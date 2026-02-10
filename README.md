@@ -1,12 +1,14 @@
 # Universal LLM Gateway
 
-A federated LLM inference gateway with network-isolated containers, OpenAI-compatible API, and multi-model pipeline orchestration.
+A **privacy-first** federated LLM inference gateway. Gateway containers run with zero network access (`network_mode: "none"`) and non-root Docker processes — your prompts never touch the internet. OpenAI-compatible API with multi-model pipeline orchestration.
 
 ## Status: Alpha (v0.1.0)
 
 Production-tested on single-GPU deployments. Under active development.
 
 ### What Works
+- **Privacy by architecture**: Gateway containers have zero network access — prompts stay on your hardware
+- **Non-root containers**: All Docker processes run as unprivileged users
 - Federated inference routing with network-isolated Gateway containers (`network_mode: "none"`)
 - Single-GPU deployments: GGUF/llama.cpp, vLLM, Whisper, Flux
 - Pipeline system for multi-model DAG workflows (example pending)
@@ -55,7 +57,8 @@ Client → Master Stargate:9999 (router-only)
 
 ### Key Design Decisions
 
-- **Network isolation**: Gateway containers run with `network_mode: "none"` — zero network access. All communication via Unix sockets.
+- **Network isolation**: Gateway containers run with `network_mode: "none"` — zero network access. All communication via Unix sockets. Your prompts and model outputs never leave the host.
+- **Non-root Docker**: All containers run as unprivileged users — no root escalation surface.
 - **Router-only Master**: Masters have no local Gateway. They orchestrate via relay stargates.
 - **HTTP-authoritative operations**: Model load completion verified via HTTP response, not telemetry events.
 - **WebSocket telemetry**: Real-time state synchronization from relay stargates to Master.
