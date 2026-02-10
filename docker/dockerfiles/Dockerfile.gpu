@@ -1,0 +1,550 @@
+# Dockerfile.gpu — Multi-stage GPU build with independent caching
+# ──────────────────────────────────────────────────────────────────────
+# Architecture:
+#
+#   base-builder ─┬─ vllm-builder ──────────┐
+#                 ├─ llama-builder ──────────┤
+#                 └─ llama-server-builder ───┤
+#                                           ▼
+#                                        runtime
+#
+# Cache isolation: Each builder declares ONLY the ARGs it consumes.
+#   LLAMA_SERVER_VERSION change → rebuilds only llama-server-builder
+#   VLLM_VERSION change         → rebuilds only vllm-builder
+#   GPU_ARCH change             → rebuilds llama-builder + llama-server-builder
+#   Source code change          → rebuilds only runtime (last layer)
+# ──────────────────────────────────────────────────────────────────────
+# NOTE: OpenBLAS intentionally disabled — its threading conflicts with
+# OpenMP, causing severe performance degradation in hybrid inference.
+
+# ──────────────────────────────────────────────────────────────────────
+# TRICKY PARTS (read before modifying):
+# ──────────────────────────────────────────────────────────────────────
+#
+# 1. ARG SCOPE = CACHE KEY
+#    Each stage declares its own ARGs. An ARG declared in a stage creates
+#    a cache key for that stage. If you add ARG GPU_ARCH to vllm-builder,
+#    changing GPU_ARCH will now ALSO invalidate vLLM cache. Only declare
+#    ARGs in stages that actually USE them.
+#
+# 2. PACKAGE MERGE ORDER (runtime stage)
+#    vLLM packages are copied FIRST, llama packages SECOND.
+#    For overlapping packages (numpy, jinja2), llama-builder's version wins.
+#    This is intentional: llama deps are simpler and less likely to conflict.
+#    NumPy and huggingface-hub are explicitly re-pinned AFTER the merge.
+#
+# 3. PYTORCH PROTECTION
+#    PyTorch nightly (cu130) is installed ONLY in vllm-builder.
+#    All other builders use --no-deps to avoid pulling PyTorch (cu12).
+#    If you add a pip install without --no-deps in llama-builder,
+#    verify it does NOT install torch as a transitive dependency.
+#
+# 4. CUDA STUBS
+#    Each builder that compiles CUDA code needs:
+#      RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so ...
+#    base-builder creates this symlink, and it's inherited by all stages.
+#    If you add a new builder NOT based on base-builder, add it manually.
+#
+# 5. STATIC VS SHARED (llama-server)
+#    llama-server is built with BUILD_SHARED_LIBS=OFF (static binary).
+#    llama-cpp-python installs libllama.so (shared library).
+#    They may link DIFFERENT llama.cpp versions — this is intentional.
+#    Do NOT make llama-server use shared libs; it will conflict.
+#
+# ──────────────────────────────────────────────────────────────────────
+
+# ──────────────────────────────────────────────────────────────────────
+# COMPONENT SELECTION (phasing out llama-cpp-python)
+# ──────────────────────────────────────────────────────────────────────
+# Each component has an independent builder stage with an ENABLE_* flag:
+#   --build-arg ENABLE_VLLM=false          → Skip vLLM (vllm-builder no-op)
+#   --build-arg ENABLE_LLAMA_SERVER=false  → Skip llama-server (llama-server-builder no-op)
+#
+# ENABLE_LLAMA_CPP_PYTHON (default: false)
+#   When false, llama-builder only installs numpy/jinja2/etc.; no llama-cpp-python.
+#   Use llama-server for GGUF. Set --build-arg ENABLE_LLAMA_CPP_PYTHON=true to build
+#   the Python bindings.
+#
+# Current state:
+#   llama-builder: Builds llama-cpp-python only when ENABLE_LLAMA_CPP_PYTHON=true
+#   llama-server-builder: Builds llama-server (ENABLE_LLAMA_SERVER)
+#   Runtime merges both (no conflict: static binary vs shared library)
+# ──────────────────────────────────────────────────────────────────────
+
+# Global ARG — available in all FROM instructions
+ARG CUDA_VERSION=13.0.0
+
+
+# ============================================================================
+# Stage 1: base-builder — Shared build environment
+# ============================================================================
+# Installs ONLY tools that ALL builders need: Python 3.12, pip, cmake, ninja.
+# No component-specific ARGs (they would invalidate all downstream caches).
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS base-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+RUN apt-get update && apt-get install -y \
+    software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y \
+    python3.12 python3.12-dev python3.12-venv \
+    build-essential cmake ninja-build pkg-config curl git \
+    && rm -rf /var/lib/apt/lists/*
+
+# PEP 668: Safe to override in isolated Docker container
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 - --break-system-packages
+
+WORKDIR /build
+
+# CUDA stub symlink for build-time linking
+RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
+
+# Build tools (globally installed — NOT copied to runtime)
+RUN python3.12 -m pip install --no-cache-dir --upgrade pip --break-system-packages && \
+    python3.12 -m pip install --no-cache-dir setuptools>=68.0.0 wheel --break-system-packages
+
+
+# ============================================================================
+# Stage 2: vllm-builder — PyTorch + vLLM (independent cache)
+# ============================================================================
+# Changing LLAMA_SERVER_VERSION, CPU_OPTIMIZATION, or GPU_ARCH does NOT
+# invalidate this stage. Only vLLM-specific ARGs create cache keys here.
+FROM base-builder AS vllm-builder
+
+ARG ENABLE_VLLM=true
+ARG VLLM_VERSION=
+# Source build: PyTorch 2.11 nightly + compile vLLM (CUDA 13.0 optimizations).
+# Pre-built wheel: let vLLM wheel dictate PyTorch version (older, faster).
+ARG VLLM_FROM_SOURCE=false
+ARG VLLM_BUILD_ARGS="--portable"
+ARG VLLM_MAX_JOBS=8
+# Pin nightly to known-working date. Update when newer nightly verified.
+ARG TORCH_NIGHTLY_DATE=20260111
+
+# Output to separate directory — merged with llama packages in runtime stage.
+# Avoids file conflicts between independently-built dependency trees.
+RUN mkdir -p /build/vllm-packages
+
+# ── PyTorch Nightly (source builds only) ─────────────────────────────
+# Pre-built wheel method skips this — the wheel pins its own PyTorch.
+RUN if [ "${ENABLE_VLLM}" = "true" ] && [ "${VLLM_FROM_SOURCE}" = "true" ]; then \
+    echo "🔥 Installing PyTorch nightly (CUDA 13.0) → /build/vllm-packages" && \
+    if [ "${TORCH_NIGHTLY_DATE}" = "latest" ]; then \
+    python3.12 -m pip install --no-cache-dir --target=/build/vllm-packages \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/nightly/cu130 \
+    --pre --break-system-packages; \
+    else \
+    echo "   Pinned to: ${TORCH_NIGHTLY_DATE}" && \
+    python3.12 -m pip install --no-cache-dir --target=/build/vllm-packages \
+    "torch==2.11.0.dev${TORCH_NIGHTLY_DATE}+cu130" \
+    "torchvision==0.25.0.dev${TORCH_NIGHTLY_DATE}+cu130" \
+    "torchaudio==2.11.0.dev${TORCH_NIGHTLY_DATE}+cu130" \
+    --index-url https://download.pytorch.org/whl/nightly/cu130 \
+    --break-system-packages; \
+    fi && \
+    export PYTHONPATH=/build/vllm-packages:${PYTHONPATH} && \
+    python3.12 -c "import torch; print(f'✅ PyTorch {torch.__version__}, CUDA: {torch.version.cuda}')"; \
+    elif [ "${ENABLE_VLLM}" = "true" ]; then \
+    echo "⏭️  Skipping PyTorch nightly (vLLM wheel provides PyTorch)"; \
+    fi
+
+# ── vLLM Base Dependencies ──────────────────────────────────────────
+# accelerate has torch>=2.0 dependency — install --no-deps to avoid
+# overwriting PyTorch nightly (cu130) with torch (cu12).
+COPY libs/inference_djinn/scripts/build/python_builders /build/python_builders
+COPY libs/inference_djinn/scripts/build/install/vllm /build/vllm_install_scripts
+
+RUN if [ "${ENABLE_VLLM}" = "true" ]; then \
+    python3.12 -m pip install --no-cache-dir --target=/build/vllm-packages \
+    'transformers>=4.56.0,<5' 'huggingface-hub>=0.34.0,<1.0' \
+    packaging blake3 psutil safetensors --break-system-packages && \
+    python3.12 -m pip install --no-cache-dir --no-deps --target=/build/vllm-packages \
+    'accelerate>=1.12.0' --break-system-packages; \
+    fi
+
+# ── Method 1: Pre-built wheel (default) ─────────────────────────────
+RUN if [ "${ENABLE_VLLM}" = "true" ] && [ "${VLLM_FROM_SOURCE}" != "true" ]; then \
+    echo "🚀 Installing vLLM from pre-built wheel..." && \
+    mkdir -p /build/wheels && \
+    if [ -n "${VLLM_VERSION}" ]; then \
+    VLLM_VER="${VLLM_VERSION#v}" && \
+    python3.12 -m pip download --no-deps --dest=/build/wheels \
+    "vllm==${VLLM_VER}" \
+    --extra-index-url https://download.pytorch.org/whl/cu130; \
+    else \
+    python3.12 -m pip download --no-deps --dest=/build/wheels vllm>=0.11.2 \
+    --extra-index-url https://download.pytorch.org/whl/cu130; \
+    fi && \
+    VLLM_WHEEL=$(ls /build/wheels/*.whl | head -1) && \
+    echo "📦 Installing deps from wheel METADATA..." && \
+    python3.12 /build/vllm_install_scripts/auto_install_dependencies.py \
+    --target=/build/vllm-packages "${VLLM_WHEEL}" && \
+    echo "📦 Installing vLLM wheel (--no-deps)..." && \
+    python3.12 -m pip install --no-cache-dir --no-deps \
+    --target=/build/vllm-packages "${VLLM_WHEEL}" --break-system-packages && \
+    rm -rf /build/wheels && \
+    echo "✅ vLLM installed from pre-built wheel"; \
+    fi
+
+# ── Method 2: Source build (slower, customizable) ────────────────────
+RUN if [ "${ENABLE_VLLM}" = "true" ] && [ "${VLLM_FROM_SOURCE}" = "true" ]; then \
+    echo "🚀 Building vLLM from source (${VLLM_BUILD_ARGS}, ${VLLM_MAX_JOBS} jobs)" && \
+    python3.12 -m pip install --no-cache-dir --target=/build/vllm-packages psutil --break-system-packages && \
+    python3.12 -m pip install --no-cache-dir \
+    "cmake>=3.26.1" ninja "setuptools>=77.0.3,<81.0.0" "setuptools-scm>=8.0" wheel jinja2 \
+    --break-system-packages && \
+    export PYTHONPATH=/build/vllm-packages:${PYTHONPATH} && \
+    export MAX_JOBS=${VLLM_MAX_JOBS} && \
+    VERSION_FLAG="" && \
+    if [ -n "${VLLM_VERSION}" ]; then \
+    VERSION_FLAG="--vllm-version=${VLLM_VERSION}"; \
+    fi && \
+    python3.12 /build/python_builders/vllm/build_vllm.py ${VLLM_BUILD_ARGS} \
+    --jobs=${VLLM_MAX_JOBS} ${VERSION_FLAG} \
+    --target=/build/vllm-packages && \
+    echo "✅ vLLM built from source"; \
+    fi
+
+RUN if [ "${ENABLE_VLLM}" != "true" ]; then \
+    echo "⏭️  vLLM disabled (ENABLE_VLLM=false)"; \
+    fi
+
+# ── Verify vLLM ──────────────────────────────────────────────────────
+RUN if [ "${ENABLE_VLLM}" = "true" ]; then \
+    export PYTHONPATH=/build/vllm-packages:${PYTHONPATH} && \
+    python3.12 -c "import torch; print(f'✅ PyTorch: {torch.__version__}')" && \
+    python3.12 -c "import vllm; print(f'✅ vLLM: {vllm.__version__}')"; \
+    fi
+
+
+# ============================================================================
+# Stage 3: llama-builder — llama-cpp-python (independent cache)
+# ============================================================================
+# Changing VLLM_VERSION, TORCH_NIGHTLY_DATE, or ENABLE_VLLM does NOT
+# invalidate this stage. Only CPU/GPU/version ARGs create cache keys.
+FROM base-builder AS llama-builder
+
+ARG CPU_OPTIMIZATION=avx2
+ARG GPU_ARCH=multi
+ARG ENABLE_LLAMA_CPP_PYTHON=false
+ARG LLAMA_CPP_PYTHON_VERSION=
+
+RUN mkdir -p /build/packages
+
+COPY libs/inference_djinn/scripts/build/python_builders /build/python_builders
+
+# Runtime deps (installed to target — will merge into runtime image)
+RUN python3.12 -m pip install --no-cache-dir --target=/build/packages \
+    numpy diskcache>=5.2.1 jinja2>=3.0.0 typing-extensions>=4.5.0 --break-system-packages
+
+# Build deps (only when building llama-cpp-python)
+RUN if [ "${ENABLE_LLAMA_CPP_PYTHON}" = "true" ]; then \
+    python3.12 -m pip install --no-cache-dir "scikit-build-core[pyproject]>=0.9.2" psutil --break-system-packages; \
+    fi
+
+# Build using unified build script when ENABLE_LLAMA_CPP_PYTHON=true
+RUN if [ "${ENABLE_LLAMA_CPP_PYTHON}" = "true" ]; then \
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH} && \
+    export PYTHONPATH=/build/packages:/build/python_builders:${PYTHONPATH} && \
+    echo "🔨 Building llama-cpp-python (CPU=${CPU_OPTIMIZATION}, GPU=${GPU_ARCH})" && \
+    CPU_FLAG="" && \
+    case "${CPU_OPTIMIZATION}" in \
+    native) CPU_FLAG="--cpu-native" ;; \
+    avx512) CPU_FLAG="--cpu-avx512" ;; \
+    avx2)   CPU_FLAG="--cpu-avx2" ;; \
+    generic) CPU_FLAG="--cpu-generic" ;; \
+    *)      CPU_FLAG="--cpu-avx2" ;; \
+    esac && \
+    GPU_FLAG="" && \
+    if [ "${GPU_ARCH}" = "multi" ]; then \
+    GPU_FLAG="--gpu-generic"; \
+    else \
+    GPU_FLAG="--gpu-arch=${GPU_ARCH}"; \
+    fi && \
+    VERSION_FLAG="" && \
+    if [ -n "${LLAMA_CPP_PYTHON_VERSION}" ]; then \
+    VERSION_FLAG="--llama-cpp-python-version=${LLAMA_CPP_PYTHON_VERSION}"; \
+    fi && \
+    echo "   Flags: ${CPU_FLAG} ${GPU_FLAG} ${VERSION_FLAG}" && \
+    python3.12 /build/python_builders/llama_cpp/build_llama_cpp.py \
+    ${CPU_FLAG} ${GPU_FLAG} ${VERSION_FLAG} \
+    --target=/build/packages --no-deps --keep-sources && \
+    echo "✅ llama-cpp-python built"; \
+    else \
+    echo "⏭️  Skipping llama-cpp-python (ENABLE_LLAMA_CPP_PYTHON=false)"; \
+    fi
+
+# Verify when built (import requires GPU at runtime — check files only)
+RUN if [ "${ENABLE_LLAMA_CPP_PYTHON}" = "true" ]; then \
+    test -f /build/packages/llama_cpp/__init__.py && \
+    test -f /build/packages/llama_cpp/lib/libllama.so && \
+    echo "✅ llama_cpp: package and libllama.so present"; \
+    fi
+
+
+# ============================================================================
+# Stage 4: llama-server-builder — Native llama-server binary
+# ============================================================================
+# Separate from llama-cpp-python — different llama.cpp versions.
+# Static binary (BUILD_SHARED_LIBS=OFF): no conflicts with libllama.so.
+FROM base-builder AS llama-server-builder
+
+ARG CPU_OPTIMIZATION=avx2
+ARG GPU_ARCH=multi
+ARG ENABLE_LLAMA_SERVER=true
+ARG LLAMA_SERVER_VERSION=main
+
+COPY docker/scripts/build/build_llama_server.sh /build/
+
+RUN if [ "${ENABLE_LLAMA_SERVER}" = "true" ]; then \
+    chmod +x /build/build_llama_server.sh && \
+    /build/build_llama_server.sh \
+        "${LLAMA_SERVER_VERSION}" \
+        "${CPU_OPTIMIZATION}" \
+        "${GPU_ARCH}"; \
+    else \
+    echo "⏭️  Skipping llama-server (ENABLE_LLAMA_SERVER=false)" && \
+    mkdir -p /opt/llama-server/bin; \
+    fi
+
+
+# ============================================================================
+# Stage 5: runtime — Merge packages, resolve conflicts, deploy
+# ============================================================================
+# ──────────────────────────────────────────────────────────────────────
+# Layer order (least-changing → most-changing for optimal cache):
+#   1. System packages + pip          (rarely changes)
+#   2. COPY from builders             (changes when builders change)
+#   3. pip install remaining deps     (changes when requirements.txt changes)
+#   4. Conflict resolution            (stable)
+#   5. cuBLAS replacement + verify    (stable)
+#   6. Source code COPY               (changes most frequently)
+#   7. Permissions + labels           (stable)
+# ──────────────────────────────────────────────────────────────────────
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+# ── 1. System packages ──────────────────────────────────────────────
+# python3.12-dev: Headers for Triton JIT compilation at runtime
+# gcc: Required by Triton for JIT kernel compilation
+# libgomp1: OpenMP runtime for hybrid GPU+CPU inference
+# curl: Needed for pip bootstrap
+RUN apt-get update && apt-get install -y \
+    software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y \
+    python3.12 python3.12-venv python3.12-dev \
+    curl libgomp1 gcc \
+    && rm -rf /var/lib/apt/lists/* && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python3
+
+# pip (needed for remaining deps and FINAL conflict resolution)
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 - --break-system-packages
+
+# ── Security: Non-root user with GPU access ──────────────────────────
+# 'video' group grants access to /dev/nvidia* devices via NVIDIA Container Runtime
+RUN groupadd -r appuser --gid=1000 || groupmod -n appuser $(getent group 1000 | cut -d: -f1) && \
+    useradd -r -g appuser --uid=1000 --no-log-init -G video appuser || usermod -l appuser -d /home/appuser -m $(getent passwd 1000 | cut -d: -f1) && \
+    usermod -aG video appuser
+
+WORKDIR /app
+
+# ── 2. Package merge from independent builders ──────────────────────
+# ──────────────────────────────────────────────────────────────────────
+# COPY order matters — last-wins for conflicting files:
+#   1. vLLM packages FIRST (larger dep tree, has PyTorch)
+#   2. llama packages SECOND (may overlap numpy, jinja2)
+# Conflicts resolved by FINAL steps below (numpy, huggingface-hub).
+# ──────────────────────────────────────────────────────────────────────
+COPY --from=vllm-builder /build/vllm-packages /usr/local/lib/python3.12/dist-packages
+COPY --from=llama-builder /build/packages /usr/local/lib/python3.12/dist-packages
+COPY --from=llama-server-builder /opt/llama-server /opt/llama-server
+
+ENV PATH="/opt/llama-server/bin:${PATH}"
+
+# ── 3. Remaining dependencies ────────────────────────────────────────
+# Small and fast — acceptable in runtime stage.
+COPY requirements.docker.gpu.txt /tmp/
+RUN python3.12 -m pip install --no-cache-dir \
+    -r /tmp/requirements.docker.gpu.txt \
+    --target=/usr/local/lib/python3.12/dist-packages \
+    --break-system-packages && \
+    rm /tmp/requirements.docker.gpu.txt
+
+# Whisper with --no-deps (prevent CUDA 12 PyTorch overwrite)
+RUN python3.12 -m pip install --no-cache-dir --no-deps \
+    --target=/usr/local/lib/python3.12/dist-packages \
+    'faster-whisper>=1.0.0' 'openai-whisper>=20231117' \
+    --break-system-packages
+
+# ── 4. FINAL: Conflict resolution ───────────────────────────────────
+# Resolves version conflicts created by merging packages from two
+# independently-built stages. MUST be the last pip operations.
+
+# ARG declared here (not at top) to minimize cache invalidation scope.
+# Only layers below this point are invalidated when ENABLE_VLLM changes.
+ARG ENABLE_VLLM=true
+
+# STEP 1: Remove duplicate dist-info directories
+# Merging builders can create stale metadata (e.g., huggingface_hub 1.x
+# dist-info when 0.x code is actually installed).
+RUN echo "🧹 FINAL STEP 1: Cleaning duplicate dist-info..." && \
+    cd /usr/local/lib/python3.12/dist-packages && \
+    for pkg in huggingface_hub transformers accelerate; do \
+    count=$(ls -d ${pkg}*.dist-info 2>/dev/null | wc -l); \
+    if [ "$count" -gt 1 ]; then \
+    echo "   ⚠️  Found $count dist-info for $pkg — cleaning"; \
+    installed_version=$(python3.12 -c "import ${pkg}; print(${pkg}.__version__)" 2>/dev/null); \
+    if [ -z "$installed_version" ]; then \
+    echo "      ERROR: Could not determine version for ${pkg}, skipping"; \
+    continue; \
+    fi; \
+    echo "      Installed version: $installed_version"; \
+    for dir in ${pkg}*.dist-info; do \
+    if ! echo "$dir" | grep -qF -- "-${installed_version}.dist-info"; then \
+    echo "      Removing stale: $dir"; \
+    rm -rf "$dir"; \
+    fi; \
+    done; \
+    fi; \
+    done && \
+    echo "   ✅ Dist-info cleanup complete"
+
+# STEP 2: Enforce NumPy <2.3 (Numba/vLLM compatibility)
+# PyTorch nightly or merged deps may pull NumPy 2.3+, which breaks Numba.
+RUN echo "🔒 FINAL STEP 2: Enforcing NumPy <2.3..." && \
+    NUMPY_VERSION=$(python3.12 -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "not found") && \
+    echo "      Current: ${NUMPY_VERSION}" && \
+    rm -rf /usr/local/lib/python3.12/dist-packages/numpy \
+           /usr/local/lib/python3.12/dist-packages/numpy.libs \
+           /usr/local/lib/python3.12/dist-packages/numpy-*.dist-info \
+           2>/dev/null || true && \
+    python3.12 -m pip install --no-cache-dir \
+    --target=/usr/local/lib/python3.12/dist-packages \
+    "numpy>=1.24.0,<2.3" --break-system-packages && \
+    NEW_VERSION=$(python3.12 -c "import numpy; print(numpy.__version__)") && \
+    echo "   ✅ NumPy: ${NUMPY_VERSION} → ${NEW_VERSION}"
+
+# STEP 3: Force huggingface-hub to match transformers constraint
+# transformers 4.57.x requires huggingface-hub<1.0,>=0.34.0
+RUN if [ "${ENABLE_VLLM}" = "true" ]; then \
+    echo "🔒 FINAL STEP 3: Forcing huggingface-hub>=0.34.0,<1.0..." && \
+    rm -rf /usr/local/lib/python3.12/dist-packages/huggingface_hub \
+           /usr/local/lib/python3.12/dist-packages/huggingface_hub-*.dist-info \
+           2>/dev/null || true && \
+    python3.12 -m pip install --no-cache-dir \
+    --target=/usr/local/lib/python3.12/dist-packages \
+    --force-reinstall --no-deps 'huggingface-hub>=0.34.0,<1.0' --break-system-packages && \
+    HF_VERSION=$(python3.12 -c "import huggingface_hub; print(huggingface_hub.__version__)") && \
+    echo "   ✅ huggingface-hub: ${HF_VERSION}"; \
+    fi
+
+# ── 5. cuBLAS replacement ───────────────────────────────────────────
+# Container's cuBLAS (CUDA 13.0 base image) causes CUBLAS_STATUS_INVALID_VALUE
+# on Blackwell GPUs. PyTorch nightly bundles a compatible version.
+# Hard links preferred (same inode, survives Docker ops). Falls back to copy.
+RUN CUDA_LIB=/usr/local/cuda-13.0/targets/x86_64-linux/lib && \
+    TORCH_LIB=/usr/local/lib/python3.12/dist-packages/nvidia/cu13/lib && \
+    if [ -f "${TORCH_LIB}/libcublas.so.13" ] && [ -f "${TORCH_LIB}/libcublasLt.so.13" ]; then \
+    echo "🔧 Replacing container cuBLAS with PyTorch bundled version..." && \
+    rm -f ${CUDA_LIB}/libcublas.so.13 ${CUDA_LIB}/libcublasLt.so.13 && \
+    if ln ${TORCH_LIB}/libcublas.so.13 ${CUDA_LIB}/libcublas.so.13 2>/dev/null && \
+    ln ${TORCH_LIB}/libcublasLt.so.13 ${CUDA_LIB}/libcublasLt.so.13 2>/dev/null; then \
+    echo "✅ cuBLAS hard linked"; \
+    else \
+    echo "⚠️  Hard links failed, copying instead"; \
+    rm -f ${CUDA_LIB}/libcublas.so.13 ${CUDA_LIB}/libcublasLt.so.13 2>/dev/null || true; \
+    cp ${TORCH_LIB}/libcublas.so.13 ${CUDA_LIB}/libcublas.so.13 && \
+    cp ${TORCH_LIB}/libcublasLt.so.13 ${CUDA_LIB}/libcublasLt.so.13 && \
+    echo "✅ cuBLAS copied"; \
+    fi && \
+    ldconfig; \
+    else \
+    echo "⏭️  Skipping cuBLAS replacement (PyTorch CUDA libs not found)"; \
+    fi
+
+    # ── Verification (before source COPY — maximizes cache hits) ────────
+    ARG ENABLE_LLAMA_CPP_PYTHON
+    ARG ENABLE_LLAMA_SERVER
+    RUN echo "=== Runtime Verification ===" && \
+    if [ -d /usr/local/lib/python3.12/dist-packages/torch ]; then \
+    python3.12 -c "import torch; print(f'✅ torch: {torch.__version__}')"; \
+    else \
+    echo "⏭️  torch not installed (vLLM disabled or using wheel method)"; \
+    fi && \
+    if [ "${ENABLE_LLAMA_CPP_PYTHON}" = "true" ]; then \
+    test -f /usr/local/lib/python3.12/dist-packages/llama_cpp/__init__.py && \
+    test -f /usr/local/lib/python3.12/dist-packages/llama_cpp/lib/libllama.so && \
+    echo "✅ llama_cpp: package and libllama.so present"; \
+    else \
+    echo "⏭️  llama-cpp-python not installed (ENABLE_LLAMA_CPP_PYTHON=false)"; \
+    fi && \
+    if [ "${ENABLE_LLAMA_SERVER}" = "true" ]; then \
+    test -f /opt/llama-server/bin/llama-server && \
+    echo "✅ llama-server: $(du -h /opt/llama-server/bin/llama-server | cut -f1)" && \
+    cat /opt/llama-server/BUILD_INFO 2>/dev/null || true; \
+    else \
+    echo "⏭️  llama-server not installed (ENABLE_LLAMA_SERVER=false)"; \
+    fi
+
+# ── Engine Runtime Environment Variables ─────────────────────────────
+# Loaded from docker/compose/engine-optimizations.env via Compose env_file.
+
+# ── 6. Source code (COPY last — changes most frequently) ─────────────
+COPY --chown=appuser:appuser libs/ /app/libs/
+COPY --chown=appuser:appuser services/_universal-llm-gateway /app/services/_universal-llm-gateway/
+COPY --chown=appuser:appuser services/universal-stargate /app/services/universal-stargate/
+COPY --chown=appuser:appuser config/ /app/config/
+COPY --chown=appuser:appuser sitecustomize.py /app/
+
+ENV PYTHONPATH=/app/libs
+ENV WORKSPACE_ROOT=/app
+
+RUN test -d /app/libs && test -d /app/services && \
+    test -f /app/config/model_catalog.yaml && \
+    echo "✅ Workspace structure verified"
+
+# ── 7. Volumes, permissions, startup ─────────────────────────────────
+RUN mkdir -p /golem/models /golem/input /golem/output /golem/logs \
+    /golem/vllm_cache /golem/vllm_cache/cuda /golem/vllm_cache/triton \
+    /home/appuser/.cache /home/appuser/.nv && \
+    chown -R appuser:appuser /golem /home/appuser
+
+VOLUME ["/golem/models", "/golem/input", "/golem/output", "/golem/logs"]
+
+RUN mkdir -p /tmp/universal-protocol /tmp/process_ipc /app/runtime && \
+    chown -R appuser:appuser /tmp/universal-protocol /tmp/process_ipc /app/runtime && \
+    chmod -R a+rX /app /golem
+
+COPY --chown=appuser:appuser services/_universal-llm-gateway/config /app/services/_universal-llm-gateway/config.default
+COPY --chown=appuser:appuser services/universal-stargate/config /app/services/universal-stargate/config.default
+
+COPY --chown=appuser:appuser docker/runtime/golem-start.sh /app/golem-start.sh
+RUN chmod +x /app/golem-start.sh
+
+# ── Switch to non-root user ──────────────────────────────────────────
+USER appuser
+WORKDIR /app/services/_universal-llm-gateway
+
+# ── Labels (ARGs declared late to minimize cache invalidation) ───────
+ARG CPU_OPTIMIZATION=avx2
+ARG GPU_ARCH=multi
+ARG CUDA_VERSION=13.0.0
+
+LABEL gpu.enabled="true"
+LABEL gpu.backend="CUDA"
+LABEL gpu.cuda_version="${CUDA_VERSION}"
+LABEL gpu.arch="${GPU_ARCH}"
+LABEL cpu.optimization="${CPU_OPTIMIZATION}"
+LABEL vllm.enabled="${ENABLE_VLLM}"
+LABEL security.user="appuser"
+LABEL security.uid="1000"
+LABEL security.groups="appuser,video"
+
+COPY --chown=appuser:appuser docker/runtime/cuda-health-check.sh /app/cuda-health-check.sh
+RUN chmod +x /app/cuda-health-check.sh

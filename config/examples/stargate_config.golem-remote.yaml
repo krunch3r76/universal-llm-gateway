@@ -1,0 +1,31 @@
+# Remote Stargate configuration for Golem deployment
+#
+# This configuration runs inside Golem VM container.
+# WebSocket is disabled (Golem limitation).
+
+gateway:
+  url: "http://localhost:9998"
+  timeout: 30.0
+
+proxy:
+  port: 9999
+  host: "0.0.0.0"
+  cors_enabled: true
+
+federation:
+  mode: "remote"
+  stargate_id: "${GOLEM_NODE_ID}"  # Set via environment variable
+  disable_websocket: true
+  
+  local_gateway:
+    socket_path: "/tmp/universal-protocol/gateway.sock"
+    gateway_id: "${GOLEM_NODE_ID}/gateway"
+    public_url: "http://localhost:9999"
+  
+  master:
+    stargate_id: "earth"
+    api_key: "${GOLEM_FEDERATION_KEY}"
+
+logging:
+  level: "INFO"
+  log_dir: "/golem/logs/stargate"

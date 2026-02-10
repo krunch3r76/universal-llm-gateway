@@ -1,0 +1,61 @@
+# Golem Edge Stargate Configuration (started inside the Golem node container)
+#
+# Purpose:
+# - Provide a local "edge" endpoint over a Unix socket for Relay Stargate forwarding.
+# - Edge is execution-capable: connects to local Gateway (localhost:9998).
+#
+# Environment variables:
+# - REMOTE_ID: relay id (e.g., "golem-remote-1")
+# - FEDERATION_API_KEY: shared key used by Relay to authenticate to Edge
+# - STARGATE_SOCKET_PATH: UDS path this Edge binds to
+#
+# NOTE:
+# - This Edge is not exposed over TCP; it is only reachable via the Unix socket.
+
+# Local Gateway connection (same container, localhost)
+gateway:
+  url: "http://localhost:9998"
+  timeout: 30.0
+  connectivity_timeout: 10.0
+  health_timeout: 2.0
+  request_timeout: 1800
+  streaming_timeout: 1800
+
+# Proxy settings - Unix socket only
+proxy:
+  port: null
+  host: null
+  socket_path: "${STARGATE_SOCKET_PATH}"
+  cors_enabled: false
+
+federation:
+  mode: edge
+  stargate_id: "edge-${REMOTE_ID}"
+
+  # Relay connects to Edge via /ws/federation/edge and must authenticate.
+  allowed_peers:
+    - stargate_id: "${REMOTE_ID}"
+      api_key: "${FEDERATION_API_KEY}"
+
+# Authorization is not useful for UDS-only local Edge.
+authorization:
+  enabled: false
+
+# Logging
+logging:
+  level: "DEBUG"
+  enable_console: true
+  enable_file: true
+  log_dir: "/golem/logs/stargate-edge"
+
+model_routing:
+  default_sticky: true
+
+request_queue:
+  max_size: 1000
+  default_timeout: 300
+
+routing:
+  scoring:
+    capacity: {}
+

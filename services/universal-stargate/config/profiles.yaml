@@ -1,0 +1,349 @@
+# Generation Parameter Profiles
+# 
+# This file defines generation parameter profiles for different use cases.
+# Profiles are structured with shared parameters (work across all engines)
+# and engine-specific parameters (llama_cpp, vllm).
+#
+# Structure:
+#   profiles:
+#     profile-name:
+#       description: "Profile description"
+#       system_prompt: "Optional system prompt for this profile"
+#       # Shared parameters (all engines)
+#       temperature: 0.7
+#       top_p: 0.9
+#       top_k: 50
+#       # Engine-specific parameters
+#       llama_cpp:
+#         repeat_penalty: 1.1
+#         min_p: 1.0
+#       vllm:
+#         presence_penalty: 0.1  # auto-converted if empty
+#
+# If 'vllm' section is empty or missing, parameters will be auto-converted
+# from the llama_cpp section at runtime.
+#
+
+profiles:
+  general-chat:
+    description: Balanced, natural conversation - good for general chat interactions
+    system_prompt: |
+      You are a helpful, friendly, and knowledgeable AI assistant.
+      
+      **Communication Style:**
+      - Use clear, standard American English unless the user requests another language.
+      - Match the user's formality level (casual for informal queries, professional for business/technical topics).
+      - Maintain a conversational tone while prioritizing clarity and accuracy.
+      - Be concise but thorough. Acknowledge uncertainty rather than guessing.
+      
+      **Technical Content:**
+      - Preserve code snippets, identifiers, and technical terms exactly as provided.
+      - Explain technical concepts in accessible language while maintaining accuracy.
+      - Provide clear, accurate, and engaging responses.
+    temperature: 0.7
+    top_p: 0.9
+    top_k: 50
+    llama_cpp:
+      min_p: 1.0
+      typical_p: 1.0
+      repeat_penalty: 1.1
+      tfs_z: 1.0
+      mirostat_mode: 0
+    vllm:
+      presence_penalty: 0.1  # Converted from repeat_penalty: 1.1
+      frequency_penalty: 0.0  # Optional: can add if you want to penalize repetition more
+  
+  factual-qa:
+    description: Conservative, low hallucination - optimized for factual question answering
+    system_prompt: "You are a precise and accurate AI assistant focused on providing factual information. Always base your responses on verified knowledge. If you're uncertain about something, clearly state your uncertainty. Avoid speculation and prioritize accuracy over creativity."
+    temperature: 0.3
+    top_p: 0.92
+    top_k: 40
+    llama_cpp:
+      min_p: 1.0
+      typical_p: 1.0
+      repeat_penalty: 1.12
+      tfs_z: 1.0
+      mirostat_mode: 0
+    vllm:
+      presence_penalty: 0.12  # Converted from repeat_penalty: 1.12
+      frequency_penalty: 0.1  # Additional penalty to reduce repetition in factual content
+  code-generation:
+    description: Tight structure, deterministic-ish - best for code generation tasks
+    system_prompt: "You are an expert Python engineer. Output only valid, self-documenting code for the described class or method — no explanations, no markdown, no commentary."
+    temperature: 0.2
+    top_p: 0.9
+    top_k: 50
+    llama_cpp:
+      min_p: 1.0
+      typical_p: 1.0
+      repeat_penalty: 1.15
+      tfs_z: 1.0
+      mirostat_mode: 0
+    vllm:
+      presence_penalty: 0.0
+      frequency_penalty: 0.1
+  json-output:
+    description: Structured output friendly - optimized for JSON and structured data
+    system_prompt: "You are a structured data assistant. Always respond with valid, well-formatted JSON. Ensure proper syntax, consistent field naming, and logical data organization. Include all requested fields and use appropriate data types. Validate your JSON output for correctness."
+    temperature: 0.2
+    top_p: 1.0
+    top_k: 40
+    response_format:
+      type: "json_object"
+    llama_cpp:
+      min_p: 1.0
+      typical_p: 1.0
+      repeat_penalty: 1.1
+      tfs_z: 1.0
+      mirostat_mode: 0
+    vllm:
+      presence_penalty: 0.1  # Converted from repeat_penalty: 1.1
+  creative:
+    description: High entropy storytelling - ideal for creative writing and narratives
+    system_prompt: "You are a creative writing assistant with a vivid imagination. Craft engaging, original stories with rich descriptions, compelling characters, and immersive narratives. Use varied vocabulary, creative metaphors, and dynamic storytelling techniques. Embrace creativity while maintaining narrative coherence."
+    temperature: 0.9
+    top_p: 0.95
+    top_k: 60
+    llama_cpp:
+      min_p: 1.0
+      typical_p: 1.0
+      repeat_penalty: 1.05
+      tfs_z: 1.0
+      mirostat_mode: 0
+    vllm:
+      presence_penalty: 0.05  # Converted from repeat_penalty: 1.05 (low for creativity)
+      frequency_penalty: 0.0  # Allow repetition for stylistic effect
+  mirostat:
+    description: Steady long-form with Mirostat v2 - consistent quality for long outputs
+    system_prompt: "You are an AI assistant optimized for long-form content generation. Maintain consistent quality, coherent structure, and steady pacing throughout extended responses. Focus on comprehensive coverage while avoiding repetition and maintaining reader engagement across lengthy outputs."
+    temperature: 0.6
+    top_p: 1.0
+    top_k: 0
+    llama_cpp:
+      min_p: 1.0
+      typical_p: 1.0
+      repeat_penalty: 1.1
+      tfs_z: 1.0
+      mirostat_mode: 2
+      mirostat_tau: 5.5
+      mirostat_eta: 0.12
+    vllm:
+      presence_penalty: 0.1  # Converted from repeat_penalty: 1.1
+      # Note: mirostat_mode not supported in vLLM, using standard penalties instead
+  summarization:
+    description: Concise, faithful - optimized for text summarization
+    system_prompt: "You are a summarization specialist. Create concise, accurate summaries that capture the essential information and key points. Maintain the original meaning while eliminating redundancy. Structure summaries logically and ensure they are self-contained and informative."
+    temperature: 0.3
+    top_p: 0.9
+    top_k: 40
+    llama_cpp:
+      min_p: 1.0
+      typical_p: 1.0
+      repeat_penalty: 1.1
+      tfs_z: 1.0
+      mirostat_mode: 0
+    vllm:
+      presence_penalty: 0.1  # Converted from repeat_penalty: 1.1
+      frequency_penalty: 0.1  # Reduce redundancy in summaries
+  translation:
+    description: Literal, low drift - best for translation tasks
+    system_prompt: "You are a professional translator focused on accuracy and cultural sensitivity. Provide precise translations that preserve the original meaning, tone, and context. Maintain consistency in terminology and style. When cultural adaptation is needed, explain your choices while staying faithful to the source material."
+    temperature: 0.2
+    top_p: 0.9
+    top_k: 40
+    llama_cpp:
+      min_p: 1.0
+      typical_p: 1.0
+      repeat_penalty: 1.05
+      tfs_z: 1.0
+      mirostat_mode: 0
+    vllm:
+      presence_penalty: 0.05  # Converted from repeat_penalty: 1.05 (low for literal translation)
+  rag:
+    description: Don't hallucinate outside context - optimized for RAG and context-grounded QA
+    system_prompt: "You are a context-aware AI assistant. Base your responses strictly on the provided context and documents. If information is not available in the given context, clearly state this limitation. Avoid speculation beyond the provided materials and cite relevant sections when possible."
+    temperature: 0.3
+    top_p: 0.9
+    top_k: 40
+    llama_cpp:
+      min_p: 1.0
+      typical_p: 1.0
+      repeat_penalty: 1.12
+      tfs_z: 1.0
+      mirostat_mode: 0
+    vllm:
+      presence_penalty: 0.12  # Converted from repeat_penalty: 1.12
+      frequency_penalty: 0.1  # Reduce hallucination and repetition
+  deterministic:
+    description: Greedy/near-greedy for evals - reproducible outputs for testing
+    system_prompt: "You are an AI assistant optimized for consistent, reproducible outputs. Provide the most likely and straightforward response to each query. Maintain consistency across similar inputs and focus on reliability over creativity. This mode is ideal for testing and evaluation scenarios."
+    temperature: 0.0
+    top_p: 1.0
+    top_k: 0
+    llama_cpp:
+      min_p: 1.0
+      typical_p: 1.0
+      repeat_penalty: 1.1
+      tfs_z: 1.0
+      mirostat_mode: 0
+    vllm:
+      presence_penalty: 0.1  # Converted from repeat_penalty: 1.1
+      frequency_penalty: 0.0  # Minimal penalty for reproducibility
+  digital_formatter:
+    description: Reformat OCR or plain text for digital readability, preserving meaning.
+    system_prompt: |
+      You are an editor, typesetter, and proofreader.
+      Reformat and clean the text for readability on digital devices:
+        - Reconstruct paragraphs and sentences cleanly.
+        - Normalize punctuation, spacing, and indentation.
+        - Preserve quotations, verse, and code blocks.
+        - Remove page headers/footers and page numbers.
+        - Do NOT alter meaning or modernize language.
+      The is the first sample and includes the title, author, and some quotes.
+    temperature: 0.25
+    top_p: 0.9
+    top_k: 40
+    llama_cpp:
+      repeat_penalty: 1.1
+      frequency_penalty: 0.05  # Approximates larger lookback window for repeat penalty
+    vllm:
+      presence_penalty: 0.1
+      frequency_penalty: 0.05
+  proofreader_mechanical:
+    description: Stage 2 - Mechanical proofreading after formatting.
+    system_prompt: |
+      You are a meticulous proofreader and copy-editor.
+      Review the text below for mechanical correctness only.
+
+      Rules:
+        - Do NOT re-flow or re-format paragraphs.
+        - Fix spelling, punctuation, spacing, and capitalization errors.
+        - Standardize quotation marks, dashes, and ellipses.
+        - Normalize Unicode and typographic marks (smart quotes, em/en dashes).
+        - Preserve author’s wording, tone, and all line breaks.
+        - Do not add, remove, or paraphrase content.
+        - Output clean text only; no commentary or markdown.
+    temperature: 0.2
+    top_p: 0.9
+    top_k: 40
+#    llama_cpp:
+#      repeat_penalty: 1.15
+#      frequency_penalty: 0.1  # Approximates larger lookback window for repeat penalty
+#    vllm:
+#      presence_penalty: 0.0
+#      frequency_penalty: 0.1
+  chunk_detector:
+    description: Choose a sensible cut boundary within a small window of numbered OCR lines.
+    system_prompt: |
+      You are a text segmentation specialist. Given a small window of numbered lines from an OCR'd book,
+      choose a sensible cutoff index where the current chunk should end BEFORE handing it to a proofreader.
+
+      Output STRICT JSON ONLY conforming to this schema (no extra text):
+      {
+        "cut_after_index": <int>,      // absolute line index to CUT AFTER (inclusive)
+        "confidence": <float>,         // 0.0–1.0
+        "reason": "<short reason>",
+        "flags": {
+          "sentence_complete": <bool>,
+          "ends_at_paragraph_boundary": <bool>,
+          "header_footer_nearby": <bool>,
+          "hyphenation_rejoin_needed": <bool>,
+          "avoid_split_quote_or_code": <bool>
+        },
+        "suggested_next_start": <int>, // usually cut_after_index + 1 (may skip header/footer)
+        "needs_more_context": <bool>   // true if the last sentence/quote/section is incomplete
+        "explanation": "" // optional explanation for the decision
+      }
+
+      Decision guidelines (in priority order):
+        1) Prefer end-of-sentence punctuation (. ! ? …) followed by whitespace/line break.
+        2) Do NOT cut between opening/closing quotes, parentheses, or code/verse fences.
+        3) Prefer paragraph/blank-line boundaries and section/heading boundaries.
+        4) Detect and skip consistent page headers/footers and page numbers if present.
+        5) Handle hyphenated end-of-line words: if a line ends with '-' and next line continues the word, mark hyphenation_rejoin_needed=true and do NOT cut there.
+        6) If no safe boundary exists in-window, set needs_more_context=true and choose the safest tentative cut (typically the last full stop you can see).
+
+      Assume the caller will pass absolute (0-based) line indices along with text.
+      NEVER rewrite text; only choose the boundary.
+    temperature: 0.2
+    top_p: 0.9
+    top_k: 40
+    max_tokens: 1024
+    response_format:
+      type: "json_object"
+    vllm:
+      presence_penalty: 0.0
+      frequency_penalty: 0.0
+    llama_cpp:
+      repeat_penalty: 1.1
+      frequency_penalty: 0.05  # Approximates larger lookback window
+      stop: ["\n\n```","Explanation:"]
+  proofreader_mechanical_with_leadin:
+    description: Reformat OCR or plain text for digital readability, preserving meaning.
+    system_prompt: |
+      You are a meticulous editor, typesetter, and proofreader.
+      The input has two sections:
+      <<<CONTEXT>>>  (read-only prior text for continuity)
+      <<<EDIT>>>     (new text to fix)
+
+      Rules:
+        - Use CONTEXT only to resolve dangling sentences/hyphenation/quotes.
+        - Do NOT copy or re-output CONTEXT.
+        - Output ONLY the corrected EDIT section.
+        - Fix spelling, punctuation, spacing, Unicode quotes/dashes; do not reflow structure.
+        - If EDIT begins by completing a sentence started in CONTEXT, merge logically and avoid duplicated words.
+        - Collapse runs of blank lines to a single blank line.
+        - No explanations or markup—text only.
+        - Reconstruct paragraphs and sentences cleanly.
+        - Normalize punctuation, spacing, and indentation.
+        - Preserve quotations, verse, and code blocks.
+        - Remove page headers/footers and page numbers.
+        - Do NOT alter meaning or modernize language.
+    temperature: 0.2
+    top_p: 0.9
+    top_k: 40
+    llama_cpp:
+      repeat_penalty: 1.15
+      frequency_penalty: 0.1  # Approximates larger lookback window
+      stop: ["\n\n```","Explanation:"]
+    vllm:
+      presence_penalty: 0.0
+      frequency_penalty: 0.1
+  digital_formatter_lite:
+    description: Clean and reformat OCR text for readability.
+    system_prompt: |
+      You are a careful editor.
+      Clean and reformat the text for easy reading:
+        - Fix OCR mistakes and spacing.
+        - Join broken sentences and paragraphs.
+        - Keep the original wording and tone. Do not remove any content.
+        - Remove page numbers and headers.
+      Output plain text only.
+    temperature: 0.2
+    top_p: 0.9
+    top_k: 40
+    llama_cpp:
+      repeat_penalty: 1.15
+      frequency_penalty: 0.1  # Approximates larger lookback window
+    vllm:
+      presence_penalty: 0.0
+      frequency_penalty: 0.1
+  cursorcore:
+    description: CursorCore AI-assisted programming - optimized for code editing and inline chat
+    system_prompt: "You are a helpful programming assistant."
+    temperature: 0.2
+    top_p: 0.9
+    top_k: 50
+    llama_cpp:
+      min_p: 1.0
+      typical_p: 1.0
+      repeat_penalty: 1.15
+      tfs_z: 1.0
+      mirostat_mode: 0
+      stop: ["<|im_end|>", "<|next_end|>"]
+    vllm:
+      presence_penalty: 0.0
+      frequency_penalty: 0.1
+      stop: ["<|im_end|>", "<|next_end|>"]
+

@@ -1,0 +1,207 @@
+# Golem Federated Test Setup - Local Testing with Multiple Nodes
+#
+# Architecture (Golem-like reachability via forwarded TCP ports):
+#   Master Stargate (local process, NOT in container)
+#     → Golem Node 1 (single container: Gateway + Edge Stargate, port 10999)
+#     → Golem Node 2 (single container: Gateway + Edge Stargate, port 11999)
+#
+# Each container runs:
+# - Gateway (TCP :9998)
+# - Edge Stargate (TCP :9999)  [Master connects here]
+#
+# Telemetry uses a Master-initiated WebSocket to /ws/federation/edge (no HTTP polling).
+#
+# Environment Setup:
+#   1. Copy template: cp env.golem-federated-test .env.golem-federated-test
+#   2. Generate keys in .env.golem-federated-test:
+#      - FEDERATION_KEY_REMOTE_1=$(openssl rand -base64 32)
+#      - FEDERATION_KEY_REMOTE_2=$(openssl rand -base64 32)
+#   3. Load environment:
+#        set -a
+#        source .env.golem-federated-test
+#        set +a
+#
+# Usage:
+#   1. Build base image: docker build -f docker/dockerfiles/Dockerfile.golem -t universal-llm-gateway:golem-base ..
+#   2. Build tarball: ./scripts/build_golem_tarball.sh (outputs to tmp/app-code.tar.gz)
+#   3. Start nodes: docker compose -f docker/compose/golem-federated-test.yml up -d
+#   4. Start Master Stargate locally:
+#        source .env.golem-federated-test
+#        STARGATE_CONFIG=config/stargate_config.golem-master.yaml \
+#          ./services/universal-stargate/scripts/start-stargate.sh debug
+#   5. Test: curl http://localhost:9999/v1/chat/completions ...
+#
+# Port Mapping:
+#   - Master Stargate: 9999 (local process)
+#   - Golem Node 1: 10999 (container, Gateway on internal 9998, Stargate on 9999)
+#   - Golem Node 2: 11999 (container, Gateway on internal 9998, Stargate on 9999)
+
+services:
+  # Golem Node 1 - Complete node (Gateway + Stargate in single container)
+  # Note: Container runs as non-root user 'appuser' (UID 1000) - see Dockerfile.golem-base
+  golem-node-1:
+    image: universal-llm-gateway:golem-base
+    container_name: golem-node-1
+    pull_policy: never
+    
+    # Mount tarball for extraction (simulates Golem requestor upload)
+    volumes:
+      - ../../tmp/app-code.tar.gz:/tmp/app-code.tar.gz:ro
+      - ../../tmp/golem-testing-mounts/node-1/work:/golem/work
+      - ../../tmp/golem-testing-mounts/node-1/models:/golem/models
+      - ../../tmp/golem-testing-mounts/node-1/logs:/golem/logs
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ../../tmp/golem-testing-mounts/node-1/output:/golem/output
+    
+    # Golem environment
+    environment:
+      # Golem-specific paths
+      APP_DIR: /golem/work/app
+      MODEL_PATH_ROOT: /golem/models
+      WORKSPACE_ROOT: /golem/work/app
+      PYTHONPATH: /golem/work/app/libs
+      
+      # Gateway configuration (internal)
+      GATEWAY_HOST: 0.0.0.0
+      GATEWAY_PORT: 9998
+      
+      # Stargate configuration (exposed)
+      STARGATE_HOST: 0.0.0.0
+      STARGATE_PORT: 9999
+      
+      # Federation configuration (EDGE mode)
+      REMOTE_ID: golem-remote-1
+      FEDERATION_API_KEY: ${FEDERATION_KEY_REMOTE_1}
+      
+      # Edge Stargate over TCP (connects to local Gateway)
+      STARGATE_CONFIG: /golem/work/app/config/stargate_config.golem-edge-tcp.yaml
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      ENVIRONMENT: golem-federated-test
+      
+      # Resource paths
+      WORKER_LOG_DIR: /golem/logs/workers
+      SOCKET_DIR: /golem/output/sockets
+      MODEL_CACHE_DIR: /golem/models
+      
+      # Feature flags
+      ENABLE_MODEL_AVAILABILITY_CHECK: "true"
+      ENABLE_MANAGEMENT_API: "true"
+      DISABLE_HEALTH_CHECKING: "false"
+      DEBUG_MODE: "false"
+    
+    # Expose Stargate port for Master connection
+    ports:
+      - "10999:9999"  # Master connects to Stargate HTTP endpoint
+    
+    # Startup command: Extract tarball and start BOTH Gateway + Stargate
+    command: >
+      bash -c "
+        set -e
+        echo '[Golem-Node-1] Extracting application code tarball...'
+        cd /golem/work && tar -xzf /tmp/app-code.tar.gz
+        
+        echo '[Golem-Node-1] Verifying extraction...'
+        ls -la /golem/work/app/
+        
+        echo '[Golem-Node-1] Starting Gateway + Stargate services...'
+        export APP_DIR=/golem/work/app
+        exec /golem/work/app/golem-start.sh both
+      "
+    
+    healthcheck:
+      # Gateway + Edge must be healthy
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:9998/health && curl -f http://localhost:9999/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    
+    restart: unless-stopped
+
+  # Golem Node 2 - Complete node (Gateway + Stargate in single container)
+  # Note: Container runs as non-root user 'appuser' (UID 1000) - see Dockerfile.golem-base
+  golem-node-2:
+    image: universal-llm-gateway:golem-base
+    container_name: golem-node-2
+    pull_policy: never
+    
+    # Mount tarball for extraction
+    volumes:
+      - ../../tmp/app-code.tar.gz:/tmp/app-code.tar.gz:ro
+      - ../../tmp/golem-testing-mounts/node-2/work:/golem/work
+      - ../../tmp/golem-testing-mounts/node-2/models:/golem/models
+      - ../../tmp/golem-testing-mounts/node-2/logs:/golem/logs
+      - ../../tmp/golem-testing-mounts/node-2/output:/golem/output
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    
+    environment:
+      # Golem-specific paths
+      APP_DIR: /golem/work/app
+      MODEL_PATH_ROOT: /golem/models
+      WORKSPACE_ROOT: /golem/work/app
+      PYTHONPATH: /golem/work/app/libs
+      
+      # Gateway configuration (internal)
+      GATEWAY_HOST: 0.0.0.0
+      GATEWAY_PORT: 9998
+      
+      # Stargate configuration (exposed)
+      STARGATE_HOST: 0.0.0.0
+      STARGATE_PORT: 9999
+      
+      # Federation configuration (EDGE mode)
+      REMOTE_ID: golem-remote-2
+      FEDERATION_API_KEY: ${FEDERATION_KEY_REMOTE_2}
+      
+      # Edge Stargate over TCP (connects to local Gateway)
+      STARGATE_CONFIG: /golem/work/app/config/stargate_config.golem-edge-tcp.yaml
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      ENVIRONMENT: golem-federated-test
+      
+      # Resource paths
+      WORKER_LOG_DIR: /golem/logs/workers
+      SOCKET_DIR: /golem/output/sockets
+      MODEL_CACHE_DIR: /golem/models
+      
+      # Feature flags
+      ENABLE_MODEL_AVAILABILITY_CHECK: "true"
+      ENABLE_MANAGEMENT_API: "true"
+      DISABLE_HEALTH_CHECKING: "false"
+      DEBUG_MODE: "false"
+    
+    # Expose Stargate port for Master connection
+    ports:
+      - "11999:9999"  # Master connects to Stargate HTTP endpoint
+    
+    # Startup command: Extract tarball and start BOTH Gateway + Stargate
+    command: >
+      bash -c "
+        set -e
+        echo '[Golem-Node-2] Extracting application code tarball...'
+        cd /golem/work && tar -xzf /tmp/app-code.tar.gz
+        
+        echo '[Golem-Node-2] Verifying extraction...'
+        ls -la /golem/work/app/
+        
+        echo '[Golem-Node-2] Starting Gateway + Stargate services...'
+        export APP_DIR=/golem/work/app
+        exec /golem/work/app/golem-start.sh both
+      "
+    
+    healthcheck:
+      # Gateway + Edge must be healthy
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:9998/health && curl -f http://localhost:9999/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    
+    restart: unless-stopped
+
+# No named volumes needed - using bind mounts to tmp/golem-testing-mounts/

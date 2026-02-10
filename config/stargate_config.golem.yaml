@@ -1,0 +1,58 @@
+# Stargate configuration for Golem Network deployment
+# Single-container mode: Gateway + Stargate communicate via TCP (localhost)
+# No federation, no Unix sockets, no authentication
+
+# Gateway connection via TCP (same container)
+gateway:
+  url: "http://localhost:9998"
+  timeout: 30.0
+  connectivity_timeout: 10.0
+  health_timeout: 2.0
+  request_timeout: 1800
+  streaming_timeout: 1800
+  resource_management:
+    max_concurrent_model_loads: 1
+    model_loading_slot_acquisition_timeout: 0.25
+    reservation_timeout: 300
+    reservation_cleanup_interval: 30
+    enable_reservation_monitoring: true
+  capabilities:
+    cpu_performance: high
+    hybrid_performance: high
+  max_concurrent_cpu_models: 50
+  max_concurrent_gpu_models: 10
+
+# Proxy settings
+proxy:
+  port: 9999
+  host: "0.0.0.0"
+  cors_enabled: true
+
+# No federation for Golem single-container deployment
+# (Federation requires separate containers and network configuration)
+
+# Logging
+logging:
+  level: "INFO"
+  enable_console: true
+  enable_file: true
+  log_dir: "/golem/logs/stargate"
+
+# Model routing (sticky by default for resource efficiency)
+model_routing:
+  default_sticky: true
+  sticky_overrides: {}
+
+# Token management
+token_management:
+  enabled: true
+  safety_buffer: 50
+  conservative_allocation_ratio: 0.75
+  fallback_to_context_length: true
+  gateway_endpoint: "http://localhost:9998/api/v1/tokens/count"
+
+# Request queue
+request_queue:
+  max_size: 1000
+  default_timeout: 300
+  poll_interval: 1.0

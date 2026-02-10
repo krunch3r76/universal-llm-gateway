@@ -1,0 +1,43 @@
+version: 1
+disable_existing_loggers: false
+
+# Global logging settings
+logging:
+  level: ${LOG_LEVEL:-INFO}
+  truncate_logs: ${TRUNCATE_LOGS:-false}
+
+formatters:
+  json:
+    class: universal_logging.renderers.JSONFormatter
+    truncate: false
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: ${LOG_LEVEL:-INFO}
+    formatter: json
+    stream: ext://sys.stdout
+  
+  file:
+    class: logging.FileHandler
+    level: ${LOG_LEVEL:-INFO}
+    formatter: json
+    filename: ${LOG_DIR:-logs}/app.log
+    mode: a
+  
+  error_file:
+    class: logging.FileHandler
+    level: ERROR
+    formatter: json
+    filename: ${LOG_DIR:-logs}/errors.log
+    mode: a
+
+loggers:
+  universal_logging:
+    level: ${LOG_LEVEL:-INFO}
+    handlers: [console, file]
+    propagate: false
+
+root:
+  level: ${LOG_LEVEL:-INFO}
+  handlers: [console, file, error_file] 

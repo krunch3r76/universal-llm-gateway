@@ -1,0 +1,78 @@
+# requirements.docker.txt
+# CPU-only Docker requirements (no GPU support, no dev/test tools, no platform-specific packages)
+
+# ============================================================================
+# Core Web Framework and ASGI Server
+# ============================================================================
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+starlette>=0.27.0
+
+# ============================================================================
+# Data Validation and Serialization
+# ============================================================================
+pydantic>=2.0.0
+msgspec
+typing-extensions>=4.0.0
+
+# ============================================================================
+# Configuration and Data Processing
+# ============================================================================
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# ============================================================================
+# HTTP and WebSocket Communication
+# ============================================================================
+httpx>=0.24.0
+websockets>=11.0
+
+# ============================================================================
+# Async and Concurrency
+# ============================================================================
+aiofiles>=23.0.0
+watchfiles>=0.21.0
+
+# ============================================================================
+# Process Management and System Utilities
+# ============================================================================
+psutil>=5.9.0
+
+# ============================================================================
+# Event Bus and Messaging
+# ============================================================================
+asyncio-mqtt>=0.16.0
+
+# ============================================================================
+# Monitoring and Logging
+# ============================================================================
+prometheus-client>=0.17.0
+structlog>=23.0.0
+
+# ============================================================================
+# Security and Authentication
+# ============================================================================
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.6
+
+# ============================================================================
+# Model Format Support (inference_djinn)
+# ============================================================================
+gguf>=0.10.0
+
+# llama-cpp-python REMOVED: Use llama-server instead (built from source in Dockerfile)
+# llama-cpp-python>=0.2.0
+
+# Optional: Fast GGUF metadata parsing
+gguf-parser>=0.1.0
+
+# ============================================================================
+# Notes:
+# ============================================================================
+# - This file is for Docker builds only (CPU-only, production runtime)
+# - No GPU support (nvidia-ml-py3, vllm, torch excluded)
+# - No development/testing tools (pytest, ruff, etc. excluded)
+# - No platform-specific CPU libraries (auto-detection preferred)
+# - Universal ecosystem modules loaded via PYTHONPATH from /app/libs
+

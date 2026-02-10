@@ -1,0 +1,164 @@
+# Local Remote Stargate + Gateway
+# For development and single-node deployments
+#
+# Architecture:
+#   Master Stargate (host process)
+#     → Remote Stargate (this container, port 10999)
+#       → Gateway (isolated container, Unix socket)
+
+services:
+  # Gateway (network isolated)
+  gateway:
+    image: ${GATEWAY_IMAGE:-universal-llm-gateway:gpu}
+    container_name: local-gateway
+    pull_policy: never
+    
+    # CRITICAL: Complete network isolation
+    # Prevents Gateway from making outbound connections
+    # All communication via Unix socket to Remote Stargate
+    network_mode: "none"
+    
+    # GPU support (optional - comment out for CPU-only)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    # Shared memory for GPU operations (required for CUDA)
+    ipc: host
+    
+    # Relaxed security for GPU access (required for NVIDIA runtime)
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    
+    volumes:
+      # Unix sockets (shared with Remote Stargate)
+      - gateway-sockets:/sockets
+      
+      # Models (read-only)
+      - ${MODEL_PATH_ROOT:-$HOME/.models}:/golem/models:ro
+      
+      # Logs
+      - gateway-logs:/golem/logs
+      
+      # Output/state
+      - gateway-output:/golem/output
+      
+      # CUDA cache (for GPU)
+      - cuda-cache:/root/.nv
+    
+    environment:
+      # Gateway identity
+      - GATEWAY_NAME=${MACHINE_NAME:-local}/gateway
+      
+      # Gateway: Unix socket only (no TCP)
+      - GATEWAY_UNIX_SOCKET=/sockets/gateway.sock
+      - GATEWAY_HOST=0.0.0.0
+      - GATEWAY_PORT=9998
+      
+      # Model configuration
+      - MODEL_PATH_ROOT=/golem/models
+      
+      # Common settings
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - ENVIRONMENT=docker-local-remote
+      - WS_AUTH_ENABLED=false
+      
+      # GPU configuration (application-level control)
+      # Note: Docker runtime GPU access controlled by deploy.resources above
+      - GPU_ENABLED=${GPU_ENABLED:-true}
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      
+      # Resource paths
+      - WORKER_LOG_DIR=/golem/logs/workers
+      - SOCKET_DIR=/golem/output/sockets
+      - MODEL_CACHE_DIR=/golem/models
+      
+      # Features
+      - ENABLE_MODEL_AVAILABILITY_CHECK=true
+      - ENABLE_MANAGEMENT_API=true
+      - DISABLE_HEALTH_CHECKING=false
+      
+      # Timeouts
+      - PROCESS_STARTUP_TIMEOUT=600
+      - GATEWAY_SHUTDOWN_GRACE=30
+    
+    # Start Gateway only
+    entrypoint: ["/app/golem-start.sh"]
+    command: ["gateway"]
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -S /sockets/gateway.sock"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+      start_period: 60s
+
+  # Local Remote Stargate (proxies to Gateway)
+  remote-stargate:
+    image: ${GATEWAY_IMAGE:-universal-llm-gateway:gpu}
+    container_name: local-remote-stargate
+    pull_policy: never
+    
+    # Linux host access (for Master Stargate WebSocket connection)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    
+    volumes:
+      # Unix socket for Gateway communication (shared volume)
+      - gateway-sockets:/sockets
+      
+      # Configuration override
+      - ../../config/stargate_config.local-remote.yaml:/app/config/stargate_config.override.yaml:ro
+      
+      # Model catalog (read-only, for model metadata)
+      - ${MODEL_CATALOG:-../../config/models}:/app/config/models:ro
+      
+      # Logs
+      - remote-logs:/tmp/logs/universal-stargate/local-remote
+    
+    environment:
+      # Stargate config
+      - STARGATE_CONFIG=/app/config/stargate_config.override.yaml
+      
+      # Federation mode
+      - REMOTE_ID=${REMOTE_ID:-local-remote}
+      - FEDERATION_API_KEY=${FEDERATION_API_KEY}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=docker-remote-stargate
+    
+    ports:
+      # Expose for Master Stargate access (HTTP)
+      - "10999:9999"
+    
+    depends_on:
+      gateway:
+        condition: service_healthy
+    
+    # Start Stargate only
+    entrypoint: ["/app/golem-start.sh"]
+    command: ["stargate"]
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9999/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  gateway-sockets:
+  gateway-logs:
+  gateway-output:
+  cuda-cache:
+  remote-logs:

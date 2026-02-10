@@ -1,0 +1,149 @@
+version: 1
+disable_existing_loggers: false
+truncate_logs: true
+# max_string_length removed - JSON truncation now handled by format_json_for_log()
+# in universal_logging.json_utils (2000 chars per field, Unicode-aware, structure-preserving)
+
+formatters:
+  # JSON formatter for all outputs
+  json:
+    class: universal_logging.renderers.JSONFormatter
+    truncate: true
+    max_field_size: 2000
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: ${LOG_LEVEL:-INFO}
+    formatter: json
+    stream: ext://sys.stdout
+  
+  file:
+    class: logging.FileHandler
+    level: ${LOG_LEVEL:-INFO}
+    formatter: json
+    filename: ${LOG_DIR:-logs}/gateway.log
+    # mode will be set to 'w' by load_logging_config if truncate_logs: true
+  
+  error_file:
+    class: logging.FileHandler
+    level: ERROR
+    formatter: json
+    filename: ${LOG_DIR:-logs}/gateway_errors.log
+    # mode will be set to 'w' by load_logging_config if truncate_logs: true
+
+loggers:
+  # Gateway core components
+  src.core.resource_tracker:
+    level: ${LOG_LEVEL:-INFO}
+    handlers: [console, file]
+    propagate: false
+
+  src.core.workers.manager:
+    level: ${LOG_LEVEL:-INFO}
+    handlers: [console, file]
+    propagate: false
+
+  src.core.workers.controller:
+    level: ${LOG_LEVEL:-INFO}
+    handlers: [console, file]
+    propagate: false
+
+  resource_integration:
+    level: ${LOG_LEVEL:-INFO}
+    handlers: [console, file]
+    propagate: false
+
+  universal_llm_gateway:
+    level: ${LOG_LEVEL:-INFO}
+    handlers: [console, file]
+    propagate: false
+
+  # FastAPI and Uvicorn - controlled logging
+  uvicorn:
+    level: WARNING
+    handlers: [console, file]
+    propagate: false
+  
+  uvicorn.error:
+    level: WARNING
+    handlers: [console, file]
+    propagate: false
+  
+  uvicorn.access:
+    level: WARNING
+    handlers: [file]
+    propagate: false
+  
+  fastapi:
+    level: ${LOG_LEVEL:-INFO}
+    handlers: [console, file]
+    propagate: false
+
+  # Suppress noisy third-party library logs (errors only)
+  httpx:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  httpcore:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  httpcore.connection:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  httpcore.http11:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  httpcore._exceptions:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  # Suppress websocket library debug messages
+  websockets:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  websocket:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  # Suppress other noisy libraries
+  urllib3:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  urllib3.connectionpool:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  requests:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  # Additional noisy HTTP libraries
+  aiohttp:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  asyncio:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+root:
+  level: ${LOG_LEVEL:-INFO}
+  handlers: [console, file, error_file]

@@ -1,0 +1,171 @@
+# Dockerfile.obfuscated
+# Obfuscated deployment - extends Dockerfile.gpu
+# 
+# Build process:
+#   1. First build base image: docker build -f Dockerfile.gpu -t gateway-base:runtime .
+#   2. Then build obfuscated: docker build -f Dockerfile.obfuscated -t gateway:obfuscated .
+#
+# Or use: ./docker/build-gpu.sh --obfuscate
+
+ARG PYTHON_VERSION=3.12
+ARG CUDA_VERSION=13.0.0
+ARG CPU_OPTIMIZATION=avx2
+ARG GPU_ARCH=multi
+ARG ENABLE_VLLM=true
+ARG VLLM_FROM_SOURCE=true
+ARG VLLM_BUILD_ARGS="--portable"
+ARG VLLM_MAX_JOBS=8
+ARG LLAMA_CPP_PYTHON_VERSION=
+ARG ENABLE_LLAMA_SERVER=true
+ARG LLAMA_SERVER_VERSION=main
+
+# ============================================================================
+# Stage 1: Obfuscator
+# ============================================================================
+FROM python:${PYTHON_VERSION}-slim AS obfuscator
+
+RUN pip install --no-cache-dir pyarmor
+
+WORKDIR /obfuscate
+
+# Activate PyArmor license
+# REQUIRED: PyArmor Pro ($89) or Basic ($52) license for unlimited files
+# Purchase: https://jondy.github.io/paypal/index.html
+# Privacy: Your source code is NEVER uploaded - only license verification info sent
+# PREREQUISITE: Copy license file to project root before build:
+#   cp pyarmor-regfile-11170.zip /mnt/torus/projects/universal-llm-gateway/
+COPY pyarmor-regfile-*.zip /tmp/
+RUN echo "🔓 Activating PyArmor license..." && \
+    pyarmor reg /tmp/pyarmor-regfile-*.zip && \
+    pyarmor -v && \
+    echo "✅ PyArmor license activated"
+
+# Copy source code to obfuscate
+# Note: Only git-tracked files are in build context (handled by build script)
+COPY libs/ /obfuscate/libs/
+COPY services/ /obfuscate/services/
+
+# Obfuscate code
+# REQUIRES: PyArmor Basic ($52) or Pro ($89) license for unlimited files
+# RECOMMENDED: Pro ($89) - RFT/BCC modes provide stronger IP protection
+#   - Protects proprietary inference logic until ROI recouped
+#   - One-time fee vs ongoing development investment
+# Privacy: Source code NEVER uploaded - only license verification (hardware/network IDs)
+# Purchase: https://jondy.github.io/paypal/index.html
+# NOTE: Removed --restrict flag to allow normal import behavior
+RUN echo "🔒 Obfuscating source code (all modules)..." && \
+    pyarmor gen --recursive \
+    --output /obfuscate/dist/services \
+    /obfuscate/services/_universal-llm-gateway \
+    /obfuscate/services/universal-stargate && \
+    pyarmor gen --recursive \
+    --output /obfuscate/dist/libs \
+    /obfuscate/libs/inference_djinn \
+    /obfuscate/libs/process_ipc \
+    /obfuscate/libs/universal_logging \
+    /obfuscate/libs/universal_transport \
+    /obfuscate/libs/universal_protocol \
+    /obfuscate/libs/universal_event_bus \
+    /obfuscate/libs/universal_workspace && \
+    echo "✅ Obfuscation complete (all services + 7 libs)"
+
+# ============================================================================
+# Stage 2: Runtime (extends Dockerfile.gpu runtime)
+# ============================================================================
+# This assumes gateway-base:runtime was built from Dockerfile.gpu
+FROM gateway-base:runtime AS runtime-base
+
+# Bootstrap pip for Python 3.12 (runtime stage doesn't include pip)
+# PEP 668: Ubuntu 24.04 marks Python as externally-managed
+# Safe to override in isolated Docker container
+RUN apt-get update && apt-get install -y curl && \
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 - --break-system-packages && \
+    apt-get remove -y curl && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# ============================================================================
+# Security: Ensure non-root user exists (defensive)
+# ============================================================================
+# Dockerfile.gpu creates appuser, but this ensures it exists if base changes
+# Uses defensive || pattern to handle existing UID/GID conflicts
+RUN groupadd -r appuser --gid=1000 || groupmod -n appuser $(getent group 1000 | cut -d: -f1) && \
+    useradd -r -g appuser --uid=1000 --no-log-init -G video appuser || usermod -l appuser -d /home/appuser -m $(getent passwd 1000 | cut -d: -f1) && \
+    usermod -aG video appuser
+
+# Install PyArmor runtime (required for obfuscated code)
+RUN python3.12 -m pip install --no-cache-dir pyarmor --break-system-packages
+
+# Copy llama-server binary from base image (already in gateway-base:runtime)
+# This is defensive - gateway-base should have it, but explicit COPY ensures it's preserved
+COPY --from=runtime-base /opt/llama-server /opt/llama-server
+ENV PATH="/opt/llama-server/bin:${PATH}"
+
+# Copy all files first (configs, docs, scripts, etc.)
+# Note: Only git-tracked files are in build context (handled by build script)
+# SECURITY: Use --chown to set ownership for non-root user
+COPY --chown=appuser:appuser libs/ /app/libs/
+COPY --chown=appuser:appuser services/ /app/services/
+COPY --chown=appuser:appuser config/ /app/config/
+COPY --chown=appuser:appuser sitecustomize.py /app/
+
+# Set Python path for runtime (critical for importing libs/*)
+ENV PYTHONPATH=/app/libs
+
+# Overlay obfuscated Python code (replaces .py files only)
+# This preserves all non-Python files (YAML, docs, scripts, etc.)
+# SECURITY: Use --chown to set ownership for non-root user
+COPY --chown=appuser:appuser --from=obfuscator /obfuscate/dist/libs/ /app/libs/
+COPY --chown=appuser:appuser --from=obfuscator /obfuscate/dist/services/ /app/services/
+
+# Copy attribution
+COPY --chown=appuser:appuser ATTRIBUTION.txt /app/
+COPY --chown=appuser:appuser LICENSE /app/
+
+# Copy startup script (readable, not obfuscated)
+COPY --chown=appuser:appuser docker/runtime/golem-start.sh /app/golem-start.sh
+RUN chmod +x /app/golem-start.sh
+
+# Rest of runtime setup (same as Dockerfile.gpu)
+ENV WORKSPACE_ROOT=/app
+
+# Verify workspace structure for root detection
+RUN echo "=== Verifying workspace structure ===" && \
+    test -d /app/libs && echo "✅ /app/libs/ exists" || echo "❌ /app/libs/ missing" && \
+    test -d /app/services && echo "✅ /app/services/ exists" || echo "❌ /app/services/ missing" && \
+    test -f /app/config/model_catalog.yaml && echo "✅ /app/config/model_catalog.yaml exists" || echo "❌ /app/config/model_catalog.yaml missing" && \
+    echo "✅ Workspace structure verified (2/3 markers: config/model_catalog.yaml + services/libs dirs)"
+
+# SECURITY: Create runtime directories with proper ownership
+RUN mkdir -p /tmp/universal-protocol /tmp/process_ipc /app/runtime && \
+    chown -R appuser:appuser /tmp/universal-protocol /tmp/process_ipc /app/runtime
+
+# ============================================================================
+# Switch to non-root user (SECURITY HARDENING)
+# ============================================================================
+# Inherit appuser from gateway-base:runtime, ensure it's active
+USER appuser
+
+WORKDIR /app/services/_universal-llm-gateway
+
+# Re-declare ARGs for labels (Docker requirement after FROM)
+ARG CUDA_VERSION
+ARG GPU_ARCH
+ARG CPU_OPTIMIZATION
+ARG ENABLE_VLLM
+
+# Labels (matches Dockerfile.gpu + obfuscation markers)
+LABEL gpu.enabled="true"
+LABEL gpu.backend="CUDA"
+LABEL gpu.cuda_version="${CUDA_VERSION}"
+LABEL gpu.arch="${GPU_ARCH}"
+LABEL cpu.optimization="${CPU_OPTIMIZATION}"
+LABEL vllm.enabled="${ENABLE_VLLM}"
+LABEL deployment.type="obfuscated"
+LABEL obfuscation.tool="pyarmor"
+LABEL maintainer="krunch3r76"
+LABEL org.opencontainers.image.title="Universal LLM Gateway"
+LABEL org.opencontainers.image.description="Obfuscated LLM inference gateway"
+LABEL org.opencontainers.image.authors="krunch3r76"
+LABEL org.opencontainers.image.source="https://github.com/krunch3r76/universal-llm-gateway"
+LABEL org.opencontainers.image.licenses="MIT"

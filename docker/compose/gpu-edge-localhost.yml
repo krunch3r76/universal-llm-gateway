@@ -1,0 +1,118 @@
+# GPU Edge Node - Localhost (mode: edge)
+# Container running Edge Stargate + Gateway
+# - Edge Stargate: Passive endpoint (mode: edge), accepts inbound via Unix socket
+# - Gateway: Core inference engine (network isolated)
+# - Relay/Master connects TO Edge Stargate via Unix socket
+#
+# EDGE vs REMOTE:
+#   EDGE: Passive - accepts inbound only, no outbound WebSocket (network-isolated containers)
+#   REMOTE: Active - initiates WebSocket connection TO Master (VPS/relay nodes)
+#
+# Environment variables sourced from: .env.gpu-edge-localhost
+
+services:
+  edge-localhost:
+    image: universal-llm-gateway:gpu
+    container_name: edge-localhost
+    pull_policy: never
+    # Optional: override user for non-admin deployments (set via DOCKER_USER env var)
+    user: ${DOCKER_USER:-}
+#    user: root  # Override Dockerfile USER (appuser) - testing performance
+    
+    # Load environment variables from files
+    env_file:
+      - ../../.env.gpu-edge-localhost
+      - ./engine-optimizations.env
+    
+    # Network isolation - no network access except via Unix socket
+    # Note: Container runs as non-root user 'appuser' (UID 1000) - see Dockerfile.gpu
+    network_mode: none
+    
+    # IPC isolation - container has own namespace (not shared with host)
+    # Using 'shareable' instead of 'host' for security isolation
+    ipc: shareable
+    
+    # Shared memory for vLLM multiprocessing (worker communication, tensor sharing)
+    # CRITICAL: Docker defaults to 64MB /dev/shm which severely degrades vLLM
+    # Using shm_size with isolated IPC namespace instead of ipc:host for security
+    shm_size: '32gb'
+    
+    # Memory lock limits (allows vLLM/PyTorch to lock GPU memory, prevents swap)
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    volumes:
+      # Runtime scripts (for quick iteration without rebuilding)
+      - ../../docker/runtime/golem-start.sh:/app/golem-start.sh:ro
+      # Configuration for Edge Stargate
+      - ../../config:/app/config:ro
+      # Data volumes (no more tarball mount)
+      - /mnt/torus/models:/golem/models
+      - ../../tmp/gpu-nodes/localhost/logs:/golem/logs
+      - ../../tmp/gpu-nodes/localhost/output:/golem/output
+      # Unix socket directory - shared with host Master Stargate
+      # Can be overridden via SOCKET_DIR env var for non-admin deployments
+      - ${SOCKET_DIR:-/tmp/universal-protocol}:/tmp/universal-protocol
+      # Persistent vLLM/CUDA/Triton compilation cache (survives container restarts)
+      # NOTE: In-container cache works without this mount (cache lives for container lifetime)
+      #       Uncomment to persist cache across restarts (requires host dir with UID 1000 ownership):
+      #       mkdir -p ~/.cache/vllm && chown 1000:1000 ~/.cache/vllm
+      - ${HOME}/.cache/vllm:/golem/vllm_cache:rw
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    
+    environment:
+      APP_DIR: /app
+      MODEL_PATH_ROOT: /golem/models
+      WORKSPACE_ROOT: /app
+      PYTHONPATH: /app/libs
+      
+      # Edge Stargate configuration (mode: edge - passive endpoint)
+      STARGATE_CONFIG: /app/config/stargate_config.gpu-edge-localhost.yaml
+      STARGATE_UNIX_SOCKET: /tmp/universal-protocol/edge-localhost.sock
+      REMOTE_ID: edge-localhost
+      STARGATE_SOCKET_PATH: /tmp/universal-protocol/edge-localhost.sock
+      
+      # Gateway listens on internal TCP (Edge Stargate connects to it)
+      GATEWAY_HOST: 127.0.0.1
+      GATEWAY_PORT: 9998
+      
+      # Federation authentication (relay-localhost authenticates TO this Edge)
+      FEDERATION_KEY_EDGE_LOCALHOST: ${FEDERATION_KEY_EDGE_LOCALHOST:-}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      ENVIRONMENT: gpu-deployment
+      WORKER_LOG_DIR: /golem/logs/workers
+      SOCKET_DIR: /tmp/universal-protocol
+      MODEL_CACHE_DIR: /golem/models
+      
+      # Feature flags
+      ENABLE_MODEL_AVAILABILITY_CHECK: "true"
+      ENABLE_MANAGEMENT_API: "true"
+      DISABLE_HEALTH_CHECKING: "false"
+    
+    # No ports exposed - network isolated
+    
+    # Start both Edge Stargate (Unix socket) and Gateway (internal TCP)
+    command: ["/app/golem-start.sh", "both"]
+    
+    # Health check via Edge Stargate Unix socket
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -S /tmp/universal-protocol/edge-localhost.sock"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    
+    restart: unless-stopped

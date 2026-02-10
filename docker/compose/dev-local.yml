@@ -1,0 +1,32 @@
+# Development: Local Remote Stargate + Gateway
+# Quick start for local development with uniform architecture
+#
+# Usage:
+#   docker compose -f docker/compose/dev-local.yml up
+#   # In another terminal: start Master Stargate (see scripts/dev-start.sh)
+
+services:
+  gateway:
+    extends:
+      file: local-remote.yml
+      service: gateway
+    
+    environment:
+      LOG_LEVEL: DEBUG
+
+  remote-stargate:
+    extends:
+      file: local-remote.yml
+      service: remote-stargate
+    
+    environment:
+      LOG_LEVEL: DEBUG
+      FEDERATION_API_KEY: ${FEDERATION_API_KEY:-dev-key-not-for-production}
+      REMOTE_ID: ${REMOTE_ID:-local-remote}
+
+volumes:
+  gateway-sockets:
+  gateway-logs:
+  gateway-output:
+  cuda-cache:
+  remote-logs:

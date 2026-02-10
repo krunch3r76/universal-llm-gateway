@@ -1,0 +1,32 @@
+[project]
+name = "process_ipc"
+version = "1.0.0"
+description = "Robust inter-process communication library for the Universal LLM Ecosystem"
+readme = "README.md"
+authors = [
+    {name = "krunch3r76", email = "biz@u26a4.com"}
+]
+license = {text = "MIT"}
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+

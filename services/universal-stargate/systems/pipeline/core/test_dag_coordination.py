@@ -1,0 +1,217 @@
+"""
+Unit tests for DAG model coordination.
+
+Tests the ModelUsageTracker and DAG executor's ability to serialize
+steps that target the same model while allowing parallel execution
+for steps targeting different models.
+"""
+
+import asyncio
+from unittest.mock import MagicMock
+
+import pytest
+
+from .dag import StepNode
+from .execution import DAGExecutor, ModelUsageTracker
+from .schemas import StepConfig
+
+
+@pytest.mark.asyncio
+async def test_model_coordination_serializes_same_model():
+    """Test that steps targeting the same model execute serially."""
+    # Setup: 3 steps, 2 use same model
+    steps = [
+        StepConfig(id="step1", type="generate", model_ref="ref1", depends_on=[]),
+        StepConfig(id="step2", type="generate", model_ref="ref1", depends_on=[]),
+        StepConfig(id="step3", type="generate", model_ref="ref2", depends_on=[]),
+    ]
+
+    # Mock registry to return model IDs
+    registry = MagicMock()
+    registry.get_model_config.side_effect = lambda ref: (
+        MagicMock(model="model-a") if ref == "ref1" else MagicMock(model="model-b")
+    )
+
+    # Track execution order
+    execution_log = []
+
+    async def mock_execute_step(node):
+        execution_log.append(f"{node.step.id}_start")
+        await asyncio.sleep(0.1)  # Simulate work
+        execution_log.append(f"{node.step.id}_end")
+
+    # Build DAG and execute
+    nodes = {s.id: StepNode(step=s, dependencies=set()) for s in steps}
+    context = MagicMock(_registry=registry)
+    executor = DAGExecutor(nodes, context)
+
+    # Patch _execute_step to use mock
+    executor._execute_step = mock_execute_step
+
+    await executor.execute()
+
+    # Verify: step1 and step2 didn't overlap (same model)
+    step1_end_idx = execution_log.index("step1_end")
+    step2_start_idx = execution_log.index("step2_start")
+    assert step2_start_idx > step1_end_idx, "step2 should start after step1 ends"
+
+    # Verify: step3 could run in parallel (different model)
+    step3_start_idx = execution_log.index("step3_start")
+    # step3 should start before step1 ends (parallel execution)
+    assert step3_start_idx < step1_end_idx or step3_start_idx < execution_log.index(
+        "step2_end"
+    )
+
+
+@pytest.mark.asyncio
+async def test_model_released_on_step_failure():
+    """Ensure model is marked available even if step throws exception."""
+    steps = [
+        StepConfig(id="step1", type="generate", model_ref="ref1", depends_on=[]),
+        StepConfig(id="step2", type="generate", model_ref="ref1", depends_on=[]),
+    ]
+
+    registry = MagicMock()
+    registry.get_model_config.return_value = MagicMock(model="model-a")
+
+    execution_log = []
+
+    async def mock_execute_step(node):
+        execution_log.append(f"{node.step.id}_start")
+        if node.step.id == "step1":
+            raise ValueError("Simulated step1 failure")
+        execution_log.append(f"{node.step.id}_end")
+
+    nodes = {s.id: StepNode(step=s, dependencies=set()) for s in steps}
+    context = MagicMock(_registry=registry)
+    executor = DAGExecutor(nodes, context)
+    executor._execute_step = mock_execute_step
+
+    # Execute (step1 will fail, but step2 should still run)
+    try:
+        await executor.execute()
+    except Exception:
+        pass  # Expected (step1 failure)
+
+    # Verify: step2 was able to start (model was released after step1 failure)
+    assert "step2_start" in execution_log, "step2 should run after step1 fails"
+
+
+@pytest.mark.asyncio
+async def test_no_model_steps_run_freely():
+    """Steps without model_ref should not coordinate (run in parallel)."""
+    steps = [
+        StepConfig(id=f"step{i}", type="select_winner", model_ref=None, depends_on=[])
+        for i in range(5)
+    ]
+
+    registry = MagicMock()
+    execution_log = []
+
+    async def mock_execute_step(node):
+        execution_log.append(f"{node.step.id}_start")
+        await asyncio.sleep(0.05)
+        execution_log.append(f"{node.step.id}_end")
+
+    nodes = {s.id: StepNode(step=s, dependencies=set()) for s in steps}
+    context = MagicMock(_registry=registry)
+    executor = DAGExecutor(nodes, context)
+    executor._execute_step = mock_execute_step
+
+    await executor.execute()
+
+    # Verify: All steps started before any ended (parallel execution)
+    first_end_idx = min(execution_log.index(f"step{i}_end") for i in range(5))
+    start_count_before_first_end = sum(
+        1 for log in execution_log[:first_end_idx] if "_start" in log
+    )
+    assert start_count_before_first_end > 1, "Multiple steps should start in parallel"
+
+
+@pytest.mark.asyncio
+async def test_registry_missing_model_ref():
+    """If registry can't resolve model_ref, step should still launch (no blocking)."""
+    steps = [
+        StepConfig(id="step1", type="generate", model_ref="unknown_ref", depends_on=[]),
+    ]
+
+    # Mock registry to raise exception
+    registry = MagicMock()
+    registry.get_model_config.side_effect = KeyError("Model not found")
+
+    execution_log = []
+
+    async def mock_execute_step(node):
+        execution_log.append(f"{node.step.id}_executed")
+
+    nodes = {s.id: StepNode(step=s, dependencies=set()) for s in steps}
+    context = MagicMock(_registry=registry)
+    executor = DAGExecutor(nodes, context)
+    executor._execute_step = mock_execute_step
+
+    await executor.execute()
+
+    # Verify: Step executed despite registry error
+    assert "step1_executed" in execution_log
+
+
+def test_model_usage_tracker_can_acquire():
+    """Test ModelUsageTracker.can_acquire logic."""
+    tracker = ModelUsageTracker()
+
+    # No model (None) should always be acquirable
+    assert tracker.can_acquire(None) is True
+
+    # Available model should be acquirable
+    assert tracker.can_acquire("model-a") is True
+
+    # Acquire model
+    tracker.acquire("model-a", "step1")
+
+    # Now it should not be acquirable
+    assert tracker.can_acquire("model-a") is False
+
+    # Different model should still be acquirable
+    assert tracker.can_acquire("model-b") is True
+
+    # Release model
+    tracker.release("model-a", "step1")
+
+    # Should be acquirable again
+    assert tracker.can_acquire("model-a") is True
+
+
+def test_model_usage_tracker_release_only_by_owner():
+    """Test that only the owning step can release a model."""
+    tracker = ModelUsageTracker()
+
+    tracker.acquire("model-a", "step1")
+
+    # Attempt release by different step (should be no-op)
+    tracker.release("model-a", "step2")
+
+    # Model should still be acquired
+    assert tracker.can_acquire("model-a") is False
+
+    # Release by correct step
+    tracker.release("model-a", "step1")
+
+    # Now available
+    assert tracker.can_acquire("model-a") is True
+
+
+@pytest.mark.asyncio
+async def test_dynamic_model_ref_validation():
+    """Test that dynamic model_ref raises validation error."""
+    step = StepConfig(
+        id="step1",
+        type="generate",
+        model_ref="${runtime_model}",  # Dynamic
+        depends_on=[],
+    )
+
+    registry = MagicMock()
+
+    # Should raise ValueError when trying to get target model
+    with pytest.raises(ValueError, match="Dynamic model_ref not supported"):
+        step.get_target_model_id(registry)

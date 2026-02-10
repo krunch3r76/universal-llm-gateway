@@ -1,0 +1,68 @@
+# Reusable fragment: generate 3 candidates in parallel
+# Used by translation and transformation pipelines
+
+fragment:
+  id: three_way_generate
+  description: "Generate colloquial, precision, and paraphrase candidates"
+  
+  # Variables that must be provided via 'with'
+  inputs:
+    - colloquial_model
+    - precision_model
+    - prompt_namespace
+  
+  # Step IDs that will be exported (prefixed with as_prefix)
+  outputs:
+    - colloquial
+    - precision
+    - paraphrase
+  
+  steps:
+    - id: colloquial
+      type: generate
+      model_ref: "{colloquial_model}"
+      prompt_ref: "{prompt_namespace}.direct"
+      temperature: 0.55
+      depends_on: []
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            translation:
+              type: string
+          required:
+            - translation
+    
+    - id: precision
+      type: generate
+      model_ref: "{precision_model}"
+      prompt_ref: "{prompt_namespace}.direct"
+      temperature: 0.25
+      depends_on: []
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            translation:
+              type: string
+          required:
+            - translation
+    
+    - id: paraphrase
+      type: generate
+      model_ref: "{colloquial_model}"
+      prompt_ref: "{prompt_namespace}.paraphrase_same_lang"
+      temperature: 0.55
+      depends_on: []
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            translation:
+              type: string
+          required:
+            - translation
+

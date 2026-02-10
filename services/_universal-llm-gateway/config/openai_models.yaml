@@ -1,0 +1,5 @@
+# OpenAI-compatible model configuration
+# This file is now deprecated - all model information is in model_loaders.yaml
+# The aliases are now the primary model identifiers in model_loaders.yaml
+
+# This file is kept for backward compatibility but is no longer used

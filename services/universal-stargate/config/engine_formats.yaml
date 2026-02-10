@@ -1,0 +1,65 @@
+# Engine Format Mapping
+# Maps model formats to their inference engines for profile parameter conversion
+
+engine_mapping:
+  # llama.cpp engine (GGUF models)
+  llama_cpp:
+    formats:
+      - gguf
+    description: "llama-cpp-python inference engine for GGUF quantized models"
+  
+  # vLLM engine (HuggingFace, AWQ, GPTQ models)
+  vllm:
+    formats:
+      - awq
+      - gptq
+      - hf
+      - huggingface
+    description: "vLLM inference engine for HuggingFace-compatible models"
+
+# Default engine for unknown formats
+default_engine: vllm
+
+# Engine capabilities and parameter sets
+engine_parameters:
+  llama_cpp:
+    # llama.cpp specific parameters
+    specific:
+      - repeat_penalty
+      - min_p
+      - typical_p
+      - tfs_z
+      - mirostat_mode
+      - mirostat_tau
+      - mirostat_eta
+    # Shared parameters supported by llama.cpp
+    shared:
+      - temperature
+      - top_p
+      - top_k
+      - max_tokens
+      - stop
+      - seed
+  
+  vllm:
+    # vLLM specific parameters
+    specific:
+      - presence_penalty
+      - frequency_penalty
+      - best_of
+      - n
+      - use_beam_search
+      - length_penalty
+      - early_stopping
+      - ignore_eos
+      - logprobs
+      - skip_special_tokens
+    # Shared parameters supported by vLLM
+    shared:
+      - temperature
+      - top_p
+      - top_k
+      - max_tokens
+      - stop
+      - seed
+

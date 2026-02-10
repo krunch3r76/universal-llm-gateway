@@ -1,0 +1,84 @@
+# Golem Master Stargate Configuration - Phase A (Single Remote Testing)
+#
+# This config runs the Master Stargate LOCALLY (not in container).
+# Master receives all client requests and routes to Remote Stargate(s).
+#
+# Note: Master is a pure orchestrator with NO local gateway.
+# All execution happens on Edge Stargates (federation remotes).
+
+# Proxy settings - client-facing endpoint
+proxy:
+  port: 9999
+  host: "0.0.0.0"
+  cors_enabled: true
+
+# Federation: Master mode
+federation:
+  mode: master  # lowercase (StargateMode enum)
+  stargate_id: master-local
+
+  # Golem testbed: Master initiates WebSocket telemetry to each Edge.
+  # HTTP polling remains supported in codebase but is not used here.
+  disable_websocket: false
+  
+  # Remote Stargate endpoints
+  remotes:
+    - stargate_id: golem-remote-1
+      url: "http://localhost:10999"  # Remote Stargate 1 HTTP endpoint
+      api_key: "${FEDERATION_KEY_REMOTE_1}"
+      disable_websocket: false
+      telemetry_ws_initiator: master
+      telemetry_log_level: "DEBUG"  # Verbose for testing
+    
+    - stargate_id: golem-remote-2
+      url: "http://localhost:11999"  # Remote Stargate 2 HTTP endpoint
+      api_key: "${FEDERATION_KEY_REMOTE_2}"
+      disable_websocket: false
+      telemetry_ws_initiator: master
+      telemetry_log_level: "DEBUG"  # Verbose for testing
+
+# Logging
+logging:
+  level: "DEBUG"
+  enable_console: true
+  enable_file: true
+  log_dir: "/tmp/logs/universal-stargate-master"
+
+# Model routing - default configuration
+model_routing:
+  default_sticky: true  # Load model on one gateway at a time
+
+# Request queue
+request_queue:
+  max_size: 1000
+  default_timeout: 300
+
+# Pipeline configuration
+pipelines:
+  search_paths:
+    - "pipelines.local"  # Local pipeline definitions
+  hot_reload:
+    enabled: true
+    debounce_ms: 2000
+  defaults:
+    save_execution_summary: true
+    summary_format: markdown
+    timeout_seconds: 180
+
+# Routing configuration
+routing:
+  scoring:
+    # Weights for routing decisions
+    warm_weight: 100        # Prefer loaded models
+    slack_weight: 10        # Prefer gateways with more resources
+    contention_weight: 50   # Avoid busy gateways
+    staleness_weight: 30    # Penalize stale telemetry
+    eviction_weight: 20     # Cost of evicting models
+    affinity_weight: 200    # Enforce affinity rules
+    stability_weight: 40    # Prefer stable gateways
+    
+    # Eviction margin (T2 must be this much better than T1)
+    eviction_margin: 50
+    
+    # Capacity limits
+    capacity: {}

@@ -1,0 +1,67 @@
+---
+# Prometheus Alerting Rules for Atomic VRAM Reservation System
+
+groups:
+  - name: vram_reservation_alerts
+    interval: 30s
+    rules:
+      # High reservation failure rate
+      - alert: HighReservationFailureRate
+        expr: |
+          rate(gateway_reservation_total{state="failed"}[5m]) /
+          (rate(gateway_reservation_total{state="completed"}[5m]) + rate(gateway_reservation_total{state="failed"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: vram_reservation
+        annotations:
+          summary: "High VRAM reservation failure rate on {{ $labels.gateway }}"
+          description: "Gateway {{ $labels.gateway }} has {{ $value | humanizePercentage }} reservation failure rate over 5 minutes"
+
+      # Expired reservations accumulating
+      - alert: ExpiredReservationsAccumulating
+        expr: rate(gateway_reservation_total{state="expired"}[5m]) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: vram_reservation
+        annotations:
+          summary: "Expired reservations accumulating on {{ $labels.gateway }}"
+          description: "Gateway {{ $labels.gateway }} has {{ $value }} expired reservations per second"
+
+      # VRAM over-reservation (should never happen with atomic system)
+      - alert: VRAMOverReservation
+        expr: gateway_vram_reserved_mb > 100000
+        for: 1m
+        labels:
+          severity: critical
+          component: vram_reservation
+        annotations:
+          summary: "CRITICAL: VRAM over-reservation detected on {{ $labels.gateway }}"
+          description: "Gateway {{ $labels.gateway }} has {{ $value }}MB VRAM reserved (exceeds expected capacity)"
+
+      # Active reservations stuck
+      - alert: ActiveReservationsStuck
+        expr: |
+          gateway_reservation_active > 0 AND
+          rate(gateway_reservation_total{state="completed"}[10m]) == 0
+        for: 10m
+        labels:
+          severity: warning
+          component: vram_reservation
+        annotations:
+          summary: "Active reservations not completing on {{ $labels.gateway }}"
+          description: "Gateway {{ $labels.gateway }} has {{ $value }} active reservations with no completions in 10 minutes"
+
+      # No reservation activity (system might be down)
+      - alert: NoReservationActivity
+        expr: |
+          rate(gateway_reservation_total[10m]) == 0
+        for: 15m
+        labels:
+          severity: info
+          component: vram_reservation
+        annotations:
+          summary: "No reservation activity on {{ $labels.gateway }}"
+          description: "Gateway {{ $labels.gateway }} has had no reservation activity for 15 minutes"
+

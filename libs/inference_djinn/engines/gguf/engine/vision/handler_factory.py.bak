@@ -1,0 +1,94 @@
+"""Factory for creating vision model chat handlers."""
+
+import logging
+from typing import Any
+
+from .registry import get_vision_model_info
+
+logger = logging.getLogger(__name__)
+
+
+def create_vision_handler(
+    vision_architecture: str,
+    clip_model_path: str,
+) -> Any:
+    """
+    Create the appropriate chat handler for a vision model.
+
+    Args:
+        vision_architecture: Key from VISION_MODEL_REGISTRY
+        clip_model_path: Path to CLIP/mmproj model file
+
+    Returns:
+        Instantiated chat handler ready for Llama() constructor
+
+    Raises:
+        ValueError: If architecture unknown or handler import fails
+    """
+    model_info = get_vision_model_info(vision_architecture)
+    if not model_info:
+        raise ValueError(f"Unknown vision architecture: {vision_architecture}")
+
+    handler_class_name = model_info.handler_class_name
+
+    try:
+        # Dynamic import from llama_cpp.llama_chat_format
+        from llama_cpp import llama_chat_format
+
+        handler_class = getattr(llama_chat_format, handler_class_name, None)
+        if handler_class is None:
+            raise ValueError(
+                f"Handler class {handler_class_name} not found in llama_cpp.llama_chat_format. "
+                f"Ensure llama-cpp-python version supports this model."
+            )
+
+        logger.info(f"Creating vision handler: {handler_class_name}")
+        logger.info(f"  CLIP model: {clip_model_path}")
+
+        # All vision handlers take clip_model_path as constructor arg
+        handler = handler_class(clip_model_path=clip_model_path)
+
+        logger.info(f"✅ Vision handler created: {handler_class_name}")
+        return handler
+
+    except ImportError as e:
+        raise ValueError(
+            f"Failed to import llama_cpp.llama_chat_format: {e}. "
+            "Ensure llama-cpp-python is installed."
+        ) from e
+    except Exception as e:
+        raise ValueError(f"Failed to create handler {handler_class_name}: {e}") from e
+
+
+def get_recommended_n_ctx(
+    vision_architecture: str, base_n_ctx: int | None = None
+) -> int:
+    """
+    Get recommended n_ctx for a vision model.
+
+    Vision models need larger context to accommodate image embeddings.
+
+    Args:
+        vision_architecture: Key from VISION_MODEL_REGISTRY
+        base_n_ctx: User-specified n_ctx (if any)
+
+    Returns:
+        Recommended n_ctx value
+    """
+    model_info = get_vision_model_info(vision_architecture)
+    if not model_info:
+        return base_n_ctx or 4096
+
+    default_n_ctx = model_info.default_n_ctx
+
+    if base_n_ctx is None:
+        return default_n_ctx
+
+    # Warn if user-specified n_ctx is smaller than recommended
+    if base_n_ctx < default_n_ctx:
+        logger.warning(
+            f"⚠️ n_ctx={base_n_ctx} may be too small for {vision_architecture}. "
+            f"Recommended: {default_n_ctx}. Image embeddings require significant context."
+        )
+
+    return base_n_ctx

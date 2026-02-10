@@ -1,0 +1,114 @@
+"""
+Telemetry receiver for Master mode.
+
+Receives telemetry from connected Remotes and dispatches to callback.
+
+INVARIANT: Only telemetry types are forwarded to callback
+INVARIANT: Non-telemetry types are logged and dropped
+"""
+
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from universal_logging import get_logger
+
+from ...common.protocol import is_telemetry_type
+
+logger = get_logger(__name__)
+
+
+class MasterTelemetryReceiver:
+    """
+    Receives telemetry from Remote Stargates.
+
+    Validates signal types and dispatches to callback.
+
+    Usage:
+        receiver = MasterTelemetryReceiver(
+            on_telemetry=manager.update_from_event,
+            event_bus=event_bus,
+        )
+        await receiver.handle_message(remote_id, msg_type, data)
+    """
+
+    def __init__(
+        self,
+        on_telemetry: Callable[[str, str, dict[str, Any]], Awaitable[None]],
+        event_bus: Any | None = None,
+    ):
+        """
+        Initialize telemetry receiver.
+
+        Args:
+            on_telemetry: Callback(remote_id, msg_type, data)
+            event_bus: Optional event bus for telemetry received events
+        """
+        self._on_telemetry = on_telemetry
+        self._event_bus = event_bus
+
+    async def handle_message(
+        self,
+        remote_id: str,
+        msg_type: str,
+        data: dict[str, Any],
+    ) -> None:
+        """
+        Handle incoming message from Remote.
+
+        Filters to telemetry message types only.
+
+        Args:
+            remote_id: Identifier of the Remote Stargate
+            msg_type: Message type
+            data: Message data
+        """
+        logger.debug(
+            f"MasterTelemetryReceiver.handle_message: "
+            f"remote_id={remote_id}, type={msg_type}"
+        )
+        if not is_telemetry_type(msg_type):
+            logger.debug(f"Non-telemetry message from {remote_id}: {msg_type}")
+            return
+
+        logger.info(f"Processing telemetry from {remote_id}: {msg_type}")
+
+        # Emit telemetry received event
+        if self._event_bus:
+            import asyncio
+
+            from src.scheduling.events import FederationTelemetryReceived
+
+            # Extract model count and resource summary from telemetry data
+            from ...common.protocol.message import FederationMessageType
+
+            model_count = 0
+            resource_summary: dict[str, Any] = {}
+
+            # GATEWAY_SNAPSHOT: full catalog + resources
+            if msg_type == FederationMessageType.GATEWAY_SNAPSHOT.value:
+                available_models = data.get("available_models", [])
+                if isinstance(available_models, list):
+                    model_count = len(available_models)
+                resource_summary = {
+                    "available_vram_mb": data.get("available_vram_mb", 0),
+                    "available_ram_mb": data.get("available_ram_mb", 0),
+                }
+
+            # RESOURCE_UPDATE: resources only
+            elif msg_type == FederationMessageType.RESOURCE_UPDATE.value:
+                resource_summary = {
+                    "available_vram_mb": data.get("available_vram_mb", 0),
+                    "available_ram_mb": data.get("available_ram_mb", 0),
+                }
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    FederationTelemetryReceived(
+                        remote_id=remote_id,
+                        model_count=model_count,
+                        resource_summary=resource_summary,
+                    )
+                )
+            )
+
+        await self._on_telemetry(remote_id, msg_type, data)

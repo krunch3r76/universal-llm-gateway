@@ -1,0 +1,25 @@
+# Universal LLM Gateway - External Dependencies
+#
+# Install with: pip install -r requirements.txt
+#
+# Note: This file only includes external PyPI packages.
+# Universal LLM Ecosystem dependencies (universal_logging, universal_event_bus, 
+# universal_protocol, universal_transport, process_ipc, inference_djinn) are NOT 
+# included here as they are expected to be in the shared virtual environment.
+
+# Web Framework and ASGI Server
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0
+
+# Configuration and Data Processing
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Process Management and System Utilities
+psutil>=5.9.0
+
+# Development Tools (optional - IDEs include these)
+# Uncomment if you want to run these tools from the command line
+# ruff>=0.1.0
+# basedpyright>=1.0.0

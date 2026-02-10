@@ -1,0 +1,288 @@
+"""
+GGUF engine model loading operations.
+
+Handles model initialization, validation, warmup, and unloading.
+Supports both text-only and vision/multi-modal models.
+"""
+
+import asyncio
+import logging
+import time
+import traceback
+from pathlib import Path
+from typing import Any
+
+from llama_cpp import Llama
+
+from .vision.config import VisionConfig
+from .vision.handler_factory import create_vision_handler, get_recommended_n_ctx
+
+logger = logging.getLogger(__name__)
+
+# Module-level flag to track if GPU has been warmed up since process start
+# Once warmed, subsequent model loads don't need full warmup
+_gpu_warmed_up = False
+
+
+class GGUFModelLoader:
+    """Handles GGUF model loading, validation, and unloading operations."""
+
+    def __init__(self, engine_instance: Any):
+        """
+        Initialize loader with reference to engine instance.
+
+        Args:
+            engine_instance: The GGUFEngine instance to operate on
+        """
+        self.engine = engine_instance
+
+    async def load(self) -> None:
+        """Load GGUF model using provided configuration only"""
+        load_start = time.time()
+
+        if not Path(self.engine.model_path).exists():
+            raise FileNotFoundError(f"Model file not found: {self.engine.model_path}")
+
+        # Use ONLY user-provided parameters - no defaults applied
+        # Let llama-cpp-python choose optimal n_threads if not explicitly configured
+        model_params = self.engine.kwargs.copy()
+        model_params["model_path"] = self.engine.model_path
+
+        # Log all arguments passed to the GGUF engine during loading
+        logger.info("Loading GGUF model with arguments:")
+        logger.info(f"  Model path: {self.engine.model_path}")
+        for key, value in model_params.items():
+            if key != "model_path":  # Already logged above
+                logger.info(f"  {key}: {value}")
+
+        try:
+            logger.debug("Starting async model loading...")
+            model_load_start = time.time()
+
+            self.engine.llama_model = await asyncio.wait_for(
+                asyncio.to_thread(self._load_model_sync, **model_params),
+                timeout=300.0,  # 5 minute timeout
+            )
+
+            model_load_time = time.time() - model_load_start
+            logger.info(f"[Performance] Model loading took {model_load_time:.3f}s")
+
+            if self.engine.llama_model is None:
+                logger.error("_load_model_sync returned None - model loading failed")
+                raise RuntimeError("Failed to load GGUF model")
+            logger.debug("Async model loading completed successfully")
+        except TimeoutError:
+            logger.error("Model loading timed out after 300 seconds")
+            raise RuntimeError("Model loading timed out")
+        except Exception as e:
+            logger.error(f"Unexpected error during async model loading: {e}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            raise
+
+        # Check if chat template can be applied automatically
+        validation_start = time.time()
+        await self._validate_chat_template_support()
+        validation_time = time.time() - validation_start
+        logger.info(
+            f"[Performance] Chat template validation took {validation_time:.3f}s"
+        )
+
+        # Chat template is handled by the model's apply_chat_template method
+        # No need to reload model or handle chat_format parameters
+
+        # Mark model as loaded BEFORE warmup (warmup uses generate() which checks this)
+        self.engine.loaded = True
+
+        # Perform startup warmup only if GPU hasn't been warmed up yet
+        # Once warmed, GPU stays active and subsequent model loads don't need warmup
+        global _gpu_warmed_up
+        startup_warmup_tokens = self.engine.kwargs.get("startup_warmup_tokens", 20)
+        if startup_warmup_tokens > 0:
+            if not _gpu_warmed_up:
+                warmup_succeeded = await self._perform_startup_warmup(
+                    startup_warmup_tokens
+                )
+                if warmup_succeeded:
+                    _gpu_warmed_up = True
+                    logger.info(
+                        "🔥 GPU warmup complete - subsequent model loads will skip warmup"
+                    )
+                # If warmup failed, leave _gpu_warmed_up=False so next model load retries
+            else:
+                logger.info(
+                    "🔥 Skipping warmup - GPU already warmed from previous model load"
+                )
+
+        total_load_time = time.time() - load_start
+        logger.info(f"[Performance] Total load time: {total_load_time:.3f}s")
+        logger.info(f"Loaded GGUF model: {self.engine.model_path}")
+
+    async def _validate_chat_template_support(self) -> None:
+        """
+        Trust the config generator's decision and llama-cpp-python's capabilities.
+
+        If input_schema="messages", then chat template application is guaranteed to work.
+        The config generator has already verified the presence of a chat template in the GGUF metadata.
+        llama-cpp-python's create_chat_completion method handles chat templates automatically.
+        """
+        logger.info(
+            "✅ Trusting config generator and llama-cpp-python for chat template handling"
+        )
+        logger.info(
+            "✅ Chat template application is guaranteed for input_schema='messages' models"
+        )
+
+        # Always trust that llama-cpp-python can handle chat templates
+        # The config generator has already verified chat template presence
+        self.engine._chat_template_available = True
+        self.engine._chat_template_required = False
+
+    async def _perform_startup_warmup(self, warmup_tokens: int = 20) -> bool:
+        """
+        Perform startup GPU warmup with actual generation to compile CUDA kernels.
+
+        Does NOT do per-request KV warmup - that happens on every user inference.
+        This just wakes up the GPU and compiles kernels once.
+
+        Only runs once per process - subsequent model loads skip warmup since GPU
+        stays active.
+
+        Args:
+            warmup_tokens: Number of tokens to generate for warmup (default: 20)
+
+        Returns:
+            True if warmup succeeded, False if it failed
+        """
+        warmup_start = time.time()
+        logger.info(f"🔥 Performing startup GPU warmup ({warmup_tokens} tokens)...")
+
+        warmup_messages = [{"role": "user", "content": "Count from 1 to 100."}]
+
+        try:
+            # Non-streaming generation - compiles CUDA kernels and wakes GPU
+            logger.info("🔥 Running GPU warmup generation...")
+            warmup_params = {"max_tokens": warmup_tokens, "stream": False}
+            _ = await self.engine._regular_inference._create_completion_unified(
+                warmup_messages, None, warmup_params, is_streaming=False
+            )
+            logger.info("🔥 GPU warmup generation complete")
+
+            # CRITICAL: Synchronize CUDA state after warmup
+            from .cuda_sync import synchronize_cuda
+
+            sync_time = synchronize_cuda(self.engine.llama_model)
+            if sync_time is not None:
+                logger.debug(
+                    f"🔥 CUDA synchronized after startup warmup ({sync_time:.3f}ms)"
+                )
+
+            warmup_time = time.time() - warmup_start
+            logger.info(
+                f"🔥 Startup GPU warmup completed in {warmup_time:.2f}s ({warmup_tokens} tokens)"
+            )
+            return True
+        except Exception as e:
+            warmup_time = time.time() - warmup_start
+            logger.warning(f"⚠️ Startup warmup failed after {warmup_time:.2f}s: {e}")
+            # Don't fail model loading if warmup fails
+            # First real inference will just be slower
+            return False
+
+    def _load_model_sync(self, **model_params) -> Llama | None:
+        """Synchronous model loading function - supports vision models."""
+        try:
+            clean_params = model_params.copy()
+
+            # Remove chat_format as we use apply_chat_template or vision handlers
+            if "chat_format" in clean_params:
+                logger.info(
+                    "Removing chat_format parameter - using model's apply_chat_template method"
+                )
+                del clean_params["chat_format"]
+
+            # Extract and validate vision configuration
+            vision_config = VisionConfig.from_kwargs(clean_params)
+            validation_errors = vision_config.validate()
+
+            if validation_errors:
+                # Log errors but don't fail - might be text-only model
+                for error in validation_errors:
+                    logger.debug(f"Vision config validation: {error}")
+
+            # If this is a vision model, create and attach handler
+            if vision_config.is_vision_model:
+                logger.info(
+                    f"🔮 Loading vision model: {vision_config.vision_architecture}"
+                )
+
+                # Create vision handler (values guaranteed non-None when is_vision_model=True)
+                assert vision_config.vision_architecture is not None
+                assert vision_config.clip_model_path is not None
+
+                chat_handler = create_vision_handler(
+                    vision_config.vision_architecture,
+                    vision_config.clip_model_path,
+                )
+                clean_params["chat_handler"] = chat_handler
+
+                # Adjust n_ctx if needed
+                current_n_ctx = clean_params.get("n_ctx")
+                recommended_n_ctx = get_recommended_n_ctx(
+                    vision_config.vision_architecture,
+                    current_n_ctx,
+                )
+                if current_n_ctx != recommended_n_ctx:
+                    logger.info(
+                        f"  Adjusting n_ctx: {current_n_ctx} → {recommended_n_ctx}"
+                    )
+                    clean_params["n_ctx"] = recommended_n_ctx
+
+                # Store vision config on engine for later reference
+                self.engine._vision_config = vision_config
+            else:
+                self.engine._vision_config = None
+
+            logger.debug(f"Loading model with params: {list(clean_params.keys())}")
+            model = Llama(**clean_params)
+
+            # Monkey patch close method for API compatibility
+            if hasattr(model, "close"):
+                original_close = model.close
+
+                def safe_close():
+                    try:
+                        original_close()
+                    except AttributeError as e:
+                        if "sampler" in str(e) or "grammar" in str(e):
+                            logger.debug(
+                                f"Ignoring API compatibility error during close: {e}"
+                            )
+                        else:
+                            raise
+                    except Exception as e:
+                        logger.error(f"Error during model close: {e}")
+
+                model.close = safe_close
+
+            logger.debug("Model loaded successfully in _load_model_sync")
+            return model
+        except Exception as e:
+            logger.error(f"Error in sync model loading: {e}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            return None
+
+    async def unload(self) -> None:
+        """Unload GGUF model and free resources"""
+        if self.engine.llama_model:
+            try:
+                if hasattr(self.engine.llama_model, "close"):
+                    self.engine.llama_model.close()
+            except Exception as e:
+                logger.error(f"Error closing model: {e}")
+
+            self.engine.llama_model = None
+
+        # No token counter cleanup needed since we use the loaded model directly
+
+        self.engine.loaded = False
+        logger.info(f"Unloaded GGUF model: {self.engine.model_path}")

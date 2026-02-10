@@ -1,0 +1,15 @@
+# Universal Event Bus - External Dependencies
+#
+# This project has NO external PyPI dependencies.
+# All dependencies are from the Universal LLM Ecosystem and are expected
+# to be available in the Python library search path.
+#
+# Ecosystem Dependencies (NOT PyPI packages):
+# - universal_logging
+#
+# These ecosystem components should be installed in the shared virtual
+# environment at $HOME/.venvs/universal
+#
+# For development tools (optional):
+# pip install ruff basedpyright pytest pytest-asyncio
+

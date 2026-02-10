@@ -1,0 +1,31 @@
+# Core dependencies
+pyyaml>=6.0
+psutil>=5.9.0
+
+# GPU monitoring (for diagnostics and capacity testing)
+nvidia-ml-py3>=7.352.0
+
+# Model format support
+gguf>=0.10.0
+llama-cpp-python>=0.2.0
+
+# Optional: Fast GGUF metadata parsing
+gguf-parser>=0.1.0
+
+# Optional: ExLlamaV3 engine support (if using GPTQ/EXL3 models)
+# exllamav3>=0.1.0  # Uncomment if using ExLlamaV3 engine
+
+# Optional: vLLM engine support (if using HuggingFace/AWQ/GPTQ models)
+# vllm>=0.6.0  # Uncomment if using vLLM engine
+# torch>=2.1.0  # Required for vLLM
+
+# Optional: FLUX.2 image generation support (requires Flux2Pipeline)
+# diffusers>=0.36.0  # Uncomment if using FLUX.2 engine
+# transformers>=4.48.0  # Required for Mistral3 text encoder
+# accelerate>=1.3.0  # Required for model CPU offload
+# torch>=2.4.0  # Required for FLUX.2
+
+# Note: Universal LLM Ecosystem components are NOT included here
+# (universal_logging, etc.) - they are expected to be in the shared
+# virtual environment ($HOME/.venvs/universal) or PYTHONPATH
+

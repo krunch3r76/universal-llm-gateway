@@ -1,0 +1,16 @@
+# System message configuration for chat models
+#
+# This file defines system message behavior for different model types.
+# The system message is applied based on the model's classification and configuration.
+
+system_messages:
+  default:
+    system_message: ""
+    override: false
+    override_if_empty: false
+
+graceful_degradation:
+  non_chat_models:
+    remove_system_messages: true
+    truncate_to_last_user: true
+    log_degradation: true

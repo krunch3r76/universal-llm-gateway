@@ -1,0 +1,21 @@
+[Unit]
+Description=CUDA Availability Monitor for Docker Container
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/mnt/torus/projects/universal-llm-gateway
+ExecStart=/usr/bin/python3 /mnt/torus/projects/universal-llm-gateway/docker/scripts/cuda-monitor-daemon.py --container universal-gateway-gpu
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits
+MemoryLimit=256M
+CPUQuota=10%
+
+[Install]
+WantedBy=multi-user.target

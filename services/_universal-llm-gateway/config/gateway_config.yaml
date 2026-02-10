@@ -1,0 +1,156 @@
+# Universal LLM Gateway Configuration
+# Core gateway settings
+
+# Server configuration
+server:
+  host: "0.0.0.0"
+  port: 9998  # Fixed port, no longer configurable
+  workers: 1
+  timeout: 300 # TODO: REMOVE, DEPRECATED AND NOT USED
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/gateway.log"
+  max_size: "10MB"
+  backup_count: 5
+
+# Process isolation settings
+process_isolation:
+  enabled: true
+  socket_dir: "/tmp/universal-protocol"
+  max_workers_per_model: 1
+  max_concurrent_workers: 1000
+  
+  # Timeout Configuration
+  # All timeouts are configurable to adapt to different hardware and model sizes
+  worker_timeout: 1200  # Main inference timeout (10 minutes) - for large model generation
+  token_counting_timeout: 31  # Timeout for token counting operations (31 seconds) - for token counting requests
+  model_info_timeout: 30  # Timeout for get_model_info operations (30 seconds) - for model metadata queries
+  shutdown_timeout: 30  # Timeout for graceful shutdown (30 seconds) - for clean worker termination
+  force_stop_timeout: 5  # Timeout for force killing processes (5 seconds) - for emergency cleanup
+  startup_timeout: 300  # Timeout for worker startup (5 minutes) - for large model loading
+  sigterm_wait_timeout: 5  # Wait time for SIGTERM termination (5 seconds) - for graceful process cleanup
+  sigkill_wait_timeout: 3  # Wait time for SIGKILL termination (3 seconds) - for force process cleanup
+  use_hierarchical_timeouts: true  # Enable hierarchical timeout fallback for better configuration management
+  
+  # Model unloading configuration
+  fast_model_unload: true  # Use SIGKILL immediately for fast model unloading (default: true)
+  skip_sigterm_on_unload: true  # Skip SIGTERM and go directly to SIGKILL for model unloading (default: true)
+  
+  cleanup_on_exit: true
+  
+  # Health monitoring settings
+  health_monitoring:
+    enabled: true  # Enable/disable health monitoring
+    start_monitoring_on_state: "READY"  # Start monitoring when process reaches READY state
+    check_interval: 30.0  # Health check interval in seconds
+    auto_recovery: false  # Disable auto-recovery to prevent interference with model loading
+
+# Worker process settings
+worker_processes:
+  use_inference_djinn_venv: false  # Set to false to inherit gateway's venv ($HOME/.venvs/universal)
+  inference_djinn_venv_path: "/mnt/torus/projects/inference_djinn/.djinn-venv/bin/python"  # Only used if use_inference_djinn_venv is true
+  detached: false  # Run workers as detached background processes
+
+# Model registry settings
+model_registry:
+  auto_discovery: false
+  config_file: "config/model_loaders.yaml"
+  validation:
+    check_paths: true
+    check_formats: true
+
+# Caching configuration
+caching:
+  enabled: true
+  max_size: 1000
+  ttl: 3600  # 1 hour
+
+# Rate limiting
+rate_limiting:
+  enabled: false
+  requests_per_minute: 60
+  burst_size: 10
+
+# Models configuration
+models:
+  auto_load_on_request: false  # Require explicit model loading via POST /v1/models/{model_id}/load
+
+# Health check settings
+health_check:
+  enabled: true
+  interval: 30
+  timeout: 60  # Legacy field - increased from 5 to 60 seconds to handle long-running operations like token counting
+  health_check_timeout: 5.0  # Timeout for async ping-based health checks (in seconds) - lightweight and fast
+
+# Error reporting configuration
+error_reporting:
+  include_stack_traces: true  # Include full stack traces in error responses
+  include_internal_details: true  # Include internal error details in responses
+  max_error_detail_size: 10000  # Maximum size of error details in bytes
+  error_categories:
+    syntax_error:
+      log_level: "ERROR"
+      include_stack_trace: true
+    initialization_error:
+      log_level: "ERROR"
+      include_stack_trace: true
+    resource_error:
+      log_level: "WARNING"
+      include_stack_trace: false
+    timeout_error:
+      log_level: "WARNING"
+      include_stack_trace: false
+    unknown_error:
+      log_level: "ERROR"
+      include_stack_trace: true
+
+# Streaming Configuration
+streaming:
+  timeout: 300  # Default streaming timeout in seconds (5 minutes)
+  cancellation_check_interval: 1  # Interval in seconds for checking cancellation signals
+  enable_cancellation: true  # Enable streaming cancellation support
+  chunk_batch_size: 1  # Number of chunks to batch before yielding to event loop (restored to original - real issue was blocking inference engine)
+
+# Model Configuration Management API
+management_api:
+  enabled: true  # Enable management API endpoints for model configuration
+  require_token: false  # Disable token requirement for development (proxy handles auth)
+  token: null  # Optional authentication token (not used when require_token: false)
+
+# Resource Guard - OOM Prevention
+# Pre-flight resource checking before model loading to prevent out-of-memory conditions
+resource_guard:
+  enabled: true  # Enable pre-flight resource checks before model loading
+  vram_safety_margin: 0.0  # No extra VRAM buffer; rely on raw requirement
+  ram_safety_margin: 0.0  # No extra RAM buffer; rely on raw requirement
+  min_vram_margin_mb: 0  # No minimum absolute VRAM margin
+  min_ram_margin_mb: 0  # No minimum absolute RAM margin
+
+# GGUF Engine Configuration (llama-cpp-python)
+# DEPRECATED: llama-cpp-python backend is deprecated in favor of llama-server
+# Global settings for all GGUF models loaded via llama-cpp-python (legacy)
+gguf:
+  # Warmup and KV cache configuration - separate controls for streaming vs non-streaming
+  warmup:
+    streaming:
+      enabled: true
+      mode: minimal           # minimal | full_prompt
+      max_tokens: null        # null = use default (1 for minimal, request's for full)
+      minimal_prompt_tokens: 100
+      clear_kv_before: true   # Clear KV cache before warmup
+      clear_kv_after: false   # Clear KV cache after warmup (before generation)
+    non_streaming:
+      enabled: true
+      mode: minimal
+      max_tokens: null
+      minimal_prompt_tokens: 100
+      clear_kv_before: false
+      clear_kv_after: false
+
+  # NOTE: enable_kv_warmup is REMOVED
+  # KV warmup is now controlled per-request-type via warmup.*.enabled
+  # NOTE: disable_kv_cache_clear is REMOVED
+  # KV clearing is now controlled per-request-type via warmup.*.clear_kv_before/after

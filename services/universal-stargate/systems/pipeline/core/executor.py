@@ -1,0 +1,544 @@
+"""
+Pipeline executor with DAG-based scheduling.
+
+Features:
+- Automatic parallelization based on dependencies
+- Conditional step execution
+- Fragment expansion
+- Domain-aware handler dispatch
+- Single-writer to context.outputs (DAGExecutor only)
+
+Invariants:
+- ∀ step: dependencies complete before execution
+- Parallel steps do not share mutable state
+- First failure propagates immediately (fail-fast)
+- Only DAGExecutor writes to context.outputs
+"""
+
+from __future__ import annotations
+
+import asyncio
+import uuid
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
+
+from fastapi.responses import Response
+from universal_event_bus import Event
+from universal_logging import get_logger
+
+from .dag import DAGBuilder, StepState
+from .events import (
+    PipelineCancelled,
+    PipelineCompleted,
+    PipelineFailed,
+    PipelineStarted,
+)
+from .execution import DAGExecutor
+from .execution.disconnect_monitor import execute_with_disconnect_monitoring
+from .fragments import get_fragment_loader
+from .handlers import PipelineContext, StepOutput
+from .prompts import get_prompt_builder
+from .schemas import FragmentRef, StepConfig
+
+if TYPE_CHECKING:
+    from ..registry import PipelineRegistry
+    from .schemas import PipelineSpec
+
+logger = get_logger(__name__)
+
+
+class PipelineExecutor:
+    """
+    Execute pipeline workflows using Directed Acyclic Graph (DAG)-based scheduling.
+
+    Steps execute as soon as their dependencies are satisfied.
+    Independent steps automatically run in parallel.
+
+    CONCURRENCY: Only DAGExecutor writes to context.outputs.
+    Handlers return StepOutput; they never write directly.
+    """
+
+    def __init__(
+        self,
+        registry: PipelineRegistry,
+        request_executor,
+        proxy,
+    ):
+        self.registry = registry
+        self.request_executor = request_executor
+        self.proxy = proxy
+        self.prompt_builder = get_prompt_builder()
+        self.fragment_loader = get_fragment_loader()
+        # Warn once if event bus unavailable
+        self._event_bus_warned: bool = False
+
+    def _publish_event(self, context: PipelineContext, event: Event) -> None:
+        """
+        Publish event via context's event bus (fire-and-forget).
+
+        Reuses pattern from DAGExecutor for consistency.
+        Logs WARN once if event_bus unavailable (graceful degradation).
+        """
+        proxy = getattr(context, "_proxy", None)
+        event_bus = getattr(proxy, "event_bus", None) if proxy else None
+        if event_bus:
+            asyncio.create_task(event_bus.publish_async_nowait(event))
+        elif not getattr(self, "_event_bus_warned", False):
+            logger.warning("Event bus unavailable - events will not be published")
+            self._event_bus_warned = True
+
+    async def execute(self, context) -> Response:
+        """
+        Execute a pipeline using DAG-based scheduling.
+
+        Args:
+            context: Request context with pipeline model ID
+
+        Returns:
+            OpenAI-compatible chat completion response
+        """
+        from ..response_builder import ResponseBuilder
+
+        try:
+            pipeline = self.registry.get_pipeline(context.selected_model)
+        except Exception:
+            raise
+
+        logger.info(
+            f"Executing pipeline '{pipeline.id}' "
+            f"(version {pipeline.version}, type: {pipeline.type})"
+        )
+
+        # Extract source text
+        text = self._extract_source_text(context)
+
+        # Validate original_request preservation for execution summaries
+        # (Internal use only - not returned to client)
+        if not context.original_request:
+            logger.error(
+                f"Pipeline '{pipeline.id}': original_request missing in context. "
+                f"Cannot generate execution summary."
+            )
+            # Continue execution but execution summary will be incomplete
+        elif not context.original_request.get("messages"):
+            logger.warning(
+                f"Pipeline '{pipeline.id}': original_request has no messages. "
+                f"Execution summary will not include conversation history."
+            )
+
+        # Register inline fragments if present
+        if pipeline.fragments:
+            self.fragment_loader.register_inline_fragments(pipeline.fragments)
+
+        # Expand fragments and prepare steps
+        steps = self._expand_steps(pipeline.steps)
+
+        # Build DAG (validates dependencies, detects cycles)
+        dag_builder = DAGBuilder(steps)
+        nodes = dag_builder.build()
+
+        ready_count = sum(1 for n in nodes.values() if not n.dependencies)
+        logger.info(
+            f"Pipeline '{pipeline.id}' DAG: {len(nodes)} nodes, "
+            f"{ready_count} ready for parallel execution"
+        )
+
+        # Extract runtime pipeline_options from HTTP request
+        runtime_options: dict[str, Any] = {}
+        if context.original_request:
+            raw_options = context.original_request.get("pipeline_options", {})
+            if raw_options is not None and not isinstance(raw_options, dict):
+                raise ValueError(
+                    f"Invalid pipeline_options type: expected dict, "
+                    f"got {type(raw_options).__name__}"
+                )
+            runtime_options = raw_options if raw_options else {}
+            if runtime_options:
+                option_keys = list(runtime_options.keys())
+                logger.info(
+                    f"Pipeline '{pipeline.id}': Received runtime options: {option_keys}"
+                )
+
+        # Create pipeline context
+        pipeline_context = PipelineContext(
+            pipeline=pipeline,
+            source_text=text,
+            http_request=context.http_request,
+            execution_id=str(uuid.uuid4()),
+            runtime_options=runtime_options,
+        )
+
+        # Inject dependencies
+        pipeline_context._registry = self.registry
+        pipeline_context._request_executor = self.request_executor
+        pipeline_context._proxy = self.proxy
+
+        # Pass gateway information for eviction protection
+        if (
+            hasattr(context, "selected_gateway_instance")
+            and context.selected_gateway_instance
+        ):
+            gateway_name = context.selected_gateway_instance.config.name
+            pipeline_context.selected_gateway_instance = gateway_name
+
+        # Emit pipeline started event
+        self._publish_event(
+            pipeline_context,
+            PipelineStarted(
+                pipeline_id=pipeline.id,
+                execution_id=pipeline_context.execution_id,
+                domain=pipeline.domain,
+                step_count=len(nodes),
+                timeout_seconds=pipeline_context.options.get("timeout_seconds"),
+            ),
+        )
+
+        # Execute DAG with client disconnection monitoring
+        import time
+
+        dag_executor = DAGExecutor(nodes, pipeline_context)
+        start_time = time.time()
+
+        try:
+            # Race between DAG execution and client disconnection
+            await execute_with_disconnect_monitoring(
+                dag_executor=dag_executor,
+                http_request=pipeline_context.http_request,
+                pipeline_id=pipeline.id,
+                execution_id=pipeline_context.execution_id,
+                step_count=len(nodes),
+            )
+            duration = time.time() - start_time
+
+            # Emit pipeline completed event
+            self._publish_event(
+                pipeline_context,
+                PipelineCompleted(
+                    pipeline_id=pipeline.id,
+                    execution_id=pipeline_context.execution_id,
+                    duration_seconds=duration,
+                    step_count=len(nodes),
+                    output_step=pipeline.output,
+                ),
+            )
+        except asyncio.CancelledError:
+            # Client disconnected - clean up and emit cancellation event
+            duration = time.time() - start_time
+            await dag_executor.cancel()
+
+            completed_steps = sum(
+                1
+                for node in nodes.values()
+                if node.state in (StepState.COMPLETED, StepState.SKIPPED)
+            )
+            pending_steps = len(nodes) - completed_steps
+
+            self._publish_event(
+                pipeline_context,
+                PipelineCancelled(
+                    pipeline_id=pipeline.id,
+                    execution_id=pipeline_context.execution_id,
+                    duration_seconds=duration,
+                    reason="client_disconnected",
+                    completed_steps=completed_steps,
+                    pending_steps=pending_steps,
+                ),
+            )
+
+            logger.info(
+                f"Pipeline '{pipeline.id}' cancelled after {duration:.1f}s "
+                f"(client disconnected, {completed_steps}/{len(nodes)} steps completed)"
+            )
+            raise
+        except Exception as e:
+            duration = time.time() - start_time
+
+            # Determine which step failed (if any)
+            failed_step = None
+            for node in nodes.values():
+                if node.state == StepState.FAILED:
+                    failed_step = node.step.name
+                    break
+
+            # Emit pipeline failed event
+            self._publish_event(
+                pipeline_context,
+                PipelineFailed(
+                    pipeline_id=pipeline.id,
+                    execution_id=pipeline_context.execution_id,
+                    duration_seconds=duration,
+                    error=str(e),
+                    failed_step=failed_step,
+                ),
+            )
+            raise
+
+        # Extract final result
+        final_result = self._get_final_result(pipeline, pipeline_context)
+
+        # Convert outputs for response builder (skip MapOutputCollection)
+        step_outputs = {
+            step_id: output.text
+            for step_id, output in pipeline_context.outputs.items()
+            if isinstance(output, StepOutput)
+        }
+
+        # Check for backtranslation data
+        backtranslation_data = self._extract_backtranslation_data(
+            steps, pipeline_context
+        )
+
+        response = ResponseBuilder.build_response(
+            context,
+            pipeline_context,
+            final_result,
+            pipeline,
+            step_outputs,
+            backtranslation_data,
+            execution_order=dag_executor.execution_order,
+        )
+
+        # Write execution summary if enabled (check merged YAML + runtime options)
+        save_summary = pipeline_context.options.get("save_execution_summary", False)
+        if save_summary:
+            await self._write_execution_summary(
+                pipeline,
+                pipeline_context,
+                context,
+                response,
+                dag_executor.execution_order,
+            )
+
+        return response
+
+    def _expand_steps(
+        self,
+        steps: Sequence[StepConfig | FragmentRef | dict[str, Any]],
+    ) -> list[StepConfig]:
+        """Expand fragment references into full steps."""
+        expanded: list[StepConfig] = []
+
+        for item in steps:
+            # Handle dict (raw from YAML)
+            if isinstance(item, dict):
+                if "use" in item:
+                    # Fragment reference
+                    ref = FragmentRef(**item)
+                    fragment_steps = self.fragment_loader.expand_fragment_ref(ref)
+                    expanded.extend(fragment_steps)
+                else:
+                    # Regular step
+                    expanded.append(StepConfig(**item))
+            elif isinstance(item, FragmentRef):
+                fragment_steps = self.fragment_loader.expand_fragment_ref(item)
+                expanded.extend(fragment_steps)
+            else:
+                expanded.append(item)
+
+        return expanded
+
+    def _get_final_result(
+        self,
+        pipeline: PipelineSpec,
+        context: PipelineContext,
+    ) -> str:
+        """
+        Get final result from pipeline output step.
+
+        Handles:
+        - Simple step references: "step_name" → StepOutput.text
+        - Map output with key: "step_name.key" → specific iteration's text
+        - MapOutputCollection: concatenates all outputs with double newlines
+        """
+        from .execution.map_reduce.collection import MapOutputCollection
+
+        output_ref = pipeline.output
+
+        # Try direct lookup first (for simple step names)
+        output = context.get_output(output_ref)
+        if output:
+            if isinstance(output, MapOutputCollection):
+                # No specific iteration requested, concatenate all
+                text_parts = [item.text for item in output.all_outputs()]
+                return "\n\n".join(text_parts)
+            return output.text
+
+        # Handle dotted references like "synthesize_all.qwen"
+        if "." in output_ref:
+            step_name, key = output_ref.split(".", 1)
+            step_output = context.get_output(step_name)
+
+            if step_output is None:
+                logger.error(
+                    f"Output '{output_ref}': step '{step_name}' not found "
+                    f"or returned no output"
+                )
+                return ""
+
+            if isinstance(step_output, MapOutputCollection):
+                # Try key-based access
+                result = step_output.get_output_by_key(key)
+                if result:
+                    return result.text
+                logger.warning(
+                    f"Output '{output_ref}': iteration key '{key}' "
+                    f"not found in map output"
+                )
+            else:
+                logger.error(
+                    f"Output '{output_ref}': step '{step_name}' is not a "
+                    f"MapOutputCollection"
+                )
+
+        return ""
+
+    def _extract_backtranslation_data(
+        self,
+        steps: list[StepConfig],
+        context: PipelineContext,
+    ) -> dict[str, Any] | None:
+        """Extract backtranslation data if present."""
+        for step in steps:
+            if step.type == "backtranslation":
+                bt_output = context.get_output(step.id)
+                if bt_output and bt_output.json:
+                    return bt_output.json
+        return None
+
+    def _extract_source_text(self, context) -> str:
+        """Extract source text from request context."""
+        # From chat request
+        if context.chat_request and context.chat_request.messages:
+            for msg in reversed(context.chat_request.messages):
+                if msg.role == "user":
+                    content = msg.content
+                    if isinstance(content, str):
+                        return content
+                    if isinstance(content, list) and content:
+                        for part in content:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                return part.get("text", "")
+                            if isinstance(part, str):
+                                return part
+
+        # From original request
+        if context.original_request:
+            messages = context.original_request.get("messages", [])
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        return content
+
+        return ""
+
+    async def _write_execution_summary(
+        self,
+        pipeline: PipelineSpec,
+        pipeline_context: PipelineContext,
+        request_context,
+        response: Response,
+        execution_order: list[str],
+    ) -> None:
+        """
+        Write execution summary to disk if enabled.
+
+        Offloads blocking file I/O to thread executor to avoid blocking
+        the event loop.
+        """
+        try:
+            import asyncio
+            import json
+
+            from ..execution_summary import get_summary_writer
+
+            # Parse response body
+            response_body = json.loads(response.body.decode("utf-8"))
+
+            # Build request body from context
+            request_body = {"model": pipeline.id, "messages": []}
+
+            if request_context.chat_request and request_context.chat_request.messages:
+                request_body["messages"] = [
+                    {"role": msg.role, "content": msg.content}
+                    for msg in request_context.chat_request.messages
+                ]
+            elif request_context.original_request:
+                request_body = request_context.original_request
+
+            writer = get_summary_writer()
+            summary_format = pipeline_context.options.get("summary_format", "markdown")
+
+            # Offload blocking I/O to thread executor
+            await asyncio.to_thread(
+                self._write_summary_sync,
+                writer,
+                pipeline,
+                pipeline_context,
+                request_body,
+                response_body,
+                execution_order,
+                summary_format,
+            )
+
+            logger.info(
+                f"Execution summary written for pipeline '{pipeline.id}' "
+                f"(format: {summary_format})"
+            )
+        except Exception as e:
+            # Don't fail the request if summary writing fails
+            logger.error(f"Failed to write execution summary: {e}", exc_info=True)
+
+    def _write_summary_sync(
+        self,
+        writer,
+        pipeline: PipelineSpec,
+        pipeline_context,
+        request_body: dict,
+        response_body: dict,
+        execution_order: list[str],
+        summary_format: str,
+    ) -> None:
+        """
+        Synchronous summary writing (runs in thread executor).
+
+        Separated from async wrapper to keep blocking I/O off the event loop.
+        """
+        # Detailed (per-step files + full summary)
+        if summary_format == "detailed":
+            writer.write_step_summaries(
+                pipeline,
+                pipeline_context,
+                request_body,
+                response_body,
+                execution_order,
+            )
+        # Markdown (default, human-readable)
+        elif summary_format in ("markdown", "all"):
+            writer.write_summary_markdown(
+                pipeline,
+                pipeline_context,
+                request_body,
+                response_body,
+                execution_order,
+            )
+
+        # YAML (optional, human + machine readable)
+        if summary_format in ("yaml", "all"):
+            writer.write_summary_yaml(
+                pipeline,
+                pipeline_context,
+                request_body,
+                response_body,
+                execution_order,
+            )
+
+        # JSON (optional, machine readable)
+        if summary_format in ("json", "all"):
+            writer.write_summary(
+                pipeline,
+                pipeline_context,
+                request_body,
+                response_body,
+                execution_order,
+            )

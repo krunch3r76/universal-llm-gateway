@@ -1,0 +1,69 @@
+# Model Profile Basename Mappings
+#
+# This file defines basename-to-profile mappings for the unified model matching system.
+# Each basename maps to a profile name from profiles.yaml, enabling consistent
+# parameter application across model variants without maintaining exhaustive model lists.
+#
+# Matching Rules:
+#   - Basenames are matched using prefix matching with boundary detection
+#   - Longer basenames take precedence (qwen2-5-coder beats qwen2-5)
+#   - Case-insensitive matching for robustness
+#   - Hyphenated basenames supported (deepseek-coder, qwen2-5-coder)
+#
+# Structure:
+#   basename_profiles:
+#     basename: "profile_name"  # References profiles.yaml
+
+basename_profiles:
+  "ernie-4-5-21b-a3b-pt-q8-0": "general-chat"
+  
+  "uncensored-frank": "general-chat"
+  
+  "gpt-oss": "general-chat"
+
+  # CursorCore models - AI-assisted programming focus
+  "cursorcore": "cursorcore"
+  # Examples: cursorcore-qw2-5-1-5b-q4-k-m, cursorcore-7b-instruct, cursorcore-test
+  
+  # Coding models (ordered by specificity - longer matches first)
+  "deepseek-coder": "code-generation"
+  # Examples: deepseek-coder-33b-instruct-q4-k-m, deepseek-coder-6-7b-base-q4-k-m, deepseek-coder-33b-awq
+  
+  "qwen2-5-coder": "code-generation"
+  # Examples: qwen2-5-coder-14b-instruct-q8-0, qwen2-5-coder-32b-instruct-q4-k-m
+  
+  "qwen2-5-vl": null
+  # Vision models - no profile assignment yet (needs proper measurement and profile definition)
+  # Examples: qwen2-5-vl-7b-instruct-ud-q8-k-xl, qwen2-5-vl-32b-instruct-q6-k
+  
+  "starcoder2": "code-generation"
+  # Examples: starcoder2-15b-instruct-v0-1-q8-0, starcoder2-7b-base-q4-k-m
+  
+  "wizardcoder": "code-generation"
+  # Examples: wizardcoder-33b-v1-1-awq, wizardcoder-15b-python-q4-k-m
+  
+  "codellama": "code-generation"
+  # Examples: codellama-34b-instruct-q4-k-m, codellama-7b-python-q4-k-m
+  
+  # Chat and instruct models (creative/general purpose)
+  "qwen2-5": "creative"
+  # Examples: qwen2-5-72b-instruct-q4-k-m (falls back from qwen2-5-coder)
+  
+  "llama3-1": "creative"
+  # Examples: llama3-1-70b-instruct-q4-k-m, llama3-1-8b-instruct-q8-0
+  
+  "wizard-vicuna": "creative"
+  # Examples: wizard-vicuna-30b-uncensored, wizard-vicuna-30b-awq, wizard-vicuna-13b-awq
+  
+  "hermes3": "general-chat"
+  # Examples: hermes3-llama-3.1-70b-uncensored-16384, hermes3-llama-3.1-8b-instruct
+  
+  # Whisper speech recognition models
+  "whisper":
+    vad_profile: streaming-optimized
+    whisper_profile: quality
+  # Examples: whisper-large-v3, whisper-medium
+  # Default profiles: VAD=streaming-optimized, Whisper=quality
+  
+  # Additional model families can be added here following the same pattern
+  # Order matters: longer/more specific basenames should be listed first

@@ -1,0 +1,10 @@
+# External dependencies (with version constraints)
+# Universal LLM Ecosystem components are NOT included here
+
+# Required dependencies
+pyyaml>=6.0
+
+# Optional dependencies (for specific features)
+# FastAPI adapter support
+fastapi>=0.100.0
+

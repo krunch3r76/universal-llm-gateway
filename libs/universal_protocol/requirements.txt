@@ -1,0 +1,16 @@
+# External dependencies for universal_protocol
+# Note: Universal LLM Ecosystem components (universal_logging, etc.) are NOT included
+# as they are expected to be in the Python path via the shared venv
+
+# YAML configuration support
+pyyaml>=6.0
+
+# ASGI web framework
+starlette>=0.27.0
+
+# HTTP client library with Unix socket support
+httpx>=0.24.0
+
+# WebSocket library
+websockets>=11.0
+

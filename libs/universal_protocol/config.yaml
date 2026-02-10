@@ -1,0 +1,13 @@
+# Universal Protocol Configuration
+# All values have defaults, so this file is optional
+
+protocol:
+  # Unix socket directory
+  socket_dir: /tmp/universal-protocol
+
+server:
+  # Event loop backend
+  loop: uvloop                   # uvloop or asyncio
+  
+  # Worker processes (always 1 for MVP)
+  workers: 1

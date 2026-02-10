@@ -1,0 +1,86 @@
+# DEVELOPMENT: Single-Machine Local Testing Configuration
+#
+# USE CASE: Local development and testing on a single machine
+# SCRIPT: ./scripts/dev-start-local-remote.sh
+#
+# ARCHITECTURE:
+#   Master Stargate (localhost:9999, host process)
+#     └─ Remote Stargate (HTTP → localhost:10999, Docker container)
+#        └─ Gateway (Docker container, network-isolated)
+#
+# All components run on localhost:
+#   - Master: host process (port 9999)
+#   - Remote Stargate: Docker container (port 10999)
+#   - Gateway: Docker container (accessed via Remote only)
+#
+# DISTINCTION FROM gpu-master-localhost.yaml:
+#   - Single-machine: everything on localhost
+#   - Connection: HTTP to container port (not Unix socket)
+#   - Simple authentication: single dev key
+#   - No remote physical hosts
+#
+# Run on host (not in container):
+#   STARGATE_CONFIG=config/stargate_config.dev-localhost-only.yaml \
+#   FEDERATION_API_KEY="dev-key" \
+#   ./services/universal-stargate/scripts/start-stargate.sh debug
+
+# Proxy settings - client-facing endpoint
+proxy:
+  port: 9999
+  host: "0.0.0.0"
+  cors_enabled: true
+
+# Federation: Master mode
+federation:
+  mode: master
+  stargate_id: "master"
+  
+  # Remote Stargate endpoints
+  remotes:
+    # Local Remote Stargate (container)
+    - stargate_id: "local-remote"
+      url: "http://localhost:10999"  # Container exposed port
+      api_key: "${FEDERATION_API_KEY}"
+      # WebSocket telemetry enabled by default (Remote initiates connection)
+
+# Logging
+# Note: LOG_LEVEL env var MUST be set (no defaults supported)
+# For defaults, hardcode value: level: "INFO"
+logging:
+  level: "INFO"
+  enable_console: true
+  enable_file: true
+  log_dir: "/tmp/logs/universal-stargate-master"
+
+# Model routing
+model_routing:
+  default_sticky: true
+  sticky_overrides:
+    zyphra-zr1-1-5b-q8-0-4096: false
+
+# Request queue
+request_queue:
+  max_size: 1000
+  default_timeout: 300
+
+# Routing configuration
+routing:
+  scoring:
+    # Weights for routing decisions
+    warm_weight: 100
+    slack_weight: 10
+    contention_weight: 1000  # High weight: route to least busy gateway (critical for non-sticky load balancing)
+    staleness_weight: 30
+    eviction_weight: 20
+    affinity_weight: 200
+    stability_weight: 40
+    
+    # Cold-load spreading (distribute loads across multiple gateways)
+    empty_gateway: 10000  # Strong preference for empty gateways (avoid overloading one gateway)
+    busy_models: 1000     # Penalize gateways with many busy models (spread the load)
+    
+    # Eviction margin (T2 must be this much better than T1)
+    eviction_margin: 50
+    
+    # Capacity limits
+    capacity: {}

@@ -1,0 +1,216 @@
+# ⚠️ OBSOLETE - DO NOT USE
+# This Dockerfile is obsolete. Use the new two-stage deployment model instead:
+# - Dockerfile.golem-base (base image with runtime only)
+# - scripts/build_golem_tarball.sh (application code tarball)
+#
+# See: GOLEM_BUILD_GUIDE.md for the new build process
+#
+# ============================================================================
+# OLD: Dockerfile.golem-mutable
+# Mutable variant - uses /app/models as read-write mount point
+# Unlike Dockerfile.golem, this allows models to be added/modified after build
+#
+# Multi-stage build:
+# - Builder stage: Compile llama-cpp-python and other packages
+# - Runtime stage: Minimal image with only runtime dependencies
+
+ARG PYTHON_VERSION=3.12
+
+# CPU optimization level (CPU-only build - optimizations are CRITICAL):
+# - "avx2" (default): x86-64-v3 with AVX2, FMA, F16C - 2-3x faster, broad compatibility
+#   Requires: Intel Haswell+ (2013+), AMD Excavator+ (2015+)
+#   RECOMMENDED for Golem Network (unknown provider hardware)
+# - "avx512": x86-64-v4 with AVX-512, VNNI, VBMI - 4-6x faster for quantized models
+#   Requires: Intel Ice Lake+ (2019+), AMD Zen 4+ (2022+)
+#   Use for known modern server deployments
+# - "generic": x86-64 baseline - maximum portability, slowest
+#   Use only for very old hardware or maximum compatibility
+# 
+# Build with specific optimization:
+#   docker build --build-arg CPU_OPTIMIZATION=avx512 -f Dockerfile.golem-mutable -t gateway:golem-mutable-avx512 .
+ARG CPU_OPTIMIZATION=avx2
+ARG LLAMA_CPP_PYTHON_VERSION=
+
+# ============================================================================
+# Builder Stage: Compile Python packages (llama-cpp-python requires compilation)
+# ============================================================================
+FROM python:${PYTHON_VERSION}-slim AS builder
+
+# Install build dependencies
+# - build-essential: gcc, g++, make
+# - cmake: required for llama-cpp-python build
+# - pkg-config: required by CMake to find OpenBLAS
+# - curl: utilities
+# - libopenblas-dev: BLAS library for CPU acceleration (2-3x faster inference)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    pkg-config \
+    curl \
+    libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Install Python packages with CPU-only build flags
+COPY requirements.docker.txt /build/
+
+# Set CPU optimization flags based on build argument
+# Default: AVX2 (x86-64-v3) for broad compatibility on Golem Network
+ARG CPU_OPTIMIZATION
+RUN if [ "$CPU_OPTIMIZATION" = "avx512" ]; then \
+    echo "🚀 CPU Optimization: AVX-512 (x86-64-v4) - 4-6x faster quantized inference"; \
+    echo "export LLAMA_CPU_ARCH=x86-64-v4" >> /build/cpu_flags.env; \
+    echo 'export LLAMA_CPU_FLAGS="-O3 -march=x86-64-v4 -mtune=generic -ffast-math -fno-finite-math-only"' >> /build/cpu_flags.env; \
+    echo "export LLAMA_AVX512_ENABLE=ON" >> /build/cpu_flags.env; \
+    echo "export LLAMA_AVX2_ENABLE=ON" >> /build/cpu_flags.env; \
+    elif [ "$CPU_OPTIMIZATION" = "avx2" ]; then \
+    echo "⚡ CPU Optimization: AVX2 (x86-64-v3) - 2-3x faster, broad compatibility"; \
+    echo "export LLAMA_CPU_ARCH=x86-64-v3" >> /build/cpu_flags.env; \
+    echo 'export LLAMA_CPU_FLAGS="-O3 -march=x86-64-v3 -mtune=generic -ffast-math -fno-finite-math-only"' >> /build/cpu_flags.env; \
+    echo "export LLAMA_AVX512_ENABLE=OFF" >> /build/cpu_flags.env; \
+    echo "export LLAMA_AVX2_ENABLE=ON" >> /build/cpu_flags.env; \
+    else \
+    echo "📦 CPU Optimization: Generic (x86-64) - maximum portability"; \
+    echo "export LLAMA_CPU_ARCH=x86-64" >> /build/cpu_flags.env; \
+    echo 'export LLAMA_CPU_FLAGS="-O3 -march=x86-64 -mtune=generic -fno-finite-math-only"' >> /build/cpu_flags.env; \
+    echo "export LLAMA_AVX512_ENABLE=OFF" >> /build/cpu_flags.env; \
+    echo "export LLAMA_AVX2_ENABLE=OFF" >> /build/cpu_flags.env; \
+    fi && \
+    cat /build/cpu_flags.env
+
+# CMAKE_ARGS: CPU-only build with OpenBLAS acceleration and CPU optimizations
+#
+# Base flags:
+# - DGGML_BLAS=ON: Enable BLAS support for faster matrix operations
+# - DGGML_BLAS_VENDOR=OpenBLAS: Use OpenBLAS library
+# - DGGML_CUDA=OFF: No CUDA (GPU) support
+# - DGGML_METAL=OFF: No Metal (macOS GPU) support
+#
+# CPU optimization flags (CRITICAL for CPU-only inference):
+# - DLLAMA_AVX512=ON: Enable AVX-512 foundation instructions (512-bit SIMD)
+# - DLLAMA_AVX512_VBMI=ON: Vector Byte Manipulation Instructions (data shuffling)
+# - DLLAMA_AVX512_VNNI=ON: Vector Neural Network Instructions (2-4x faster quantized inference)
+# - DLLAMA_AVX2=ON: AVX2 256-bit SIMD (default, broad compatibility)
+# - DLLAMA_FMA=ON: Fused Multiply-Add (single-cycle multiply+add)
+# - DLLAMA_F16C=ON: Half-precision float conversion
+# - DCMAKE_CXX_FLAGS/C_FLAGS: Architecture-specific compiler flags
+#
+# Performance impact: 2-6x faster CPU inference vs generic build (depending on optimization level)
+# FORCE_CMAKE: Ensure llama-cpp-python builds from source with our flags
+# CMAKE_BUILD_PARALLEL_LEVEL: Use all available CPU cores for faster compilation
+# Install to /build/packages for easy copying to runtime stage
+RUN . /build/cpu_flags.env && \
+    pip install --no-cache-dir --upgrade pip && \
+    CMAKE_ARGS="-DGGML_BLAS=ON \
+    -DGGML_BLAS_VENDOR=OpenBLAS \
+    -DGGML_CUDA=OFF \
+    -DGGML_METAL=OFF \
+    -DLLAMA_AVX512=${LLAMA_AVX512_ENABLE} \
+    -DLLAMA_AVX512_VBMI=${LLAMA_AVX512_ENABLE} \
+    -DLLAMA_AVX512_VNNI=${LLAMA_AVX512_ENABLE} \
+    -DLLAMA_AVX2=${LLAMA_AVX2_ENABLE} \
+    -DLLAMA_FMA=ON \
+    -DLLAMA_F16C=ON \
+    -DCMAKE_CXX_FLAGS=\"${LLAMA_CPU_FLAGS}\" \
+    -DCMAKE_C_FLAGS=\"${LLAMA_CPU_FLAGS}\" \
+    -DGGML_BUILD_EXAMPLES=OFF \
+    -DGGML_BUILD_TESTS=OFF \
+    -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_TESTS=OFF" \
+    CMAKE_BUILD_PARALLEL_LEVEL=$(nproc) \
+    FORCE_CMAKE=1 \
+    pip install --no-cache-dir --prefix=/build/packages -r requirements.docker.txt
+
+# ============================================================================
+# Runtime Stage: Minimal image with only runtime dependencies
+# ============================================================================
+FROM python:${PYTHON_VERSION}-slim
+
+# Install runtime dependencies
+# - curl: healthchecks and utilities
+# - libgomp1: OpenMP runtime (required by llama-cpp-python for parallelization)
+# - libopenblas0: OpenBLAS runtime library (provides 2-3x faster CPU inference)
+RUN apt-get update && apt-get install -y \
+    curl \
+    libgomp1 \
+    libopenblas0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy compiled Python packages from builder
+COPY --from=builder /build/packages /usr/local
+
+# Copy project structure
+COPY libs/ /app/libs/
+COPY services/_universal-llm-gateway /app/services/_universal-llm-gateway/
+COPY services/universal-stargate /app/services/universal-stargate/
+COPY config/ /app/config/
+COPY sitecustomize.py /app/
+
+# Set Python path for runtime (critical for importing libs/*)
+ENV PYTHONPATH=/app/libs
+
+# Set workspace root for detection (Docker doesn't have .git)
+ENV WORKSPACE_ROOT=/app
+
+# Verify workspace structure for root detection
+RUN echo "=== Verifying workspace structure ===" && \
+    test -d /app/libs && echo "✅ /app/libs/ exists" || echo "❌ /app/libs/ missing" && \
+    test -d /app/services && echo "✅ /app/services/ exists" || echo "❌ /app/services/ missing" && \
+    test -f /app/config/model_catalog.yaml && echo "✅ /app/config/model_catalog.yaml exists" || echo "❌ /app/config/model_catalog.yaml missing" && \
+    echo "✅ Workspace structure verified (2/3 markers: config/model_catalog.yaml + services/libs dirs)"
+
+# ============================================================================
+# MUTABLE VARIANT: /app/models as mount point (NOT a Docker volume)
+# ============================================================================
+# Create /app/models directory for host bind mount
+# This directory will be mounted from the host as read-write
+RUN mkdir -p /app/models
+
+# ============================================================================
+# GOLEM VOLUMES: Kept for output/logs (but not models in mutable variant)
+# ============================================================================
+# Create volume directories for output and logs only
+RUN mkdir -p /golem/input /golem/output /golem/logs && \
+    echo "Volume directories created for output and logs"
+
+# Volume for input data (if needed)
+VOLUME ["/golem/input"]
+
+# Volume for output/results
+VOLUME ["/golem/output"]
+
+# Volume for logs (avoid 128MB tmpfs limit)
+VOLUME ["/golem/logs"]
+
+# ============================================================================
+# MUTABLE VARIANT: Models are in /app/models (bind mount), not /golem/models
+# ============================================================================
+
+# Create non-volume directories for runtime state
+# These are limited to 128MB total in tmpfs
+RUN mkdir -p /tmp/universal-protocol \
+    /tmp/process_ipc \
+    /app/runtime
+
+# ============================================================================
+# Configuration (baked in as defaults - can be overridden via volumes or env vars)
+# ============================================================================
+COPY services/_universal-llm-gateway/config /app/services/_universal-llm-gateway/config.default
+COPY services/universal-stargate/config /app/services/universal-stargate/config.default
+
+# WORKDIR sets default directory for shell commands
+WORKDIR /app/services/_universal-llm-gateway
+
+# Create a startup script for the mutable variant
+COPY docker/runtime/golem-start.sh /app/golem-start.sh
+RUN chmod +x /app/golem-start.sh
+
+# Add labels for runtime inspection
+ARG CPU_OPTIMIZATION
+LABEL cpu.optimization="${CPU_OPTIMIZATION}"
+LABEL cpu.only="true"
+LABEL platform="mutable"
+LABEL variant="mutable"

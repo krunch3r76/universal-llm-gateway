@@ -1,0 +1,240 @@
+# Dockerfile.golem-base
+# Base image for Golem deployment - RUNTIME ONLY (no application code)
+# Application code is deployed separately via tarball
+#
+# Multi-stage build:
+# - Builder stage: Install Python packages
+# - llama-server-builder stage: Build llama-server from llama.cpp source
+# - Runtime stage: Minimal image with only runtime dependencies
+
+ARG PYTHON_VERSION=3.12
+
+# llama-server version (git ref: commit, tag, or "main")
+ARG LLAMA_SERVER_VERSION=main
+
+# CPU optimization level (CPU-only build - optimizations are CRITICAL):
+# - "avx2" (default): x86-64-v3 with AVX2, FMA, F16C - 2-3x faster, broad compatibility
+#   Requires: Intel Haswell+ (2013+), AMD Excavator+ (2015+)
+#   RECOMMENDED for Golem Network (unknown provider hardware)
+# - "avx512": x86-64-v4 with AVX-512, VNNI, VBMI - 4-6x faster for quantized models
+#   Requires: Intel Ice Lake+ (2019+), AMD Zen 4+ (2022+)
+#   Use for known modern server deployments
+# - "generic": x86-64 baseline - maximum portability, slowest
+#   Use only for very old hardware or maximum compatibility
+# 
+# Build with specific optimization:
+#   docker build --build-arg CPU_OPTIMIZATION=avx512 -f Dockerfile.golem-base -t universal-llm-gateway:golem-base .
+ARG CPU_OPTIMIZATION=avx2
+
+# ============================================================================
+# Builder Stage: Install Python packages (no compilation)
+# ============================================================================
+FROM python:${PYTHON_VERSION}-slim AS builder
+
+# Install minimal build dependencies (curl for pip bootstrap only)
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Install Python packages (no compilation needed)
+COPY requirements.docker.txt /build/
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --prefix=/build/packages -r requirements.docker.txt
+
+
+# ============================================================================
+# llama-server-builder Stage: Build llama-server from llama.cpp source
+# ============================================================================
+FROM python:${PYTHON_VERSION}-slim AS llama-server-builder
+
+# Install build dependencies
+# - build-essential: gcc, g++, make
+# - cmake: required for llama.cpp build
+# - ninja-build: fast build tool (alternative to make)
+# - pkg-config: required by CMake to find OpenBLAS
+# - git: clone llama.cpp repository
+# - curl: utilities
+# - libopenblas-dev: BLAS library for CPU acceleration
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    git \
+    curl \
+    libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG LLAMA_SERVER_VERSION
+ARG CPU_OPTIMIZATION
+
+WORKDIR /build/llama-server-build
+
+# Clone llama.cpp (shallow clone for speed)
+RUN if [ "${LLAMA_SERVER_VERSION}" = "main" ] || [ "${LLAMA_SERVER_VERSION}" = "latest" ]; then \
+    git clone --depth=1 https://github.com/ggml-org/llama.cpp.git .; \
+    else \
+    git clone --depth=1 --branch "${LLAMA_SERVER_VERSION}" https://github.com/ggml-org/llama.cpp.git . 2>/dev/null || { \
+        git clone https://github.com/ggml-org/llama.cpp.git . && \
+        git checkout "${LLAMA_SERVER_VERSION}"; \
+    }; \
+    fi && \
+    ACTUAL_COMMIT=$(git rev-parse --short HEAD) && \
+    echo "🔨 Building llama-server from llama.cpp ${ACTUAL_COMMIT}"
+
+# Map CPU optimization to CMake flags (CPU-only, no CUDA)
+RUN case "${CPU_OPTIMIZATION}" in \
+    native) \
+        CMAKE_C_FLAGS="-O3 -march=native -mtune=native -ffast-math -fno-finite-math-only -funroll-loops -fomit-frame-pointer -falign-functions=32 -falign-loops=32 -fprefetch-loop-arrays -ftree-vectorize -fno-signed-zeros -fno-trapping-math"; \
+        ;; \
+    avx512) \
+        CMAKE_C_FLAGS="-O3 -march=x86-64-v4 -mtune=generic -ffast-math -fno-finite-math-only"; \
+        ;; \
+    avx2) \
+        CMAKE_C_FLAGS="-O3 -march=x86-64-v3 -mtune=generic -ffast-math -fno-finite-math-only"; \
+        ;; \
+    generic) \
+        CMAKE_C_FLAGS="-O3 -march=x86-64 -mtune=generic -fno-finite-math-only"; \
+        ;; \
+    *) \
+        echo "❌ Unknown CPU_OPTIMIZATION: ${CPU_OPTIMIZATION}"; \
+        exit 1; \
+        ;; \
+    esac && \
+    echo "   CPU flags: ${CMAKE_C_FLAGS}" && \
+    mkdir -p build && cd build && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/llama-server \
+        -DCMAKE_C_FLAGS="${CMAKE_C_FLAGS}" \
+        -DCMAKE_CXX_FLAGS="${CMAKE_C_FLAGS}" \
+        -DGGML_CUDA=OFF \
+        -DGGML_METAL=OFF \
+        -DGGML_BLAS=ON \
+        -DGGML_BLAS_VENDOR=OpenBLAS \
+        -DGGML_OPENMP=ON \
+        -DBUILD_SHARED_LIBS=OFF \
+        -G Ninja && \
+    cmake --build . --config Release --target llama-server -j$(nproc) && \
+    mkdir -p /opt/llama-server/bin && \
+    cp bin/llama-server /opt/llama-server/bin/ && \
+    chmod +x /opt/llama-server/bin/llama-server && \
+    ACTUAL_COMMIT=$(git -C .. rev-parse --short HEAD) && \
+    echo "commit: ${ACTUAL_COMMIT}" > /opt/llama-server/BUILD_INFO && \
+    echo "version: ${LLAMA_SERVER_VERSION}" >> /opt/llama-server/BUILD_INFO && \
+    echo "cpu: ${CPU_OPTIMIZATION}" >> /opt/llama-server/BUILD_INFO && \
+    echo "cpu_flags: ${CMAKE_C_FLAGS}" >> /opt/llama-server/BUILD_INFO && \
+    echo "cuda: OFF" >> /opt/llama-server/BUILD_INFO && \
+    echo "blas: OpenBLAS" >> /opt/llama-server/BUILD_INFO && \
+    echo "build_date: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /opt/llama-server/BUILD_INFO && \
+    echo "✅ llama-server built: $(du -h /opt/llama-server/bin/llama-server | cut -f1)"
+
+
+# ============================================================================
+# Runtime Stage: Minimal image with only runtime dependencies
+# ============================================================================
+FROM python:${PYTHON_VERSION}-slim
+
+# Install runtime dependencies
+# - curl: healthchecks and utilities
+# - libgomp1: OpenMP runtime (required by llama-server for parallelization)
+# - libopenblas0: OpenBLAS runtime library (provides 2-3x faster CPU inference)
+RUN apt-get update && apt-get install -y \
+    curl \
+    libgomp1 \
+    libopenblas0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Python packages from builder
+COPY --from=builder /build/packages /usr/local
+
+# Copy llama-server from llama-server-builder
+COPY --from=llama-server-builder /opt/llama-server /opt/llama-server
+
+# Add llama-server to PATH
+ENV PATH="/opt/llama-server/bin:${PATH}"
+
+# ============================================================================
+# Security: Create non-root user (BEFORE creating directories)
+# ============================================================================
+# Create application user and group with UID/GID 1000 (standard first user)
+# This follows Docker security best practices and prevents privilege escalation
+# if the container is compromised.
+#
+# Why UID 1000?
+# - Standard first user ID on most Linux systems
+# - Matches typical developer workstation user
+# - Simplifies volume permission management
+#
+# Security benefits:
+# - Reduces container escape risk (many CVEs require root)
+# - Limits blast radius of application vulnerabilities
+# - Meets SOC 2, ISO 27001, PCI-DSS compliance requirements
+# - Passes CIS Docker Benchmark security scans
+RUN groupadd -r appuser --gid=1000 || groupmod -n appuser $(getent group 1000 | cut -d: -f1) && \
+    useradd -r -g appuser --uid=1000 --no-log-init appuser || usermod -l appuser -d /home/appuser -m $(getent passwd 1000 | cut -d: -f1)
+
+# ============================================================================
+# Golem Directory Structure (per contract)
+# ============================================================================
+# /golem/work/   - Writable volume - code deployed here by requestor
+# /golem/models/ - Writable volume - model files
+# /golem/logs/   - Writable volume - log output
+# /golem/output/ - Writable volume - results
+# /golem/input/  - Writable volume - input data (optional)
+#
+# CRITICAL: Directories created and owned by appuser for non-root operation
+RUN mkdir -p /golem/work /golem/models /golem/logs /golem/output /golem/input && \
+    chown -R appuser:appuser /golem
+
+# Declare writable volumes
+VOLUME ["/golem/work"]
+VOLUME ["/golem/models"]
+VOLUME ["/golem/logs"]
+VOLUME ["/golem/output"]
+VOLUME ["/golem/input"]
+
+# ============================================================================
+# Default Environment Variables (can be overridden by requestor)
+# ============================================================================
+# PYTHONPATH will be set by requestor to /golem/work/app/libs
+# WORKSPACE_ROOT will be set by requestor to /golem/work/app
+# MODEL_PATH_ROOT points to Golem models volume
+ENV PYTHONPATH=/golem/work/app/libs
+ENV WORKSPACE_ROOT=/golem/work/app
+ENV MODEL_PATH_ROOT=/golem/models
+
+# ============================================================================
+# Runtime directories (tmpfs - limited to 128MB total)
+# ============================================================================
+# CRITICAL: Must be owned by appuser for socket creation and IPC
+RUN mkdir -p /tmp/universal-protocol \
+    /tmp/process_ipc && \
+    chown -R appuser:appuser /tmp/universal-protocol /tmp/process_ipc
+
+# ============================================================================
+# Switch to non-root user (SECURITY HARDENING)
+# ============================================================================
+# All subsequent operations and container runtime will execute as appuser (UID 1000)
+# This prevents privilege escalation and reduces attack surface
+USER appuser
+
+# ============================================================================
+# Labels for runtime inspection
+# ============================================================================
+ARG CPU_OPTIMIZATION
+LABEL cpu.optimization="${CPU_OPTIMIZATION}"
+LABEL cpu.only="true"
+LABEL platform="golem"
+LABEL variant="base"
+LABEL contract.version="1.0"
+LABEL security.user="appuser"
+LABEL security.uid="1000"
+
+# Default working directory (will be overridden by requestor)
+WORKDIR /golem/work
+
+# No CMD or ENTRYPOINT - requestor will execute golem-start.sh from tarball
+# Golem execution will run as appuser (UID 1000)

@@ -1,0 +1,5 @@
+# Python Service Manager Dependencies
+# Required for stargate_service_manager.py
+
+psutil>=5.9.0
+python-dotenv>=1.0.0

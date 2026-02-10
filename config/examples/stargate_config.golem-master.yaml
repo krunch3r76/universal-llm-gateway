@@ -1,0 +1,73 @@
+# Golem Master Stargate Configuration
+# Optimized for low network cost + responsive inference
+
+gateway:
+  url: "http://localhost:9998"  # Local gateway (if running)
+  timeout: 30.0
+
+proxy:
+  port: 9999
+  host: "0.0.0.0"
+
+federation:
+  mode: MASTER
+  
+  # HTTP polling (required for Golem - no WebSocket support)
+  disable_websocket: true
+  
+  # Telemetry polling configuration
+  # Base interval for idle remotes (no active requests)
+  # Higher = less network cost, slower state visibility
+  telemetry_poll_interval_ms: 60000  # 60s (Golem-optimized)
+  
+  # Fast interval during active inference
+  # Lower = more responsive, higher network cost during inference
+  fast_poll_interval_ms: 5000  # 5s
+  
+  # Continue fast polling after request completes
+  # Catches post-inference cleanup (model unload, VRAM release)
+  fast_poll_cooldown_ms: 30000  # 30s
+  
+  # Telemetry logging (on Remote nodes)
+  telemetry_log_level: "INFO"  # INFO = only state changes, DEBUG = all snapshots
+  
+  # Remote Stargate endpoints (via yapapi HTTP proxy)
+  remotes:
+    - id: golem-node-1
+      url: "http://localhost:8001"  # yapapi proxy port
+      api_key: "${FEDERATION_KEY_GOLEM_1}"
+      telemetry_log_level: "INFO"  # Per-remote override
+    
+    - id: golem-node-2
+      url: "http://localhost:8002"
+      api_key: "${FEDERATION_KEY_GOLEM_2}"
+      telemetry_log_level: "INFO"
+
+logging:
+  level: "INFO"
+  enable_console: true
+  enable_file: true
+  log_dir: "/tmp/logs/stargate"
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │ Network Cost Estimates (per remote)                        │
+# ├─────────────────────┬───────────────┬───────────────────────┤
+# │ Scenario            │ Traffic/hour  │ Golem Cost Impact     │
+# ├─────────────────────┼───────────────┼───────────────────────┤
+# │ Mostly idle (95%)   │ ~36KB         │ Minimal (<$0.01/day)  │
+# │ Moderate use (50%)  │ ~99KB         │ Low (<$0.05/day)      │
+# │ Heavy use (90%)     │ ~300KB        │ Moderate (~$0.10/day) │
+# └─────────────────────┴───────────────┴───────────────────────┘
+#
+# Polling behavior:
+# - IDLE (no active requests): 60s interval (1 poll/min)
+# - BUSY (active requests): 5s interval (12 polls/min)
+# - COOLDOWN (30s after request completes): 5s interval
+#
+# Empty delta optimization:
+# - Remote returns 204 No Content when no state changes
+# - Master skips processing (saves ~200 bytes)
+#
+# List field optimization:
+# - Small model list changes: {"added": [...], "removed": [...]}
+# - Large model list changes: Full list (snapshot)

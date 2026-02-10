@@ -1,0 +1,6 @@
+# Model Catalog - V2 Schema
+# Models are now in config/models/**/<model_id>.yaml
+schema_version: 2
+catalog_version: '1.0'
+catalog_type: static
+# models section removed - all models in individual files

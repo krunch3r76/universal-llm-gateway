@@ -1,0 +1,130 @@
+# Docker Compose for Network-Isolated LLM Gateway
+#
+# This configuration demonstrates complete network isolation:
+# - Container has NO network access (network_mode: "none")
+# - Communication via Unix sockets only
+# - Sockets exposed via volume mounts
+#
+# Security benefits:
+# - No network attack surface
+# - No port exposure
+# - Defense-in-depth architecture
+#
+# Usage:
+#   docker compose -f docker/docker-compose.unix-socket.yml up
+#
+# Prerequisites:
+#   - Docker image built: universal-llm-gateway:gpu
+#   - Socket directory exists: mkdir -p /tmp/universal-sockets
+#   - Models directory: ${MODEL_PATH_ROOT} or ~/.models
+
+services:
+  gateway-stargate:
+    image: universal-llm-gateway:gpu
+    container_name: universal-gateway-isolated
+
+    # CRITICAL: Complete network isolation
+    # No TCP/IP networking - Unix sockets only
+    network_mode: "none"
+
+    # GPU support (for GPU-enabled models)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+
+    # Shared memory for CUDA and worker processes
+    ipc: host
+
+    # Security options: Allow AVX-512 and other CPU features
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+
+    # Volume mounts
+    volumes:
+      # Model storage (read-only for security)
+      - ${MODEL_PATH_ROOT:-$HOME/.models}:/golem/models:ro
+
+      # Unix sockets (shared with host)
+      - /tmp/universal-sockets:/sockets
+
+      # Configuration overrides
+      # Note: Gateway configuration is now in stargate_config.yaml (no separate gateways.yaml)
+
+      # User-specific pipelines and handlers
+      - ${HOME}/.local/share/universal-stargate:/root/.local/share/universal-stargate:ro
+
+      # Logs (persistent)
+      - gateway-isolated-logs:/golem/logs
+
+      # Output/state
+      - gateway-isolated-output:/golem/output
+
+      # CUDA kernel cache (speeds up first inference)
+      - cuda-cache:/root/.nv
+
+    environment:
+      # Unix socket paths (inside container)
+      - GATEWAY_UNIX_SOCKET=/sockets/gateway.sock
+      - STARGATE_UNIX_SOCKET=/sockets/stargate.sock
+
+      # Model configuration
+      - MODEL_PATH_ROOT=/golem/models
+
+      # Service configuration (not used in Unix socket mode, but kept for compatibility)
+      - GATEWAY_HOST=0.0.0.0
+      - GATEWAY_PORT=9998
+      - STARGATE_HOST=0.0.0.0
+      - STARGATE_PORT=9999
+
+      # Common settings
+      - LOG_LEVEL=info
+      - ENVIRONMENT=docker-gpu-isolated
+      - WS_AUTH_ENABLED=false
+
+      # GPU configuration
+      - GPU_ENABLED=true
+      - CUDA_VISIBLE_DEVICES=0
+
+      # Resource paths
+      - WORKER_LOG_DIR=/golem/logs/workers
+      - SOCKET_DIR=/golem/output/sockets
+      - MODEL_CACHE_DIR=/golem/models
+
+      # Features
+      - ENABLE_MODEL_AVAILABILITY_CHECK=true
+      - ENABLE_MANAGEMENT_API=true
+      - DISABLE_HEALTH_CHECKING=false
+
+      # Timeouts
+      - PROCESS_STARTUP_TIMEOUT=600
+      - GATEWAY_SHUTDOWN_GRACE=30
+
+      # Stargate configuration
+      - STARGATE_CONFIG=/app/services/universal-stargate/config/stargate_config.docker.yaml
+      
+      # Debug event socket (enable with DEBUG_EVENT_SOCKET=/sockets/events.sock)
+      - DEBUG_EVENT_SOCKET=${DEBUG_EVENT_SOCKET:-}
+
+    # Start both Gateway and Stargate services
+    entrypoint: [ "/app/golem-start.sh" ]
+    command: [ "both" ]
+
+    restart: unless-stopped
+
+    # Health check via socket (not HTTP)
+    healthcheck:
+      test: [ "CMD", "sh", "-c", "test -S /sockets/gateway.sock && test -S /sockets/stargate.sock" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+volumes:
+  gateway-isolated-logs:
+  gateway-isolated-output:
+  cuda-cache:

@@ -1,0 +1,142 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+/build/
+*.egg
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.log
+*.sqlite
+*.db
+.pytest_cache/
+.coverage
+htmlcov/
+logs/
+
+# PyArmor license files (NEVER commit)
+pyarmor-regfile-*.zip
+pyarmor-regcode-*.txt
+
+# Environment files (contain secrets - NEVER commit)
+.env.*
+*.env.local
+.env.*.local
+config/env/*.local
+# Keep example files tracked
+!.env.example
+!.env.*.example
+tmp/
+docs/
+
+# IDE - Keep settings.json but ignore other VS Code files
+.vscode/
+.cursor/
+
+# Ruff cache (MUST be added BEFORE running ruff format/check)
+.ruff_cache/
+
+# Type checking
+.mypy_cache/
+.pytype/
+.pyre/
+
+prompts/
+tests/
+templates/
+.cursorignore
+.github/
+proposals/
+models/
+summaries/
+
+.git/
+changelog/
+# Local pipeline development workspace (not for public release)
+# Mature pipelines go in pipelines/ (tracked)
+pipelines.local/
+
+# Development artifacts
+report.txt
+ATTRIBUTION.txt
+
+# Generated images (regenerate from PlantUML sources in docs)
+*.svg
+*.png
+
+# Internal development docs (not for public release)
+**/README_AI.md
+**/PLAN.md
+**/PLAN_abandoned.md
+PROMPT_*.md
+**/README_TEMP.md
+
+# Development working notes
+pipelines.local/consensus/.v4.0_abandoned/
+pipelines.local/consensus/notes.md
+pipelines.local/consensus/VISION.md
+pipelines.local/consensus/VISION_NEXT.md
+pipelines.local/consensus/SUMMARY.md
+pipelines.local/consensus/DOCS_INDEX.md
+pipelines.local/consensus/PROVENANCE.md
+pipelines.local/consensus/v3.3/STATUS.md
+pipelines.local/consensus/v3.3/DEBUGGING.md
+pipelines.local/consensus/v3.3/CONTRACTS.md
+pipelines.local/consensus/v3.3/PROVENANCE.md
+pipelines.local/consensus/v3.305/types-implementation-prompt.md
+
+# Internal build/bugfix notes
+docker/docs/bugfixes/
+docker/docs/optimization/changelog-cpu-optimization.md
+libs/inference_djinn/scripts/build/python_builders/llama_cpp/COMPATIBILITY_MATRIX_UPDATE.md
+libs/inference_djinn/scripts/build/python_builders/llama_cpp/EXPERIMENTAL_BUILD.md
+libs/inference_djinn/scripts/build/python_builders/llama_cpp/README_EXPERIMENTAL.md
+libs/inference_djinn/scripts/build/python_builders/vllm/VERSION_PINNING.md
+libs/inference_djinn/scripts/build/shell/vllm/VLLM_BUILD_SCRIPT_UPDATES.md
+services/universal-stargate/systems/pipeline/BUGFIX_event_persistence.md
+
+# Golem-specific testing/deployment docs (not relevant for general users)
+docker/compose/README-golem-testing.md
+scripts/README_GOLEM.md
+QUICK_REFERENCE.md
+
+# Internal reference docs (granular implementation details)
+scripts/BATCHING_DIAGNOSTICS.md
+examples/pipeline-execution-summary-example.md
+examples/ocr-domain/
+libs/inference_djinn/scripts/build/shell/llama_cpp/MIGRATION.md
+services/universal-stargate/systems/federation/ANTI_PATTERNS.md
+services/universal-stargate/systems/federation/OPERATIONS.md
+services/universal-stargate/systems/federation/ORCHESTRATION.md
+services/universal-stargate/systems/federation/REFERENCE.md
+
+# Internal architecture notes
+services/universal-stargate/systems/federation/uml-clarify-telemetry-age-usage.md
+services/universal-stargate/systems/federation/telemetry-architecture-uml.md
+services/universal-stargate/docs/sse_abstraction_analysis.md
+services/universal-stargate/proposals/
+libs/universal_event_bus/proposals/
+libs/universal_transport/proposals/
+libs/universal_transport/tmp/
+libs/process_ipc/proposals/
+libs/universal_logging/DEMO.md
+libs/universal_event_bus/MIGRATION_GUIDE.md
+services/universal-stargate/systems/graphics/references/

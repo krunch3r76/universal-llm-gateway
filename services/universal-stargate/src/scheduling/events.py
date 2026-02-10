@@ -1,0 +1,2090 @@
+"""
+Event signals for Universal Stargate event-driven architecture.
+
+All events now use the UML Message structure from universal_event_bus.
+Events are created via factory functions and published as Event objects.
+
+The EventBus automatically injects:
+- timestamp: ISO 8601 string with milliseconds and Z suffix
+- id: Global counter for event ordering
+
+Usage:
+    from src.scheduling.events import GatewayStateChanged
+    event = GatewayStateChanged(
+        url="http://localhost:9998",
+        connectivity="reachable",
+        health="healthy",
+        previous_connectivity=None,
+        previous_health=None,
+        transition_type="initial",
+    )
+    await event_bus.publish_async_nowait(event)
+"""
+
+from typing import Any
+
+from model_id import ModelId
+from universal_event_bus import Event, event_factory
+
+# ========================================
+# Routing Metrics Event Signals (UDP-emitted metrics)
+# ========================================
+
+REQUEST_ROUTED = "request.routed"
+"""
+Request successfully routed to gateway
+Emitted when a request is routed to a specific gateway for processing.
+This metric is useful for tracking routing decisions and load distribution.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_url": str,
+    "gateway_name": str,
+    "timestamp": float,
+    "routing_time_ms": float,  # Time taken to route request
+    "queue_position": Optional[int],  # Position in queue if queued
+    "immediate_route": bool  # True if routed immediately, False if queued
+}
+"""
+
+MODEL_LOAD_INITIATED = "model.load.initiated"
+"""
+Model loading initiated on gateway
+Emitted when a model load operation is triggered.
+
+Payload: {
+    "model_id": str,
+    "gateway_url": str,
+    "gateway_name": str,
+    "timestamp": float,
+    "already_loaded": bool  # True if model was already loaded
+}
+"""
+
+MODEL_LOAD_COMPLETED = "model.load.completed"
+"""
+Model loading completed on gateway
+Emitted when a model finishes loading (successfully or failed).
+
+Payload: {
+    "model_id": str,
+    "gateway_url": str,
+    "gateway_name": str,
+    "timestamp": float,
+    "success": bool,
+    "load_time_ms": float,  # Time taken to load model
+    "error": Optional[str]  # Error message if failed
+}
+"""
+
+TOKEN_COUNT_COMPLETED = "request.token.counted"
+"""
+Token counting operation completed
+Emitted after token counting finishes for request preparation.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_url": str,
+    "timestamp": float,
+    "success": bool,
+    "count_time_ms": float,
+    "input_tokens": Optional[int],
+    "context_limit": Optional[int],
+    "allocated_max_tokens": Optional[int],
+    "error": Optional[str]
+}
+"""
+
+# ========================================
+# Routing Decision Event Signals
+# ========================================
+
+ROUTING_DECISION = "scheduler.routing.decided"
+"""
+Routing decision made by DecisionEngine.
+Emitted for every routing decision with full observability.
+
+Payload: {
+    "model_id": str,                    # Model being routed
+    "original_model_id": str | None,    # Original request model ID
+    "selected_gateway": str | None,     # Selected gateway name
+    "selection_reason": str,            # Why this gateway was selected
+    "selection_tier": str | None,       # T0/T1/T2 tier name
+    "candidate_count": int,             # Total candidates evaluated
+    "feasible_count": int,              # Number of feasible candidates
+    "evaluation_time_ms": float,        # Time spent in decision engine
+    "request_id": str | None,           # Proxy request ID for tracing
+    "timestamp": float,                 # Unix timestamp
+
+    # Optional detailed trace (expensive, enable for debugging)
+    "candidates": list[dict] | None,    # Full candidate details
+}
+"""
+
+ROUTING_DECISION_FAILED = "scheduler.routing.failed"
+"""
+Routing decision failed - no gateway available.
+Emitted when no feasible gateway can be found.
+
+Payload: {
+    "model_id": str,
+    "original_model_id": str | None,
+    "candidate_count": int,
+    "evaluation_time_ms": float,
+    "request_id": str | None,
+    "timestamp": float,
+    "reason": str
+}
+"""
+
+# ========================================
+# Gateway Event Signals
+# ========================================
+
+GATEWAY_STATE_CHANGED = "gateway.state.changed"
+"""
+Unified gateway state changed event (Phase 2)
+Consolidates connectivity and health changes into single comprehensive event.
+
+Payload: {
+    "url": str,
+    "connectivity": str,  # "reachable" | "unreachable"
+    "health": str,  # "healthy" | "unhealthy" | "unknown"
+    "previous_connectivity": Optional[str],
+    "previous_health": Optional[str],
+    "transition_type": str,  # "connectivity_only" | "health_only" | "both" | "initial"
+    "check_duration_ms": int
+}
+"""
+
+GATEWAY_RETRY_ATTEMPTED = "gateway.retry.attempted"
+"""
+Gateway request retry attempted (structured telemetry)
+Emitted when a gateway request fails and retry is attempted.
+
+Payload: {
+    "gateway_url": str,
+    "method": str,  # HTTP method
+    "path": str,
+    "attempt": int,  # Current attempt number (1-indexed)
+    "max_retries": int,
+    "error_type": str,  # Exception class name
+    "error_message": str,
+    "backoff_delay_ms": int  # Milliseconds until next retry
+}
+"""
+
+MODEL_LOADED = "model.loaded"
+"""
+Model loaded on gateway
+Payload: {
+    "url": str,
+    "model_id": str
+}
+"""
+
+MODEL_UNLOADED = "model.unloaded"
+"""
+Model unloaded from gateway
+Payload: {
+    "url": str,
+    "model_id": str
+}
+"""
+
+MODEL_LOADING_STARTED = "model.loading.started"
+"""
+Model loading started on gateway
+Payload: {
+    "url": str,
+    "model_id": str
+}
+"""
+
+MODEL_LOADING_FAILED = "model.loading.failed"
+"""
+Model loading failed on gateway
+Payload: {
+    "url": str,
+    "model_id": str,
+    "error": str
+}
+"""
+
+MODEL_EXECUTION_STARTED = "model.execution.started"
+"""
+Model execution request started (per-request lifecycle event).
+
+This is a **lifecycle event**, not a state signal. Each event represents
+one execution request starting. Consumer aggregates these to derive state.
+
+Current (llama.cpp): Set-based tracking (1 request at a time)
+Future (vLLM): Counter-based tracking (N concurrent requests)
+
+Workload-agnostic: Applies to LLM inference, ASR, image generation, etc.
+
+Payload: {
+    "url": str,       # Gateway URL
+    "model_id": str   # Model that started execution
+}
+"""
+
+MODEL_EXECUTION_COMPLETED = "model.execution.completed"
+"""
+Model execution request completed (per-request lifecycle event).
+
+**Scheduling signal**: Wakes queue processors to check if model has capacity.
+**Slot release**: GatewayTracker subscribes to auto-release reserved slots.
+
+INVARIANT: request_id and gateway_id always present
+
+Payload: {
+    "url": str,         # Gateway URL
+    "model_id": str,    # Model that completed execution
+    "request_id": str,  # Request identifier (for slot tracking)
+    "gateway_id": str,  # Gateway identifier (for slot tracking)
+}
+"""
+
+MODEL_CAPACITY_FREED = "model.capacity.freed"
+"""
+Wake-only signal: capacity likely increased on gateway/model.
+
+NOT a slot-release signal. Emitted when:
+- Gateway reports MODEL_IDLE (execution finished, model now idle)
+- Gateway reports MODEL_UNLOADED (model removed, resources freed)
+
+Consumers should re-check capacity but NOT release any tracked slots.
+
+Payload: {
+    "url": str,       # Gateway URL
+    "model_id": str,  # Model with freed capacity
+}
+"""
+
+GATEWAY_RESOURCE_UPDATE = "gateway.resource.updated"
+"""
+Gateway resource information updated
+Payload: {
+    "url": str,
+    "total_vram_mb": int,
+    "available_vram_mb": int,
+    "total_ram_mb": int,
+    "available_ram_mb": int,
+    "loaded_models": list[str],  # Set converted to list for JSON
+    "busy_models": list[str]     # Set converted to list for JSON
+}
+"""
+
+FEDERATION_GATEWAY_CATALOG_CHANGED = "federation.catalog.changed"
+"""
+Federated gateway catalog changed
+Emitted when a federated gateway's model catalog changes.
+Payload: {
+    "gateway_id": str,  # Unique identifier (e.g., "edge-localhost-gateway")
+    "old_model_count": int,
+    "new_model_count": int,
+    "event_type": str | None,  # Optional: 'added', 'removed', 'changed'
+    "models": list[str] | None,  # Optional: affected model IDs
+}
+"""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Federation Events (signal naming: past-tense verbs per workspace policy)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Connection lifecycle
+FEDERATION_CONNECTION_ESTABLISHED = "federation.connection.established"
+FEDERATION_CONNECTION_LOST = "federation.connection.lost"
+FEDERATION_CONNECTION_AUTHENTICATED = "federation.connection.authenticated"
+
+# Telemetry flow
+FEDERATION_TELEMETRY_RECEIVED = "federation.telemetry.received"
+FEDERATION_TELEMETRY_MARKED_STALE = "federation.telemetry.marked.stale"
+FEDERATION_TELEMETRY_APPLIED = "federation.telemetry.applied"
+
+# Routing decisions
+FEDERATION_ROUTING_DELEGATED = "federation.routing.delegated"
+FEDERATION_ROUTING_ROUTED_LOCAL = "federation.routing.routed.local"
+FEDERATION_ROUTING_REJECTED = "federation.routing.rejected"
+
+# Model load orchestration
+FEDERATION_LOAD_REQUESTED = "federation.load.requested"
+FEDERATION_LOAD_CONFIRMED = "federation.load.confirmed"
+FEDERATION_LOAD_FAILED = "federation.load.failed"
+
+# Orchestrator decisions
+FEDERATION_ORCHESTRATOR_DECIDED = "federation.orchestrator.decided"
+FEDERATION_ORCHESTRATOR_EVICTED = "federation.orchestrator.evicted"
+
+RESOURCE_RESERVED = "resource.reserved"
+"""
+Resources reserved for model loading
+Emitted when resource manager reserves VRAM/RAM for a model load operation.
+
+Payload: {
+    "gateway_name": str,
+    "model_id": str,
+    "reservation_id": str,
+    "vram_mb": int,
+    "ram_mb": int,
+    "timeout_seconds": float
+}
+"""
+
+RESOURCE_RELEASED = "resource.released"
+"""
+Resources released from reservation
+Emitted when resource reservation is released (completed, expired, or cancelled).
+
+Payload: {
+    "gateway_name": str,
+    "model_id": str,
+    "reservation_id": str,
+    "vram_mb": int,
+    "ram_mb": int,
+    "reason": str  # "completed" | "expired" | "cancelled"
+}
+"""
+
+# ========================================
+# Request Event Signals
+# ========================================
+
+REQUEST_QUEUED = "request.queued"
+"""
+Request added to queue
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "priority": int
+}
+"""
+
+REQUEST_PROCESSING = "request.processing"
+"""
+Request started processing
+Payload: {
+    "request_id": str,
+    "gateway_url": str,
+    "model_id": str
+}
+"""
+
+REQUEST_COMPLETED = "request.completed"
+"""
+Request completed successfully
+Payload: {
+    "request_id": str,
+    "gateway_url": str,
+    "model_id": str,
+    "duration": float
+}
+"""
+
+REQUEST_FAILED = "request.failed"
+"""
+Request failed
+Payload: {
+    "request_id": str,
+    "gateway_url": Optional[str],
+    "model_id": str,
+    "error": str
+}
+"""
+
+REQUEST_TIMEOUT = "request.timed.out"
+"""
+Request timed out
+Payload: {
+    "request_id": str,
+    "gateway_url": Optional[str],
+    "model_id": str,
+    "timeout_seconds": float
+}
+"""
+
+REQUEST_REMOVED = "request.removed"
+"""
+Request removed from queue (e.g., client disconnect)
+Payload: {
+    "request_id": str,
+    "reason": str,
+    "model_id": str,
+    "age_seconds": float
+}
+"""
+
+# ========================================
+# Master Queue Event Signals
+# ========================================
+
+QUEUE_MASTER_ENTERED = "queue.master.entered"
+"""
+Request entered master capacity queue.
+Emitted when a request starts waiting for system-wide capacity.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "compute_type": str,
+    "endpoint_category": str,
+    "queue_position": int,
+}
+"""
+
+QUEUE_MASTER_WOKEN = "queue.master.woken"
+"""
+Request woken from master capacity queue.
+Emitted when capacity becomes available and a waiter is released.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "compute_type": str,
+    "endpoint_category": str,
+    "wait_time_ms": float,
+    "gateway_id": str | None,  # Gateway with capacity
+}
+"""
+
+QUEUE_MASTER_TIMEOUT = "queue.master.timed.out"
+"""
+Request timed out in master capacity queue.
+Emitted when safety net timeout is exceeded.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "compute_type": str,
+    "endpoint_category": str,
+    "timeout_seconds": float,
+}
+"""
+
+QUEUE_MASTER_TOCTOU = "queue.master.toctou"
+"""
+TOCTOU race detected after master queue wake.
+Emitted when request fails capacity check after being woken.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "compute_type": str,
+    "endpoint_category": str,
+    "retry_count": int,
+}
+"""
+
+# ========================================
+# Pipeline Step Events: Embedding
+# ========================================
+
+PIPELINE_STEP_EMBEDDING_STARTED = "pipeline.step.embedding.started"
+"""
+Pipeline embedding step started.
+Emitted when a pipeline step begins fetching embeddings.
+
+Payload: {
+    "execution_id": str,
+    "step_id": str,
+    "model_id": str,
+    "input_count": int,
+}
+"""
+
+PIPELINE_STEP_EMBEDDING_COMPLETED = "pipeline.step.embedding.completed"
+"""
+Pipeline embedding step completed.
+Emitted when embeddings are successfully retrieved.
+
+Payload: {
+    "execution_id": str,
+    "step_id": str,
+    "model_id": str,
+    "input_count": int,
+    "duration_ms": float,
+    "embedding_dim": int,
+}
+"""
+
+PIPELINE_STEP_EMBEDDING_FAILED = "pipeline.step.embedding.failed"
+"""
+Pipeline embedding step failed.
+Emitted when embedding request fails.
+
+Payload: {
+    "execution_id": str,
+    "step_id": str,
+    "model_id": str,
+    "input_count": int,
+    "duration_ms": float,
+    "error": str,
+    "status_code": int | None,
+}
+"""
+
+# ========================================
+# Pipeline Step Events: Domain Verification
+# ========================================
+
+PIPELINE_STEP_DOMAIN_VERIFICATION_STARTED = "pipeline.step.domain.verification.started"
+"""
+Pipeline domain verification step started.
+Emitted when domain-specific verification begins for a domain.
+
+Payload: {
+    "execution_id": str,
+    "step_id": str,
+    "domain": str,
+    "model_id": str,
+    "statement_count": int,
+}
+"""
+
+PIPELINE_STEP_DOMAIN_VERIFICATION_COMPLETED = (
+    "pipeline.step.domain.verification.completed"
+)
+"""
+Pipeline domain verification step completed.
+Emitted when domain-specific verification completes for a domain.
+
+Payload: {
+    "execution_id": str,
+    "step_id": str,
+    "domain": str,
+    "model_id": str,
+    "statement_count": int,
+    "passed_count": int,
+    "failed_count": int,
+    "duration_ms": float,
+}
+"""
+
+# ========================================
+# System Event Signals
+# ========================================
+
+SYSTEM_STARTED = "system.started"
+"""
+System started
+Payload: {} (empty)
+"""
+
+SYSTEM_SHUTDOWN = "system.shutdown"
+"""
+System shutting down
+Payload: {} (empty)
+"""
+
+
+# ========================================
+# Factory Functions (Type-Safe Event Creation)
+# ========================================
+
+
+# Routing Events
+@event_factory
+def RequestRouted(
+    request_id: str,
+    model_id: str,
+    gateway_url: str,
+    gateway_name: str,
+    timestamp: float,
+    routing_time_ms: float,
+    queue_position: int | None = None,
+    immediate_route: bool = True,
+) -> Event:
+    """
+    Create REQUEST_ROUTED event.
+
+    INVARIANT: request_id always present (proxy request ID for tracking)
+
+    Args:
+        request_id: Proxy request ID for tracking and tracing
+        model_id: Model being routed
+        gateway_url: Selected gateway URL
+        gateway_name: Selected gateway name
+        timestamp: Unix timestamp
+        routing_time_ms: Time taken to route request
+        queue_position: Position in queue if queued
+        immediate_route: True if routed immediately, False if queued
+
+    Returns:
+        Event with RequestRouted signal
+    """
+    return Event(
+        signal=REQUEST_ROUTED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_url": gateway_url,
+            "gateway_name": gateway_name,
+            "timestamp": timestamp,
+            "routing_time_ms": routing_time_ms,
+            "queue_position": queue_position,
+            "immediate_route": immediate_route,
+        },
+    )
+
+
+@event_factory
+def ModelLoadInitiated(
+    model_id: str,
+    gateway_url: str,
+    gateway_name: str,
+    timestamp: float,
+    already_loaded: bool = False,
+    *,
+    request_id: str | None = None,
+) -> Event:
+    """
+    Create MODEL_LOAD_INITIATED event.
+
+    INVARIANT: request_id present when triggered by request
+
+    Args:
+        model_id: Model being loaded
+        gateway_url: Target gateway URL
+        gateway_name: Target gateway name
+        timestamp: Unix timestamp
+        already_loaded: True if model was already loaded
+        request_id: Proxy request ID (when triggered by request)
+
+    Returns:
+        Event with ModelLoadInitiated signal
+    """
+    payload = {
+        "model_id": model_id,
+        "gateway_url": gateway_url,
+        "gateway_name": gateway_name,
+        "timestamp": timestamp,
+        "already_loaded": already_loaded,
+    }
+    if request_id:
+        payload["request_id"] = request_id
+    return Event(signal=MODEL_LOAD_INITIATED, payload=payload)
+
+
+@event_factory
+def ModelLoadCompleted(
+    model_id: str,
+    gateway_url: str,
+    gateway_name: str,
+    timestamp: float,
+    success: bool,
+    load_time_ms: float,
+    error: str | None = None,
+    *,
+    request_id: str | None = None,
+) -> Event:
+    """
+    Create MODEL_LOAD_COMPLETED event.
+
+    INVARIANT: request_id present when triggered by request
+
+    Args:
+        model_id: Model that finished loading
+        gateway_url: Gateway URL
+        gateway_name: Gateway name
+        timestamp: Unix timestamp
+        success: True if load succeeded
+        load_time_ms: Time taken to load model
+        error: Error message if failed
+        request_id: Proxy request ID (when triggered by request)
+
+    Returns:
+        Event with ModelLoadCompleted signal
+    """
+    payload = {
+        "model_id": model_id,
+        "gateway_url": gateway_url,
+        "gateway_name": gateway_name,
+        "timestamp": timestamp,
+        "success": success,
+        "load_time_ms": load_time_ms,
+        "error": error,
+    }
+    if request_id:
+        payload["request_id"] = request_id
+    return Event(signal=MODEL_LOAD_COMPLETED, payload=payload)
+
+
+@event_factory
+def TokenCountCompleted(
+    request_id: str,
+    model_id: str,
+    gateway_url: str,
+    timestamp: float,
+    success: bool,
+    count_time_ms: float,
+    input_tokens: int | None = None,
+    context_limit: int | None = None,
+    allocated_max_tokens: int | None = None,
+    error: str | None = None,
+) -> Event:
+    """
+    Create TOKEN_COUNT_COMPLETED event.
+
+    INVARIANT: request_id always present (proxy request ID for tracking)
+
+    Args:
+        request_id: Proxy request ID for tracking and tracing
+        model_id: Model for token counting
+        gateway_url: Gateway URL
+        timestamp: Unix timestamp
+        success: True if count succeeded
+        count_time_ms: Time taken for token counting
+        input_tokens: Number of input tokens
+        context_limit: Model context limit
+        allocated_max_tokens: Allocated max_tokens value
+        error: Error message if failed
+
+    Returns:
+        Event with TokenCountCompleted signal
+    """
+    return Event(
+        signal=TOKEN_COUNT_COMPLETED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_url": gateway_url,
+            "timestamp": timestamp,
+            "success": success,
+            "count_time_ms": count_time_ms,
+            "input_tokens": input_tokens,
+            "context_limit": context_limit,
+            "allocated_max_tokens": allocated_max_tokens,
+            "error": error,
+        },
+    )
+
+
+@event_factory
+def RoutingDecision(
+    model_id: str,
+    selection_reason: str,
+    candidate_count: int,
+    feasible_count: int,
+    evaluation_time_ms: float,
+    timestamp: float,
+    original_model_id: str | None = None,
+    selected_gateway: str | None = None,
+    selection_tier: str | None = None,
+    request_id: str | None = None,
+    candidates: list[dict] | None = None,
+) -> Event:
+    """
+    Create ROUTING_DECISION event.
+
+    Args:
+        model_id: Model being routed
+        selection_reason: Why this gateway was selected
+        candidate_count: Total candidates evaluated
+        feasible_count: Number of feasible candidates
+        evaluation_time_ms: Time spent in decision engine
+        timestamp: Unix timestamp
+        original_model_id: Original request model ID
+        selected_gateway: Selected gateway name
+        selection_tier: T0/T1/T2 tier name
+        request_id: Proxy request ID for tracing
+        candidates: Full candidate details (optional, expensive)
+
+    Returns:
+        Event with RoutingDecision signal
+    """
+    return Event(
+        signal=ROUTING_DECISION,
+        payload={
+            "model_id": model_id,
+            "original_model_id": original_model_id,
+            "selected_gateway": selected_gateway,
+            "selection_reason": selection_reason,
+            "selection_tier": selection_tier,
+            "candidate_count": candidate_count,
+            "feasible_count": feasible_count,
+            "evaluation_time_ms": evaluation_time_ms,
+            "request_id": request_id,
+            "timestamp": timestamp,
+            "candidates": candidates,
+        },
+    )
+
+
+@event_factory
+def RoutingDecisionFailed(
+    model_id: str,
+    candidate_count: int,
+    evaluation_time_ms: float,
+    timestamp: float,
+    reason: str,
+    original_model_id: str | None = None,
+    request_id: str | None = None,
+) -> Event:
+    """
+    Create ROUTING_DECISION_FAILED event.
+
+    Args:
+        model_id: Model that failed to route
+        candidate_count: Total candidates evaluated
+        evaluation_time_ms: Time spent in decision engine
+        timestamp: Unix timestamp
+        reason: Failure reason
+        original_model_id: Original request model ID
+        request_id: Proxy request ID for tracing
+
+    Returns:
+        Event with RoutingDecisionFailed signal
+    """
+    return Event(
+        signal=ROUTING_DECISION_FAILED,
+        payload={
+            "model_id": model_id,
+            "original_model_id": original_model_id,
+            "candidate_count": candidate_count,
+            "evaluation_time_ms": evaluation_time_ms,
+            "request_id": request_id,
+            "timestamp": timestamp,
+            "reason": reason,
+        },
+    )
+
+
+# Gateway Events
+@event_factory
+def GatewayStateChanged(
+    url: str,
+    connectivity: str,
+    health: str,
+    transition_type: str,
+    previous_connectivity: str | None = None,
+    previous_health: str | None = None,
+    check_duration_ms: int = 0,
+) -> Event:
+    """
+    Create GATEWAY_STATE_CHANGED event.
+
+    Args:
+        url: Gateway URL
+        connectivity: "reachable" | "unreachable"
+        health: "healthy" | "unhealthy" | "unknown"
+        transition_type: "connectivity_only" | "health_only" | "both" | "initial"
+        previous_connectivity: Previous connectivity state
+        previous_health: Previous health state
+        check_duration_ms: Duration of health check
+
+    Returns:
+        Event with GatewayStateChanged signal
+    """
+    return Event(
+        signal=GATEWAY_STATE_CHANGED,
+        payload={
+            "url": url,
+            "connectivity": connectivity,
+            "health": health,
+            "previous_connectivity": previous_connectivity,
+            "previous_health": previous_health,
+            "transition_type": transition_type,
+            "check_duration_ms": check_duration_ms,
+        },
+    )
+
+
+@event_factory
+def GatewayRetryAttempted(
+    gateway_url: str,
+    method: str,
+    path: str,
+    attempt: int,
+    max_retries: int,
+    error_type: str,
+    error_message: str,
+    backoff_delay_ms: int,
+) -> Event:
+    """
+    Create GATEWAY_RETRY_ATTEMPTED event.
+
+    Args:
+        gateway_url: Gateway URL
+        method: HTTP method
+        path: Request path
+        attempt: Current attempt number (1-indexed)
+        max_retries: Maximum retry count
+        error_type: Exception class name
+        error_message: Error message
+        backoff_delay_ms: Milliseconds until next retry
+
+    Returns:
+        Event with GatewayRetryAttempted signal
+    """
+    return Event(
+        signal=GATEWAY_RETRY_ATTEMPTED,
+        payload={
+            "gateway_url": gateway_url,
+            "method": method,
+            "path": path,
+            "attempt": attempt,
+            "max_retries": max_retries,
+            "error_type": error_type,
+            "error_message": error_message,
+            "backoff_delay_ms": backoff_delay_ms,
+        },
+    )
+
+
+@event_factory
+def ModelLoaded(
+    url: str,
+    model_id: str,
+    gateway_name: str | None = None,
+    vram_mb: int | None = None,
+    ram_mb: int | None = None,
+) -> Event:
+    """
+    Create MODEL_LOADED event.
+
+    Args:
+        url: Gateway URL
+        model_id: Model that was loaded
+        gateway_name: Optional gateway name (for enriched events)
+        vram_mb: Optional VRAM usage in MB
+        ram_mb: Optional RAM usage in MB
+
+    Returns:
+        Event with ModelLoaded signal
+    """
+    payload: dict[str, Any] = {"url": url, "model_id": model_id}
+    if gateway_name is not None:
+        payload["gateway_name"] = gateway_name
+    if vram_mb is not None:
+        payload["vram_mb"] = vram_mb
+    if ram_mb is not None:
+        payload["ram_mb"] = ram_mb
+    return Event(signal=MODEL_LOADED, payload=payload)
+
+
+@event_factory
+def ModelUnloaded(
+    url: str,
+    model_id: str,
+    gateway_name: str | None = None,
+) -> Event:
+    """
+    Create MODEL_UNLOADED event.
+
+    Args:
+        url: Gateway URL
+        model_id: Model that was unloaded
+        gateway_name: Optional gateway name (for enriched events)
+
+    Returns:
+        Event with ModelUnloaded signal
+    """
+    payload: dict[str, Any] = {"url": url, "model_id": model_id}
+    if gateway_name is not None:
+        payload["gateway_name"] = gateway_name
+    return Event(signal=MODEL_UNLOADED, payload=payload)
+
+
+@event_factory
+def ModelLoadingStarted(url: str, model_id: str) -> Event:
+    """
+    Create MODEL_LOADING_STARTED event.
+
+    Args:
+        url: Gateway URL
+        model_id: Model starting to load
+
+    Returns:
+        Event with ModelLoadingStarted signal
+    """
+    return Event(
+        signal=MODEL_LOADING_STARTED, payload={"url": url, "model_id": model_id}
+    )
+
+
+@event_factory
+def ModelLoadingFailed(
+    url: str,
+    model_id: str,
+    error: str,
+    gateway_name: str | None = None,
+) -> Event:
+    """
+    Create MODEL_LOADING_FAILED event.
+
+    Args:
+        url: Gateway URL
+        model_id: Model that failed to load
+        error: Error message
+        gateway_name: Optional gateway name (for enriched events)
+
+    Returns:
+        Event with ModelLoadingFailed signal
+    """
+    payload: dict[str, Any] = {"url": url, "model_id": model_id, "error": error}
+    if gateway_name is not None:
+        payload["gateway_name"] = gateway_name
+    return Event(
+        signal=MODEL_LOADING_FAILED,
+        payload=payload,
+    )
+
+
+@event_factory
+def ModelExecutionStarted(url: str, model_id: str) -> Event:
+    """
+    Create model.execution.started event.
+
+    Lifecycle event: one execution request started on this model.
+    Consumer aggregates to derive busy state.
+
+    Workload-agnostic: Applies to LLM inference, ASR, image generation, etc.
+
+    Args:
+        url: Gateway URL
+        model_id: Model that started execution
+
+    Returns:
+        Event with ModelExecutionStarted signal
+    """
+    return Event(
+        signal=MODEL_EXECUTION_STARTED, payload={"url": url, "model_id": model_id}
+    )
+
+
+@event_factory
+def ModelExecutionCompleted(
+    url: str,
+    model_id: str,
+    request_id: str,
+    gateway_id: str,
+) -> Event:
+    """
+    Create model.execution.completed event (request-scoped slot release).
+
+    INVARIANT: request_id and gateway_id are REQUIRED for slot tracking.
+
+    Triggers:
+    1. GatewayTracker auto-releases slot (via subscription)
+    2. Queue processors wake to check capacity
+
+    Args:
+        url: Gateway URL
+        model_id: Model that completed execution
+        request_id: Request identifier (REQUIRED for slot tracking)
+        gateway_id: Gateway identifier (REQUIRED for slot tracking)
+
+    Returns:
+        Event with ModelExecutionCompleted signal
+    """
+    return Event(
+        signal=MODEL_EXECUTION_COMPLETED,
+        payload={
+            "url": url,
+            "model_id": model_id,
+            "request_id": request_id,
+            "gateway_id": gateway_id,
+        },
+    )
+
+
+@event_factory
+def ModelCapacityFreed(url: str, model_id: str) -> Event:
+    """
+    Create model.capacity.freed event (wake-only, no slot release).
+
+    Args:
+        url: Gateway URL
+        model_id: Model with freed capacity
+
+    Returns:
+        Event with ModelCapacityFreed signal
+    """
+    return Event(
+        signal=MODEL_CAPACITY_FREED,
+        payload={"url": url, "model_id": model_id},
+    )
+
+
+@event_factory
+def GatewayResourceUpdate(
+    url: str,
+    total_vram_mb: int,
+    available_vram_mb: int,
+    total_ram_mb: int,
+    available_ram_mb: int,
+    loaded_models: list[str],
+    busy_models: list[str],
+) -> Event:
+    """
+    Create GATEWAY_RESOURCE_UPDATE event.
+
+    Args:
+        url: Gateway URL
+        total_vram_mb: Total VRAM in MB
+        available_vram_mb: Available VRAM in MB
+        total_ram_mb: Total RAM in MB
+        available_ram_mb: Available RAM in MB
+        loaded_models: List of loaded model IDs
+        busy_models: List of busy model IDs
+
+    Returns:
+        Event with GatewayResourceUpdate signal
+    """
+    return Event(
+        signal=GATEWAY_RESOURCE_UPDATE,
+        payload={
+            "url": url,
+            "total_vram_mb": total_vram_mb,
+            "available_vram_mb": available_vram_mb,
+            "total_ram_mb": total_ram_mb,
+            "available_ram_mb": available_ram_mb,
+            "loaded_models": loaded_models,
+            "busy_models": busy_models,
+        },
+    )
+
+
+@event_factory
+def ResourceReserved(
+    gateway_name: str,
+    model_id: str,
+    reservation_id: str,
+    vram_mb: int,
+    ram_mb: int,
+    timeout_seconds: float,
+) -> Event:
+    """
+    Create RESOURCE_RESERVED event.
+
+    Args:
+        gateway_name: Gateway name
+        model_id: Model for reservation
+        reservation_id: Unique reservation ID
+        vram_mb: VRAM reserved in MB
+        ram_mb: RAM reserved in MB
+        timeout_seconds: Reservation timeout
+
+    Returns:
+        Event with ResourceReserved signal
+    """
+    return Event(
+        signal=RESOURCE_RESERVED,
+        payload={
+            "gateway_name": gateway_name,
+            "model_id": model_id,
+            "reservation_id": reservation_id,
+            "vram_mb": vram_mb,
+            "ram_mb": ram_mb,
+            "timeout_seconds": timeout_seconds,
+        },
+    )
+
+
+@event_factory
+def ResourceReleased(
+    gateway_name: str,
+    model_id: str,
+    reservation_id: str,
+    vram_mb: int,
+    ram_mb: int,
+    reason: str,
+) -> Event:
+    """
+    Create RESOURCE_RELEASED event.
+
+    Args:
+        gateway_name: Gateway name
+        model_id: Model for reservation
+        reservation_id: Unique reservation ID
+        vram_mb: VRAM released in MB
+        ram_mb: RAM released in MB
+        reason: "completed" | "expired" | "cancelled"
+
+    Returns:
+        Event with ResourceReleased signal
+    """
+    return Event(
+        signal=RESOURCE_RELEASED,
+        payload={
+            "gateway_name": gateway_name,
+            "model_id": model_id,
+            "reservation_id": reservation_id,
+            "vram_mb": vram_mb,
+            "ram_mb": ram_mb,
+            "reason": reason,
+        },
+    )
+
+
+# Request Events
+@event_factory
+def RequestQueued(
+    request_id: str,
+    model_id: str,
+    priority: int,
+) -> Event:
+    """
+    Create REQUEST_QUEUED event.
+
+    INVARIANT: request_id always present (proxy request ID for tracking)
+
+    Args:
+        request_id: Proxy request ID for tracking and tracing
+        model_id: Model requested
+        priority: Request priority
+
+    Returns:
+        Event with RequestQueued signal
+    """
+    return Event(
+        signal=REQUEST_QUEUED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "priority": priority,
+        },
+    )
+
+
+@event_factory
+def RequestProcessing(
+    request_id: str,
+    gateway_url: str,
+    model_id: str,
+) -> Event:
+    """
+    Create REQUEST_PROCESSING event.
+
+    INVARIANT: request_id always present (proxy request ID for tracking)
+
+    Args:
+        request_id: Proxy request ID for tracking and tracing
+        gateway_url: Gateway processing request
+        model_id: Model being used
+
+    Returns:
+        Event with RequestProcessing signal
+    """
+    return Event(
+        signal=REQUEST_PROCESSING,
+        payload={
+            "request_id": request_id,
+            "gateway_url": gateway_url,
+            "model_id": model_id,
+        },
+    )
+
+
+@event_factory
+def RequestCompleted(
+    request_id: str,
+    gateway_url: str,
+    model_id: str,
+    duration: float,
+) -> Event:
+    """
+    Create REQUEST_COMPLETED event.
+
+    INVARIANT: request_id always present (proxy request ID for tracking)
+
+    Args:
+        request_id: Proxy request ID for tracking and tracing
+        gateway_url: Gateway that processed request
+        model_id: Model used
+        duration: Request duration in seconds
+
+    Returns:
+        Event with RequestCompleted signal
+    """
+    return Event(
+        signal=REQUEST_COMPLETED,
+        payload={
+            "request_id": request_id,
+            "gateway_url": gateway_url,
+            "model_id": model_id,
+            "duration": duration,
+        },
+    )
+
+
+@event_factory
+def RequestFailed(
+    request_id: str,
+    model_id: str,
+    error: str,
+    gateway_url: str | None = None,
+) -> Event:
+    """
+    Create REQUEST_FAILED event.
+
+    INVARIANT: request_id always present (proxy request ID for tracking)
+
+    Args:
+        request_id: Proxy request ID for tracking and tracing
+        model_id: Model requested
+        error: Error message
+        gateway_url: Gateway URL (optional)
+
+    Returns:
+        Event with RequestFailed signal
+    """
+    return Event(
+        signal=REQUEST_FAILED,
+        payload={
+            "request_id": request_id,
+            "gateway_url": gateway_url,
+            "model_id": model_id,
+            "error": error,
+        },
+    )
+
+
+@event_factory
+def RequestTimeout(
+    request_id: str,
+    model_id: str,
+    timeout_seconds: float,
+    gateway_url: str | None = None,
+) -> Event:
+    """
+    Create REQUEST_TIMEOUT event.
+
+    INVARIANT: request_id always present (proxy request ID for tracking)
+
+    Args:
+        request_id: Proxy request ID for tracking and tracing
+        model_id: Model requested
+        timeout_seconds: Timeout value
+        gateway_url: Gateway URL (optional)
+
+    Returns:
+        Event with RequestTimeout signal
+    """
+    return Event(
+        signal=REQUEST_TIMEOUT,
+        payload={
+            "request_id": request_id,
+            "gateway_url": gateway_url,
+            "model_id": model_id,
+            "timeout_seconds": timeout_seconds,
+        },
+    )
+
+
+@event_factory
+def RequestRemoved(
+    request_id: str, reason: str, model_id: str, age_seconds: float
+) -> Event:
+    """
+    Create REQUEST_REMOVED event.
+
+    Args:
+        request_id: Request identifier
+        reason: Removal reason
+        model_id: Model requested
+        age_seconds: How long request was queued
+
+    Returns:
+        Event with RequestRemoved signal
+    """
+    return Event(
+        signal=REQUEST_REMOVED,
+        payload={
+            "request_id": request_id,
+            "reason": reason,
+            "model_id": model_id,
+            "age_seconds": age_seconds,
+        },
+    )
+
+
+# Master Queue Events
+@event_factory
+def QueueMasterEntered(
+    request_id: str,
+    model_id: str,
+    queue_position: int,
+    compute_type: str = "",
+    endpoint_category: str = "",
+) -> Event:
+    """
+    Create QUEUE_MASTER_ENTERED event.
+
+    Args:
+        request_id: Request identifier
+        model_id: Model being requested
+        queue_position: Position in queue (1-indexed)
+        compute_type: Optional; "cpu", "hybrid", or "gpu" (legacy)
+        endpoint_category: Optional; "generation" or "embedding" (legacy)
+
+    Returns:
+        Event with QueueMasterEntered signal
+    """
+    return Event(
+        signal=QUEUE_MASTER_ENTERED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "queue_position": queue_position,
+            "compute_type": compute_type,
+            "endpoint_category": endpoint_category,
+        },
+    )
+
+
+@event_factory
+def QueueMasterWoken(
+    request_id: str,
+    model_id: str,
+    wait_time_ms: float,
+    gateway_id: str | None = None,
+    compute_type: str = "",
+    endpoint_category: str = "",
+) -> Event:
+    """
+    Create QUEUE_MASTER_WOKEN event.
+
+    Args:
+        request_id: Request identifier
+        model_id: Model being requested
+        wait_time_ms: Time spent waiting in queue
+        gateway_id: Gateway with available capacity
+        compute_type: Optional (legacy)
+        endpoint_category: Optional (legacy)
+
+    Returns:
+        Event with QueueMasterWoken signal
+    """
+    return Event(
+        signal=QUEUE_MASTER_WOKEN,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "wait_time_ms": wait_time_ms,
+            "gateway_id": gateway_id,
+            "compute_type": compute_type,
+            "endpoint_category": endpoint_category,
+        },
+    )
+
+
+@event_factory
+def QueueMasterTimedOut(
+    request_id: str,
+    model_id: str,
+    timeout_seconds: float,
+    compute_type: str = "",
+    endpoint_category: str = "",
+) -> Event:
+    """
+    Create QUEUE_MASTER_TIMEOUT event.
+
+    Args:
+        request_id: Request identifier
+        model_id: Model being requested
+        timeout_seconds: Timeout value that was exceeded
+        compute_type: Optional (legacy)
+        endpoint_category: Optional (legacy)
+
+    Returns:
+        Event with QueueMasterTimedOut signal
+    """
+    return Event(
+        signal=QUEUE_MASTER_TIMEOUT,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "timeout_seconds": timeout_seconds,
+            "compute_type": compute_type,
+            "endpoint_category": endpoint_category,
+        },
+    )
+
+
+@event_factory
+def QueueMasterToctou(
+    request_id: str,
+    model_id: str,
+    compute_type: str,
+    endpoint_category: str,
+    retry_count: int,
+) -> Event:
+    """
+    Create QUEUE_MASTER_TOCTOU event.
+
+    Args:
+        request_id: Request identifier
+        model_id: Model being requested
+        compute_type: "cpu", "hybrid", or "gpu"
+        endpoint_category: "generation" or "embedding"
+        retry_count: Number of retries so far
+
+    Returns:
+        Event with QueueMasterToctou signal
+    """
+    return Event(
+        signal=QUEUE_MASTER_TOCTOU,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "compute_type": compute_type,
+            "endpoint_category": endpoint_category,
+            "retry_count": retry_count,
+        },
+    )
+
+
+# Pipeline Step Events: Embedding
+@event_factory
+def PipelineStepEmbeddingStarted(
+    execution_id: str,
+    step_id: str,
+    model_id: str,
+    input_count: int,
+) -> Event:
+    """
+    Create PIPELINE_STEP_EMBEDDING_STARTED event.
+
+    Args:
+        execution_id: Pipeline execution ID
+        step_id: Step identifier
+        model_id: Embedding model being used
+        input_count: Number of texts to embed
+
+    Returns:
+        Event with PipelineStepEmbeddingStarted signal
+    """
+    return Event(
+        signal=PIPELINE_STEP_EMBEDDING_STARTED,
+        payload={
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "model_id": model_id,
+            "input_count": input_count,
+        },
+    )
+
+
+@event_factory
+def PipelineStepEmbeddingCompleted(
+    execution_id: str,
+    step_id: str,
+    model_id: str,
+    input_count: int,
+    duration_ms: float,
+    embedding_dim: int,
+) -> Event:
+    """
+    Create PIPELINE_STEP_EMBEDDING_COMPLETED event.
+
+    Args:
+        execution_id: Pipeline execution ID
+        step_id: Step identifier
+        model_id: Embedding model used
+        input_count: Number of texts embedded
+        duration_ms: Time taken in milliseconds
+        embedding_dim: Dimension of embeddings
+
+    Returns:
+        Event with PipelineStepEmbeddingCompleted signal
+    """
+    return Event(
+        signal=PIPELINE_STEP_EMBEDDING_COMPLETED,
+        payload={
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "model_id": model_id,
+            "input_count": input_count,
+            "duration_ms": duration_ms,
+            "embedding_dim": embedding_dim,
+        },
+    )
+
+
+@event_factory
+def PipelineStepEmbeddingFailed(
+    execution_id: str,
+    step_id: str,
+    model_id: str,
+    input_count: int,
+    duration_ms: float,
+    error: str,
+    status_code: int | None = None,
+) -> Event:
+    """
+    Create PIPELINE_STEP_EMBEDDING_FAILED event.
+
+    Args:
+        execution_id: Pipeline execution ID
+        step_id: Step identifier
+        model_id: Embedding model attempted
+        input_count: Number of texts attempted
+        duration_ms: Time taken before failure
+        error: Error message
+        status_code: HTTP status code if applicable
+
+    Returns:
+        Event with PipelineStepEmbeddingFailed signal
+    """
+    return Event(
+        signal=PIPELINE_STEP_EMBEDDING_FAILED,
+        payload={
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "model_id": model_id,
+            "input_count": input_count,
+            "duration_ms": duration_ms,
+            "error": error,
+            "status_code": status_code,
+        },
+    )
+
+
+# Pipeline Step Events: Domain Verification
+@event_factory
+def PipelineStepDomainVerificationStarted(  # noqa: N802
+    execution_id: str,
+    step_id: str,
+    domain: str,
+    model_id: str,
+    statement_count: int,
+) -> Event:
+    """
+    Create PIPELINE_STEP_DOMAIN_VERIFICATION_STARTED event.
+
+    Args:
+        execution_id: Pipeline execution ID
+        step_id: Step identifier
+        domain: Domain being verified (e.g., "mathematics")
+        model_id: Domain authority model
+        statement_count: Number of statements to verify
+
+    Returns:
+        Event with PipelineStepDomainVerificationStarted signal
+    """
+    return Event(
+        signal=PIPELINE_STEP_DOMAIN_VERIFICATION_STARTED,
+        payload={
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "domain": domain,
+            "model_id": model_id,
+            "statement_count": statement_count,
+        },
+    )
+
+
+@event_factory
+def PipelineStepDomainVerificationCompleted(  # noqa: N802
+    execution_id: str,
+    step_id: str,
+    domain: str,
+    model_id: str,
+    statement_count: int,
+    passed_count: int,
+    failed_count: int,
+    duration_ms: float,
+) -> Event:
+    """
+    Create PIPELINE_STEP_DOMAIN_VERIFICATION_COMPLETED event.
+
+    Args:
+        execution_id: Pipeline execution ID
+        step_id: Step identifier
+        domain: Domain that was verified
+        model_id: Domain authority model used
+        statement_count: Number of statements verified
+        passed_count: Statements that passed verification
+        failed_count: Statements that failed verification
+        duration_ms: Time taken in milliseconds
+
+    Returns:
+        Event with PipelineStepDomainVerificationCompleted signal
+    """
+    return Event(
+        signal=PIPELINE_STEP_DOMAIN_VERIFICATION_COMPLETED,
+        payload={
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "domain": domain,
+            "model_id": model_id,
+            "statement_count": statement_count,
+            "passed_count": passed_count,
+            "failed_count": failed_count,
+            "duration_ms": duration_ms,
+        },
+    )
+
+
+# System Events
+@event_factory
+def SystemStarted() -> Event:
+    """
+    Create SYSTEM_STARTED event.
+
+    Returns:
+        Event with SystemStarted signal
+    """
+    return Event(signal=SYSTEM_STARTED, payload={})
+
+
+@event_factory
+def SystemShutdown() -> Event:
+    """
+    Create SYSTEM_SHUTDOWN event.
+
+    Returns:
+        Event with SystemShutdown signal
+    """
+    return Event(signal=SYSTEM_SHUTDOWN, payload={})
+
+
+@event_factory
+def FederationGatewayCatalogChanged(
+    gateway_id: str,
+    old_model_count: int,
+    new_model_count: int,
+    event_type: str | None = None,
+    models: list[str] | None = None,
+) -> Event:
+    """
+    Create FEDERATION_GATEWAY_CATALOG_CHANGED event.
+
+    Emitted when a federated gateway's model catalog changes.
+
+    Args:
+        gateway_id: Unique gateway identifier (e.g., "edge-localhost-gateway")
+        old_model_count: Previous number of models
+        new_model_count: New number of models
+        event_type: Type of change ('added', 'removed', 'changed')
+        models: List of affected model IDs
+
+    Returns:
+        Event with FEDERATION_GATEWAY_CATALOG_CHANGED signal
+
+    Note:
+        Gateway identification uses gateway_id, not URL. Master routes via
+        Edge Stargate URL, never direct to Gateway.
+    """
+    payload = {
+        "gateway_id": gateway_id,
+        "old_model_count": old_model_count,
+        "new_model_count": new_model_count,
+    }
+    if event_type is not None:
+        payload["event_type"] = event_type
+    if models is not None:
+        payload["models"] = models
+    return Event(
+        signal=FEDERATION_GATEWAY_CATALOG_CHANGED,
+        payload=payload,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Federation Event Factories (all require @event_factory decorator)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@event_factory
+def FederationConnectionEstablished(
+    remote_id: str,
+    transport: str,  # "websocket" | "http_polling"
+    latency_ms: int | None = None,
+) -> Event:
+    """Remote Stargate connected to Master."""
+    payload = {
+        "remote_id": remote_id,
+        "transport": transport,
+    }
+    if latency_ms is not None:
+        payload["latency_ms"] = latency_ms
+    return Event(signal=FEDERATION_CONNECTION_ESTABLISHED, payload=payload)
+
+
+@event_factory
+def FederationConnectionLost(
+    remote_id: str,
+    reason: str,
+) -> Event:
+    """Remote Stargate disconnected from Master."""
+    return Event(
+        signal=FEDERATION_CONNECTION_LOST,
+        payload={"remote_id": remote_id, "reason": reason},
+    )
+
+
+@event_factory
+def FederationConnectionAuthenticated(
+    remote_id: str,
+    method: str,
+) -> Event:
+    """Remote Stargate authenticated with Master."""
+    return Event(
+        signal=FEDERATION_CONNECTION_AUTHENTICATED,
+        payload={"remote_id": remote_id, "method": method},
+    )
+
+
+@event_factory
+def FederationTelemetryReceived(
+    remote_id: str,
+    model_count: int,
+    resource_summary: dict[str, Any],
+    telemetry_age_ms: int | None = None,
+) -> Event:
+    """Master received telemetry from Remote/Edge."""
+    payload = {
+        "remote_id": remote_id,
+        "model_count": model_count,
+        "resource_summary": resource_summary,
+    }
+    if telemetry_age_ms is not None:
+        payload["telemetry_age_ms"] = telemetry_age_ms
+    return Event(signal=FEDERATION_TELEMETRY_RECEIVED, payload=payload)
+
+
+@event_factory
+def FederationTelemetryMarkedStale(
+    remote_id: str,
+    age_seconds: float,
+    threshold_seconds: float,
+) -> Event:
+    """Telemetry from Remote exceeded staleness threshold."""
+    return Event(
+        signal=FEDERATION_TELEMETRY_MARKED_STALE,
+        payload={
+            "remote_id": remote_id,
+            "age_seconds": age_seconds,
+            "threshold_seconds": threshold_seconds,
+        },
+    )
+
+
+@event_factory
+def FederationTelemetryApplied(
+    remote_id: str,
+    changes: list[str],
+) -> Event:
+    """Telemetry applied to Master state."""
+    return Event(
+        signal=FEDERATION_TELEMETRY_APPLIED,
+        payload={"remote_id": remote_id, "changes": changes},
+    )
+
+
+@event_factory
+def FederationRoutingDelegated(
+    request_id: str,
+    target_remote: str,
+    model_id: str,
+    reason: str | None = None,
+) -> Event:
+    """Master delegated request to Remote Stargate."""
+    payload = {
+        "request_id": request_id,
+        "target_remote": target_remote,
+        "model_id": model_id,
+    }
+    if reason:
+        payload["reason"] = reason
+    return Event(signal=FEDERATION_ROUTING_DELEGATED, payload=payload)
+
+
+@event_factory
+def FederationRoutingRoutedLocal(
+    request_id: str,
+    model_id: str,
+    reason: str,
+) -> Event:
+    """Master routed request to local Gateway."""
+    return Event(
+        signal=FEDERATION_ROUTING_ROUTED_LOCAL,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def FederationRoutingRejected(
+    request_id: str,
+    model_id: str,
+    reason: str,
+) -> Event:
+    """Master rejected request (no available target)."""
+    return Event(
+        signal=FEDERATION_ROUTING_REJECTED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def FederationLoadRequested(
+    request_id: str,
+    target_remote: str,
+    model_id: str,
+) -> Event:
+    """Master requested Remote load a model."""
+    return Event(
+        signal=FEDERATION_LOAD_REQUESTED,
+        payload={
+            "request_id": request_id,
+            "target_remote": target_remote,
+            "model_id": model_id,
+        },
+    )
+
+
+@event_factory
+def FederationLoadConfirmed(
+    request_id: str,
+    remote_id: str,
+    model_id: str,
+    duration_ms: int,
+) -> Event:
+    """Remote confirmed model loaded."""
+    return Event(
+        signal=FEDERATION_LOAD_CONFIRMED,
+        payload={
+            "request_id": request_id,
+            "remote_id": remote_id,
+            "model_id": model_id,
+            "duration_ms": duration_ms,
+        },
+    )
+
+
+@event_factory
+def FederationLoadFailed(
+    request_id: str,
+    remote_id: str,
+    model_id: str,
+    error: str,
+) -> Event:
+    """Remote failed to load model."""
+    return Event(
+        signal=FEDERATION_LOAD_FAILED,
+        payload={
+            "request_id": request_id,
+            "remote_id": remote_id,
+            "model_id": model_id,
+            "error": error,
+        },
+    )
+
+
+@event_factory
+def FederationOrchestratorDecided(
+    request_id: str,
+    decision_type: str,  # "route" | "load" | "queue" | "reject"
+    target: str | None,
+    reason: str,
+    alternatives_considered: list[str] | None = None,
+) -> Event:
+    """Orchestrator made a routing/load decision."""
+    payload = {
+        "request_id": request_id,
+        "decision_type": decision_type,
+        "target": target,
+        "reason": reason,
+    }
+    if alternatives_considered:
+        payload["alternatives_considered"] = alternatives_considered
+    return Event(signal=FEDERATION_ORCHESTRATOR_DECIDED, payload=payload)
+
+
+@event_factory
+def FederationOrchestratorEvicted(
+    target_remote: str,
+    model_id: str,
+    reason: str,
+) -> Event:
+    """Orchestrator evicted model from Remote."""
+    return Event(
+        signal=FEDERATION_ORCHESTRATOR_EVICTED,
+        payload={
+            "target_remote": target_remote,
+            "model_id": model_id,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def FederationGatewayResourceUpdateSignal(
+    gateway_id: str,
+    source: str = "http_polling",
+) -> Event:
+    """
+    Create GATEWAY_RESOURCE_UPDATE wake-up signal for federation.
+
+    Minimal payload for telemetry freshness notification.
+    Used by HTTP polling master to wake up FreshnessWaiter.
+
+    Args:
+        gateway_id: Gateway identifier
+        source: Source of update ("http_polling", "websocket", etc.)
+
+    Returns:
+        Event with GatewayResourceUpdate signal
+    """
+    return Event(
+        signal=GATEWAY_RESOURCE_UPDATE,
+        payload={
+            "gateway_id": gateway_id,
+            "source": source,
+        },
+    )
+
+
+@event_factory
+def FederationModelLoaded(gateway_id: str, model_id: ModelId | str) -> Event:
+    """
+    Create MODEL_LOADED event for federation (gateway_id instead of url).
+
+    Args:
+        gateway_id: Gateway identifier
+        model_id: Model that was loaded
+
+    Returns:
+        Event with ModelLoaded signal
+    """
+    return Event(
+        signal=MODEL_LOADED,
+        payload={
+            "gateway_id": gateway_id,
+            "model_id": model_id,
+        },
+    )
+
+
+@event_factory
+def FederationModelUnloaded(gateway_id: str, model_id: ModelId | str) -> Event:
+    """
+    Create MODEL_UNLOADED event for federation (gateway_id instead of url).
+
+    Args:
+        gateway_id: Gateway identifier
+        model_id: Model that was unloaded
+
+    Returns:
+        Event with ModelUnloaded signal
+    """
+    return Event(
+        signal=MODEL_UNLOADED,
+        payload={
+            "gateway_id": gateway_id,
+            "model_id": model_id,
+        },
+    )

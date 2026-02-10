@@ -1,0 +1,48 @@
+# Project metadata for path-based imports
+# This project is imported directly via its path, not via pip installation
+[project]
+name = "universal-event-bus"
+version = "0.2.0"
+description = "Event-driven messaging and coordination infrastructure for Universal LLM Ecosystem"
+readme = "README.md"
+authors = [
+    {name = "krunch3r76", email = "biz@u26a4.com"}
+]
+license = {text = "MIT"}
+requires-python = ">=3.12"
+
+# Dependencies must be installed separately via pip
+# Add the parent directory of this project to PYTHONPATH to import:
+#   import sys
+#   sys.path.insert(0, '/path/to/parent/of/universal_event_bus')
+#   import universal_event_bus
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+
+

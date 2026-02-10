@@ -1,0 +1,135 @@
+# Universal LLM Gateway - Comprehensive Requirements
+# This file combines all dependencies from:
+# - Root project
+# - libs/ subtree modules (process_ipc, universal_event_bus, universal_logging, 
+#   universal_protocol, universal_transport, inference_djinn)
+# - services/ (universal-llm-gateway, universal-stargate)
+
+# ============================================================================
+# Core Web Framework and ASGI Server
+# ============================================================================
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+starlette>=0.27.0
+
+# ============================================================================
+# Data Validation and Serialization
+# ============================================================================
+pydantic>=2.0.0
+msgspec
+typing-extensions>=4.0.0
+
+# ============================================================================
+# Configuration and Data Processing
+# ============================================================================
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# ============================================================================
+# HTTP and WebSocket Communication
+# ============================================================================
+httpx>=0.24.0
+websockets>=11.0
+
+# ============================================================================
+# Async and Concurrency
+# ============================================================================
+aiofiles>=23.0.0
+watchfiles>=0.21.0
+
+# ============================================================================
+# Process Management and System Utilities
+# ============================================================================
+psutil>=5.9.0
+
+# ============================================================================
+# Event Bus and Messaging
+# ============================================================================
+asyncio-mqtt>=0.16.0
+
+# ============================================================================
+# Monitoring and Logging
+# ============================================================================
+prometheus-client>=0.17.0
+structlog>=23.0.0
+
+# ============================================================================
+# Security and Authentication
+# ============================================================================
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.6
+
+# ============================================================================
+# Scientific Computing and Array Operations
+# ============================================================================
+# NumPy version constraint: Numba (used by vLLM) requires NumPy <=2.2
+# Without this constraint, pip installs NumPy 2.3+ which breaks Numba
+numpy>=1.24.0,<2.3
+
+# ============================================================================
+# Model Format Support (inference_djinn)
+# ============================================================================
+gguf>=0.10.0
+#llama-cpp-python>=0.2.0
+
+# Optional: Fast GGUF metadata parsing
+gguf-parser>=0.1.0
+
+# ============================================================================
+# GPU Monitoring (inference_djinn)
+# ============================================================================
+nvidia-ml-py3>=7.352.0
+
+# ============================================================================
+# Development and Testing Tools
+# ============================================================================
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+
+# ============================================================================
+# Code Quality Tools
+# ============================================================================
+ruff>=0.8.0
+basedpyright>=1.18.0
+
+# ============================================================================
+# Whisper ASR Dependencies
+# ============================================================================
+openai-whisper>=20231117      # Original OpenAI Whisper (PyTorch backend)
+# faster-whisper>=1.0.0       # Alternative: CTranslate2 backend (requires cuDNN 9.x)
+soundfile>=0.12.1             # Audio file I/O
+scipy>=1.11.0                 # Audio resampling
+
+# Optional VAD backends
+webrtcvad>=2.0.10             # WebRTC VAD (optional, graceful fallback)
+
+# Note: Silero VAD loaded via torch.hub (requires torch which is typically
+# already present for CUDA support). silero-vad pip package not required.
+
+# ============================================================================
+# Optional Engine Support (uncomment as needed)
+# ============================================================================
+# ExLlamaV3 engine support (if using GPTQ/EXL3 models)
+# exllamav3>=0.1.0
+
+# vLLM engine support (if using HuggingFace/AWQ/GPTQ models)
+# vllm>=0.6.0
+# torch>=2.1.0  # Required for vLLM
+
+
+
+diffusers>=0.30.0
+transformers>=4.57.3
+torch>=2.0.0
+accelerate>=0.30.0
+# ============================================================================
+# Notes:
+# ============================================================================
+# - Universal LLM Ecosystem components (universal_logging, universal_event_bus,
+#   universal_protocol, universal_transport, process_ipc, inference_djinn) are
+#   NOT included as PyPI packages - they are expected to be available in the
+#   Python library search path via the shared virtual environment or PYTHONPATH
+# - sitecustomize.py in the project root automatically adds libs/ to sys.path
+# - All modules in libs/ are git subtrees and should be imported directly by name

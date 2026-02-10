@@ -1,0 +1,164 @@
+{
+  "dashboard": {
+    "title": "VRAM Reservation System",
+    "tags": ["vram", "reservations", "resource-management"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 0,
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Reservations by Gateway",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "gateway_reservation_active",
+            "legendFormat": "{{gateway}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"label": "Active Reservations", "show": true},
+          {"show": true}
+        ]
+      },
+      {
+        "id": 2,
+        "title": "VRAM Reserved (MB)",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "gateway_vram_reserved_mb",
+            "legendFormat": "{{gateway}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"label": "VRAM (MB)", "show": true},
+          {"show": true}
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Loading Slots Usage",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "gateway_loading_slots_active",
+            "legendFormat": "{{gateway}} - active",
+            "refId": "A"
+          },
+          {
+            "expr": "gateway_loading_slots_max",
+            "legendFormat": "{{gateway}} - max",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"label": "Slots", "show": true},
+          {"show": true}
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Reservation Outcomes",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "targets": [
+          {
+            "expr": "rate(gateway_reservation_total{state=\"completed\"}[5m])",
+            "legendFormat": "{{gateway}} - completed",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(gateway_reservation_total{state=\"failed\"}[5m])",
+            "legendFormat": "{{gateway}} - failed",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(gateway_reservation_total{state=\"expired\"}[5m])",
+            "legendFormat": "{{gateway}} - expired",
+            "refId": "C"
+          }
+        ],
+        "yaxes": [
+          {"label": "Rate (per second)", "show": true},
+          {"show": true}
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Loading Slot Wait Time (ms)",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "targets": [
+          {
+            "expr": "gateway_loading_wait_time_ms",
+            "legendFormat": "{{gateway}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"label": "Wait Time (ms)", "show": true},
+          {"show": true}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Loading Acquisition Success Rate",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "targets": [
+          {
+            "expr": "rate(gateway_loading_acquisitions_total{result=\"success\"}[5m]) / (rate(gateway_loading_acquisitions_total{result=\"success\"}[5m]) + rate(gateway_loading_acquisitions_total{result=\"failed\"}[5m])) * 100",
+            "legendFormat": "{{gateway}} - success rate %",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"label": "Success Rate (%)", "show": true, "min": 0, "max": 100},
+          {"show": true}
+        ]
+      },
+      {
+        "id": 7,
+        "title": "RAM Reserved (MB)",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+        "targets": [
+          {
+            "expr": "gateway_ram_reserved_mb",
+            "legendFormat": "{{gateway}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"label": "RAM (MB)", "show": true},
+          {"show": true}
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Pending Reservations",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+        "targets": [
+          {
+            "expr": "gateway_reservation_pending",
+            "legendFormat": "{{gateway}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"label": "Pending", "show": true},
+          {"show": true}
+        ]
+      }
+    ]
+  }
+}
+

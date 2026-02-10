@@ -1,0 +1,168 @@
+# docker/docker-compose.gateway-gpu.yml
+# Gateway with NVIDIA GPU support (CUDA-enabled llama-cpp-python + vLLM)
+# Foreground mode - shows console logs (recommended for gateway-only instances)
+# For background mode, use: docker-compose -f docker-compose.gateway-gpu.yml up -d
+#
+# Building:
+#   - Recommended: docker/build-gpu.sh (with flags like --cpu-native --gpu-native)
+#   - Then use: docker compose -f docker/docker-compose.gateway-gpu.yml up --no-build
+#   - Or export build args before compose: export CPU_OPTIMIZATION=native GPU_ARCH=120
+#   - Direct build: docker compose -f docker/docker-compose.gateway-gpu.yml build
+version: '3.8'
+
+services:
+  gateway-gpu:
+    build:
+      context: ..
+      dockerfile: docker/dockerfiles/Dockerfile.gpu
+      args:
+        PYTHON_VERSION: "${PYTHON_VERSION:-3.12}"
+        CUDA_VERSION: "${CUDA_VERSION:-13.0.0}"
+        CPU_OPTIMIZATION: "${CPU_OPTIMIZATION:-avx2}"
+        GPU_ARCH: "${GPU_ARCH:-multi}"
+        ENABLE_VLLM: "${ENABLE_VLLM:-true}"
+        VLLM_FROM_SOURCE: "${VLLM_FROM_SOURCE:-true}"
+        VLLM_BUILD_ARGS: "${VLLM_BUILD_ARGS:---portable}"
+        VLLM_MAX_JOBS: "${VLLM_MAX_JOBS:-8}"
+        LLAMA_CPP_PYTHON_VERSION: "${LLAMA_CPP_PYTHON_VERSION:-}"
+    image: universal-llm-gateway:${IMAGE_TAG:-gpu}
+    container_name: universal-gateway-gpu
+    
+    # IPC (Inter-Process Communication) configuration for shared memory
+    # RECOMMENDED: ipc: host - optimal for GPU workloads, worker processes, and GPU-CPU memory transfers
+    #
+    # Alternative modes (only needed for untrusted workloads or multi-tenant environments):
+    # - ipc: shareable  (BALANCED) - Better isolation, can share with specific containers
+    # - ipc: private    (MOST ISOLATED) - Fully isolated IPC namespace (may reduce GPU performance)
+    #
+    # NETWORK CONFIGURATION:
+    # This single-container deployment uses Docker's default bridge network.
+    # - ✅ Port 9998 accessible from host (required for API access)
+    # - ⚠️ Container HAS internet/WAN access (default bridge network behavior)
+    # - ⚠️ No network isolation (internal: true would block port mappings)
+    #
+    # For network isolation with exposed ports, use multi-container architecture:
+    # - Gateway on internal-only network (no internet)
+    # - Stargate on internal + default networks (exposes ports, has internet access)
+    # See: docker-compose.stargate-gateway-gpu.yml (future implementation)
+    ipc: host
+    
+    # Security options: Allow advanced CPU features (AVX-512, etc.)
+    # Required for AVX-512 optimized builds to work
+    # Without this, container gets "Illegal instruction" errors on AVX-512 code
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    
+    # NVIDIA GPU support (single GPU only - multi-GPU not yet supported)
+    # No resource limits - use all available GPU/CPU/memory
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1  # Single GPU only
+              capabilities: [gpu]
+    
+    # Memory lock limits (required for use_mlock=true in GGUF models)
+    # Allows llama.cpp to lock model weights in RAM, preventing swap and improving performance
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    
+    ports:
+      - "${GATEWAY_PORT:-9998}:9998"
+    
+    # Load shared inference optimization environment variables
+    env_file:
+      - ./engine-optimizations.env
+    
+    environment:
+      # Model configuration
+      - MODEL_PATH_ROOT=/golem/models
+      
+      # Service configuration
+      - GATEWAY_HOST=0.0.0.0
+      - GATEWAY_PORT=9998
+      - WS_AUTH_ENABLED=false
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - ENVIRONMENT=docker-gpu
+      
+      # GPU configuration (single GPU only)
+      - GPU_ENABLED=true
+      # - CUDA_VISIBLE_DEVICES=0  # Single GPU only (multi-GPU not supported yet)
+      
+      # Resource paths
+      - WORKER_LOG_DIR=/golem/logs/workers
+      - SOCKET_DIR=/golem/output/sockets
+      - MODEL_CACHE_DIR=/golem/models
+      
+      # Features
+      - ENABLE_MODEL_AVAILABILITY_CHECK=true
+      - ENABLE_MANAGEMENT_API=true
+      - DISABLE_HEALTH_CHECKING=false
+      
+      # User config directory (for dynamic catalog)
+      - GATEWAY_USER_CONFIG_DIR=/root/.gateway
+      
+      # CPU Performance (Inference Engine Configuration)
+      # Override at runtime if needed: OMP_NUM_THREADS=16 docker compose up
+      #
+      # Default behavior: Auto-detect optimal thread count (full CPU passthrough)
+      # NOTE: OMP_WAIT_POLICY defaults to PASSIVE (allows idle threads to sleep)
+      #       Setting to ACTIVE causes 100% CPU spin-wait (2000%+ idle CPU usage)
+      
+      # Timeouts (longer for GPU initialization)
+      - PROCESS_STARTUP_TIMEOUT=600
+      - GATEWAY_SHUTDOWN_GRACE=30
+      
+      # Debug event socket (enable with DEBUG_EVENT_SOCKET=/sockets/events.sock)
+      - DEBUG_EVENT_SOCKET=${DEBUG_EVENT_SOCKET:-}
+    
+    volumes:
+      # Models directory (REQUIRED)
+      - ${MODEL_PATH_ROOT:-$HOME/.models}:/golem/models:ro
+      
+      # Local catalog config directory (for runtime customization)
+      # Maps host ~/.gateway to container /root/.gateway
+      # Allows customization of activated profiles, resource overrides, etc.
+      - ${GATEWAY_CONFIG_DIR:-$HOME/.gateway}:/root/.gateway:rw
+      
+      # User-specific pipelines and handlers (for Stargate if running in "both" mode)
+      - ${HOME}/.local/share/universal-stargate:/root/.local/share/universal-stargate:ro
+      
+      # Logs (persistent)
+      - gateway-gpu-logs:/golem/logs
+      
+      # Output/state
+      - gateway-gpu-output:/golem/output
+      
+      # CUDA kernel cache (speeds up first inference after container restart)
+      - cuda-cache:/root/.nv
+      
+      # Event monitoring socket (host-accessible)
+      - ${EVENT_SOCKET_DIR:-/tmp/universal-sockets}:/sockets
+      
+      # Development bind mounts (remove in production builds)
+      - ../docker/scripts/build/golem-start.sh:/app/golem-start.sh:ro
+      - ../services/_universal-llm-gateway/src/main.py:/app/services/_universal-llm-gateway/src/main.py:ro
+      - ../libs/inference_djinn/engines/gguf/engine/loading.py:/app/libs/inference_djinn/engines/gguf/engine/loading.py:ro
+    
+    entrypoint: ["/app/golem-start.sh"]
+    command: ["gateway"]
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9998/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s  # Longer for GPU initialization
+
+volumes:
+  gateway-gpu-logs:
+  gateway-gpu-output:
+  cuda-cache:
+

@@ -1,0 +1,258 @@
+# Universal Stargate Logging Configuration
+# Circular-dependency-free configuration compatible with universal_logging
+
+version: 1
+disable_existing_loggers: false
+truncate_logs: true
+# max_string_length removed - JSON truncation now handled by format_json_for_log()
+# in universal_logging.json_utils (2000 chars per field, Unicode-aware, structure-preserving)
+
+formatters:
+  # Plain JSON for file outputs (no ANSI color codes)
+  # Using '()' syntax to pass all kwargs to constructor
+  json_file:
+    "()": universal_logging.renderers.JSONFormatter
+    truncate: true
+    max_field_size: 2000
+    colors: false
+  
+  # Colorized JSON for console readability
+  # Using '()' syntax to pass all kwargs to constructor
+  json_console:
+    "()": universal_logging.renderers.JSONFormatter
+    truncate: true
+    max_field_size: 2000
+    colors: true
+
+handlers:
+  # Main application log (everything except GUI)
+  # DEBUG by default for full file detail, respects LOG_LEVEL override
+  main_file:
+    class: logging.FileHandler
+    filename: ${LOG_DIR:-logs}/universal_stargate.log
+    formatter: json_file
+    level: ${LOG_LEVEL:-DEBUG}
+
+  # GUI-specific log (separate from main)
+  gui_file:
+    class: logging.FileHandler
+    filename: ${LOG_DIR:-logs}/gui.log
+    formatter: json_file
+    level: DEBUG
+
+  # GUI debug log (detailed debugging)
+  gui_debug_file:
+    class: logging.FileHandler
+    filename: ${LOG_DIR:-logs}/gui_debug.log
+    formatter: json_file
+    level: DEBUG
+
+  # Error log (duplicates errors from all components)
+  errors_file:
+    class: logging.FileHandler
+    filename: ${LOG_DIR:-logs}/errors.log
+    level: ERROR
+    formatter: json_file
+
+  # Console handler - fixed at INFO for clean output (not env-controlled)
+  console:
+    class: logging.StreamHandler
+    level: INFO
+    formatter: json_console
+    stream: ext://sys.stdout
+
+  # Null handler (quoted to avoid YAML parsing as None)
+  "null":
+    class: logging.NullHandler
+
+loggers:
+  # GUI components - console only (no file logging)
+  gui:
+    level: DEBUG
+    handlers: [console, errors_file]  # Console + error duplication only
+    propagate: false
+
+  # GUI sub-components
+  gui.model:
+    level: DEBUG
+    handlers: [console, errors_file]
+    propagate: false
+
+  gui.controller:
+    level: DEBUG
+    handlers: [console, errors_file]
+    propagate: false
+
+  gui.view:
+    level: DEBUG
+    handlers: [console, errors_file]
+    propagate: false
+
+  # Universal transport components (for GUI debugging)
+  universal_transport:
+    level: DEBUG
+    handlers: [gui_debug_file, errors_file]
+    propagate: false
+
+  # Suppress noisy third-party library logs (errors only, completely silenced)
+  httpx:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  httpcore:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  httpcore.connection:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  httpcore.http11:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  httpcore._exceptions:
+    level: ERROR
+    handlers: []
+    propagate: false
+    
+  # Suppress watchfiles debug messages (only show warnings+)
+  watchfiles:
+    level: WARNING
+    handlers: [errors_file]
+    propagate: false
+
+  # Additional noisy HTTP libraries
+  urllib3:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  urllib3.connectionpool:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  requests:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  aiohttp:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  asyncio:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  # Suppress websocket library debug messages  
+  websockets:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  websocket:
+    level: ERROR
+    handlers: []
+    propagate: false
+
+  # Suppress uvicorn logs to reduce noise
+  uvicorn:
+    level: WARNING
+    handlers: [main_file, errors_file]
+    propagate: false
+  
+  uvicorn.error:
+    level: WARNING
+    handlers: [main_file, errors_file]
+    propagate: false
+  
+  uvicorn.access:
+    level: WARNING
+    handlers: ["null"]
+    propagate: false
+
+  # Suppress websocket library debug messages
+  websockets:
+    level: WARNING
+    handlers: [errors_file]
+    propagate: false
+
+  websocket:
+    level: WARNING
+    handlers: [errors_file]
+    propagate: false
+
+  # Suppress monitoring event logger (events are for GUI only, not regular logs)
+  monitoring.event_logger:
+    level: WARNING
+    handlers: ["null"]
+    propagate: false
+
+  # Suppress request forwarder debug details (Content-Length updates, etc.)
+  proxy.core.request_forwarder:
+    level: INFO
+    handlers: [main_file, errors_file]
+    propagate: false
+
+  # Suppress chunk processor debug details (chunks are only important for GUI)
+  proxy.core.chunk_processor:
+    level: WARNING
+    handlers: [main_file, errors_file]
+    propagate: false
+  
+  # Suppress stream handler chunk logging
+  proxy.core.stream_handler:
+    level: WARNING
+    handlers: [main_file, errors_file]
+    propagate: false
+  
+  # Suppress stream monitor chunk logging
+  proxy.core.stream_monitor:
+    level: WARNING
+    handlers: [main_file, errors_file]
+    propagate: false
+
+  # Suppress noisy batch routing logs when resources unavailable
+  systems.routing.batch.batch:
+    level: WARNING
+    handlers: [main_file, errors_file]
+    propagate: false
+
+  systems.routing.batch.router:
+    level: WARNING
+    handlers: [main_file, errors_file]
+    propagate: false
+
+  systems.routing.batch.cold_routing:
+    level: WARNING
+    handlers: [main_file, errors_file]
+    propagate: false
+
+  systems.routing.batch.eviction_planner:
+    level: WARNING
+    handlers: [main_file, errors_file]
+    propagate: false
+
+  systems.pipeline.dag:
+    level: INFO
+    handlers: [main_file, errors_file]
+    propagate: false
+
+  systems.routing.selection.collector:
+    level: WARNING
+    handlers: [main_file, errors_file]
+    propagate: false
+
+# Root logger at DEBUG to allow all messages through to handlers
+# Handlers filter independently: console=INFO, files=DEBUG (or LOG_LEVEL override)
+root:
+  level: DEBUG
+  handlers: [main_file, errors_file, console]

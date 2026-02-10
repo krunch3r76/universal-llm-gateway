@@ -1,0 +1,32 @@
+[Unit]
+Description=Universal Stargate - Middleware Proxy (User Service)
+Documentation=https://github.com/universal-stargate/universal-stargate
+# After=network.target universal-llm-gateway.service
+Wants=network.target
+# Requires=universal-llm-gateway.service
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/torus/projects/universal-llm-gateway/services/universal-stargate
+ExecStart=/usr/bin/python3 /mnt/torus/projects/universal-llm-gateway/services/universal-stargate/scripts/stargate_service_manager.py --environment=release
+#Restart=always
+#RestartSec=10
+StartLimitInterval=60s
+StartLimitBurst=3
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+TimeoutStartSec=120s
+StandardOutput=null
+StandardError=null
+
+# Security settings (minimal for user service)
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=32768
+
+[Install]
+WantedBy=default.target

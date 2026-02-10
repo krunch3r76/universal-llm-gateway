@@ -1,0 +1,77 @@
+# .dockerignore
+# Exclude unnecessary files from Docker build context
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Python cache (** prefix for recursive matching at any depth)
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.djinn-venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+# .cursor/
+
+# Documentation (optional - include if you want docs in container)
+docs/
+proposals/
+prompts/
+templates/
+tmp/
+
+# Tests
+tests/
+benchmarks/
+
+# Scripts (CLI tools that run outside container)
+scripts/
+
+# Logs (we'll create fresh directories in container)
+logs/
+*.log
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Extra sources (not needed in container)
+extra_sources/
+
+# Temporary files
+*.tmp
+*.temp
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Docker files (exclude build-time files, keep runtime scripts)
+docker/compose/
+docker/config/
+docker/docs/
+docker/dockerfiles/
+docker/scripts/
+!docker/scripts/build/build_llama_server.sh
+docker/*.yml
+docker/*.yaml
+docker/*.md
+# docker/runtime/ is automatically included (container entrypoint scripts)
+Dockerfile*
+# Allow obfuscated Dockerfiles for CPU builds
+!Dockerfile.obfuscated-cpu
+.dockerignore

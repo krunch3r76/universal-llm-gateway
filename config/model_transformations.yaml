@@ -1,0 +1,130 @@
+# Model-specific transformation configurations
+# 
+# This file defines custom transformation functions for models that need
+# special prompt formatting beyond the generic "extract last user message" approach.
+#
+# Each transformation specifies:
+#   - basename: Model basename this transformation applies to (using prefix matching)
+#   - description: Human-readable description of what this does
+#   - settings: Configuration parameters for the transformation
+#
+# Basename Matching:
+#   - Uses prefix matching with boundary detection (e.g., "deepseek-coder" matches "deepseek-coder-33b-instruct")
+#   - Longest basenames take precedence (specificity matching)
+#   - Case-insensitive matching for robustness
+
+transformations:
+  wizard_vicuna:
+    basename: "wizard-vicuna"  # New unified format
+    model_ids:  # Legacy format for backward compatibility during transition
+      - wizard-vicuna-30b-uncensored
+      - wizard-vicuna-30b-awq
+      - wizard-vicuna-13b-awq
+      - wizard-vicuna-7b-awq
+    # Matches: wizard-vicuna-30b-uncensored, wizard-vicuna-30b-awq, wizard-vicuna-13b-awq, wizard-vicuna-7b-awq
+    description: "Converts OpenAI Chat Completions messages to Wizard-Vicuna format with USER:/ASSISTANT: prefixes"
+    settings:
+      remove_system_messages: true
+      truncate_to_last_user: false  # Keep full conversation history
+      conversation_header: "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. "
+      prompt_template: "USER: {prompt}\nASSISTANT: "    
+  
+  deepseek_coder_instruct:
+    basename: "deepseek-coder"  # New unified format
+    model_ids:  # Legacy format for backward compatibility during transition
+      - deepseek-coder-33b-awq
+      - deepseek-coder-6.7b-awq
+      - deepseek-coder-33b-instruct-q4-k-m
+    # Matches: deepseek-coder-33b-awq, deepseek-coder-6-7b-awq, deepseek-coder-33b-instruct-q4-k-m
+    description: "Converts OpenAI Chat Completions messages to DeepSeek Coder Instruct format"
+    settings:
+      remove_system_messages: true
+      truncate_to_last_user: false  # Multi-turn format
+      conversation_header: "You are an AI programming assistant, utilizing the Deepseek Coder model, developed by Deepseek Company, and you only answer questions related to computer science. For politically sensitive questions, security and privacy issues, and other non-computer science questions, you will refuse to answer.\n"
+      prompt_template: "### Instruction:\n{prompt}\n\n### Response:\n"
+
+  wizardcoder:
+    basename: "wizardcoder"  # New unified format
+    model_ids:  # Legacy format for backward compatibility during transition
+      - wizardcoder-33b-v1-1-awq
+    # Matches: wizardcoder-33b-v1-1-awq, wizardcoder-15b-python-q4-k-m
+    description: "WizardCode Instruct: messages format without system prompts"
+    settings:
+      remove_system_messages: true
+      truncate_to_last_user: false
+      conversation_header: "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
+      prompt_template: "### Instruction:\n{prompt}\n\n### Response:\n"
+
+  starcoder2_instruct:
+    basename: "starcoder2"  # New unified format
+    model_ids:  # Legacy format for backward compatibility during transition
+      - starcoder2-15b-instruct-v0-1-q8-0
+    # Matches: starcoder2-15b-instruct-v0-1-q8-0, starcoder2-7b-base-q4-k-m
+    description: "StarCoder2 Instruct: messages format without system prompts"
+    settings:
+      remove_system_messages: true
+      truncate_to_last_user: true
+
+  cursorcore:
+    enabled: true  # Set to false to disable CursorCore transformation
+    basename: "cursorcore"  # New unified format
+    model_ids:  # Legacy format for backward compatibility during transition
+      - cursorcore-qw2-5-1-5b-q4-k-m
+    # Matches: cursorcore-qw2-5-1-5b-q4-k-m, cursorcore-7b-instruct, cursorcore-test
+    description: "Converts OpenAI Chat Completions messages to CursorCore assistant-conversation format"
+    settings:
+      transformation_type: "cursorcore"
+      remove_system_messages: false  # Keep system messages for CursorCore format
+      truncate_to_last_user: false  # Keep full conversation history
+      default_system_message: "You are a helpful programming assistant."
+  uncensored_frank_llama3:
+    basename: "uncensored-frank-llama-3-8b"
+    # Matches: uncensored-frank-llama-3-8b-q4-k-m-8192-cpu, uncensored-frank-llama-3-8b-q8-0, etc.
+    description: "Uncensored Frank Llama 3 - Bartowski quantization with malformed chat template requiring explicit stop sequences"
+    settings:
+      # No transformation needed - uses standard messages format
+      # generation_params: Parameters to add/override in the request
+      generation_params:
+        stop:
+          - "<|im_end|>"
+          - "<|eot_id|>"
+
+  mammoth:
+    basename: "mammoth"
+    # Matches: mammoth-7b-q4-k-m, mammoth-13b-instruct, etc.
+    description: "Mammoth Instruct: messages format with instruction/response template"
+    settings:
+      remove_system_messages: true
+      truncate_to_last_user: false
+      conversation_header: "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n"
+      prompt_template: "### Instruction:\n{prompt}\n\n### Response:\n"
+
+  orca_mini:
+    basename: "orca-mini"
+    # Matches: orca-mini-7b-q8-0, orca-mini-3b, orca-mini-13b, etc.
+    description: "Orca Mini: explain-tuned model with System/User/Response format"
+    settings:
+      remove_system_messages: false  # Preserve client system messages
+      truncate_to_last_user: false   # Keep full conversation history
+      system_template: "### System:\n{system}\n\n"
+      conversation_header: "### System:\nYou are an AI assistant that follows instruction extremely well. Help as much as you can.\n\n"
+      prompt_template: "### User:\n{prompt}\n\n### Response:\n"
+
+  gemma:
+    basename: "gemma"
+    # Matches: gemma-2-9b-it-q4-k-m-8192, gemma-3-12b-it, gemma-the-writer-10b, etc.
+    description: "Gemma: Google's Gemma models (all versions) do not support system role in chat template"
+    settings:
+      prepend_system_to_user: true   # Preserve system instruction by prepending to first user message
+      remove_system_messages: true   # Remove system role after prepending (Gemma doesn't support system)
+      truncate_to_last_user: false   # Keep full conversation history
+      # Custom template with clear delimiters to prevent example copying
+      # When system prompt is folded into user prompt, models may treat examples as
+      # content to reproduce. This template clearly marks system instructions as separate
+      # from user content and explicitly forbids copying example text.
+      system_prepend_template: |
+        <<< SYSTEM INSTRUCTIONS - DO NOT COPY ANY TEXT FROM THIS SECTION >>>
+        {system}
+        <<< END SYSTEM INSTRUCTIONS >>>
+
+        User request: {prompt}

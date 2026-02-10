@@ -1,0 +1,184 @@
+# Dockerfile.golem-obfuscated
+# Production-ready obfuscated Golem Network deployment
+# 
+# CPU-only deployment with IP protection via PyArmor obfuscation
+# Replaces: Dockerfile.obfuscated-cpu + Dockerfile.obfuscated-cpu-mutable
+#
+# Build:
+#   docker build -f Dockerfile.golem-obfuscated -t universal-llm-gateway:golem-obfuscated .
+#
+# Model Workflow:
+#   All Golem deployments are "mutable" - models are added at some stage:
+#   Option A: At build time (build script populates models/ before build)
+#   Option B: Post-build (copy into running container, commit, convert to GVMI)
+#   Option C: Runtime (volume mount - less common for Golem)
+#
+# Architecture:
+#   - Extends universal-llm-gateway:golem-base (CPU-optimized runtime)
+#   - Obfuscates all Python source code for IP protection
+#   - Runs as non-root user (UID 1000)
+#   - /app/models writable for flexible model deployment
+
+ARG PYTHON_VERSION=3.12
+ARG CPU_OPTIMIZATION=avx2
+ARG LLAMA_CPP_PYTHON_VERSION=
+
+# ============================================================================
+# Stage 1: Obfuscator
+# ============================================================================
+FROM python:${PYTHON_VERSION}-slim AS obfuscator
+
+RUN pip install --no-cache-dir pyarmor
+
+WORKDIR /obfuscate
+
+# Activate PyArmor license
+# REQUIRED: PyArmor Pro ($89) or Basic ($52) license for unlimited files
+# Purchase: https://jondy.github.io/paypal/index.html
+# Privacy: Your source code is NEVER uploaded - only license verification info sent
+# PREREQUISITE: Copy license file to project root before build:
+#   cp pyarmor-regfile-*.zip /mnt/torus/projects/universal-llm-gateway/
+COPY pyarmor-regfile-*.zip /tmp/
+RUN echo "🔓 Activating PyArmor license..." && \
+    pyarmor reg /tmp/pyarmor-regfile-*.zip && \
+    pyarmor -v && \
+    echo "✅ PyArmor license activated"
+
+# Copy source code to obfuscate
+# Note: Only git-tracked files are in build context (handled by build script)
+COPY libs/ /obfuscate/libs/
+COPY services/ /obfuscate/services/
+
+# Obfuscate code
+# REQUIRES: PyArmor Basic ($52) or Pro ($89) license for unlimited files
+# RECOMMENDED: Pro ($89) - RFT/BCC modes provide stronger IP protection
+#   - Protects proprietary inference logic until ROI recouped
+#   - One-time fee vs ongoing development investment
+# Privacy: Source code NEVER uploaded - only license verification (hardware/network IDs)
+# Purchase: https://jondy.github.io/paypal/index.html
+# NOTE: Removed --restrict flag to allow normal import behavior
+RUN echo "🔒 Obfuscating source code (all modules)..." && \
+    pyarmor gen --recursive \
+    --output /obfuscate/dist/services \
+    /obfuscate/services/_universal-llm-gateway \
+    /obfuscate/services/universal-stargate && \
+    pyarmor gen --recursive \
+    --output /obfuscate/dist/libs \
+    /obfuscate/libs/inference_djinn \
+    /obfuscate/libs/process_ipc \
+    /obfuscate/libs/universal_logging \
+    /obfuscate/libs/universal_transport \
+    /obfuscate/libs/universal_protocol \
+    /obfuscate/libs/universal_event_bus \
+    /obfuscate/libs/universal_workspace && \
+    echo "✅ Obfuscation complete (all services + 7 libs)"
+
+# ============================================================================
+# Stage 2: Runtime (extends universal-llm-gateway:golem-base)
+# ============================================================================
+# Inherits:
+#   - CPU-optimized llama-cpp-python (AVX2/AVX512)
+#   - Non-root user (appuser, UID 1000)
+#   - Golem volume structure (/golem/*)
+FROM universal-llm-gateway:golem-base AS runtime
+
+# CRITICAL: Switch to root temporarily for package installation
+# Base image ends with USER appuser, so we need root for apt-get
+USER root
+
+# Bootstrap pip for Python 3.12 (golem-base doesn't include pip to minimize size)
+# PEP 668: Ubuntu 24.04 marks Python as externally-managed
+# Safe to override in isolated Docker container
+RUN apt-get update && apt-get install -y curl && \
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 - --break-system-packages && \
+    apt-get remove -y curl && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install PyArmor runtime (required for obfuscated code execution)
+RUN python3.12 -m pip install --no-cache-dir pyarmor --break-system-packages
+
+# Copy all files first (configs, docs, scripts, etc.)
+# Note: Only git-tracked files are in build context (handled by build script)
+# SECURITY: Use --chown to set ownership for non-root user (inherited from golem-base)
+COPY --chown=appuser:appuser libs/ /app/libs/
+COPY --chown=appuser:appuser services/ /app/services/
+COPY --chown=appuser:appuser config/ /app/config/
+COPY --chown=appuser:appuser sitecustomize.py /app/
+
+# Set Python path for runtime (critical for importing libs/*)
+ENV PYTHONPATH=/app/libs
+
+# Overlay obfuscated Python code (replaces .py files only)
+# This preserves all non-Python files (YAML, docs, scripts, etc.)
+# SECURITY: Use --chown to set ownership for non-root user
+COPY --chown=appuser:appuser --from=obfuscator /obfuscate/dist/libs/ /app/libs/
+COPY --chown=appuser:appuser --from=obfuscator /obfuscate/dist/services/ /app/services/
+
+# Copy attribution
+COPY --chown=appuser:appuser ATTRIBUTION.txt /app/
+COPY --chown=appuser:appuser LICENSE /app/
+
+# Copy startup script (readable, not obfuscated)
+COPY --chown=appuser:appuser docker/runtime/golem-start.sh /app/golem-start.sh
+RUN chmod +x /app/golem-start.sh
+
+# ============================================================================
+# Model Directory Setup
+# ============================================================================
+# All Golem deployments will have models copied into /app/models at some stage:
+#   - Option A: At build time (via build script populating models/ directory)
+#   - Option B: Post-build, pre-GVMI (copy into running container, then commit)
+#   - Option C: Runtime (via volume mount - not typical for Golem)
+#
+# This Dockerfile creates the directory structure. Actual model files added later.
+# The /app/models directory is owned by appuser (UID 1000) for write access.
+
+# Copy any models present in build context (typically just .gitkeep placeholder)
+# Build script can optionally populate models/ before build for Option A
+COPY --chown=appuser:appuser models/ /app/models/
+
+# Ensure directory is writable for post-build model copying (Option B)
+# This allows: docker run, copy models, docker commit, convert to GVMI
+RUN chown -R appuser:appuser /app/models && \
+    chmod -R u+w /app/models && \
+    echo "✅ /app/models ready for model files"
+
+# Rest of runtime setup
+ENV WORKSPACE_ROOT=/app
+
+# Verify workspace structure for root detection
+RUN echo "=== Verifying workspace structure ===" && \
+    test -d /app/libs && echo "✅ /app/libs/ exists" || echo "❌ /app/libs/ missing" && \
+    test -d /app/services && echo "✅ /app/services/ exists" || echo "❌ /app/services/ missing" && \
+    test -f /app/config/model_catalog.yaml && echo "✅ /app/config/model_catalog.yaml exists" || echo "❌ /app/config/model_catalog.yaml missing" && \
+    echo "✅ Workspace structure verified (2/3 markers: config/model_catalog.yaml + services/libs dirs)"
+
+# SECURITY: Create runtime directories with proper ownership
+# Note: /golem/* directories already created and owned by appuser in golem-base
+# These commands require root to chown, so run before switching to appuser
+RUN mkdir -p /tmp/universal-protocol /tmp/process_ipc /app/runtime && \
+    chown -R appuser:appuser /tmp/universal-protocol /tmp/process_ipc /app/runtime
+
+# ============================================================================
+# Switch to non-root user (SECURITY HARDENING) - FINAL
+# ============================================================================
+# All package installation and chown complete, now switch to appuser for runtime
+USER appuser
+
+WORKDIR /app/services/_universal-llm-gateway
+
+# Re-declare ARGs for labels (Docker requirement after FROM)
+ARG CPU_OPTIMIZATION
+
+# Labels for runtime inspection
+LABEL cpu.only="true"
+LABEL cpu.optimization="${CPU_OPTIMIZATION}"
+LABEL platform="golem"
+LABEL deployment.type="obfuscated"
+LABEL obfuscation.tool="pyarmor"
+LABEL security.user="appuser"
+LABEL security.uid="1000"
+LABEL maintainer="krunch3r76"
+LABEL models.path="/app/models"
+LABEL models.writable="true"

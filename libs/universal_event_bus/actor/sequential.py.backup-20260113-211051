@@ -1,0 +1,229 @@
+"""
+Sequential Executor for lock-free async operations.
+
+Provides a minimal, composable pattern that guarantees sequential execution
+of async operations without locks. Logic remains in normal methods - the
+executor just ensures they don't interleave.
+
+Design Goals:
+    1. Minimal boilerplate - use normal async methods
+    2. Composable - works with any class via composition
+    3. Transparent - logic stays at the surface, not hidden in commands
+    4. Reusable - one pattern for all sequential-access needs
+
+Usage:
+    class MyManager:
+        def __init__(self):
+            self._seq = SequentialExecutor()
+
+        async def complex_operation(self, arg1, arg2):
+            # Multi-step operation with awaits - guaranteed sequential
+            async def work():
+                data = await self._fetch_data()
+                result = self._process(data, arg1, arg2)
+                await self._save(result)
+                return result
+            return await self._seq.run(work())
+
+    # Or with decorator:
+    class MyManager(Sequential):
+        @sequential
+        async def complex_operation(self, arg1, arg2):
+            # This method body runs sequentially - no lock needed
+            data = await self._fetch_data()
+            result = self._process(data, arg1, arg2)
+            await self._save(result)
+            return result
+"""
+
+import asyncio
+from collections.abc import Awaitable, Coroutine
+from functools import wraps
+from typing import Any, TypeVar
+
+from universal_logging import get_logger
+
+logger = get_logger(__name__)
+
+T = TypeVar("T")
+
+
+class SequentialExecutor:
+    """
+    Executes coroutines sequentially, one at a time.
+
+    Use this when you need to ensure multi-step async operations
+    don't interleave. Eliminates the need for asyncio.Lock.
+
+    The executor uses an internal queue - when you call run(), your
+    coroutine is queued and executed after all previously queued
+    coroutines complete.
+    """
+
+    def __init__(self):
+        self._queue: (
+            asyncio.Queue[tuple[Coroutine[Any, Any, Any], asyncio.Future[Any]]] | None
+        ) = None
+        self._task: asyncio.Task | None = None
+        self._running = False
+
+    async def start(self) -> None:
+        """Start the executor loop."""
+        if self._running:
+            return
+        self._running = True
+        if self._queue is None:
+            self._queue = asyncio.Queue()
+        self._task = asyncio.create_task(self._loop())
+
+    async def stop(self) -> None:
+        """Stop the executor gracefully."""
+        if not self._running:
+            return
+        self._running = False
+
+        if self._queue is not None:
+            # Unblock queue with sentinel
+            sentinel: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
+            sentinel.set_result(None)
+
+            async def noop():
+                return None
+
+            await self._queue.put((noop(), sentinel))
+
+        if self._task:
+            try:
+                await asyncio.wait_for(self._task, timeout=5.0)
+            except TimeoutError:
+                self._task.cancel()
+
+    async def run(self, coro: Awaitable[T]) -> T:
+        """
+        Execute coroutine sequentially, waiting for result.
+
+        The coroutine is queued and executed after all previously
+        queued coroutines complete. Returns the result.
+
+        Args:
+            coro: Coroutine to execute
+
+        Returns:
+            Result of the coroutine
+        """
+        if not self._running:
+            # Auto-start if needed
+            await self.start()
+
+        if self._queue is None:
+            raise RuntimeError("Queue not initialized")
+
+        future: asyncio.Future[T] = asyncio.get_event_loop().create_future()
+        await self._queue.put((coro, future))
+        return await future
+
+    def run_nowait(self, coro: Awaitable[Any]) -> None:
+        """
+        Execute coroutine sequentially without waiting (fire-and-forget).
+
+        Args:
+            coro: Coroutine to execute
+        """
+        if not self._running or self._queue is None:
+            logger.warning("Executor not running, dropping coroutine")
+            return
+
+        future: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
+
+        def log_error(f: asyncio.Future) -> None:
+            try:
+                f.result()
+            except Exception as e:
+                logger.error(f"Background operation failed: {e}")
+
+        future.add_done_callback(log_error)
+
+        try:
+            self._queue.put_nowait((coro, future))
+        except asyncio.QueueFull:
+            logger.error("Executor queue full, dropping coroutine")
+
+    async def _loop(self) -> None:
+        """Process coroutines sequentially."""
+        if self._queue is None:
+            logger.error("Queue not initialized")
+            return
+
+        while self._running:
+            try:
+                coro, future = await self._queue.get()
+
+                try:
+                    result = await coro
+                    future.set_result(result)
+                except Exception as e:
+                    future.set_exception(e)
+
+                self._queue.task_done()
+
+            except asyncio.CancelledError:
+                break
+
+
+class Sequential:
+    """
+    Mixin that provides a shared SequentialExecutor.
+
+    Inherit from this and use the @sequential decorator on methods
+    that need sequential execution guarantees.
+
+    Example:
+        class MyManager(Sequential):
+            @sequential
+            async def complex_operation(self, arg1, arg2):
+                # This runs sequentially - no locks needed
+                data = await self._fetch()
+                return self._process(data)
+    """
+
+    _executor: SequentialExecutor
+
+    def __init__(self):
+        self._executor = SequentialExecutor()
+
+    async def _start_executor(self) -> None:
+        """Start the sequential executor."""
+        await self._executor.start()
+
+    async def _stop_executor(self) -> None:
+        """Stop the sequential executor."""
+        await self._executor.stop()
+
+
+def sequential(method):
+    """
+    Decorator that makes an async method run sequentially.
+
+    Use on methods of classes that inherit from Sequential.
+    The decorated method will be queued and executed one at a time,
+    eliminating the need for locks.
+
+    Example:
+        class MyManager(Sequential):
+            @sequential
+            async def update_state(self, new_value):
+                # Guaranteed sequential - safe to do multi-step operations
+                current = await self._fetch_current()
+                merged = self._merge(current, new_value)
+                await self._save(merged)
+                return merged
+    """
+
+    @wraps(method)
+    async def wrapper(self, *args, **kwargs):
+        async def work():
+            return await method(self, *args, **kwargs)
+
+        return await self._executor.run(work())
+
+    return wrapper

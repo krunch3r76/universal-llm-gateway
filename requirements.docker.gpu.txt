@@ -1,0 +1,121 @@
+# requirements.docker.gpu.txt
+# GPU-enabled Docker requirements (CUDA support)
+# Phase 1: llama-cpp-python CUDA only (vLLM in Phase 2)
+
+# ============================================================================
+# Core Web Framework and ASGI Server
+# ============================================================================
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+starlette>=0.27.0
+
+# ============================================================================
+# Data Validation and Serialization
+# ============================================================================
+pydantic>=2.0.0
+msgspec
+typing-extensions>=4.0.0
+
+# ============================================================================
+# Build Tools (required for runtime compilation)
+# ============================================================================
+# setuptools required by vLLM for JIT CUDA kernel compilation
+setuptools>=68.0.0
+
+# ============================================================================
+# Configuration and Data Processing
+# ============================================================================
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# ============================================================================
+# HTTP and WebSocket Communication
+# ============================================================================
+httpx>=0.24.0
+websockets>=11.0
+
+# ============================================================================
+# Async and Concurrency
+# ============================================================================
+aiofiles>=23.0.0
+
+# ============================================================================
+# Process Management and System Utilities
+# ============================================================================
+psutil>=5.9.0
+
+# ============================================================================
+# Event Bus and Messaging
+# ============================================================================
+asyncio-mqtt>=0.16.0
+
+# ============================================================================
+# Monitoring and Logging
+# ============================================================================
+prometheus-client>=0.17.0
+structlog>=23.0.0
+
+# ============================================================================
+# Security and Authentication
+# ============================================================================
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.6
+
+# ============================================================================
+# Scientific Computing and Array Operations
+# ============================================================================
+# NumPy version constraint: Numba (used by vLLM) requires NumPy <=2.2
+# Without this constraint, pip installs NumPy 2.3+ which breaks Numba
+numpy>=1.24.0,<2.3
+
+# ============================================================================
+# Model Format Support (inference_djinn)
+# ============================================================================
+gguf>=0.10.0
+
+# GPU-enabled llama-cpp-python (CUDA support)
+# Built with CMAKE_ARGS in Dockerfile - DO NOT install here
+# llama-cpp-python>=0.2.0
+
+# Optional: Fast GGUF metadata parsing
+gguf-parser>=0.1.0
+
+# ============================================================================
+# GPU Monitoring
+# ============================================================================
+nvidia-ml-py3>=7.352.0
+
+# ============================================================================
+# Audio/Speech Processing (Whisper ASR)
+# ============================================================================
+# Both Whisper implementations available - engine will choose based on preference
+# faster-whisper>=1.0.0           # CTranslate2 backend - INSTALLED WITH --no-deps IN DOCKERFILE
+# openai-whisper>=20231117        # PyTorch backend - INSTALLED WITH --no-deps IN DOCKERFILE
+# Audio processing dependencies
+soundfile>=0.12.0
+scipy>=1.11.0
+
+# ============================================================================
+# Phase 2 Dependencies (vLLM Support)
+# ============================================================================
+# PyTorch with CUDA 13.0 support (required for vLLM)
+# Installed via wheel index in Dockerfile - DO NOT install here
+# torch>=2.9.1
+
+# vLLM for high-performance GPU inference of safetensors models
+# Installed in Dockerfile after PyTorch - DO NOT install here
+# vllm>=0.11.2
+
+# vLLM dependencies (transformers, accelerate) - installed conditionally in Dockerfile
+# when ENABLE_VLLM=true - DO NOT install here
+
+# ============================================================================
+# Notes:
+# ============================================================================
+# - Phase 1: CUDA-enabled llama-cpp-python only
+# - Phase 2: Add PyTorch + vLLM (adds ~6-8GB to image)
+# - llama-cpp-python built separately in Dockerfile with CMAKE_ARGS
+# - PyTorch and vLLM installed via custom wheel index in Dockerfile
+# - Expected image size: ~3-4GB (Phase 1), ~10-12GB (Phase 2)
+

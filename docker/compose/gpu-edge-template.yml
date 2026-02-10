@@ -1,0 +1,104 @@
+# GPU Edge Node - Template (mode: edge)
+# Container running Edge Stargate + Gateway
+# - Edge Stargate: Passive endpoint (mode: edge), accepts inbound via Unix socket
+# - Gateway: Core inference engine (network isolated)
+# - Master/Relay connects TO Edge Stargate via Unix socket
+#
+# EDGE vs REMOTE:
+#   EDGE: Passive - accepts inbound only, no outbound WebSocket (network-isolated containers)
+#   REMOTE: Active - initiates WebSocket connection TO Master (VPS/relay nodes)
+#
+# TO USE THIS TEMPLATE:
+# 1. Copy this file: cp gpu-edge-template.yml gpu-edge-<hostname>.yml
+# 2. Create .env file: cp ../../.env.gpu-edge-localhost ../../.env.gpu-edge-<hostname>
+# 3. Update <REPLACEME> placeholders below
+# 4. Update stargate config: cp config/stargate_config.gpu-edge-localhost.yaml config/stargate_config.gpu-edge-<hostname>.yaml
+# 5. Generate federation keys if needed
+
+services:
+  edge-<HOSTNAME>:  # REPLACEME: Unique container name (e.g., edge-mars)
+    image: universal-llm-gateway:gpu
+    container_name: edge-<HOSTNAME>  # REPLACEME: Same as service name
+    pull_policy: never
+    
+    # Load environment variables from files
+    env_file:
+      - ../../.env.gpu-edge-<HOSTNAME>  # REPLACEME: Deployment-specific config
+      - ./engine-optimizations.env       # Shared inference optimizations (vLLM, OpenMP)
+    
+    # Network isolation - no network access except via Unix socket
+    # Note: Container runs as non-root user 'appuser' (UID 1000) - see Dockerfile.gpu
+    network_mode: none
+    
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    volumes:
+      # Runtime scripts (for quick iteration without rebuilding)
+      - ../../docker/runtime/golem-start.sh:/app/golem-start.sh:ro
+      # Configuration
+      - ../../config:/app/config:ro
+      # Data volumes
+      - <HOST_MODELS_PATH>:/golem/models  # REPLACEME: Host path to models (e.g., /mnt/models)
+      - ../../tmp/gpu-nodes/<HOSTNAME>/logs:/golem/logs  # REPLACEME: Log directory
+      - ../../tmp/gpu-nodes/<HOSTNAME>/output:/golem/output  # REPLACEME: Output directory
+      # Unix socket directory - shared with host Master/Relay Stargate
+      - /tmp/universal-protocol:/tmp/universal-protocol
+      # Event monitoring socket (host-accessible)
+      - ${EVENT_SOCKET_DIR:-/tmp/universal-sockets}:/sockets
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    
+    environment:
+      APP_DIR: /app
+      MODEL_PATH_ROOT: /golem/models
+      WORKSPACE_ROOT: /app
+      PYTHONPATH: /app/libs
+      
+      # Edge Stargate configuration (mode: edge - passive endpoint)
+      STARGATE_CONFIG: /app/config/stargate_config.gpu-edge-<HOSTNAME>.yaml  # REPLACEME: Config file
+      STARGATE_UNIX_SOCKET: /tmp/universal-protocol/edge-<HOSTNAME>.sock  # REPLACEME: Socket name
+      REMOTE_ID: edge-<HOSTNAME>  # REPLACEME: Unique remote ID
+      STARGATE_SOCKET_PATH: /tmp/universal-protocol/edge-<HOSTNAME>.sock  # REPLACEME: Same as STARGATE_UNIX_SOCKET
+      
+      # Gateway listens on internal TCP (Edge Stargate connects to it)
+      GATEWAY_HOST: 127.0.0.1
+      GATEWAY_PORT: 9998
+      
+      # Federation authentication (connecting relay/master authenticates TO this Edge)
+      FEDERATION_KEY_EDGE_<HOSTNAME_UPPER>: ${FEDERATION_KEY_EDGE_<HOSTNAME_UPPER>:-}  # REPLACEME: Uppercase hostname
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      ENVIRONMENT: gpu-deployment
+      WORKER_LOG_DIR: /golem/logs/workers
+      SOCKET_DIR: /tmp/universal-protocol
+      MODEL_CACHE_DIR: /golem/models
+      
+      # Feature flags
+      ENABLE_MODEL_AVAILABILITY_CHECK: "true"
+      ENABLE_MANAGEMENT_API: "true"
+      DISABLE_HEALTH_CHECKING: "false"
+      
+      # Debug event socket (enable with DEBUG_EVENT_SOCKET=/sockets/events.sock)
+      DEBUG_EVENT_SOCKET: ${DEBUG_EVENT_SOCKET:-}
+    
+    # No ports - network isolated, Unix socket only
+    
+    # Start both Edge Stargate (Unix socket) and Gateway (internal TCP)
+    command: ["/app/golem-start.sh", "both"]
+    
+    # Health check via Edge Stargate Unix socket
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -S /tmp/universal-protocol/edge-<HOSTNAME>.sock"]  # REPLACEME: Socket name
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    
+    restart: unless-stopped

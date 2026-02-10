@@ -1,0 +1,46 @@
+[project]
+name = "universal-llm-gateway"
+version = "2.0.0"
+description = "High-performance LLM inference gateway with worker process management and RPC communication"
+readme = "README.md"
+authors = [
+    {name = "krunch3r76", email = "biz@u26a4.com"}
+]
+license = {text = "MIT"}
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "tmp",
+    "*.egg-info",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+]
+ignore = ["E501"]  # line-too-long
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+# Add paths for pipeline handlers in pipelines.local/
+extraPaths = [
+    "services/universal-stargate",
+    "libs",
+]

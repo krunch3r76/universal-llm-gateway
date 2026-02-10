@@ -1,0 +1,72 @@
+# GPU Jupiter Relay Stargate Configuration
+# Relay Stargate runs on jupiter host (local process)
+# Router-only mode: forwards requests to Edge container via Unix socket
+#
+# ARCHITECTURE (2026-01-16):
+#   Relay: Router-only (NO local Gateway)
+#   Edge: Execution-capable (has local Gateway inside container)
+#   Relay forwards to Edge via federation.local_edge.socket_path
+#
+# Explicit router-only configuration (signals no local execution capability)
+# NOTE: gateway.url/socket_path NOT used for Remote mode - use federation.local_edge
+gateway:
+  url: null  # CRITICAL: null signals router-only mode for Remote Stargate
+
+# Proxy settings - receives requests from Master
+proxy:
+  port: 9999
+  host: "0.0.0.0"
+  cors_enabled: true
+
+# Federation: Remote mode (relay topology)
+federation:
+  mode: remote
+  stargate_id: relay-jupiter
+  # Relay topology: WebSocket telemetry (default, no disable_websocket needed)
+  
+  # Master to connect TO (Remote-initiates WebSocket)
+  master:
+    stargate_id: master-localhost
+    url: "http://${MASTER_HOST:-master.local}:9999"  # Adjust to master's hostname/IP
+    api_key: "${FEDERATION_KEY_JUPITER}"
+  
+  # Local Edge Stargate (federation protocol over Unix socket)
+  local_edge:
+    socket_path: "/tmp/universal-protocol/edge-jupiter.sock"  # Unix socket to Edge container
+    stargate_id: "edge-jupiter"
+    api_key: "${FEDERATION_KEY_EDGE_JUPITER}"
+  
+  # Reconnection settings (bounded backoff)
+  reconnect_interval_ms: 1000
+  max_reconnect_delay_ms: 30000
+  ping_interval_ms: 15000
+
+# Logging
+logging:
+  level: "DEBUG"
+  enable_console: true
+  enable_file: true
+  log_dir: "/tmp/logs/universal-stargate-relay-jupiter"
+
+# Debug event persistence for post-mortem debugging
+debug_events:
+  persistence:
+    enabled: true
+    directory: "/tmp/stargate-events"
+    max_file_size_mb: 50
+    max_files: 3
+    flush_interval_seconds: 1.0
+
+# Model routing - default configuration
+model_routing:
+  default_sticky: true
+
+# Request queue
+request_queue:
+  max_size: 1000
+  default_timeout: 300
+
+# Routing scoring configuration
+routing:
+  scoring:
+    capacity: {}

@@ -1,0 +1,56 @@
+#!/bin/bash
+# llama-cpp-python Build Script - Compatibility Matrix Enhanced
+# Uses tested commits by default, with option to use pinned stable
+
+set -e
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PYTHON_BUILDER="$SCRIPT_DIR/../../python_builders/llama_cpp/build_llama_cpp_experimental.py"
+
+# Check if Python builder exists
+if [ ! -f "$PYTHON_BUILDER" ]; then
+    echo "❌ ERROR: Python builder not found: $PYTHON_BUILDER"
+    exit 1
+fi
+
+# Prefer venv Python if available, otherwise use system Python
+PYTHON_EXEC="python3"
+if [ -n "$VIRTUAL_ENV" ]; then
+    PYTHON_EXEC="$VIRTUAL_ENV/bin/python3"
+fi
+
+# Parse arguments to inject smart defaults
+ARGS=()
+HAS_COMMIT_ARG=false
+HAS_FEATURE_ARG=false
+HAS_PROFILE_ARG=false
+
+for arg in "$@"; do
+    case "$arg" in
+        --llama-cpp-commit=*|--latest-llama-cpp|--pinned-llama-cpp)
+            HAS_COMMIT_ARG=true
+            ;;
+        --feature=*)
+            HAS_FEATURE_ARG=true
+            ;;
+        --compatibility-profile=*)
+            HAS_PROFILE_ARG=true
+            ;;
+    esac
+    ARGS+=("$arg")
+done
+
+# Smart default: Use latest working commit unless user specifies otherwise
+if [ "$HAS_COMMIT_ARG" = false ] && [ "$HAS_FEATURE_ARG" = false ] && [ "$HAS_PROFILE_ARG" = false ]; then
+    echo "ℹ️  Using pinned stable commit (no API patches required)"
+    echo "   To use old pinned stable: --pinned-llama-cpp"
+    echo "   To try latest master: --latest-llama-cpp"
+    echo ""
+    
+    
+    ARGS+=("--pinned-llama-cpp")
+fi
+
+# Execute Python builder with enhanced arguments
+exec "$PYTHON_EXEC" "$PYTHON_BUILDER" "${ARGS[@]}"
+

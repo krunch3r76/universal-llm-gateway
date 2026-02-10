@@ -1,0 +1,59 @@
+# Golem Edge Stargate Configuration (TCP, execution-capable)
+#
+# Runs inside each Golem node container as the ONLY Stargate process.
+#
+# Topology:
+#   Master (local) → Edge (TCP :9999) over:
+#     - WS telemetry: /ws/federation/edge  (Master-initiated)
+#     - HTTP federation: /api/v1/federation/*  (Master-initiated)
+#
+# Environment variables:
+# - REMOTE_ID: node identifier (e.g. "golem-remote-1")
+# - FEDERATION_API_KEY: shared key for Master authentication (per node)
+
+# Local Gateway connection (same container, localhost)
+gateway:
+  url: "http://localhost:9998"
+  timeout: 30.0
+  connectivity_timeout: 10.0
+  health_timeout: 2.0
+  request_timeout: 1800
+  streaming_timeout: 1800
+
+# Proxy settings - TCP (Master connects here)
+proxy:
+  port: 9999
+  host: "0.0.0.0"
+  cors_enabled: false
+
+federation:
+  mode: edge
+  stargate_id: "${REMOTE_ID}"
+
+  # Master connects to Edge and must authenticate.
+  allowed_peers:
+    - stargate_id: "master-local"
+      api_key: "${FEDERATION_API_KEY}"
+
+# Edge is not intended to serve client traffic in this topology.
+authorization:
+  enabled: false
+
+# Logging
+logging:
+  level: "DEBUG"
+  enable_console: true
+  enable_file: true
+  log_dir: "/golem/logs/stargate"
+
+model_routing:
+  default_sticky: true
+
+request_queue:
+  max_size: 1000
+  default_timeout: 300
+
+routing:
+  scoring:
+    capacity: {}
+

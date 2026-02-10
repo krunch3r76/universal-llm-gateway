@@ -1,0 +1,79 @@
+# Example gateway configuration with hot reload enabled
+# Copy this to gateway_config.yaml and modify as needed
+
+server:
+  host: "0.0.0.0"
+  port: 9998
+  workers: 1
+  timeout: 300
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/gateway.log"
+  max_size: "10MB"
+  backup_count: 5
+
+process_isolation:
+  enabled: true
+  socket_dir: "/tmp/universal-protocol"
+  max_workers_per_model: 1
+  max_concurrent_workers: 1
+  worker_timeout: 300
+  model_info_timeout: 5
+  shutdown_timeout: 10
+  force_stop_timeout: 5
+  startup_timeout: 60
+  sigterm_wait_timeout: 5
+  sigkill_wait_timeout: 3
+  use_hierarchical_timeouts: true
+  cleanup_on_exit: true
+  fast_model_unload: true
+  skip_sigterm_on_unload: true
+
+worker_processes:
+  use_inference_djinn_venv: false
+  inference_djinn_venv_path: "/mnt/torus/projects/inference-djinn/.djinn-venv/bin/python"
+  detached: true
+
+model_registry:
+  auto_discovery: false
+  config_file: "config/model_loaders.yaml"
+  validation:
+    check_paths: true
+    check_formats: true
+
+models:
+  auto_load_on_request: false
+
+caching:
+  enabled: true
+  max_size: 1000
+  ttl: 3600
+
+rate_limiting:
+  enabled: true
+  requests_per_minute: 60
+  burst_size: 10
+
+health_check:
+  enabled: true
+  interval: 30
+  timeout: 5
+
+management_api:
+  enabled: false
+  require_token: true
+  token: null
+
+# Hot reload configuration
+hot_reload:
+  enabled: true  # Enable hot reload functionality
+  watch_directory: "config"  # Directory to watch for changes
+  debounce_ms: 500  # Debounce delay in milliseconds
+  recursive: true  # Watch subdirectories recursively
+  supported_formats: [".yaml", ".yml", ".json"]  # File formats to watch
+  log_level: "info"  # Logging level for hot reload events
+
+security:
+  allowed_origins: ["*"]

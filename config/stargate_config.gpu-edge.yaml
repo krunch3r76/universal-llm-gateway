@@ -1,0 +1,81 @@
+# GPU Edge Node Configuration - Network Isolated Edge (Gateway + Stargate)
+#
+# This configuration is for a network-isolated container running BOTH Gateway and Stargate
+# The Edge Stargate communicates ONLY via Unix socket with the host Relay Stargate
+# NO federation config needed - completely isolated
+#
+# Environment variables:
+#   REMOTE_ID - Node identifier (e.g., "edge-localhost", "edge-jupiter")
+#   STARGATE_SOCKET_PATH - Unix socket path (e.g., /tmp/universal-protocol/edge-localhost.sock)
+
+# Local Gateway connection (same container, localhost HTTP)
+gateway:
+  url: "http://localhost:9998"  # Gateway runs on localhost in same container
+  timeout: 30.0
+  connectivity_timeout: 10.0
+  health_timeout: 2.0
+  request_timeout: 1800
+  streaming_timeout: 1800
+  resource_management:
+    max_concurrent_model_loads: 1
+    model_loading_slot_acquisition_timeout: 0.25
+    reservation_timeout: 300
+    reservation_cleanup_interval: 30
+    enable_reservation_monitoring: true
+  capabilities:
+    cpu_performance: high
+    hybrid_performance: high
+  max_concurrent_cpu_models: 50
+  max_concurrent_gpu_models: 10
+
+# Proxy settings - Unix socket ONLY (no HTTP port - network isolated)
+proxy:
+  port: null  # No HTTP port - network isolated
+  host: null  # No HTTP binding
+  socket_path: "${STARGATE_SOCKET_PATH}"  # Unix socket for Relay Stargate communication
+  cors_enabled: false  # Not applicable for Unix socket
+
+# Federation config - EDGE mode (passive endpoint)
+# Edge Stargate accepts inbound connections via Unix socket ONLY
+# NO outbound federation connections (network isolated, no Master WebSocket)
+#
+# EDGE vs REMOTE:
+#   EDGE: Passive - accepts inbound, no outbound WebSocket (network-isolated containers)
+#   REMOTE: Active - initiates WebSocket connection TO Master (VPS/relay nodes)
+federation:
+  mode: edge
+  stargate_id: "${REMOTE_ID}"
+  
+  # Allowed inbound peers (Relays that can connect via /ws/federation/edge)
+  allowed_peers:
+    - stargate_id: "relay-localhost"
+      api_key: "${FEDERATION_KEY_EDGE_LOCALHOST}"
+    - stargate_id: "relay-jupiter"
+      api_key: "${FEDERATION_KEY_EDGE_JUPITER}"
+
+# Authorization - DISABLED for network-isolated Edge (Unix socket only)
+# Edge containers have network_mode: none and are only accessible via Unix socket
+# from the trusted Relay Stargate on the same host. No authentication needed.
+authorization:
+  enabled: false
+
+# Logging
+logging:
+  level: "DEBUG"
+  enable_console: true
+  enable_file: true
+  log_dir: "/golem/logs/stargate"  # Container volume path
+
+# Model routing - default configuration
+model_routing:
+  default_sticky: true
+
+# Request queue
+request_queue:
+  max_size: 1000
+  default_timeout: 300
+
+# Routing scoring configuration
+routing:
+  scoring:
+    capacity: {}

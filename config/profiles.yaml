@@ -1,0 +1,4 @@
+# Profile configurations for Universal LLM Gateway Stargate
+# This file defines generation parameter profiles that can be applied to requests
+
+profiles: {}

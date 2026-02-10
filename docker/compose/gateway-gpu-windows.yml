@@ -1,0 +1,122 @@
+# docker/docker-compose.gateway-gpu-windows.yml
+# Gateway with NVIDIA GPU support for Windows (Docker Desktop + WSL2)
+#
+# This file removes Linux-specific features that don't work on Windows:
+# - ipc: host (replaced with shm_size for shared memory)
+# - security_opt (Linux security modules not applicable)
+#
+# Requirements:
+# - Windows 10 (21H2+) or Windows 11
+# - Docker Desktop with WSL2 backend enabled
+# - NVIDIA GPU with WSL2-compatible driver (Game Ready 470.76+)
+# - Updated WSL2 kernel: wsl --update
+#
+# Usage:
+#   docker compose -f docker/docker-compose.gateway-gpu-windows.yml up
+#
+# Verify GPU access first:
+#   docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu22.04 nvidia-smi
+version: '3.8'
+
+services:
+  gateway-gpu:
+    build:
+      context: ..
+      dockerfile: docker/dockerfiles/Dockerfile.gpu
+      args:
+        PYTHON_VERSION: "3.12"
+        # Use CUDA 12.x for broader GPU compatibility on Windows
+        # (CUDA 13.0 requires very recent drivers)
+        CUDA_VERSION: "${CUDA_VERSION:-12.6.0}"
+    image: universal-llm-gateway:gpu-windows
+    container_name: universal-gateway-gpu-windows
+    
+    # Windows/WSL2: Use explicit shared memory size instead of ipc: host
+    # ipc: host is unreliable on WSL2; shm_size provides dedicated /dev/shm
+    # 8GB is sufficient for most model loading and PyTorch operations
+    shm_size: '8gb'
+    
+    # NOTE: Removed Linux-specific options that don't apply to Windows:
+    # - ipc: host (replaced with shm_size above)
+    # - security_opt: seccomp/apparmor (Linux security modules)
+    
+    # NVIDIA GPU support (works via WSL2 GPU-P on Windows)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1  # Single GPU only
+              capabilities: [gpu]
+    
+    ports:
+      - "${GATEWAY_PORT:-9998}:9998"
+    
+    environment:
+      # Model configuration
+      - MODEL_PATH_ROOT=/golem/models
+      
+      # Service configuration
+      - GATEWAY_HOST=0.0.0.0
+      - GATEWAY_PORT=9998
+      - WS_AUTH_ENABLED=false
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - ENVIRONMENT=docker-gpu-windows
+      
+      # GPU configuration (single GPU only)
+      - GPU_ENABLED=true
+      # - CUDA_VISIBLE_DEVICES=0
+      
+      # Resource paths
+      - WORKER_LOG_DIR=/golem/logs/workers
+      - SOCKET_DIR=/golem/output/sockets
+      - MODEL_CACHE_DIR=/golem/models
+      
+      # Features
+      - ENABLE_MODEL_AVAILABILITY_CHECK=true
+      - ENABLE_MANAGEMENT_API=true
+      - DISABLE_HEALTH_CHECKING=false
+      
+      # User config directory (for dynamic catalog)
+      - GATEWAY_USER_CONFIG_DIR=/root/.gateway
+      
+      # Timeouts (longer for GPU initialization)
+      - PROCESS_STARTUP_TIMEOUT=600
+      - GATEWAY_SHUTDOWN_GRACE=30
+    
+    volumes:
+      # Models directory (REQUIRED)
+      # Windows paths - Docker Desktop translates these automatically
+      # Option 1: Use Windows-style path (Docker translates /c/Users/... internally)
+      # Option 2: Set MODEL_PATH_ROOT env var before running
+      - ${MODEL_PATH_ROOT:-${HOME}/.models}:/golem/models:ro
+      
+      # Local catalog config directory (for runtime customization)
+      - ${GATEWAY_CONFIG_DIR:-${HOME}/.gateway}:/root/.gateway:rw
+      
+      # Logs (persistent)
+      - gateway-gpu-windows-logs:/golem/logs
+      
+      # Output/state
+      - gateway-gpu-windows-output:/golem/output
+      
+      # CUDA kernel cache (speeds up first inference after container restart)
+      - cuda-cache-windows:/root/.nv
+    
+    entrypoint: ["/app/golem-start.sh"]
+    command: ["gateway"]
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9998/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s  # Longer for GPU initialization
+
+volumes:
+  gateway-gpu-windows-logs:
+  gateway-gpu-windows-output:
+  cuda-cache-windows:
+

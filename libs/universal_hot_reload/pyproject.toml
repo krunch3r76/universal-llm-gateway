@@ -1,0 +1,13 @@
+[project]
+name = "universal_hot_reload"
+version = "0.1.0"
+description = "Pure async file watching with debouncing using watchfiles"
+requires-python = ">=3.11"
+dependencies = [
+    "watchfiles>=0.18.0",
+    "universal_logging",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

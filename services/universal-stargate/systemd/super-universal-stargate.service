@@ -1,0 +1,36 @@
+[Unit]
+Description=Universal Stargate - Middleware Proxy (User Service)
+Documentation=https://github.com/universal-stargate/universal-stargate
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/torus/projects/universal-llm-gateway
+# Environment automatically detects super-repo mode based on working directory name
+ExecStart=/mnt/torus/projects/universal-llm-gateway/services/universal-stargate/scripts/start-stargate.sh release
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -TERM $MAINPID
+# Note: ExecStopPost removed - socket cleanup is handled by the Python script
+# Restart=always
+# RestartSec=10
+StartLimitInterval=60s
+StartLimitBurst=3
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=60s
+TimeoutStartSec=300s
+StandardOutput=null
+StandardError=null
+
+# Security settings (minimal for user service)
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=32768
+
+[Install]
+WantedBy=default.target
+
