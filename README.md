@@ -9,7 +9,7 @@ Production-tested on single-GPU deployments. Under active development.
 ### What Works
 - Federated inference routing with network-isolated Gateway containers (`network_mode: "none"`)
 - Single-GPU deployments: GGUF/llama.cpp, vLLM, Whisper, Flux
-- Pipeline system for multi-model DAG workflows (consensus, translation, transformation)
+- Pipeline system for multi-model DAG workflows (example pending)
 - WebSocket telemetry for real-time state synchronization
 - Docker-based deployment with Unix socket isolation
 - OpenAI-compatible API (`/v1/chat/completions`, `/v1/images/generations`, `/v1/audio/live_transcribe`)
