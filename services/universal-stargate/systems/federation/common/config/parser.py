@@ -296,12 +296,13 @@ def _parse_master_connection(
 
     try:
         api_key = expand_env_vars(master_data["api_key"]).strip()
+        url = expand_env_vars(master_data["url"]).strip()
     except ValueError as e:
         raise ConfigurationError(f"Invalid master config: {e}") from e
 
     return MasterConnectionConfig(
         stargate_id=master_data["stargate_id"],
-        url=master_data["url"],
+        url=url,
         api_key=api_key,
     )
 

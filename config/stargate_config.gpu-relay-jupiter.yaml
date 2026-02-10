@@ -27,7 +27,7 @@ federation:
   # Master to connect TO (Remote-initiates WebSocket)
   master:
     stargate_id: master-localhost
-    url: "http://${MASTER_HOST:-master.local}:9999"  # Adjust to master's hostname/IP
+    url: "http://${MASTER_HOST}:9999"
     api_key: "${FEDERATION_KEY_JUPITER}"
   
   # Local Edge Stargate (federation protocol over Unix socket)

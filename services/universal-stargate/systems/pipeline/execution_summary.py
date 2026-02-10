@@ -31,6 +31,10 @@ from .execution_summary_inputs import (
     format_handler_inputs_section,
     format_map_iteration_inputs,
 )
+from .verification_report import (
+    STEP_TYPE_VERIFY_CHAIN_V4,
+    build_verification_report,
+)
 
 if TYPE_CHECKING:
     from .core.handlers.protocol import PipelineContext
@@ -1649,7 +1653,7 @@ class ExecutionSummaryWriter:
         with open(full_summary_path, "w", encoding="utf-8") as f:
             f.write(full_content)
 
-        # Write summary.json in exec dir so tools (e.g. extract_verifications_by_model) can use it
+        # Write summary.json in exec dir for tools (e.g. extract_verifications_by_model)
         summary = {
             "metadata": {
                 "pipeline_id": pipeline.id,
@@ -1674,6 +1678,25 @@ class ExecutionSummaryWriter:
         summary_path = exec_dir / "summary.json"
         with open(summary_path, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
+
+        execution = summary["execution"]
+        steps = execution.get("steps") or []
+        has_verify_steps = any(
+            s.get("step_type") == STEP_TYPE_VERIFY_CHAIN_V4 for s in steps
+        )
+        if has_verify_steps:
+            metadata = {
+                "pipeline_id": pipeline.id,
+                "execution_id": context.execution_id,
+                "timestamp_iso": summary["metadata"]["timestamp"],
+                "source_text": context.source_text,
+                "question": context.source_text,
+            }
+            report = build_verification_report(execution, metadata)
+            report_path = exec_dir / "verification_report.json"
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2, ensure_ascii=False)
+            logger.info("Verification report written: %s", report_path)
 
         logger.info(
             f"Per-step summaries written: {exec_dir} "

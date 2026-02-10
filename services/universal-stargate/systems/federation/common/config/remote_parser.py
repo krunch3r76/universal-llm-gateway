@@ -111,8 +111,12 @@ def _parse_remote_config(remote_data: dict[str, Any]) -> RemoteStargateConfig:
     Raises:
         ConfigurationError: If required fields missing or env vars not set
     """
-    stargate_id, url, api_key_template = _require_remote_fields(remote_data)
+    stargate_id, url_raw, api_key_template = _require_remote_fields(remote_data)
     api_key = _expand_api_key(stargate_id, api_key_template)
+    try:
+        url = expand_env_vars(url_raw).strip()
+    except ValueError as e:
+        raise ConfigurationError(f"Invalid remote config for {stargate_id}: {e}") from e
     disable_websocket, telemetry_poll_interval_ms, telemetry_ws_initiator = (
         _parse_remote_optional_fields(remote_data)
     )
