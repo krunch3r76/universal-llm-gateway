@@ -69,6 +69,15 @@ def _validate_request_queue_config(request_queue_config: dict[str, Any]) -> None
                 f"request_queue.queue_timeout must be a positive number, got: {timeout}"
             )
 
+    # Upstream retry timeout — budget for retrying retryable 502 (federated upstream)
+    if "upstream_retry_timeout" in request_queue_config:
+        urt = request_queue_config["upstream_retry_timeout"]
+        if not isinstance(urt, int | float) or urt <= 0:
+            raise ValueError(
+                "request_queue.upstream_retry_timeout must be a positive number, "
+                f"got: {urt}"
+            )
+
     # Validate non_sticky sub-config (no queue_timeout — use top-level)
     if "non_sticky" in request_queue_config:
         non_sticky = request_queue_config["non_sticky"]

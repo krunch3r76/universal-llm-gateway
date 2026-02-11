@@ -117,6 +117,17 @@ async def _route_to_federated_gateway(
 
     gateways_for_routing = federated_gateways_to_routing_candidates(federated_gateways)
 
+    # Exclude gateways that failed on previous retry (keep all if none remain)
+    if context.excluded_gateway_ids:
+        kept = [
+            g
+            for g in gateways_for_routing
+            if g.name not in context.excluded_gateway_ids
+        ]
+        if kept:
+            logger.info("🚫 Routing: excluded %s", context.excluded_gateway_ids)
+            gateways_for_routing = kept
+
     logger.debug(
         f"Router-only: {len(gateways_for_routing)} federated gateways available"
     )

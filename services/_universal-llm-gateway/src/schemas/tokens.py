@@ -123,7 +123,13 @@ class TokenCountResponse(BaseModel):
     """Response schema for token counting endpoint"""
 
     token_count: int = Field(..., description="Number of tokens in the messages")
-    context_limit: int = Field(..., description="Maximum context length for the model")
+    context_limit: int = Field(
+        ...,
+        description=(
+            "Effective context length per inference slot "
+            "(total context divided by parallel_slots)"
+        ),
+    )
     max_generation_tokens: int = Field(
         ..., description="Maximum tokens available for generation"
     )

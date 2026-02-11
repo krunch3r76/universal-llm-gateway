@@ -76,7 +76,7 @@ def build_initial_telemetry_payload(
     )
 
     # Extract catalog data (model resources and activated contexts)
-    model_resources: dict[str, dict[str, int]] = {}
+    model_resources: dict[str, dict[str, int | str]] = {}
     activated_contexts: dict[str, dict[str, list[int]]] = {}
     activated_models: list[str] = []
 
@@ -84,20 +84,18 @@ def build_initial_telemetry_payload(
         catalog = ws_client.get_catalog()
 
         if catalog:
-            # Extract model resource requirements
+            # Forward full model resource entries from Gateway catalog.
+            # Includes capacity metadata (context_length, parallel_slots,
+            # effective_context_per_slot) needed by Master for max_tokens
+            # capping when token counting is skipped (e.g. pipeline mode).
             catalog_resources = catalog.get("model_resources", {})
             for model_id in all_models:
                 model_entry = catalog_resources.get(model_id, {})
                 vram_usage = model_entry.get("vram_usage")
                 ram_usage = model_entry.get("ram_usage")
-                input_schema = model_entry.get("input_schema", "messages")
 
                 if vram_usage is not None and ram_usage is not None:
-                    model_resources[model_id] = {
-                        "vram_usage": vram_usage,
-                        "ram_usage": ram_usage,
-                        "input_schema": input_schema,
-                    }
+                    model_resources[model_id] = dict(model_entry)
 
             # Extract activated contexts (for Master filtering)
             activated_contexts = catalog.get("activated_contexts", {})

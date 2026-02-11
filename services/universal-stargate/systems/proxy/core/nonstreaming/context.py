@@ -80,6 +80,9 @@ class RequestContext:
         # Endpoint category determined during routing (for consistent capacity tracking)
         self.routing_endpoint_category: EndpointCategory | None = None
 
+        # Gateways to exclude from routing (accumulated across retries)
+        self.excluded_gateway_ids: set[str] = set()
+
     @property
     def is_federated(self) -> bool:
         """

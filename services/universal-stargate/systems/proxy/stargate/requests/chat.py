@@ -45,31 +45,123 @@ def _is_capacity_error(exc: HTTPException) -> bool:
     return is_retryable(code)
 
 
+def _is_retryable_upstream_error(exc: HTTPException) -> bool:
+    """Return True iff HTTPException is a retryable federated upstream error.
+
+    These are HTTP 502 from the executor where the upstream gateway returned
+    a transient error (5xx mapped to RESOURCE_UNAVAILABLE with retryable=True).
+    """
+    if exc.status_code != 502:
+        return False
+
+    detail = exc.detail
+    if not isinstance(detail, dict):
+        return False
+
+    if detail.get("retryable", False):
+        return True
+
+    code = detail.get("code", "")
+    return is_retryable(code)
+
+
+def _extract_failed_gateway_id(exc: HTTPException) -> str | None:
+    """Extract gateway_id from an upstream error envelope, if present."""
+    detail = exc.detail
+    if not isinstance(detail, dict):
+        return None
+    data = detail.get("data")
+    if not isinstance(data, dict):
+        return None
+    gw_id = data.get("gateway_id")
+    return gw_id if isinstance(gw_id, str) else None
+
+
+def _read_positive_float(
+    config: dict[str, object], key: str, default: float, label: str
+) -> float:
+    """Read a positive float from config, logging ERROR on missing/invalid."""
+    raw = config.get(key)
+    if raw is None:
+        logger.error("%s missing in config; using %.0fs default", label, default)
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.error("Invalid %s=%r; using %.0fs default", label, raw, default)
+        return default
+    if value <= 0:
+        logger.error(
+            "Invalid %s=%r (must be > 0); using %.0fs default", label, raw, default
+        )
+        return default
+    return value
+
+
 def _get_capacity_retry_timeout_s(proxy: StargateProxy) -> float:
     """
     Return total time budget for capacity retries (seconds).
 
     Source of truth: stargate config `request_queue.queue_timeout`.
     """
-    request_queue_config = proxy.config.get_request_queue_config()
-    raw = request_queue_config.get("queue_timeout")
-    if raw is None:
-        logger.error(
-            "request_queue.queue_timeout missing in config; using 1800s default"
+    rq = proxy.config.get_request_queue_config()
+    return _read_positive_float(
+        rq, "queue_timeout", 1800.0, "request_queue.queue_timeout"
+    )
+
+
+def _get_upstream_retry_timeout_s(proxy: StargateProxy) -> float:
+    """
+    Return time budget for retryable upstream (502) errors (seconds).
+
+    Source of truth: stargate config `request_queue.upstream_retry_timeout`.
+    """
+    rq = proxy.config.get_request_queue_config()
+    return _read_positive_float(
+        rq, "upstream_retry_timeout", 120.0, "request_queue.upstream_retry_timeout"
+    )
+
+
+def _retry_timeout_exception(
+    *,
+    is_capacity: bool,
+    model_id: str,
+    effective_timeout: float,
+    retry_count: int,
+    elapsed: float,
+    last_exc: HTTPException,
+) -> HTTPException:
+    """Build the appropriate timeout HTTPException after retry budget exhaustion."""
+    data: dict[str, object] = {
+        "model_id": model_id,
+        "timeout_seconds": effective_timeout,
+        "retry_count": retry_count,
+        "elapsed_s": round(elapsed, 2),
+    }
+    if is_capacity:
+        return HTTPException(
+            status_code=get_http_status(ErrorCode.CAPACITY_TIMEOUT),
+            detail=error_envelope(
+                code=ErrorCode.CAPACITY_TIMEOUT,
+                message=f"Capacity timeout for model {model_id}",
+                source="master",
+                retryable=False,
+                data=data,
+            ),
         )
-        return 1800.0
-    try:
-        timeout_s = float(raw)
-    except (TypeError, ValueError):
-        logger.error("Invalid request_queue.queue_timeout=%r; using 1800s default", raw)
-        return 1800.0
-    if timeout_s <= 0:
-        logger.error(
-            "Invalid request_queue.queue_timeout=%r (must be > 0); using 1800s default",
-            raw,
-        )
-        return 1800.0
-    return timeout_s
+    # Upstream: include last error context for diagnostics
+    last_detail = last_exc.detail if isinstance(last_exc.detail, dict) else {}
+    data["last_upstream_error"] = last_detail.get("data", {})
+    return HTTPException(
+        status_code=502,
+        detail=error_envelope(
+            code=ErrorCode.RESOURCE_UNAVAILABLE,
+            message=f"Upstream retry timeout for model {model_id}",
+            source="master",
+            retryable=False,
+            data=data,
+        ),
+    )
 
 
 async def process_chat_completion(
@@ -176,8 +268,9 @@ async def process_chat_completion(
     request_short_id = getattr(context, "request_id", "unknown")[:8]
 
     start_time = time.time()
-    timeout_s = _get_capacity_retry_timeout_s(proxy)
-    capacity_retry_started = time.monotonic()
+    capacity_timeout_s = _get_capacity_retry_timeout_s(proxy)
+    upstream_timeout_s = _get_upstream_retry_timeout_s(proxy)
+    retry_started = time.monotonic()
     retry_count = 0
 
     if proxy.event_bus:
@@ -238,27 +331,52 @@ async def process_chat_completion(
                 return response
 
             except HTTPException as exc:
-                if not _is_capacity_error(exc):
+                is_capacity = _is_capacity_error(exc)
+                is_upstream = not is_capacity and _is_retryable_upstream_error(exc)
+
+                if not (is_capacity or is_upstream):
                     raise
 
                 retry_count += 1
 
-                elapsed = time.monotonic() - capacity_retry_started
-                remaining = timeout_s - elapsed
+                # Upstream failure: exclude the failed gateway so the
+                # DecisionEngine routes to a different one on retry.
+                # Also clear the stability binding (removes bias).
+                if is_upstream:
+                    failed_gw = _extract_failed_gateway_id(exc)
+                    if failed_gw:
+                        context.excluded_gateway_ids.add(failed_gw)
+                        logger.info(
+                            "🚫 [REQ:%s] Excluding gateway %s from routing "
+                            "(%d excluded)",
+                            request_short_id,
+                            failed_gw,
+                            len(context.excluded_gateway_ids),
+                        )
+                    tracker = getattr(proxy, "stability_tracker", None)
+                    if tracker is not None:
+                        tracker.clear_binding(context.selected_model)
+
+                # Budget: capacity → long queue wait; upstream → short retry
+                effective_timeout = (
+                    capacity_timeout_s if is_capacity else upstream_timeout_s
+                )
+                # Cap by pipeline step timeout if present
+                if context.request_timeout_hint:
+                    effective_timeout = min(
+                        effective_timeout, context.request_timeout_hint
+                    )
+
+                elapsed = time.monotonic() - retry_started
+                remaining = effective_timeout - elapsed
                 if remaining <= 0:
-                    raise HTTPException(
-                        status_code=get_http_status(ErrorCode.CAPACITY_TIMEOUT),
-                        detail=error_envelope(
-                            code=ErrorCode.CAPACITY_TIMEOUT,
-                            message=f"Capacity timeout for model {model_id}",
-                            source="master",
-                            retryable=False,
-                            data={
-                                "model_id": model_id,
-                                "timeout_seconds": timeout_s,
-                                "retry_count": retry_count,
-                            },
-                        ),
+                    raise _retry_timeout_exception(
+                        is_capacity=is_capacity,
+                        model_id=model_id,
+                        effective_timeout=effective_timeout,
+                        retry_count=retry_count,
+                        elapsed=elapsed,
+                        last_exc=exc,
                     ) from exc
 
                 if await request.is_disconnected():
@@ -267,13 +385,17 @@ async def process_chat_completion(
                 base_delay = min(2.0, 0.05 * (2 ** min(retry_count - 1, 6)))
                 delay_s = min(base_delay * random.uniform(0.5, 1.5), remaining)
 
+                error_kind = "Capacity" if is_capacity else "Upstream"
                 log_level = logger.info if retry_count <= 3 else logger.debug
                 log_level(
-                    "🔄 [REQ:%s] Capacity retry for %s (retry #%d, sleep=%.2fs)",
+                    "🔄 [REQ:%s] %s retry for %s "
+                    "(retry #%d, sleep=%.2fs, budget=%.0fs)",
                     request_short_id,
+                    error_kind,
                     model_id,
                     retry_count,
                     delay_s,
+                    effective_timeout,
                 )
                 await asyncio.sleep(delay_s)
                 continue

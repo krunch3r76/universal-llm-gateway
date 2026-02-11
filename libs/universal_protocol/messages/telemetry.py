@@ -429,7 +429,7 @@ class GatewaySnapshotPayload(TelemetryPayload):
 
     # Required: Catalog data (full list for routing)
     available_models: list[str]
-    model_resources: dict[str, dict[str, int]]
+    model_resources: dict[str, dict[str, int | str]]
 
     # Optional: Activation filtering for /v1/models
     activated_models: list[str] | None = None
@@ -634,7 +634,7 @@ def GatewaySnapshot(  # noqa: N802
     total_vram_mb: int,
     total_ram_mb: int,
     available_models: list[str],
-    model_resources: dict[str, dict[str, int]],
+    model_resources: dict[str, dict[str, int | str]],
     activated_models: list[str] | None = None,
     activated_contexts: dict[str, dict[str, list[int]]] | None = None,
     loaded_models: list[str] | None = None,

@@ -476,6 +476,11 @@ class BaseHandler(AbstractStepHandler):
         elif step.timeout_seconds:
             http_timeout = step.timeout_seconds + 30
 
+        # Resolve skip_token_counting: step overrides pipeline options
+        skip_tc = step.skip_token_counting
+        if skip_tc is None:
+            skip_tc = context.pipeline.options.skip_token_counting
+
         # Invoke via Stargate
         client = context.get_proxy_client()
         try:
@@ -488,6 +493,7 @@ class BaseHandler(AbstractStepHandler):
                 messages=messages,
                 execution_id=context.execution_id,
                 step_id=step.id,
+                skip_token_counting=skip_tc,
                 timeout=http_timeout,
                 map_iteration_request_id=context.map_iteration_request_id,
                 **params,

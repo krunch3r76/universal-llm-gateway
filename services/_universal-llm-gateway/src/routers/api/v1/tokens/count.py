@@ -73,6 +73,23 @@ async def count_tokens(
                 ),
             )
 
+        # Compute effective per-slot context: with parallel_slots > 1 the
+        # engine splits its KV cache across slots, so each slot only has
+        # context_length // parallel_slots usable tokens.
+        loader_config = model_registry.get_model_loader_config(
+            resolved_openai_api_model_id
+        )
+        parallel_slots = 1
+        if loader_config is not None:
+            parallel_slots = max(1, loader_config.get("parallel_slots", 1))
+        effective_context = max(1, context_length // parallel_slots)
+        if parallel_slots > 1:
+            logger.info(
+                f"Slot-aware context for {model_id}: "
+                f"{context_length} total / {parallel_slots} slots "
+                f"= {effective_context} effective per slot"
+            )
+
         # Check ResourceTracker state before attempting token counting
         # Only ERROR state should cause immediate failure - BUSY means queue/wait
         from src.core.resources import resource_tracker
@@ -109,11 +126,15 @@ async def count_tokens(
                 if tracker_info and tracker_info.status.value == "loaded":
                     logger.info(f"Model {model_id} already loaded (federation path)")
                 else:
-                    raise RuntimeError(f"Failed to load model {model_id} for token counting")
+                    raise RuntimeError(
+                        f"Failed to load model {model_id} for token counting"
+                    )
         except Exception as e:
             # If model is already loaded, proceed with token counting
             if tracker_info and tracker_info.status.value == "loaded":
-                logger.info(f"Model {model_id} already loaded, proceeding with token counting (error: {e})")
+                logger.info(
+                    f"Model {model_id} already loaded, proceeding with token counting (error: {e})"
+                )
             else:
                 raise
 
@@ -145,12 +166,13 @@ async def count_tokens(
             logger.info(f"🔍 Token counting result for {model_id}: {result}")
             logger.info(f"🔍 Extracted token count: {token_count}")
 
-            # Calculate available tokens for generation
-            max_generation_tokens = max(0, context_length - token_count)
+            # Calculate available tokens for generation using effective
+            # per-slot context (accounts for KV cache split across slots)
+            max_generation_tokens = max(0, effective_context - token_count)
 
             return TokenCountResponse(
                 token_count=token_count,
-                context_limit=context_length,
+                context_limit=effective_context,
                 max_generation_tokens=max_generation_tokens,
                 token_counting_enabled=True,
             )

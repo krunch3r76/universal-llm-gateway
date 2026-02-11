@@ -187,7 +187,7 @@ class ProxyClient:
         *,
         execution_id: str | None = None,
         step_id: str | None = None,
-        skip_token_counting: bool = True,
+        skip_token_counting: bool = False,
         timeout: float | None = None,
         map_iteration_request_id: str | None = None,
         **params: Any,
@@ -201,7 +201,7 @@ class ProxyClient:
             execution_id: Pipeline execution ID (for tracing)
             step_id: Pipeline step ID (for tracing)
             skip_token_counting: Skip pre-request token counting
-                (default: True for pipeline)
+                (default: False — token counting runs for slot-aware max_tokens)
             timeout: Request timeout (overrides default)
             map_iteration_request_id: Pre-generated per-iteration request ID
                 for cancellation tracking. If None, generates new UUID.

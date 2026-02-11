@@ -207,6 +207,18 @@ class InitDataCache:
                     max_concurrent_requests
                 )
 
+                # Context capacity metadata: total context, slots, effective
+                # per-slot context (KV cache is split across parallel slots)
+                total_context = self._model_registry.get_model_max_tokens(model_id)
+                if total_context:
+                    model_resources[model_id]["context_length"] = total_context
+                    model_resources[model_id]["parallel_slots"] = (
+                        max_concurrent_requests
+                    )
+                    model_resources[model_id]["effective_context_per_slot"] = (
+                        total_context // max_concurrent_requests
+                    )
+
         # DEBUG: Log telemetry data being sent to Stargate
         logger.debug(
             f"📊 [TELEMETRY] Catalog summary for GATEWAY_SNAPSHOT: "

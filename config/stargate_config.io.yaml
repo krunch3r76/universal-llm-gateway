@@ -67,6 +67,7 @@ request_queue:
   max_concurrent_processing: 100  # Allow 100 concurrent requests (was defaulting to 10)
   request_timeout: 300
   queue_timeout: 1800.0
+  upstream_retry_timeout: 120  # Retry budget for retryable upstream 502 errors (seconds)
   non_sticky:
     enabled: true
 

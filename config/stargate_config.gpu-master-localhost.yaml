@@ -78,6 +78,7 @@ request_queue:
   max_size: 1000
   default_timeout: 300
   queue_timeout: 1800  # Unified capacity queue timeout (30 min)
+  upstream_retry_timeout: 120  # Retry budget for retryable upstream 502 errors (seconds)
   non_sticky:
     enabled: true
 
