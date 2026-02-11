@@ -331,11 +331,15 @@ async def openai_http_exception_handler(request: Request, exc: HTTPException):
         )
         return await _create_streaming_error_response(error_dict, exc.status_code)
 
-    # Non-streaming error: return regular JSON response with explicit connection close
+    # Merge exception headers (e.g. X-Pipeline-Execution-Id) with connection close
+    response_headers: dict[str, str] = {"Connection": "close"}
+    if exc.headers:
+        response_headers.update(exc.headers)
+
     return JSONResponse(
         status_code=exc.status_code,
         content=error_dict,
-        headers={"Connection": "close"},  # Explicit connection closure
+        headers=response_headers,
     )
 
 

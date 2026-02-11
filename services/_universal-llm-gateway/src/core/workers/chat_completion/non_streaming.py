@@ -157,10 +157,14 @@ class NonStreamingChatCompletion:
                     c.get("finish_reason", "stop"),
                 )
         usage = response.get("usage", {})
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
         return {
             "content": content,
-            "prompt_tokens": usage.get("prompt_tokens", 0),
-            "completion_tokens": usage.get("completion_tokens", 0),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
             "finish_reason": finish_reason,
             "model_id": model_id,
         }

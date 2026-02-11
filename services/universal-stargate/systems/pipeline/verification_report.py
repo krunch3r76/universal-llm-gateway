@@ -8,8 +8,11 @@ in each pipeline execution directory. Scripts can parse it to:
 2. Find claims rejected by consensus (caught).
 3. Find claims a given model voted true for that were rejected
    (that model "hallucinated" that claim).
+4. Inspect per-model and per-chunk verification timing (when present in stats).
 
 Schema: See build_verification_report() return structure.
+stats.verification_timing: total_models, total_latency_ms, per_model[]
+  (model_id, num_claims, latency_ms, mode, chunk_size, chunks[], prompt_tokens, completion_tokens).
 """
 
 from __future__ import annotations
@@ -88,6 +91,9 @@ def _build_step_entry(step: dict[str, Any]) -> dict[str, Any] | None:
         acc = stats.get("accepted", 0)
         rej = stats.get("rejected", 0)
         step_stats = {"total": total, "accepted": acc, "rejected": rej}
+        verification_timing = stats.get("verification_timing")
+        if isinstance(verification_timing, dict):
+            step_stats["verification_timing"] = verification_timing
 
     return {
         "step_id": step_id,
@@ -111,7 +117,8 @@ def build_verification_report(
     Pure function: no I/O. Input source is same as summary.json:
     execution.steps[] where step_type == consensus_verify_chain_v4,
     with step.json containing verified_facts, rejected_claims,
-    verdicts_by_model, stats.
+    verdicts_by_model, stats. stats may include verification_timing
+    (per-model and per-chunk latency breakdown) when available.
 
     Args:
         execution_details: execution dict from summary (steps, step_count, etc.)

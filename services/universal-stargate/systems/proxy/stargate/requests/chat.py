@@ -125,10 +125,18 @@ async def process_chat_completion(
         try:
             return await proxy.pipeline_executor.execute(context)
         except Exception as exc:
+            from systems.pipeline.core.dag import PipelineExecutionError
             from systems.pipeline.core.execution.errors import PipelineError
+
+            execution_id: str | None = getattr(exc, "execution_id", None)
+            exec_header = (
+                {"X-Pipeline-Execution-Id": execution_id} if execution_id else {}
+            )
 
             if isinstance(exc, PipelineError):
                 error_dict = exc.to_dict()
+                if execution_id:
+                    error_dict["execution_id"] = execution_id
                 logger.error(
                     "Pipeline execution failed: %s - %s",
                     error_dict.get("error_type"),
@@ -140,6 +148,27 @@ async def process_chat_completion(
                         "error": error_dict,
                         "pipeline_id": context.selected_model,
                     },
+                    headers=exec_header,
+                ) from exc
+
+            if isinstance(exc, PipelineExecutionError):
+                error_detail: dict[str, object] = {
+                    "message": f"Internal server error: {exc}",
+                    "type": "internal_error",
+                    "code": "internal_server_error",
+                    "operation": "chat_completions",
+                }
+                if execution_id:
+                    error_detail["execution_id"] = execution_id
+                logger.error(
+                    "Pipeline execution error: %s (execution_id=%s)",
+                    exc,
+                    execution_id,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail={"error": error_detail},
+                    headers=exec_header,
                 ) from exc
             raise
 

@@ -7,7 +7,7 @@ Executes pipeline steps respecting dependencies with automatic parallelization.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from model_id import ModelId
 from universal_event_bus import Event
@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 from .model_tracker import ModelUsageTracker
 
 logger = get_logger(__name__)
+# Dedicated logger for pipeline execution tracking (separate file, no truncation)
+execution_logger = get_logger("systems.pipeline.execution")
 
 
 class DAGExecutor:
@@ -430,6 +432,10 @@ class DAGExecutor:
                     len(step_calls),
                 )
 
+            self._log_step_model_calls(
+                node.step.name, step_calls, duration, success=True
+            )
+
         node.output = output
         node.state = StepState.COMPLETED
         # For map steps, the collection is already stored in context.outputs
@@ -461,12 +467,26 @@ class DAGExecutor:
         self, node: StepNode, error: Exception, duration: float
     ) -> None:
         """Record step failure."""
-        _ = self.context.drain_step_calls()
+        failed_calls = self.context.drain_step_calls()
+        if failed_calls:
+            self._log_step_model_calls(
+                node.step.name, failed_calls, duration, success=False
+            )
 
         node.state = StepState.FAILED
         node.error = error
 
         pipeline_id, execution_id = self._get_event_context()
+        call_contexts = None
+        if failed_calls:
+            call_contexts = [
+                {
+                    "request_id": getattr(c, "snapshot_request_id", None),
+                    "request_body": getattr(c, "request_body", {}),
+                    "response_content": getattr(c, "content", None),
+                }
+                for c in failed_calls
+            ]
         try:
             from ...pipeline_failure_debug import write_failure_debug
 
@@ -475,6 +495,7 @@ class DAGExecutor:
                 execution_id=execution_id or "",
                 step_id=node.step.name,
                 error=error,
+                call_contexts=call_contexts,
             )
         except Exception as e:
             logger.warning("Could not write failure debug file: %s", e)
@@ -488,6 +509,51 @@ class DAGExecutor:
                 duration_seconds=duration,
                 error=str(error),
             )
+        )
+
+    def _log_step_model_calls(
+        self,
+        step_name: str,
+        calls: list[Any],
+        duration: float,
+        *,
+        success: bool,
+    ) -> None:
+        """Log per-step model call summary to execution_logger.
+
+        Emits one event per step with aggregated token counts and
+        snapshot_request_ids for correlation with request/response
+        snapshot files on disk.
+        """
+        _, execution_id = self._get_event_context()
+        total_prompt = sum(c.prompt_tokens for c in calls)
+        total_completion = sum(c.completion_tokens for c in calls)
+        total_tokens = total_prompt + total_completion
+
+        # Collect unique models and snapshot IDs from the calls
+        models: list[str] = []
+        snapshot_ids: list[str] = []
+        for c in calls:
+            model = c.request_body.get("model", "unknown")
+            if model not in models:
+                models.append(model)
+            snap_id = getattr(c, "snapshot_request_id", None)
+            if snap_id:
+                snapshot_ids.append(snap_id)
+
+        status = "completed" if success else "failed"
+        model_str = ", ".join(models)
+        snap_str = ", ".join(snapshot_ids) if snapshot_ids else "none"
+
+        execution_logger.info(
+            f"Step '{step_name}' {status}: "
+            f"execution_id={execution_id}, "
+            f"model=[{model_str}], calls={len(calls)}, "
+            f"prompt_tokens={total_prompt}, "
+            f"completion_tokens={total_completion}, "
+            f"total_tokens={total_tokens}, "
+            f"duration={duration:.2f}s, "
+            f"snapshot_ids=[{snap_str}]"
         )
 
     async def _execute_map_step(self, node: StepNode) -> StepOutput:

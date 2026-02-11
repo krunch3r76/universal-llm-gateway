@@ -122,6 +122,19 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
     except Exception as e:
         logger.warning(f"Failed to cleanup request snapshots on startup: {e}")
 
+    # Cleanup pipeline failures on startup
+    try:
+        log_dir = os.getenv("LOG_DIR", "/tmp/logs/universal-stargate")
+        failures_dir = Path(log_dir) / "pipeline_failures"
+        if failures_dir.exists():
+            import shutil
+
+            shutil.rmtree(failures_dir)
+            failures_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Cleared pipeline failures: {failures_dir}")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup pipeline failures on startup: {e}")
+
     # Skip gateway-specific initialization in router-only mode
     if gateway_name is not None:
         await initialize_http_client(proxy)
@@ -303,7 +316,7 @@ def _wire_federation_manager(proxy: StargateProxy) -> None:
 
     # Wire capacity ledger to federated gateway manager
     # Admission control: CapacityLedger in systems/routing/capacity/
-    if hasattr(proxy, 'capacity_ledger') and proxy.capacity_ledger:
+    if hasattr(proxy, "capacity_ledger") and proxy.capacity_ledger:
         proxy.federation_integration.federated_manager.set_capacity_ledger(
             proxy.capacity_ledger
         )

@@ -39,6 +39,7 @@ class ModelCallResult:
     prompt_tokens: int
     completion_tokens: int
     map_iteration_request_id: str | None
+    snapshot_request_id: str | None
     system_prompt: str | None
     user_prompt: str
 
@@ -295,8 +296,7 @@ class BaseHandler(AbstractStepHandler):
         # Overlay step's generation_parameters (explicit overrides take precedence)
         # Exclude max_tokens: already resolved with constraint multiplier applied
         step_overrides = {
-            k: v for k, v in step.generation_parameters.items()
-            if k != "max_tokens"
+            k: v for k, v in step.generation_parameters.items() if k != "max_tokens"
         }
         params.update(step_overrides)
 
@@ -479,7 +479,11 @@ class BaseHandler(AbstractStepHandler):
         # Invoke via Stargate
         client = context.get_proxy_client()
         try:
-            response, map_iteration_request_id = await client.chat_completion(
+            (
+                response,
+                map_iteration_request_id,
+                snapshot_request_id,
+            ) = await client.chat_completion(
                 model=resolved_model_id,
                 messages=messages,
                 execution_id=context.execution_id,
@@ -543,6 +547,7 @@ class BaseHandler(AbstractStepHandler):
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             map_iteration_request_id=map_iteration_request_id,
+            snapshot_request_id=snapshot_request_id,
             system_prompt=system_prompt,
             user_prompt=prompt,
         )

@@ -74,7 +74,7 @@ class ProxyClient:
 
     Usage:
         client = ProxyClient.from_environment()
-        response, map_iteration_request_id = await client.chat_completion(
+        response, map_req_id, snap_id = await client.chat_completion(
             model="model-id",
             messages=[{"role": "user", "content": "Hello"}],
             execution_id="pipeline-123",
@@ -191,7 +191,7 @@ class ProxyClient:
         timeout: float | None = None,
         map_iteration_request_id: str | None = None,
         **params: Any,
-    ) -> tuple[dict[str, Any], str]:
+    ) -> tuple[dict[str, Any], str, str]:
         """
         Execute chat completion via Stargate.
 
@@ -209,7 +209,10 @@ class ProxyClient:
                 (temperature, max_tokens, response_format, etc.)
 
         Returns:
-            Tuple of (response_dict, map_iteration_request_id) for cancellation tracking
+            Tuple of (response_dict, map_iteration_request_id,
+            snapshot_request_id). snapshot_request_id is the per-call
+            unique ID used as X-Internal-Request-ID — matches the
+            request/response snapshot filenames.
 
         Raises:
             ProxyClientError: On request failure
@@ -272,7 +275,7 @@ class ProxyClient:
                     detail=detail,
                 )
 
-            return response.json(), map_iteration_request_id
+            return response.json(), map_iteration_request_id, unique_request_id
 
         except httpx.TimeoutException as e:
             raise ProxyClientError(

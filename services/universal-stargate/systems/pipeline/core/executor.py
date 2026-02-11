@@ -45,6 +45,8 @@ if TYPE_CHECKING:
     from .schemas import PipelineSpec
 
 logger = get_logger(__name__)
+# Dedicated logger for pipeline execution tracking (separate file, no truncation)
+execution_logger = get_logger("systems.pipeline.execution")
 
 
 class PipelineExecutor:
@@ -160,12 +162,19 @@ class PipelineExecutor:
                 )
 
         # Create pipeline context
+        execution_id = str(uuid.uuid4())
         pipeline_context = PipelineContext(
             pipeline=pipeline,
             source_text=text,
             http_request=context.http_request,
-            execution_id=str(uuid.uuid4()),
+            execution_id=execution_id,
             runtime_options=runtime_options,
+        )
+
+        # Log pipeline execution start with full original request (no truncation)
+        execution_logger.info(
+            f"Pipeline execution started: pipeline={pipeline.id}, "
+            f"execution_id={execution_id}, source_text='{text}'"
         )
 
         # Inject dependencies
@@ -260,6 +269,14 @@ class PipelineExecutor:
                     failed_step = node.step.name
                     break
 
+            # Log failure with execution_id and full error (no truncation)
+            execution_logger.error(
+                f"Pipeline execution failed: pipeline={pipeline.id}, "
+                f"execution_id={pipeline_context.execution_id}, "
+                f"duration={duration:.2f}s, failed_step={failed_step}, "
+                f"error={str(e)}"
+            )
+
             # Emit pipeline failed event
             self._publish_event(
                 pipeline_context,
@@ -271,6 +288,8 @@ class PipelineExecutor:
                     failed_step=failed_step,
                 ),
             )
+            # Attach execution_id so HTTP error response can include it
+            e.execution_id = pipeline_context.execution_id  # type: ignore[union-attr]
             raise
 
         # Extract final result
@@ -296,6 +315,14 @@ class PipelineExecutor:
             step_outputs,
             backtranslation_data,
             execution_order=dag_executor.execution_order,
+        )
+
+        # Log successful completion
+        duration = time.time() - start_time
+        execution_logger.info(
+            f"Pipeline execution completed: pipeline={pipeline.id}, "
+            f"execution_id={pipeline_context.execution_id}, "
+            f"duration={duration:.2f}s, steps={len(pipeline_context.outputs)}"
         )
 
         # Write execution summary if enabled (check merged YAML + runtime options)

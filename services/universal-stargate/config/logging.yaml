@@ -16,6 +16,12 @@ formatters:
     max_field_size: 2000
     colors: false
   
+  # JSON formatter with NO truncation (for pipeline execution logs)
+  json_file_no_truncate:
+    "()": universal_logging.renderers.JSONFormatter
+    truncate: false
+    colors: false
+  
   # Colorized JSON for console readability
   # Using '()' syntax to pass all kwargs to constructor
   json_console:
@@ -53,6 +59,13 @@ handlers:
     filename: ${LOG_DIR:-logs}/errors.log
     level: ERROR
     formatter: json_file
+
+  # Pipeline execution log (separate, no truncation)
+  pipeline_execution_file:
+    class: logging.FileHandler
+    filename: ${LOG_DIR:-logs}/pipeline_executions.log
+    formatter: json_file_no_truncate
+    level: INFO
 
   # Console handler - fixed at INFO for clean output (not env-controlled)
   console:
@@ -244,6 +257,12 @@ loggers:
   systems.pipeline.dag:
     level: INFO
     handlers: [main_file, errors_file]
+    propagate: false
+
+  # Pipeline execution logger - dedicated file with no truncation
+  systems.pipeline.execution:
+    level: INFO
+    handlers: [pipeline_execution_file, errors_file]
     propagate: false
 
   systems.routing.selection.collector:

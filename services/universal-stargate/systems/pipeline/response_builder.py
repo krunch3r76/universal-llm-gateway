@@ -156,5 +156,10 @@ class ResponseBuilder:
             body["pipeline"]["step_stats"] = step_stats
 
         return Response(
-            content=json.dumps(body), media_type="application/json", status_code=200
+            content=json.dumps(body),
+            media_type="application/json",
+            status_code=200,
+            headers={
+                "X-Pipeline-Execution-Id": pipeline_context.execution_id,
+            },
         )
