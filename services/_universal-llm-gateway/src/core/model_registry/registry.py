@@ -571,7 +571,10 @@ class ModelRegistry:
                     self.format = info.get("format", "gguf")
 
                     # Include loader_config for vision model validation
-                    self.loader_config = data.get("loader_config", {})
+                    # Prefer base_loader (catalog) over loader_config (legacy)
+                    self.loader_config = data.get(
+                        "base_loader", data.get("loader_config", {})
+                    )
 
                     # Resolve clip_model_path if present and relative
                     if "clip_model_path" in self.loader_config:

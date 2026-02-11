@@ -427,11 +427,21 @@ class FederatedRequestForwarder:
             )
 
             if response.is_success:
+                body = response.json()
+                # Remote API returns HTTP 200 with status="failed" for
+                # application-level failures (e.g., insufficient VRAM).
+                # Map to 503 so orchestrator treats as retryable, not 4xx.
+                if body.get("status") == "failed":
+                    return {
+                        "status": "failed",
+                        "status_code": 503,
+                        "message": body.get("message", "Remote load failed"),
+                    }
                 return {
                     "status": "ok",
                     "status_code": response.status_code,
                     "message": "Model loaded successfully",
-                    **response.json(),  # Include any additional response data
+                    **body,
                 }
             else:
                 return {
