@@ -59,7 +59,7 @@ handlers:
     class: logging.StreamHandler
     level: INFO
     formatter: json_console
-    stream: ext://sys.stdout
+    stream: ext://sys.stderr
 
   # Null handler (quoted to avoid YAML parsing as None)
   "null":

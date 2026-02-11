@@ -50,7 +50,7 @@ def run_gpu_test(
         Profile dict with success, ram_mb, vram_mb, n_gpu_layers
     """
     try:
-        from inference_djinn.scripts.config_generators.gguf.testing import (
+        from inference_djinn.scripts.config_generators.gguf.measurement import (
             test_single_gpu_layers,
         )
         from inference_djinn.scripts.config_generators.gguf.utils import to_native_int
@@ -106,7 +106,7 @@ def run_cpu_test(
         Profile dict with success, ram_mb, vram_mb, n_gpu_layers
     """
     try:
-        from inference_djinn.scripts.config_generators.gguf.testing import (
+        from inference_djinn.scripts.config_generators.gguf.measurement import (
             test_single_cpu_memory,
         )
         from inference_djinn.scripts.config_generators.gguf.utils import to_native_int
@@ -171,7 +171,7 @@ def run_hybrid_test(
         - total_layers: Total layers in model (for logging)
     """
     try:
-        from inference_djinn.scripts.config_generators.gguf.testing import (
+        from inference_djinn.scripts.config_generators.gguf.measurement import (
             find_max_gpu_layers_binary_search,
             test_single_gpu_layers,
         )

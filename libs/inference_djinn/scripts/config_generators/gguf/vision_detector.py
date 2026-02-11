@@ -1,7 +1,8 @@
 """Vision model detection for GGUF config generator."""
 
-from universal_logging import get_logger
 from pathlib import Path
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -18,6 +19,9 @@ VISION_NAME_PATTERNS: dict[str, str] = {
     "minicpm-v": "minicpm_v",
     "minicpmv": "minicpm_v",
     "moondream": "moondream",
+    "ministral": "mistral3",
+    "mistral-3": "mistral3",
+    "mistral3": "mistral3",
 }
 
 # Common mmproj file patterns

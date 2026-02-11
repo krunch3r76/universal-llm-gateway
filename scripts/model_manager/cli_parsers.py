@@ -76,7 +76,7 @@ def add_generate_parser(subparsers: argparse._SubParsersAction) -> None:
     vision_group.add_argument(
         "--vision-architecture",
         metavar="ARCH",
-        choices=["qwen2_vl", "llava_1_5", "llava_1_6", "minicpm_v", "moondream"],
+        choices=["qwen2_vl", "llava_1_5", "llava_1_6", "minicpm_v", "moondream", "mistral3"],
         help="Vision architecture (required with --mmproj)",
     )
     vision_group.add_argument(

@@ -52,6 +52,13 @@ VISION_MODEL_REGISTRY: dict[str, VisionModelInfo] = {
         tokens_per_image=729,
         description="Moondream2: Lightweight, edge-friendly",
     ),
+    "mistral3": VisionModelInfo(
+        handler_class_name="Llava16ChatHandler",
+        chat_format="mistral-3-vl",
+        default_n_ctx=32768,
+        tokens_per_image=2048,
+        description="Ministral 3 / Mistral 3 VL: Native vision + text",
+    ),
 }
 
 

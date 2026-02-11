@@ -5,6 +5,8 @@ Forwards /gateway/* requests to local Edge Stargate.
 
 INVARIANT: ∀ request: forward_to_edge(request) via Unix socket
 INVARIANT: SSE streams passed through without buffering
+INVARIANT: ∀ request: includes federation auth headers
+           (X-Federation-Source, X-Federation-Key)
 """
 
 import json
@@ -13,6 +15,11 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from universal_logging import get_logger
+
+from systems.federation.common.types import (
+    HEADER_FEDERATION_KEY,
+    HEADER_FEDERATION_SOURCE,
+)
 
 logger = get_logger(__name__)
 
@@ -36,14 +43,18 @@ def _create_sse_error(message: str) -> str:
 
 def create_gateway_forward_router(
     local_edge_socket_path: str | None = None,
+    stargate_id: str | None = None,
+    edge_api_key: str | None = None,
 ) -> APIRouter:
     """
     Create router that forwards Gateway requests to local Edge.
 
-    Master/Relay mode: Forwards to Edge via Unix socket.
+    Master/Relay mode: Forwards to Edge via Unix socket with federation auth.
 
     Args:
         local_edge_socket_path: Unix socket path to local Edge Stargate
+        stargate_id: Master's stargate ID (for X-Federation-Source header)
+        edge_api_key: Edge's API key (for X-Federation-Key header)
 
     Returns:
         APIRouter with /gateway/* endpoints
@@ -54,6 +65,20 @@ def create_gateway_forward_router(
         # No local Edge configured - return empty router
         logger.debug("No local Edge socket configured - gateway forwarding disabled")
         return router
+
+    # Federation auth headers for all Edge requests
+    federation_headers = {}
+    if stargate_id and edge_api_key:
+        federation_headers[HEADER_FEDERATION_SOURCE] = stargate_id
+        federation_headers[HEADER_FEDERATION_KEY] = edge_api_key
+        logger.info(
+            f"Gateway forwarding configured with federation auth: {stargate_id}"
+        )
+    else:
+        logger.warning(
+            "Gateway forwarding configured without federation auth "
+            "(stargate_id or edge_api_key missing)"
+        )
 
     def _get_client() -> httpx.AsyncClient:
         """Get httpx client for Edge connection."""
@@ -79,6 +104,7 @@ def create_gateway_forward_router(
                 response = await client.post(
                     "http://localhost/api/v1/federation/gateway/jobs",
                     json=body,
+                    headers=federation_headers,
                 )
 
                 return Response(
@@ -103,6 +129,7 @@ def create_gateway_forward_router(
             try:
                 response = await client.get(
                     f"http://localhost/api/v1/federation/gateway/jobs/{job_id}",
+                    headers=federation_headers,
                 )
 
                 return Response(
@@ -132,6 +159,7 @@ def create_gateway_forward_router(
                     async with client.stream(
                         "GET",
                         f"http://localhost/api/v1/federation/gateway/jobs/{job_id}/logs",
+                        headers=federation_headers,
                     ) as response:
                         if response.status_code != 200:
                             error_body = await response.aread()
@@ -173,6 +201,7 @@ def create_gateway_forward_router(
             try:
                 response = await client.delete(
                     f"http://localhost/api/v1/federation/gateway/jobs/{job_id}",
+                    headers=federation_headers,
                 )
 
                 return Response(
@@ -201,6 +230,7 @@ def create_gateway_forward_router(
                 response = await client.get(
                     "http://localhost/api/v1/federation/gateway/status/resources",
                     timeout=10.0,
+                    headers=federation_headers,
                 )
 
                 return Response(
@@ -233,6 +263,7 @@ def create_gateway_forward_router(
                 response = await client.get(
                     f"http://localhost/gateway/api/v1/catalog/models/{model_id}",
                     timeout=10.0,
+                    headers=federation_headers,
                 )
 
                 if response.status_code == 200:
@@ -302,6 +333,7 @@ def create_gateway_forward_router(
                     "http://localhost/api/v1/federation/gateway/models",
                     json=body,
                     timeout=30.0,
+                    headers=federation_headers,
                 )
 
                 return Response(
@@ -328,6 +360,7 @@ def create_gateway_forward_router(
                 response = await client.delete(
                     f"http://localhost/api/v1/federation/gateway/models/{model_id}",
                     timeout=60.0,
+                    headers=federation_headers,
                 )
 
                 return Response(
@@ -360,6 +393,7 @@ def create_gateway_forward_router(
                 response = await client.post(
                     "http://localhost/gateway/api/v1/catalog/reload",
                     timeout=10.0,
+                    headers=federation_headers,
                 )
 
                 return Response(

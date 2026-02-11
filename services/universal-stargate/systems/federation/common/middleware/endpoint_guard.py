@@ -29,6 +29,7 @@ REMOTE_MODE_ALLOWED_PREFIXES: frozenset[str] = frozenset(
 EDGE_MODE_ALLOWED_PREFIXES: frozenset[str] = frozenset(
     [
         "/api/v1/federation/",
+        "/gateway/",  # Gateway management APIs (catalog, models, jobs)
         "/health",
         "/healthz",
         "/readyz",

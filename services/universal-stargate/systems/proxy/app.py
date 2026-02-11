@@ -467,6 +467,8 @@ if local_edge_socket:
 
     gateway_forward_router = create_gateway_forward_router(
         local_edge_socket_path=local_edge_socket,
+        stargate_id=federation_config.stargate_id,
+        edge_api_key=local_edge_config.api_key if local_edge_config else None,
     )
     app.include_router(gateway_forward_router)
     logger.info(f"Gateway forwarding enabled via Edge: {local_edge_socket}")

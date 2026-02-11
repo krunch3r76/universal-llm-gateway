@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 
 
 def _resolve_test_script() -> Path:
-    """Locate simple_gpu_layer_test.py."""
+    """Locate llama_server_measurement.py."""
     root = Path(__file__).resolve()
     # services/_universal-llm-gateway/src/jobs/measurement/gpu.py
     # -> project root at parents[5]
@@ -46,7 +46,7 @@ def _resolve_test_script() -> Path:
         / "scripts"
         / "tests"
         / "gguf"
-        / "simple_gpu_layer_test.py"
+        / "llama_server_measurement.py"
     )
 
 
@@ -60,7 +60,7 @@ async def run_layer_test(
     tracker: SubprocessTracker,
     timeout_sec: int = 300,
 ) -> dict[str, Any]:
-    """Run simple_gpu_layer_test asynchronously and return parsed result."""
+    """Run llama_server_measurement asynchronously and return parsed result."""
     script = _resolve_test_script()
     if not script.exists():
         return {"success": False, "error": f"Test script not found: {script}"}
@@ -106,9 +106,6 @@ async def run_layer_test(
         except Exception as e:
             logger.warning(f"Failed to compute measurement subprocess limits: {e}")
 
-    env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
-
     cmd = [
         sys.executable,
         str(script),
@@ -120,6 +117,10 @@ async def run_layer_test(
         str(context),
         "--batch",
         str(n_batch),
+        "--gpu-index",
+        str(gpu_index),
+        "--mode",
+        "gpu",
     ]
     if mmproj_path:
         cmd.extend(["--mmproj", mmproj_path])
@@ -131,7 +132,7 @@ async def run_layer_test(
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
-        env=env,
+        env=os.environ.copy(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         preexec_fn=lambda: setup_measurement_subprocess(

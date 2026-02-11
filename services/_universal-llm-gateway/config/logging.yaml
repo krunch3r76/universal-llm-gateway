@@ -16,7 +16,7 @@ handlers:
     class: logging.StreamHandler
     level: ${LOG_LEVEL:-INFO}
     formatter: json
-    stream: ext://sys.stdout
+    stream: ext://sys.stderr
   
   file:
     class: logging.FileHandler

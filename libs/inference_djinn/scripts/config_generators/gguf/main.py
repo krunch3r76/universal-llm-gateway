@@ -16,7 +16,7 @@ from .profiles import (
     BaseProfile,
     merge_profiles,
 )
-from .testing import (
+from .profile_builder import (
     build_subprofile_cpu_only,
     build_subprofile_gpu_only,
     build_subprofile_hybrid,

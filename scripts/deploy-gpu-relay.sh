@@ -399,6 +399,9 @@ start_edge_localhost() {
     # Start container
     docker compose -f docker/compose/gpu-edge-localhost.yml up -d
     
+    # Re-ensure socket dir is writable after compose up (Docker can re-own it)
+    chmod 0777 "$socket_dir" 2>/dev/null || true
+    
     # Wait for socket to appear
     log "Waiting for localhost Edge socket at $SOCKET_PATH..."
     local max_wait=60
@@ -409,6 +412,7 @@ start_edge_localhost() {
             success "Localhost Edge+Gateway socket ready at $SOCKET_PATH"
             return 0
         fi
+        log "  ... waiting for socket (${waited}s/${max_wait}s)"
         sleep 2
         waited=$((waited + 2))
     done
@@ -551,13 +555,16 @@ start_relay_jupiter() {
 
 stop_edge_localhost() {
     log "Stopping localhost Edge container..."
-    docker compose -f docker/compose/gpu-edge-localhost.yml down --volumes
+    # --volumes removed: it can delete/re-own the bind-mounted socket directory,
+    # causing PermissionError on next start when appuser tries create_unix_server
+    docker compose -f docker/compose/gpu-edge-localhost.yml down
     success "Localhost Edge stopped"
 }
 
 stop_edge_jupiter() {
     log "Stopping jupiter Edge container..."
-    ssh "$JUPITER_HOST" "cd /mnt/torus/projects/universal-llm-gateway && docker compose -f docker/compose/gpu-edge-jupiter.yml down --volumes"
+    # --volumes removed: same as stop_edge_localhost (protects socket dir ownership)
+    ssh "$JUPITER_HOST" "cd /mnt/torus/projects/universal-llm-gateway && docker compose -f docker/compose/gpu-edge-jupiter.yml down"
     success "Jupiter Edge stopped"
 }
 

@@ -519,6 +519,8 @@ def _detect_vision_architecture(model_id: str) -> str | None:
         return "minicpm_v"
     elif "moondream" in model_lower:
         return "moondream"
+    elif "ministral" in model_lower or "mistral-3" in model_lower:
+        return "mistral3"
 
     return None
 
@@ -589,16 +591,7 @@ def _update_catalog_after_measurement(
             print("❌ No result data in job response", file=sys.stderr)
             return False
 
-        # For static catalog: reload Gateway catalog to see new/updated models
-        if static:
-            print("   Reloading Gateway catalog...")
-            if not _reload_gateway_catalog(stargate_url, headers, request_timeout):
-                print(
-                    "   ⚠️  Catalog reload failed - Gateway may not see updates",
-                    file=sys.stderr,
-                )
-
-        # Get current catalog entry via Stargate
+        # Get current catalog entry via Stargate API
         response = requests.get(
             f"{stargate_url}/gateway/models/{model_id}/config",
             headers=headers,
@@ -636,6 +629,15 @@ def _update_catalog_after_measurement(
                     model_id, catalog_entry, allow_overwrite=True
                 )
                 print(f"   {operation.title()} static catalog: {file_path}")
+                
+                # Reload Gateway catalog to reflect filesystem changes
+                print("   Reloading Gateway catalog...")
+                if not _reload_gateway_catalog(stargate_url, headers, request_timeout):
+                    print(
+                        "   ⚠️  Catalog reload failed - Gateway may not see updates",
+                        file=sys.stderr,
+                    )
+                
                 return True
             except Exception as e:
                 logger.error(f"Failed to write static catalog for {model_id}: {e}")

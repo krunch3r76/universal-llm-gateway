@@ -225,7 +225,7 @@ def create_minimal_config(service_name: str) -> dict[str, Any]:
                 "class": "logging.StreamHandler",
                 "level": log_level,
                 "formatter": "standard",
-                "stream": "ext://sys.stdout",
+                "stream": "ext://sys.stderr",
             }
         },
         "root": {"level": log_level, "handlers": ["console"]},
