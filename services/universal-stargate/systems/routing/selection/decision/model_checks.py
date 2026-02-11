@@ -35,11 +35,22 @@ def _is_model_available(gateway: "Gateway", placement: "Placement") -> bool:
 
 def _is_model_loaded(gateway: "Gateway", placement: "Placement") -> bool:
     """Check if model is already loaded on gateway."""
+    # If the model is transitioning (loading/unloading), treat as NOT loaded.
+    #
+    # Rationale: `loading_models` is used as the control-plane "in transition" set.
+    # During eviction, a model may still appear in `loaded_models` while an unload is
+    # in progress. Treating it as loaded creates TOCTOU races where we route T1 to a
+    # model that is being unloaded, producing upstream 400 model_not_loaded.
     if placement.original_model_id:
         # Parse original to ModelId for comparison
         from model_id import ModelId
 
         original_parsed = ModelId.parse(placement.original_model_id)
+        if original_parsed in gateway.loading_models:
+            return False
         if original_parsed in gateway.loaded_models:  # ModelId in frozenset[ModelId]
             return True
+
+    if placement.model_id in gateway.loading_models:
+        return False
     return placement.model_id in gateway.loaded_models  # ModelId in frozenset[ModelId]

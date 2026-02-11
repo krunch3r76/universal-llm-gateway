@@ -14,6 +14,7 @@
 #
 # Key environment variables:
 #   BUILD_SCOPE=all|llama    Which components to rebuild (default: all)
+#   BUILD_NO_CACHE=1         Disable Docker build cache (forces rebuild)
 #   VLLM_VERSION=TAG         Pin vLLM version
 #   VLLM_EXTRA_FLAGS=FLAGS   Extra vLLM build flags
 #   JUPITER_HOST=USER@HOST   Jupiter SSH target
@@ -110,6 +111,29 @@ fi
 # the cached vLLM from a previous build, producing a complete image.
 # ──────────────────────────────────────────────────────────────────────
 BUILD_SCOPE="${BUILD_SCOPE:-all}"
+BUILD_NO_CACHE="${BUILD_NO_CACHE:-}"
+
+is_truthy() {
+    local raw="${1:-}"
+    local value="${raw,,}"
+    case "${value}" in
+        1|true|yes|y|on)
+            return 0
+            ;;
+        ""|0|false|no|n|off)
+            return 1
+            ;;
+        *)
+            warn "Unknown BUILD_NO_CACHE value '${raw}'; treating as enabled"
+            return 0
+            ;;
+    esac
+}
+
+NO_CACHE_FLAG=""
+if is_truthy "${BUILD_NO_CACHE}"; then
+    NO_CACHE_FLAG="--no-cache"
+fi
 usage() {
     cat << EOF
 Usage: $0 <command> [options]
@@ -138,10 +162,12 @@ Commands:
 
 Options:
     --jupiter-host HOST       Remote GPU node hostname/IP (default: user@remote-gpu-node)
+    --no-cache               Disable Docker build cache (forces rebuild)
 
 Environment Variables:
     BUILD_SCOPE=all|llama    Control rebuild scope (default: all)
                              llama: Only rebuild llama-cpp + llama-server (skip vLLM)
+    BUILD_NO_CACHE=1         Disable Docker build cache (forces rebuild)
     VLLM_VERSION=TAG         Pin vLLM version (e.g., v0.13.0)
     VLLM_EXTRA_FLAGS=FLAGS   Extra vLLM build flags (e.g., --no-patches)
     JUPITER_HOST=USER@HOST   Remote GPU node SSH target (default: user@remote-gpu-node)
@@ -163,6 +189,10 @@ parse_args() {
                 JUPITER_HOST="$2"
                 shift 2
                 ;;
+            --no-cache)
+                NO_CACHE_FLAG="--no-cache"
+                shift
+                ;;
             *)
                 shift
                 ;;
@@ -176,6 +206,7 @@ build_prerequisites() {
     # Build GPU image on localhost in background
     log "Starting GPU build on localhost (background)..."
     local build_args="--cpu-native --gpu-native"
+    [[ -n "${NO_CACHE_FLAG}" ]] && build_args+=" ${NO_CACHE_FLAG}"
     [[ -n "${VLLM_VERSION:-}" ]] && build_args+=" --vllm-version=${VLLM_VERSION}"
     [[ -n "${VLLM_MAX_JOBS_LOCALHOST:-}" ]] && build_args+=" --vllm-jobs=${VLLM_MAX_JOBS_LOCALHOST}"
     
@@ -194,6 +225,7 @@ build_prerequisites() {
     # Build GPU image on jupiter in background
     log "Starting GPU build on jupiter (background)..."
     local build_args="--cpu-native --gpu-native"
+    [[ -n "${NO_CACHE_FLAG}" ]] && build_args+=" ${NO_CACHE_FLAG}"
     [[ -n "${VLLM_VERSION:-}" ]] && build_args+=" --vllm-version=${VLLM_VERSION}"
     
     # Apply BUILD_SCOPE (same as localhost)
@@ -265,6 +297,7 @@ rebuild_code() {
     # Rebuild on localhost in background
     log "Rebuilding on localhost (background)..."
     local build_args="--cpu-native --gpu-native"
+    [[ -n "${NO_CACHE_FLAG}" ]] && build_args+=" ${NO_CACHE_FLAG}"
     [[ -n "${VLLM_VERSION:-}" ]] && build_args+=" --vllm-version=${VLLM_VERSION}"
     [[ -n "${VLLM_MAX_JOBS_LOCALHOST:-}" ]] && build_args+=" --vllm-jobs=${VLLM_MAX_JOBS_LOCALHOST}"
     
@@ -283,6 +316,7 @@ rebuild_code() {
     # Rebuild on jupiter in background
     log "Rebuilding on jupiter (background)..."
     local build_args="--cpu-native --gpu-native"
+    [[ -n "${NO_CACHE_FLAG}" ]] && build_args+=" ${NO_CACHE_FLAG}"
     [[ -n "${VLLM_VERSION:-}" ]] && build_args+=" --vllm-version=${VLLM_VERSION}"
     
     # Apply BUILD_SCOPE (same as localhost)

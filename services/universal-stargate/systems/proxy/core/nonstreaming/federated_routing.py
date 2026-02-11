@@ -209,13 +209,16 @@ async def _route_to_federated_gateway(
         else:
             # Non-sticky: allow any gateway that has the model
             allowed_gateway_ids = frozenset(
-                g.name for g in gateways_for_routing
-                if model_id in g.loaded_models
+                g.name for g in gateways_for_routing if model_id in g.loaded_models
             )
 
         # Acquire slot (may await if all gateways at capacity)
         # Timeout from config or default 30s
-        timeout_s = routing_config.get("admission", {}).get("timeout_s", 30.0) if routing_config else 30.0
+        timeout_s = (
+            routing_config.get("admission", {}).get("timeout_s", 30.0)
+            if routing_config
+            else 30.0
+        )
 
         try:
             assigned_gateway_id = await admission_queue.acquire(
@@ -434,6 +437,7 @@ async def _route_to_federated_gateway(
         if trace.selection_tier == FeasibilityTier.T2_FEASIBLE_EVICT:
             eviction_ok = await execute_router_only_eviction(
                 federation_forwarder=federation_forwarder,
+                federated_manager=federated_manager,
                 selected_gateway=selected_gateway,
                 trace=trace,
                 request_id=context.request_id,

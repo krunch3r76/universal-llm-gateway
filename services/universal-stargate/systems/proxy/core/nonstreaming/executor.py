@@ -21,6 +21,10 @@ from ..endpoint_category import derive_endpoint_category
 from .bypass_mode import execute_bypass_mode
 from .context import RequestContext
 from .gateway_selection import select_gateway_and_load_model
+from .upstream_error import (
+    extract_upstream_error_payload,
+    map_upstream_status_to_error_code,
+)
 
 if TYPE_CHECKING:
     from model_id import ModelId
@@ -802,9 +806,28 @@ class RequestExecutor:
 
         except httpx.HTTPStatusError as e:
             # Remote returned 4xx/5xx - map to 502 (bad gateway)
+            upstream_status_code = int(e.response.status_code)
+            upstream_payload = extract_upstream_error_payload(e.response)
+            error_code, retryable = map_upstream_status_to_error_code(
+                upstream_status_code, upstream_payload
+            )
+
             logger.error(
-                f"Federated request HTTP error: {e.response.status_code} "
-                f"for {fed_gateway.gateway_id}"
+                "Federated request HTTP error: %d for %s",
+                upstream_status_code,
+                fed_gateway.gateway_id,
+                extra={
+                    "request_id": context.request_id,
+                    "gateway_id": fed_gateway.gateway_id,
+                    "upstream_error": upstream_payload,
+                },
+            )
+
+            # Snapshot upstream error payload (critical for 4xx diagnosis)
+            from ...debug.request_snapshots import write_response_snapshot
+
+            await write_response_snapshot(
+                upstream_payload, context.request_id, stage="response-from-gateway"
             )
             # Emit execution completed for slot tracking (error path)
             from systems.proxy.core.lifecycle import emit_execution_completed
@@ -816,18 +839,28 @@ class RequestExecutor:
                 request_id=context.request_id,
                 gateway_id=fed_gateway.gateway_id,
             )
+
+            detail = error_envelope(
+                code=error_code,
+                message=(
+                    f"Remote gateway error: {upstream_status_code} "
+                    f"(gateway_id={fed_gateway.gateway_id})"
+                ),
+                source="master",
+                retryable=retryable,
+                data={
+                    "status_code": upstream_status_code,
+                    "gateway_id": fed_gateway.gateway_id,
+                    "upstream_error": upstream_payload,
+                },
+            )
+
+            await write_response_snapshot(
+                detail, context.request_id, stage="response-to-client"
+            )
             raise HTTPException(
                 status_code=502,
-                detail=error_envelope(
-                    code=ErrorCode.UNEXPECTED_ERROR,
-                    message=f"Remote gateway error: {e.response.status_code}",
-                    source="master",
-                    retryable=True,
-                    data={
-                        "status_code": e.response.status_code,
-                        "gateway_id": fed_gateway.gateway_id,
-                    },
-                ),
+                detail=detail,
             )
         except httpx.TimeoutException:
             logger.error(f"Federated request timeout for {fed_gateway.gateway_id}")
