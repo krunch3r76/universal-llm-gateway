@@ -1,15 +1,15 @@
 # Universal LLM Gateway
 
-A **privacy-first** federated LLM inference gateway. Gateway containers run with zero network access (`network_mode: "none"`) and non-root Docker processes — your prompts never touch the internet. OpenAI-compatible API with multi-model pipeline orchestration.
+A **security-first** federated LLM inference gateway built on zero-trust principles — you never need to trust the LLMs you run. Gateway containers run with zero network access (`network_mode: "none"`) and non-root Docker processes — models cannot exfiltrate data, access the network, or escalate privileges regardless of their behavior. OpenAI-compatible API with multi-model pipeline orchestration.
 
 ## Status: Alpha (v0.1.0)
 
 Production-tested on single-GPU deployments. Under active development.
 
 ### What Works
-- **Privacy by architecture**: Gateway containers have zero network access — prompts stay on your hardware
-- **Non-root containers**: All Docker processes run as unprivileged users
-- Federated inference routing with network-isolated Gateway containers (`network_mode: "none"`)
+- **Zero-trust LLM execution**: Gateway containers have zero network access and run as non-root — models cannot exfiltrate data, access external services, or escalate privileges by design
+- **Defense in depth**: Network isolation (`network_mode: "none"`) + unprivileged processes + Unix socket communication = minimal attack surface even if models are compromised
+- Federated inference routing with network-isolated Gateway containers
 - Single-GPU deployments: GGUF/llama.cpp, vLLM, Whisper, Flux
 - Pipeline system for multi-model DAG workflows (example pending)
 - WebSocket telemetry for real-time state synchronization
@@ -57,8 +57,9 @@ Client → Master Stargate:9999 (router-only)
 
 ### Key Design Decisions
 
-- **Network isolation**: Gateway containers run with `network_mode: "none"` — zero network access. All communication via Unix sockets. Your prompts and model outputs never leave the host.
-- **Non-root Docker**: All containers run as unprivileged users — no root escalation surface.
+- **Network isolation**: Gateway containers run with `network_mode: "none"` — zero network access. All communication via Unix sockets. Models cannot exfiltrate prompts, outputs, or sensitive data over the network.
+- **Non-root execution**: All containers run as unprivileged users — no root escalation surface. Models cannot gain system-level privileges.
+- **Privilege separation**: Each Gateway runs in its own isolated container with minimal capabilities — models cannot affect other models or the host system.
 - **Router-only Master**: Masters have no local Gateway. They orchestrate via relay stargates.
 - **HTTP-authoritative operations**: Model load completion verified via HTTP response, not telemetry events.
 - **WebSocket telemetry**: Real-time state synchronization from relay stargates to Master.
