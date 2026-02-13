@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi.responses import Response
@@ -27,11 +28,28 @@ from universal_event_bus import Event
 from universal_logging import get_logger
 
 from .dag import DAGBuilder, StepState
-from .events import (
+
+# New observability events (for JSONL recorder)
+from .events import EventRecorder
+from .events.lifecycle import (
     PipelineCancelled,
     PipelineCompleted,
     PipelineFailed,
     PipelineStarted,
+)
+
+# Old bus event factories (for backward-compatible monitoring consumers)
+from .events.pipeline import (
+    PipelineCancelled as BusPipelineCancelled,
+)
+from .events.pipeline import (
+    PipelineCompleted as BusPipelineCompleted,
+)
+from .events.pipeline import (
+    PipelineFailed as BusPipelineFailed,
+)
+from .events.pipeline import (
+    PipelineStarted as BusPipelineStarted,
 )
 from .execution import DAGExecutor
 from .execution.disconnect_monitor import execute_with_disconnect_monitoring
@@ -182,6 +200,27 @@ class PipelineExecutor:
         pipeline_context._request_executor = self.request_executor
         pipeline_context._proxy = self.proxy
 
+        # Create event recorder for pipeline observability
+        from pathlib import Path
+
+        log_base = pipeline_context.options.get(
+            "log_dir", "/tmp/logs/universal-stargate"
+        )
+        exec_ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        exec_short = execution_id[:8]
+        event_dir = (
+            Path(log_base)
+            / "pipeline_summaries"
+            / pipeline.id
+            / f"{exec_ts}_{exec_short}"
+        )
+        recorder = EventRecorder(
+            pipeline_id=pipeline.id,
+            execution_id=execution_id,
+            output_dir=event_dir,
+        )
+        pipeline_context._recorder = recorder
+
         # Pass gateway information for eviction protection
         if (
             hasattr(context, "selected_gateway_instance")
@@ -190,10 +229,17 @@ class PipelineExecutor:
             gateway_name = context.selected_gateway_instance.config.name
             pipeline_context.selected_gateway_instance = gateway_name
 
-        # Emit pipeline started event
+        # Emit pipeline started event (recorder for JSONL + bus for monitoring)
+        recorder.emit(
+            PipelineStarted(
+                step_count=len(nodes),
+                timeout_seconds=pipeline_context.options.get("timeout_seconds"),
+                source_text=text,
+            ),
+        )
         self._publish_event(
             pipeline_context,
-            PipelineStarted(
+            BusPipelineStarted(
                 pipeline_id=pipeline.id,
                 execution_id=pipeline_context.execution_id,
                 domain=pipeline.domain,
@@ -219,10 +265,16 @@ class PipelineExecutor:
             )
             duration = time.time() - start_time
 
-            # Emit pipeline completed event
+            # Emit pipeline completed event (recorder + bus)
+            recorder.emit(
+                PipelineCompleted(
+                    duration_ms=duration * 1000,
+                    output_step=pipeline.output,
+                ),
+            )
             self._publish_event(
                 pipeline_context,
-                PipelineCompleted(
+                BusPipelineCompleted(
                     pipeline_id=pipeline.id,
                     execution_id=pipeline_context.execution_id,
                     duration_seconds=duration,
@@ -242,9 +294,17 @@ class PipelineExecutor:
             )
             pending_steps = len(nodes) - completed_steps
 
+            recorder.emit(
+                PipelineCancelled(
+                    duration_ms=duration * 1000,
+                    reason="client_disconnected",
+                    completed_steps=completed_steps,
+                    pending_steps=pending_steps,
+                ),
+            )
             self._publish_event(
                 pipeline_context,
-                PipelineCancelled(
+                BusPipelineCancelled(
                     pipeline_id=pipeline.id,
                     execution_id=pipeline_context.execution_id,
                     duration_seconds=duration,
@@ -277,10 +337,20 @@ class PipelineExecutor:
                 f"error={str(e)}"
             )
 
-            # Emit pipeline failed event
+            # Emit pipeline failed event (recorder + bus)
+            import traceback as tb_mod
+
+            recorder.emit(
+                PipelineFailed(
+                    duration_ms=duration * 1000,
+                    error=str(e),
+                    failed_step=failed_step,
+                    traceback="".join(tb_mod.format_exception(e)),
+                ),
+            )
             self._publish_event(
                 pipeline_context,
-                PipelineFailed(
+                BusPipelineFailed(
                     pipeline_id=pipeline.id,
                     execution_id=pipeline_context.execution_id,
                     duration_seconds=duration,
@@ -325,16 +395,8 @@ class PipelineExecutor:
             f"duration={duration:.2f}s, steps={len(pipeline_context.outputs)}"
         )
 
-        # Write execution summary if enabled (check merged YAML + runtime options)
-        save_summary = pipeline_context.options.get("save_execution_summary", False)
-        if save_summary:
-            await self._write_execution_summary(
-                pipeline,
-                pipeline_context,
-                context,
-                response,
-                dag_executor.execution_order,
-            )
+        # Close event recorder (flushes JSONL)
+        recorder.close()
 
         return response
 
@@ -458,114 +520,3 @@ class PipelineExecutor:
                         return content
 
         return ""
-
-    async def _write_execution_summary(
-        self,
-        pipeline: PipelineSpec,
-        pipeline_context: PipelineContext,
-        request_context,
-        response: Response,
-        execution_order: list[str],
-    ) -> None:
-        """
-        Write execution summary to disk if enabled.
-
-        Offloads blocking file I/O to thread executor to avoid blocking
-        the event loop.
-        """
-        try:
-            import asyncio
-            import json
-
-            from ..execution_summary import get_summary_writer
-
-            # Parse response body
-            response_body = json.loads(response.body.decode("utf-8"))
-
-            # Build request body from context
-            request_body = {"model": pipeline.id, "messages": []}
-
-            if request_context.chat_request and request_context.chat_request.messages:
-                request_body["messages"] = [
-                    {"role": msg.role, "content": msg.content}
-                    for msg in request_context.chat_request.messages
-                ]
-            elif request_context.original_request:
-                request_body = request_context.original_request
-
-            writer = get_summary_writer()
-            summary_format = pipeline_context.options.get("summary_format", "markdown")
-
-            # Offload blocking I/O to thread executor
-            await asyncio.to_thread(
-                self._write_summary_sync,
-                writer,
-                pipeline,
-                pipeline_context,
-                request_body,
-                response_body,
-                execution_order,
-                summary_format,
-            )
-
-            logger.info(
-                f"Execution summary written for pipeline '{pipeline.id}' "
-                f"(format: {summary_format})"
-            )
-        except Exception as e:
-            # Don't fail the request if summary writing fails
-            logger.error(f"Failed to write execution summary: {e}", exc_info=True)
-
-    def _write_summary_sync(
-        self,
-        writer,
-        pipeline: PipelineSpec,
-        pipeline_context,
-        request_body: dict,
-        response_body: dict,
-        execution_order: list[str],
-        summary_format: str,
-    ) -> None:
-        """
-        Synchronous summary writing (runs in thread executor).
-
-        Separated from async wrapper to keep blocking I/O off the event loop.
-        """
-        # Detailed (per-step files + full summary)
-        if summary_format == "detailed":
-            writer.write_step_summaries(
-                pipeline,
-                pipeline_context,
-                request_body,
-                response_body,
-                execution_order,
-            )
-        # Markdown (default, human-readable)
-        elif summary_format in ("markdown", "all"):
-            writer.write_summary_markdown(
-                pipeline,
-                pipeline_context,
-                request_body,
-                response_body,
-                execution_order,
-            )
-
-        # YAML (optional, human + machine readable)
-        if summary_format in ("yaml", "all"):
-            writer.write_summary_yaml(
-                pipeline,
-                pipeline_context,
-                request_body,
-                response_body,
-                execution_order,
-            )
-
-        # JSON (optional, machine readable)
-        if summary_format in ("json", "all"):
-            writer.write_summary(
-                pipeline,
-                pipeline_context,
-                request_body,
-                response_body,
-                execution_order,
-            )

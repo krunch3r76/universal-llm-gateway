@@ -26,13 +26,20 @@ if TYPE_CHECKING:
     from ..checkpoint import CheckpointManager
     from ..resolver import NamespaceResolver
 
-from ...events import (
-    MapIterationCompleted,
+# Old bus event factories (for backward-compatible monitoring consumers)
+# New observability events (for JSONL recorder)
+from ...events.lifecycle import MapIterationCompleted
+from ...events.map import (
+    MapIterationCompleted as BusMapIterationCompleted,
+)
+from ...events.map import (
     MapIterationFailed,
     MapIterationStarted,
-    MapStepCompleted,
     MapStepStarted,
     MapTimeoutWarning,
+)
+from ...events.map import (
+    MapStepCompleted as BusMapStepCompleted,
 )
 
 logger = logging.getLogger(__name__)
@@ -397,7 +404,7 @@ class MapExecutor:
             succeeded_count, total, self._map_config.min_success_threshold
         )
         self._publish_event(
-            MapStepCompleted(
+            BusMapStepCompleted(
                 pipeline_id=pipeline_id,
                 execution_id=execution_id,
                 step_name=self._step.name,
@@ -541,10 +548,12 @@ class MapExecutor:
 
         # Emit per-iteration events
         pipeline_id, execution_id = self._get_event_context()
+        recorder = getattr(self._runtime, "recorder", None)
+        key_by_idx = dict(iteration_metadata)
         for result in iteration_results:
             if result.status == IterationStatus.COMPLETED:
                 self._publish_event(
-                    MapIterationCompleted(
+                    BusMapIterationCompleted(
                         pipeline_id=pipeline_id,
                         execution_id=execution_id,
                         step_name=self._step.name,
@@ -552,6 +561,20 @@ class MapExecutor:
                         duration_seconds=result.duration_seconds or 0.0,
                     )
                 )
+                if recorder:
+                    out = results_by_index.get(result.index)
+                    recorder.emit(
+                        MapIterationCompleted(
+                            step_name=self._step.name,
+                            model_id=result.model_id,
+                            iteration_index=result.index,
+                            iteration_key=key_by_idx.get(result.index) or "",
+                            duration_ms=(result.duration_seconds or 0.0) * 1000,
+                            output_text=(out.text if out else ""),
+                            prompt_tokens=(out.prompt_tokens if out else 0),
+                            completion_tokens=(out.completion_tokens if out else 0),
+                        )
+                    )
             else:
                 if result.status == IterationStatus.TIMEOUT:
                     failure_type = "timeout"
@@ -696,6 +719,7 @@ class MapExecutor:
 
                 # Build iteration results for error
                 iteration_results: list[IterationResult] = []
+                ff_results_by_index: dict[int, StepOutput] = {}
                 for task in done:
                     idx = tasks[task]
                     ctx = iteration_context.get(idx, {})
@@ -717,6 +741,7 @@ class MapExecutor:
                             )
                         )
                     else:
+                        ff_results_by_index[idx] = task.result()
                         iteration_results.append(
                             IterationResult(
                                 index=idx,
@@ -746,10 +771,12 @@ class MapExecutor:
 
                 # Emit per-iteration events
                 pipeline_id, execution_id = self._get_event_context()
+                rec = getattr(self._runtime, "recorder", None)
+                ff_key_by_idx = dict(iteration_metadata)
                 for result in iteration_results:
                     if result.status == IterationStatus.COMPLETED:
                         self._publish_event(
-                            MapIterationCompleted(
+                            BusMapIterationCompleted(
                                 pipeline_id=pipeline_id,
                                 execution_id=execution_id,
                                 step_name=self._step.name,
@@ -757,6 +784,22 @@ class MapExecutor:
                                 duration_seconds=result.duration_seconds or 0.0,
                             )
                         )
+                        if rec:
+                            out = ff_results_by_index.get(result.index)
+                            rec.emit(
+                                MapIterationCompleted(
+                                    step_name=self._step.name,
+                                    model_id=result.model_id,
+                                    iteration_index=result.index,
+                                    iteration_key=ff_key_by_idx.get(result.index) or "",
+                                    duration_ms=(result.duration_seconds or 0.0) * 1000,
+                                    output_text=(out.text if out else ""),
+                                    prompt_tokens=(out.prompt_tokens if out else 0),
+                                    completion_tokens=(
+                                        out.completion_tokens if out else 0
+                                    ),
+                                )
+                            )
                     else:
                         if result.status == IterationStatus.CANCELLED:
                             failure_type = "cancelled"
@@ -840,10 +883,12 @@ class MapExecutor:
 
         # Emit per-iteration events
         pipeline_id, execution_id = self._get_event_context()
+        rec2 = getattr(self._runtime, "recorder", None)
+        ff2_key_by_idx = dict(iteration_metadata)
         for result in iteration_results:
             if result.status == IterationStatus.COMPLETED:
                 self._publish_event(
-                    MapIterationCompleted(
+                    BusMapIterationCompleted(
                         pipeline_id=pipeline_id,
                         execution_id=execution_id,
                         step_name=self._step.name,
@@ -851,6 +896,20 @@ class MapExecutor:
                         duration_seconds=result.duration_seconds or 0.0,
                     )
                 )
+                if rec2:
+                    out = results_by_index.get(result.index)
+                    rec2.emit(
+                        MapIterationCompleted(
+                            step_name=self._step.name,
+                            model_id=result.model_id,
+                            iteration_index=result.index,
+                            iteration_key=ff2_key_by_idx.get(result.index) or "",
+                            duration_ms=(result.duration_seconds or 0.0) * 1000,
+                            output_text=(out.text if out else ""),
+                            prompt_tokens=(out.prompt_tokens if out else 0),
+                            completion_tokens=(out.completion_tokens if out else 0),
+                        )
+                    )
             else:
                 if result.status == IterationStatus.CANCELLED:
                     failure_type = "cancelled"

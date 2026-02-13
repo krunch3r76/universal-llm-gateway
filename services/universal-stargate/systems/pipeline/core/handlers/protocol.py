@@ -188,9 +188,17 @@ class PipelineContext:
     # Map iteration state (set by MapExecutor for provenance tracking)
     _map_state: MapIterationState | None = None
 
+    # Event recorder for pipeline observability (set by executor)
+    _recorder: Any = None  # EventRecorder instance
+
     # Auto-tracking: model calls made during current step
     # Cleared by DAGExecutor at each step boundary
     _step_model_calls: list[Any] = field(default_factory=list)
+
+    @property
+    def recorder(self):
+        """Event recorder for pipeline observability. May be None if not configured."""
+        return self._recorder
 
     def record_model_call(self, call_result: Any) -> None:
         """Record a model call for automatic token aggregation."""

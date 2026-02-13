@@ -16,7 +16,30 @@ from universal_logging import get_logger
 from src.core.gateway_tracker import gateway_tracker
 
 from ..dag import PipelineExecutionError, StepState
-from ..events import StepCompleted, StepFailed, StepSkipped, StepStarted
+
+# New observability events (for JSONL recorder)
+from ..events.lifecycle import (
+    StepCompleted,
+    StepFailed,
+    StepInputsCaptured,
+    StepOutputCaptured,
+    StepSkipped,
+    StepStarted,
+)
+
+# Old bus event factories (for backward-compatible monitoring consumers)
+from ..events.step import (
+    StepCompleted as BusStepCompleted,
+)
+from ..events.step import (
+    StepFailed as BusStepFailed,
+)
+from ..events.step import (
+    StepSkipped as BusStepSkipped,
+)
+from ..events.step import (
+    StepStarted as BusStepStarted,
+)
 from .proxy_client import ProxyClient
 
 if TYPE_CHECKING:
@@ -274,10 +297,18 @@ class DAGExecutor:
             if not await self._should_execute_step(node.step):
                 logger.info(f"Step '{node.step.id}' skipped (condition not met)")
 
-                # Emit step skipped event
+                # Emit step skipped (recorder + bus)
+                recorder = self.context.recorder
+                if recorder:
+                    recorder.emit(
+                        StepSkipped(
+                            step_name=node.step.name,
+                            reason="condition not met",
+                        )
+                    )
                 pipeline_id, execution_id = self._get_event_context()
                 self._publish_event(
-                    StepSkipped(
+                    BusStepSkipped(
                         pipeline_id=pipeline_id,
                         execution_id=execution_id,
                         step_name=node.step.name,
@@ -369,13 +400,24 @@ class DAGExecutor:
         """Execute step and update state."""
         import time
 
-        # Emit step started event
         pipeline_id, execution_id = self._get_event_context()
         target_model = node.step.get_target_model_id(
             self.context._registry, domain=self.context.pipeline.domain
         )
+
+        # Emit step started (recorder + bus)
+        recorder = self.context.recorder
+        if recorder:
+            recorder.emit(
+                StepStarted(
+                    step_name=node.step.name,
+                    step_type=node.step.type,
+                    model_id=target_model,
+                    is_map_step=node.step.is_map_step,
+                )
+            )
         self._publish_event(
-            StepStarted(
+            BusStepStarted(
                 pipeline_id=pipeline_id,
                 execution_id=execution_id,
                 step_name=node.step.name,
@@ -384,6 +426,14 @@ class DAGExecutor:
                 is_map_step=node.step.is_map_step,
             )
         )
+
+        # Capture step inputs for observability
+        if recorder:
+            inputs = self._capture_step_inputs(node.step)
+            if inputs:
+                recorder.emit(
+                    StepInputsCaptured(step_name=node.step.name, inputs=inputs)
+                )
 
         start_time = time.time()
         try:
@@ -447,11 +497,38 @@ class DAGExecutor:
         logger.info(f"Step '{node.step.name}' completed (latency: {latency_ms:.0f}ms)")
         self._propagate_completion(node.step.name)
 
-        # Emit step completed event
+        # Emit step output + completed (recorder + bus)
+        recorder = self.context.recorder
+        if recorder:
+            recorder.emit(
+                StepOutputCaptured(
+                    step_name=node.step.name,
+                    model_id=output.model_id,
+                    raw=output.raw,
+                    json_data=output.json,
+                    prompt_tokens=output.prompt_tokens,
+                    completion_tokens=output.completion_tokens,
+                    latency_ms=output.latency_ms,
+                    model_call_count=getattr(output, "model_call_count", 0),
+                    system_prompt=output.system_prompt,
+                    user_prompt=output.user_prompt,
+                    request_body=output.request_body,
+                )
+            )
+            recorder.emit(
+                StepCompleted(
+                    step_name=node.step.name,
+                    model_id=output.model_id,
+                    duration_ms=duration * 1000,
+                    prompt_tokens=output.prompt_tokens,
+                    completion_tokens=output.completion_tokens,
+                    model_call_count=getattr(output, "model_call_count", 0),
+                )
+            )
         pipeline_id, execution_id = self._get_event_context()
         output_length = len(output.text) if hasattr(output, "text") else 0
         self._publish_event(
-            StepCompleted(
+            BusStepCompleted(
                 pipeline_id=pipeline_id,
                 execution_id=execution_id,
                 step_name=node.step.name,
@@ -500,9 +577,22 @@ class DAGExecutor:
         except Exception as e:
             logger.warning("Could not write failure debug file: %s", e)
 
-        # Emit step failed event
+        # Emit step failed (recorder + bus)
+        import traceback as tb_mod
+
+        recorder = self.context.recorder
+        if recorder:
+            recorder.emit(
+                StepFailed(
+                    step_name=node.step.name,
+                    error=str(error),
+                    duration_ms=duration * 1000,
+                    traceback="".join(tb_mod.format_exception(error)),
+                    model_calls=call_contexts,
+                )
+            )
         self._publish_event(
-            StepFailed(
+            BusStepFailed(
                 pipeline_id=pipeline_id,
                 execution_id=execution_id,
                 step_name=node.step.name,
@@ -510,6 +600,45 @@ class DAGExecutor:
                 error=str(error),
             )
         )
+
+    def _capture_step_inputs(self, step: StepConfig) -> dict[str, Any]:
+        """Capture resolved handler inputs for observability.
+
+        Mirrors BaseHandler._resolve_input: resolve() → traverse_path()
+        so the event records the actual value, not intermediate objects
+        (e.g., MapOutputCollection, StepOutput).
+        """
+        from ..execution.resolver import NamespaceResolver, traverse_path
+
+        inputs: dict[str, Any] = {}
+        if not step.handler_inputs:
+            return inputs
+        resolver = NamespaceResolver(self.context)
+        for input_name, binding in step.handler_inputs.items():
+            try:
+                root = resolver.resolve(binding)
+                val = (
+                    traverse_path(
+                        root,
+                        binding.field_path,
+                        step_name=step.id,
+                        field_name=input_name,
+                        binding_repr=str(binding),
+                        resolver=resolver,
+                    )
+                    if binding.field_path
+                    else root
+                )
+                # Truncate large string values for JSONL size
+                if isinstance(val, str) and len(val) > 2000:
+                    val = val[:2000] + f"... ({len(val)} chars total)"
+                inputs[input_name] = {
+                    "source": str(binding),
+                    "value": val,
+                }
+            except Exception:
+                inputs[input_name] = {"source": str(binding), "value": None}
+        return inputs
 
     def _log_step_model_calls(
         self,

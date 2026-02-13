@@ -1,55 +1,75 @@
 """
 Pipeline execution events.
 
-Event categories:
-- Pipeline lifecycle: started, completed, failed
-- Step lifecycle: started, completed, failed, skipped
-- Map step progress: iteration tracking, timeout warnings
-- Checkpoint operations: saved, loaded, failed
+Two event systems coexist during migration:
+- Old bus events (@event_factory → EventBus): step.py, pipeline.py, map.py
+- New observability events (dataclass → JSONL): lifecycle.py, verification.py
 
-Event-driven state invariant:
-- Pipeline/step state visible via events (single source of truth)
-- External observers can track execution progress
-- All events include pipeline_id and execution_id for correlation
+The old bus events are imported by DAGExecutor and MapExecutor with Bus* aliases.
+The new dataclass events power the JSONL-based pipeline viewer.
+
+Checkpoint events remain unchanged (not migrated).
 """
 
+from .base import PipelineEvent
 from .checkpoint import CheckpointFailed, CheckpointLoaded, CheckpointSaved
-from .map import (
+from .inference import ModelInvocation
+from .lifecycle import (
     MapIterationCompleted,
-    MapIterationFailed,
-    MapIterationStarted,
-    MapStepCompleted,
-    MapStepStarted,
-    MapTimeoutWarning,
-)
-from .pipeline import (
     PipelineCancelled,
     PipelineCompleted,
     PipelineFailed,
     PipelineStarted,
+    StepCompleted,
+    StepFailed,
+    StepInputsCaptured,
+    StepOutputCaptured,
+    StepSkipped,
+    StepStarted,
 )
-from .step import StepCompleted, StepFailed, StepSkipped, StepStarted
+from .recorder import EventRecorder
+from .verification import (
+    ClaimsClassified,
+    ClaimsContextualized,
+    ClaimsExtracted,
+    CompoundClaimsDecomposed,
+    DomainVerificationCompleted,
+    ModelVerdictCast,
+    ThresholdApplied,
+    TiebreakerTriggered,
+    VerificationComplete,
+)
 
 __all__ = [
-    # Checkpoint events
-    "CheckpointSaved",
-    "CheckpointLoaded",
-    "CheckpointFailed",
-    # Pipeline events
+    # Base
+    "PipelineEvent",
+    "EventRecorder",
+    # Lifecycle (new dataclass events for JSONL recorder)
     "PipelineStarted",
     "PipelineCompleted",
     "PipelineFailed",
     "PipelineCancelled",
-    # Step events
     "StepStarted",
     "StepCompleted",
     "StepFailed",
     "StepSkipped",
-    # Map events
-    "MapStepStarted",
-    "MapIterationStarted",
+    "StepInputsCaptured",
+    "StepOutputCaptured",
     "MapIterationCompleted",
-    "MapIterationFailed",
-    "MapTimeoutWarning",
-    "MapStepCompleted",
+    # Inference
+    "ModelInvocation",
+    # Verification
+    "ClaimsExtracted",
+    "ClaimsClassified",
+    "ClaimsContextualized",
+    "CompoundClaimsDecomposed",
+    "DomainVerificationCompleted",
+    "ModelVerdictCast",
+    "TiebreakerTriggered",
+    "ThresholdApplied",
+    "VerificationComplete",
+    # Checkpoint
+    "CheckpointSaved",
+    "CheckpointLoaded",
+    "CheckpointFailed",
 ]

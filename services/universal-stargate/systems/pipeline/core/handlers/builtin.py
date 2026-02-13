@@ -112,9 +112,12 @@ class BaseHandler(AbstractStepHandler):
             "base",
             "q4",
             "q8",
+            "q6",
             "f16",
             "cpu",
             "gpu",
+            "hybrid",
+            "uncensored",
         }
     )
 
@@ -330,8 +333,10 @@ class BaseHandler(AbstractStepHandler):
         Full IDs typically contain:
         - Multiple hyphens (segmented naming)
         - Version indicators (instruct, chat, base)
-        - Quantization markers (q4, q8, f16)
-        - Context length (8192, 32768)
+        - Quantization markers (q4, q6, q8, f16)
+        - Context length (8192, 32768, 131072)
+        - Deployment markers (cpu, gpu, hybrid)
+        - Variant markers (uncensored)
 
         Design Decision: Models without these indicators (e.g., "hermes-3-llama-3.1-8b")
         will be treated as aliases and fail if not registered. This is intentional —
@@ -342,6 +347,7 @@ class BaseHandler(AbstractStepHandler):
             "phi" → False (alias)
             "phi-3-5-mini-instruct-q4-k-m-32768-cpu" → True (full ID)
             "qwen2-5-7b-instruct-q4-k-m-32768-cpu" → True (full ID)
+            "hermes3-llama-3.1-70b-uncensored-16384-hybrid" → True (full ID)
             "hermes-3-llama-3.1-8b" → False (no indicators, treated as alias)
         """
         # Aliases are typically short, single words or underscored
@@ -353,8 +359,15 @@ class BaseHandler(AbstractStepHandler):
         if len(segments) < 3:
             return False
 
-        # Look for version/quantization indicators
-        return any(seg.lower() in self.FULL_ID_INDICATORS for seg in segments)
+        # Look for keyword indicators (quantization, deployment, variant)
+        if any(seg.lower() in self.FULL_ID_INDICATORS for seg in segments):
+            return True
+
+        # Look for numeric context length (4-6 digit numbers: 2048, 8192, 32768, 131072)
+        if any(seg.isdigit() and 1000 <= int(seg) <= 999999 for seg in segments):
+            return True
+
+        return False
 
     def _resolve_model_alias(
         self,
@@ -412,12 +425,16 @@ class BaseHandler(AbstractStepHandler):
         max_tokens: int | None = None,
         json_schema: dict[str, Any] | None = None,
         disable_json_response: bool = False,
+        call_label: str = "",
     ) -> ModelCallResult:
         """
         Invoke model and return complete result.
 
         Model aliases are automatically resolved via the pipeline registry.
         Use short aliases (e.g., "phi") or full IDs interchangeably.
+
+        Emits a ModelInvocation event for every call (success or failure)
+        so the pipeline viewer can display the full request/response chain.
 
         Args:
             model_id: Target model identifier (alias or full ID)
@@ -429,6 +446,8 @@ class BaseHandler(AbstractStepHandler):
             max_tokens: Max tokens (None = model default)
             json_schema: JSON schema for structured output
             disable_json_response: Remove response_format from params
+            call_label: Purpose identifier for observability (e.g., "decompose",
+                "verify", "classify"). Helps distinguish sub-calls in complex handlers.
 
         Returns:
             ModelCallResult with content, request body, tokens,
@@ -438,6 +457,9 @@ class BaseHandler(AbstractStepHandler):
         Raises:
             ProxyClientError: If model call fails or response cannot be parsed
         """
+        import time as _time
+
+        from ..events.inference import ModelInvocation
         from ..execution.proxy_client import ProxyClientError
 
         # AUTO-RESOLVE model alias to full ID
@@ -481,6 +503,9 @@ class BaseHandler(AbstractStepHandler):
         if skip_tc is None:
             skip_tc = context.pipeline.options.skip_token_counting
 
+        recorder = context.recorder
+        call_start = _time.monotonic()
+
         # Invoke via Stargate
         client = context.get_proxy_client()
         try:
@@ -499,6 +524,7 @@ class BaseHandler(AbstractStepHandler):
                 **params,
             )
         except ProxyClientError as e:
+            call_duration_ms = (_time.monotonic() - call_start) * 1000
             e.add_note(f"Pipeline step: {step.id}")
             e.add_note(f"Execution ID: {context.execution_id}")
             e.add_note(f"Model: {resolved_model_id}")
@@ -508,6 +534,24 @@ class BaseHandler(AbstractStepHandler):
                 f"Model invocation failed: {e.status_code} {e.detail} "
                 f"(step={step.id}, model={resolved_model_id})"
             )
+            if recorder:
+                recorder.emit(
+                    ModelInvocation(
+                        step_name=step.name,
+                        model_id=resolved_model_id,
+                        call_label=call_label,
+                        system_prompt=system_prompt,
+                        user_prompt=prompt,
+                        request_body=request_body,
+                        error=(
+                            f"{e.status_code} {e.detail}"
+                            if hasattr(e, "status_code")
+                            else str(e)
+                        ),
+                        latency_ms=call_duration_ms,
+                        success=False,
+                    )
+                )
             raise
 
         # Extract token usage
@@ -546,6 +590,8 @@ class BaseHandler(AbstractStepHandler):
                 response_preview=content,
             )
 
+        call_duration_ms = (_time.monotonic() - call_start) * 1000
+
         result = ModelCallResult(
             content=content,
             finish_reason=finish_reason,
@@ -557,6 +603,25 @@ class BaseHandler(AbstractStepHandler):
             system_prompt=system_prompt,
             user_prompt=prompt,
         )
+
+        # Emit observability event for every successful call
+        if recorder:
+            recorder.emit(
+                ModelInvocation(
+                    step_name=step.name,
+                    model_id=resolved_model_id,
+                    call_label=call_label,
+                    snapshot_request_id=snapshot_request_id or "",
+                    system_prompt=system_prompt,
+                    user_prompt=prompt,
+                    request_body=request_body,
+                    response_text=content,
+                    latency_ms=call_duration_ms,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    success=True,
+                )
+            )
 
         # Auto-record for pipeline-level token aggregation
         context.record_model_call(result)

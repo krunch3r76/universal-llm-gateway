@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Consensus Pipeline Viewer</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <h1>Consensus Pipeline Viewer</h1>
+      <div class="subtitle">Multi-model verification &amp; truth distillation</div>
+    </div>
+    <div id="live-indicator"><span class="pulse"></span> LIVE</div>
+  </header>
+
+  <div id="exec-selector">
+    <h2>Executions</h2>
+    <div class="exec-list" id="exec-list">
+      <div class="loading">Loading executions...</div>
+    </div>
+  </div>
+
+  <div id="question-display" style="display:none;margin-bottom:20px">
+    <div style="font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Question</div>
+    <div id="question-text" style="font-size:18px;font-weight:500;color:var(--text);line-height:1.4"></div>
+  </div>
+  <div id="summary-banner"></div>
+  <div id="pipeline-flow"></div>
+  <div id="detail-panel"></div>
+  <div id="final-output">
+    <div class="label">Verified Output</div>
+    <div class="content" id="final-output-text"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+<script src="/static/stream.js"></script>
+<script src="/static/detail.js"></script>
+</body>
+</html>

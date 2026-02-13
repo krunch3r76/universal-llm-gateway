@@ -31,6 +31,40 @@ class _CallContext(TypedDict, total=False):
 logger = get_logger(__name__)
 
 FAILURES_DIR_NAME = "pipeline_failures"
+_FAILED_RID_PREFIX = "failed_request_ids: "
+
+
+def _extract_failed_request_ids(error: BaseException) -> list[str]:
+    """Extract failed request IDs from exception notes.
+
+    Recurses into ExceptionGroup sub-exceptions and exception chains.
+    Looks for notes matching "failed_request_ids: id1,id2,..." added
+    by verification handlers.
+    """
+    rids: list[str] = []
+
+    def _collect(exc: BaseException) -> None:
+        for note in getattr(exc, "__notes__", []):
+            if isinstance(note, str) and note.startswith(_FAILED_RID_PREFIX):
+                raw = note[len(_FAILED_RID_PREFIX) :]
+                rids.extend(rid.strip() for rid in raw.split(",") if rid.strip())
+        # Recurse into ExceptionGroup sub-exceptions
+        if isinstance(exc, BaseExceptionGroup):
+            for sub in exc.exceptions:
+                _collect(sub)
+        # Follow exception chain
+        if exc.__cause__ is not None:
+            _collect(exc.__cause__)
+
+    _collect(error)
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for rid in rids:
+        if rid not in seen:
+            seen.add(rid)
+            unique.append(rid)
+    return unique
 
 
 def _get_failures_dir() -> Path:
@@ -104,11 +138,18 @@ def write_failure_debug(
         filename = f"{ts}_{pipeline_id}_{safe_step}_{exec_short}.txt"
         path = failures_dir / filename
 
+        # Extract failed request IDs from exception notes (including sub-exceptions)
+        failed_rids = _extract_failed_request_ids(error)
+
         lines = [
             f"pipeline_id: {pipeline_id}",
             f"execution_id: {execution_id}",
             f"step_id: {step_id}",
             f"exception: {exc_name}: {error}",
+        ]
+        if failed_rids:
+            lines.append(f"failed_request_ids: {', '.join(failed_rids)}")
+        lines += [
             "",
             "--- TRACEBACK ---",
             traceback.format_exc(),

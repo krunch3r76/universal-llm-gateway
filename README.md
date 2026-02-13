@@ -18,8 +18,8 @@ Production-tested on single-GPU deployments. Under active development.
 - Real-time audio transcription with VAD profiles
 
 ### Roadmap
+- [ ] **Simplified onboarding process** (expanded Quick Start in this README, installation guides, CLI wizards)
 - [ ] Multi-GPU / tensor parallelism (vLLM)
-- [ ] Golem Network integration (WebSocket-capable workers)
 - [ ] Native VPS deployment tooling (one-command setup)
 - [ ] Pipeline system stabilization (v6 schema)
 - [ ] Simplified model onboarding (CLI wizard or web UI)

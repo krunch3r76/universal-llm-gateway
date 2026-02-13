@@ -33,6 +33,7 @@ class ProcessResult:
     results: list[Any]
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    request_id: str | None = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -48,6 +49,7 @@ class ChunkResult:
     error: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    request_id: str | None = None
 
 
 @dataclass(slots=True, kw_only=True)

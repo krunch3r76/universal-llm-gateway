@@ -135,6 +135,7 @@ class ChunkedModelExecutor:
 
             prompt_tokens = 0
             completion_tokens = 0
+            request_id: str | None = None
 
             try:
                 if self._timeout_per_chunk_ms:
@@ -150,6 +151,7 @@ class ChunkedModelExecutor:
                     results = raw_result.results
                     prompt_tokens = raw_result.prompt_tokens
                     completion_tokens = raw_result.completion_tokens
+                    request_id = raw_result.request_id
                 else:
                     results = raw_result
 
@@ -160,6 +162,9 @@ class ChunkedModelExecutor:
                     error_msg = f"Timeout after {timeout_sec:.1f}s"
                 else:
                     error_msg = str(e) or type(e).__name__
+
+                # Extract request_id attached by caller (e.g. pipeline handler)
+                request_id = getattr(e, "request_id", None)
 
                 logger.warning(
                     f"ChunkedModelExecutor: chunk {chunk.index} failed "
@@ -196,6 +201,7 @@ class ChunkedModelExecutor:
                 error=error_msg,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                request_id=request_id,
             )
 
         # Execute with optional concurrency limit
