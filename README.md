@@ -1,14 +1,15 @@
 # Universal LLM Gateway
 
-A **security-first** federated LLM inference gateway built on zero-trust principles — you never need to trust the LLMs you run. Gateway containers run with zero network access (`network_mode: "none"`) and non-root Docker processes — models cannot exfiltrate data, access the network, or escalate privileges regardless of their behavior. OpenAI-compatible API with multi-model pipeline orchestration.
+A **privacy and security-first** federated LLM inference gateway built on zero-trust principles. Gateway containers run with zero network access (`network_mode: "none"`) and non-root Docker processes — your prompts never leave your hardware, and models cannot exfiltrate data, access the network, or escalate privileges regardless of their behavior. OpenAI-compatible API with multi-model pipeline orchestration.
 
 ## Status: Alpha (v0.1.0)
 
 Production-tested on single-GPU deployments. Under active development.
 
 ### What Works
-- **Zero-trust LLM execution**: Gateway containers have zero network access and run as non-root — models cannot exfiltrate data, access external services, or escalate privileges by design
-- **Defense in depth**: Network isolation (`network_mode: "none"`) + unprivileged processes + Unix socket communication = minimal attack surface even if models are compromised
+- **Privacy by design**: Gateway containers have zero network access — your prompts and outputs never leave your hardware
+- **Zero-trust security**: Models run as non-root in isolated containers — they cannot exfiltrate data, access external services, or escalate privileges regardless of behavior
+- **Defense in depth**: Network isolation (`network_mode: "none"`) + unprivileged processes + Unix socket communication
 - Federated inference routing with network-isolated Gateway containers
 - Single-GPU deployments: GGUF/llama.cpp, vLLM, Whisper, Flux
 - Pipeline system for multi-model DAG workflows (example pending)
