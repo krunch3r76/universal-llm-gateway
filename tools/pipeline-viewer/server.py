@@ -82,12 +82,16 @@ def create_app(
         if not snapshots_dir.exists():
             raise HTTPException(status_code=404, detail="Snapshots directory not found")
 
+        # Apply same sanitization as the writer (request_snapshots.py):
+        # replace "/" with "-" and truncate to 32 chars
+        safe_request_id = request_id.replace("/", "-")[:32]
+
         for stage in SNAPSHOT_STAGES:
             stage_dir = snapshots_dir / stage
             if not stage_dir.is_dir():
                 continue
             for f in stage_dir.iterdir():
-                if f.suffix == ".json" and request_id in f.name:
+                if f.suffix == ".json" and safe_request_id in f.name:
                     try:
                         data = json.loads(f.read_text(encoding="utf-8"))
                         key = stage.replace("-", "_")

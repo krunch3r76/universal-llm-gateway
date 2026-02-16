@@ -34,10 +34,14 @@ from .verification import (
     ClaimsExtracted,
     CompoundClaimsDecomposed,
     DomainVerificationCompleted,
+    EnrichReviewCompleted,
+    FilterNegativesCompleted,
     ModelVerdictCast,
+    SynergizeCompleted,
     ThresholdApplied,
     TiebreakerTriggered,
     VerificationComplete,
+    VetoPassCompleted,
 )
 
 __all__ = [
@@ -64,10 +68,14 @@ __all__ = [
     "ClaimsContextualized",
     "CompoundClaimsDecomposed",
     "DomainVerificationCompleted",
+    "EnrichReviewCompleted",
+    "FilterNegativesCompleted",
     "ModelVerdictCast",
     "TiebreakerTriggered",
     "ThresholdApplied",
+    "SynergizeCompleted",
     "VerificationComplete",
+    "VetoPassCompleted",
     # Checkpoint
     "CheckpointSaved",
     "CheckpointLoaded",

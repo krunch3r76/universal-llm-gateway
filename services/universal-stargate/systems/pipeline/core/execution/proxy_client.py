@@ -59,6 +59,16 @@ class ProxyClientError(Exception):
         self.detail = detail
 
 
+def _error_message(status_code: int, detail: Any) -> str:
+    """Build error message that includes upstream error detail when available."""
+    base = f"Stargate returned {status_code}"
+    if isinstance(detail, dict):
+        error_info = detail.get("error", {})
+        if isinstance(error_info, dict) and "message" in error_info:
+            return f"{base}: {error_info['message']}"
+    return base
+
+
 class ProxyClient:
     """
     HTTP client for pipeline → Stargate internal communication.
@@ -270,7 +280,7 @@ class ProxyClient:
                     detail = response.text
 
                 raise ProxyClientError(
-                    f"Stargate returned {response.status_code}",
+                    _error_message(response.status_code, detail),
                     status_code=response.status_code,
                     detail=detail,
                 )
@@ -417,7 +427,7 @@ class ProxyClient:
                     detail = response.text
 
                 raise ProxyClientError(
-                    f"Stargate returned {response.status_code}",
+                    _error_message(response.status_code, detail),
                     status_code=response.status_code,
                     detail=detail,
                 )
