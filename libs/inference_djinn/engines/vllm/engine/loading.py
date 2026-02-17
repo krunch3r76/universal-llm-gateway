@@ -1,14 +1,15 @@
 """
 VLLM engine model loading operations.
 
-Handles model loading, tokenizer initialization, and unload operations.
+Handles model loading, tokenizer initialization, startup warmup, and unload.
 """
 
 import gc
-from universal_logging import get_logger
+import time
 from typing import Any
 
 from transformers import AutoTokenizer
+from universal_logging import get_logger
 from vllm import AsyncLLMEngine
 from vllm.engine.arg_utils import AsyncEngineArgs
 
@@ -102,12 +103,118 @@ class VLLMModelLoader:
             # Get model info
             self.engine.model_info = self.engine.get_model_info()
 
+            # Mark loaded BEFORE warmup (warmup uses generate() which checks this)
             self.engine.loaded = True
             logger.info(f"vLLM model loaded successfully: {self.engine.model_path}")
+
+            # Perform startup warmup to trigger PTX→SASS JIT compilation
+            warmup_config = self.engine.kwargs.get("warmup", {})
+            if warmup_config.get("enabled", False):
+                _ = await self._perform_startup_warmup(warmup_config)
+            else:
+                logger.info(
+                    "vLLM startup warmup disabled - first inference will trigger "
+                    "PTX→SASS JIT compilation (~60-90s)"
+                )
 
         except Exception as e:
             logger.error(f"Failed to load vLLM model: {e}")
             raise
+
+    async def _perform_startup_warmup(self, warmup_config: dict[str, Any]) -> bool:
+        """Perform startup warmup to trigger PTX→SASS JIT compilation.
+
+        Runs one non-streaming inference with a minimal prompt so that
+        NVIDIA driver kernel compilation happens before real user traffic.
+
+        Optionally clears CUDA memory cache before/after warmup.
+        Does NOT touch on-disk caches (VLLM_CACHE_ROOT, CUDA_CACHE_PATH).
+
+        Args:
+            warmup_config: Dict with keys: enabled, max_tokens, prompt_tokens,
+                          clear_cuda_cache_before, clear_cuda_cache_after
+
+        Returns:
+            True if warmup succeeded, False if it failed (non-fatal)
+        """
+        max_tokens = warmup_config.get("max_tokens", 20)
+        prompt_tokens = warmup_config.get("prompt_tokens", 50)
+        clear_before = warmup_config.get("clear_cuda_cache_before", False)
+        clear_after = warmup_config.get("clear_cuda_cache_after", True)
+
+        warmup_start = time.time()
+        logger.info(
+            f"[vLLM warmup] Starting startup warmup "
+            f"(max_tokens={max_tokens}, prompt_tokens≈{prompt_tokens})"
+        )
+
+        # Step 1: Clear CUDA cache before warmup (if configured)
+        if clear_before:
+            self._clear_cuda_cache("before warmup")
+
+        # Step 2: Run one inference to compile CUDA kernels
+        try:
+            warmup_prompt = self._build_warmup_prompt(prompt_tokens)
+            warmup_data: dict[str, Any] = {
+                "messages": [{"role": "user", "content": warmup_prompt}],
+                "max_tokens": max_tokens,
+                "stream": False,
+            }
+
+            logger.info("[vLLM warmup] Running warmup inference...")
+            _ = await self.engine._regular_inference.generate(warmup_data)
+
+            elapsed = time.time() - warmup_start
+            logger.info(
+                f"[vLLM warmup] Startup warmup completed in {elapsed:.2f}s "
+                f"(max_tokens={max_tokens})"
+            )
+
+        except Exception as e:
+            elapsed = time.time() - warmup_start
+            logger.warning(
+                f"[vLLM warmup] Startup warmup failed after {elapsed:.2f}s "
+                f"(non-fatal): {e}"
+            )
+            return False
+
+        # Step 3: Clear CUDA cache after warmup (if configured)
+        if clear_after:
+            self._clear_cuda_cache("after warmup")
+
+        return True
+
+    @staticmethod
+    def _build_warmup_prompt(target_tokens: int) -> str:
+        """Build a minimal warmup prompt of approximately target_tokens length.
+
+        Uses repeated short words; each repetition ≈ 2 tokens.
+
+        Args:
+            target_tokens: Approximate number of tokens desired
+
+        Returns:
+            Warmup prompt string
+        """
+        repetitions = max(1, target_tokens // 2)
+        return " ".join(["warmup"] * repetitions)
+
+    @staticmethod
+    def _clear_cuda_cache(context: str) -> None:
+        """Clear CUDA memory cache (not filesystem caches).
+
+        Args:
+            context: Description of when clearing happens (for logging)
+        """
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                logger.info(f"[vLLM warmup] Cleared CUDA cache ({context})")
+        except Exception as e:
+            logger.warning(f"[vLLM warmup] Could not clear CUDA cache ({context}): {e}")
 
     async def unload(self) -> None:
         """Unload model and free resources, following GGUF engine pattern."""

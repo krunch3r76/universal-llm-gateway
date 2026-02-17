@@ -887,8 +887,9 @@ class ModelRegistry:
         """
         Select appropriate profile loader configuration.
 
-        Automatically injects n_ctx from profile key (e.g., '65536' → n_ctx=65536)
-        so context length doesn't need to be duplicated in loader section.
+        For GGUF profiles that lack an explicit context-length key, injects
+        ``n_ctx`` from the numeric profile key (e.g. ``'65536'`` → ``n_ctx=65536``).
+        Skipped when ``max_model_len`` is already present (vLLM models).
 
         Args:
             profiles: Dictionary of profile configurations
@@ -896,7 +897,7 @@ class ModelRegistry:
             is_cpu: Whether selecting from CPU profiles
 
         Returns:
-            Profile loader config dict with n_ctx injected (empty if no match)
+            Profile loader config dict (empty if no match)
         """
         if not profiles:
             return {}
@@ -958,10 +959,12 @@ class ModelRegistry:
                     first_profile = list(profiles.values())[0]
                     loader_config = first_profile.get("loader", {}).copy()
 
-        # Inject n_ctx from profile key if it's numeric and not already set
+        # Inject n_ctx from profile key for GGUF models.
+        # Skip when max_model_len already provides context length (vLLM uses
+        # max_model_len; passing n_ctx to AsyncEngineArgs crashes it).
         if selected_key and selected_key.isdigit():
             ctx_value = int(selected_key)
-            if "n_ctx" not in loader_config:
+            if "n_ctx" not in loader_config and "max_model_len" not in loader_config:
                 loader_config["n_ctx"] = ctx_value
                 logger.debug(
                     f"[registry] Injected n_ctx={ctx_value} from "
@@ -970,8 +973,7 @@ class ModelRegistry:
 
         logger.info(
             f"[registry] _select_profile_loader: selected_key={selected_key}, "
-            f"profile_loader keys={list(loader_config.keys())}, "
-            f"has_parallel_slots={('parallel_slots' in loader_config)}"
+            f"profile_loader keys={list(loader_config.keys())}"
         )
         return loader_config
 
@@ -1069,7 +1071,6 @@ class ModelRegistry:
         logger.info(
             f"[registry] Merged loader config: base keys={list(base_loader.keys())}, "
             f"profile keys={list(profile_loader.keys())}, "
-            f"merged keys={list(merged.keys())}, "
-            f"has_parallel_slots={('parallel_slots' in merged)}"
+            f"merged keys={list(merged.keys())}"
         )
         return merged

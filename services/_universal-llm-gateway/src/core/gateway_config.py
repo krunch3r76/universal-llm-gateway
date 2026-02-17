@@ -315,6 +315,56 @@ class GGUFEngineConfig(BaseModel):
     )
 
 
+class VLLMWarmupConfig(BaseModel):
+    """Startup warmup configuration for vLLM engine.
+
+    Runs one inference after model load to trigger PTX→SASS JIT compilation
+    so the first user request doesn't pay the ~60-90s NVIDIA driver cost.
+
+    Unlike GGUF per-request warmup, this is a one-shot event at model load time.
+    vLLM manages KV cache internally; only CUDA-level cache ops are available.
+
+    Invariant: ∀ warmup: enabled ⟹ (max_tokens > 0 ∧ prompt_tokens > 0)
+    """
+
+    enabled: bool = Field(False, description="Enable startup warmup after model load")
+    max_tokens: int = Field(
+        20,
+        ge=1,
+        description="Tokens to generate during warmup (small = fast, enough for JIT)",
+    )
+    prompt_tokens: int = Field(
+        50,
+        ge=1,
+        description="Approximate prompt size (tokens) for warmup message",
+    )
+    clear_cuda_cache_before: bool = Field(
+        False,
+        description="torch.cuda.empty_cache() before warmup (clear fragmented memory)",
+    )
+    clear_cuda_cache_after: bool = Field(
+        True,
+        description=(
+            "torch.cuda.empty_cache() after warmup "
+            "(reclaim warmup memory before real traffic)"
+        ),
+    )
+
+
+class VLLMEngineConfig(BaseModel):
+    """vLLM engine-specific configuration.
+
+    Covers startup warmup for PTX→SASS JIT compilation.
+    """
+
+    warmup: VLLMWarmupConfig = Field(
+        default_factory=VLLMWarmupConfig,
+        description=(
+            "Startup warmup to trigger CUDA kernel compilation after model load"
+        ),
+    )
+
+
 class GatewayConfig(BaseModel):
     """Main gateway configuration model"""
 
@@ -336,4 +386,5 @@ class GatewayConfig(BaseModel):
     streaming: StreamingConfig = Field(default_factory=StreamingConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     resource_guard: ResourceGuardConfig = Field(default_factory=ResourceGuardConfig)
+    vllm: VLLMEngineConfig = Field(default_factory=VLLMEngineConfig)
     gguf: GGUFEngineConfig = Field(default_factory=GGUFEngineConfig)

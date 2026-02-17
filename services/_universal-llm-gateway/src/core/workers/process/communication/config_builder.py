@@ -92,6 +92,10 @@ def build_model_config_for_worker(
             f"non_streaming(enabled={ns_enabled}, clear_before={ns_clear})"
         )
 
+    # Inject global vLLM warmup configuration if model uses vLLM engine
+    if model_format != "gguf" and _is_vllm_engine(model_registry, model_id):
+        _inject_vllm_warmup_config(loader_config, gateway_config)
+
     # Build streaming config from gateway config
     streaming_config: dict[str, Any] = {}
     if hasattr(gateway_config, "streaming") and gateway_config.streaming:
@@ -110,23 +114,41 @@ def build_model_config_for_worker(
     engine = info.get("engine", "unknown")
 
     # Resolve parallel_slots: controls FifoCapacityGate concurrency.
-    # Default is 1 (serial). Models with parallel_slots > 1 in loader_config
-    # enable batched concurrent inference (e.g., llama-server -np 8).
-    # Invariant: worker gate limit ≡ parallel_slots
-    if "parallel_slots" in loader_config:
-        effective_slots = loader_config["parallel_slots"]
+    # Pop from loader_config so it doesn't leak to engines that reject it
+    # (e.g., vLLM's AsyncEngineArgs doesn't accept parallel_slots).
+    # Re-inject only for native (GGUF) engine which uses it as llama-server -np N.
+    #
+    # For vLLM: batching is handled internally (continuous batching, max_num_seqs).
+    # The FifoCapacityGate limit is set high to avoid artificial serialization.
+    effective_slots = loader_config.pop("parallel_slots", None)
+
+    if effective_slots is not None:
         logger.info(
             f"[config_builder] Using explicit "
             f"parallel_slots={effective_slots} from model config"
         )
     else:
-        effective_slots = 1
-        loader_config["parallel_slots"] = effective_slots
+        # Default depends on engine: native uses serial (1), vLLM handles
+        # batching internally so we allow high concurrency at the gate.
         if engine == "native":
+            effective_slots = 1
             logger.info(
                 f"[config_builder] parallel_slots not configured, "
                 f"defaulting to {effective_slots} (engine={engine})"
             )
+        elif engine == "vllm":
+            effective_slots = 256
+            logger.info(
+                f"[config_builder] parallel_slots not configured, "
+                f"defaulting to {effective_slots} (engine={engine}, "
+                f"vLLM uses internal continuous batching)"
+            )
+        else:
+            effective_slots = 1
+
+    # Re-inject into loader_config only for native engine (llama-server -np N)
+    if engine == "native":
+        loader_config["parallel_slots"] = effective_slots
 
     streaming_config["parallel_slots"] = effective_slots
 
@@ -152,6 +174,58 @@ def get_worker_timeout(gateway_config: Any) -> float:
         Timeout in seconds (default: 300)
     """
     return float(getattr(gateway_config.process_isolation, "worker_timeout", 300))
+
+
+def _is_vllm_engine(model_registry: Any, model_id: str) -> bool:
+    """Check if model uses the vLLM engine.
+
+    Looks at the model config's engine field to determine engine type.
+
+    Args:
+        model_registry: ModelRegistry instance
+        model_id: Model identifier
+
+    Returns:
+        True if model uses vLLM engine
+    """
+    model_config_data = model_registry.get_model_config(model_id) or {}
+    info = model_config_data.get("info", {})
+    return info.get("engine", "").lower() == "vllm"
+
+
+def _inject_vllm_warmup_config(
+    loader_config: dict[str, Any], gateway_config: Any
+) -> None:
+    """Inject vLLM startup warmup config into loader_config.
+
+    Reads from gateway_config.vllm.warmup and serialises to a dict that
+    the VLLMModelLoader can consume via engine.kwargs["warmup"].
+
+    Args:
+        loader_config: Mutable loader config dict (modified in-place)
+        gateway_config: Gateway configuration object
+    """
+    if "warmup" in loader_config:
+        return  # Per-model override already present
+
+    if not hasattr(gateway_config, "vllm"):
+        return
+
+    warmup_cfg = gateway_config.vllm.warmup
+    loader_config["warmup"] = {
+        "enabled": warmup_cfg.enabled,
+        "max_tokens": warmup_cfg.max_tokens,
+        "prompt_tokens": warmup_cfg.prompt_tokens,
+        "clear_cuda_cache_before": warmup_cfg.clear_cuda_cache_before,
+        "clear_cuda_cache_after": warmup_cfg.clear_cuda_cache_after,
+    }
+
+    logger.info(
+        f"[vLLM] Applied warmup config: "
+        f"enabled={warmup_cfg.enabled}, max_tokens={warmup_cfg.max_tokens}, "
+        f"clear_before={warmup_cfg.clear_cuda_cache_before}, "
+        f"clear_after={warmup_cfg.clear_cuda_cache_after}"
+    )
 
 
 def get_force_stop_timeout(gateway_config: Any) -> float:

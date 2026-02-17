@@ -4,9 +4,9 @@ VLLM engine parameter extraction and sampling parameter creation.
 Handles conversion from OpenAI-style parameters to vLLM SamplingParams.
 """
 
-from universal_logging import get_logger
 from typing import Any
 
+from universal_logging import get_logger
 from vllm.sampling_params import SamplingParams, StructuredOutputsParams
 
 logger = get_logger(__name__)
@@ -24,10 +24,19 @@ class VLLMParameterBuilder:
         """
         self.engine = engine_instance
 
+    # Gateway-injected keys that must not reach AsyncEngineArgs
+    _GATEWAY_KEYS: frozenset[str] = frozenset({"warmup"})
+
     def extract_vllm_params(self) -> dict[str, Any]:
-        """Extract vLLM-specific parameters from kwargs. Pass through all parameters."""
-        # Pass through all kwargs - let vLLM handle validation
-        return self.engine.kwargs.copy()
+        """Extract vLLM engine parameters from kwargs, excluding gateway-internal keys.
+
+        Gateway may inject control keys (e.g. 'warmup') into kwargs that are
+        consumed by the loader before engine args construction; they must be
+        stripped here so AsyncEngineArgs does not reject them as unknown kwargs.
+        """
+        return {
+            k: v for k, v in self.engine.kwargs.items() if k not in self._GATEWAY_KEYS
+        }
 
     def create_sampling_params(
         self, generation_params: dict[str, Any]

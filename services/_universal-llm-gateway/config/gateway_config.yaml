@@ -129,6 +129,21 @@ resource_guard:
   min_vram_margin_mb: 0  # No minimum absolute VRAM margin
   min_ram_margin_mb: 0  # No minimum absolute RAM margin
 
+# vLLM Engine Configuration
+# Global settings for all vLLM models (e.g. qwen3-32b-awq, HuggingFace safetensors)
+vllm:
+  # Startup warmup configuration
+  # Runs one inference after model load to trigger PTX→SASS JIT compilation
+  # so the first user request doesn't pay the ~60-90s NVIDIA driver compilation cost.
+  # Unlike GGUF per-request warmup, this is a one-shot event at model load time.
+  # vLLM manages KV cache internally; only CUDA-level cache clearing is available.
+  warmup:
+    enabled: true               # Enable startup warmup after model load
+    max_tokens: 20              # Tokens to generate during warmup (small = fast, enough for JIT)
+    prompt_tokens: 50           # Approximate prompt size (tokens) for warmup message
+    clear_cuda_cache_before: false  # torch.cuda.empty_cache() before warmup (clear fragmented memory)
+    clear_cuda_cache_after: true    # torch.cuda.empty_cache() after warmup (reclaim warmup memory)
+
 # GGUF Engine Configuration (llama-cpp-python)
 # DEPRECATED: llama-cpp-python backend is deprecated in favor of llama-server
 # Global settings for all GGUF models loaded via llama-cpp-python (legacy)
