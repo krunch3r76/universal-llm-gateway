@@ -75,13 +75,13 @@ Client → Master Stargate:9999 (router-only)
 
 ## Quick Start
 
+**[Watch: clone to running inference in minutes](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4)**
+
 ```bash
 git clone https://github.com/krunch3r76/universal-llm-gateway.git
 cd universal-llm-gateway
 ./manage
 ```
-
-`./manage` handles everything — environment setup, model configuration, and deployment. See the **[setup demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4)** for a walkthrough from clone to running inference.
 
 ## API Endpoints
 
@@ -187,40 +187,6 @@ All endpoints require `X-Federation-Source` + `X-Federation-Key` headers.
 | `/api/v1/federation/inference` | POST | Inference request |
 | `/api/v1/federation/inference/{id}` | DELETE | Cancel inference |
 | `/ws/federation` | WebSocket | Telemetry connection |
-
-## Configuration
-
-### Environment Variables
-
-```bash
-# Gateway
-GATEWAY_HOST=0.0.0.0          # Bind address
-GATEWAY_PORT=9998              # Port
-GATEWAY_UNIX_SOCKET=           # Unix socket path (overrides TCP)
-GATEWAY_API_KEY=               # Required — generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-
-# Stargate
-STARGATE_HOST=0.0.0.0
-STARGATE_PORT=9999
-STARGATE_UNIX_SOCKET=          # Unix socket path (overrides TCP)
-
-LOG_LEVEL=info
-```
-
-See `.env.example` for a complete template with key generation instructions.
-
-### Model Catalog
-
-Models are defined as individual YAML files organized by domain:
-
-```
-config/models/
-├── text_llm/llama-cpp/*.yaml    # GGUF models
-├── text_llm/vllm/*.yaml          # HF/AWQ/GPTQ models
-├── audio/whisper/*.yaml          # Whisper models
-├── graphics/diffusers/*.yaml     # Image generation models
-└── translation/ctranslate2/*.yaml
-```
 
 ## Project Structure
 
