@@ -93,16 +93,13 @@ RUN apt-get update && apt-get install -y \
     build-essential cmake ninja-build pkg-config curl git \
     && rm -rf /var/lib/apt/lists/*
 
-# PEP 668: Safe to override in isolated Docker container
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 - --break-system-packages
-
 WORKDIR /build
 
-# CUDA stub symlink for build-time linking
-RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
-
-# Build tools (globally installed — NOT copied to runtime)
-RUN python3.12 -m pip install --no-cache-dir --upgrade pip --break-system-packages && \
+# PEP 668: Safe to override in isolated Docker container.
+# pip bootstrap + CUDA stub + build tools combined to minimize layers.
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 - --break-system-packages && \
+    ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 && \
+    python3.12 -m pip install --no-cache-dir --upgrade pip --break-system-packages && \
     python3.12 -m pip install --no-cache-dir setuptools>=68.0.0 wheel --break-system-packages
 
 
@@ -329,11 +326,11 @@ FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
 
-# ── 1. System packages ──────────────────────────────────────────────
+# ── 1. System packages + pip + non-root user ─────────────────────────
 # python3.12-dev: Headers for Triton JIT compilation at runtime
 # gcc: Required by Triton for JIT kernel compilation
 # libgomp1: OpenMP runtime for hybrid GPU+CPU inference
-# curl: Needed for pip bootstrap
+# 'video' group grants access to /dev/nvidia* devices via NVIDIA Container Runtime
 RUN apt-get update && apt-get install -y \
     software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
@@ -341,15 +338,10 @@ RUN apt-get update && apt-get install -y \
     python3.12 python3.12-venv python3.12-dev \
     curl libgomp1 gcc \
     && rm -rf /var/lib/apt/lists/* && \
-    ln -sf /usr/bin/python3.12 /usr/bin/python3
-
-# pip (needed for remaining deps and FINAL conflict resolution)
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 - --break-system-packages
-
-# ── Security: Non-root user with GPU access ──────────────────────────
-# 'video' group grants access to /dev/nvidia* devices via NVIDIA Container Runtime
-RUN groupadd -r appuser --gid=1000 || groupmod -n appuser $(getent group 1000 | cut -d: -f1) && \
-    useradd -r -g appuser --uid=1000 --no-log-init -G video appuser || usermod -l appuser -d /home/appuser -m $(getent passwd 1000 | cut -d: -f1) && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python3 && \
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 - --break-system-packages && \
+    (groupadd -r appuser --gid=1000 || groupmod -n appuser $(getent group 1000 | cut -d: -f1)) && \
+    (useradd -r -g appuser --uid=1000 --no-log-init -G video appuser || usermod -l appuser -d /home/appuser -m $(getent passwd 1000 | cut -d: -f1)) && \
     usermod -aG video appuser
 
 WORKDIR /app
@@ -367,33 +359,27 @@ COPY --from=llama-server-builder /opt/llama-server /opt/llama-server
 
 ENV PATH="/opt/llama-server/bin:${PATH}"
 
-# ── 3. Remaining dependencies ────────────────────────────────────────
-# Small and fast — acceptable in runtime stage.
+# ── 3. Remaining dependencies + Whisper ──────────────────────────────
 COPY requirements.docker.gpu.txt /tmp/
 RUN python3.12 -m pip install --no-cache-dir \
     -r /tmp/requirements.docker.gpu.txt \
     --target=/usr/local/lib/python3.12/dist-packages \
     --break-system-packages && \
-    rm /tmp/requirements.docker.gpu.txt
-
-# Whisper with --no-deps (prevent CUDA 12 PyTorch overwrite)
-RUN python3.12 -m pip install --no-cache-dir --no-deps \
+    rm /tmp/requirements.docker.gpu.txt && \
+    python3.12 -m pip install --no-cache-dir --no-deps \
     --target=/usr/local/lib/python3.12/dist-packages \
     'faster-whisper>=1.0.0' 'openai-whisper>=20231117' \
     --break-system-packages
 
-# ── 4. FINAL: Conflict resolution ───────────────────────────────────
+# ── 4. FINAL: Conflict resolution (single layer) ────────────────────
 # Resolves version conflicts created by merging packages from two
 # independently-built stages. MUST be the last pip operations.
+# All three steps combined into one layer to reduce cache bloat.
 
 # ARG declared here (not at top) to minimize cache invalidation scope.
-# Only layers below this point are invalidated when ENABLE_VLLM changes.
 ARG ENABLE_VLLM=true
 
-# STEP 1: Remove duplicate dist-info directories
-# Merging builders can create stale metadata (e.g., huggingface_hub 1.x
-# dist-info when 0.x code is actually installed).
-RUN echo "🧹 FINAL STEP 1: Cleaning duplicate dist-info..." && \
+RUN echo "🧹 STEP 1: Cleaning duplicate dist-info..." && \
     cd /usr/local/lib/python3.12/dist-packages && \
     for pkg in huggingface_hub transformers accelerate; do \
     count=$(ls -d ${pkg}*.dist-info 2>/dev/null | wc -l); \
@@ -413,11 +399,8 @@ RUN echo "🧹 FINAL STEP 1: Cleaning duplicate dist-info..." && \
     done; \
     fi; \
     done && \
-    echo "   ✅ Dist-info cleanup complete"
-
-# STEP 2: Enforce NumPy <2.3 (Numba/vLLM compatibility)
-# PyTorch nightly or merged deps may pull NumPy 2.3+, which breaks Numba.
-RUN echo "🔒 FINAL STEP 2: Enforcing NumPy <2.3..." && \
+    echo "   ✅ Dist-info cleanup complete" && \
+    echo "🔒 STEP 2: Enforcing NumPy <2.3..." && \
     NUMPY_VERSION=$(python3.12 -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "not found") && \
     echo "      Current: ${NUMPY_VERSION}" && \
     rm -rf /usr/local/lib/python3.12/dist-packages/numpy \
@@ -428,12 +411,9 @@ RUN echo "🔒 FINAL STEP 2: Enforcing NumPy <2.3..." && \
     --target=/usr/local/lib/python3.12/dist-packages \
     "numpy>=1.24.0,<2.3" --break-system-packages && \
     NEW_VERSION=$(python3.12 -c "import numpy; print(numpy.__version__)") && \
-    echo "   ✅ NumPy: ${NUMPY_VERSION} → ${NEW_VERSION}"
-
-# STEP 3: Force huggingface-hub to match transformers constraint
-# transformers 4.57.x requires huggingface-hub<1.0,>=0.34.0
-RUN if [ "${ENABLE_VLLM}" = "true" ]; then \
-    echo "🔒 FINAL STEP 3: Forcing huggingface-hub>=0.34.0,<1.0..." && \
+    echo "   ✅ NumPy: ${NUMPY_VERSION} → ${NEW_VERSION}" && \
+    if [ "${ENABLE_VLLM}" = "true" ]; then \
+    echo "🔒 STEP 3: Forcing huggingface-hub>=0.34.0,<1.0..." && \
     rm -rf /usr/local/lib/python3.12/dist-packages/huggingface_hub \
            /usr/local/lib/python3.12/dist-packages/huggingface_hub-*.dist-info \
            2>/dev/null || true && \
@@ -444,10 +424,13 @@ RUN if [ "${ENABLE_VLLM}" = "true" ]; then \
     echo "   ✅ huggingface-hub: ${HF_VERSION}"; \
     fi
 
-# ── 5. cuBLAS replacement ───────────────────────────────────────────
+# ── 5. cuBLAS replacement + verification ─────────────────────────────
 # Container's cuBLAS (CUDA 13.0 base image) causes CUBLAS_STATUS_INVALID_VALUE
 # on Blackwell GPUs. PyTorch nightly bundles a compatible version.
 # Hard links preferred (same inode, survives Docker ops). Falls back to copy.
+ARG ENABLE_LLAMA_CPP_PYTHON
+ARG ENABLE_LLAMA_SERVER
+
 RUN CUDA_LIB=/usr/local/cuda-13.0/targets/x86_64-linux/lib && \
     TORCH_LIB=/usr/local/lib/python3.12/dist-packages/nvidia/cu13/lib && \
     if [ -f "${TORCH_LIB}/libcublas.so.13" ] && [ -f "${TORCH_LIB}/libcublasLt.so.13" ]; then \
@@ -466,12 +449,8 @@ RUN CUDA_LIB=/usr/local/cuda-13.0/targets/x86_64-linux/lib && \
     ldconfig; \
     else \
     echo "⏭️  Skipping cuBLAS replacement (PyTorch CUDA libs not found)"; \
-    fi
-
-    # ── Verification (before source COPY — maximizes cache hits) ────────
-    ARG ENABLE_LLAMA_CPP_PYTHON
-    ARG ENABLE_LLAMA_SERVER
-    RUN echo "=== Runtime Verification ===" && \
+    fi && \
+    echo "=== Runtime Verification ===" && \
     if [ -d /usr/local/lib/python3.12/dist-packages/torch ]; then \
     python3.12 -c "import torch; print(f'✅ torch: {torch.__version__}')"; \
     else \
@@ -501,31 +480,28 @@ COPY --chown=appuser:appuser services/_universal-llm-gateway /app/services/_univ
 COPY --chown=appuser:appuser services/universal-stargate /app/services/universal-stargate/
 COPY --chown=appuser:appuser config/ /app/config/
 COPY --chown=appuser:appuser sitecustomize.py /app/
+COPY --chown=appuser:appuser docker/runtime/golem-start.sh /app/golem-start.sh
+COPY --chown=appuser:appuser docker/runtime/cuda-health-check.sh /app/cuda-health-check.sh
 
 ENV PYTHONPATH=/app/libs
 ENV WORKSPACE_ROOT=/app
 
+# ── 7. Directories, permissions, config defaults (single layer) ──────
+# config.default created via cp (source dirs already present from COPY above)
 RUN test -d /app/libs && test -d /app/services && \
     test -f /app/config/model_catalog.yaml && \
-    echo "✅ Workspace structure verified"
-
-# ── 7. Volumes, permissions, startup ─────────────────────────────────
-RUN mkdir -p /golem/models /golem/input /golem/output /golem/logs \
+    mkdir -p /golem/models /golem/input /golem/output /golem/logs \
     /golem/vllm_cache /golem/vllm_cache/cuda /golem/vllm_cache/triton \
-    /home/appuser/.cache /home/appuser/.nv && \
-    chown -R appuser:appuser /golem /home/appuser
-
-VOLUME ["/golem/models", "/golem/input", "/golem/output", "/golem/logs"]
-
-RUN mkdir -p /tmp/universal-protocol /tmp/process_ipc /app/runtime && \
-    chown -R appuser:appuser /tmp/universal-protocol /tmp/process_ipc /app/runtime && \
+    /home/appuser/.cache /home/appuser/.nv \
+    /tmp/universal-protocol /tmp/process_ipc /app/runtime && \
+    cp -a /app/services/_universal-llm-gateway/config /app/services/_universal-llm-gateway/config.default && \
+    cp -a /app/services/universal-stargate/config /app/services/universal-stargate/config.default && \
+    chmod +x /app/golem-start.sh /app/cuda-health-check.sh && \
+    chown -R appuser:appuser /golem /home/appuser \
+    /tmp/universal-protocol /tmp/process_ipc /app/runtime && \
     chmod -R a+rX /app /golem
 
-COPY --chown=appuser:appuser services/_universal-llm-gateway/config /app/services/_universal-llm-gateway/config.default
-COPY --chown=appuser:appuser services/universal-stargate/config /app/services/universal-stargate/config.default
-
-COPY --chown=appuser:appuser docker/runtime/golem-start.sh /app/golem-start.sh
-RUN chmod +x /app/golem-start.sh
+VOLUME ["/golem/models", "/golem/input", "/golem/output", "/golem/logs"]
 
 # ── Switch to non-root user ──────────────────────────────────────────
 USER appuser
@@ -545,6 +521,3 @@ LABEL vllm.enabled="${ENABLE_VLLM}"
 LABEL security.user="appuser"
 LABEL security.uid="1000"
 LABEL security.groups="appuser,video"
-
-COPY --chown=appuser:appuser docker/runtime/cuda-health-check.sh /app/cuda-health-check.sh
-RUN chmod +x /app/cuda-health-check.sh

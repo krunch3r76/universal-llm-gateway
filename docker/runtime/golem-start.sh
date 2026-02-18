@@ -140,23 +140,22 @@ validate_gpu_environment() {
             return 1
         fi
         
-        # Validate CUDA is accessible to Python
+        # Validate CUDA is accessible to Python (best-effort: torch > nvidia-smi)
         log_info "Validating CUDA availability to Python..."
-        if ! python3 -c "from llama_cpp import llama_cpp; info_raw = llama_cpp.llama_print_system_info(); info = info_raw.decode() if hasattr(info_raw, 'decode') else str(info_raw); assert 'CUDA' in info.upper(), 'CUDA not available'" 2>&1; then
-            log_error "❌ llama-cpp-python cannot access CUDA"
-            log_error "   This may indicate:"
-            log_error "   1. Wrong Docker image (use Dockerfile.gpu)"
-            log_error "   2. NVIDIA runtime not enabled (--gpus all)"
-            log_error "   3. CUDA version mismatch"
-            return 1
+        if python3 -c "import torch" 2>/dev/null; then
+            if ! python3 -c "import torch; assert torch.cuda.is_available(), 'CUDA not available'; print(f'PyTorch {torch.__version__}, CUDA {torch.version.cuda}, {torch.cuda.device_count()} device(s)')" 2>&1; then
+                log_error "❌ PyTorch cannot access CUDA"
+                log_error "   This may indicate:"
+                log_error "   1. Wrong Docker image (use Dockerfile.gpu)"
+                log_error "   2. NVIDIA runtime not enabled (--gpus all)"
+                log_error "   3. CUDA version mismatch"
+                return 1
+            fi
+        else
+            log_info "  PyTorch not installed — CUDA validated via nvidia-smi only"
         fi
         
         log_info "✅ GPU environment validated successfully"
-        
-        # Log GPU backend info from llama-cpp-python
-        python3 -c "from llama_cpp import llama_cpp; info_raw=llama_cpp.llama_print_system_info(); info=info_raw.decode() if hasattr(info_raw, 'decode') else str(info_raw); print(info)" | while read -r line; do
-            log_info "  ${line}"
-        done
         
     else
         log_info "Running in CPU-only mode"
