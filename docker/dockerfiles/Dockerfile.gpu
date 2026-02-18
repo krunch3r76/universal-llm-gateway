@@ -476,12 +476,9 @@ RUN CUDA_LIB=/usr/local/cuda-13.0/targets/x86_64-linux/lib && \
 
 # ── 6. Source code (COPY last — changes most frequently) ─────────────
 COPY --chown=appuser:appuser libs/ /app/libs/
-COPY --chown=appuser:appuser services/_universal-llm-gateway /app/services/_universal-llm-gateway/
-COPY --chown=appuser:appuser services/universal-stargate /app/services/universal-stargate/
+COPY --chown=appuser:appuser services/ /app/services/
 COPY --chown=appuser:appuser config/ /app/config/
-COPY --chown=appuser:appuser sitecustomize.py /app/
-COPY --chown=appuser:appuser docker/runtime/golem-start.sh /app/golem-start.sh
-COPY --chown=appuser:appuser docker/runtime/cuda-health-check.sh /app/cuda-health-check.sh
+COPY --chown=appuser:appuser sitecustomize.py docker/runtime/golem-start.sh docker/runtime/cuda-health-check.sh /app/
 
 ENV PYTHONPATH=/app/libs
 ENV WORKSPACE_ROOT=/app
