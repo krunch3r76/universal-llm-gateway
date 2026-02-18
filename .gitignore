@@ -61,6 +61,7 @@ docs/
 
 prompts/
 tests/
+!libs/inference_djinn/scripts/tests/
 templates/
 !config/templates/
 .cursorignore
