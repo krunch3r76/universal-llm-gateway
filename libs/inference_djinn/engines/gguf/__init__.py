@@ -9,7 +9,7 @@ from . import inspector
 # Lazy import to avoid loading heavy dependencies at package import time
 def __getattr__(name: str):
     if name == "GGUFEngine":
-        from .engine import GGUFEngine
+        from .llama_cpp_python_engine_depecrated import GGUFEngine
         return GGUFEngine
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
