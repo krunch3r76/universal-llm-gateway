@@ -66,9 +66,10 @@ templates/
 .cursorignore
 .github/
 proposals/
-# Model weight/binary files — NOT the static catalog at config/models/
+# Model weight/binary files — NOT the static catalog or source code
 models/
 !config/models/
+!services/_universal-llm-gateway/src/routers/**/models/
 summaries/
 
 .git/
