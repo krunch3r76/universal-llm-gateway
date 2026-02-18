@@ -91,6 +91,20 @@ class ServiceController:
     def service_state(self) -> ServiceState:
         return self._service_state
 
+    def check_model_path_ownership(self) -> str | None:
+        """Return warning if MODEL_PATH is root-owned, None if OK."""
+        base_env = self._load_env_file(self._root / ".env.local")
+        model_path = Path(
+            base_env.get("MODEL_PATH_ROOT", str(Path.home() / ".models"))
+        ).expanduser()
+        if model_path.exists() and model_path.stat().st_uid == 0 and os.getuid() != 0:
+            uid, gid = os.getuid(), os.getgid()
+            return (
+                f"{model_path} is owned by root (Docker bind mount artifact).\n"
+                f"Fix: sudo chown -R {uid}:{gid} {model_path}"
+            )
+        return None
+
     @property
     def build_running(self) -> bool:
         return self._build_process is not None
@@ -175,7 +189,9 @@ class ServiceController:
         node_env_path = self._ensure_node_env(node_id)
         node_env = self._load_env_file(node_env_path)
         model_path = Path(node_env.get("MODEL_PATH", str(Path.home() / ".models")))
-        self._ensure_bind_mount_dirs(node_id, model_path)
+        ownership_error = self._ensure_bind_mount_dirs(node_id, model_path)
+        if ownership_error:
+            return ownership_error
         env = self._build_env(node_env_path)
         env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
 
@@ -369,11 +385,13 @@ class ServiceController:
         logger.info("Generated node env: %s", node_env)
         return node_env
 
-    def _ensure_bind_mount_dirs(self, node_id: str, model_path: Path) -> None:
+    def _ensure_bind_mount_dirs(self, node_id: str, model_path: Path) -> str | None:
         """Pre-create bind mount source dirs so Docker doesn't create them as root.
 
         Docker daemon auto-creates missing bind mount sources owned by root:root.
         Creating them here (as the invoking user) prevents that.
+
+        Returns an error message if any dir is root-owned, None on success.
         """
         dirs = [
             model_path,
@@ -385,6 +403,16 @@ class ServiceController:
         ]
         for d in dirs:
             d.mkdir(parents=True, exist_ok=True)
+        root_owned = [d for d in dirs if d.exists() and d.stat().st_uid == 0]
+        if root_owned and os.getuid() != 0:
+            paths = "\n  ".join(str(d) for d in root_owned)
+            uid, gid = os.getuid(), os.getgid()
+            return (
+                f"Bind mount dirs owned by root (Docker created them):\n"
+                f"  {paths}\n"
+                f"Fix with:\n  sudo chown -R {uid}:{gid} {' '.join(str(d) for d in root_owned)}"
+            )
+        return None
 
     def _ensure_socket_dir(self) -> None:
         socket_dir = Path("/tmp/universal-protocol")

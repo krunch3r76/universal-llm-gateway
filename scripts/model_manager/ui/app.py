@@ -85,6 +85,9 @@ class ModelManagerApp(App):
         yield StatusBar()
 
     def on_mount(self) -> None:
+        warning = self._service_controller.check_model_path_ownership()
+        if warning:
+            self.notify(warning, severity="error", timeout=15)
         self.push_screen("home")
 
     def push_screen(  # type: ignore[override]

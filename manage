@@ -65,4 +65,23 @@ if [[ ! -f "$VENV_PYTHON" ]]; then
     echo ""
 fi
 
+# Ensure model directory exists as current user (not root via Docker bind mount)
+MODEL_DIR="$HOME/.models"
+if [[ -f "$SCRIPT_DIR/.env.local" ]]; then
+    _val=$(grep -E '^MODEL_PATH_ROOT=' "$SCRIPT_DIR/.env.local" | head -1 | cut -d= -f2-)
+    [[ -n "$_val" ]] && MODEL_DIR="$_val"
+fi
+
+if [[ -d "$MODEL_DIR" ]]; then
+    _owner=$(stat -c '%u' "$MODEL_DIR" 2>/dev/null || stat -f '%u' "$MODEL_DIR" 2>/dev/null)
+    if [[ "$_owner" == "0" && "$(id -u)" != "0" ]]; then
+        echo "ERROR: $MODEL_DIR is owned by root." >&2
+        echo "Docker created this directory via a bind mount." >&2
+        echo "Fix with:  sudo chown -R $(id -u):$(id -g) $MODEL_DIR" >&2
+        exit 1
+    fi
+else
+    mkdir -p "$MODEL_DIR"
+fi
+
 exec "$VENV_PYTHON" -m scripts.model_manager.ui "$@"
