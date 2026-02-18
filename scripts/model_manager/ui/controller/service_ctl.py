@@ -172,6 +172,7 @@ class ServiceController:
             return f"Compose file not found: {compose_path}"
 
         self._ensure_socket_dir()
+        self._ensure_bind_mount_dirs(node_id)
         node_env_path = self._ensure_node_env(node_id)
         env = self._build_env(node_env_path)
         env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
@@ -365,6 +366,22 @@ class ServiceController:
         node_env.write_text("\n".join(lines) + "\n")
         logger.info("Generated node env: %s", node_env)
         return node_env
+
+    def _ensure_bind_mount_dirs(self, node_id: str) -> None:
+        """Pre-create bind mount source dirs so Docker doesn't create them as root.
+
+        Docker daemon auto-creates missing bind mount sources owned by root:root.
+        Creating them here (as the invoking user) prevents that.
+        """
+        dirs = [
+            _GATEWAY_DIR / "catalog",
+            _GATEWAY_DIR / "nodes",
+            Path.home() / ".cache" / "vllm",
+            self._root / "tmp" / "gpu-nodes" / node_id / "logs",
+            self._root / "tmp" / "gpu-nodes" / node_id / "output",
+        ]
+        for d in dirs:
+            d.mkdir(parents=True, exist_ok=True)
 
     def _ensure_socket_dir(self) -> None:
         socket_dir = Path("/tmp/universal-protocol")
