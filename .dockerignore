@@ -35,6 +35,7 @@ tmp/
 
 # Tests
 tests/
+!libs/inference_djinn/scripts/tests/
 benchmarks/
 
 # Scripts (CLI tools that run outside container)
