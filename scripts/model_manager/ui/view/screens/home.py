@@ -54,6 +54,7 @@ class HomeScreen(Screen):
         Binding("d", "nav_download", "Download"),
         Binding("s", "nav_services", "Services"),
         Binding("r", "nav_remotes", "Remotes"),
+        Binding("f", "nav_footprint", "Footprint"),
         Binding("e", "nav_settings", "Settings"),
         Binding("q", "quit", "Quit"),
     ]
@@ -131,6 +132,9 @@ class HomeScreen(Screen):
     def action_nav_remotes(self) -> None:
         self.app.push_screen("remotes")
 
+    def action_nav_footprint(self) -> None:
+        self.app.push_screen("footprint")
+
     def action_nav_settings(self) -> None:
         self.app.push_screen("settings")
 
@@ -178,6 +182,7 @@ class HomeScreen(Screen):
                 yield Button("Catalog [c]", id="btn-catalog", variant="primary")
                 yield Button("Services [s]", id="btn-services")
                 yield Button("Remotes [r]", id="btn-remotes")
+                yield Button("Footprint [f]", id="btn-footprint")
                 yield Button("Settings [e]", id="btn-settings")
                 yield Button("Quit [q]", id="btn-quit", variant="error")
 
@@ -197,6 +202,8 @@ class HomeScreen(Screen):
                 self.app.push_screen("services")
             case "btn-remotes":
                 self.app.push_screen("remotes")
+            case "btn-footprint":
+                self.app.push_screen("footprint")
             case "btn-settings":
                 self.app.push_screen("settings")
             case "btn-quit":

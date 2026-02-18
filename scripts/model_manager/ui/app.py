@@ -14,6 +14,7 @@ from .model.catalog_state import CatalogState
 from .model.local_env import LocalEnv
 from .view.screens.catalog import CatalogScreen
 from .view.screens.download import DownloadScreen
+from .view.screens.footprint import FootprintScreen
 from .view.screens.home import HomeScreen
 from .view.screens.measure import MeasureScreen
 from .view.screens.remotes import RemotesScreen
@@ -39,6 +40,7 @@ class ModelManagerApp(App):
         "services": ServicesScreen,
         "settings": SettingsScreen,
         "remotes": RemotesScreen,
+        "footprint": FootprintScreen,
     }
 
     CSS = """
