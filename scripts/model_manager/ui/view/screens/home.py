@@ -184,6 +184,9 @@ class HomeScreen(Screen):
     def on_mount(self) -> None:
         self.refresh_status()
 
+    def on_screen_resume(self) -> None:
+        self.refresh_status()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         match event.button.id:
             case "btn-catalog":
