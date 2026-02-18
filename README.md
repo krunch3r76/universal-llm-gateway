@@ -75,42 +75,13 @@ Client → Master Stargate:9999 (router-only)
 
 ## Quick Start
 
-**[Watch the setup demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4)** — `./manage` bootstrapping a fresh system from clone to running inference.
-
-### Getting Started
-
 ```bash
 git clone https://github.com/krunch3r76/universal-llm-gateway.git
 cd universal-llm-gateway
 ./manage
 ```
 
-`./manage` is the single entry point for setup and operation. On first run it:
-1. Creates a Python venv at `~/.venvs/universal`
-2. Installs host dependencies (no GPU/torch — those run in Docker)
-3. Launches the Model Manager TUI for configuring and deploying models
-
-```bash
-# Test
-curl http://localhost:9999/health
-
-# Chat completion
-curl -X POST http://localhost:9999/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "hermes3-llama3.1-8b-16384",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "stream": true
-  }'
-```
-
-### Production Deployment
-
-1. **Build Docker images**: `cd docker && ./scripts/build/build.sh`
-2. **Configure federation**: Copy `.env.example`, generate keys, edit `config/stargate_config.yaml`
-3. **Deploy**: `docker compose -f docker/compose/federation-isolated.yml up -d`
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed installation and environment setup.
+`./manage` handles everything — environment setup, model configuration, and deployment. See the **[setup demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4)** for a walkthrough from clone to running inference.
 
 ## API Endpoints
 
