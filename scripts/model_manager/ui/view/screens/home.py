@@ -1,6 +1,8 @@
 """Home screen - dashboard with service status and quick actions."""
 
+import logging
 import os
+from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -8,6 +10,10 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Label, Static
+
+from scripts.model_manager.topology import build_snapshot
+
+logger = logging.getLogger(__name__)
 
 
 class StepIndicator(Static):
@@ -85,6 +91,10 @@ class HomeScreen(Screen):
         width: 100%;
         height: auto;
         padding: 1 2;
+    }
+    #topology-diagram {
+        padding: 1 2;
+        width: 100%;
     }
     #actions-panel {
         width: 100%;
@@ -176,6 +186,7 @@ class HomeScreen(Screen):
             yield Static("  Docker:   checking...", id="img-status")
             yield Static("", id="model-paths")
             yield Static("", id="model-count")
+            yield Static("", id="topology-diagram")
 
         with Container(id="actions-panel"):
             with Horizontal(id="actions-row"):
@@ -188,7 +199,10 @@ class HomeScreen(Screen):
 
         yield Footer()
 
+    _REFRESH_INTERVAL_SECONDS = 30
+
     def on_mount(self) -> None:
+        self.set_interval(self._REFRESH_INTERVAL_SECONDS, self.refresh_status)
         self.refresh_status()
 
     def on_screen_resume(self) -> None:
@@ -279,6 +293,14 @@ class HomeScreen(Screen):
             parts.append(f"[yellow]{missing} missing[/]")
         parts.append(f"{not_local} not on disk")
         self.query_one("#model-count", Static).update("  ".join(parts))
+
+        try:
+            workspace_root: Path = app._workspace_root  # type: ignore[attr-defined]
+            snapshot = build_snapshot(workspace_root, services=services)
+            self.query_one("#topology-diagram", Static).update(snapshot.to_diagram())
+            snapshot.write()
+        except Exception as e:
+            logger.error("Topology snapshot failed: %s", e)
 
         status_bar = app.query_one("StatusBar")  # type: ignore[attr-defined]
         status_bar.gateway_status = gw.status

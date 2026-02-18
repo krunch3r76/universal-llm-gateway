@@ -84,4 +84,9 @@ else
     mkdir -p "$MODEL_DIR"
 fi
 
+if [[ "${1:-}" == "topology" ]]; then
+    shift
+    exec "$VENV_PYTHON" -m scripts.model_manager.topology "$@"
+fi
+
 exec "$VENV_PYTHON" -m scripts.model_manager.ui "$@"

@@ -159,8 +159,8 @@ class FootprintInspector:
         lines = [
             "# Stop services first",
             'pkill -f "universal-" 2>/dev/null',
-            "docker stop edge-localhost-edge-1 2>/dev/null",
-            "docker rm edge-localhost-edge-1 2>/dev/null",
+            "docker stop edge-localhost 2>/dev/null",
+            "docker rm edge-localhost 2>/dev/null",
             "",
             "# Remove managed state (preserves models and venv)",
             f"rm -rf {_GATEWAY_DIR}",
