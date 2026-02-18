@@ -54,7 +54,9 @@ routing:
 # Pipeline configuration
 pipelines:
   search_paths:
+    - "pipelines"
     - "pipelines.local"
+    - "~/.pipelines"
   hot_reload:
     enabled: true
     debounce_ms: 2000

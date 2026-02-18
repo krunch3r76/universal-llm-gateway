@@ -78,6 +78,7 @@ header .subtitle { color: var(--text-dim); font-size: 14px; }
 #pipeline-flow {
   display: none;
   margin-bottom: 24px; overflow-x: auto; padding-bottom: 8px;
+  overflow-anchor: none;
 }
 #pipeline-flow.visible { display: block; }
 .phase-group { margin-bottom: 16px; }
@@ -452,6 +453,84 @@ details[open] > .collapsible-header::before {
 }
 .source-answer-legend .sentence-ok {
   color: var(--text-dim); font-size: 11px;
+}
+
+/* -- Vote cell tooltip (reasoning on hover) ------------------------------ */
+.vote-cell[title] { cursor: help; }
+.claim-row { cursor: pointer; transition: background 0.1s; }
+.claim-row:hover { background: rgba(88,166,255,0.04); }
+
+/* -- Reasoning Drawer ---------------------------------------------------- */
+#reasoning-drawer {
+  display: none; margin-top: 16px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+  animation: fadeSlideIn 0.2s ease-out;
+}
+#reasoning-drawer.visible { display: block; }
+
+.reasoning-drawer-header {
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+}
+.reasoning-drawer-title {
+  display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;
+}
+.reasoning-claim-text {
+  font-size: 13px; font-weight: 500; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis;
+}
+.reasoning-drawer-actions {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+.reasoning-close-btn {
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  font-size: 16px; padding: 4px 8px; border-radius: 4px;
+}
+.reasoning-close-btn:hover { color: var(--text); background: var(--border); }
+
+.reasoning-filter-btn {
+  font-size: 11px; padding: 4px 10px; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--bg);
+  color: var(--text-dim); cursor: pointer; font-family: var(--mono);
+  transition: all 0.15s; white-space: nowrap;
+}
+.reasoning-filter-btn:hover { border-color: var(--accent); color: var(--text); }
+.reasoning-filter-btn.active { border-color: var(--red); color: var(--red); background: var(--red-bg); }
+
+.reasoning-cards { padding: 12px 18px; display: flex; flex-direction: column; gap: 10px; }
+
+.reasoning-card {
+  padding: 10px 14px; border: 1px solid var(--border);
+  border-radius: 6px; border-left: 3px solid var(--border);
+}
+.reasoning-card.fail { border-left-color: var(--red); }
+.reasoning-card.pass { border-left-color: var(--green); }
+
+.reasoning-card-header {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+}
+.reasoning-verdict {
+  font-size: 14px; font-weight: 700; width: 18px; text-align: center;
+}
+.reasoning-verdict.pass { color: var(--green); }
+.reasoning-verdict.fail { color: var(--red); }
+.reasoning-model-name { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--text); }
+.reasoning-authority-tag {
+  font-size: 9px; padding: 1px 6px; border-radius: 10px;
+  background: rgba(188,140,255,0.2); color: var(--purple);
+  font-weight: 600; font-family: var(--mono); text-transform: uppercase;
+}
+
+.reasoning-text {
+  font-size: 13px; color: var(--text-dim); line-height: 1.6;
+  white-space: pre-wrap; word-break: break-word;
+}
+.reasoning-text.reasoning-empty { font-style: italic; opacity: 0.6; }
+
+.reasoning-empty-state {
+  padding: 16px; text-align: center; color: var(--text-dim);
+  font-size: 13px; font-style: italic;
 }
 
 /* -- Scrollbar ----------------------------------------------------------- */

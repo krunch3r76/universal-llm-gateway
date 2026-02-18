@@ -53,9 +53,12 @@ class DomainVerificationCompleted(PipelineEvent):
 
 @dataclass(slots=True, kw_only=True)
 class ModelVerdictCast(PipelineEvent):
-    """Emitted per verifier model with its verdicts on all claims."""
+    """Emitted per verifier model with its verdicts on all claims.
 
-    verdicts: dict[str, bool] = field(default_factory=dict)
+    Each verdict is {"v": bool, "r": str} — verdict + reasoning.
+    """
+
+    verdicts: dict[str, dict[str, str | bool]] = field(default_factory=dict)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -95,13 +98,17 @@ class VetoPassCompleted(PipelineEvent):
 
     The veto step re-verifies authority-accepted claims with a separate pool.
     Only unanimous FALSE from all veto models overrides the authority verdict.
+
+    Each verdict in verdicts_by_model is {"v": bool, "r": str}.
     """
 
     authority_claims_checked: int = 0
     vetoed_ids: list[str] = field(default_factory=list)
     survived_ids: list[str] = field(default_factory=list)
     veto_pool: list[str] = field(default_factory=list)
-    verdicts_by_model: dict[str, dict[str, bool]] = field(default_factory=dict)
+    verdicts_by_model: dict[str, dict[str, dict[str, str | bool]]] = field(
+        default_factory=dict
+    )
     veto_policy: str = ""
     latency_ms: float = 0.0
 
@@ -140,12 +147,34 @@ class EnrichReviewCompleted(PipelineEvent):
 
 
 @dataclass(slots=True, kw_only=True)
+class DomainVetoCompleted(PipelineEvent):
+    """Emitted after domain-specialist veto on non-unanimous accepted claims.
+
+    The domain veto fires within a verify_chain step, after general consensus.
+    A specialist model reviews accepted claims where the general pool was split.
+    """
+
+    domain: str = ""
+    specialist_model: str = ""
+    candidates_checked: int = 0
+    vetoed_ids: list[str] = field(default_factory=list)
+    survived_ids: list[str] = field(default_factory=list)
+    verdicts: dict[str, bool] = field(default_factory=dict)
+    latency_ms: float = 0.0
+
+
+@dataclass(slots=True, kw_only=True)
 class VerificationComplete(PipelineEvent):
-    """Final verification result with full claim data and vote matrix."""
+    """Final verification result with full claim data and vote matrix.
+
+    Each verdict in verdicts_by_model is {"v": bool, "r": str}.
+    """
 
     verified_facts: list[dict[str, Any]] = field(default_factory=list)
     rejected_claims: list[dict[str, Any]] = field(default_factory=list)
-    verdicts_by_model: dict[str, dict[str, bool]] = field(default_factory=dict)
+    verdicts_by_model: dict[str, dict[str, dict[str, str | bool]]] = field(
+        default_factory=dict
+    )
     stats: dict[str, Any] = field(default_factory=dict)
     verifier_pool: list[str] = field(default_factory=list)
     originator: str = ""

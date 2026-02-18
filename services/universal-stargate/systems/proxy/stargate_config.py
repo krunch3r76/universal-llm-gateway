@@ -341,7 +341,7 @@ class StargateConfig:
         return self.config.get(
             "pipelines",
             {
-                "search_paths": ["config"],
+                "search_paths": ["pipelines", "pipelines.local", "~/.pipelines"],
             },
         )
 

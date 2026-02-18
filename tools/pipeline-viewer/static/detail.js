@@ -1,6 +1,16 @@
 // -- Detail Panel ---------------------------------------------------------
 // Depends on: escHtml(), shortModel() from app.js
 
+// Extract verdict bool + reasoning from new {v,r} shape or legacy bare bool.
+function getVerdict(entry) {
+  if (entry === true || entry === false) return { v: entry, r: '' };
+  if (entry && typeof entry === 'object' && 'v' in entry) return entry;
+  return null;
+}
+
+// Shared state for reasoning drawer — populated by renderVoteMatrix.
+let _reasoningCtx = null;
+
 function renderDetailPanel(step) {
   const el = document.getElementById('detail-panel');
   const tabs = buildTabs(step);
@@ -219,7 +229,23 @@ function renderVoteMatrix(step) {
     }
   }
 
-  // Tally counts: authority vote + pool votes
+  // Extract domain veto specialist verdicts (v5.1+)
+  const domainVetos = step.domain_routing?.domain_veto || [];
+  const vetoSpecialists = [];
+  const vetoSpecialistSet = new Set();
+  const vetoVerdictMap = {};  // sid → bool
+  for (const dv of domainVetos) {
+    const sm = dv.specialist_model;
+    if (sm && !vetoSpecialistSet.has(sm)) {
+      vetoSpecialistSet.add(sm);
+      vetoSpecialists.push({ model: sm, domain: dv.domain });
+    }
+    for (const [sid, verdict] of Object.entries(dv.verdicts || {})) {
+      vetoVerdictMap[sid] = verdict;
+    }
+  }
+
+  // Tally counts: authority vote + pool votes (domain veto excluded — shown separately)
   const tallies = {};
   for (const claim of allClaims) {
     let yes = 0, no = 0;
@@ -232,9 +258,9 @@ function renderVoteMatrix(step) {
     // Pool votes
     for (const m of pool) {
       if (!votedModels.has(m)) continue;
-      const vote = verdicts[m]?.[claim.statement_id];
-      if (vote === true) yes++;
-      else if (vote === false) no++;
+      const vr = getVerdict(verdicts[m]?.[claim.statement_id]);
+      if (vr && vr.v === true) yes++;
+      else if (vr && vr.v === false) no++;
     }
     tallies[claim.statement_id] = { yes, no, total: yes + no };
   }
@@ -243,6 +269,12 @@ function renderVoteMatrix(step) {
   const authorityHeaders = authorityModels.map(am => {
     const label = escHtml(shortModel(am));
     return `<th class="model-col"><span style="color:var(--purple)">${label}</span><div style="font-size:9px;color:var(--purple);font-weight:400">domain</div></th>`;
+  }).join('');
+
+  // Domain veto specialist column headers (v5.1+)
+  const vetoHeaders = vetoSpecialists.map(vs => {
+    const label = escHtml(shortModel(vs.model));
+    return `<th class="model-col"><span style="color:var(--orange, #e8a840)">${label}</span><div style="font-size:9px;color:var(--orange, #e8a840);font-weight:400">${escHtml(vs.domain)} veto</div></th>`;
   }).join('');
 
   // Pool column headers
@@ -306,14 +338,25 @@ function renderVoteMatrix(step) {
       return '<td class="vote-cell">-</td>';
     }).join('');
 
-    // Pool vote cells
+    // Domain veto specialist cells (v5.1+)
+    const vetoCells = vetoSpecialists.map(vs => {
+      const sid = claim.statement_id;
+      if (!(sid in vetoVerdictMap)) return '<td class="vote-cell">-</td>';
+      if (vetoVerdictMap[sid] === true) return '<td class="vote-cell pass">\u2713</td>';
+      if (vetoVerdictMap[sid] === false) return '<td class="vote-cell fail">\u2717</td>';
+      return '<td class="vote-cell">-</td>';
+    }).join('');
+
+    // Pool vote cells (with reasoning tooltip)
     const cells = pool.map(m => {
       if (!votedModels.has(m)) {
         return '<td class="vote-cell skipped"></td>';
       }
-      const vote = verdicts[m]?.[claim.statement_id];
-      if (vote === true) return '<td class="vote-cell pass">\u2713</td>';
-      if (vote === false) return '<td class="vote-cell fail">\u2717</td>';
+      const vr = getVerdict(verdicts[m]?.[claim.statement_id]);
+      if (!vr) return '<td class="vote-cell">-</td>';
+      const tip = vr.r ? ` title="${escHtml(vr.r)}"` : '';
+      if (vr.v === true) return `<td class="vote-cell pass"${tip}>\u2713</td>`;
+      if (vr.v === false) return `<td class="vote-cell fail"${tip}>\u2717</td>`;
       return '<td class="vote-cell">-</td>';
     }).join('');
 
@@ -322,10 +365,11 @@ function renderVoteMatrix(step) {
     const parentBadge = parentIds.has(claim.statement_id)
       ? `<span class="compound-badge">compound</span>`
       : '';
-    return `<tr class="${rowClass}">
+    const sid = claim.statement_id;
+    return `<tr class="${rowClass} claim-row" data-sid="${escHtml(sid)}" onclick="openReasoningDrawer(this.dataset.sid)">
       <td class="claim-text">${treePrefix}${escHtml(claim.text)}${domainBadge}${parentBadge}</td>
       <td>${verdictBadge}</td>
-      ${authCells}${cells}
+      ${authCells}${vetoCells}${cells}
     </tr>`;
   }
 
@@ -337,6 +381,15 @@ function renderVoteMatrix(step) {
 
   const sourceAnswerHtml = renderSourceAnswer(step);
 
+  // Build claim lookup for reasoning drawer
+  const claimMap = {};
+  for (const c of allClaims) claimMap[c.statement_id] = c;
+
+  _reasoningCtx = {
+    verdicts, pool, votedModels, authVerdicts, authorityModels,
+    claimMap, verifiedSet, rejectedSet, vetoVerdictMap, vetoSpecialists,
+  };
+
   return `
     ${sourceAnswerHtml}
     <div style="margin-bottom:12px">
@@ -347,6 +400,7 @@ function renderVoteMatrix(step) {
       <span style="color:var(--text-dim)">${activeCount} verifier models</span>
       ${pool.length > activeCount ? `<span style="color:var(--text-dim)"> (${pool.length} in pool)</span>` : ''}
       ${authorityModels.length ? `<span style="color:var(--purple)"> + ${authorityModels.length} domain authority</span>` : ''}
+      ${vetoSpecialists.length ? `<span style="color:var(--orange, #e8a840)"> + ${vetoSpecialists.length} domain veto</span>` : ''}
     </div>
     <div style="overflow-x:auto">
       <table class="vote-matrix">
@@ -354,12 +408,13 @@ function renderVoteMatrix(step) {
           <tr>
             <th>Claim</th>
             <th>Verdict</th>
-            ${authorityHeaders}${modelHeaders}
+            ${authorityHeaders}${vetoHeaders}${modelHeaders}
           </tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
+    <div id="reasoning-drawer"></div>
   `;
 }
 
@@ -458,7 +513,46 @@ function renderDomainRouting(step) {
     html += '</div></div>';
   }
 
-  if (!authEntries.length && !generalIds.length) {
+  // Section 4: Domain Veto (specialist veto on non-unanimous accepted claims, v5.1+)
+  const domainVetos = dr.domain_veto || [];
+  for (const dv of domainVetos) {
+    const vetoed = dv.vetoed_ids || [];
+    const survived = dv.survived_ids || [];
+    const dvVerdicts = dv.verdicts || {};
+    const domainLabel = dv.domain || 'unknown';
+    const specialistLabel = dv.specialist_model || 'unknown';
+    const latency = dv.latency_ms ? `${(dv.latency_ms / 1000).toFixed(1)}s` : '';
+
+    html += `<div class="routing-card" style="border-left:3px solid var(--orange, #e8a840)">
+      <div class="heading">Domain Veto: ${escHtml(domainLabel)} <span class="domain-badge ${domainLabel}">${dv.candidates_checked} non-unanimous checked</span></div>
+      <div style="font-size:12px;color:var(--text-dim);padding:2px 0 6px">
+        Specialist: <strong>${escHtml(shortModel(specialistLabel))}</strong>${latency ? ` \u00b7 ${latency}` : ''}
+      </div>`;
+
+    if (survived.length) {
+      html += `<div style="padding:4px 0 2px;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px">Confirmed by specialist (${survived.length})</div>`;
+      for (const sid of survived) {
+        const text = claimText[sid] || sid;
+        html += `<div style="padding:3px 0;font-size:13px">
+          <span style="color:var(--green)">\u2713</span> ${escHtml(text)}
+        </div>`;
+      }
+    }
+
+    if (vetoed.length) {
+      html += `<div style="padding:4px 0 2px;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px;margin-top:8px">Rejected by specialist (${vetoed.length})</div>`;
+      for (const sid of vetoed) {
+        const text = claimText[sid] || sid;
+        html += `<div style="padding:3px 0;font-size:13px">
+          <span style="color:var(--red)">\u2717</span> ${escHtml(text)}
+        </div>`;
+      }
+    }
+
+    html += '</div>';
+  }
+
+  if (!authEntries.length && !generalIds.length && !domainVetos.length) {
     html += '<div style="color:var(--text-dim)">All claims routed to general verification (no domain-specific routing).</div>';
   }
 

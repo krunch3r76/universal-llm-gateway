@@ -39,8 +39,8 @@ Example Structure:
 Invariants:
     - ∀ handlers_dir with __init__.py: MUST have register_handlers(router)
     - ∀ handlers_dir without __init__.py: skip silently (not a handler package)
-    - ∀ handlers_dir with __init__.py but no register_handlers: FATAL ERROR
-    - ∀ import failure in handlers: FATAL ERROR (config error, not recoverable)
+    - ∀ handlers_dir with __init__.py but no register_handlers: ERROR, skip package
+    - ∀ import failure in handlers: ERROR, skip package (other packages still load)
 """
 
 from __future__ import annotations
@@ -74,10 +74,6 @@ def load_user_handlers(config_base_dir: Path | None = None) -> int:
 
     Returns:
         Number of handler modules successfully loaded
-
-    Raises:
-        HandlerLoadError: If any handler package is malformed or fails to import.
-                         Config errors are fatal - we don't want partial pipeline state.
     """
     if config_base_dir is None:
         logger.debug("No config_base_dir provided, skipping handler loading")
@@ -101,12 +97,20 @@ def load_user_handlers(config_base_dir: Path | None = None) -> int:
         # Load shared handlers first (enables variant override)
         shared_handlers = domain_dir / "handlers"
         if shared_handlers.is_dir():
-            loaded_count += _load_handlers_package(
-                handlers_dir=shared_handlers,
-                package_name=_make_package_name(domain_dir.name),
-                display_path=f"{domain_dir.name}/handlers",
-                router=router,
-            )
+            try:
+                loaded_count += _load_handlers_package(
+                    handlers_dir=shared_handlers,
+                    package_name=_make_package_name(domain_dir.name),
+                    display_path=f"{domain_dir.name}/handlers",
+                    router=router,
+                )
+            except HandlerLoadError as e:
+                logger.error(
+                    "⚠ Skipping domain %s (shared handlers failed): %s",
+                    domain_dir.name,
+                    e,
+                )
+                continue  # variants likely depend on shared, skip entire domain
 
         # Load variant-specific handlers (alphabetical order)
         for variant_dir in sorted(domain_dir.iterdir()):
@@ -121,12 +125,22 @@ def load_user_handlers(config_base_dir: Path | None = None) -> int:
 
             variant_handlers = variant_dir / "handlers"
             if variant_handlers.is_dir():
-                loaded_count += _load_handlers_package(
-                    handlers_dir=variant_handlers,
-                    package_name=_make_package_name(domain_dir.name, variant_dir.name),
-                    display_path=f"{domain_dir.name}/{variant_dir.name}/handlers",
-                    router=router,
-                )
+                try:
+                    loaded_count += _load_handlers_package(
+                        handlers_dir=variant_handlers,
+                        package_name=_make_package_name(
+                            domain_dir.name, variant_dir.name
+                        ),
+                        display_path=(f"{domain_dir.name}/{variant_dir.name}/handlers"),
+                        router=router,
+                    )
+                except HandlerLoadError as e:
+                    logger.error(
+                        "⚠ Skipping handler package %s/%s: %s",
+                        domain_dir.name,
+                        variant_dir.name,
+                        e,
+                    )
 
     if loaded_count > 0:
         logger.info(f"Loaded {loaded_count} handler package(s)")

@@ -1,0 +1,279 @@
+# Consensus Pipeline Model Panel
+#
+# Architecture: Models defined as dict, pipeline uses map steps for parallelism
+# Strategy: Diverse architectures → uncorrelated errors → stronger consensus
+#
+# The pipeline defines model lists in pipeline options, then maps over them:
+#   options.answer_models: [phi, qwen, frank]
+#   Step uses map_over to iterate answer_models in parallel
+#
+# This keeps models.yaml simple (just model definitions) and pipeline.yaml
+# controls which models are used for which roles.
+#
+# Execution Configuration (optional):
+#   execution:
+#     chunk_size: int       # Statements per model call (default: 10, use 1 for isolation)
+#     max_concurrent: int   # Max parallel chunks for this model (default: unlimited)
+#     timeout_ms: int       # Per-chunk timeout in milliseconds (default: none)
+#     sequential: bool      # Force sequential execution (default: false)
+#
+# Handlers that support ChunkedModelExecutor read these hints automatically.
+
+models:
+  # ==========================================================================
+  # ACTIVE MODELS (currently configured)
+  # ==========================================================================
+
+  phi:
+    # model: phi-4-q4-k-m-16384
+    model: phi-3-5-mini-instruct-q8-0-32768
+
+    system_prompt: ""
+    # 3.8B | 128K context | multilingual | logical reasoning
+    #execution:
+      #chunk_size: 4           # Statements per batch (default: 10)
+#      max_concurrent: 3       # Max parallel chunks (default: unlimited)
+
+  phi4:
+    # model: phi-4-q4-k-m-16384
+    model: phi-4-q4-k-m-16384
+
+    system_prompt: ""
+    # 3.8B | 128K context | multilingual | logical reasoning
+    #execution:
+      #chunk_size: 4           # Statements per batch (default: 10)
+#      max_concurrent: 3       # Max parallel chunks (default: unlimited)
+
+  qwen:
+    model: qwen2-5-7b-instruct-q8-0-32768
+    system_prompt: ""
+    # 7B | fast inference | scalable | multilingual
+    # Alias for qwen2_5_7b
+    #execution:
+      #chunk_size: 4           # Statements per batch (default: 10)
+#      max_concurrent: 3       # Max parallel chunks (default: unlimited)
+
+  frank:
+    model: uncensored-frank-llama-3-8b-q4-k-m-8192
+    system_prompt: ""
+    # 8B | uncensored | creative | llama3 base
+
+  # ==========================================================================
+  # HIGH-QUALITY MODELS (recommended for consensus)
+  # ==========================================================================
+
+  qwen2_5_7b:
+    model: qwen2-5-7b-instruct-q8-0-32768
+    system_prompt: ""
+    # 7B | MMLU 74.2% | MATH 75.5% | fast inference
+    # USE FOR: Answer generation, verification (balanced quality/speed)
+
+  qwen2_5_14b:
+    model: qwen2-5-14b-instruct-q4-k-m-32768
+    system_prompt: ""
+    # 14B | MMLU 78%+ | MATH 82%+ | best reasoning
+    # USE FOR: Answer generation, verification (highest quality)
+
+  ministral_3_8b:
+    model: ministral-3-8b-instruct-2512-q6-k-32768
+    system_prompt: ""
+    execution:
+      chunk_size: 1           # Ministral nests reasoning as JSON trees, exhausting token budget on batches
+    # 8B | MMLU 74.2% | MATH 75.5% | fast inference
+    # USE FOR: Answer generation, verification (balanced quality/speed)
+
+  gemma3_12b:
+    model: gemma-3-12b-it-q4-k-m-16384
+    system_prompt: ""
+    # execution:
+      # chunk_size: 1           # Statements per batch (default: 10)
+#      max_concurrent: 3       # Max parallel chunks (default: unlimited)
+    # 12B | MMLU 74.5% | GSM8K 71% | balanced (SLOW - use for quality over speed)
+    # USE FOR: Synthesis, verification (no system prompt support - prepend to user message)
+
+  # ==========================================================================
+  # ANSWER GENERATION CANDIDATES (diverse architectures)
+  # ==========================================================================
+  # Uncomment and add to options.answer_models in basic.yaml
+
+  # mistral_nemo:
+  #   model: mistral-nemo-12b-instruct-q4-k-m
+  #   system_prompt: ""
+  #   # 12B | complex NLP | translation | dialogue
+  #   # USE FOR: Complex reasoning, multilingual tasks
+
+  # gemma2:
+  #   model: gemma2-9b-instruct-q4-k-m
+  #   system_prompt: ""
+  #   # 9B | efficient | real-time
+  #   # USE FOR: Local deployment, edge computing
+
+  gemma_2_9b:
+    model: gemma-2-9b-it-q4-k-m-8192
+    system_prompt: ""
+    # 7B | Falcon H1 | fast inference
+    # USE FOR: General QA, sentiment analysis
+    #execution:
+      #chunk_size: 4           # Statements per batch (default: 10)
+#      max_concurrent: 3       # Max parallel chunks (default: unlimited)
+
+  # ==========================================================================
+  # BATCH-SENSITIVE MODELS (require isolation mode)
+  # ==========================================================================
+  # These models produce incorrect results with batch processing but work
+  # correctly when processing one statement at a time.
+
+  llama_3_1_8b:
+    model: meta-llama-3-1-8b-instruct-q8-0-32768
+    system_prompt: ""
+    # 8B | Llama 3.1 | Q8 quantization
+    # KNOWN ISSUE: Produces contradictory reasoning in batch mode
+    # SOLUTION: execution.chunk_size=1 enables isolation mode
+    #execution:
+      #chunk_size: 4          # May prefer one statement at a time (isolation mode)
+      # No per-chunk timeout — step timeout (verify_all: 420s) provides the
+      # safety net.  Per-chunk timeouts kill requests still in the capacity
+      # retry loop, which cascades into TaskGroup failures.
+#      max_concurrent: 4       # Limit concurrent requests
+
+  mistral_7b:
+    model: mistral-7b-instruct-v0-3-q8-0-16384
+    system_prompt: ""
+    # 7B | structured output | fast inference | Mistral AI
+    # USE FOR: Verification, JSON generation, diverse architecture
+    #execution:
+      #chunk_size: 1           # Statements per batch (default: 10)
+#      max_concurrent: 3       # Max parallel chunks (default: unlimited)
+
+
+  # ==========================================================================
+  # VERIFICATION & REASONING SPECIALISTS
+  # ==========================================================================
+  # Uncomment and add to options.verify_models in basic.yaml
+
+  # pythia:
+  #   model: pythia-2.8b-q4-k-m
+  #   system_prompt: ""
+  #   # 2.8B | structured logic | reasoning | coding
+  #   # USE FOR: Decomposition, verification, logical tasks
+
+  # stablelm:
+  #   model: stablelm-zephyr-3b-q4-k-m
+  #   system_prompt: ""
+  #   # 3B | fast inference | reasoning
+  #   # USE FOR: Edge systems, fast verification
+
+  # dclm:
+  #   model: dclm-7b-q4-k-m
+  #   system_prompt: ""
+  #   # 7B | commonsense reasoning | logical deduction
+  #   # USE FOR: General verification, common-sense checks
+
+  # ==========================================================================
+  # DOMAIN SPECIALISTS (adaptive routing)
+  # ==========================================================================
+  # Domain-aware verification: math_authority_model uses qwen_math verdict
+  # for statements with domain="mathematics"
+
+  # qwen_math:
+  #  model: qwen2-5-math-1-5b-instruct-q8-0-4096
+  #  system_prompt: ""
+
+  zyphra_math:
+    model: zyphra-zr1-1-5b-q8-0-16384
+    system_prompt: ""
+  #   # 1.5B Q8_0 | mathematical reasoning | equation solving | arithmetic
+  #   # USE FOR: Single authority on domain="mathematics" claims
+  #   # Rationale: Specialized math model catches computational errors general LLMs miss
+
+  # ==========================================================================
+  # SYNTHESIS CANDIDATES
+  # ==========================================================================
+  # Uncomment and add to options.synthesizer_configs in basic-v3.yaml
+
+  gemma_writer:
+    model: gemma-the-writer-10b-d-au-q4-k-m-8192
+    system_prompt: ""
+    # 10B | Prose-optimized | Brainstorm 5x | Reduced GPT-isms
+    # USE FOR: Natural prose synthesis, creative writing, reduced cliches
+
+  minicpm:
+    model: minicpm-v-4-q8-0-32768
+    system_prompt: ""
+  #   # 4B | resource efficient | English/Chinese | lightweight
+  #   # USE FOR: Efficient synthesis, resource-constrained environments
+
+  # ==========================================================================
+  # LIGHTWEIGHT (mobile/edge experiments)
+  # ==========================================================================
+
+  # tinyllama:
+  #   model: tinyllama-1.1b-q4-k-m
+  #   system_prompt: ""
+  #   # 1.1B | efficient | mobile/edge
+  #   # USE FOR: Mobile/edge testing
+
+  # mobilellama:
+  #   model: mobilellama-1.4b-q4-k-m
+  #   system_prompt: ""
+  #   # 1.4B | low-power devices | 40% faster
+  #   # USE FOR: Low-power verification
+
+  # ==========================================================================
+  # EMBEDDING MODELS
+  # ==========================================================================
+
+  embedding:
+    model: nomic-embed-text-v1-5-q8-0-2048
+    system_prompt: ""
+    # 141M | semantic similarity | text embeddings
+    # USE FOR: Deduplication via semantic clustering
+
+
+# ==========================================================================
+# PIPELINE ROLE ASSIGNMENT
+# ==========================================================================
+#
+# Edit basic.yaml options section to configure model panels:
+#
+# options:
+#   # Answer generation (parallel execution via map step)
+#   answer_models: [phi, qwen, frank]
+#
+#   # Verification (parallel execution via map step, auto-excludes origin)
+#   verify_models: [phi, qwen, frank]
+#
+#   # Final synthesis (single model)
+#   synthesizer_model: frank
+#
+#   # Cross-model decomposition (reduces bias)
+#   decompose_mapping:
+#     phi: qwen      # qwen decomposes phi's answer
+#     qwen: frank    # frank decomposes qwen's answer
+#     frank: phi     # phi decomposes frank's answer
+#
+# ==========================================================================
+# EXPERIMENTATION EXAMPLES
+# ==========================================================================
+#
+# High-quality panel (best accuracy):
+#   answer_models: [qwen2_5_14b, gemma3_12b, qwen2_5_7b]
+#   verify_models: [qwen2_5_14b, gemma3_12b, qwen2_5_7b]
+#
+# Balanced panel (speed + quality):
+#   answer_models: [qwen2_5_7b, llama_3_1_8b, phi]
+#   verify_models: [qwen2_5_7b, llama_3_1_8b, phi]
+#
+# Fast edge panel:
+#   answer_models: [phi, stablelm, pythia]
+#   verify_models: [phi, stablelm, dclm]
+#
+# Math-focused (with domain routing):
+#   answer_models: [qwen2_5_7b, phi, frank]
+#   verify_models: [qwen2_5_7b, qwen_math, phi]  # qwen_math for domain=mathematics
+#
+# Diverse architecture (uncorrelated errors):
+#   answer_models: [qwen2_5_14b, gemma3_12b, llama_3_1_8b, phi]
+#   verify_models: [qwen2_5_14b, gemma3_12b, llama_3_1_8b, phi]
+#
+# No pipeline step changes needed - just swap model lists!

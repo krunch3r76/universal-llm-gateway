@@ -299,6 +299,22 @@ def _apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
                 "details": ev.get("details", []),
             }
 
+        case "domain_veto_completed":
+            if sd["domain_routing"] is None:
+                sd["domain_routing"] = {}
+            vetos = sd["domain_routing"].setdefault("domain_veto", [])
+            vetos.append(
+                {
+                    "domain": ev.get("domain", ""),
+                    "specialist_model": ev.get("specialist_model", ""),
+                    "candidates_checked": ev.get("candidates_checked", 0),
+                    "vetoed_ids": ev.get("vetoed_ids", []),
+                    "survived_ids": ev.get("survived_ids", []),
+                    "verdicts": ev.get("verdicts", {}),
+                    "latency_ms": ev.get("latency_ms", 0.0),
+                }
+            )
+
         case "model_verdict_cast":
             # Individual model verdicts — aggregated in verification_complete
             pass

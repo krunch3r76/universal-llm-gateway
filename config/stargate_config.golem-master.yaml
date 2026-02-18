@@ -56,7 +56,9 @@ request_queue:
 # Pipeline configuration
 pipelines:
   search_paths:
-    - "pipelines.local"  # Local pipeline definitions
+    - "pipelines"        # Repo-tracked pipelines
+    - "pipelines.local"  # Local development (gitignored)
+    - "~/.pipelines"     # User-global overrides
   hot_reload:
     enabled: true
     debounce_ms: 2000

@@ -425,7 +425,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
             config_base_dir = Path.cwd()
 
         # Load user handlers from all search paths (colocated with pipelines)
-        from systems.pipeline.user_handlers import HandlerLoadError, load_user_handlers
+        from systems.pipeline.user_handlers import load_user_handlers
 
         search_paths = pipelines_config.get("search_paths", ["config"])
         total_loaded = 0
@@ -440,8 +440,6 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
 
                 loaded_count = load_user_handlers(config_base_dir=resolved_path)
                 total_loaded += loaded_count
-            except HandlerLoadError:
-                raise  # Fatal: handler package is malformed
             except Exception as e:
                 logger.warning(f"Failed to load handlers from {search_path}: {e}")
 
