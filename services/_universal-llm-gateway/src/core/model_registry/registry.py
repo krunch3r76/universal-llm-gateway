@@ -619,22 +619,22 @@ class ModelRegistry:
         self._models_with_available_paths.clear()
 
         # Detect backend availability
-        llama_installed = GPUCapabilities.is_llama_installed()
-        llama_gpu_available = GPUCapabilities.is_llama_gpu_available()
+        llama_installed = GPUCapabilities.is_llama_server_available()
+        llama_gpu_available = GPUCapabilities.is_torch_gpu_available()
         vllm_available = GPUCapabilities.is_vllm_available()
 
         # Log detection results
         if llama_installed:
             if llama_gpu_available:
                 logger.info(
-                    "✅ llama-cpp-python GPU available - all GGUF models supported"
+                    "✅ llama-server GPU available - all GGUF models supported"
                 )
             else:
                 logger.info(
-                    "ℹ️ llama-cpp-python CPU-only - GGUF models limited to cpu_profiles"
+                    "ℹ️ llama-server CPU-only - GGUF models limited to cpu_profiles"
                 )
         else:
-            logger.info("⚠️ llama-cpp-python not installed - GGUF models not available")
+            logger.info("⚠️ llama-server not found - GGUF models not available")
 
         if vllm_available:
             logger.info("✅ vLLM available - HF/AWQ/GPTQ models supported")
@@ -697,10 +697,10 @@ class ModelRegistry:
                 models_missing_files.append(result.model_id)
                 continue
 
-            # GGUF models require llama-cpp-python
+            # GGUF models require llama-server
             if model_format == "gguf":
                 if not llama_installed:
-                    logger.debug(f"Model requires llama-cpp-python: {result.model_id}")
+                    logger.debug(f"Model requires llama-server: {result.model_id}")
                     llama_required += 1
                     models_missing_llama.append(result.model_id)
                     continue
@@ -748,7 +748,7 @@ class ModelRegistry:
             if llama_required > 0:
                 missing_llama_str = ", ".join(models_missing_llama)
                 logger.info(
-                    f"  • {llama_required} model(s) - require llama-cpp-python "
+                    f"  • {llama_required} model(s) - require llama-server "
                     f"(GGUF): {missing_llama_str}"
                 )
             if cpu_profile_missing > 0:

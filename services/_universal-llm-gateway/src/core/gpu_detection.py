@@ -14,12 +14,13 @@ logger = get_logger(__name__)
 
 
 class GPUCapabilities:
-    """Detect and cache GPU/CUDA capabilities for llama-cpp-python and torch/vLLM."""
+    """Detect and cache GPU/CUDA capabilities for llama-server and torch/vLLM."""
 
     _instance = None
     _llama_installed: bool | None = None
     _llama_gpu_available: bool | None = None
     _llama_backend: str | None = None
+    _llama_server_available: bool | None = None
     _torch_gpu_available: bool | None = None
     _torch_backend: str | None = None
     _vllm_available: bool | None = None
@@ -230,6 +231,38 @@ class GPUCapabilities:
         return gpu_available
 
     @classmethod
+    @lru_cache(maxsize=1)
+    def detect_llama_server(cls) -> bool:
+        """
+        Detect if the llama-server binary is available.
+
+        Returns:
+            True if llama-server binary is found and executable
+        """
+        if cls._llama_server_available is not None:
+            return cls._llama_server_available
+
+        try:
+            from inference_djinn.engines.gguf.native.binary import find_llama_server
+
+            find_llama_server()
+            cls._llama_server_available = True
+            logger.info("✅ llama-server binary found - GGUF models supported")
+        except FileNotFoundError:
+            cls._llama_server_available = False
+            logger.info("⚠️ llama-server binary not found - GGUF models not available")
+        except Exception as e:
+            cls._llama_server_available = False
+            logger.warning(f"⚠️ Failed to detect llama-server: {e}")
+
+        return cls._llama_server_available or False
+
+    @classmethod
+    def is_llama_server_available(cls) -> bool:
+        """Check if llama-server binary is available (required for GGUF models)."""
+        return cls.detect_llama_server()
+
+    @classmethod
     def is_torch_gpu_available(cls) -> bool:
         """Check if GPU acceleration is available for PyTorch."""
         gpu_available, _ = cls.detect_torch()
@@ -252,9 +285,11 @@ class GPUCapabilities:
         cls._llama_installed = None
         cls._llama_gpu_available = None
         cls._llama_backend = None
+        cls._llama_server_available = None
         cls._torch_gpu_available = None
         cls._torch_backend = None
         cls._vllm_available = None
         cls.detect_llama.cache_clear()
+        cls.detect_llama_server.cache_clear()
         cls.detect_torch.cache_clear()
         cls.detect_vllm.cache_clear()
