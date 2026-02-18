@@ -19,7 +19,7 @@ Production-tested on single-GPU deployments. Under active development.
 - Real-time audio transcription with VAD profiles
 
 ### Roadmap
-- [ ] **Simplified onboarding process** (expanded Quick Start in this README, installation guides, CLI wizards)
+- [x] **Simplified onboarding process** — `./manage` bootstraps environment and launches TUI ([demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4))
 - [ ] Multi-GPU / tensor parallelism (vLLM)
 - [ ] Native VPS deployment tooling (one-command setup)
 - [ ] Pipeline system stabilization (v6 schema)
@@ -75,11 +75,22 @@ Client → Master Stargate:9999 (router-only)
 
 ## Quick Start
 
-### Local Development
+**[Watch the setup demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4)** — `./manage` bootstrapping a fresh system from clone to running inference.
+
+### Getting Started
 
 ```bash
-./scripts/dev-start.sh
+git clone https://github.com/krunch3r76/universal-llm-gateway.git
+cd universal-llm-gateway
+./manage
+```
 
+`./manage` is the single entry point for setup and operation. On first run it:
+1. Creates a Python venv at `~/.venvs/universal`
+2. Installs host dependencies (no GPU/torch — those run in Docker)
+3. Launches the Model Manager TUI for configuring and deploying models
+
+```bash
 # Test
 curl http://localhost:9999/health
 
