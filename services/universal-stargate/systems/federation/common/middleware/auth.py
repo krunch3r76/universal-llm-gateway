@@ -112,6 +112,10 @@ class EdgeFederationAuthMiddleware(BaseHTTPMiddleware):
         if self._config.mode != StargateMode.EDGE:
             return await call_next(request)
 
+        # Trusted topology (e.g. network_mode=none + Unix socket) — skip auth
+        if not self._config.federation_auth_enabled:
+            return await call_next(request)
+
         path = request.url.path
 
         # Check if auth required

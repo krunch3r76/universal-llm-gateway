@@ -80,8 +80,11 @@ def load_federation_config(config_path: Path | None = None) -> FederationConfig:
 
     # Set execution_capable based on gateway presence
     gateway_cfg = data.get("gateway", {})
-
     _set_execution_capable(fed_config, gateway_cfg)
+
+    # Propagate authorization.enabled → federation_auth_enabled
+    auth_section = data.get("authorization", {})
+    fed_config.federation_auth_enabled = auth_section.get("enabled", True)
 
     return fed_config
 
@@ -372,6 +375,8 @@ def log_startup_banner(config: FederationConfig) -> None:
                 f"(socket: {config.local_edge.socket_path})"
             )
     elif config.mode == StargateMode.EDGE:
+        auth_label = "enabled" if config.federation_auth_enabled else "disabled"
+        logger.info(f"   federation auth: {auth_label}")
         if config.allowed_peers:
             peer_ids = [p.stargate_id for p in config.allowed_peers]
             logger.info(f"   allowed peers: {peer_ids}")

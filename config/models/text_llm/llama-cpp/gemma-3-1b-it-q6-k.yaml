@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: gemma-3-1b-it-Q6_K
+  format: gguf
+  arch: gemma3
+  quant: Q6_K
+  parameters_m: 828
+  training_context_length: 32768
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: unsloth/gemma-3-1b-it-GGUF
+    verified: true
+    file: gemma-3-1b-it-Q6_K.gguf
+  size_bytes: 1011738656
+  sha256: 078d867f4c0d46ba6249987a8ab80ebff766415e10899522a359a48cefd035f7

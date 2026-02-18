@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Dolphin-Mistral-24B-Venice-Edition-Q4_K_M
+  format: gguf
+  arch: llama
+  quant: Q4_K_M
+  parameters_m: 26004
+  training_context_length: 32768
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: bartowski/cognitivecomputations_Dolphin-Mistral-24B-Venice-Edition-GGUF
+    verified: true
+    file: Dolphin-Mistral-24B-Venice-Edition-Q4_K_M.gguf
+  size_bytes: 14333909376
+  sha256: 2740d59cb0de4136b960f608778e657f30294922bf59f145eadbdf7850127392

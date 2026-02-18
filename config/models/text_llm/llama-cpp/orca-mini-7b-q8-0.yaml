@@ -1,0 +1,19 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: orca_mini_7b.Q8_0
+  format: gguf
+  arch: llama
+  quant: Q8_0
+  parameters_m: 9328
+  training_context_length: 2048
+  supports_chat_history: true
+  input_schema: prompt
+  transformation: orca-mini
+download:
+  huggingface:
+    repo: mradermacher/orca_mini_7b-GGUF
+    verified: true
+    file: orca_mini_7b.Q8_0.gguf
+  size_bytes: 7161125728
+  sha256: 8a13455a6e0fd3e5ad74424b4b16c70fc79dd2272de9a13ba50e7c5272679a98

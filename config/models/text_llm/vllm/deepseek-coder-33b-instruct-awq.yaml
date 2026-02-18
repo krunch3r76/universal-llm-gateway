@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: vllm
+metadata:
+  name: deepseek-coder-33B-instruct-AWQ
+  format: awq
+  family: llama
+  arch: llama
+  quant: awq-4bit
+  training_context_length: 16384
+  supports_chat_history: true
+  input_schema: prompt
+  transformation: deepseek-coder
+download:
+  huggingface:
+    repo: TheBloke/deepseek-coder-33B-instruct-AWQ
+    file: null
+  size_bytes: 18008816752
+  sha256: 17abbcc69ddc373cc5eda8cd259a64d9b19a9879c1535f7d22b8d18919c32fc5

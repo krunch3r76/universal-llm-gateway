@@ -1,0 +1,19 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: DeepSeek-R1-Distill-Qwen-14B-Q8_0
+  description: Excellent reasoning capabilities for understanding patterns
+  format: gguf
+  family: qwen
+  arch: qwen2
+  parameters_m: 14000
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+  quant: Q8_0
+download:
+  huggingface:
+    repo: unsloth/DeepSeek-R1-Distill-Qwen-14B-GGUF
+    file: DeepSeek-R1-Distill-Qwen-14B-Q8_0.gguf
+  size_bytes: 15701597344
+  sha256: 9be78e224d99535ad81f192bf993bdd01f78e7cc611642b64fd545e10fdb3fc4

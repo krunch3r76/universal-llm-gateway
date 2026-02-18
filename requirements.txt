@@ -120,6 +120,11 @@ webrtcvad>=2.0.10             # WebRTC VAD (optional, graceful fallback)
 
 
 
+# ============================================================================
+# TUI (Model Manager Onboarding UI)
+# ============================================================================
+textual>=8.0.0
+
 diffusers>=0.30.0
 transformers>=4.57.3
 torch>=2.0.0

@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Uncensored-Frank-Llama-3-8B-Q4_K_M
+  format: gguf
+  arch: llama
+  quant: Q4_K_M
+  parameters_m: 10200
+  training_context_length: 8192
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: bartowski/Uncensored-Frank-Llama-3-8B-GGUF
+    verified: true
+    file: Uncensored-Frank-Llama-3-8B-Q4_K_M.gguf
+  size_bytes: 4920734208
+  sha256: a48fac4489d8e8c0f7d99081c1179db235384129ec4419d0dcd971e3bbafe64a

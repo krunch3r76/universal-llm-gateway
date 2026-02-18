@@ -1,0 +1,20 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: CodeLlama-34b-Python-hf.Q6_K
+  format: gguf
+  family: llama
+  arch: llama
+  quant: Q6_K
+  parameters_m: 34000
+  training_context_length: 16384
+  license: llama2
+  supports_chat_history: true
+  input_schema: prompt
+  transformation: codellama-instruct
+download:
+  huggingface:
+    repo: mradermacher/CodeLlama-34b-Python-hf-GGUF
+    file: CodeLlama-34b-Python-hf.Q6_K.gguf
+  size_bytes: 27683877984
+  sha256: 13aa0a1f0479447f5b7b682e599d286cea8ec8c4691dddd0a4f36e4156b9a814

@@ -1,0 +1,31 @@
+catalog_schema: 3
+schema: faster-whisper
+metadata:
+  name: whisper-large-v3
+  format: whisper
+  family: whisper
+  parameters_m: 1550
+  license: mit
+  supports_chat_history: false
+  input_schema: audio
+  supports_streaming: true
+  languages:
+    - en
+    - fa
+    - ar
+    - zh
+    - es
+    - fr
+    - de
+    - it
+    - ja
+    - ko
+    - pt
+    - ru
+    - tr
+download:
+  huggingface:
+    repo: null
+    file: large-v3.pt
+  size_bytes: 3094000000
+  sha256: e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb

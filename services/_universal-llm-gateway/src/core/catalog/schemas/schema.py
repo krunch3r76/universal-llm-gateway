@@ -142,8 +142,11 @@ class BaseEngineSchema(ABC):
 
         Checks:
             - metadata.format matches schema.formats
-            - devices dict exists
+            - devices dict exists (warning only for V3 static entries)
             - At least one device configuration
+
+        V3 static entries (catalog_schema >= 3, no devices) are valid metadata-only
+        entries and do not require a devices section.
         """
         issues: list[ValidationIssue] = []
         metadata = entry.get("metadata", {})
@@ -172,20 +175,23 @@ class BaseEngineSchema(ABC):
                 )
             )
 
-        # Validate devices exist
+        # V3 static entries have no devices section — this is valid
+        catalog_schema = entry.get("catalog_schema", 0)
+        is_v3_static = catalog_schema >= 3 and not devices
+
         if not devices:
-            issues.append(
-                ValidationIssue(
-                    model_id=model_id,
-                    severity="error",
-                    message="No devices configured",
-                    field="devices",
-                    fix="Add at least one device configuration (gpu/cpu)",
+            if not is_v3_static:
+                issues.append(
+                    ValidationIssue(
+                        model_id=model_id,
+                        severity="error",
+                        message="No devices configured",
+                        field="devices",
+                        fix="Add at least one device configuration (gpu/cpu)",
+                    )
                 )
-            )
             return issues
 
-        # Validate device names
         for device_name in devices:
             if device_name not in self.supported_devices:
                 issues.append(

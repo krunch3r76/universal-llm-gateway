@@ -1,10 +1,16 @@
 """
 GGUF metadata extraction.
+
+Quant derivation: filename is the authoritative source for quantization type.
+general.file_type in GGUF metadata is a *file-level* enum (GGUFFileType)
+whose integer values do NOT correspond to tensor-level GGMLQuantizationType.
 """
 
-from universal_logging import get_logger
+import re
 from pathlib import Path
 from typing import Any
+
+from universal_logging import get_logger
 
 from .base import CatalogMetadata
 
@@ -16,18 +22,79 @@ try:
 
     _ = patch_gguf()
 except Exception:
-    pass  # Graceful degradation if gguf not installed
+    pass
+
+# Ordered longest-first to prevent partial matches (e.g. Q4_K before Q4_K_M)
+_QUANT_TOKENS: list[str] = [
+    "Q4_K_XL", "Q6_K_XL", "Q8_K_XL",
+    "Q3_K_S", "Q3_K_M", "Q3_K_L",
+    "Q4_K_S", "Q4_K_M", "Q4_K_L",
+    "Q5_K_S", "Q5_K_M", "Q5_K_L",
+    "Q6_K_L", "Q6_K_M",
+    "Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K", "Q8_K",
+    "Q4_0_4_4", "Q4_0_4_8", "Q4_0_8_8",
+    "Q4_0", "Q4_1", "Q5_0", "Q5_1", "Q8_0", "Q8_1",
+    "IQ2_XXS", "IQ2_XS", "IQ2_S", "IQ2_M",
+    "IQ3_XXS", "IQ3_S", "IQ3_M",
+    "IQ4_NL", "IQ4_XS",
+    "IQ1_S", "IQ1_M",
+    "TQ1_0", "TQ2_0",
+    "BF16", "F16", "F32",
+    "MXFP4",
+]  # fmt: skip
+
+_QUANT_RE_BODY = "|".join(re.escape(t) for t in _QUANT_TOKENS)
+_QUANT_PATTERN = re.compile(
+    rf"(?:^|[.\-_])({_QUANT_RE_BODY})(?:[.\-_]|$)",
+    re.IGNORECASE,
+)
+
+# general.file_type → quant string (GGUFFileType enum, NOT GGMLQuantizationType)
+_GGUF_FILE_TYPE_TO_QUANT: dict[int, str] = {
+    0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1",
+    7: "Q8_0", 8: "Q5_0", 9: "Q5_1",
+    10: "Q2_K", 11: "Q3_K_S", 12: "Q3_K_M", 13: "Q3_K_L",
+    14: "Q4_K_S", 15: "Q4_K_M", 16: "Q5_K_S", 17: "Q5_K_M", 18: "Q6_K",
+    19: "IQ2_XXS", 20: "IQ2_XS", 21: "IQ3_XXS", 22: "IQ1_S",
+    23: "IQ4_NL", 24: "IQ3_S", 25: "IQ3_M", 26: "IQ2_S", 27: "IQ2_M",
+    28: "IQ4_XS", 29: "IQ1_M", 30: "BF16",
+    31: "Q4_0_4_4", 32: "Q4_0_4_8", 33: "Q4_0_8_8",
+    34: "TQ1_0", 35: "TQ2_0",
+}  # fmt: skip
+
+
+def extract_quant_from_filename(filename: str) -> str | None:
+    """Extract quantization type from a filename by matching known quant tokens.
+
+    Handles both underscore and dash separators.
+    e.g. "model.Q4_K_M.gguf" → "Q4_K_M", "model-q8-0.gguf" → "Q8_0"
+
+    Args:
+        filename: Filename or stem (with or without .gguf extension).
+
+    Returns:
+        Canonical uppercase quant string, or None if not found.
+    """
+    stem = filename.rsplit(".", 1)[0] if filename.endswith(".gguf") else filename
+    normalized = stem.upper().replace("-", "_")
+
+    match = _QUANT_PATTERN.search(normalized)
+    if match:
+        raw = match.group(1).upper()
+        for token in _QUANT_TOKENS:
+            if raw == token:
+                return token
+    return None
 
 
 def extract_gguf(path: Path) -> CatalogMetadata:
-    """
-    Extract metadata from GGUF file using GGUFMetadataLite.
+    """Extract metadata from GGUF file using GGUFMetadataLite.
 
     Args:
-        path: Path to GGUF file
+        path: Path to GGUF file.
 
     Returns:
-        Extracted metadata
+        Extracted metadata.
     """
     try:
         from gguf import GGUFReader
@@ -38,38 +105,30 @@ def extract_gguf(path: Path) -> CatalogMetadata:
         meta = GGUFMetadataLite.from_gguf(reader)
         meta_dict = meta.to_dict()
 
-        # Get architecture directly from GGUF metadata
         arch = meta_dict.get("architecture")
         if arch and arch != "unknown":
             arch = arch.lower()
         else:
             arch = None
 
-        # Family can be inferred from arch if needed, but we don't hardcode mappings
-        # Let the catalog consumer decide based on arch
         family = None
 
-        # Get quantization directly from GGUF metadata (avoid filename parsing)
-        quant = _normalize_gguf_quant(meta_dict.get("file_type"))
+        quant = extract_quant_from_filename(path.name)
+        if quant is None:
+            quant = _resolve_file_type(meta_dict.get("file_type"))
 
-        # Check for chat template
         has_chat_template = bool(meta_dict.get("chat_template"))
 
-        # Determine input schema
-        # If chat template exists, use messages
-        # For Instruct models without embedded templates, infer from name
         if has_chat_template:
             input_schema = "messages"
             supports_chat_history = True
         elif "instruct" in path.stem.lower() or "chat" in path.stem.lower():
-            # Instruct/Chat models support messages even without embedded template
             input_schema = "messages"
             supports_chat_history = True
         else:
             input_schema = "prompt"
             supports_chat_history = False
 
-        # Estimate parameters from GGUF metadata
         parameters_m = _estimate_parameters(meta_dict)
 
         return CatalogMetadata(
@@ -91,42 +150,48 @@ def extract_gguf(path: Path) -> CatalogMetadata:
         return CatalogMetadata(
             name=path.stem,
             format="gguf",
+            quant=extract_quant_from_filename(path.name),
         )
     except Exception as e:
         logger.warning(f"Failed to read GGUF metadata: {e}")
         return CatalogMetadata(
             name=path.stem,
             format="gguf",
+            quant=extract_quant_from_filename(path.name),
         )
 
 
-def _normalize_gguf_quant(file_type: object | None) -> str | None:
-    """Normalize GGUF file_type value into a catalog-friendly quant string."""
-    if not file_type or file_type == "unknown":
+def _resolve_file_type(file_type: object | None) -> str | None:
+    """Map general.file_type (GGUFFileType enum) to a quant string.
+
+    This is the fallback when filename-based extraction fails. Uses the correct
+    GGUFFileType → quant mapping (NOT GGMLQuantizationType which is tensor-level).
+
+    Args:
+        file_type: Value from general.file_type GGUF metadata field.
+
+    Returns:
+        Canonical quant string or None.
+    """
+    if file_type is None or file_type == "unknown":
         return None
 
-    name: str | None = None
+    if isinstance(file_type, int):
+        resolved = _GGUF_FILE_TYPE_TO_QUANT.get(file_type)
+        if resolved is None:
+            logger.warning(f"Unknown GGUF file_type integer: {file_type}")
+        return resolved
 
     if isinstance(file_type, str):
-        name = file_type
-    elif hasattr(file_type, "name"):
-        name = getattr(file_type, "name")
+        cleaned = file_type.replace("MOSTLY_", "").replace("ALL_", "")
+        return cleaned if cleaned else None
 
-    if name is None and isinstance(file_type, int):
-        try:
-            from ...engines.gguf.gguf_patch import get_quantization_type_name
+    if hasattr(file_type, "name"):
+        name = str(getattr(file_type, "name"))
+        return name.replace("MOSTLY_", "").replace("ALL_", "")
 
-            name = get_quantization_type_name(file_type)
-        except Exception as e:
-            logger.debug(
-                f"Failed to get quantization type name for file_type={file_type}: {e}"
-            )
-            name = None
-
-    if name is None:
-        name = str(file_type)
-
-    return name.replace("GGML_TYPE_", "").replace("GGML_", "")
+    logger.warning(f"Unrecognized file_type type: {type(file_type).__name__}")
+    return None
 
 
 def _estimate_parameters(meta: dict[str, Any]) -> int | None:

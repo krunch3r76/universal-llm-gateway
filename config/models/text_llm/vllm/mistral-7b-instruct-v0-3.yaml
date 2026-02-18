@@ -1,0 +1,16 @@
+catalog_schema: 3
+schema: vllm
+metadata:
+  name: Mistral-7B-Instruct-v0.3
+  format: hf
+  family: mistral
+  arch: mistral
+  training_context_length: 32768
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: mistralai/Mistral-7B-Instruct-v0.3
+    file: null
+  size_bytes: 28992746844
+  sha256: 76d5729be995fb6510c7f103c5b8825d3d82f8126ac949db6be367a638694d1f

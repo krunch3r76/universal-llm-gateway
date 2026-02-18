@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Zyphra_ZR1-1.5B-Q8_0
+  format: gguf
+  arch: qwen2
+  quant: Q8_0
+  parameters_m: 1563
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: bartowski/Zyphra_ZR1-1.5B-GGUF
+    verified: true
+    file: Zyphra_ZR1-1.5B-Q8_0.gguf
+  size_bytes: 1894533600
+  sha256: 744bbc8db102509445722e85ef1af3821df84d34d8b7d48d987ba817bf7bbfd6

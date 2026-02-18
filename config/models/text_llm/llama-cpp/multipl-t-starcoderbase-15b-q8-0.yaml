@@ -1,0 +1,16 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: MultiPL-T-StarCoderBase_15b.Q8_0
+  format: gguf
+  family: starcoder
+  arch: starcoder
+  supports_chat_history: true
+  input_schema: prompt
+  quant: Q8_0
+download:
+  huggingface:
+    repo: mradermacher/MultiPL-T-StarCoderBase_15b-GGUF
+    file: MultiPL-T-StarCoderBase_15b.Q8_0.gguf
+  size_bytes: 16644900736
+  sha256: d05e79c0a853b55c7c03976f5aad1a7138e56ee812544acd0f3f140c1e2ac82d

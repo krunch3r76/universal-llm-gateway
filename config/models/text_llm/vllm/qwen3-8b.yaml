@@ -1,0 +1,16 @@
+catalog_schema: 3
+schema: vllm
+metadata:
+  name: Qwen3-8B
+  format: hf
+  family: qwen
+  arch: qwen
+  training_context_length: 40960
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: Qwen/Qwen3-8B
+    file: null
+  size_bytes: 16392939430
+  sha256: 31d6a825ae35f11fb85b195b4c42c146c051e446433125a215336abdf95cbf5f

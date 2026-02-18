@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: deepseek-coder-7b-instruct-v1.5.Q4_K_M
+  format: gguf
+  arch: llama
+  quant: Q4_K_M
+  parameters_m: 8745
+  training_context_length: 4096
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: mradermacher/deepseek-coder-7b-instruct-v1.5-GGUF
+    verified: true
+    file: deepseek-coder-7b-instruct-v1.5.Q4_K_M.gguf
+  size_bytes: 4223359872
+  sha256: 7ae335d9aca9136a5bf7bfd4fdf6968f542a8a6b2592cd431be4339c59e80892

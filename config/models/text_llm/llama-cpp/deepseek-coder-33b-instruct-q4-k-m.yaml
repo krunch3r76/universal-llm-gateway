@@ -1,0 +1,21 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: deepseek-coder-33b-instruct.Q4_K_M
+  description: Strong at pattern recognition
+  format: gguf
+  family: deepseek
+  arch: llama
+  quant: Q4_K_M
+  parameters_m: 33000
+  training_context_length: 16384
+  license: deepseek-license
+  supports_chat_history: true
+  input_schema: prompt
+  transformation: deepseek-coder
+download:
+  huggingface:
+    repo: TheBloke/deepseek-coder-33B-instruct-GGUF
+    file: deepseek-coder-33b-instruct.Q4_K_M.gguf
+  size_bytes: 19940659200
+  sha256: null

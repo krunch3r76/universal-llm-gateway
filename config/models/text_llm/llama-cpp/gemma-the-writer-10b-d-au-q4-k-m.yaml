@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Gemma-The-Writer-10B-D_AU-Q4_k_m
+  format: gguf
+  arch: gemma2
+  quant: Q4_K_M
+  parameters_m: 11817
+  training_context_length: 8192
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: DavidAU/Gemma-The-Writer-J.GutenBerg-10B-GGUF
+    verified: true
+    file: Gemma-The-Writer-10B-D_AU-Q4_k_m.gguf
+  size_bytes: 6222335584
+  sha256: 50e5f0f93e4c5a095a7e0e1aa74edd84a76954445d3efb7cc378fde963164ef6

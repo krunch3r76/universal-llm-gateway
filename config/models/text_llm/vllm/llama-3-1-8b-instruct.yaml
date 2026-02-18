@@ -1,0 +1,16 @@
+catalog_schema: 3
+schema: vllm
+metadata:
+  name: Llama-3.1-8B-Instruct
+  format: hf
+  family: llama
+  arch: llama
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: meta-llama/Llama-3.1-8B-Instruct
+    file: null
+  size_bytes: 32123357950
+  sha256: ab33d910f405204e5d388bc3521503584800461dc96808e287821dd451c1edac

@@ -332,6 +332,9 @@ class FederationConfig:
 
     # Edge mode fields
     allowed_peers: list[AllowedPeerConfig] = field(default_factory=list)
+    # When False, Edge accepts any peer without credential checks
+    # (trusted topology, e.g. network_mode=none + Unix socket)
+    federation_auth_enabled: bool = True
 
     # Remote mode: disable outbound WebSocket client (for Golem/restrictive networks)
     # When True, Remote will NOT attempt to connect to Master via WebSocket

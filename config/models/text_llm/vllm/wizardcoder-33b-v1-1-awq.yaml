@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: vllm
+metadata:
+  name: WizardCoder-33B-V1.1-AWQ
+  format: awq
+  family: llama
+  arch: llama
+  quant: awq-4bit
+  training_context_length: 16384
+  supports_chat_history: false
+  input_schema: prompt
+  transformation: wizardcoder
+download:
+  huggingface:
+    repo: TheBloke/WizardCoder-33B-V1.1-AWQ
+    file: null
+  size_bytes: 18008816752
+  sha256: f86e3f998bf03344b1eeac96e8560157825e80579b44baf023a413bd9ee0ab25

@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: GLM-4.7-Flash-Q4_K_M
+  format: gguf
+  arch: deepseek2
+  quant: Q4_K_M
+  parameters_m: 4336
+  training_context_length: 202752
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: unsloth/GLM-4.7-Flash-GGUF
+    verified: true
+    file: GLM-4.7-Flash-Q4_K_M.gguf
+  size_bytes: 18312339776
+  sha256: 73ba18480e06ccda453a26263c0e2be2bd86294e827b1812ddea2f88bba2d924

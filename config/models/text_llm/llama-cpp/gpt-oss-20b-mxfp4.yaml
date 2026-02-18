@@ -1,0 +1,19 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: gpt-oss-20b-mxfp4
+  format: gguf
+  arch: gpt-oss
+  quant: MXFP4
+  parameters_m: 2786
+  block_count: 24
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: ggml-org/gpt-oss-20b-GGUF
+    verified: true
+    file: gpt-oss-20b-mxfp4.gguf
+  size_bytes: 12109566560
+  sha256: be37a636aca0fc1aae0d32325f82f6b4d21495f06823b5fbc1898ae0303e9935

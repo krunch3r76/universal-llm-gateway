@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: CodeLlama-34b-Instruct-hf.Q6_K
+  format: gguf
+  arch: llama
+  quant: Q6_K
+  parameters_m: 55968
+  training_context_length: 16384
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: mradermacher/CodeLlama-34b-Instruct-hf-GGUF
+    verified: true
+    file: CodeLlama-34b-Instruct-hf.Q6_K.gguf
+  size_bytes: 27683878816
+  sha256: 219a3a5a7d9af3dc4b7a7a4377fc00addd3e01e605d09851478d9251dd99f90c

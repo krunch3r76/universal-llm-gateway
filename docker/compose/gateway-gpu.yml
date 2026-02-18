@@ -145,9 +145,9 @@ services:
       - ${EVENT_SOCKET_DIR:-/tmp/universal-sockets}:/sockets
       
       # Development bind mounts (remove in production builds)
-      - ../docker/scripts/build/golem-start.sh:/app/golem-start.sh:ro
-      - ../services/_universal-llm-gateway/src/main.py:/app/services/_universal-llm-gateway/src/main.py:ro
-      - ../libs/inference_djinn/engines/gguf/engine/loading.py:/app/libs/inference_djinn/engines/gguf/engine/loading.py:ro
+      - ../../docker/runtime/golem-start.sh:/app/golem-start.sh:ro
+      - ../../services/_universal-llm-gateway/src/main.py:/app/services/_universal-llm-gateway/src/main.py:ro
+      - ../../libs/inference_djinn/engines/gguf/engine/loading.py:/app/libs/inference_djinn/engines/gguf/engine/loading.py:ro
     
     entrypoint: ["/app/golem-start.sh"]
     command: ["gateway"]

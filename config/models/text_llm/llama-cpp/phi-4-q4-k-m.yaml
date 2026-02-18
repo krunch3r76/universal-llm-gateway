@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: phi-4-Q4_K_M
+  format: gguf
+  arch: phi3
+  quant: Q4_K_M
+  parameters_m: 19922
+  training_context_length: 16384
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: bartowski/phi-4-GGUF
+    verified: true
+    file: phi-4-Q4_K_M.gguf
+  size_bytes: 9053114816
+  sha256: 009aba717c09d4a35890c7d35eb59d54e1dba884c7c526e7197d9c13ab5911d9

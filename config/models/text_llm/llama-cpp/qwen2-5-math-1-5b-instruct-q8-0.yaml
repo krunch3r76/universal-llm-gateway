@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Qwen2.5-Math-1.5B-Instruct-Q8_0
+  format: gguf
+  arch: qwen2
+  quant: Q8_0
+  parameters_m: 1563
+  training_context_length: 4096
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: bartowski/Qwen2.5-Math-1.5B-Instruct-GGUF
+    verified: true
+    file: Qwen2.5-Math-1.5B-Instruct-Q8_0.gguf
+  size_bytes: 1646573376
+  sha256: bd9840d52eb4a7ae0c4098a82e11d2e5ddafb56e25498b0a99e48cedf6b49f67

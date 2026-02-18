@@ -114,18 +114,20 @@ class EdgeFederationServer:
         peer_id = auth_data.get("stargate_id", "")
         api_key = auth_data.get("api_key", "")
 
-        # Check if peer is in allowed_peers
-        expected_key = self._allowed_peers.get(peer_id)
-        if not expected_key:
-            logger.warning(f"Auth failed: {peer_id} not in allowed_peers")
-            await self._send_auth_result(websocket, False, "Unknown peer")
-            return False
+        # Trusted topology — accept any peer without credential checks
+        if not self._config.federation_auth_enabled:
+            logger.info(f"Auth disabled — accepting peer {peer_id}")
+        else:
+            expected_key = self._allowed_peers.get(peer_id)
+            if not expected_key:
+                logger.warning(f"Auth failed: {peer_id} not in allowed_peers")
+                await self._send_auth_result(websocket, False, "Unknown peer")
+                return False
 
-        # Verify API key
-        if api_key != expected_key:
-            logger.warning(f"Auth failed: Invalid API key for {peer_id}")
-            await self._send_auth_result(websocket, False, "Invalid API key")
-            return False
+            if api_key != expected_key:
+                logger.warning(f"Auth failed: Invalid API key for {peer_id}")
+                await self._send_auth_result(websocket, False, "Invalid API key")
+                return False
 
         # Register authenticated peer
         async with self._peers_lock:

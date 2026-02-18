@@ -1,0 +1,19 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: CursorCore-QW2.5-1.5B.Q4_K_M
+  format: gguf
+  family: qwen
+  arch: qwen2
+  quant: Q4_K_M
+  parameters_m: 1500
+  training_context_length: 32768
+  supports_chat_history: true
+  input_schema: prompt
+  transformation: cursorcore
+download:
+  huggingface:
+    repo: mradermacher/CursorCore-QW2.5-1.5B-GGUF
+    file: CursorCore-QW2.5-1.5B.Q4_K_M.gguf
+  size_bytes: 985719456
+  sha256: 5247321d1741694eb64df3a3a1b6affde5b504ec1f72ab3f2567210527fdba25

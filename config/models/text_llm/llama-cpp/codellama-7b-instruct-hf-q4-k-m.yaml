@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: codellama-7b-instruct-hf-q4_k_m
+  format: gguf
+  family: llama
+  arch: llama
+  quant: Q4_K_M
+  parameters_m: 7000
+  training_context_length: 16384
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: alphaduriendur/CodeLlama-7b-Instruct-hf-Q4_K_M-GGUF
+    file: codellama-7b-instruct-hf-q4_k_m.gguf
+  size_bytes: 4081096960
+  sha256: 16e1d644021e78b6338913e99af975a3144bbf79b5534a96e5102e6332e0fef3

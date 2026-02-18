@@ -1,0 +1,17 @@
+catalog_schema: 3
+schema: vllm
+metadata:
+  name: Nous-Hermes-2-Mixtral-8x7B-DPO-AWQ
+  format: awq
+  family: mixtral
+  arch: mixtral-8x7b
+  quant: awq-4bit
+  training_context_length: 32768
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: TheBloke/Nous-Hermes-2-Mixtral-8x7B-DPO-AWQ
+    file: null
+  size_bytes: 24632823000
+  sha256: null

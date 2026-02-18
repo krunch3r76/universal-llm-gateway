@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: gpt-oss-20b-UD-Q8_K_XL
+  format: gguf
+  family: gpt-oss
+  arch: gpt-oss
+  parameters_m: 20000
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+  quant: Q8_K_XL
+download:
+  huggingface:
+    repo: unsloth/gpt-oss-20b-GGUF
+    file: gpt-oss-20b-UD-Q8_K_XL.gguf
+  size_bytes: 13195442368
+  sha256: b97fa9f3efa642ef3abd599a170f0b26612e5179a4ef5c65fb8852fb974ec239

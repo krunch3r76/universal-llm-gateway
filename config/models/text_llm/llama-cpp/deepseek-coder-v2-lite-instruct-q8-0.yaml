@@ -1,0 +1,16 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: DeepSeek-Coder-V2-Lite-Instruct-Q8_0
+  format: gguf
+  family: deepseek2
+  arch: deepseek2
+  supports_chat_history: true
+  input_schema: messages
+  quant: Q8_0
+download:
+  huggingface:
+    repo: lmstudio-community/DeepSeek-Coder-V2-Lite-Instruct-GGUF
+    file: DeepSeek-Coder-V2-Lite-Instruct-Q8_0.gguf
+  size_bytes: 16702518016
+  sha256: af12f49d16dc54f2148af3f6dc3ee5de9461e8586a1d13e279b7e7623bf796fb

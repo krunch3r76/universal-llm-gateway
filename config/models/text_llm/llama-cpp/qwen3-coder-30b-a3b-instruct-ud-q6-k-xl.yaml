@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Qwen3-Coder-30B-A3B-Instruct-UD-Q6_K_XL
+  format: gguf
+  family: qwen
+  arch: qwen3moe
+  parameters_m: 30000
+  license: apache-2.0
+  supports_chat_history: true
+  input_schema: messages
+  quant: Q6_K_XL
+download:
+  huggingface:
+    repo: unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
+    file: Qwen3-Coder-30B-A3B-Instruct-UD-Q6_K_XL.gguf
+  size_bytes: 26340328608
+  sha256: b09fcc58fd27cd43dacdf6840c5829125c8ed9463b2a386ce2667395b1292f63

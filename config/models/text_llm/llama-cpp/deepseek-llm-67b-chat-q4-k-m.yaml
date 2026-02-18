@@ -1,0 +1,19 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: deepseek-llm-67b-chat.Q4_K_M
+  format: gguf
+  family: deepseek
+  arch: llama
+  quant: Q4_K_M
+  parameters_m: 67000
+  training_context_length: 4096
+  license: deepseek-license
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: TheBloke/deepseek-llm-67b-chat-GGUF
+    file: deepseek-llm-67b-chat.Q4_K_M.gguf
+  size_bytes: 40439687104
+  sha256: null

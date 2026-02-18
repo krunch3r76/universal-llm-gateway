@@ -160,11 +160,9 @@ def cmd_measure(args: argparse.Namespace, config: Config) -> int:
 
     # Auto-update catalog if requested
     if getattr(args, "update_catalog", False):
-        static_mode = getattr(args, "static", False)
         mmproj_path = getattr(args, "mmproj", None)
         tokens_per_image = getattr(args, "tokens_per_image", None)
 
-        # CLI handles all catalog updates (static writes to host filesystem, dynamic via API)
         print("\n📝 Updating catalog with measurement results...")
         if not _update_catalog_after_measurement(
             stargate_url,
@@ -172,7 +170,6 @@ def cmd_measure(args: argparse.Namespace, config: Config) -> int:
             args.model_id,
             headers,
             request_timeout,
-            static_mode,
             mmproj_path,
             getattr(args, "vision_architecture", None),
             tokens_per_image,
@@ -421,7 +418,6 @@ def cmd_remeasure(args: argparse.Namespace, config: Config) -> int:  # noqa: PLR
             vision_architecture=getattr(args, "vision_architecture", None),
             tokens_per_image=getattr(args, "tokens_per_image", None),
             update_catalog=True,  # Always update catalog in remeasure
-            static=getattr(args, "static", False),
             verbose=getattr(args, "verbose", False),
         )
 
@@ -540,9 +536,6 @@ def _reload_gateway_catalog(
         True if reload succeeded, False otherwise
     """
     try:
-        # Note: This endpoint doesn't exist yet through Stargate proxy
-        # For now, we directly call the Gateway endpoint via container
-        # TODO: Add /gateway/catalog/reload proxy endpoint to Stargate
         response = requests.post(
             f"{stargate_url}/gateway/catalog/reload",
             headers=headers,
@@ -562,22 +555,19 @@ def _update_catalog_after_measurement(
     model_id: str,
     headers: dict[str, str],
     request_timeout: float,
-    static: bool = False,
     mmproj_path: str | None = None,
     vision_architecture: str | None = None,
     tokens_per_image: int | None = None,
 ) -> bool:
     """
-    Fetch measurement result and update catalog.
+    Fetch measurement result and dual-write catalog.
 
-    For static catalog: writes directly to config/models/ (host filesystem)
-    For dynamic catalog: calls Gateway API
+    Writes full entry to local catalog (~/.gateway/catalog/) and
+    metadata-only entry to static catalog (config/models/).
     """
-    # Schemas that support hybrid (partial GPU offload)
     schemas_with_hybrid = {"llama-cpp"}
 
     try:
-        # Fetch job result via Stargate
         response = requests.get(
             f"{stargate_url}/gateway/jobs/{job_id}",
             headers=headers,
@@ -591,7 +581,6 @@ def _update_catalog_after_measurement(
             print("❌ No result data in job response", file=sys.stderr)
             return False
 
-        # Get current catalog entry via Stargate API
         response = requests.get(
             f"{stargate_url}/gateway/models/{model_id}/config",
             headers=headers,
@@ -616,50 +605,34 @@ def _update_catalog_after_measurement(
         if catalog_entry is None:
             return False
 
-        if static:
-            # Write directly to host filesystem (no API call)
-            from universal_logging import get_logger
+        from .catalog_writer import (
+            write_local_catalog_entry,
+            write_static_catalog_entry,
+        )
 
-            from .catalog_writer import write_static_catalog_entry
-
-            logger = get_logger(__name__)
-
-            try:
-                file_path, operation = write_static_catalog_entry(
-                    model_id, catalog_entry, allow_overwrite=True
-                )
-                print(f"   {operation.title()} static catalog: {file_path}")
-                
-                # Reload Gateway catalog to reflect filesystem changes
-                print("   Reloading Gateway catalog...")
-                if not _reload_gateway_catalog(stargate_url, headers, request_timeout):
-                    print(
-                        "   ⚠️  Catalog reload failed - Gateway may not see updates",
-                        file=sys.stderr,
-                    )
-                
-                return True
-            except Exception as e:
-                logger.error(f"Failed to write static catalog for {model_id}: {e}")
-                print(f"❌ Failed to write static catalog: {e}", file=sys.stderr)
-                return False
-        else:
-            # Dynamic catalog: use API (existing behavior)
-            payload = {
-                "model_key": model_id,
-                "config": catalog_entry,
-                "allow_overwrite": True,
-                "static": False,  # Explicit: dynamic only via API
-            }
-            response = requests.post(
-                f"{stargate_url}/gateway/models",
-                json=payload,
-                headers=headers,
-                timeout=max(request_timeout, 10),
+        try:
+            local_path, local_op = write_local_catalog_entry(
+                model_id, catalog_entry, allow_overwrite=True
             )
-            response.raise_for_status()
-            print(f"   Updated dynamic catalog for {model_id}")
+            print(f"   {local_op.title()} local catalog: {local_path}")
+
+            static_path, static_op = write_static_catalog_entry(
+                model_id, catalog_entry, allow_overwrite=True
+            )
+            print(f"   {static_op.title()} static catalog: {static_path}")
+
+            print("   Reloading Gateway catalog...")
+            if not _reload_gateway_catalog(stargate_url, headers, request_timeout):
+                print(
+                    "   ⚠️  Catalog reload failed - Gateway may not see updates",
+                    file=sys.stderr,
+                )
+
             return True
+        except Exception as e:
+            logger.error(f"Failed to write catalog for {model_id}: {e}")
+            print(f"❌ Failed to write catalog: {e}", file=sys.stderr)
+            return False
 
     except requests.HTTPError as e:
         print(f"❌ HTTP error updating catalog: {e}", file=sys.stderr)
@@ -818,19 +791,26 @@ def _build_updated_catalog_entry(
         existing.update(hybrid_profiles)
         hybrid_device["profiles"] = existing
 
-    # Update activated contexts in metadata
+    # Activate only the largest context that fits for each device type.
+    # GPU: prefer largest full-offload (n_gpu_layers=-1), fall back to largest partial.
+    # CPU: largest successful.
     if gpu_profiles or cpu_profiles or hybrid_profiles:
         if cpu_profiles:
-            cpu_contexts = [int(ctx) for ctx in cpu_profiles.keys()]
-            if cpu_contexts:
-                metadata["activated_cpu_contexts"] = [max(cpu_contexts)]
+            best_cpu = max(int(ctx) for ctx in cpu_profiles)
+            metadata["activated_cpu_contexts"] = [best_cpu]
 
         if gpu_profiles or hybrid_profiles:
-            gpu_contexts = [int(ctx) for ctx in gpu_profiles.keys()]
-            hybrid_contexts = [int(ctx) for ctx in hybrid_profiles.keys()]
-            all_gpu_contexts = sorted(gpu_contexts + hybrid_contexts, reverse=True)
-            if all_gpu_contexts:
-                metadata["activated_gpu_contexts"] = all_gpu_contexts
+            full_offload = [
+                int(ctx)
+                for ctx, p in {**gpu_profiles, **hybrid_profiles}.items()
+                if p.get("n_gpu_layers") == -1
+            ]
+            if full_offload:
+                metadata["activated_gpu_contexts"] = [max(full_offload)]
+            else:
+                all_gpu = [int(ctx) for ctx in {**gpu_profiles, **hybrid_profiles}]
+                if all_gpu:
+                    metadata["activated_gpu_contexts"] = [max(all_gpu)]
 
     # Remove V1 keys if present (cleanup)
     catalog_entry.pop("configurations", None)

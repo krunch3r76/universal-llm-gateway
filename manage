@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Launch the Model Manager TUI.
+# Creates $HOME/.venvs/universal and installs host requirements if missing.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="$HOME/.venvs/universal"
+VENV_PYTHON="$VENV_DIR/bin/python"
+PY_VERSION="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+
+check_venv_support() {
+    if python3 -m ensurepip --version &>/dev/null; then
+        return 0
+    fi
+
+    echo "Error: python3-venv is not installed." >&2
+    echo "" >&2
+
+    if command -v apt &>/dev/null; then
+        echo "  sudo apt install python${PY_VERSION}-venv" >&2
+    elif command -v dnf &>/dev/null; then
+        echo "  sudo dnf install python${PY_VERSION}-venv" >&2
+    elif command -v pacman &>/dev/null; then
+        echo "  sudo pacman -S python" >&2
+    elif command -v zypper &>/dev/null; then
+        echo "  sudo zypper install python3-venv" >&2
+    else
+        echo "  Install the python3-venv package for your distribution." >&2
+    fi
+
+    echo "" >&2
+    echo "Then re-run: ./manage" >&2
+    exit 1
+}
+
+if [[ ! -f "$VENV_PYTHON" ]]; then
+    check_venv_support
+
+    echo ""
+    echo "A Python virtual environment is needed for the TUI and host services."
+    echo ""
+    echo "  Location: $VENV_DIR"
+    echo "  Python:   $(python3 --version)"
+    echo "  Deps:     requirements.host.txt (no GPU/torch — those run in Docker)"
+    echo ""
+    read -rp "Create venv and install? [Y/n] " answer
+    if [[ "${answer,,}" =~ ^n ]]; then
+        echo "Aborted." >&2
+        exit 0
+    fi
+
+    echo ""
+    echo "Creating venv at $VENV_DIR ..." >&2
+    mkdir -p "$(dirname "$VENV_DIR")"
+    python3 -m venv "$VENV_DIR"
+
+    echo "Copying sitecustomize.py into venv ..." >&2
+    SITE_PACKAGES="$VENV_DIR"/lib/python*/site-packages
+    cp "$SCRIPT_DIR/sitecustomize.py" $SITE_PACKAGES/
+
+    echo "Installing host requirements ..." >&2
+    "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.host.txt"
+    echo ""
+    echo "Done. Launching TUI ..."
+    echo ""
+fi
+
+exec "$VENV_PYTHON" -m scripts.model_manager.ui "$@"

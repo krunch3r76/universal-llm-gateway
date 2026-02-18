@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Hermes-3-Llama-3.1-70B-Uncensored.i1-Q4_K_M
+  format: gguf
+  family: llama
+  arch: llama
+  quant: Q4_K_M
+  parameters_m: 70000
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: mradermacher/Hermes-3-Llama-3.1-70B-Uncensored-i1-GGUF
+    file: Hermes-3-Llama-3.1-70B-Uncensored.i1-Q4_K_M.gguf
+  size_bytes: 42520399008
+  sha256: ca2e201e8a780b9e40d3b59c95756f8a5364443f783d802696fb828d40e82747

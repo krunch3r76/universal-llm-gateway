@@ -1,0 +1,22 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Qwen2.5-VL-32B-Instruct-q6_k_m
+  format: gguf
+  arch: qwen2vl
+  quant: Q6_K_M
+  parameters_m: 38252
+  training_context_length: 128000
+  supports_chat_history: true
+  input_schema: messages
+  is_vision_model: true
+  vision_architecture: qwen2_vl
+download:
+  huggingface:
+    repo: Mungert/Qwen2.5-VL-32B-Instruct-GGUF
+    verified: true
+    file: Qwen2.5-VL-32B-Instruct-q6_k_m.gguf
+    mmproj_file: Qwen2.5-VL-32B-Instruct-mmproj-f16.gguf
+    local_subdir: Qwen2.5-VL-32B-Instruct
+  size_bytes: 26886154752
+  sha256: 11babfdcab903253cab23f7c0d2ccb6c5ddf5424292c21ed34ff1387e4b1f4c1

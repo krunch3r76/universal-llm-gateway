@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Mistral-7B-Instruct-v0.3.Q4_K_M
+  format: gguf
+  arch: llama
+  quant: Q4_K_M
+  parameters_m: 10200
+  training_context_length: 32768
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF
+    verified: true
+    file: Mistral-7B-Instruct-v0.3.Q4_K_M.gguf
+  size_bytes: 4372811936
+  sha256: 14850c84ff9f06e9b51d505d64815d5cc0cea0257380353ac0b3d21b21f6e024

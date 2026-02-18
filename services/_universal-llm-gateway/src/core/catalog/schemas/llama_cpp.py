@@ -67,6 +67,11 @@ class LlamaCppSchema(BaseEngineSchema):
         if any(i.severity == "error" for i in issues):
             return issues
 
+        # V3 static entries have no loader/devices — skip engine-specific validation
+        catalog_schema = entry.get("catalog_schema", 0)
+        if catalog_schema >= 3 and not entry.get("devices"):
+            return issues
+
         metadata = entry.get("metadata", {})
         loader = entry.get("loader", {})
         devices = entry.get("devices", {})

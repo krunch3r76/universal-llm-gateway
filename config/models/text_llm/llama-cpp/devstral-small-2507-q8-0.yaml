@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Devstral-Small-2507-Q8_0
+  format: gguf
+  family: llama
+  arch: llama
+  training_context_length: 131072
+  license: apache-2.0
+  supports_chat_history: true
+  input_schema: messages
+  quant: Q8_0
+download:
+  huggingface:
+    repo: unsloth/Devstral-Small-2507-GGUF
+    file: Devstral-Small-2507-Q8_0.gguf
+  size_bytes: 25054788576
+  sha256: bd43fa34f9a5fa379143972b3e83b9a4bac74b8e78c08d77234d8e940085aa5e

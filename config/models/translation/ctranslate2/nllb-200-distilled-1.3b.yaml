@@ -1,0 +1,15 @@
+catalog_schema: 3
+schema: ctranslate2
+metadata:
+  name: NLLB-200 Distilled 1.3B
+  format: ct2
+  family: nllb
+  parameters_m: 1300
+  supports_chat_history: false
+  input_schema: prompt
+download:
+  huggingface:
+    repo: null
+    file: null
+  size_bytes: 1401024516
+  sha256: null

@@ -1,0 +1,16 @@
+catalog_schema: 3
+schema: faster-whisper
+metadata:
+  name: whisper-medium
+  format: whisper
+  family: whisper
+  parameters_m: 769
+  license: mit
+  input_schema: audio
+  supports_streaming: true
+download:
+  huggingface:
+    repo: null
+    file: medium.pt
+  size_bytes: 1535000000
+  sha256: 345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1

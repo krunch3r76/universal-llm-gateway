@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: MiniCPM-V-4-Q8_0
+  format: gguf
+  arch: llama
+  quant: Q8_0
+  parameters_m: 4194
+  training_context_length: 32768
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: second-state/MiniCPM-V-4-GGUF
+    verified: true
+    file: MiniCPM-V-4-Q8_0.gguf
+  size_bytes: 3833381696
+  sha256: 4618297c8a2ec285c84dd219d6daaaecd4359a8c92a1fc9bb0d629928be44bad

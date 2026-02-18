@@ -1,0 +1,21 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Ministral-3-8B-Instruct-2512-Q6_K
+  format: gguf
+  arch: mistral3
+  quant: Q6_K
+  parameters_m: 10838
+  training_context_length: 262144
+  supports_chat_history: true
+  input_schema: messages
+  is_vision_model: true
+  vision_architecture: mistral3
+download:
+  huggingface:
+    repo: unsloth/Ministral-3-8B-Instruct-2512-GGUF
+    verified: true
+    file: Ministral-3-8B-Instruct-2512/Ministral-3-8B-Instruct-2512-Q6_K.gguf
+    mmproj_file: Ministral-3-8B-Instruct-2512/mmproj-BF16.gguf
+  size_bytes: 6972872224
+  sha256: c2d0939ba8c980b445097ed00bd3029cfbb937185f3c9a31e26fb62f332c134b

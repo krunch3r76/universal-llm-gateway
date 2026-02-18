@@ -1,0 +1,22 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Qwen2.5-VL-7B-Instruct-UD-Q8_K_XL
+  format: gguf
+  arch: qwen2vl
+  quant: Q8_K_XL
+  parameters_m: 8118
+  training_context_length: 128000
+  supports_chat_history: true
+  input_schema: messages
+  is_vision_model: true
+  vision_architecture: qwen2_vl
+download:
+  huggingface:
+    repo: unsloth/Qwen2.5-VL-7B-Instruct-GGUF
+    verified: true
+    file: Qwen2.5-VL-7B-Instruct-UD-Q8_K_XL.gguf
+    mmproj_file: mmproj-F16.gguf
+    local_subdir: Qwen2.5-VL-7B-Instruct
+  size_bytes: 10192153472
+  sha256: 52381e33c769ff3ec0ed9afb5ba0ef341a868d90b75c3b8b27774616e796e5fe

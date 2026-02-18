@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: vllm
+metadata:
+  name: Phind-CodeLlama-34B-v2-AWQ
+  format: awq
+  family: llama
+  arch: llama
+  quant: awq-4bit
+  training_context_length: 16384
+  supports_chat_history: false
+  input_schema: prompt
+  transformation: codellama-instruct
+download:
+  huggingface:
+    repo: TheBloke/Phind-CodeLlama-34B-v2-AWQ
+    file: null
+  size_bytes: 18309041667
+  sha256: 6e63d06790f3011312431191398c709e7baea0645aaf7fcdc6495ed7a417d875

@@ -1,0 +1,96 @@
+# GPU Edge Node — Parameterized (mode: edge)
+# Single compose file for ALL edge nodes. Per-node values come from env vars.
+#
+# Required environment variables:
+#   NODE_ID    - Hostname identifier (e.g., localhost, jupiter)
+#   MODEL_PATH - Host path to models (e.g., /mnt/torus/models, ~/.models)
+#
+# Usage:
+#   # Via TUI (recommended):
+#   ./manage → Services → Start Gateway
+#
+#   # Manual:
+#   source ~/.gateway/nodes/localhost.env
+#   COMPOSE_PROJECT_NAME=edge-${NODE_ID} docker compose -f docker/compose/gpu-edge.yml up -d
+
+services:
+  edge:
+    image: universal-llm-gateway:gpu
+    container_name: edge-${NODE_ID:?NODE_ID required}
+    pull_policy: never
+    user: ${DOCKER_USER:-}
+
+    env_file:
+      - ./engine-optimizations.env
+
+    network_mode: none
+
+    ipc: shareable
+
+    shm_size: '32gb'
+
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    volumes:
+      - ../../docker/runtime/golem-start.sh:/app/golem-start.sh:ro
+      - ../../config:/app/config:ro
+      - ${MODEL_PATH:?MODEL_PATH required}:/golem/models
+      - ../../tmp/gpu-nodes/${NODE_ID}/logs:/golem/logs
+      - ../../tmp/gpu-nodes/${NODE_ID}/output:/golem/output
+      - ${SOCKET_DIR:-/tmp/universal-protocol}:/tmp/universal-protocol
+      - ${HOME}/.gateway/catalog:/golem/catalog:ro
+      - ${HOME}/.cache/vllm:/golem/vllm_cache:rw
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+
+    environment:
+      APP_DIR: /app
+      MODEL_PATH_ROOT: /golem/models
+      WORKSPACE_ROOT: /app
+      PYTHONPATH: /app/libs
+
+      STARGATE_CONFIG: /app/config/templates/edge-stargate.yaml
+      STARGATE_UNIX_SOCKET: /tmp/universal-protocol/edge-${NODE_ID}.sock
+      REMOTE_ID: edge-${NODE_ID}
+      STARGATE_SOCKET_PATH: /tmp/universal-protocol/edge-${NODE_ID}.sock
+
+      GATEWAY_HOST: 127.0.0.1
+      GATEWAY_PORT: 9998
+
+      GPU_ENABLED: "${GPU_ENABLED:-true}"
+
+      FEDERATION_KEY_EDGE: ${FEDERATION_KEY_EDGE:-}
+
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      ENVIRONMENT: gpu-deployment
+      WORKER_LOG_DIR: /golem/logs/workers
+      SOCKET_DIR: /tmp/universal-protocol
+      MODEL_CACHE_DIR: /golem/models
+
+      GATEWAY_LOCAL_CATALOG_DIR: /golem/catalog
+
+      ENABLE_MODEL_AVAILABILITY_CHECK: "true"
+      ENABLE_MANAGEMENT_API: "true"
+      DISABLE_HEALTH_CHECKING: "false"
+
+    command: ["/app/golem-start.sh", "both"]
+
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -S /tmp/universal-protocol/edge-${NODE_ID}.sock"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+    restart: unless-stopped

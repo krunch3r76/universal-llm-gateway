@@ -1,0 +1,15 @@
+catalog_schema: 3
+schema: ctranslate2
+metadata:
+  name: OPUS-MT Polish-English
+  format: ct2
+  family: opus-mt
+  parameters_m: 74
+  supports_chat_history: false
+  input_schema: prompt
+download:
+  huggingface:
+    repo: null
+    file: null
+  size_bytes: 79960138
+  sha256: null

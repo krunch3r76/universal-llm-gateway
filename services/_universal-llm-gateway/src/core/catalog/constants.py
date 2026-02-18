@@ -1,16 +1,18 @@
 """
-Catalog Constants - V2 Schema Definitions.
+Catalog Constants - V3 Schema Definitions.
 
-V2 Schema:
+V3 Schema:
     - Schema-per-engine pattern
-    - Device-based configuration (gpu, cpu, hybrid)
-    - Engine derived from schema field
+    - Static catalog (config/models/): metadata-only, version-controlled
+    - Local catalog (~/.gateway/catalog/): full operational entry, per-install
+    - catalog_schema: 3 in every file (per-file field, not catalog-level)
     - NO backward compatibility (fail fast on V1 patterns)
 
 Invariants:
     ∀ model: model.schema ∈ VALID_SCHEMAS
     ∀ model: model.metadata.format ∈ VALID_FORMATS
-    ∀ device: device ∈ model.devices ⟹ device ∈ schema.supported_devices
+    ∀ static_entry: ¬loader ∧ ¬devices ∧ ¬activated_*_contexts
+    ∀ local_entry: full operational entry (metadata + loader + devices)
     ¬∃ metadata.engine  (removed in V2)
     ¬∃ configurations  (renamed to devices)
 """
@@ -19,7 +21,10 @@ Invariants:
 # SCHEMA VERSION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-CATALOG_SCHEMA_VERSION = 2
+CATALOG_SCHEMA_VERSION = 3
+
+# Per-file schema version key (present in every catalog YAML file)
+CATALOG_FILE_SCHEMA_KEY = "catalog_schema"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # VALID SCHEMAS (Engine Names)
@@ -83,4 +88,6 @@ HYBRID_DEVICE = "hybrid"
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Reserved keys at model entry level (not device names)
-RESERVED_MODEL_KEYS = frozenset({"schema", "metadata", "loader", "devices", "download"})
+RESERVED_MODEL_KEYS = frozenset(
+    {"catalog_schema", "schema", "metadata", "loader", "devices", "download"}
+)

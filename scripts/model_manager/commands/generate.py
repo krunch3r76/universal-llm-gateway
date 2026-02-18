@@ -6,7 +6,6 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
-from ..api_client import get_api_client
 from ..utils import load_yaml, save_yaml
 
 logger = get_logger(__name__)
@@ -18,10 +17,11 @@ def generate_via_api(
     stargate_url: str,
     model_path: Path | str | None = None,
 ) -> int:
-    """Handle catalog entry generation.
+    """
+    Handle catalog entry generation — dual-write to static and local catalogs.
 
-    Static catalog: write directly to config/models/ (no API, --stargate ignored)
-    Dynamic catalog: POST to Stargate /gateway/models
+    Static catalog: writes metadata-only to config/models/ (no API, --stargate used for reload)
+    Local catalog: writes skeleton (metadata + empty devices) to ~/.gateway/catalog/
 
     Args:
         args: Command arguments
@@ -31,82 +31,48 @@ def generate_via_api(
     """
     import requests
 
-    static = getattr(args, "static", False)
-
-    if static:
-        # Write directly to host filesystem (no API call)
-        from .catalog_writer import write_static_catalog_entry
-
-        failed = 0
-        for model_key, catalog_entry in entries.items():
-            try:
-                file_path, operation = write_static_catalog_entry(
-                    model_key, catalog_entry, allow_overwrite=True
-                )
-                print(f"✅ {model_key} ({operation} at {file_path})")
-            except Exception as e:
-                logger.error(f"Failed to write static catalog for {model_key}: {e}")
-                print(f"❌ {model_key}: {e}", file=sys.stderr)
-                failed += 1
-
-        if failed:
-            print(f"\n{failed}/{len(entries)} model(s) failed", file=sys.stderr)
-            return 1
-
-        print(f"\n{len(entries)} model(s) written to static catalog")
-
-        # Trigger Gateway catalog reload when using Stargate (federated mode)
-        if stargate_url:
-            print("Reloading Gateway catalog...")
-            try:
-                import requests
-
-                response = requests.post(
-                    f"{stargate_url}/gateway/catalog/reload",
-                    timeout=10,
-                )
-                response.raise_for_status()
-                print("✅ Gateway catalog reloaded")
-            except requests.RequestException as e:
-                logger.warning(f"Failed to reload Gateway catalog: {e}")
-                print(
-                    "⚠️  Catalog reload failed - restart services to see updates",
-                    file=sys.stderr,
-                )
-
-        return 0
-
-    # Dynamic catalog: use API (existing behavior)
-    client = get_api_client(
-        stargate_url,
-        api_key=getattr(args, "gateway_api_key", None),
-        timeout=getattr(args, "timeout", None),
-        federated=True,
-    )
-    if not client:
-        print(f"Error: Stargate not reachable at {stargate_url}", file=sys.stderr)
-        return 1
+    from .catalog_writer import write_local_catalog_entry, write_static_catalog_entry
 
     failed = 0
     for model_key, catalog_entry in entries.items():
         try:
-            result, status_code = client.add_model(
-                model_key, catalog_entry, static=False
+            static_path, static_op = write_static_catalog_entry(
+                model_key, catalog_entry, allow_overwrite=True
             )
-            status_label = "Created" if status_code == 201 else "Updated"
-            print(f"✅ {model_key} ({status_label} in dynamic catalog)")
-        except requests.HTTPError as e:
-            response_body = getattr(e.response, "text", "")[:500]
-            print(f"❌ {model_key}: HTTP {e.response.status_code}", file=sys.stderr)
-            if response_body:
-                print(f"   Response: {response_body}", file=sys.stderr)
+            local_path, local_op = write_local_catalog_entry(
+                model_key, catalog_entry, allow_overwrite=True
+            )
+            print(
+                f"✅ {model_key} "
+                f"(static {static_op}: {static_path}, local {local_op}: {local_path})"
+            )
+        except Exception as e:
+            logger.error(f"Failed to write catalog for {model_key}: {e}")
+            print(f"❌ {model_key}: {e}", file=sys.stderr)
             failed += 1
 
     if failed:
         print(f"\n{failed}/{len(entries)} model(s) failed", file=sys.stderr)
         return 1
 
-    print(f"\n{len(entries)} model(s) registered to dynamic catalog via API")
+    print(f"\n{len(entries)} model(s) written to static + local catalog")
+
+    if stargate_url:
+        print("Reloading Gateway catalog...")
+        try:
+            response = requests.post(
+                f"{stargate_url}/gateway/catalog/reload",
+                timeout=10,
+            )
+            response.raise_for_status()
+            print("✅ Gateway catalog reloaded")
+        except requests.RequestException as e:
+            logger.warning(f"Failed to reload Gateway catalog: {e}")
+            print(
+                "⚠️  Catalog reload failed - restart services to see updates",
+                file=sys.stderr,
+            )
+
     return 0
 
 

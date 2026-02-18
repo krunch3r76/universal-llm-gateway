@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Meta-Llama-3.1-8B-Instruct.Q8_0
+  format: gguf
+  arch: llama
+  quant: Q8_0
+  parameters_m: 10200
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: MaziyarPanahi/Meta-Llama-3.1-8B-Instruct-GGUF
+    verified: true
+    file: Meta-Llama-3.1-8B-Instruct.Q8_0.gguf
+  size_bytes: 8540771232
+  sha256: f8d608c983b83a1bf28229bc9beb4294c91f5d4cbfe2c1829566b4d7c4693eeb

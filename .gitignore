@@ -62,10 +62,13 @@ docs/
 prompts/
 tests/
 templates/
+!config/templates/
 .cursorignore
 .github/
 proposals/
+# Model weight/binary files — NOT the static catalog at config/models/
 models/
+!config/models/
 summaries/
 
 .git/

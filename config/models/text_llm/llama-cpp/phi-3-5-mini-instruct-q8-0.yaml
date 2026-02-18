@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Phi-3.5-mini-instruct.Q8_0
+  format: gguf
+  arch: phi3
+  quant: Q8_0
+  parameters_m: 5234
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: MaziyarPanahi/Phi-3.5-mini-instruct-GGUF
+    verified: true
+    file: Phi-3.5-mini-instruct.Q8_0.gguf
+  size_bytes: 4061222624
+  sha256: 210441d16853c418fddc9b7a549238889388d5bec7193a6147606e60f9580426

@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: qwen2.5-7b-instruct-q4_k_m-00001-of-00002
+  format: gguf
+  arch: qwen2
+  quant: Q4_K_M
+  parameters_m: 8118
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: Qwen/Qwen2.5-7B-Instruct-GGUF
+    verified: true
+    file: qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf
+  size_bytes: 3993201344
+  sha256: dfce12e3862a5283ccfb88221b48480e58745165de856439950d0f22590580db

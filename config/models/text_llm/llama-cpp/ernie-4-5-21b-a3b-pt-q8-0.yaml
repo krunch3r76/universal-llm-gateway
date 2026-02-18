@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: ERNIE-4.5-21B-A3B-PT-Q8_0
+  format: gguf
+  arch: ernie4_5-moe
+  quant: Q8_0
+  parameters_m: 3963
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: unsloth/ERNIE-4.5-21B-A3B-PT-GGUF
+    verified: true
+    file: ERNIE-4.5-21B-A3B-PT-Q8_0.gguf
+  size_bytes: 23205355008
+  sha256: d60c6b1d18c3f991847a36d4d4c87d6f31b49d71ca920b8dd22365e2a043dbf2

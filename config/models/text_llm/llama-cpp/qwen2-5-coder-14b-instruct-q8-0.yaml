@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Qwen2.5-Coder-14B-Instruct-Q8_0
+  format: gguf
+  arch: qwen2
+  quant: Q8_0
+  parameters_m: 21894
+  training_context_length: 32768
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: bartowski/Qwen2.5-Coder-14B-Instruct-GGUF
+    verified: true
+    file: Qwen2.5-Coder-14B-Instruct-Q8_0.gguf
+  size_bytes: 15701598432
+  sha256: ceed8d9126648af71bb5b3d1e69c43b25689752ea2c42204a48fea202605adc5

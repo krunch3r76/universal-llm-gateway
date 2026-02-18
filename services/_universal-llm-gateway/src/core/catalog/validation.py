@@ -119,6 +119,8 @@ def validate_catalog(catalog: dict[str, Any]) -> list[ValidationIssue]:
     """
     Validate entire catalog.
 
+    Accepts schema_version 2 or 3 (V3 = static/local split architecture).
+
     Args:
         catalog: Catalog dict with 'models' key
 
@@ -128,20 +130,18 @@ def validate_catalog(catalog: dict[str, Any]) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     models = catalog.get("models", {})
 
-    # Check schema version
     schema_version = catalog.get("schema_version")
-    if schema_version != 2:
+    if schema_version not in (2, 3):
         issues.append(
             ValidationIssue(
                 model_id="_catalog",
                 severity="error",
-                message=f"Expected schema_version=2, got {schema_version}",
+                message=f"Expected schema_version 2 or 3, got {schema_version}",
                 field="schema_version",
-                fix="Migrate catalog to V2 format (run migration script)",
+                fix="Migrate catalog to V3 format (run scripts/migrate_catalog_v3.py)",
             )
         )
 
-    # Validate each model
     for model_id, entry in models.items():
         issues.extend(validate_model(model_id, entry))
 

@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: nomic-embed-text-v1.5.Q8_0
+  format: gguf
+  arch: nomic-bert
+  quant: Q8_0
+  parameters_m: 141
+  training_context_length: 2048
+  supports_chat_history: false
+  input_schema: prompt
+download:
+  huggingface:
+    repo: nomic-ai/nomic-embed-text-v1.5-GGUF
+    verified: true
+    file: nomic-embed-text-v1.5.Q8_0.gguf
+  size_bytes: 146146432
+  sha256: 3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7

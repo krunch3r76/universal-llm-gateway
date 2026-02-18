@@ -169,15 +169,15 @@ curl -X POST http://localhost:9999/v1/chat/completions \
 
 Expected: Response with generated text.
 
-## Architecture: Static vs Dynamic Catalog
+## Architecture: Static vs Local Catalog
 
-| Operation | Static Catalog | Dynamic Catalog |
-|-----------|----------------|-----------------|
-| Write location | Host: `config/models/` | Container: `GATEWAY_DYNAMIC_CATALOG_DIR` |
-| Write method | CLI direct file write | API: `POST /gateway/models` |
-| Persistence | Version-controlled (git) | Ephemeral (container lifecycle) |
-| Use case | Maintainer-managed models | Runtime-added models |
-| Reload needed | Yes (restart Gateway) | No (immediate) |
+| Operation | Static Catalog | Local Catalog |
+|-----------|----------------|---------------|
+| Write location | Host: `config/models/` | Host: `~/.gateway/catalog/` |
+| Write method | CLI direct file write (metadata-only) | CLI direct file write (full entry) |
+| Persistence | Version-controlled (git) | Per-install (`~/.gateway/`, gitignored) |
+| Use case | Model metadata + provenance | Operational entries with measured profiles |
+| Reload needed | Yes (trigger catalog reload) | Yes (trigger catalog reload) |
 
 ## Troubleshooting
 

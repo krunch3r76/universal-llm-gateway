@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: EsotericKnowledge-24B.Q8_0
+  format: gguf
+  family: llama
+  arch: llama
+  parameters_m: 24000
+  training_context_length: 32768
+  supports_chat_history: true
+  input_schema: messages
+  quant: Q8_0
+download:
+  huggingface:
+    repo: mradermacher/EsotericKnowledge-24B-GGUF
+    file: EsotericKnowledge-24B.Q8_0.gguf
+  size_bytes: 25054802816
+  sha256: 2931543eed738b339fd9c5ed09479d26381bd656872f7566437ade665aa1cd6a

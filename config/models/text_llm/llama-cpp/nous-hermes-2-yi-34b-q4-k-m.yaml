@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Nous-Hermes-2-Yi-34B.Q4_K_M
+  format: gguf
+  family: llama
+  arch: llama
+  quant: Q4_K_M
+  parameters_m: 34000
+  training_context_length: 4096
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: TheBloke/Nous-Hermes-2-Yi-34B-GGUF
+    file: nous-hermes-2-yi-34b.Q4_K_M.gguf
+  size_bytes: 20658710752
+  sha256: 1e4c3c51f09865a4e9e231aa6d88c412f45273f9a16b851b50d1fb3a094df530

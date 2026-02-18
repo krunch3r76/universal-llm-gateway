@@ -1,0 +1,17 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: gemma-3-27b-it-Q8_0
+  format: gguf
+  family: gemma
+  arch: gemma3
+  parameters_m: 27000
+  supports_chat_history: true
+  input_schema: messages
+  quant: Q8_0
+download:
+  huggingface:
+    repo: unsloth/gemma-3-27b-it-GGUF
+    file: gemma-3-27b-it-Q8_0.gguf
+  size_bytes: 28707972192
+  sha256: 4f8cb99283aa9ed7926280a372e0b04224d2be0b790a03b5ad85d25a18906499

@@ -1,0 +1,19 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Qwen2.5-32B-Instruct-abliterated.Q4_K_M
+  description: Larger context, good instruction following
+  format: gguf
+  family: qwen
+  arch: qwen2
+  quant: Q4_K_M
+  parameters_m: 32000
+  training_context_length: 32768
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: mradermacher/Qwen2.5-32B-Instruct-abliterated-GGUF
+    file: Qwen2.5-32B-Instruct-abliterated.Q4_K_M.gguf
+  size_bytes: 19851336864
+  sha256: e63617fd56c8585fe78fe05bcbb3b36e0b5ef3857e11233cdd1dc9ba56f38001

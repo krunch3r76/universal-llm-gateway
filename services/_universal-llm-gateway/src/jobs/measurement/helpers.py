@@ -81,22 +81,21 @@ async def update_catalog_with_results(
     use_static: bool = False,
 ) -> None:
     """
-    Update catalog with measurement results.
+    Update local catalog (~/.gateway/catalog/) with measurement results.
 
-    For use_static=True: Skip catalog write (CLI handles it on host)
-    For use_static=False: Update local/dynamic catalog (unchanged)
+    use_static=True: Skip (CLI dual-writes to both catalogs on host)
+    use_static=False: Update local catalog via inference_djinn
 
     Args:
         model_id: Model identifier
         mode: Measurement mode (gpu, cpu, auto)
         results: Profile results to write to catalog
         emit_log: Logging callback for job progress
-        use_static: If True, skip (CLI handles static writes on host filesystem)
+        use_static: If True, skip (CLI handles dual-write on host filesystem)
     """
     if use_static:
-        # Static catalog writes are handled by CLI (host filesystem access)
-        # Gateway has read-only /app/config mount
-        emit_log("📝 Static catalog update skipped (CLI will write to host)")
+        # Dual-write handled by CLI (host filesystem access for both catalogs)
+        emit_log("📝 Catalog update skipped (CLI will dual-write to host)")
         return
 
     from inference_djinn.catalog.local_config import load_local_catalog

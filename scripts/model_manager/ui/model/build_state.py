@@ -1,0 +1,135 @@
+"""Build state - tracks Docker GPU image build status and config."""
+
+import json
+import logging
+import shutil
+import subprocess
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+logger = logging.getLogger(__name__)
+
+IMAGE_NAME = "universal-llm-gateway"
+IMAGE_TAG = "gpu"
+FULL_IMAGE = f"{IMAGE_NAME}:{IMAGE_TAG}"
+
+
+class BuildStatus(StrEnum):
+    NOT_BUILT = "not_built"
+    BUILT = "built"
+    BUILDING = "building"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+
+
+@dataclass(slots=True, kw_only=True)
+class ImageConfig:
+    """Build configuration extracted from image labels."""
+
+    cpu: str = ""
+    gpu_arch: str = ""
+    vllm: bool = False
+    cuda: str = ""
+
+    def summary(self) -> str:
+        parts = []
+        if self.cpu:
+            parts.append(f"CPU={self.cpu}")
+        if self.gpu_arch:
+            parts.append(f"GPU={self.gpu_arch}")
+        parts.append(f"vLLM={'yes' if self.vllm else 'no'}")
+        if self.cuda:
+            parts.append(f"CUDA {self.cuda}")
+        return "  ".join(parts)
+
+
+@dataclass(slots=True, kw_only=True)
+class ImageInfo:
+    status: BuildStatus
+    image_id: str = ""
+    created: str = ""
+    size: str = ""
+    config: ImageConfig = field(default_factory=ImageConfig)
+
+
+class BuildState:
+    """
+    Check whether the Docker GPU image exists and its build configuration.
+
+    Build operations are delegated to docker/scripts/build/build-gpu.sh
+    by the ServiceController (not handled here).
+    """
+
+    def check_image(self) -> ImageInfo:
+        if not shutil.which("docker"):
+            return ImageInfo(status=BuildStatus.UNKNOWN)
+        try:
+            result = subprocess.run(
+                [
+                    "docker",
+                    "image",
+                    "inspect",
+                    FULL_IMAGE,
+                    "--format",
+                    "{{.ID}}\t{{.Created}}\t{{.Size}}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return ImageInfo(status=BuildStatus.NOT_BUILT)
+
+            parts = result.stdout.strip().split("\t")
+            return ImageInfo(
+                status=BuildStatus.BUILT,
+                image_id=parts[0][:12] if parts else "",
+                created=parts[1] if len(parts) > 1 else "",
+                size=self._format_size(parts[2]) if len(parts) > 2 else "",
+                config=self._read_labels(),
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.warning("Docker inspect failed: %s", e)
+            return ImageInfo(status=BuildStatus.UNKNOWN)
+
+    @staticmethod
+    def _read_labels() -> ImageConfig:
+        try:
+            result = subprocess.run(
+                [
+                    "docker",
+                    "image",
+                    "inspect",
+                    FULL_IMAGE,
+                    "--format",
+                    "{{json .Config.Labels}}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode != 0:
+                return ImageConfig()
+            labels = json.loads(result.stdout.strip())
+            return ImageConfig(
+                cpu=labels.get("cpu.optimization", ""),
+                gpu_arch=labels.get("gpu.arch", ""),
+                vllm=labels.get("vllm.enabled", "false") == "true",
+                cuda=labels.get("gpu.cuda_version", ""),
+            )
+        except (
+            subprocess.TimeoutExpired,
+            json.JSONDecodeError,
+            FileNotFoundError,
+        ) as e:
+            logger.warning("Failed to read image labels: %s", e)
+            return ImageConfig()
+
+    @staticmethod
+    def _format_size(size_str: str) -> str:
+        try:
+            size_bytes = int(size_str)
+            gb = size_bytes / (1024**3)
+            return f"{gb:.1f} GB"
+        except ValueError:
+            return size_str

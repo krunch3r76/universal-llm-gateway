@@ -1,0 +1,23 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: llava-v1.6-vicuna-13b.Q8_0
+  format: gguf
+  arch: llama
+  quant: Q8_0
+  parameters_m: 18245
+  training_context_length: 4096
+  supports_chat_history: true
+  input_schema: messages
+  is_vision_model: true
+  vision_architecture: llava_1_6
+  tokens_per_image: 2880
+download:
+  huggingface:
+    repo: cjpais/llava-v1.6-vicuna-13b-gguf
+    verified: true
+    file: llava-v1.6-vicuna-13b.Q8_0.gguf
+    mmproj_file: mmproj-model-f16.gguf
+    local_subdir: llava-v1.6-vicuna-13b
+  size_bytes: 13831319552
+  sha256: 0ad4b052e935703dfeb9acb549fcf9d5d7cb8d04338a3861c1eb9cba3f95eefb

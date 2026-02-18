@@ -1,0 +1,17 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: starcoder2-15b-instruct-v0.1.Q8_0
+  format: gguf
+  family: starcoder2
+  arch: starcoder2
+  parameters_m: 15000
+  supports_chat_history: true
+  input_schema: messages
+  quant: Q8_0
+download:
+  huggingface:
+    repo: mradermacher/starcoder2-15b-instruct-v0.1-GGUF
+    file: starcoder2-15b-instruct-v0.1.Q8_0.gguf
+  size_bytes: 16965110688
+  sha256: 1bbaf40679614503ad8a312446abc3ab1da4755128ae191ea3a64752099a058b

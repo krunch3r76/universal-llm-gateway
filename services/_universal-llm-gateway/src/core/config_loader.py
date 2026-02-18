@@ -167,7 +167,7 @@ class ConfigLoader:
         """
         Load model configuration from model catalog.
 
-        Uses CatalogLoader to load and merge static + dynamic catalogs,
+        Uses CatalogLoader to load and merge static + local catalogs,
         then converts to the legacy model_loaders format expected by ModelRegistry.
 
         Args:

@@ -165,7 +165,11 @@ class FederationIntegration:
                 f"allowed_peers={self._config.allowed_peers}"
             )
 
-            if gateway_manager is not None and self._config.allowed_peers:
+            can_federate = bool(
+                self._config.allowed_peers or not self._config.federation_auth_enabled
+            )
+
+            if gateway_manager is not None and can_federate:
                 self._edge_server = EdgeFederationServer(self._config, gateway_manager)
 
                 # Mount WebSocket endpoint for telemetry
@@ -175,9 +179,10 @@ class FederationIntegration:
                 self._mount_edge_http_endpoints(app, gateway_manager)
 
                 peer_ids = [p.stargate_id for p in self._config.allowed_peers]
+                auth_label = "auth" if self._config.federation_auth_enabled else "open"
                 logger.info(
                     f"Edge mode: /ws/federation/edge + HTTP endpoints mounted "
-                    f"(allowed_peers={peer_ids})"
+                    f"(allowed_peers={peer_ids}, {auth_label})"
                 )
             elif gateway_manager is not None:
                 logger.info("Edge mode: no allowed_peers - federation disabled")

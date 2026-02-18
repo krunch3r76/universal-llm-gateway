@@ -1,0 +1,20 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Wizard-Vicuna-30B-Uncensored.Q4_K_M
+  format: gguf
+  family: llama
+  arch: llama
+  quant: Q4_K_M
+  parameters_m: 30000
+  training_context_length: 2048
+  license: cc-by-nc-4.0
+  supports_chat_history: true
+  input_schema: prompt
+  transformation: wizard-vicuna
+download:
+  huggingface:
+    repo: TheBloke/Wizard-Vicuna-30B-Uncensored-GGUF
+    file: Wizard-Vicuna-30B-Uncensored.Q4_K_M.gguf
+  size_bytes: 19621139904
+  sha256: 857bd2d43848d0dc80cd608f4d580d80245cdb62828572d4352fea4efeae292b

@@ -1,0 +1,16 @@
+catalog_schema: 3
+schema: vllm
+metadata:
+  name: GLM-4-9B-0414
+  format: hf
+  family: unknown
+  arch: unknown
+  training_context_length: 32768
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: zai-org/GLM-4-9B-0414
+    file: null
+  size_bytes: 18820584952
+  sha256: f428f8621a3b09c8dc85640d35b147fd52515c4de3eeed71a0bd24fe28a475e8

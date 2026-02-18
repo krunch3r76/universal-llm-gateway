@@ -1,29 +1,28 @@
 """
-Catalog Entry Generator - V2 Schema-Per-Engine Format.
+Catalog Entry Generator - V3 Static-Only Format.
 
-Generates model catalog entries for the Universal LLM Gateway.
+Generates static catalog entries for the Universal LLM Gateway.
 
-V2 Schema:
+V3 Static Schema:
+    - catalog_schema: 3
     - schema: Engine reference (llama-cpp, vllm, etc.)
     - metadata: Model info (format, family, etc.) - NO engine field
-    - loader: Default loader parameters
-    - devices: Device configurations (gpu, cpu)
     - download: HuggingFace source info
+
+Generated entries contain NO loader or devices sections.
+Those are written to the local catalog (~/.gateway/catalog/) after measurement.
 
 Usage:
     from inference_djinn.catalog.generator import generate_catalog_entry
 
     entry = generate_catalog_entry(model_path)
-    # Returns V2 format entry
-
-Note:
-    Generated entries have EMPTY profiles - they must be empirically
-    measured using model-manager measure.
+    # Returns V3 static format entry (metadata-only)
 """
 
-from universal_logging import get_logger
 from pathlib import Path
 from typing import Any
+
+from universal_logging import get_logger
 
 from .discovery import DiscoveredModel, ModelDiscovery, ModelFormat
 from .extractor import CatalogMetadata, MetadataExtractor
@@ -192,18 +191,18 @@ class CatalogEntryGenerator:
         metadata: CatalogMetadata,
         hf_source: HFSource | None,
     ) -> dict[str, Any]:
-        """Build complete catalog entry in V2 format."""
+        """Build static catalog entry in V3 format (metadata-only, no loader/devices)."""
+        meta = metadata.to_catalog_metadata()
+
+        # V3: engine derived from schema, not stored in metadata
+        meta.pop("engine", None)
+
         entry: dict[str, Any] = {
+            "catalog_schema": 3,
             "schema": self._get_schema_for_format(model.format),
-            "metadata": metadata.to_catalog_metadata(),
-            "loader": self._build_loader(model),
-            "devices": self._build_devices(model),
+            "metadata": meta,
             "download": self._build_download(model, hf_source),
         }
-
-        # Remove engine from metadata (V2: derived from schema)
-        if "engine" in entry["metadata"]:
-            del entry["metadata"]["engine"]
 
         return entry
 
@@ -236,99 +235,6 @@ class CatalogEntryGenerator:
                 logger.debug(f"Could not compute SHA256: {e}")
 
         return result
-
-    def _build_loader(
-        self,
-        model: DiscoveredModel,
-    ) -> dict[str, Any]:
-        """
-        Build loader section with engine defaults.
-
-        V2: 'loader' replaces 'base_loader' at entry level.
-        """
-        if model.format == ModelFormat.GGUF:
-            return {
-                "f16_kv": True,
-                "use_mmap": False,
-                "use_mlock": True,
-                "verbose": False,
-                "n_batch": 512,
-            }
-
-        elif model.format in (ModelFormat.HF, ModelFormat.AWQ, ModelFormat.GPTQ):
-            return {
-                "trust_remote_code": False,
-                "gpu_memory_utilization": 0.95,
-                "dtype": "auto",
-                "disable_custom_all_reduce": True,
-                "disable_log_stats": True,
-            }
-
-        elif model.format == ModelFormat.EXL3:
-            return {
-                "max_batch_size": 1,
-                "max_input_len": 8192,
-                "max_output_len": 4096,
-            }
-
-        elif model.format == ModelFormat.WHISPER:
-            return {
-                "beam_size": 5,
-            }
-
-        return {}
-
-    def _build_devices(
-        self,
-        model: DiscoveredModel,
-    ) -> dict[str, Any]:
-        """
-        Build devices section with V2 schema structure.
-
-        V2 Structure:
-            devices:
-                gpu:
-                    profiles: {}  # Empty - requires measurement
-                cpu:  # Optional, only for engines that support CPU
-                    profiles: {}
-
-        Profiles are intentionally empty - they must be empirically measured.
-        """
-        devices: dict[str, Any] = {}
-
-        if model.format == ModelFormat.GGUF:
-            # llama-cpp supports gpu, cpu, hybrid
-            devices["gpu"] = {"profiles": {}}
-            devices["cpu"] = {"profiles": {}}
-
-        elif model.format in (ModelFormat.HF, ModelFormat.AWQ, ModelFormat.GPTQ):
-            # vLLM is GPU-only
-            devices["gpu"] = {"profiles": {}}
-
-        elif model.format == ModelFormat.EXL3:
-            # ExLlamaV3 is GPU-only
-            devices["gpu"] = {"profiles": {}}
-
-        elif model.format == ModelFormat.WHISPER:
-            # faster-whisper supports gpu and cpu
-            devices["gpu"] = {
-                "profiles": {},
-                "loader": {
-                    "device": "cuda",
-                    "compute_type": "float16",
-                    "cpu_threads": 4,
-                },
-            }
-            devices["cpu"] = {
-                "profiles": {},
-                "loader": {
-                    "device": "cpu",
-                    "compute_type": "int8",
-                    "cpu_threads": 8,
-                },
-            }
-
-        return devices
 
     @classmethod
     def format_yaml(cls, entries: dict[str, dict[str, Any]]) -> str:

@@ -1,0 +1,29 @@
+catalog_schema: 3
+schema: diffusers
+metadata:
+  name: flux.2-dev
+  format: flux2
+  family: flux
+  parameters_m: 12000
+  license: non-commercial
+  supports_chat_history: false
+  input_schema: prompt
+  supports_streaming: false
+  description: Flux.2-dev text-to-image diffusion model
+  capabilities:
+    - text-to-image
+    - high-quality
+    - artistic
+  supported_sizes:
+    - 512x512
+    - 768x768
+    - 1024x1024
+    - 1280x1280
+    - 1536x1536
+    - 2048x2048
+download:
+  huggingface:
+    repo: black-forest-labs/FLUX.2-dev
+    file: null
+  size_bytes: 57885945035
+  sha256: null

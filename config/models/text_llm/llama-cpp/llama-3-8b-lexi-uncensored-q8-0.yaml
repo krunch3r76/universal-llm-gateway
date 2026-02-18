@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Llama-3-8B-Lexi-Uncensored.Q8_0
+  format: gguf
+  arch: llama
+  quant: Q8_0
+  parameters_m: 10200
+  training_context_length: 8192
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: QuantFactory/Llama-3-8B-Lexi-Uncensored-GGUF
+    verified: true
+    file: Llama-3-8B-Lexi-Uncensored.Q8_0.gguf
+  size_bytes: 8541283648
+  sha256: 9ab93705f4e0b0ce6ad69ed2072d625c2d6f357db567154fb007bf90e7a8c3d6

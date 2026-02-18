@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: DarkIdol-Llama-3.1-8B-Instruct-1.2-Uncensored.i1-Q4_K_M
+  format: gguf
+  arch: llama
+  quant: Q4_K_M
+  parameters_m: 10200
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: mradermacher/DarkIdol-Llama-3.1-8B-Instruct-1.2-Uncensored-i1-GGUF
+    verified: true
+    file: DarkIdol-Llama-3.1-8B-Instruct-1.2-Uncensored.i1-Q4_K_M.gguf
+  size_bytes: 4920735872
+  sha256: 1ffaf6ae82ee73277fee646988c1100bc9d3bd8d91fbcd43f3e1b78c95e0cd40
