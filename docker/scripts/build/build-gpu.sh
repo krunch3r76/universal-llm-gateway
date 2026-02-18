@@ -112,7 +112,7 @@ VLLM_MAX_JOBS="${VLLM_MAX_JOBS:-8}"
 LLAMA_CPP_PYTHON_VERSION="${LLAMA_CPP_PYTHON_VERSION:-}"
 
 
-ENABLE_LLAMA_CPP_PYTHON="${ENABLE_LLAMA_CPP_PYTHON:-true}"
+ENABLE_LLAMA_CPP_PYTHON="${ENABLE_LLAMA_CPP_PYTHON:-false}"
 # Default: Build native llama-server for native integration
 ENABLE_LLAMA_SERVER="${ENABLE_LLAMA_SERVER:-true}"
 # Default: Use latest llama.cpp main branch
@@ -231,14 +231,6 @@ while [[ $# -gt 0 ]]; do
             ENABLE_LLAMA_SERVER="true"
             shift
             ;;
-        --no-llama-cpp-python)
-            ENABLE_LLAMA_CPP_PYTHON="false"
-            shift
-            ;;
-        --with-llama-cpp-python)
-            ENABLE_LLAMA_CPP_PYTHON="true"
-            shift
-            ;;
         --llama-server-version=*)
             LLAMA_SERVER_VERSION="${1#*=}"
             shift
@@ -262,9 +254,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --vllm-wheel        Use pre-built wheel (faster, requires CUDA 12.x)"
             echo "  --vllm-jobs=N       Max parallel jobs for source build (default: 8)"
             echo ""
-            echo "llama-cpp-python Options:"
-            echo "  --no-llama-cpp-python        Skip llama-cpp-python (use llama-server only)"
-            echo "  --with-llama-cpp-python      Build llama-cpp-python (default)"
+            echo "llama-cpp-python Options (disabled by default):"
+            echo "  --no-llama-cpp-python            Skip llama-cpp-python (default)"
+            echo "  --with-llama-cpp-python          Build llama-cpp-python Python bindings"
             echo "  --llama-cpp-python-version=HASH/TAG  Pin version (default: latest)"
             echo "                                        Example: ce6fd8b (Aug 14, 2025) or v0.3.8"
             echo ""
@@ -273,10 +265,6 @@ while [[ $# -gt 0 ]]; do
             echo "PyTorch Nightly Options:"
             echo "  --torch-nightly-date=YYYYMMDD  Pin to specific nightly (default: 20260111)"
             echo "  --torch-nightly-latest         Use latest nightly (may fail if deps broken)"
-            echo ""
-            echo "llama-cpp-python Options (disabled by default):"
-            echo "  --no-llama-cpp-python            Skip llama-cpp-python (default)"
-            echo "  --with-llama-cpp-python          Build llama-cpp-python Python bindings"
             echo ""
             echo "llama-server Options:"
             echo "  --no-llama-server               Skip llama-server build"
@@ -302,11 +290,10 @@ while [[ $# -gt 0 ]]; do
             echo "  VLLM_FROM_SOURCE=true|false (default: true, source build)"
             echo "  VLLM_BUILD_ARGS='--portable' (source build args)"
             echo "  VLLM_MAX_JOBS=8 (source build parallelism)"
-    echo "  ENABLE_LLAMA_CPP_PYTHON=true|false (default: true)"
-    echo "  LLAMA_CPP_PYTHON_VERSION=hash/tag (default: empty = latest)"
-    echo "  VLLM_VERSION=hash/tag (default: empty = latest release)"
-    echo "  TORCH_NIGHTLY_DATE=YYYYMMDD|latest (default: 20260111)"
-    echo "  ENABLE_LLAMA_CPP_PYTHON=true|false (default: false)"
+            echo "  ENABLE_LLAMA_CPP_PYTHON=true|false (default: false)"
+            echo "  LLAMA_CPP_PYTHON_VERSION=hash/tag (default: empty = latest)"
+            echo "  VLLM_VERSION=hash/tag (default: empty = latest release)"
+            echo "  TORCH_NIGHTLY_DATE=YYYYMMDD|latest (default: 20260111)"
             echo "  ENABLE_LLAMA_SERVER=true|false (default: true)"
             echo "  LLAMA_SERVER_VERSION=ref (default: main)"
             echo "  IMAGE_NAME=universal-llm-gateway"
@@ -386,14 +373,11 @@ if [[ "${ENABLE_VLLM}" == "true" ]]; then
 fi
 echo "  llama-cpp-python: ${ENABLE_LLAMA_CPP_PYTHON}"
 if [[ "${ENABLE_LLAMA_CPP_PYTHON}" == "true" ]]; then
-echo "  llama-cpp-python: ${ENABLE_LLAMA_CPP_PYTHON}"
-if [[ "${ENABLE_LLAMA_CPP_PYTHON}" == "true" ]]; then
     if [ -z "${LLAMA_CPP_PYTHON_VERSION}" ]; then
         echo "    (version: latest from main)"
     else
         echo "    (version: ${LLAMA_CPP_PYTHON_VERSION})"
     fi
-fi
 fi
 if [ -z "${VLLM_VERSION}" ]; then
     echo "  vLLM: latest release tag"
