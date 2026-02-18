@@ -1,5 +1,7 @@
 """Home screen - dashboard with service status and quick actions."""
 
+import os
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
@@ -224,12 +226,24 @@ class HomeScreen(Screen):
         )
 
         search_paths = app.local_env.model_search_paths  # type: ignore[attr-defined]
-        paths_lines = "  ".join(str(p) for p in search_paths)
-        exists_hint = (
-            "" if all(p.is_dir() for p in search_paths) else " [yellow](not found)[/]"
-        )
+        path_parts: list[str] = []
+        for p in search_paths:
+            if p.is_dir():
+                if p.stat().st_uid == 0 and os.getuid() != 0:
+                    uid, gid = os.getuid(), os.getgid()
+                    path_parts.append(
+                        f"{p} [red](root-owned — fix: sudo chown -R {uid}:{gid} {p})[/]"
+                    )
+                else:
+                    path_parts.append(str(p))
+            else:
+                try:
+                    p.mkdir(parents=True, exist_ok=True)
+                    path_parts.append(f"{p} [green](created)[/]")
+                except PermissionError:
+                    path_parts.append(f"{p} [red](permission denied)[/]")
         self.query_one("#model-paths", Static).update(
-            f"\n  [b]Model search path:[/b] {paths_lines}{exists_hint}"
+            f"\n  [b]Model search path:[/b] {'  '.join(path_parts)}"
         )
 
         catalog = app.catalog  # type: ignore[attr-defined]
