@@ -71,6 +71,8 @@ services:
       GPU_ENABLED: "${GPU_ENABLED:-true}"
 
       FEDERATION_KEY_EDGE: ${FEDERATION_KEY_EDGE:-}
+      MASTER_STARGATE_ID: "${MASTER_STARGATE_ID:-master-localhost}"
+      MASTER_API_KEY: "${MASTER_API_KEY:-onboarding-dev-key}"
 
       LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
       ENVIRONMENT: gpu-deployment

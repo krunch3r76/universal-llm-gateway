@@ -35,6 +35,9 @@ proxy:
 federation:
   mode: edge
   stargate_id: "${REMOTE_ID}"
+  allowed_peers:
+    - stargate_id: "${MASTER_STARGATE_ID}"
+      api_key: "${MASTER_API_KEY}"
 
 # Network-isolated edge — auth unnecessary (Unix socket from trusted host only)
 authorization:
