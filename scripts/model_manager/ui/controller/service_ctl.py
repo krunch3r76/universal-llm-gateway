@@ -283,53 +283,59 @@ class ServiceController:
             return f"Stargate starting (PID {process.pid})."
 
     async def stop_stargate(self) -> str:
-        """Stop Stargate by PID (persisted in ~/.gateway/stargate.pid).
+        """Stop Stargate regardless of whether the PID file is current.
 
-        Guards against stale/recycled PIDs by requiring both:
-        the PID is alive AND port 9999 is open.
+        Three cases handled in order:
+        1. PID file present and alive → SIGTERM the recorded PID.
+        2. PID file absent/stale but port open → locate listener via ss(8).
+        3. Port closed → nothing to do.
         """
         pid_file = _GATEWAY_DIR / "stargate.pid"
         port = ServiceState.STARGATE_PORT
         port_open = self._service_state._port_open(port)
 
-        if not pid_file.exists():
-            if port_open:
+        recorded_pid: int | None = None
+        if pid_file.exists():
+            try:
+                recorded_pid = int(pid_file.read_text().strip())
+            except (ValueError, OSError) as e:
+                logger.error("Corrupt PID file %s: %s", pid_file, e)
+                pid_file.unlink(missing_ok=True)
+
+        if recorded_pid is not None and self._service_state._pid_alive(recorded_pid):
+            if not port_open:
+                pid_file.unlink(missing_ok=True)
                 return (
-                    f"Port {port} is open but no PID file at {pid_file}.\n"
-                    "Stargate may have been started outside the TUI."
+                    f"PID {recorded_pid} is alive but port {port} is closed — "
+                    "not Stargate. Stale PID file removed."
                 )
+            return self._kill_stargate_pid(recorded_pid, pid_file)
+
+        # PID dead or no valid file — clean up and try to find the real listener.
+        pid_file.unlink(missing_ok=True)
+        if not port_open:
+            if recorded_pid is not None:
+                return f"Stale PID file removed (PID {recorded_pid} already dead)."
             return "Stargate is not running."
 
-        try:
-            pid = int(pid_file.read_text().strip())
-        except (ValueError, OSError) as e:
-            logger.error("Corrupt PID file %s: %s", pid_file, e)
-            pid_file.unlink(missing_ok=True)
-            return f"Corrupt PID file removed: {e}"
-
-        alive = self._service_state._pid_alive(pid)
-        if not alive:
-            pid_file.unlink(missing_ok=True)
-            if port_open:
-                return (
-                    f"Stale PID {pid} (dead), but port {port} is still open.\n"
-                    "Another process may hold the port."
-                )
-            return f"Stale PID file removed (PID {pid} already dead)."
-
-        if not port_open:
-            pid_file.unlink(missing_ok=True)
+        listener = self._service_state._find_listener_pid(port)
+        if listener is None:
             return (
-                f"PID {pid} is alive but port {port} is closed — "
-                "not Stargate. Stale PID file removed."
+                f"Port {port} is open but the listener could not be identified.\n"
+                "Run: ss -tlnp 'sport = :9999'"
             )
+        return self._kill_stargate_pid(listener, None)
 
+    def _kill_stargate_pid(self, pid: int, pid_file: Path | None) -> str:
+        """Send SIGTERM to pid; remove pid_file if provided."""
         try:
             os.kill(pid, signal.SIGTERM)
-            pid_file.unlink(missing_ok=True)
+            if pid_file is not None:
+                pid_file.unlink(missing_ok=True)
             return f"Sent SIGTERM to Stargate (PID {pid})."
         except ProcessLookupError:
-            pid_file.unlink(missing_ok=True)
+            if pid_file is not None:
+                pid_file.unlink(missing_ok=True)
             return "Stargate already exited."
         except PermissionError as e:
             logger.error("Cannot kill Stargate PID %d: %s", pid, e)

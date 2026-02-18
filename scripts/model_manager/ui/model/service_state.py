@@ -1,6 +1,7 @@
 """Service state - tracks Gateway and Stargate process/container health."""
 
 import logging
+import re
 import shutil
 import socket
 import subprocess
@@ -155,3 +156,25 @@ class ServiceState:
             return True
         except OSError:
             return False
+
+    @staticmethod
+    def _find_listener_pid(port: int) -> int | None:
+        """Find PID of the process listening on port using ss(8).
+
+        Preferred over lsof: faster, part of iproute2 (universally available
+        on Linux). Returns None if ss is unavailable or the port has no
+        identifiable listener (e.g. owned by another user).
+        """
+        try:
+            result = subprocess.run(
+                ["ss", "-Htlnp", f"sport = :{port}"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            m = re.search(r"pid=(\d+)", result.stdout)
+            if m:
+                return int(m.group(1))
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.warning("ss lookup failed for port %d: %s", port, e)
+        return None

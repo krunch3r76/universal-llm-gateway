@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 
 def _validate_gpu_requirement(
-    engine_type: str, loader_config: dict, model_id: str
+    engine_type: str, loader_config: dict[str, Any], model_id: str
 ) -> tuple[bool, str]:
     """
     Validate GPU requirement for engine and fail-fast if unavailable.
@@ -63,34 +63,33 @@ def _validate_gpu_requirement(
 
     # Validate GPU availability by engine type
     if engine_type == "native":
-        try:
-            from llama_cpp import llama_supports_gpu_offload
+        from src.core.gpu_detection import GPUCapabilities
 
-            if not llama_supports_gpu_offload():
-                error_msg = (
-                    f"❌ FAIL-FAST: Cannot load model '{model_id}' - "
-                    f"GPU required but llama-cpp not built with CUDA\n"
-                    f"   Model config: {gpu_requirement_reason}\n"
-                    f"   This check prevents silent CPU fallback which would "
-                    f"cause severe performance degradation.\n"
-                    f"   Resolution: Rebuild llama-cpp-python with CUDA support."
-                )
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
-            else:
-                logger.info(
-                    f"✅ [worker] GPU validation passed - llama-cpp has CUDA "
-                    f"support for {gpu_requirement_reason}"
-                )
-        except ImportError as e:
+        if not GPUCapabilities.is_llama_server_available():
             error_msg = (
                 f"❌ FAIL-FAST: Cannot load model '{model_id}' - "
-                f"GPU required but llama-cpp not available\n"
+                f"GPU required but llama-server binary not found\n"
                 f"   Model config: {gpu_requirement_reason}\n"
-                f"   Resolution: Install llama-cpp-python: {e}"
+                f"   Resolution: Ensure llama-server is installed at "
+                f"/opt/llama-server/bin or on PATH."
             )
             logger.error(error_msg)
             raise RuntimeError(error_msg)
+
+        if not GPUCapabilities.is_hardware_gpu_available():
+            error_msg = (
+                f"❌ FAIL-FAST: Cannot load model '{model_id}' - "
+                f"GPU required but no GPU hardware detected\n"
+                f"   Model config: {gpu_requirement_reason}\n"
+                f"   Resolution: Ensure GPU is accessible (check nvidia-smi)."
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        logger.info(
+            f"✅ [worker] GPU validation passed - llama-server binary present "
+            f"and hardware GPU available for {gpu_requirement_reason}"
+        )
 
     else:  # vllm, diffusers, faster-whisper all require PyTorch
         try:
@@ -154,7 +153,8 @@ class EngineLifecycle:
                 loader_config = loader_config.copy()
                 loader_config["clip_model_path"] = self._resolve_model_path(clip_path)
                 logger.info(
-                    f"🔧 [worker] Resolved clip_model_path: {loader_config['clip_model_path']}"
+                    "🔧 [worker] Resolved clip_model_path: %s",
+                    loader_config["clip_model_path"],
                 )
 
         logger.info(
@@ -192,15 +192,18 @@ class EngineLifecycle:
             error_str = str(e).lower()
             if "cuda" in error_str or "gpu" in error_str:
                 logger.error(
-                    "❌ [worker] GPU/CUDA error - ensure CUDA is properly configured and GPU has enough memory"
+                    "❌ [worker] GPU/CUDA error - ensure CUDA is properly configured "
+                    "and GPU has enough memory"
                 )
             if "memory" in error_str or "oom" in error_str:
                 logger.error(
-                    "❌ [worker] Memory error - model may be too large for available memory"
+                    "❌ [worker] Memory error - model may be too large for available "
+                    "memory"
                 )
             if "timeout" in error_str:
                 logger.error(
-                    "❌ [worker] Timeout error - model loading took too long, consider increasing timeouts"
+                    "❌ [worker] Timeout error - model loading took too long, consider "
+                    "increasing timeouts"
                 )
 
             raise
@@ -261,13 +264,17 @@ class EngineLifecycle:
         handler = handlers_map.get(command_type)
         if not handler:
             logger.error(
-                f"❌ [worker] Unknown command type: {command_type}, available: {list(handlers_map.keys())}"
+                "❌ [worker] Unknown command type: %s, available: %s",
+                command_type,
+                list(handlers_map.keys()),
             )
             raise ValueError(f"Unknown command type: {command_type}")
 
         try:
             logger.info(
-                f"🔧 [worker] Calling handler {handler.__name__} for command {command_type}"
+                "🔧 [worker] Calling handler %s for command %s",
+                handler.__name__,
+                command_type,
             )
             # Call the handler with command params
             # Note: handlers expect params dict, not the full command
@@ -286,8 +293,11 @@ class EngineLifecycle:
                 )
                 result = {"result": result}
 
+            # Unicode + automatic truncation
             logger.info(
-                f"✅ [worker] Command {command_type} completed successfully, result: {format_json_for_log(result)}"  # Unicode + automatic truncation
+                "✅ [worker] Command %s completed successfully, result: %s",
+                command_type,
+                format_json_for_log(result),
             )
             return result
 
