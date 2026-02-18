@@ -153,6 +153,7 @@ class ServiceController:
             args.append("--gpu-native")
         if no_cache:
             args.append("--no-cache")
+        args.append("--refresh-source")
         if scope == "llama":
             args.append("--no-vllm")
 

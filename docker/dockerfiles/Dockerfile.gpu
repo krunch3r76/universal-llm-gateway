@@ -475,6 +475,11 @@ RUN CUDA_LIB=/usr/local/cuda-13.0/targets/x86_64-linux/lib && \
 # Loaded from docker/compose/engine-optimizations.env via Compose env_file.
 
 # ── 6. Source code (COPY last — changes most frequently) ─────────────
+# Changing SOURCE_VERSION invalidates the COPY cache below, forcing a
+# fresh copy of libs/, services/, config/ from the build context.
+# Pass --build-arg SOURCE_VERSION=$(date +%s) to bust the cache, or use
+# build-gpu.sh --refresh-source which does this automatically.
+ARG SOURCE_VERSION=0
 COPY --chown=appuser:appuser libs/ /app/libs/
 COPY --chown=appuser:appuser services/ /app/services/
 COPY --chown=appuser:appuser config/ /app/config/

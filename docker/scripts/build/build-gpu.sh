@@ -132,6 +132,10 @@ VLLM_VERSION="${VLLM_VERSION:-}"
 # Format: YYYYMMDD (e.g., 20260111)
 TORCH_NIGHTLY_DATE="${TORCH_NIGHTLY_DATE:-20260111}"
 
+# Source cache-busting: empty = rely on Docker's content checksum (default).
+# Set to any value (e.g. timestamp) to force re-COPY of libs/ + services/.
+SOURCE_VERSION=""
+
 # Default: Build readable images (set to true for obfuscated production builds)
 OBFUSCATE="false"
 
@@ -235,6 +239,10 @@ while [[ $# -gt 0 ]]; do
             LLAMA_SERVER_VERSION="${1#*=}"
             shift
             ;;
+        --refresh-source)
+            SOURCE_VERSION="$(date +%s)"
+            shift
+            ;;
         --obfuscate)
             OBFUSCATE="true"
             shift
@@ -245,6 +253,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --no-cache          Force rebuild without cache"
+            echo "  --refresh-source    Bust cache for source COPY (libs/, services/, config/)"
             echo "  --obfuscate         Build obfuscated image (PyArmor, production)"
             echo ""
             echo "vLLM Options:"
@@ -393,6 +402,9 @@ fi
 if [[ -n "${NO_CACHE}" ]]; then
     echo "  Cache: DISABLED (forced rebuild)"
 fi
+if [[ -n "${SOURCE_VERSION}" ]]; then
+    echo "  Source refresh: YES (SOURCE_VERSION=${SOURCE_VERSION})"
+fi
 echo ""
 
 # Display CPU optimization info
@@ -473,6 +485,7 @@ docker build \
     --build-arg TORCH_NIGHTLY_DATE="${TORCH_NIGHTLY_DATE}" \
     --build-arg ENABLE_LLAMA_SERVER="${ENABLE_LLAMA_SERVER}" \
     --build-arg LLAMA_SERVER_VERSION="${LLAMA_SERVER_VERSION}" \
+    ${SOURCE_VERSION:+--build-arg SOURCE_VERSION="${SOURCE_VERSION}"} \
     -f docker/dockerfiles/Dockerfile.gpu \
     -t gateway-base:runtime \
     .
@@ -514,6 +527,7 @@ if [[ "${OBFUSCATE}" == "true" ]]; then
         --build-arg TORCH_NIGHTLY_DATE="${TORCH_NIGHTLY_DATE}" \
         --build-arg ENABLE_LLAMA_SERVER="${ENABLE_LLAMA_SERVER}" \
         --build-arg LLAMA_SERVER_VERSION="${LLAMA_SERVER_VERSION}" \
+        ${SOURCE_VERSION:+--build-arg SOURCE_VERSION="${SOURCE_VERSION}"} \
         -f "${BUILD_CONTEXT}/docker/dockerfiles/Dockerfile.obfuscated" \
         -t "${IMAGE_NAME}:${IMAGE_TAG}" \
         "${BUILD_CONTEXT}"
@@ -591,6 +605,7 @@ echo "  2. Run: docker compose -f docker/docker-compose.gateway-gpu.yml up"
 echo ""
 echo "Build options:"
 echo "  - Force rebuild: docker/build-gpu.sh --no-cache"
+echo "  - Source refresh: docker/build-gpu.sh --refresh-source  (fast, re-copies source only)"
 echo "  - Use pre-built wheel: VLLM_FROM_SOURCE=false docker/build-gpu.sh"
 echo "  - Obfuscated (production): docker/build-gpu.sh --obfuscate"
 echo "  - No vLLM (fastest): docker/build-gpu.sh --no-vllm"
