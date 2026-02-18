@@ -620,18 +620,20 @@ class ModelRegistry:
 
         # Detect backend availability
         llama_installed = GPUCapabilities.is_llama_server_available()
-        llama_gpu_available = GPUCapabilities.is_torch_gpu_available()
+        hardware_gpu_available = GPUCapabilities.is_hardware_gpu_available()
         vllm_available = GPUCapabilities.is_vllm_available()
 
         # Log detection results
         if llama_installed:
-            if llama_gpu_available:
+            if hardware_gpu_available:
                 logger.info(
-                    "✅ llama-server GPU available - all GGUF models supported"
+                    "✅ llama-server + GPU hardware - "
+                    "all GGUF models supported"
                 )
             else:
                 logger.info(
-                    "ℹ️ llama-server CPU-only - GGUF models limited to cpu_profiles"
+                    "ℹ️ llama-server CPU-only (no GPU hardware) - "
+                    "GGUF models limited to cpu_profiles"
                 )
         else:
             logger.info("⚠️ llama-server not found - GGUF models not available")
@@ -705,8 +707,8 @@ class ModelRegistry:
                     models_missing_llama.append(result.model_id)
                     continue
 
-                # If llama-cpp has no GPU, check for cpu_profiles
-                if not llama_gpu_available and model_config:
+                # If no GPU hardware, check for cpu_profiles
+                if not hardware_gpu_available and model_config:
                     has_cpu_profiles = bool(model_config.get("cpu_profiles"))
                     has_gpu_profiles = bool(model_config.get("profiles"))
 

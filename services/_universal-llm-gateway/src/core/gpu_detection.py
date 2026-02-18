@@ -1,5 +1,7 @@
 """GPU detection for platform-aware model filtering."""
 
+import shutil
+import subprocess
 from functools import lru_cache
 
 from universal_logging import get_logger
@@ -21,6 +23,8 @@ class GPUCapabilities:
     _llama_gpu_available: bool | None = None
     _llama_backend: str | None = None
     _llama_server_available: bool | None = None
+    _hardware_gpu_available: bool | None = None
+    _hardware_gpu_backend: str | None = None
     _torch_gpu_available: bool | None = None
     _torch_backend: str | None = None
     _vllm_available: bool | None = None
@@ -263,6 +267,58 @@ class GPUCapabilities:
         return cls.detect_llama_server()
 
     @classmethod
+    @lru_cache(maxsize=1)
+    def detect_hardware_gpu(cls) -> tuple[bool, str | None]:
+        """
+        Detect GPU at hardware/driver level (no Python package deps).
+
+        Uses nvidia-smi to check for NVIDIA GPUs. Independent of torch
+        or llama-cpp-python. Correct check for llama-server GPU
+        capability since llama-server is a standalone binary.
+
+        Returns:
+            Tuple of (gpu_available: bool, backend: str | None)
+        """
+        if cls._hardware_gpu_available is not None:
+            return cls._hardware_gpu_available, cls._hardware_gpu_backend
+
+        if not shutil.which("nvidia-smi"):
+            cls._hardware_gpu_available = False
+            cls._hardware_gpu_backend = None
+            logger.info("ℹ️ nvidia-smi not found - no NVIDIA GPU detected")
+            return cls._hardware_gpu_available, cls._hardware_gpu_backend
+
+        try:
+            query = "--query-gpu=name,memory.total"
+            result = subprocess.run(
+                ["nvidia-smi", query, "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                gpu_info = result.stdout.strip().split("\n")[0]
+                cls._hardware_gpu_available = True
+                cls._hardware_gpu_backend = "CUDA"
+                logger.info(f"✅ Hardware GPU detected (NVIDIA): {gpu_info}")
+            else:
+                cls._hardware_gpu_available = False
+                cls._hardware_gpu_backend = None
+                logger.info("ℹ️ nvidia-smi found but no usable GPU reported")
+        except (subprocess.TimeoutExpired, OSError) as e:
+            cls._hardware_gpu_available = False
+            cls._hardware_gpu_backend = None
+            logger.warning(f"⚠️ Failed to query nvidia-smi: {e}")
+
+        return cls._hardware_gpu_available, cls._hardware_gpu_backend
+
+    @classmethod
+    def is_hardware_gpu_available(cls) -> bool:
+        """Check if GPU hardware is available at the driver level."""
+        gpu_available, _ = cls.detect_hardware_gpu()
+        return gpu_available
+
+    @classmethod
     def is_torch_gpu_available(cls) -> bool:
         """Check if GPU acceleration is available for PyTorch."""
         gpu_available, _ = cls.detect_torch()
@@ -280,16 +336,19 @@ class GPUCapabilities:
         return backend
 
     @classmethod
-    def reset(cls):
+    def reset(cls) -> None:
         """Reset cached detection (useful for testing)."""
         cls._llama_installed = None
         cls._llama_gpu_available = None
         cls._llama_backend = None
         cls._llama_server_available = None
+        cls._hardware_gpu_available = None
+        cls._hardware_gpu_backend = None
         cls._torch_gpu_available = None
         cls._torch_backend = None
         cls._vllm_available = None
         cls.detect_llama.cache_clear()
         cls.detect_llama_server.cache_clear()
+        cls.detect_hardware_gpu.cache_clear()
         cls.detect_torch.cache_clear()
         cls.detect_vllm.cache_clear()
