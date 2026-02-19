@@ -1,7 +1,9 @@
 """Topology management — add/remove remote nodes in Master Stargate config."""
 
+import asyncio
 import logging
 import secrets
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +104,107 @@ def remove_remote(hostname: str) -> bool:
     )
     logger.info("Removed remote %s from %s", relay_id, _MASTER_CONFIG)
     return True
+
+
+async def deploy_remote(
+    *,
+    hostname: str,
+    address: str,
+    workspace_root: Path,
+    build: bool = False,
+    restart: bool = False,
+) -> AsyncIterator[str]:
+    """Deploy relay+edge to a remote host via rsync + ssh.
+
+    Yields log lines as they appear. Three steps:
+    1. rsync repo (excludes local-only files)
+    2. scp ~/.gateway/nodes/<hostname>.env
+    3. ssh ./manage relay [--restart] [--build]
+    """
+    repo = workspace_root.resolve()
+    dest = f"{address}:~/universal-llm-gateway/"
+    node_env = _NODES_DIR / f"{hostname}.env"
+    if not node_env.exists():
+        yield f"[red]Node env not found: {node_env}. Add Remote first.[/red]"
+        return
+
+    rsync_excludes = [
+        ".env.local",
+        "tmp/gpu-nodes",
+        "__pycache__",
+        ".git",
+        "node_modules",
+        ".venv",
+        "*.pyc",
+    ]
+    rsync_args = [
+        "rsync",
+        "-az",
+        "--delete",
+        *[f"--exclude={x}" for x in rsync_excludes],
+        f"{repo}/",
+        dest,
+    ]
+    yield f"$ {' '.join(rsync_args)}"
+    proc = await asyncio.create_subprocess_exec(
+        *rsync_args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=str(repo),
+    )
+    assert proc.stdout is not None
+    async for raw in proc.stdout:
+        yield raw.decode(errors="replace").rstrip()
+    code = await proc.wait()
+    if code != 0:
+        yield f"[red]rsync failed (exit {code}).[/red]"
+        return
+
+    scp_args = [
+        "scp",
+        str(node_env),
+        f"{address}:~/.gateway/nodes/{hostname}.env",
+    ]
+    yield f"$ {' '.join(scp_args)}"
+    proc = await asyncio.create_subprocess_exec(
+        *scp_args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    assert proc.stdout is not None
+    async for raw in proc.stdout:
+        yield raw.decode(errors="replace").rstrip()
+    code = await proc.wait()
+    if code != 0:
+        yield f"[red]scp failed (exit {code}).[/red]"
+        return
+
+    relay_cmd = "./manage relay"
+    if restart:
+        relay_cmd += " --restart"
+    if build:
+        relay_cmd += " --build"
+    ssh_args = [
+        "ssh",
+        "-t",
+        "-o",
+        "BatchMode=yes",
+        address,
+        f"cd ~/universal-llm-gateway && {relay_cmd}",
+    ]
+    yield f"$ ssh -t -o BatchMode=yes {address} 'cd ~/universal-llm-gateway && {relay_cmd}'"
+    proc = await asyncio.create_subprocess_exec(
+        *ssh_args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    assert proc.stdout is not None
+    async for raw in proc.stdout:
+        yield raw.decode(errors="replace").rstrip()
+    code = await proc.wait()
+    if code != 0:
+        yield f"[red]ssh relay failed (exit {code}).[/red]"
+        return
 
 
 def list_node_envs() -> list[Path]:
