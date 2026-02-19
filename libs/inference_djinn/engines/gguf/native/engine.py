@@ -16,7 +16,7 @@ ARCHITECTURE NOTES (embedding mode):
 
 import hashlib
 import os
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 from typing import Any, override
 
 import httpx
@@ -205,7 +205,6 @@ class NativeGGUFEngine(BaseEngine):
         self.server_manager: LlamaServerManager | None = None
         self.client: LlamaServerClient | None = None
         self._crashed = False
-        self._external_crash_callback: Callable[[int], None] | None = None
 
         # Embedding task prefix configuration (for models like Nomic)
         # TRICKY: llama-server doesn't support task prefixes natively.
@@ -217,29 +216,6 @@ class NativeGGUFEngine(BaseEngine):
         # Set engine type to distinguish from llama-cpp-python GGUF
         # Native server supports parallel requests via slots
         self.engine_type = "gguf_native"
-
-    def _handle_server_crash(self, exit_code: int) -> None:
-        """Callback from LlamaServerManager when llama-server process dies."""
-        logger.error(
-            f"❌ [NativeGGUFEngine] Server process crashed (exit_code={exit_code})"
-        )
-        self._crashed = True
-        if self._external_crash_callback:
-            try:
-                self._external_crash_callback(exit_code)
-            except Exception as e:
-                logger.error(
-                    f"❌ [NativeGGUFEngine] External crash callback failed: {e}"
-                )
-
-    def set_crash_callback(self, callback: Callable[[int], None]) -> None:
-        """Register external crash callback (worker lifecycle integration).
-
-        Args:
-            callback: Receives exit_code (int) from process death, or -1
-                when crash is discovered via connectivity failure.
-        """
-        self._external_crash_callback = callback
 
     @override
     async def load(self) -> None:
@@ -254,10 +230,7 @@ class NativeGGUFEngine(BaseEngine):
 
         self._crashed = False  # Reset on fresh load
         # Create server manager
-        self.server_manager = LlamaServerManager(
-            self.config,
-            on_crash=self._handle_server_crash,
-        )
+        self.server_manager = LlamaServerManager(self.config)
 
         try:
             # Start server
@@ -482,7 +455,7 @@ class NativeGGUFEngine(BaseEngine):
             logger.error(
                 f"❌ [NativeGGUFEngine] Server unreachable during token count: {e}"
             )
-            self._handle_server_crash(-1)
+            self._crashed = True
             return TokenCountResult(
                 tokens=0,
                 method="error",

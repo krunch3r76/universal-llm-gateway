@@ -14,9 +14,13 @@ let _reasoningCtx = null;
 function renderDetailPanel(step) {
   const el = document.getElementById('detail-panel');
   const tabs = buildTabs(step);
+  const parent = parentStepLabel(step.step_id);
+  const nameHtml = parent
+    ? `<span class="detail-parent-label">${escHtml(parent)} /</span> ${escHtml(displayStepName(step.step_id))}`
+    : escHtml(step.step_id);
   el.innerHTML = `
     <div class="detail-header">
-      <h3>${escHtml(step.step_id)}</h3>
+      <h3>${nameHtml}</h3>
       <button class="close-btn" onclick="hideDetailPanel()">\u2715</button>
     </div>
     <div class="detail-body">

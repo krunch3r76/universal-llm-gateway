@@ -398,7 +398,19 @@ def _infer_verifier_pool(steps: list[dict[str, Any]]) -> None:
 
 
 def _categorize_step(step_id: str) -> str:
-    """Assign a UI category to a step (matches parser.py logic)."""
+    """Assign a UI category to a step.
+
+    Sub-pipeline steps (containing ``__``) are categorized by their
+    parent prefix so expanded sub-steps inherit the parent's phase.
+    """
+    if "__" in step_id:
+        parent = step_id.split("__", maxsplit=1)[0]
+        if "verify" in parent or "veto" in parent:
+            return "verify"
+        if "synth" in parent:
+            return "synthesize"
+        step_id = step_id.split("__", maxsplit=1)[1]
+
     if "analyze" in step_id or "classify" in step_id:
         return "classify"
     if "answer" in step_id or "reseed" in step_id:

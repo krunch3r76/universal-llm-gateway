@@ -1,0 +1,56 @@
+# Synthesize sub-pipeline: post_process → review_synthesis
+#
+# Groups the synthesis phase into a reusable sub-pipeline.
+# Both handlers are unchanged from v5.0 — this is purely structural.
+#
+# Inputs (bound by parent pipeline):
+#   original_answer  - Raw answer from the originating model
+#   verified_facts   - Final verified facts after veto
+#   rejected_claims  - Final rejected claims after veto
+#   question         - Cleaned question text
+#   mode             - post_process_mode option
+
+id: consensus-synthesize
+type: consensus
+
+inputs:
+  - original_answer
+  - verified_facts
+  - rejected_claims
+  - question
+  - mode
+
+steps:
+  - name: post_process
+    type: consensus_post_process_v5_0
+    model_ref: qwen
+    handler_inputs:
+      mode: inputs.mode
+      original_answer: inputs.original_answer
+      verified_facts: inputs.verified_facts
+      rejected_claims: inputs.rejected_claims
+      question: inputs.question
+    handler_outputs:
+      final: post_process.raw
+    allow_passthrough: false
+    prompt_ref_synthesize: consensus.v5.0.post_synthesize
+    generation_parameters:
+      temperature: 0.3
+    timeout_seconds: 600
+
+  - name: review_synthesis
+    type: consensus_enrich_review_v5_0
+    model_ref: qwen
+    prompt_ref: consensus.v5.0.check_synthesis
+    prompt_ref_re_enrich: consensus.v5.0.revise_synthesis
+    handler_inputs:
+      enriched_answer: post_process.raw
+      verified_facts: inputs.verified_facts
+      question: inputs.question
+    handler_outputs:
+      raw: review_synthesis.raw
+    generation_parameters:
+      temperature: 0.3
+    timeout_seconds: 300
+
+output: review_synthesis

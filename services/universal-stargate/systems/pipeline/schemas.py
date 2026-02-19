@@ -10,6 +10,7 @@ from .core.schemas import (
     PipelineSpec,
     PromptConfig,
     StepConfig,
+    SubPipelineSpec,
 )
 
 
@@ -59,4 +60,5 @@ __all__ = [
     "SharedModels",
     "SharedPrompts",
     "StepConfig",
+    "SubPipelineSpec",
 ]

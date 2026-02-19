@@ -41,6 +41,7 @@ from .schemas import (
     SourceInput,
     StepConfig,
     StepInputs,
+    SubPipelineSpec,
 )
 from .validation import PipelineValidator
 
@@ -50,6 +51,7 @@ __all__ = [
     "PipelineOptions",
     "PipelineSpec",
     "StepConfig",
+    "SubPipelineSpec",
     # Phase 1 schemas
     "InputBinding",
     "OutputBinding",

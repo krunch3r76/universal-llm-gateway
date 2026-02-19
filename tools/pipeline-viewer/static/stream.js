@@ -229,6 +229,13 @@ function applyEvent(sd, ev) {
 }
 
 function categorizeStep(stepId) {
+  // Sub-pipeline steps: categorize by parent prefix
+  if (stepId.includes('__')) {
+    const parent = stepId.split('__')[0];
+    if (parent.includes('verify') || parent.includes('veto')) return 'verify';
+    if (parent.includes('synth')) return 'synthesize';
+    stepId = stepId.split('__')[1];
+  }
   if (stepId.includes('analyze') || stepId.includes('classify')) return 'classify';
   if (stepId.includes('answer') || stepId.includes('reseed')) return 'answer';
   if (stepId.includes('verify') || stepId.includes('tiebreaker')) return 'verify';

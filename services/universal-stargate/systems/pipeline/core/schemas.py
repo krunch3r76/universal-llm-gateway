@@ -115,6 +115,25 @@ class PipelineSpec(BaseModel):
         return self.type
 
 
+class SubPipelineSpec(BaseModel):
+    """Sub-pipeline specification loaded from a separate YAML file.
+
+    Lighter than PipelineSpec: declares an inputs/outputs interface
+    so a parent pipeline step can bind its data flow declaratively.
+
+    Invariant: ∀ step ∈ steps: internal bindings use step names
+    local to this sub-pipeline (no parent awareness).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    type: str
+    inputs: list[str]
+    steps: list[StepConfig]
+    output: str
+
+
 @dataclass
 class PromptConfig:
     """

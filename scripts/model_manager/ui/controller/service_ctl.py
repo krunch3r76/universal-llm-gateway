@@ -272,6 +272,7 @@ class ServiceController:
         config_path = self._ensure_stargate_config()
         env = self._build_env()
         env["STARGATE_CONFIG"] = str(config_path)
+        env["STARGATE_MODE"] = "master"
 
         log_path = Path("/tmp/logs/universal-stargate/tui-startup.log")
         log_path.parent.mkdir(parents=True, exist_ok=True)

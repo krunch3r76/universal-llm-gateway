@@ -113,12 +113,16 @@ function renderPipelineFlow(steps) {
           const model = shortModel(step.model_ref || step.model || '');
           const badge = getBadge(step);
           const statusCls = step.status === 'running' ? 'running' : (hasFailed || step.status === 'failed' ? 'failed' : '');
+          const parentLabel = parentStepLabel(step.step_id);
+          const nameHtml = parentLabel
+            ? `<div class="step-parent-label">${escHtml(parentLabel)}</div><div class="step-name">${escHtml(displayStepName(step.step_id))}</div>`
+            : `<div class="step-name">${escHtml(step.step_id)}</div>`;
           return `
             ${i > 0 ? '<span class="step-arrow">\u2192</span>' : ''}
             <div class="step-node cat-${step.category} ${selectedStepIdx === idx ? 'selected' : ''} ${statusCls}"
                  onclick="selectStep(${idx})">
               ${badge}
-              <div class="step-name">${escHtml(step.step_id)}</div>
+              ${nameHtml}
               <div class="step-meta">${model} &middot; ${latency} &middot; ${tokStr}</div>
             </div>
           `;
@@ -145,6 +149,16 @@ function groupByPhase(steps) {
 
 function getPhase(step) {
   const id = step.step_id;
+
+  // Sub-pipeline steps: group by parent prefix
+  if (id.includes('__')) {
+    const parent = id.split('__')[0];
+    if (parent.startsWith('verify_link')) return 'Verify Chain';
+    if (parent === 'veto_pass') return 'Veto Pass';
+    if (parent === 'synthesize') return 'Synthesize';
+    return 'Pipeline';
+  }
+
   if (id === 'analyze_question' || id === 'classify_expansion_safety') return 'Classify';
   if (id === 'answer_all') return 'Answer (Parallel)';
   if (id === 'output_gate') return 'Output Gate';
@@ -154,7 +168,22 @@ function getPhase(step) {
   if (['verify_link0','enrich_link1','verify_link1','enrich_link2','verify_link2','tiebreaker_pass'].includes(id)) {
     return 'Pass 1 \u2014 Verify & Enrich Chain';
   }
+  // v6.0 non-sub-pipeline steps
+  if (id === 'synergize' || id === 'filter_negatives') return 'Merge & Filter';
+  if (id === 'veto_pass') return 'Veto Pass';
   return 'Pipeline';
+}
+
+// Format sub-pipeline step IDs for display: "verify_link0__decompose" → "decompose"
+// with a small parent label rendered separately.
+function displayStepName(stepId) {
+  if (!stepId.includes('__')) return stepId;
+  return stepId.split('__')[1];
+}
+
+function parentStepLabel(stepId) {
+  if (!stepId.includes('__')) return '';
+  return stepId.split('__')[0];
 }
 
 function getBadge(step) {
@@ -192,9 +221,8 @@ function renderFinalOutput(steps) {
   const el = document.getElementById('final-output');
   const textEl = document.getElementById('final-output-text');
   const gateStep = steps.find(s => s.step_id === 'output_gate');
-  const output = gateStep?.raw_output
-    || steps.findLast(s => s.category === 'synthesize')?.raw_output
-    || '';
+  const synthStep = steps.findLast(s => s.category === 'synthesize');
+  const output = gateStep?.raw_output || synthStep?.raw_output || '';
   if (output) {
     textEl.textContent = output;
     el.classList.add('visible');

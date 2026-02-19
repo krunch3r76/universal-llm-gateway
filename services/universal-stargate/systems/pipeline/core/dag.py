@@ -3,6 +3,7 @@ DAG (Directed Acyclic Graph) builder for pipeline steps.
 
 Provides:
 - Dependency graph construction
+- Sub-pipeline expansion (``type: sub_pipeline`` → namespaced flat steps)
 - Cycle detection
 - Topological sorting
 
@@ -10,6 +11,7 @@ Invariants:
 - ∀ step: step.depends_on ⊆ {s.id | s ∈ pipeline.steps}
 - ¬∃ cycle in dependency graph
 - ∀ step: all dependencies complete before step executes
+- After expansion, the DAG is indistinguishable from a fully-inline pipeline
 
 Note: DAGExecutor has been moved to execution/executor.py
 """
@@ -18,13 +20,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from .handlers.protocol import StepOutput
-    from .schemas import StepConfig
+    from .schemas import InputBinding, StepConfig, SubPipelineSpec
 
 logger = get_logger(__name__)
 
@@ -74,12 +76,17 @@ class DAGBuilder:
         """
         Build and validate the DAG.
 
+        Pre-pass: expand ``sub_pipeline`` steps into namespaced flat steps.
+        After expansion, the DAG contains only concrete handler steps.
+
         Returns:
             Dict of step_id -> StepNode
 
         Raises:
             ValueError: If DAG is invalid (cycles, dangling refs)
         """
+        self.steps = _expand_all_sub_pipelines(self.steps)
+
         # Create nodes with computed dependencies (v5 schema)
         for step in self.steps:
             self.nodes[step.id] = StepNode(
@@ -171,6 +178,146 @@ class PipelineExecutionError(Exception):
     """Raised when pipeline execution fails."""
 
     pass
+
+
+# ---------------------------------------------------------------------------
+# Sub-pipeline expansion
+# ---------------------------------------------------------------------------
+
+
+SUB_PIPELINE_SEP = "__"
+"""Separator for namespaced sub-pipeline step IDs.
+
+Uses ``__`` instead of ``.`` because ``InputBinding.parse()`` splits on
+the first dot to extract the step name. Dots inside step names would
+break binding resolution.
+"""
+
+
+def _expand_all_sub_pipelines(steps: list[StepConfig]) -> list[StepConfig]:
+    """Replace ``sub_pipeline`` steps with namespaced flat steps.
+
+    For each step with ``type == "sub_pipeline"``, the attached
+    ``SubPipelineSpec`` (loaded by the loader) is expanded inline.
+    Downstream bindings that reference the parent step name are rewritten
+    to point at the sub-pipeline's output step.
+
+    Returns:
+        New step list with all sub_pipeline steps replaced.
+    """
+    has_sub = any(s.type == "sub_pipeline" for s in steps)
+    if not has_sub:
+        return steps
+
+    output_aliases: dict[str, str] = {}
+    expanded: list[StepConfig] = []
+
+    for step in steps:
+        if step.type != "sub_pipeline":
+            expanded.append(step)
+            continue
+
+        sub_spec: SubPipelineSpec | None = step.get_domain_field("_sub_pipeline_spec")
+        if sub_spec is None:
+            raise ValueError(
+                f"Step '{step.id}' has type 'sub_pipeline' but no loaded spec. "
+                f"Ensure pipeline_ref is set and the loader resolved it."
+            )
+
+        parent_inputs = step.handler_inputs
+        prefix = step.id
+        output_step_name = f"{prefix}{SUB_PIPELINE_SEP}{sub_spec.output}"
+        output_aliases[prefix] = output_step_name
+
+        for sub_step in sub_spec.steps:
+            namespaced = _namespace_step(sub_step, prefix, parent_inputs, sub_spec)
+            expanded.append(namespaced)
+
+        logger.info(
+            f"Expanded sub-pipeline '{sub_spec.id}' into "
+            f"{len(sub_spec.steps)} steps under prefix '{prefix}'"
+        )
+
+    if output_aliases:
+        for step in expanded:
+            _rewrite_aliases(step, output_aliases)
+
+    return expanded
+
+
+def _namespace_step(
+    sub_step: StepConfig,
+    prefix: str,
+    parent_inputs: dict[str, InputBinding],
+    sub_spec: SubPipelineSpec,
+) -> StepConfig:
+    """Create a namespaced copy of a sub-pipeline step.
+
+    - Step name prefixed: ``decompose`` → ``verify_link0__decompose``
+    - Internal step references prefixed
+    - ``inputs.*`` bindings replaced with parent's handler_inputs
+    - ``config.*_step`` references prefixed
+    """
+    from .schemas import InputBinding, StepConfig
+
+    data: dict[str, Any] = sub_step.model_dump(by_alias=True, exclude_none=True)
+    data["name"] = f"{prefix}{SUB_PIPELINE_SEP}{sub_step.name}"
+
+    new_inputs: dict[str, Any] = {}
+    for key, binding in sub_step.handler_inputs.items():
+        if binding.namespace == "step" and binding.step_name == "inputs":
+            input_name = binding.field_path.split(".")[0]
+            if input_name in parent_inputs:
+                new_inputs[key] = parent_inputs[input_name]
+            else:
+                raise ValueError(
+                    f"Sub-step '{sub_step.name}' references input '{input_name}' "
+                    f"not provided by parent. "
+                    f"Declared inputs: {sub_spec.inputs}, "
+                    f"provided: {list(parent_inputs.keys())}"
+                )
+        elif binding.namespace == "step" and binding.step_name:
+            new_inputs[key] = InputBinding(
+                namespace="step",
+                step_name=f"{prefix}{SUB_PIPELINE_SEP}{binding.step_name}",
+                field_path=binding.field_path,
+            )
+        else:
+            new_inputs[key] = binding
+    data["handler_inputs"] = new_inputs
+
+    if sub_step.model_extra:
+        extra = dict(sub_step.model_extra)
+        for ekey, eval_ in extra.items():
+            if ekey.endswith("_step") and isinstance(eval_, str):
+                extra[ekey] = f"{prefix}{SUB_PIPELINE_SEP}{eval_}"
+            elif ekey == "config" and isinstance(eval_, dict):
+                cfg = dict(eval_)
+                for ck, cv in cfg.items():
+                    if ck.endswith("_step") and isinstance(cv, str):
+                        cfg[ck] = f"{prefix}{SUB_PIPELINE_SEP}{cv}"
+                extra["config"] = cfg
+        for ekey, eval_ in extra.items():
+            if ekey not in data:
+                data[ekey] = eval_
+
+    return StepConfig(**data)
+
+
+def _rewrite_aliases(
+    step: StepConfig,
+    aliases: dict[str, str],
+) -> None:
+    """Rewrite handler_input bindings that reference aliased parent step names."""
+    from .schemas import InputBinding
+
+    for key, binding in list(step.handler_inputs.items()):
+        if binding.namespace == "step" and binding.step_name in aliases:
+            step.handler_inputs[key] = InputBinding(
+                namespace="step",
+                step_name=aliases[binding.step_name],
+                field_path=binding.field_path,
+            )
 
 
 class ResponseTruncatedError(PipelineExecutionError):

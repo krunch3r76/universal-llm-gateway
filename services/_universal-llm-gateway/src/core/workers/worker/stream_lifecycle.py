@@ -100,4 +100,5 @@ async def notify_model_unload(entry_id: str, model_name: str) -> bool:
     Delegates to stream_registry.notify_model_unload() for consistency.
     """
     from universal_protocol.ws.registry import stream_registry
+
     return stream_registry.notify_model_unload(entry_id, model_name)

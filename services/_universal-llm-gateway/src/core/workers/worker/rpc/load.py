@@ -162,7 +162,7 @@ class LoadHandlers:
         rpc_path = params.get("path")
 
         # Check if model already loaded
-        if self.model_loaded and self.engine:
+        if self.engine and self.engine.is_loaded():
             self._validate_load_request_params(rpc_name, rpc_path, request_id)
 
             logger.info(
