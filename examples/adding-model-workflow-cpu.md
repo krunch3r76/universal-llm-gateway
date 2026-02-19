@@ -146,9 +146,7 @@ Expected: Entry present in split catalog structure under domain/engine path.
 For static catalog changes to take effect, reload the Gateway:
 
 ```bash
-# Option A: Restart services (if using scripts)
-./scripts/deploy-gpu-relay.sh restart
-
+# Option A: Restart via TUI (./manage → Services → Stop/Start Stargate)
 # Option B: Manual restart (if baremetal)
 pkill -f "universal-"; rm -f /tmp/universal-protocol/*.sock /tmp/process_ipc/*.sock
 # Then start Stargate and Gateway again

@@ -18,6 +18,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, override
 
+from provenance.cross_model import order_models_by_affinity
 from systems.pipeline.core.events.verification import VetoPassCompleted
 from systems.pipeline.core.execution.chunked import get_execution_config
 from systems.pipeline.core.execution.resolver import NamespaceResolver
@@ -131,11 +132,22 @@ class VetoPassHandler(BaseHandler):
             )
             return passthrough
 
-        # Resolve veto pool
+        # Resolve veto pool, ordered by affinity (answer-pool models first)
         veto_pool_aliases = self._resolve_veto_pool(step, context)
         if not veto_pool_aliases:
             logger.info("Step '%s': no veto_pool configured, passthrough", step.id)
             return passthrough
+
+        answer_models_opt = (context.options or {}).get("answer_models", {})
+        answer_pool: set[str] = (
+            set(answer_models_opt.values())
+            if isinstance(answer_models_opt, dict)
+            else set(answer_models_opt)
+            if isinstance(answer_models_opt, list)
+            else set()
+        )
+        if answer_pool:
+            veto_pool_aliases = order_models_by_affinity(veto_pool_aliases, answer_pool)
 
         veto_model_ids = [
             self._resolve_model_alias(alias, context) for alias in veto_pool_aliases
@@ -194,6 +206,7 @@ class VetoPassHandler(BaseHandler):
             prompt_ref_verify_batch=(
                 str(prompt_ref_batch) if prompt_ref_batch else None
             ),
+            sequential_dispatch=bool(answer_pool),
         )
 
         # Remap model IDs to aliases for readability

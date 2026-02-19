@@ -1,4 +1,7 @@
-"""Services screen - build, start, stop Gateway and Stargate."""
+"""Services screen - local build, start, stop Gateway and Stargate.
+
+Remote operations (deploy, restart remotes) live on the Home topology panel.
+"""
 
 import asyncio
 
@@ -8,6 +11,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Select, Static
 
+from ...controller.operation_log import tee_with_summary
 from ..widgets.log_stream import LogStream
 
 _SCOPE_FLAGS: dict[str, list[str]] = {
@@ -93,6 +97,7 @@ class ServicesScreen(Screen):
             yield Button(
                 "Stop Stargate", id="btn-stop-sg", variant="error", disabled=True
             )
+            yield Button("Restart Local", id="btn-restart-local", variant="warning")
 
         yield LogStream(id="svc-log")
 
@@ -118,9 +123,8 @@ class ServicesScreen(Screen):
                     self.run_worker(self._cancel_build(), exclusive=True)
                 else:
                     self._set_build_ui(building=True)
-                    scope = self.query_one("#build-scope", Select).value
                     self.run_worker(
-                        self._build(str(scope) if scope != Select.BLANK else "all"),
+                        self._build(self._selected_scope()),
                         exclusive=True,
                     )
             case "btn-start-gw" | "btn-stop-gw":
@@ -137,6 +141,8 @@ class ServicesScreen(Screen):
                     self.run_worker(self._start_stargate(), exclusive=True)
                 else:
                     self.run_worker(self._stop_stargate(), exclusive=True)
+            case "btn-restart-local":
+                self.run_worker(self._restart_local(), exclusive=True)
             case "btn-refresh":
                 self._refresh_status()
             case "btn-back":
@@ -181,12 +187,37 @@ class ServicesScreen(Screen):
             btn.variant = "primary"
         btn.disabled = False
 
+    def _selected_scope(self) -> str:
+        val = self.query_one("#build-scope", Select).value
+        return str(val) if val != Select.BLANK else "all"
+
+    async def _restart_local(self) -> None:
+        """Stop and restart local gateway + stargate only."""
+        log = self.query_one("#svc-log", LogStream)
+        log.clear()
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+
+        log.write_line("[localhost] Stopping services...")
+        log.write_line(await svc.stop_stargate())
+        log.write_line(await svc.stop_gateway())
+        await asyncio.sleep(1)
+        log.write_line("[localhost] Starting gateway...")
+        log.write_line(await svc.start_gateway())
+        await asyncio.sleep(2)
+        log.write_line("[localhost] Starting stargate...")
+        log.write_line(await svc.start_stargate())
+        self._refresh_status()
+
     async def _build(self, scope: str) -> None:
         log = self.query_one("#svc-log", LogStream)
         log.clear()
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        async for line in svc.build_image(scope=scope):
-            log.write_line(line)
+        summary = tee_with_summary(
+            svc.build_image(scope=scope),
+            operation="build",
+            host="localhost",
+        )
+        await log.stream_from(summary)
         self._set_build_ui(building=False)
         self._refresh_status()
 

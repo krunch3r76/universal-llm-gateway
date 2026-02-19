@@ -537,12 +537,12 @@ class FederatedGatewayManager(Sequential):
                 f"UNREACHABLE → REACHABLE (was offline for {age_before}ms)"
             )
         else:
-            # Regular heartbeat - only debug log
-            age_ms = int((now - old_heartbeat) * 1000)
-            logger.debug(
-                f"💓 Gateway {gateway.gateway_id} heartbeat received "
-                f"(age={age_ms}ms, threshold=60000ms)"
-            )
+            gap_ms = int((now - old_heartbeat) * 1000)
+            if gap_ms > 15_000:
+                logger.warning(
+                    f"⚠️ Gateway {gateway.gateway_id} heartbeat gap: "
+                    f"{gap_ms}ms (expected ≤5000ms)"
+                )
 
     @sequential
     async def update_from_event(

@@ -57,15 +57,22 @@ async def verify_claims(
     prompt_ref: str,
     exec_configs: dict[str, ModelExecutionConfig] | None = None,
     prompt_ref_verify_batch: str | None = None,
+    sequential_dispatch: bool = False,
 ) -> tuple[
     dict[str, list[bool]],
     dict[str, dict[str, VerdictEntry]],
     list[VerificationModelTiming],
 ]:
-    """Verify candidates across all verifier models in parallel.
+    """Verify candidates across verifier models.
 
     Fan-out: each model verifies its eligible claims concurrently.
     Fan-in: aggregate per-claim verdicts from all models.
+
+    When sequential_dispatch is True, models are dispatched one at a time
+    in the order given by verify_model_ids.  This groups requests by model
+    in stargate's FIFO queue, improving request locality and reducing
+    unnecessary model load/unload cycles.  Callers should pre-order
+    verify_model_ids by affinity (e.g. via order_models_by_affinity).
 
     Returns:
         (verdicts, verdicts_by_model, model_timings)
@@ -101,10 +108,14 @@ async def verify_claims(
         )
         return (model_id, results, timing)
 
-    async with asyncio.TaskGroup() as tg:
-        tasks = [tg.create_task(_verify_one_model(mid)) for mid in verify_model_ids]
-
-    model_results = [t.result() for t in tasks]
+    if sequential_dispatch:
+        model_results = []
+        for mid in verify_model_ids:
+            model_results.append(await _verify_one_model(mid))
+    else:
+        async with asyncio.TaskGroup() as tg:
+            tasks = [tg.create_task(_verify_one_model(mid)) for mid in verify_model_ids]
+        model_results = [t.result() for t in tasks]
 
     verdicts: dict[str, list[bool]] = {}
     verdicts_by_model: dict[str, dict[str, VerdictEntry]] = {}
