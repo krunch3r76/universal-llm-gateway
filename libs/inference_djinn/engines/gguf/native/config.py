@@ -37,8 +37,8 @@ class ServerConfig:
     # Unix socket (preferred over TCP — eliminates port conflicts)
     socket_path: str | None = None
 
-    # Parallel processing
-    parallel_slots: int = 8
+    # Parallel processing (1 unless catalog configures higher)
+    parallel_slots: int = 1
     continuous_batching: bool = True
 
     # Context configuration
@@ -51,6 +51,13 @@ class ServerConfig:
 
     # API format
     api_format: APIFormat = APIFormat.OPENAI
+
+    # Batch size (-b)
+    batch_size: int = 512
+
+    # KV cache types (-ctk/-ctv; f16 when f16_kv=True, f32 when False)
+    cache_type_k: str = "f16"
+    cache_type_v: str = "f16"
 
     # Advanced options
     flash_attn: bool = True
@@ -141,9 +148,16 @@ class ServerConfig:
         if self.continuous_batching:
             args.append("-cb")
 
-        # Context configuration
+        # Context and batch configuration
         args.extend(["-c", str(self.ctx_size)])
         args.extend(["-ngl", str(self.n_gpu_layers)])
+        args.extend(["-b", str(self.batch_size)])
+
+        # KV cache types (only emit when non-default to keep CLI clean)
+        if self.cache_type_k != "f16":
+            args.extend(["-ctk", self.cache_type_k])
+        if self.cache_type_v != "f16":
+            args.extend(["-ctv", self.cache_type_v])
 
         # CPU threading (only if explicitly set; otherwise LLAMA_ARG_THREADS env var used)
         if self.n_threads is not None:

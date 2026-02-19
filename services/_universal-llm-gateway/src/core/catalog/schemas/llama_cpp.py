@@ -43,7 +43,7 @@ class LlamaCppSchema(BaseEngineSchema):
     def get_default_loader(self) -> dict[str, Any]:
         return {
             "f16_kv": True,
-            "use_mmap": False,
+            "use_mmap": True,
             "use_mlock": True,
             "verbose": False,
             "n_batch": 512,

@@ -94,6 +94,7 @@ class FederatedGateway:
     gateway_id: str
     remote_stargate_id: str
     remote_stargate_url: str
+    node_id: str = ""
 
     # Resource state (from RESOURCE_UPDATE)
     ram_free_mb: int = 0

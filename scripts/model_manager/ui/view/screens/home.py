@@ -6,10 +6,10 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label, Static
+from textual.widgets import Collapsible, Footer, Header, Label, Static
 
 from scripts.model_manager.topology import build_snapshot
 
@@ -64,6 +64,7 @@ class HomeScreen(Screen):
         Binding("r", "nav_remotes", "Remotes"),
         Binding("f", "nav_footprint", "Footprint"),
         Binding("e", "nav_settings", "Settings"),
+        Binding("t", "toggle_topology", "Topology"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -83,6 +84,13 @@ class HomeScreen(Screen):
         height: auto;
         padding: 1 2;
     }
+    #steps-compact {
+        display: none;
+        width: 100%;
+        height: auto;
+        padding: 0 2;
+        text-align: center;
+    }
     #next-action {
         width: 100%;
         height: auto;
@@ -94,24 +102,14 @@ class HomeScreen(Screen):
         height: auto;
         padding: 0 2;
     }
-    #actions-panel {
-        width: 100%;
-        height: auto;
-        padding: 1 2;
-        align-horizontal: center;
-    }
-    #actions-row {
-        width: auto;
-        height: auto;
-    }
-    #actions-row Button {
-        margin: 0 1;
-    }
     .step-arrow {
         width: 3;
         height: 3;
         content-align: center middle;
         color: $text-muted;
+    }
+    #topo-collapsible {
+        padding: 0 2;
     }
     """
 
@@ -175,6 +173,7 @@ class HomeScreen(Screen):
             yield Static("→", classes="step-arrow")
             yield StepIndicator("Measure", id="step-measure", classes="todo")
 
+        yield Static("", id="steps-compact", markup=True)
         yield Static("", id="next-action", markup=True)
 
         with Vertical(id="info-panel"):
@@ -182,16 +181,8 @@ class HomeScreen(Screen):
             yield Static("", id="model-paths")
             yield Static("", id="model-count")
 
-        with Container(id="actions-panel"):
-            with Horizontal(id="actions-row"):
-                yield Button("Catalog [c]", id="btn-catalog", variant="primary")
-                yield Button("Services [s]", id="btn-services")
-                yield Button("Remotes [r]", id="btn-remotes")
-                yield Button("Footprint [f]", id="btn-footprint")
-                yield Button("Settings [e]", id="btn-settings")
-                yield Button("Quit [q]", id="btn-quit", variant="error")
-
-        yield TopologyPanel(id="topology-panel")
+        with Collapsible(title="Topology", id="topo-collapsible", collapsed=True):
+            yield TopologyPanel(id="topology-panel")
 
         yield Footer()
 
@@ -204,20 +195,15 @@ class HomeScreen(Screen):
     def on_screen_resume(self) -> None:
         self.refresh_status()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        match event.button.id:
-            case "btn-catalog":
-                self.app.push_screen("catalog")
-            case "btn-services":
-                self.app.push_screen("services")
-            case "btn-remotes":
-                self.app.push_screen("remotes")
-            case "btn-footprint":
-                self.app.push_screen("footprint")
-            case "btn-settings":
-                self.app.push_screen("settings")
-            case "btn-quit":
-                self.app.exit()
+    def action_toggle_topology(self) -> None:
+        collapsible = self.query_one("#topo-collapsible", Collapsible)
+        collapsible.collapsed = not collapsible.collapsed
+
+    def on_topology_panel_deploy_state_changed(
+        self, event: TopologyPanel.DeployStateChanged
+    ) -> None:
+        if event.deploying:
+            self.query_one("#topo-collapsible", Collapsible).collapsed = False
 
     def refresh_status(self) -> None:
         self.run_worker(self._check_status(), exclusive=True)
@@ -238,6 +224,7 @@ class HomeScreen(Screen):
             topo_panel.set_workspace_root(workspace_root)
             topo_panel.update_from_snapshot(snapshot)
             snapshot.write()
+            self._update_topo_title(snapshot)
         except Exception as e:
             logger.error("Topology snapshot failed: %s", e)
 
@@ -256,6 +243,17 @@ class HomeScreen(Screen):
 
         catalog = app.catalog  # type: ignore[attr-defined]
         self._update_steps(gw, sg, build, catalog)
+
+    def _update_topo_title(self, snapshot: object) -> None:
+        statuses = [snapshot.master.status]  # type: ignore[union-attr]
+        if snapshot.local_edge:  # type: ignore[union-attr]
+            statuses.append(snapshot.local_edge.status)  # type: ignore[union-attr]
+        statuses.extend(r.status for r in snapshot.remotes)  # type: ignore[union-attr]
+        total = len(statuses)
+        running = sum(1 for s in statuses if s == "running")
+        self.query_one(
+            "#topo-collapsible", Collapsible
+        ).title = f"Topology ({total} nodes: {running} running)"
 
     def _update_model_paths(self, app: object) -> None:
         search_paths = app.local_env.model_search_paths  # type: ignore[attr-defined]
@@ -326,8 +324,16 @@ class HomeScreen(Screen):
             "step-download": has_downloads,
             "step-measure": has_measured,
         }
-        for step_id, done in step_done.items():
-            self._mark_step(step_id, done)
+
+        all_done = all(step_done.values())
+        self.query_one("#steps-row").display = not all_done
+        compact = self.query_one("#steps-compact", Static)
+        compact.display = all_done
+        if all_done:
+            compact.update("[green]✓ Configure → Build → Start → Download → Measure[/]")
+        else:
+            for step_id, done in step_done.items():
+                self._mark_step(step_id, done)
 
         if not gw_up and not sg_up:
             start_hint = r"press \[s] Services → Start Gateway + Stargate"

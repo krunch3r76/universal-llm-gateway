@@ -696,7 +696,7 @@ def _build_updated_catalog_entry(
         loader.update(
             {
                 "f16_kv": True,
-                "use_mmap": False,
+                "use_mmap": True,
                 "use_mlock": True,
                 "verbose": False,
                 "n_batch": 512,

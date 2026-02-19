@@ -94,7 +94,7 @@ class GGUFLoaderConfig(BaseModel):
 
     n_batch: int = Field(512, description="Batch size for prompt processing")
     f16_kv: bool = Field(True, description="Use float16 for KV cache")
-    use_mmap: bool = Field(False, description="Use memory mapping")
+    use_mmap: bool = Field(True, description="Use memory mapping")
     use_mlock: bool = Field(True, description="Lock pages in RAM")
     verbose: bool = Field(False, description="Enable verbose logging")
 

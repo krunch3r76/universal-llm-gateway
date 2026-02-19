@@ -81,6 +81,7 @@ class RemoteTelemetrySender:
         self._source = TelemetrySource(
             stargate_id=config.stargate_id,
             gateway_id=gateway_id,
+            node_id=config.node_id,
         )
 
         # Rate limiter (optional, can be bypassed for low-volume)

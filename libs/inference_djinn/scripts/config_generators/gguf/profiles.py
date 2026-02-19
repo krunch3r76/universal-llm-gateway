@@ -207,7 +207,7 @@ def merge_profiles(
         base_loader = {
             "n_batch": 512,
             "f16_kv": True,
-            "use_mmap": False,
+            "use_mmap": True,
             "use_mlock": True,
             "verbose": False,
         }

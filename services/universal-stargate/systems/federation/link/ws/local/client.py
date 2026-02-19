@@ -59,24 +59,16 @@ class LocalEdgeClient(PeerConnection):
         | None = None,
         on_connected: Callable[[], Awaitable[None]] | None = None,
         on_disconnected: Callable[[], Awaitable[None]] | None = None,
+        on_measurement_request: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+        | None = None,
         ping_interval: float = 20.0,
     ):
-        """
-        Initialize Local Edge client.
-
-        Args:
-            config: Local Edge configuration (Edge peer info)
-            relay_stargate_id: This Relay's stargate_id (for auth identity)
-            on_telemetry: Callback for telemetry events
-            on_connected: Callback when connected
-            on_disconnected: Callback when disconnected
-            ping_interval: Ping interval in seconds
-        """
         self._config = config
         self._relay_stargate_id = relay_stargate_id
         self._on_telemetry = on_telemetry
         self._on_connected = on_connected
         self._on_disconnected = on_disconnected
+        self._on_measurement_request = on_measurement_request
         self._ping_interval = ping_interval
 
         # CRITICAL: Auth uses Relay's stargate_id (not Edge's)
@@ -234,11 +226,11 @@ class LocalEdgeClient(PeerConnection):
             name=f"local-edge-ping-{self._config.stargate_id}",
         )
 
-        # Run receive loop (blocks until disconnect)
         await local_receive_loop(
             websocket=ws,
             peer_id=self.peer_id,
             on_telemetry=self._on_telemetry,
+            on_measurement_request=self._on_measurement_request,
         )
 
     async def _on_session_end(self) -> None:

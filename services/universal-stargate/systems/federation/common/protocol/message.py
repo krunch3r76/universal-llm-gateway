@@ -47,6 +47,10 @@ class FederationMessageType(str, Enum):
     TELEMETRY_HEARTBEAT = "telemetry.heartbeat"
     GATEWAY_SNAPSHOT = "telemetry.gateway.snapshot"
 
+    # Measurement (Edge ↔ Master request/response)
+    MEASUREMENT_VRAM_REQUEST = "measurement.vram.request"
+    MEASUREMENT_VRAM_RESPONSE = "measurement.vram.response"
+
 
 # Factory functions return MessageEnvelope
 
@@ -245,6 +249,36 @@ def create_request_cancel(
         data["model_id"] = model_id
     return MessageEnvelope(
         type=FederationMessageType.REQUEST_CANCEL.value,
+        data=data,
+    )
+
+
+def create_measurement_vram_request(
+    request_id: str,
+    device_index: int = 0,
+) -> MessageEnvelope:
+    """Create MEASUREMENT_VRAM_REQUEST message."""
+    return MessageEnvelope(
+        type=FederationMessageType.MEASUREMENT_VRAM_REQUEST.value,
+        data={"request_id": request_id, "device_index": device_index},
+    )
+
+
+def create_measurement_vram_response(
+    request_id: str,
+    total_mb: int | None,
+    process_count: int | None,
+    error: str | None = None,
+) -> MessageEnvelope:
+    """Create MEASUREMENT_VRAM_RESPONSE message."""
+    data: dict[str, Any] = {"request_id": request_id}
+    if error is not None:
+        data["error"] = error
+    else:
+        data["total_mb"] = total_mb
+        data["process_count"] = process_count
+    return MessageEnvelope(
+        type=FederationMessageType.MEASUREMENT_VRAM_RESPONSE.value,
         data=data,
     )
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
@@ -21,6 +22,7 @@ from ..common.config import FederationConfig
 from ..common.protocol import (
     FederationMessageType,
     create_federation_auth_result,
+    create_measurement_vram_request,
 )
 from .telemetry import (
     build_initial_telemetry_payload,
@@ -33,6 +35,8 @@ if TYPE_CHECKING:
     from fastapi import WebSocket
 
 logger = get_logger(__name__)
+
+VRAM_REQUEST_TIMEOUT = 10.0
 
 
 class EdgeFederationServer:
@@ -76,6 +80,7 @@ class EdgeFederationServer:
         self._source = TelemetrySource(
             stargate_id=config.stargate_id,
             gateway_id=f"{config.stargate_id}-gateway",
+            node_id=config.node_id,
         )
 
         # Telemetry cache for late-joining peers
@@ -90,6 +95,9 @@ class EdgeFederationServer:
 
         # Periodic heartbeat task (for preventing telemetry staleness)
         self._heartbeat_task: asyncio.Task[None] | None = None
+
+        # Pending measurement requests awaiting response from Master
+        self._pending_requests: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
         logger.info(
             f"EdgeFederationServer initialized for {config.stargate_id} "
@@ -318,6 +326,44 @@ class EdgeFederationServer:
                 logger.error(f"Failed to send to {peer_id}: {e}")
                 # Will be cleaned up on next disconnect handler call
 
+    # ─── Measurement Request/Response ──────────────────────────────────────
+
+    async def request_vram_snapshot(self, device_index: int = 0) -> dict[str, Any]:
+        """Send VRAM measurement request to Master, await response.
+
+        Raises TimeoutError if no response within VRAM_REQUEST_TIMEOUT.
+        Raises RuntimeError if no peers connected.
+        """
+        if not self._authenticated_peers:
+            raise RuntimeError("No peers connected for VRAM measurement")
+
+        request_id = uuid.uuid4().hex[:12]
+        msg = create_measurement_vram_request(request_id, device_index)
+        msg_json = json.dumps(msg.to_dict())
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict[str, Any]] = loop.create_future()
+        self._pending_requests[request_id] = future
+
+        try:
+            async with self._peers_lock:
+                peers = list(self._authenticated_peers.values())
+            await peers[0].send_text(msg_json)
+
+            return await asyncio.wait_for(future, timeout=VRAM_REQUEST_TIMEOUT)
+        finally:
+            self._pending_requests.pop(request_id, None)
+
+    def resolve_measurement_response(self, data: dict[str, Any]) -> bool:
+        """Resolve a pending measurement Future. Returns True if matched."""
+        request_id = data.get("request_id", "")
+        future = self._pending_requests.get(request_id)
+        if future and not future.done():
+            future.set_result(data)
+            return True
+        logger.warning(f"No pending request for measurement response {request_id}")
+        return False
+
     # ─── Gateway Telemetry Wiring ──────────────────────────────────────────
 
     def wire_gateway_telemetry(self, ws_client: Any, gateway_url: str) -> None:
@@ -427,5 +473,6 @@ class EdgeFederationServer:
             ws_client=ws_client,
             stargate_id=self._config.stargate_id,
             gateway_id=self._source.gateway_id,
+            node_id=self._config.node_id,
             broadcast_callback=self._broadcast_to_peers,
         )

@@ -103,7 +103,6 @@ def create_edge_federation_router(edge_server: EdgeFederationServer) -> APIRoute
                 msg_type = msg.get("type", "")
 
                 if msg_type == FederationMessageType.FEDERATION_PING.value:
-                    # Respond with pong
                     pong = {
                         "type": FederationMessageType.FEDERATION_PONG.value,
                         "data": {},
@@ -111,8 +110,10 @@ def create_edge_federation_router(edge_server: EdgeFederationServer) -> APIRoute
                     await websocket.send_text(json.dumps(pong))
                     logger.debug(f"Pong sent to {peer_id}")
 
+                elif msg_type == FederationMessageType.MEASUREMENT_VRAM_RESPONSE.value:
+                    edge_server.resolve_measurement_response(msg.get("data", {}))
+
                 elif is_telemetry_type(msg_type):
-                    # Edge receives telemetry from peer? Unusual but log it
                     logger.debug(f"Received telemetry from {peer_id}: {msg_type}")
 
                 else:

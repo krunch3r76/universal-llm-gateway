@@ -189,7 +189,7 @@ class DecisionEngine:
                 eviction_plan=eviction_summary,
                 affinity_rule=(
                     affinity_rule
-                    if affinity_rule and affinity_rule.stargate == gateway.name
+                    if affinity_rule and affinity_rule.node == gateway.node_id
                     else None
                 ),
             )
@@ -324,35 +324,32 @@ class DecisionEngine:
         # Apply hard affinity filter
         if hard_affinity:
             t1_affinity = [
-                c for c in t1_candidates if c.gateway.name == hard_affinity.stargate
+                c for c in t1_candidates if c.gateway.node_id == hard_affinity.node
             ]
             t2_affinity = [
-                c for c in t2_candidates if c.gateway.name == hard_affinity.stargate
+                c for c in t2_candidates if c.gateway.node_id == hard_affinity.node
             ]
 
             # If affinity gateway is T1, use it
             if t1_affinity:
                 return (
                     t1_affinity[0],
-                    f"hard_affinity={hard_affinity.stargate}, tier=T1",
+                    f"hard_affinity={hard_affinity.node}, tier=T1",
                 )
 
             # If affinity gateway is T2 and eviction allowed, use it
             if t2_affinity and hard_affinity.evict_if_needed:
                 return (
                     t2_affinity[0],
-                    f"hard_affinity={hard_affinity.stargate}, tier=T2_eviction",
+                    f"hard_affinity={hard_affinity.node}, tier=T2_eviction",
                 )
 
-            # Hard affinity gateway is infeasible
-            # For hard affinity + sticky: Do NOT fall back, return None to trigger wait
-            # For hard affinity + non-sticky: Could fall back, but hard affinity implies
-            # strong preference, so also return None
+            # Hard affinity node is infeasible
             logger.warning(
-                f"Hard affinity stargate {hard_affinity.stargate} infeasible "
+                f"Hard affinity node {hard_affinity.node} infeasible "
                 f"(no T1/T2 candidates). Returning None to trigger wait/error logic."
             )
-            return None, f"hard_affinity={hard_affinity.stargate}_infeasible"
+            return None, f"hard_affinity={hard_affinity.node}_infeasible"
 
         # Sort by score within each tier (descending), with name tie-breaker
         def sort_key(c: GatewayCandidate) -> tuple[float, str]:

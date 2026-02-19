@@ -25,14 +25,14 @@ class AffinityStrength(StrEnum):
 @dataclass(frozen=True, kw_only=True)
 class AffinityRule:
     """
-    Single affinity rule mapping model pattern to stargate.
+    Single affinity rule mapping model pattern to a node.
 
     Invariant: ∀ rule, (match is valid regex OR exact string)
-               ∧ stargate ∈ configured_stargates
+               ∧ node ∈ configured_nodes
     """
 
     match: str  # Exact model ID or regex pattern
-    stargate: str  # Target stargate ID
+    node: str  # Target node identifier (canonical NODE_ID, e.g. "jupiter")
     strength: AffinityStrength = AffinityStrength.SOFT
     bonus: float = 50.0  # Score bonus for soft affinity
     evict_if_needed: bool = True  # Allow eviction to satisfy this rule
@@ -214,21 +214,18 @@ def load_routing_policy(config: dict[str, Any]) -> RoutingPolicy:
     Expected config shape:
     ```yaml
     routing:
+      affinity:
+        - match: "hermes3-*"
+          node: "jupiter"
+          strength: "hard"
+          evict_if_needed: true
       scoring:
         eviction_margin: 10
         telemetry_max_age_ms: 2000
-        capacity:
-          enabled: true
         weights:
           affinity: 50
           warm: 15
           contention: 20
-          ...
-      affinity:
-        - match: "hermes3-*"
-          stargate: "jupiter"
-          strength: "hard"
-          evict_if_needed: true
     model_routing:
       default_sticky: true
       sticky_overrides:
@@ -267,16 +264,23 @@ def load_routing_policy(config: dict[str, Any]) -> RoutingPolicy:
         if not isinstance(rule_dict, dict):
             continue
 
-        # Legacy format check - fail-fast
-        if "gateway" in rule_dict and "stargate" not in rule_dict:
+        # Legacy format checks — fail-fast
+        if "gateway" in rule_dict and "node" not in rule_dict:
             gw_value = rule_dict["gateway"]
             raise ValueError(
-                f"MIGRATION REQUIRED: Affinity rule uses deprecated 'gateway' field.\n"
-                f"Rename 'gateway: {gw_value}' to 'stargate: {gw_value}'\n"
-                f"See: docs/refactoring/federation-only-architecture-v2.md"
+                f"MIGRATION REQUIRED: Affinity rule uses deprecated 'gateway'.\n"
+                f"Rename 'gateway: {gw_value}' to 'node: {gw_value}'\n"
+                f"Use canonical NODE_ID (e.g. 'jupiter')"
+            )
+        if "stargate" in rule_dict and "node" not in rule_dict:
+            sg_value = rule_dict["stargate"]
+            raise ValueError(
+                f"MIGRATION REQUIRED: Affinity rule uses deprecated 'stargate' field.\n"
+                f"Rename 'stargate: {sg_value}' to 'node: {sg_value}'\n"
+                f"Use the canonical NODE_ID (e.g. 'jupiter', not 'relay-jupiter')"
             )
 
-        if "match" not in rule_dict or "stargate" not in rule_dict:
+        if "match" not in rule_dict or "node" not in rule_dict:
             continue
 
         strength_str = rule_dict.get("strength", "soft").lower()
@@ -287,7 +291,7 @@ def load_routing_policy(config: dict[str, Any]) -> RoutingPolicy:
         rules.append(
             AffinityRule(
                 match=rule_dict["match"],
-                stargate=rule_dict["stargate"],
+                node=rule_dict["node"],
                 strength=strength,
                 bonus=float(rule_dict.get("bonus", 50.0)),
                 evict_if_needed=rule_dict.get("evict_if_needed", True),

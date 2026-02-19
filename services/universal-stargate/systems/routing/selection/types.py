@@ -53,6 +53,7 @@ class Gateway:
     """Models available in this gateway's catalog (can be loaded)."""
 
     remote_stargate_id: str | None = None  # For eviction protection tracking
+    node_id: str = ""  # Canonical node identity for affinity matching
 
     # Model details for eviction scoring (populated when include_model_details=True)
     model_details: dict[ModelId, dict[str, Any]] = field(default_factory=dict)
