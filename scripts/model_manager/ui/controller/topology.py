@@ -156,6 +156,12 @@ async def deploy_remote(
         "node_modules",
         ".venv",
         "*.pyc",
+        # These directories are COPY'd into Docker builder stages (vllm-builder,
+        # llama-builder, llama-server-builder). Syncing them invalidates the
+        # vLLM CUDA build cache, forcing a full recompile (~1h). Remote deploys
+        # are always application-only pushes, never builder script updates.
+        "libs/inference_djinn/scripts/build/",
+        "docker/scripts/build/",
     ]
     rsync_args = [
         "rsync",

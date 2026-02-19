@@ -69,7 +69,7 @@ def _render_template(template: Path, env: dict[str, str]) -> Path:
         return value
 
     rendered = _ENV_VAR_RE.sub(_replace, text)
-    config_path = _GATEWAY_DIR / "stargate.yaml"
+    config_path = _GATEWAY_DIR / "relay-stargate.yaml"
     _GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
     config_path.write_text(rendered)
     logger.info("Rendered relay config: %s", config_path)
