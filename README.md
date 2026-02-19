@@ -1,8 +1,6 @@
 # Universal LLM Gateway
 
-An OpenAI-compatible inference stack built for a hostile-model threat model. Prompts and outputs stay on your hardware — the execution plane runs unprivileged inside network-isolated containers (`network_mode: "none"`), so even a compromised model cannot exfiltrate data or reach the internet.
-
-Clients talk to **Stargate** on port `9999` — that's the only externally visible service. Behind it, each GPU node runs a network-isolated container where an **Edge Stargate** sits in front of a colocated **Gateway**. The Gateway is reachable only through the Edge Stargate's Unix socket — it has no network access and no exposed ports.
+An OpenAI-compatible inference stack where nothing leaves your hardware. Models run unprivileged inside network-isolated containers (network_mode: "none"): no exfiltration, no phoning home, no cloud dependency.
 
 ## What it solves
 
