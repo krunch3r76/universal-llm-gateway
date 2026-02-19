@@ -95,7 +95,7 @@ class RemotesScreen(Screen):
                 yield Input(id="inp-address", placeholder="jupiter (or 192.168.1.50)")
             with Horizontal():
                 yield Label("Model path:")
-                yield Input(id="inp-model-path", placeholder="/mnt/models")
+                yield Input(id="inp-model-path", placeholder="~/.models")
             with Horizontal():
                 yield Button("Add Remote", id="btn-add", variant="success")
                 yield Checkbox("Build", id="chk-build")
