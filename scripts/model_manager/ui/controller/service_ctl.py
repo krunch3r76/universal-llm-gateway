@@ -170,7 +170,9 @@ class ServiceController:
         if scope == "llama":
             args.append("--no-vllm")
 
-        yield f"$ {' '.join(args)}"
+        log_path = Path("/tmp/rebuild-gpu.log")
+        cmd_line = f"$ {' '.join(args)}"
+        yield cmd_line
         process = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
@@ -181,15 +183,24 @@ class ServiceController:
         self._build_process = process
         try:
             assert process.stdout is not None
-            async for raw_line in process.stdout:
-                yield raw_line.decode(errors="replace").rstrip()
+            with log_path.open("w") as log_file:
+                log_file.write(cmd_line + "\n")
+                log_file.flush()
+                async for raw_line in process.stdout:
+                    line = raw_line.decode(errors="replace").rstrip()
+                    log_file.write(line + "\n")
+                    log_file.flush()
+                    yield line
             exit_code = await process.wait()
-            if exit_code == 0:
-                yield "Build completed successfully."
-            elif exit_code == -signal.SIGTERM or exit_code == -signal.SIGKILL:
-                yield "Build cancelled."
-            else:
-                yield f"Build FAILED (exit code {exit_code})."
+            with log_path.open("a") as log_file:
+                if exit_code == 0:
+                    msg = "Build completed successfully."
+                elif exit_code == -signal.SIGTERM or exit_code == -signal.SIGKILL:
+                    msg = "Build cancelled."
+                else:
+                    msg = f"Build FAILED (exit code {exit_code})."
+                log_file.write(msg + "\n")
+            yield msg
         finally:
             self._build_process = None
 
