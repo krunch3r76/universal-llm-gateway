@@ -297,6 +297,11 @@ class FederationIntegration:
         # Cancel endpoint (shares request_store for parity with Remote)
         app.include_router(create_cancel_router(request_store))
 
+        # VRAM measurement endpoint (proxied to Master via federation WS)
+        from ..remote.api.measurement import create_measurement_router
+
+        app.include_router(create_measurement_router(self._edge_server))
+
         # Gateway management proxy (for measure.py and admin operations)
         from ..remote.api.gateway_proxy import create_gateway_proxy_router
 

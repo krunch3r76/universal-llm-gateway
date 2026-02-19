@@ -62,6 +62,7 @@ def stargate_to_gateway(stargate: Stargate) -> Gateway:
         telemetry_timestamp=stargate.telemetry_timestamp,
         last_heartbeat=stargate.last_heartbeat,
         remote_stargate_id=stargate.ref.remote_stargate_id,
+        node_id=getattr(stargate.ref, "node_id", ""),
     )
 
 
@@ -113,6 +114,7 @@ def federated_gateways_to_routing_candidates(
                 last_heartbeat=fg.last_heartbeat,
                 model_details=model_details,
                 remote_stargate_id=fg.remote_stargate_id,
+                node_id=getattr(fg, "node_id", ""),
             )
         )
 

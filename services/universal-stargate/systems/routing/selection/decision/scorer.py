@@ -49,7 +49,7 @@ def calculate_utility(
 
     # Component: Affinity
     affinity_score = 0.0
-    if affinity_rule and affinity_rule.stargate == gateway.name:
+    if affinity_rule and affinity_rule.node == gateway.node_id:
         affinity_score = affinity_rule.bonus
 
     # Component: Warm (model already loaded)

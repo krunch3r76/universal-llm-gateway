@@ -4,6 +4,7 @@ Federation configuration schema (dataclasses only).
 All configuration dataclasses for federation system.
 """
 
+import os
 import socket
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -290,6 +291,7 @@ class FederationConfig:
 
     mode: StargateMode = StargateMode.EDGE
     stargate_id: str = ""  # Defaults to hostname if empty
+    node_id: str = ""  # Canonical node identity for affinity matching
 
     # Execution capability (derived at config load time from main gateway section)
     # Set by config loader: false only for router-only Master
@@ -378,3 +380,12 @@ class FederationConfig:
         """Set defaults and validate after initialization."""
         if not self.stargate_id:
             self.stargate_id = socket.gethostname()
+        if not self.node_id:
+            self.node_id = os.environ.get("NODE_ID", "")
+        if not self.node_id:
+            self.node_id = (
+                self.stargate_id.removeprefix("edge-")
+                .removeprefix("relay-")
+                .removeprefix("master-")
+                .removesuffix("-gateway")
+            )

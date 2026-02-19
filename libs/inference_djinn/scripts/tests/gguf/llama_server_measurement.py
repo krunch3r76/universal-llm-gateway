@@ -1,48 +1,34 @@
 #!/usr/bin/env python3
-"""
-llama-server-based model measurement.
+"""Measure model RAM and VRAM by spawning a temporary llama-server.
 
-Replaces simple_gpu_layer_test.py and simple_cpu_only_memory_test.py.
-Spawns a temporary llama-server instance, measures RAM/VRAM, and reports
-results as JSON on stdout.
+VRAM is measured in-container via pynvml per-process accounting.
+When --hold is used, the caller (gpu.py) can also take a host-side
+VRAM snapshot via Stargate federation for cross-validation.
 
-Usage:
-    # GPU measurement
-    python llama_server_measurement.py --model /path/to/model.gguf --layers 32 --ctx 4096
-
-    # CPU measurement
-    python llama_server_measurement.py --model /path/to/model.gguf --mode cpu --ctx 4096
+With --hold: load model → measure VRAM → print READY → wait for stdin
+             close → warmup → measure RAM → JSON.
+Without --hold: load model → measure VRAM → warmup → measure RAM → JSON.
 """
 
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
 
-# --- PID-based memory measurement ---
-
 
 def get_process_rss_mb(pid: int) -> int:
-    """
-    Return RSS (Resident Set Size) of an external process in MB.
-
-    Args:
-        pid: Process ID to measure
-
-    Raises:
-        RuntimeError: If measurement fails
-    """
+    """Return RSS (MB) for an external PID."""
     try:
         import psutil
 
-        process = psutil.Process(pid)
-        return int(process.memory_info().rss // (1024 * 1024))
+        return int(psutil.Process(pid).memory_info().rss // (1024 * 1024))
     except ImportError:
-        # Fallback: /proc/{pid}/status (Linux only)
         try:
             with open(f"/proc/{pid}/status") as f:
                 for line in f:
@@ -56,16 +42,7 @@ def get_process_rss_mb(pid: int) -> int:
 
 
 def get_process_gpu_memory(pid: int, device_index: int = 0) -> int:
-    """
-    Return GPU memory used by an external process in MB.
-
-    Args:
-        pid: Process ID to measure
-        device_index: GPU device index
-
-    Raises:
-        RuntimeError: If measurement fails
-    """
+    """Return GPU memory used by a process in MB via pynvml per-process accounting."""
     try:
         import pynvml
 
@@ -80,7 +57,7 @@ def get_process_gpu_memory(pid: int, device_index: int = 0) -> int:
                 return int(vram_mb)
 
         pynvml.nvmlShutdown()
-        return 0  # Process not using GPU yet
+        return 0
 
     except ImportError:
         raise ImportError("nvidia-ml-py3 not installed") from None
@@ -88,11 +65,28 @@ def get_process_gpu_memory(pid: int, device_index: int = 0) -> int:
         raise RuntimeError(f"pynvml failed: {e}") from e
 
 
+def _select_visible_gpu_device(gpu_index: int, cuda_visible_devices: str | None) -> str:
+    """Resolve --gpu-index to a concrete CUDA_VISIBLE_DEVICES value."""
+    if not cuda_visible_devices:
+        return str(gpu_index)
+
+    tokens = [t.strip() for t in cuda_visible_devices.split(",") if t.strip()]
+    if not tokens:
+        return str(gpu_index)
+
+    if gpu_index < 0 or gpu_index >= len(tokens):
+        raise ValueError(
+            f"--gpu-index {gpu_index} out of range for "
+            f"CUDA_VISIBLE_DEVICES={cuda_visible_devices!r}"
+        )
+    return tokens[gpu_index]
+
+
 # --- Server lifecycle ---
 
 
 def find_binary() -> str:
-    """Locate llama-server binary (import from shared module)."""
+    """Locate llama-server binary."""
     from inference_djinn.engines.gguf.native.binary import find_llama_server
 
     return find_llama_server()
@@ -106,6 +100,9 @@ def build_server_command(
     n_ctx: int,
     n_batch: int,
     mmproj_path: str | None = None,
+    *,
+    use_mmap: bool = True,
+    f16_kv: bool = True,
 ) -> list[str]:
     """Build llama-server CLI command for measurement."""
     cmd = [
@@ -118,12 +115,19 @@ def build_server_command(
         str(n_gpu_layers),
         "-c",
         str(n_ctx),
+        "-b",
+        str(n_batch),
         "-np",
         "1",
+        "-cb",
         "--flash-attn",
         "on",
         "--mlock",
     ]
+    if not use_mmap:
+        cmd.append("--no-mmap")
+    if not f16_kv:
+        cmd.extend(["-ctk", "f32", "-ctv", "f32"])
     if mmproj_path:
         cmd.extend(["--mmproj", mmproj_path])
     return cmd
@@ -134,18 +138,7 @@ def wait_for_health(
     timeout_sec: int = 60,
     proc: subprocess.Popen | None = None,
 ) -> None:
-    """
-    Poll /health endpoint until server is ready.
-
-    Args:
-        socket_path: Unix socket path
-        timeout_sec: Maximum wait time
-        proc: Server process (checked for early exit)
-
-    Raises:
-        TimeoutError: If server doesn't become healthy
-        RuntimeError: If server process dies during wait
-    """
+    """Poll /health endpoint until server is ready."""
     import httpx
 
     transport = httpx.HTTPTransport(uds=socket_path)
@@ -174,12 +167,7 @@ def wait_for_health(
 
 
 def warmup_via_api(socket_path: str, n_ctx: int) -> None:
-    """
-    Exercise KV cache allocation via completion API.
-
-    Sends a short prompt to force KV cache allocation and one
-    generation pass. This captures peak memory after cache fill.
-    """
+    """Send a short completion request to fault in pages and caches."""
     import httpx
 
     transport = httpx.HTTPTransport(uds=socket_path)
@@ -193,16 +181,28 @@ def warmup_via_api(socket_path: str, n_ctx: int) -> None:
     try:
         client.post(
             "/v1/completions",
-            json={
-                "prompt": prompt,
-                "max_tokens": 50,
-                "temperature": 0.0,
-            },
+            json={"prompt": prompt, "max_tokens": 50, "temperature": 0.0},
         )
     except Exception:
         print("Warning: warmup request failed", file=sys.stderr)
     finally:
         client.close()
+
+
+def _drain_stderr(pipe: object, lines: list[str]) -> None:
+    """Drain stderr pipe into a list in a background thread."""
+    for line in pipe:
+        lines.append(line)
+    pipe.close()
+
+
+def _parse_offloaded_layers(stderr_lines: list[str]) -> int | None:
+    """Parse actual offloaded layer count from llama-server stderr."""
+    for line in stderr_lines:
+        m = re.search(r"offloaded\s+(\d+)/(\d+)\s+layers", line)
+        if m:
+            return int(m.group(1))
+    return None
 
 
 # --- Main measurement ---
@@ -216,17 +216,19 @@ def measure(
     gpu_index: int,
     mode: str,
     mmproj_path: str | None = None,
+    hold: bool = False,
 ) -> dict[str, bool | int | str | None]:
-    """
-    Run measurement: spawn server, measure, shutdown.
+    """Spawn server, measure RAM and VRAM, shutdown; return JSON-shaped dict.
 
-    Returns:
-        {"success": bool, "ram_mb": int|None, "vram_mb": int|None, "error": str|None}
+    VRAM is measured after model load via pynvml per-process accounting.
+    With hold=True: prints READY after load (caller can take host-side
+    snapshot for cross-validation), blocks until stdin is closed.
     """
     result: dict[str, bool | int | str | None] = {
         "success": False,
         "ram_mb": None,
         "vram_mb": None,
+        "offloaded_layers": None,
         "error": None,
     }
 
@@ -249,8 +251,13 @@ def measure(
         if mode == "cpu":
             env["CUDA_VISIBLE_DEVICES"] = ""
         else:
-            env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
+            selected = _select_visible_gpu_device(
+                gpu_index=gpu_index,
+                cuda_visible_devices=env.get("CUDA_VISIBLE_DEVICES"),
+            )
+            env["CUDA_VISIBLE_DEVICES"] = selected
 
+        stderr_lines: list[str] = []
         proc = subprocess.Popen(
             cmd,
             env=env,
@@ -258,25 +265,40 @@ def measure(
             stderr=subprocess.PIPE,
             text=True,
         )
+        stderr_thread = threading.Thread(
+            target=_drain_stderr,
+            args=(proc.stderr, stderr_lines),
+            daemon=True,
+        )
+        stderr_thread.start()
 
         wait_for_health(socket_path, timeout_sec=120, proc=proc)
+
         pid = proc.pid
         assert pid is not None
 
-        ram_after_load = get_process_rss_mb(pid)
+        # VRAM after model load (before warmup — captures layer offload cost)
         vram_after_load = get_process_gpu_memory(pid, gpu_index) if mode == "gpu" else 0
 
+        if hold:
+            print("READY", flush=True)
+            sys.stdin.readline()
+
         warmup_via_api(socket_path, n_ctx)
-        ram_after_warmup = get_process_rss_mb(pid)
-        vram_after_warmup = (
-            get_process_gpu_memory(pid, gpu_index) if mode == "gpu" else 0
-        )
+        ram_mb = get_process_rss_mb(pid)
+
+        offloaded = _parse_offloaded_layers(stderr_lines)
+        if offloaded is not None and offloaded != n_gpu_layers and n_gpu_layers != -1:
+            print(
+                f"WARNING: requested {n_gpu_layers} GPU layers but server "
+                f"offloaded {offloaded}",
+                file=sys.stderr,
+            )
 
         result["success"] = True
-        result["ram_mb"] = max(ram_after_load, ram_after_warmup)
-        result["vram_mb"] = (
-            max(vram_after_load, vram_after_warmup) if mode == "gpu" else None
-        )
+        result["ram_mb"] = ram_mb
+        result["vram_mb"] = vram_after_load if mode == "gpu" else None
+        result["offloaded_layers"] = offloaded
 
     except FileNotFoundError as e:
         result["error"] = f"Binary not found: {e}"
@@ -324,6 +346,11 @@ def main() -> int:
         default="gpu",
         help="Measurement mode",
     )
+    parser.add_argument(
+        "--hold",
+        action="store_true",
+        help="Hold after model load for external VRAM measurement",
+    )
 
     args = parser.parse_args()
 
@@ -350,6 +377,7 @@ def main() -> int:
         gpu_index=args.gpu_index,
         mode=args.mode,
         mmproj_path=args.mmproj,
+        hold=args.hold,
     )
 
     print(json.dumps(result))

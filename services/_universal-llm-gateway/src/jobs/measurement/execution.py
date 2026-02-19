@@ -113,9 +113,6 @@ async def measure_gpu_with_stepdown(
                     found_full_gpu = True
                     emit_log(f"  → Max full-GPU context: {ctx}")
             else:
-                # Log stderr if available for debugging
-                if stderr := profile.get("stderr"):
-                    emit_log(f"  → Error details: {stderr}")
                 # Full GPU failed - try hybrid if enabled
                 if enable_hybrid:
                     hybrid = await try_hybrid_measurement(
@@ -203,8 +200,6 @@ async def measure_cpu_contexts(
                 log_profile_result(ctx, profile, emit_log)
             else:
                 emit_log(f"  ❌ {ctx}: CPU measurement failed")
-                if stderr := profile.get("stderr"):
-                    emit_log(f"      stderr: {stderr}")
                 results[str(ctx)] = {"error": "CPU measurement failed"}
         except Exception as e:
             emit_log(f"  ❌ {ctx}: {e}")

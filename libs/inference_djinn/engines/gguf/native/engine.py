@@ -79,6 +79,10 @@ class NativeGGUFEngine(BaseEngine):
         no_mmap: bool = False,
         mlock: bool = True,
         numa: bool = False,
+        # Batch and KV cache (defaults in ServerConfig)
+        batch_size: int | None = None,
+        cache_type_k: str | None = None,
+        cache_type_v: str | None = None,
         # Vision models
         mmproj_path: str | None = None,
         # Embedding mode
@@ -136,6 +140,18 @@ class NativeGGUFEngine(BaseEngine):
                     "(catalog compat)"
                 )
 
+        # COMPAT: Accept YAML loader config key names (translate to engine params)
+        if "use_mmap" in kwargs:
+            no_mmap = not kwargs.pop("use_mmap")
+        if "use_mlock" in kwargs:
+            mlock = kwargs.pop("use_mlock")
+        if "f16_kv" in kwargs:
+            f16_kv_val: bool = kwargs.pop("f16_kv")
+            cache_type_k = "f16" if f16_kv_val else "f32"
+            cache_type_v = "f16" if f16_kv_val else "f32"
+        if "n_batch" in kwargs:
+            batch_size = kwargs.pop("n_batch")
+
         # DEBUG: Log parallel_slots value received
         logger.info(
             f"[NativeGGUFEngine] Initializing with parallel_slots={parallel_slots}, "
@@ -148,6 +164,15 @@ class NativeGGUFEngine(BaseEngine):
             model_hash = hashlib.sha256(model_path.encode()).hexdigest()[:12]
             socket_path = f"{socket_dir}/{model_hash}.sock"
             os.makedirs(socket_dir, exist_ok=True)
+
+        # Only forward batch/cache fields when explicitly provided (ServerConfig owns defaults)
+        optional_fields: dict[str, int | str] = {}
+        if batch_size is not None:
+            optional_fields["batch_size"] = batch_size
+        if cache_type_k is not None:
+            optional_fields["cache_type_k"] = cache_type_k
+        if cache_type_v is not None:
+            optional_fields["cache_type_v"] = cache_type_v
 
         self.config = ServerConfig(
             model_path=model_path,
@@ -173,6 +198,7 @@ class NativeGGUFEngine(BaseEngine):
             ubatch_size=ubatch_size or (8192 if embedding else None),
             verbose=verbose,
             timeout=timeout,
+            **optional_fields,
         )
         self.startup_timeout = startup_timeout
 

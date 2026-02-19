@@ -8,6 +8,8 @@ from .message import (
     create_federation_init,
     create_federation_ping,
     create_federation_pong,
+    create_measurement_vram_request,
+    create_measurement_vram_response,
     create_model_busy,
     create_model_idle,
     create_model_load_failed,
@@ -38,6 +40,8 @@ __all__ = [
     "create_federation_auth_result",
     "create_federation_ping",
     "create_federation_pong",
+    "create_measurement_vram_request",
+    "create_measurement_vram_response",
     "is_telemetry_type",
     "parse_federation_message",
 ]

@@ -168,6 +168,7 @@ def create_periodic_heartbeat_task(
     ws_client: GatewayWebSocketClient,
     stargate_id: str,
     gateway_id: str,
+    node_id: str,
     broadcast_callback: Callable[[dict[str, Any]], Any],
 ) -> asyncio.Task[None]:
     """
@@ -181,6 +182,7 @@ def create_periodic_heartbeat_task(
         ws_client: Gateway WebSocket client (for connection status check)
         stargate_id: Stargate identifier
         gateway_id: Gateway identifier
+        node_id: Canonical node identifier
         broadcast_callback: Async callback to broadcast messages to peers
 
     Returns:
@@ -203,12 +205,16 @@ def create_periodic_heartbeat_task(
                     create_telemetry_heartbeat,
                 )
 
+                source: dict[str, str] = {
+                    "stargate_id": stargate_id,
+                    "gateway_id": gateway_id,
+                }
+                if node_id:
+                    source["node_id"] = node_id
+
                 heartbeat_msg = create_telemetry_heartbeat(
                     gateway_id=gateway_id,
-                    source={
-                        "stargate_id": stargate_id,
-                        "gateway_id": gateway_id,
-                    },
+                    source=source,
                 )
 
                 # Send as generic telemetry (lightweight, no pipeline reload)

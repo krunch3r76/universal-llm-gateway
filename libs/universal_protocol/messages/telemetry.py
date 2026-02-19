@@ -82,12 +82,16 @@ class TelemetrySource:
 
     stargate_id: str
     gateway_id: str
+    node_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "stargate_id": self.stargate_id,
             "gateway_id": self.gateway_id,
         }
+        if self.node_id:
+            result["node_id"] = self.node_id
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TelemetrySource:
@@ -99,6 +103,7 @@ class TelemetrySource:
         return cls(
             stargate_id=data["stargate_id"],
             gateway_id=data["gateway_id"],
+            node_id=data.get("node_id", ""),
         )
 
 

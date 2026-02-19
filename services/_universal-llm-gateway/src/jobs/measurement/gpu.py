@@ -3,6 +3,10 @@ GPU and hybrid measurement execution.
 
 Handles full GPU offload, partial GPU offload (hybrid), and binary search
 for optimal layer count. Uses subprocess isolation for memory safety.
+
+VRAM is measured host-side via Stargate federation (Edge → Master pynvml).
+The subprocess loads the model in --hold mode; Gateway takes a VRAM delta
+via Stargate before and after load, then signals the subprocess to continue.
 """
 
 import asyncio
@@ -20,7 +24,6 @@ from .common import (
     DEFAULT_SUBPROC_NICE,
     DEFAULT_SUBPROC_OOM_SCORE_ADJ,
     SubprocessTracker,
-    compute_ram_headroom_bytes,
     env_int,
     maybe_psutil,
     setup_measurement_subprocess,
@@ -29,12 +32,12 @@ from .gguf_reader import extract_block_count
 
 logger = get_logger(__name__)
 
+STARGATE_VRAM_ENDPOINT = "/api/v1/federation/measurement/vram"
+
 
 def _resolve_test_script() -> Path:
     """Locate llama_server_measurement.py."""
     root = Path(__file__).resolve()
-    # services/_universal-llm-gateway/src/jobs/measurement/gpu.py
-    # -> project root at parents[5]
     project_root = root.parents[5]
     return (
         project_root
@@ -47,6 +50,92 @@ def _resolve_test_script() -> Path:
     )
 
 
+def _stargate_socket_path() -> str | None:
+    """Get Edge Stargate Unix socket from env."""
+    return os.environ.get("STARGATE_UNIX_SOCKET") or os.environ.get(
+        "STARGATE_SOCKET_PATH"
+    )
+
+
+async def _request_vram_snapshot(device_index: int = 0) -> int | None:
+    """Request host-side VRAM snapshot via Edge Stargate → Master.
+
+    Returns total per-process VRAM in MB, or None if unavailable.
+    """
+    socket_path = _stargate_socket_path()
+    if not socket_path:
+        logger.warning("No STARGATE_UNIX_SOCKET — cannot measure VRAM via federation")
+        return None
+
+    import httpx
+
+    transport = httpx.AsyncHTTPTransport(uds=socket_path)
+    async with httpx.AsyncClient(transport=transport, timeout=15.0) as client:
+        resp = await client.post(
+            f"http://localhost{STARGATE_VRAM_ENDPOINT}",
+            json={"device_index": device_index},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("total_mb")
+
+
+def _compute_adaptive_timeout(
+    model_path: Path, n_layers: int, base_timeout: int
+) -> int:
+    """Reduce timeout for large models to fail fast."""
+    psutil_mod = maybe_psutil()
+    if not psutil_mod:
+        return base_timeout
+    try:
+        vm = psutil_mod.virtual_memory()
+        model_bytes = model_path.stat().st_size
+        if model_bytes / vm.total > 0.5:
+            timeout = 180 if n_layers == -1 else 90
+            logger.info(
+                f"Large model ({int(model_bytes / (1024**3))}GB, "
+                f"{int(model_bytes / vm.total * 100)}% of RAM), "
+                f"timeout: {timeout}s (layers={n_layers})"
+            )
+            return timeout
+    except Exception as e:
+        logger.warning(f"Failed to compute adaptive timeout: {e}")
+    return base_timeout
+
+
+async def _start_memory_monitor(
+    model_path: Path, proc: asyncio.subprocess.Process
+) -> asyncio.Task[None] | None:
+    """Start swap-pressure monitor; returns task or None."""
+    psutil_mod = maybe_psutil()
+    if not psutil_mod:
+        return None
+    try:
+        vm = psutil_mod.virtual_memory()
+        if model_path.stat().st_size <= vm.total * 0.5:
+            return None
+    except Exception:
+        return None
+
+    async def _watch() -> None:
+        initial_swap = psutil_mod.swap_memory().used
+        while True:
+            await asyncio.sleep(2)
+            delta_mb = (psutil_mod.swap_memory().used - initial_swap) / (1024 * 1024)
+            if delta_mb > 2048:
+                logger.warning(
+                    f"Memory pressure: swap +{int(delta_mb)}MB, killing subprocess"
+                )
+                try:
+                    if proc.pid:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                except Exception:
+                    pass
+                break
+
+    return asyncio.create_task(_watch())
+
+
 async def run_layer_test(
     model_path: Path,
     n_layers: int,
@@ -57,51 +146,26 @@ async def run_layer_test(
     tracker: SubprocessTracker,
     timeout_sec: int = 300,
 ) -> dict[str, Any]:
-    """Run llama_server_measurement asynchronously and return parsed result."""
+    """Run llama_server_measurement with host-side VRAM via Stargate.
+
+    Flow: take VRAM baseline → spawn --hold subprocess → wait READY →
+    take VRAM snapshot → compute delta → close stdin → read JSON result.
+    Falls back to in-container measurement if Stargate is unreachable.
+    """
     script = _resolve_test_script()
     if not script.exists():
         return {"success": False, "error": f"Test script not found: {script}"}
 
-    # Host-safety: Check RAM headroom, use adaptive timeouts for large models.
-    psutil_mod = maybe_psutil()
-    headroom_bytes = compute_ram_headroom_bytes(psutil_mod)
-    adaptive_timeout = timeout_sec
-    vm = None
+    adaptive_timeout = _compute_adaptive_timeout(model_path, n_layers, timeout_sec)
 
-    if psutil_mod and headroom_bytes is not None:
-        try:
-            vm = psutil_mod.virtual_memory()
-            available = vm.available
-            if available < headroom_bytes:
-                return {
-                    "success": False,
-                    "error": (
-                        "Insufficient RAM headroom for safe measurement probe "
-                        f"(available={available // (1024 * 1024)}MB, "
-                        f"headroom={headroom_bytes // (1024 * 1024)}MB)"
-                    ),
-                }
-
-            # For huge models, use adaptive timeouts
-            try:
-                model_bytes = model_path.stat().st_size
-                model_to_ram_ratio = model_bytes / vm.total
-                if model_to_ram_ratio > 0.5:
-                    if n_layers == -1:
-                        adaptive_timeout = 180
-                    else:
-                        adaptive_timeout = 90
-                    logger.info(
-                        f"Large model detected "
-                        f"({int(model_bytes / (1024 * 1024 * 1024))}GB, "
-                        f"{int(model_to_ram_ratio * 100)}% of RAM), "
-                        f"using timeout: {adaptive_timeout}s (layers={n_layers})"
-                    )
-            except Exception:
-                pass
-
-        except Exception as e:
-            logger.warning(f"Failed to compute measurement subprocess limits: {e}")
+    # VRAM baseline (host-side via federation)
+    vram_baseline: int | None = None
+    use_hold_mode = False
+    try:
+        vram_baseline = await _request_vram_snapshot(gpu_index)
+        use_hold_mode = vram_baseline is not None
+    except Exception as e:
+        logger.warning(f"VRAM baseline via Stargate failed, falling back: {e}")
 
     cmd = [
         sys.executable,
@@ -121,6 +185,8 @@ async def run_layer_test(
     ]
     if mmproj_path:
         cmd.extend(["--mmproj", mmproj_path])
+    if use_hold_mode:
+        cmd.append("--hold")
 
     nice_value = env_int("MEASUREMENT_SUBPROC_NICE") or DEFAULT_SUBPROC_NICE
     oom_adj = (
@@ -130,6 +196,7 @@ async def run_layer_test(
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         env=os.environ.copy(),
+        stdin=asyncio.subprocess.PIPE if use_hold_mode else asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         preexec_fn=lambda: setup_measurement_subprocess(
@@ -140,56 +207,27 @@ async def run_layer_test(
     )
     tracker.add(proc)
     logger.info(
-        f"Started subprocess PID {proc.pid} with safety: "
-        f"nice={nice_value}, oom_adj={oom_adj}, timeout={adaptive_timeout}s"
+        f"Started subprocess PID {proc.pid}: "
+        f"nice={nice_value}, oom_adj={oom_adj}, timeout={adaptive_timeout}s, "
+        f"hold={use_hold_mode}"
     )
 
-    # Monitor memory pressure for large models
-    monitor_task = None
-    if psutil_mod and vm is not None and model_path.exists():
-        try:
-            model_bytes = model_path.stat().st_size
-            if model_bytes > vm.total * 0.5:
-
-                async def monitor_memory_pressure() -> None:
-                    """Kill subprocess if swap usage spikes."""
-                    initial_swap = psutil_mod.swap_memory().used
-                    while True:
-                        await asyncio.sleep(2)
-                        current_swap = psutil_mod.swap_memory().used
-                        swap_delta_mb = (current_swap - initial_swap) / (1024 * 1024)
-                        if swap_delta_mb > 2048:
-                            logger.warning(
-                                f"Memory pressure detected: "
-                                f"swap +{int(swap_delta_mb)}MB, "
-                                "killing probe subprocess"
-                            )
-                            try:
-                                if proc.pid:
-                                    os.killpg(proc.pid, signal.SIGKILL)
-                            except Exception:
-                                pass
-                            break
-
-                monitor_task = asyncio.create_task(monitor_memory_pressure())
-        except Exception as e:
-            logger.debug(f"Could not start memory pressure monitor: {e}")
+    monitor_task = await _start_memory_monitor(model_path, proc)
 
     try:
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=adaptive_timeout
-        )
+        if use_hold_mode:
+            data = await _run_hold_mode(
+                proc, gpu_index, vram_baseline, adaptive_timeout
+            )
+        else:
+            data = await _run_legacy_mode(proc, adaptive_timeout)
     except TimeoutError:
-        logger.warning(
-            f"Probe timeout after {adaptive_timeout}s "
-            "(possible memory pressure freeze), killing subprocess"
-        )
+        logger.warning(f"Probe timeout after {adaptive_timeout}s, killing subprocess")
         try:
             if proc.pid:
                 os.killpg(proc.pid, signal.SIGKILL)
         except Exception:
             pass
-        tracker.discard(proc)
         return {"success": False, "error": f"timeout after {adaptive_timeout}s"}
     finally:
         if monitor_task:
@@ -200,6 +238,59 @@ async def run_layer_test(
                 pass
         tracker.discard(proc)
 
+    return data
+
+
+async def _run_hold_mode(
+    proc: asyncio.subprocess.Process,
+    gpu_index: int,
+    vram_baseline: int | None,
+    timeout: int,
+) -> dict[str, Any]:
+    """Hold-mode flow: wait READY, measure VRAM delta, release."""
+    assert proc.stdout is not None
+    assert proc.stdin is not None
+
+    ready_line = await asyncio.wait_for(proc.stdout.readline(), timeout=timeout)
+    if not ready_line.strip().startswith(b"READY"):
+        stderr = await proc.stderr.read() if proc.stderr else b""
+        return {
+            "success": False,
+            "error": f"Expected READY, got: {ready_line.decode().strip()}",
+            "stderr": stderr.decode().strip(),
+        }
+
+    # Take host-side VRAM snapshot after model load
+    vram_mb: int | None = None
+    try:
+        vram_after = await _request_vram_snapshot(gpu_index)
+        if vram_after is not None and vram_baseline is not None:
+            vram_mb = max(0, vram_after - vram_baseline)
+            logger.info(f"VRAM delta: {vram_after} - {vram_baseline} = {vram_mb} MB")
+    except Exception as e:
+        logger.error(f"VRAM snapshot after load failed: {e}")
+
+    # Release subprocess: close stdin → triggers warmup + RAM measurement
+    proc.stdin.close()
+
+    stdout_rest, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    if proc.returncode != 0:
+        return {
+            "success": False,
+            "error": f"exit {proc.returncode}",
+            "stderr": stderr.decode().strip(),
+        }
+
+    output = stdout_rest.decode().strip()
+    return _parse_output(output, stderr.decode().strip(), vram_mb)
+
+
+async def _run_legacy_mode(
+    proc: asyncio.subprocess.Process, timeout: int
+) -> dict[str, Any]:
+    """Legacy flow (no Stargate): run to completion, use in-container VRAM."""
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+
     if proc.returncode != 0:
         return {
             "success": False,
@@ -208,20 +299,25 @@ async def run_layer_test(
         }
 
     output = stdout.decode().strip()
+    return _parse_output(output, stderr.decode().strip(), vram_override=None)
+
+
+def _parse_output(
+    output: str, stderr: str, vram_override: int | None
+) -> dict[str, Any]:
+    """Parse JSON from subprocess stdout, optionally override vram_mb."""
     if not output:
         return {"success": False, "error": "no output"}
 
     try:
         data = json.loads(output)
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"invalid json: {e}",
-            "stderr": stderr.decode().strip(),
-        }
+        return {"success": False, "error": f"invalid json: {e}", "stderr": stderr}
 
-    # Include stderr in result for timing extraction
-    data["stderr"] = stderr.decode().strip()
+    if vram_override is not None:
+        data["vram_mb"] = vram_override
+
+    data["stderr"] = stderr
     return data
 
 
@@ -302,31 +398,26 @@ async def measure_hybrid_context(
         else:
             error = profile.get("error", "unknown")
             emit_log(f"  → {mid} layers FAILED ({error}), searching lower...")
-            if stderr := profile.get("stderr"):
-                emit_log(f"      stderr: {stderr}")
             high = mid - 1
 
     if best:
         final_layers = best.get("n_gpu_layers", 0)
+        emit_log(
+            f"  → Binary search complete: max {final_layers}/{total_layers} layers fit"
+        )
 
-        # Apply safety margin for first hybrid context
-        if min_layers_hint is None and final_layers > 0:
+        if final_layers > 0:
             if safety_margin is None:
                 safety_margin = env_int("MEASUREMENT_HYBRID_SAFETY_MARGIN")
             if safety_margin is None:
                 safety_margin = 2
             safe_layers = max(1, final_layers - safety_margin)
-            emit_log(
-                f"  → Binary search complete: "
-                f"max {final_layers}/{total_layers} layers fit"
-            )
-            if safety_margin > 0:
+
+            if safety_margin > 0 and safe_layers < final_layers:
                 emit_log(
-                    f"  → Applying -{safety_margin} safety margin (first hybrid): "
+                    f"  → Applying -{safety_margin} safety margin: "
                     f"{final_layers} → {safe_layers} layers"
                 )
-
-                # Verify safe layer count
                 emit_log(
                     f"  → Measuring {safe_layers} layers to verify resource usage..."
                 )
@@ -352,28 +443,9 @@ async def measure_hybrid_context(
                 else:
                     error = verified.get("error", "unknown")
                     emit_log(
-                        f"  → Warning: verification at {safe_layers} layers "
-                        f"failed ({error}), using {final_layers} layer measurement"
+                        f"  → Verification at {safe_layers} layers "
+                        f"failed ({error}), using {final_layers} layers"
                     )
-                    best["n_gpu_layers"] = final_layers
-                    return best
-            else:
-                emit_log("  → Using max layers without verification (safety margin=0)")
-                return best
-        else:
-            if min_layers_hint is not None:
-                emit_log(
-                    f"  → Binary search complete: "
-                    f"max {final_layers}/{total_layers} layers fit"
-                )
-                emit_log(
-                    "  → No safety margin applied (subsequent hybrid, comfortable fit)"
-                )
-            else:
-                emit_log(
-                    f"  → Binary search complete: "
-                    f"max {final_layers}/{total_layers} layers fit"
-                )
 
         return best
 

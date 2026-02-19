@@ -214,14 +214,13 @@ class MasterIntegration:
         """Create LocalEdgeClient with callbacks wired."""
         from ..link.ws.local import LocalEdgeClient
 
-        # CRITICAL: Pass Master's stargate_id for auth (not Edge's)
-        # Edge validates against allowed_peers keyed by Master ID
         return LocalEdgeClient(
             config=edge_config,
             relay_stargate_id=self._config.stargate_id,
             on_telemetry=self._process_edge_telemetry,
             on_connected=self._on_edge_connected,
             on_disconnected=self._on_edge_disconnected,
+            on_measurement_request=self._handle_vram_measurement,
         )
 
     async def _connect_local_edge_client(
@@ -240,6 +239,18 @@ class MasterIntegration:
 
         # Process telemetry directly (unlike Remote which forwards to Master)
         await self._federated_manager.update_from_event(peer_id, msg_type, data)
+
+    async def _handle_vram_measurement(
+        self, data: dict[str, object]
+    ) -> dict[str, object]:
+        """Handle VRAM measurement request from Edge (runs pynvml on host)."""
+        from .measurement.vram import measure_gpu_vram
+
+        device_index = int(data.get("device_index", 0))
+        snapshot = measure_gpu_vram(device_index)
+        if snapshot is None:
+            return {"total_mb": None, "process_count": None}
+        return {"total_mb": snapshot.total_mb, "process_count": snapshot.process_count}
 
     async def _on_edge_connected(self) -> None:
         """Handle Edge connection."""

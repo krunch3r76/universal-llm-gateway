@@ -64,11 +64,15 @@ def _parse_federation_config(config_dict: dict[str, Any]) -> FederationConfig:
     stargate_id_raw = config_dict.get("stargate_id", "")
     stargate_id = expand_env_vars(stargate_id_raw) if stargate_id_raw else ""
 
+    node_id_raw = config_dict.get("node_id", "")
+    node_id = expand_env_vars(node_id_raw) if node_id_raw else ""
+
     remotes = _parse_remotes(config_dict.get("remotes", []))
 
     return FederationConfig(
         mode=mode,
         stargate_id=stargate_id,
+        node_id=node_id,
         protocol_version=config_dict.get("protocol_version", "1.0"),
         max_hops=config_dict.get("max_hops", 3),
         telemetry_stale_threshold_ms=config_dict.get(

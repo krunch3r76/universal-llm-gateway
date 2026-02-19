@@ -161,6 +161,7 @@ class FederatedGatewayManager(Sequential):
             gateway_id=gateway_id,
             remote_stargate_id=remote_stargate_id,
             remote_stargate_url=getattr(gateway, "remote_stargate_url", ""),
+            node_id=getattr(gateway, "node_id", ""),
             is_http_polling=getattr(gateway, "is_http_polling", False),
             # Preserve resource state
             ram_free_mb=getattr(gateway, "ram_free_mb", 0),
@@ -462,7 +463,10 @@ class FederatedGatewayManager(Sequential):
     # === Gateway Creation (shared by all ingestion paths) ===
 
     def _ensure_gateway(
-        self, gateway_id: str, remote_stargate_id: str
+        self,
+        gateway_id: str,
+        remote_stargate_id: str,
+        node_id: str = "",
     ) -> FederatedGateway:
         """
         Get or create gateway for telemetry ingestion.
@@ -472,12 +476,16 @@ class FederatedGatewayManager(Sequential):
         Args:
             gateway_id: Gateway identifier (from telemetry)
             remote_stargate_id: Remote Stargate ID (for URL lookup + mode)
+            node_id: Canonical node identifier (from telemetry source)
 
         Returns:
             Existing or newly created FederatedGateway
         """
         if gateway_id in self._gateways:
-            return self._gateways[gateway_id]
+            gw = self._gateways[gateway_id]
+            if node_id and not gw.node_id:
+                gw.node_id = node_id
+            return gw
 
         # Look up remote configuration
         remote_url = self._remote_urls.get(remote_stargate_id, "")
@@ -488,12 +496,16 @@ class FederatedGatewayManager(Sequential):
             gateway_id=gateway_id,
             remote_stargate_id=remote_stargate_id,
             remote_stargate_url=remote_url,
+            node_id=node_id,
             is_http_polling=is_http_polling,
         )
         self._gateways[gateway_id] = gateway
 
         mode = "HTTP-polling" if is_http_polling else "WebSocket"
-        logger.info(f"🌐 New federated gateway registered: {gateway_id} ({mode})")
+        logger.info(
+            f"🌐 New federated gateway registered: {gateway_id} "
+            f"(node={node_id or 'unknown'}, {mode})"
+        )
 
         return gateway
 
@@ -589,7 +601,7 @@ class FederatedGatewayManager(Sequential):
         gateway_id = source.gateway_id
 
         # Get or create gateway (shared helper)
-        gw = self._ensure_gateway(gateway_id, source.stargate_id)
+        gw = self._ensure_gateway(gateway_id, source.stargate_id, source.node_id)
 
         # Pre-condition observation (for observability)
         pre_loaded_models = gw.loaded_models

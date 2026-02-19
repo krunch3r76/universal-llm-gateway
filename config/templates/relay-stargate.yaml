@@ -20,6 +20,7 @@ proxy:
 federation:
   mode: remote
   stargate_id: "${RELAY_ID}"
+  node_id: "${NODE_ID}"
 
   master:
     stargate_id: "master-localhost"

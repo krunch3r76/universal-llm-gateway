@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, DataTable, Select, Static
 
@@ -29,6 +30,13 @@ _STATUS_COL = "status"
 
 class TopologyPanel(Widget):
     """DataTable showing all nodes with live status + parallel fleet operations."""
+
+    class DeployStateChanged(Message):
+        """Posted when a fleet deploy starts or finishes."""
+
+        def __init__(self, deploying: bool) -> None:
+            self.deploying = deploying
+            super().__init__()
 
     DEFAULT_CSS = """
     TopologyPanel {
@@ -200,6 +208,7 @@ class TopologyPanel(Widget):
         self._deploying = True
         self._node_buffers.clear()
         self._active_node = "localhost"
+        self.post_message(self.DeployStateChanged(deploying=True))
 
         log = self.query_one("#topo-progress", LogStream)
         log.display = True
@@ -213,6 +222,13 @@ class TopologyPanel(Widget):
             await self._deploy_remotes_parallel(build=build, scope=scope)
         finally:
             self._deploying = False
+            self.post_message(self.DeployStateChanged(deploying=False))
+            self.set_timer(10, self._auto_hide_log)
+
+    def _auto_hide_log(self) -> None:
+        """Collapse the deploy log stream after idle timeout."""
+        if not self._deploying:
+            self.query_one("#topo-progress", LogStream).display = False
 
     async def _build_local(self, scope: str) -> None:
         """Build image + restart local services (sequential)."""
