@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING
 from model_id import ModelId
 from universal_logging import get_logger
 
-from .resource_checks import _compute_loading_reservation
-from .types import EvictionPlanSummary
+from .resource_checks import _compute_loading_reservation, resolve_gateway_requirements
+from .types import ConstraintFailure, EvictionPlanSummary
 
 if TYPE_CHECKING:
     from ..types import Gateway, Placement
@@ -41,10 +41,18 @@ def _compute_eviction_plan(
 
     Returns None if eviction cannot provide enough resources.
     """
+    # Per-gateway figures are authoritative; placement hint is overridden here
+    resolved = resolve_gateway_requirements(gateway, placement)
+    if isinstance(resolved, ConstraintFailure):
+        logger.error(f"Eviction planning blocked: {resolved.reason}")
+        return None
+
+    gw_vram_mb, gw_ram_mb = resolved
+
     # Log entry point with full context
     logger.info(
         f"🔍 EVICTION EVAL for {placement.model_id} on {gateway.name}: "
-        f"Need {placement.vram_mb}MB VRAM, {placement.ram_mb}MB RAM | "
+        f"Need {gw_vram_mb}MB VRAM, {gw_ram_mb}MB RAM | "
         f"Currently available: {gateway.vram_free_mb}MB VRAM, "
         f"{gateway.ram_free_mb}MB RAM | "
         f"Loaded models: {list(gateway.loaded_models)}"
@@ -163,8 +171,8 @@ def _compute_eviction_plan(
         config.get("resource_margins", {}).get("vram_margin") if config else None
     )
     vram_margin = vram_margin_config if vram_margin_config is not None else 1.0
-    ram_needed = int(placement.ram_mb * ram_margin)
-    vram_needed = int(placement.vram_mb * vram_margin)
+    ram_needed = int(gw_ram_mb * ram_margin)
+    vram_needed = int(gw_vram_mb * vram_margin)
 
     # Conservative estimate combining actual measurements + catalog + totals
     # Invariant: available = max(catalog_estimate, hardware_measured,
@@ -216,7 +224,7 @@ def _compute_eviction_plan(
     )
 
     # Check BOTH resources for hybrid models (vram_mb > 0 AND ram_mb > 0)
-    if placement.vram_mb > 0 and total_vram < vram_needed:
+    if gw_vram_mb > 0 and total_vram < vram_needed:
         logger.warning(
             f"❌ EVICTION FAILED for {placement.model_id}: "
             f"Insufficient VRAM even with eviction - need {vram_needed}MB, "
@@ -224,7 +232,7 @@ def _compute_eviction_plan(
             f"freeable: {freed_vram_catalog}MB from {len(models_to_evict)} models)"
         )
         return None
-    if placement.ram_mb > 0 and total_ram < ram_needed:
+    if gw_ram_mb > 0 and total_ram < ram_needed:
         logger.warning(
             f"❌ EVICTION FAILED for {placement.model_id}: "
             f"Insufficient RAM even with eviction - need {ram_needed}MB, "

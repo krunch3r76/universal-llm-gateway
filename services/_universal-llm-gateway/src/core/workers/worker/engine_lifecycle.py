@@ -129,6 +129,14 @@ class EngineLifecycle:
 
     # Assumes self.model_config, self.engine, self.model_loaded, self.model_id exist
 
+    def _on_engine_crash(self, exit_code: int) -> None:
+        """Handle engine crash notification — reset worker state."""
+        logger.error(
+            "❌ [worker] Engine process crashed (exit_code=%s), marking unloaded",
+            exit_code,
+        )
+        self.model_loaded = False
+
     async def _load_model_engine(self) -> None:
         """Load the appropriate model engine based on config using the factory."""
         # Remove import - truncation now automatic
@@ -176,6 +184,10 @@ class EngineLifecycle:
                 loading_timeout=300.0,
             )
             self.model_loaded = True
+
+            if hasattr(self.engine, "set_crash_callback"):
+                self.engine.set_crash_callback(self._on_engine_crash)
+
             logger.info("✅ [worker] Model engine loaded successfully")
 
         except (EngineTimeoutError, EngineInitializationError) as e:

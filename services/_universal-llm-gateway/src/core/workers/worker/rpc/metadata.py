@@ -22,7 +22,7 @@ class MetadataHandlers:
             List of loaded models with their info
         """
         loaded_models = []
-        if self.model_loaded and self.engine:
+        if self.engine and self.engine.is_loaded():
             try:
                 model_info = self.engine.get_model_info()  # Synchronous method
                 loaded_models.append(model_info)
@@ -43,7 +43,7 @@ class MetadataHandlers:
         Raises:
             EngineError: If model not loaded
         """
-        if not self.model_loaded or not self.engine:
+        if not self.engine or not self.engine.is_loaded():
             raise EngineError(
                 code="MODEL_NOT_LOADED", message="Model engine not loaded"
             )

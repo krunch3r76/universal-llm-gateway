@@ -51,8 +51,9 @@ class LifecycleHandlers:
         Returns:
             Health status including model_loaded state
         """
-        status = "ready" if self.model_loaded else "busy"
-        models = [self.model_id] if self.model_loaded else []
+        live = bool(self.engine and self.engine.is_loaded())
+        status = "ready" if live else "busy"
+        models = [self.model_id] if live else []
 
         return {"status": status, "models": models}
 
@@ -67,7 +68,7 @@ class LifecycleHandlers:
             "status": "pong",
             "timestamp": datetime.now().isoformat(),
             "worker_id": self.worker_id,
-            "model_loaded": self.model_loaded,
+            "model_loaded": bool(self.engine and self.engine.is_loaded()),
         }
 
     async def handle_debug_stats(self, params: dict) -> dict:

@@ -21,7 +21,7 @@ class RPCHelpers:
     def _resolve_model_path(self, original_path: str) -> str:
         """
         Resolve model path by joining relative paths with MODEL_PATH_ROOT.
-        
+
         For backwards compatibility, strips legacy root paths (/mnt/torus/models, ~/.models)
         and replaces them with MODEL_PATH_ROOT.
 
@@ -39,7 +39,7 @@ class RPCHelpers:
             Legacy absolute: "/mnt/torus/models/model.gguf"
             MODEL_PATH_ROOT: "/golem/models"
             Result: "/golem/models/model.gguf"
-            
+
             Other absolute: "/custom/path/to/model"
             Result: "/custom/path/to/model" (unchanged)
         """
@@ -61,7 +61,7 @@ class RPCHelpers:
             legacy_roots = ["/mnt/torus/models", os.path.expanduser("~/.models")]
             for legacy_root in legacy_roots:
                 if expanded_path.startswith(legacy_root):
-                    relative_path = expanded_path[len(legacy_root):].lstrip("/")
+                    relative_path = expanded_path[len(legacy_root) :].lstrip("/")
                     return f"{model_root.rstrip('/')}/{relative_path}"
             # Other absolute path - return as-is
             return expanded_path
@@ -205,8 +205,8 @@ class RPCHelpers:
         """Count tokens using inference_djinn engine."""
         # Remove import - truncation now automatic
 
-        # Ensure model is loaded before counting tokens
-        if not self.model_loaded or not self.engine:
+        # Ensure model is loaded and engine is healthy before counting tokens
+        if not self.engine or not self.engine.is_loaded():
             raise RuntimeError("Model must be loaded before counting tokens")
 
         try:

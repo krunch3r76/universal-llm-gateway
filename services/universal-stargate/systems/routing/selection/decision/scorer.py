@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
 
-from .types import EvictionPlanSummary, FeasibilityTier, ScoreComponents
+from .resource_checks import resolve_gateway_requirements
+from .types import (
+    ConstraintFailure,
+    EvictionPlanSummary,
+    FeasibilityTier,
+    ScoreComponents,
+)
 
 if TYPE_CHECKING:
     from ..types import Gateway, Placement
@@ -63,8 +69,17 @@ def calculate_utility(
 
     warm_score = 100.0 if is_effectively_warm else 0.0  # Avoid load latency/races
 
-    # Component: Slack (VRAM headroom)
-    slack_score = _calculate_slack_score(gateway, placement, eviction_plan)
+    # Component: Slack (VRAM headroom) — use per-gateway resource figures
+    # Feasibility already passed, so resolver should not fail here
+    slack_resolved = resolve_gateway_requirements(gateway, placement)
+    if isinstance(slack_resolved, ConstraintFailure):
+        # Should not happen (feasibility checked first) — fall back to placement hint
+        gw_vram_mb, gw_ram_mb = placement.vram_mb, placement.ram_mb
+    else:
+        gw_vram_mb, gw_ram_mb = slack_resolved
+    slack_score = _calculate_slack_score(
+        gateway, placement, eviction_plan, gw_vram_mb, gw_ram_mb
+    )
 
     # Component: Contention (active requests)
     contention_score = _calculate_contention_score(gateway)
@@ -230,6 +245,8 @@ def _calculate_slack_score(
     gateway: Gateway,
     placement: Placement,
     eviction_plan: EvictionPlanSummary | None,
+    gw_vram_mb: int,
+    gw_ram_mb: int,
 ) -> float:
     """
     Calculate slack score (headroom after placement).
@@ -237,16 +254,16 @@ def _calculate_slack_score(
     Higher slack = better (more room for future models).
     Normalized to 0-10 range.
     """
-    if placement.is_gpu:
+    if gw_vram_mb > 0:
         free = gateway.vram_free_mb
         if eviction_plan:
             free += eviction_plan.freed_vram_mb
-        slack = free - placement.vram_mb
+        slack = free - gw_vram_mb
     else:
         free = gateway.ram_free_mb
         if eviction_plan:
             free += eviction_plan.freed_ram_mb
-        slack = free - int(placement.ram_mb * 1.10)
+        slack = free - int(gw_ram_mb * 1.10)
 
     # Normalize: 0 slack = 0, 10GB slack = 10
     return max(0.0, min(10.0, slack / 1000.0))
