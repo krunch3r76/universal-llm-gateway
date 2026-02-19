@@ -14,10 +14,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from inference_djinn.scripts.config_generators.gguf.utils import (
-    extract_metadata,
-    to_native_int,
-)
 from universal_logging import get_logger
 
 from .common import (
@@ -29,6 +25,7 @@ from .common import (
     maybe_psutil,
     setup_measurement_subprocess,
 )
+from .gguf_reader import extract_block_count
 
 logger = get_logger(__name__)
 
@@ -96,8 +93,8 @@ async def run_layer_test(
                         adaptive_timeout = 90
                     logger.info(
                         f"Large model detected "
-                        f"({int(model_bytes/(1024*1024*1024))}GB, "
-                        f"{int(model_to_ram_ratio*100)}% of RAM), "
+                        f"({int(model_bytes / (1024 * 1024 * 1024))}GB, "
+                        f"{int(model_to_ram_ratio * 100)}% of RAM), "
                         f"using timeout: {adaptive_timeout}s (layers={n_layers})"
                     )
             except Exception:
@@ -235,13 +232,23 @@ async def measure_gpu_context(
     gpu_index: int,
     mmproj_path: str | None,
     tracker: SubprocessTracker,
+    total_layers: int | None = None,
 ) -> dict[str, Any]:
-    """Measure single GPU context via async subprocess."""
+    """Measure single GPU context with full offload verification.
+
+    Uses explicit layer count instead of -1 to prevent hidden hybrid:
+    llama.cpp silently reduces GPU layers when VRAM is insufficient
+    with -1, producing successful but misleading measurements.
+    Explicit count fails hard on OOM, triggering correct hybrid fallback.
+    """
+    test_layers = total_layers if total_layers is not None else -1
     profile = await run_layer_test(
-        model_path, -1, context, n_batch, gpu_index, mmproj_path, tracker
+        model_path, test_layers, context, n_batch, gpu_index, mmproj_path, tracker
     )
     if profile.get("success"):
-        profile.setdefault("n_gpu_layers", -1)
+        profile["n_gpu_layers"] = -1
+        if total_layers is not None:
+            profile["total_layers"] = total_layers
     return profile
 
 
@@ -257,13 +264,8 @@ async def measure_hybrid_context(
     safety_margin: int | None = None,
 ) -> dict[str, Any]:
     """Measure single hybrid context using async binary search."""
-    meta, _ = extract_metadata(str(model_path))
-    total_layers = (
-        to_native_int(meta.block_count)
-        if meta and hasattr(meta, "block_count")
-        else None
-    )
-    if not total_layers or total_layers <= 0:
+    total_layers = extract_block_count(model_path)
+    if not total_layers:
         return {
             "success": False,
             "error": "Cannot determine total layers from metadata",
@@ -356,9 +358,7 @@ async def measure_hybrid_context(
                     best["n_gpu_layers"] = final_layers
                     return best
             else:
-                emit_log(
-                    "  → Using max layers without verification (safety margin=0)"
-                )
+                emit_log("  → Using max layers without verification (safety margin=0)")
                 return best
         else:
             if min_layers_hint is not None:
@@ -379,70 +379,3 @@ async def measure_hybrid_context(
 
     emit_log("  → Binary search failed: no configuration fits")
     return {"success": False, "error": "Hybrid search failed"}
-
-
-def log_hybrid_result(
-    ctx: int,
-    profile: dict[str, Any],
-    n_layers: int,
-    total_layers: Any,
-    emit_log: Callable[[str], None],
-) -> None:
-    """Log successful hybrid profile measurement."""
-    vram = profile.get("vram_mb", "N/A")
-    ram = profile.get("ram_mb", "N/A")
-    percent = round(n_layers / total_layers * 100) if total_layers != "?" else "?"
-    emit_log(
-        f"  ✅ {ctx}: VRAM={vram}MB, RAM={ram}MB, "
-        f"layers={n_layers}/{total_layers} ({percent}% on GPU, hybrid)"
-    )
-
-
-async def try_hybrid_measurement(
-    model_path: Path,
-    context: int,
-    n_batch: int,
-    gpu_index: int,
-    mmproj_path: str | None,
-    min_layers_hint: int | None,
-    emit_log: Callable[[str], None],
-    tracker: SubprocessTracker,
-    safety_margin: int | None = None,
-) -> dict[str, Any] | None:
-    """
-    Try hybrid (partial GPU offload) measurement for a context.
-
-    Returns profile dict with n_gpu_layers set to optimal partial value,
-    or None if even partial offload fails.
-    """
-    emit_log(f"  ❌ {context}: Full GPU failed (OOM)")
-    emit_log("  → Trying partial GPU offload (hybrid mode)...")
-    if min_layers_hint:
-        emit_log(
-            f"  → Starting binary search from {min_layers_hint} layers "
-            "(known to fit from larger context)..."
-        )
-    else:
-        emit_log("  → Running binary search to find max layers that fit...")
-    try:
-        profile = await measure_hybrid_context(
-            model_path,
-            context,
-            n_batch,
-            gpu_index,
-            mmproj_path,
-            min_layers_hint,
-            tracker,
-            emit_log,
-            safety_margin,
-        )
-        if profile.get("success"):
-            n_layers = profile.get("n_gpu_layers", 0)
-            total_layers = profile.get("total_layers", "?")
-            log_hybrid_result(context, profile, n_layers, total_layers, emit_log)
-            return profile
-        error_msg = profile.get("error") or "Hybrid also failed"
-        emit_log(f"  ❌ {context}: {error_msg}")
-    except Exception as e:
-        emit_log(f"  ❌ {context}: Hybrid failed: {e}")
-    return None

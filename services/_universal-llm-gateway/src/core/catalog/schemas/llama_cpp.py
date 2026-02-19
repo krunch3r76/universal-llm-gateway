@@ -176,13 +176,11 @@ class LlamaCppSchema(BaseEngineSchema):
                 },
             }
 
-        # Build hybrid profiles (merge into GPU profiles with distinct keys)
+        # Build hybrid profiles (numeric keys, same as GPU — n_gpu_layers distinguishes)
         hybrid_device = devices.get("hybrid", {})
         for ctx, prof in hybrid_device.get("profiles", {}).items():
-            key = f"{ctx}-hybrid"
-            # Merge profile-specific loader config
             profile_loader = prof.get("loader", {})
-            profiles[key] = {
+            profiles[str(ctx)] = {
                 "loader": {
                     "n_ctx": int(ctx),
                     "n_gpu_layers": prof.get("n_gpu_layers", 0),

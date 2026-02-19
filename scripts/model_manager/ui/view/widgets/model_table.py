@@ -1,6 +1,7 @@
 """Model table widget for browsing the catalog."""
 
 from collections.abc import Callable
+
 from textual.app import ComposeResult
 from textual.message import Message
 from textual.widget import Widget
@@ -64,13 +65,15 @@ class ModelTable(Widget):
             self.post_message(self.ModelSelected(event.row_key.value))
 
 
-def _model_status(m: ModelInfo, is_downloaded: Callable[[ModelInfo], bool] | None) -> str:
+def _model_status(
+    m: ModelInfo, is_downloaded: Callable[[ModelInfo], bool] | None
+) -> str:
     """
     ∀ m: has_profiles(m) ⟹ was measured ⟹ file was present at some point.
     is_local alone is insufficient: migration creates local entries for all models.
     """
     on_disk = is_downloaded(m) if is_downloaded else False
-    has_profiles = m.has_gpu_profiles or m.has_cpu_profiles
+    has_profiles = m.has_gpu_profiles or m.has_cpu_profiles or m.has_hybrid_profiles
     if has_profiles and on_disk:
         return "[green]measured[/]"
     if has_profiles and not on_disk:

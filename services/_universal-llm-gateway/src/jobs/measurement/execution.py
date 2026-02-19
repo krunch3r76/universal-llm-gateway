@@ -18,9 +18,10 @@ from .common import (
     get_system_memory_info as get_system_memory_info,  # noqa: F401, PLC0414
 )
 from .cpu import measure_cpu_context
+from .gguf_reader import extract_block_count
 from .gpu import (
     measure_gpu_context,
-    try_hybrid_measurement,
+    measure_hybrid_context,
 )
 from .timing import (
     TimingTracker,
@@ -67,13 +68,33 @@ async def measure_gpu_with_stepdown(
     prev_layers_hint = None
     timing_tracker = TimingTracker() if validate_timing else None
 
+    total_layers = extract_block_count(model_path)
+    if total_layers:
+        emit_log(f"Model has {total_layers} layers (from GGUF metadata)")
+    else:
+        emit_log(
+            "⚠ Could not extract layer count from metadata — "
+            "using n_gpu_layers=-1 (hidden hybrid detection disabled)"
+        )
+
     for ctx in contexts:
         emit_log(f"Measuring GPU context {ctx}...")
-        emit_log("  → Loading model with full GPU offload (n_gpu_layers=-1)...")
+        if total_layers:
+            emit_log(
+                f"  → Loading model with full GPU offload ({total_layers} layers)..."
+            )
+        else:
+            emit_log("  → Loading model with full GPU offload (n_gpu_layers=-1)...")
 
         try:
             profile = await measure_gpu_context(
-                model_path, ctx, n_batch, gpu_index, mmproj_path, tracker
+                model_path,
+                ctx,
+                n_batch,
+                gpu_index,
+                mmproj_path,
+                tracker,
+                total_layers,
             )
             if profile.get("success"):
                 # Validate timing (shared logic with CPU)
@@ -83,9 +104,7 @@ async def measure_gpu_with_stepdown(
 
                 # Check for timing anomaly - stop measuring if detected
                 if profile.get("error"):
-                    emit_log(
-                        f"  → Stopping - keeping {len(results)} valid contexts"
-                    )
+                    emit_log(f"  → Stopping - keeping {len(results)} valid contexts")
                     break
 
                 results[str(ctx)] = profile
@@ -177,9 +196,7 @@ async def measure_cpu_contexts(
 
                 # Check for timing anomaly - stop measuring if detected
                 if profile.get("error"):
-                    emit_log(
-                        f"  → Stopping - keeping {len(results)} valid contexts"
-                    )
+                    emit_log(f"  → Stopping - keeping {len(results)} valid contexts")
                     break
 
                 results[str(ctx)] = profile
@@ -249,6 +266,72 @@ def log_profile_result(
     ram = profile.get("ram_mb", "N/A")
     layers = profile.get("n_gpu_layers", "N/A")
     emit_log(f"  ✅ {ctx}: VRAM={vram}MB, RAM={ram}MB, layers={layers}")
+
+
+def _log_hybrid_result(
+    ctx: int,
+    profile: dict[str, Any],
+    n_layers: int,
+    total_layers: Any,
+    emit_log: Callable[[str], None],
+) -> None:
+    """Log successful hybrid profile measurement."""
+    vram = profile.get("vram_mb", "N/A")
+    ram = profile.get("ram_mb", "N/A")
+    percent = round(n_layers / total_layers * 100) if total_layers != "?" else "?"
+    emit_log(
+        f"  ✅ {ctx}: VRAM={vram}MB, RAM={ram}MB, "
+        f"layers={n_layers}/{total_layers} ({percent}% on GPU, hybrid)"
+    )
+
+
+async def try_hybrid_measurement(
+    model_path: Path,
+    context: int,
+    n_batch: int,
+    gpu_index: int,
+    mmproj_path: str | None,
+    min_layers_hint: int | None,
+    emit_log: Callable[[str], None],
+    tracker: "SubprocessTracker",
+    safety_margin: int | None = None,
+) -> dict[str, Any] | None:
+    """Try hybrid (partial GPU offload) measurement for a context.
+
+    Returns profile dict with n_gpu_layers set to optimal partial value,
+    or None if even partial offload fails.
+    """
+    emit_log(f"  ❌ {context}: Full GPU failed (OOM)")
+    emit_log("  → Trying partial GPU offload (hybrid mode)...")
+    if min_layers_hint:
+        emit_log(
+            f"  → Starting binary search from {min_layers_hint} layers "
+            "(known to fit from larger context)..."
+        )
+    else:
+        emit_log("  → Running binary search to find max layers that fit...")
+    try:
+        profile = await measure_hybrid_context(
+            model_path,
+            context,
+            n_batch,
+            gpu_index,
+            mmproj_path,
+            min_layers_hint,
+            tracker,
+            emit_log,
+            safety_margin,
+        )
+        if profile.get("success"):
+            n_layers = profile.get("n_gpu_layers", 0)
+            total_layers = profile.get("total_layers", "?")
+            _log_hybrid_result(context, profile, n_layers, total_layers, emit_log)
+            return profile
+        error_msg = profile.get("error") or "Hybrid also failed"
+        emit_log(f"  ❌ {context}: {error_msg}")
+    except Exception as e:
+        emit_log(f"  ❌ {context}: Hybrid failed: {e}")
+    return None
 
 
 def apply_resource_caps(

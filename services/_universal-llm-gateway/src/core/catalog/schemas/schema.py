@@ -13,10 +13,9 @@ Invariants:
     - ∀ schema: supported_devices ⊆ {gpu, cpu, hybrid}
 
 Profile Key Semantics (ModelId alignment):
-    - context_length profiles: Keys are numeric strings ('8192', '32768')
-    - Hybrid profiles: Keys append '-hybrid' suffix ('32768-hybrid')
+    - GPU/Hybrid profiles: Keys are numeric strings ('8192', '32768')
+      in shared `profiles` dict — n_gpu_layers distinguishes hybrid from full-GPU
     - CPU profiles: Stored separately in cpu_profiles dict
-    - Mapping: Model requests with '-hybrid' suffix use hybrid profiles
     - Mapping: Model requests with '-cpu' suffix use cpu_profiles
 """
 

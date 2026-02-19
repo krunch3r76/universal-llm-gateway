@@ -78,6 +78,51 @@ class OnboardingController:
             async for line in self._download_gguf(model):
                 yield line
 
+    async def check_loaded_models(self) -> list[str]:
+        """Return model IDs currently loaded in Gateway (occupying VRAM/RAM)."""
+        import httpx
+
+        stargate_url = "http://localhost:9999"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{stargate_url}/gateway/status/resources", timeout=10.0
+                )
+                resp.raise_for_status()
+                return resp.json().get("loaded_models", [])
+        except httpx.HTTPError as e:
+            logger.warning("Failed to check loaded models: %s", e)
+            return []
+
+    async def unload_models(self, model_ids: list[str]) -> list[tuple[str, bool, str]]:
+        """
+        Unload models via Stargate API.
+
+        Returns list of (model_id, success, message) tuples.
+        """
+        import httpx
+
+        stargate_url = "http://localhost:9999"
+        results: list[tuple[str, bool, str]] = []
+        async with httpx.AsyncClient() as client:
+            for model_id in model_ids:
+                try:
+                    resp = await client.delete(
+                        f"{stargate_url}/gateway/models/{model_id}", timeout=10.0
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    status = data.get("status", "unknown")
+                    if status in ("unloaded", "not_loaded"):
+                        results.append((model_id, True, status))
+                    else:
+                        reason = data.get("reason", status)
+                        results.append((model_id, False, reason))
+                except httpx.HTTPError as e:
+                    logger.error("Failed to unload %s: %s", model_id, e)
+                    results.append((model_id, False, str(e)))
+        return results
+
     async def _reload_gateway_catalog(self) -> tuple[bool, str]:
         """Trigger catalog reload so Gateway's in-memory state matches disk."""
         import httpx
@@ -126,6 +171,7 @@ class OnboardingController:
         yield f"$ {' '.join(args)}"
         process = await asyncio.create_subprocess_exec(
             *args,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(self._workspace_root),

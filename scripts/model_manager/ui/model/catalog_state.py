@@ -34,6 +34,7 @@ class ModelInfo:
     size_bytes: int = 0
     has_gpu_profiles: bool = False
     has_cpu_profiles: bool = False
+    has_hybrid_profiles: bool = False
     is_vision_model: bool = False
     source_path: Path | None = None
     # True when this entry came from the local catalog (has full operational data)
@@ -153,6 +154,7 @@ class CatalogState:
             size_bytes=download.get("size_bytes", 0),
             has_gpu_profiles=bool(devices.get("gpu", {}).get("profiles")),
             has_cpu_profiles=bool(devices.get("cpu", {}).get("profiles")),
+            has_hybrid_profiles=bool(devices.get("hybrid", {}).get("profiles")),
             is_vision_model=bool(metadata.get("is_vision_model")),
             source_path=path,
             is_local=is_local,
