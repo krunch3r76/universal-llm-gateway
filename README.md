@@ -76,8 +76,7 @@ Client → Master Stargate:9999 (router-only)
 ## Quick Start
 
 <a href="https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4">
-  <img src="https://krunch3r76.github.io/assets/universal-llm-gateway/measure_thumbnail_02-18-2026_01.jpg" alt="Setup demo" width="100%">
-  <br><b>▶ Click to play setup demo</b>
+  <img src="https://krunch3r76.github.io/assets/universal-llm-gateway/measure_thumbnail_02-18-2026_01.jpg" alt="Click to play setup demo" width="100%">
 </a>
 
 ```bash
@@ -156,20 +155,27 @@ All endpoints require `X-Federation-Source` + `X-Federation-Key` headers.
 
 ```
 universal-llm-gateway/
+├── manage                            # Entry point — bootstraps venv, launches TUI
 ├── services/
-│   ├── _universal-llm-gateway/    # Gateway service (port 9998)
-│   └── universal-stargate/        # Stargate service (port 9999)
+│   ├── _universal-llm-gateway/       # Gateway service (port 9998)
+│   └── universal-stargate/           # Stargate service (port 9999)
 ├── libs/
-│   ├── inference_djinn/           # LLM engines (llama.cpp, vLLM, Whisper, Flux)
-│   ├── process_ipc/              # Process supervision and IPC
-│   ├── universal_protocol/       # RPC protocol definitions
-│   ├── universal_transport/      # Transport layer (Unix sockets, HTTP)
-│   ├── universal_event_bus/      # Event messaging system
-│   └── universal_logging/        # Structured logging
-├── config/                       # Configuration files and model catalog
-├── docker/                       # Dockerfiles, Compose configs, build scripts
-├── scripts/                      # Utility and deployment scripts
-└── pipelines/                    # Shipped pipeline definitions (mature)
+│   ├── inference_djinn/              # LLM engines (llama.cpp, vLLM, Whisper, Flux)
+│   ├── model_id/                     # ModelId type-safe identifiers
+│   ├── process_ipc/                  # Process supervision and IPC
+│   ├── provenance/                   # Model provenance tracking
+│   ├── universal_concurrency/        # Async concurrency primitives
+│   ├── universal_event_bus/          # Event messaging system
+│   ├── universal_logging/            # Structured logging
+│   ├── universal_protocol/           # RPC protocol definitions
+│   ├── universal_transport/          # Transport layer (Unix sockets, HTTP)
+│   └── universal_workspace/          # Workspace path resolution
+├── scripts/
+│   └── model_manager/               # TUI application (Textual, MVC)
+├── config/                           # Model catalog, templates, stargate configs
+├── docker/                           # Dockerfiles, Compose configs, build scripts
+├── pipelines/                        # Shipped pipeline definitions
+└── tools/                            # Developer utilities (pipeline viewer)
 ```
 
 ## License
