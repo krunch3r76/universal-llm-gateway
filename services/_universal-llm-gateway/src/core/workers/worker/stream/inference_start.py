@@ -96,7 +96,7 @@ class StreamInferenceStartHandlers:
         """
         request_id = params.get("_request_id", "unknown")
 
-        if not self.model_loaded or not self.engine:
+        if not self.engine or not self.engine.is_loaded():
             raise EngineError(code="MODEL_NOT_LOADED", message="Model not loaded")
 
         if not self._inference_gate:

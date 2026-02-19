@@ -132,45 +132,30 @@ async def _route_to_federated_gateway(
         f"Router-only: {len(gateways_for_routing)} federated gateways available"
     )
 
-    # PHASE 2 FIX: Extract resource requirements from federated gateway telemetry
-    # Previously hardcoded vram_mb=0, ram_mb=0, which caused resource checks
-    # to pass vacuously
+    # Build placement hint from first matching gateway's model_resources.
+    # This is a hint only — per-gateway authoritative figures are resolved
+    # in _check_resources() via resolve_gateway_requirements().
     vram_mb = 0
     ram_mb = 0
-    found_in_gateway = None
-
     for fg in federated_gateways:
         if model_id in fg.model_resources:
             resources = fg.model_resources[model_id]
             vram_mb = resources.get("vram_usage", 0)
             ram_mb = resources.get("ram_usage", 0)
-            found_in_gateway = fg.gateway_id
-            logger.info(
-                f"✅ Router-only: Found {model_id} resource requirements in "
-                f"federated gateway {fg.gateway_id}: vram={vram_mb}MB, ram={ram_mb}MB"
-            )
             break
-
-    if vram_mb == 0 and ram_mb == 0:
-        logger.warning(
-            f"⚠️ Router-only: No resource requirements found for {model_id} in "
-            f"federated catalogs. Resource checks may be inaccurate. "
-            f"Checked {len(federated_gateways)} gateways."
-        )
 
     placement = Placement(
         model_id=model_id,
         ram_mb=ram_mb,
         vram_mb=vram_mb,
         is_gpu=vram_mb > 0,
-        # Convert to str for existing interfaces
         endpoint_category=endpoint_category.value,
     )
 
     logger.info(
-        f"📋 Router-only: Created Placement for {model_id}: "
+        f"📋 Router-only: Placement hint for {model_id}: "
         f"VRAM={placement.vram_mb}MB, RAM={placement.ram_mb}MB, "
-        f"is_gpu={placement.is_gpu}, source={found_in_gateway or 'none'}"
+        f"is_gpu={placement.is_gpu} (per-gateway figures resolved at check time)"
     )
 
     # Create DecisionEngine (stateless, can be per-request OK)

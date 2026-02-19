@@ -16,7 +16,7 @@ class EmbeddingHandlers:
         self, params: dict[str, Any]
     ) -> dict[str, Any]:
         """Handle generate_embeddings RPC for text embedding."""
-        if not self.model_loaded or not self.engine:
+        if not self.engine or not self.engine.is_loaded():
             raise EngineError(code="MODEL_NOT_LOADED", message="Model not loaded")
 
         input_texts = params.get("input", [])

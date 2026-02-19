@@ -128,6 +128,14 @@ def evaluate_feasibility(
         )
         return FeasibilityTier.T1_FEASIBLE_NOW, (), None
 
+    # Catalog integrity violation cannot be resolved by eviction — short-circuit
+    if (
+        resource_failure
+        and resource_failure.constraint == "missing_gateway_resource_data"
+    ):
+        failures.append(resource_failure)
+        return FeasibilityTier.T0_INFEASIBLE, tuple(failures), None
+
     logger.debug(
         f"🔍 FEASIBILITY Check 4 (eviction): {placement.model_id} on {gateway.name} "
         f"needs eviction (resource check failed)"
@@ -151,8 +159,6 @@ def evaluate_feasibility(
                 constraint="can_fit_with_eviction",
                 reason="Cannot fit even after evicting all idle models",
                 details={
-                    "vram_needed": placement.vram_mb,
-                    "ram_needed": placement.ram_mb,
                     "vram_free": gateway.vram_free_mb,
                     "ram_free": gateway.ram_free_mb,
                 },

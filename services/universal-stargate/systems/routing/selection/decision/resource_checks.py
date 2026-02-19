@@ -63,6 +63,60 @@ def _compute_loading_reservation(
     return vram_reserved, ram_reserved, loading_details
 
 
+def resolve_gateway_requirements(
+    gateway: "Gateway",
+    placement: "Placement",
+) -> tuple[int, int] | ConstraintFailure:
+    """
+    Resolve per-gateway resource requirements for target model.
+
+    Invariant: ∀ model ∈ gateway.available_models ⟹ model ∈ gateway.model_details
+
+    Returns:
+        (vram_mb, ram_mb) from gateway's own model_details, or
+        ConstraintFailure if gateway lacks resource data for this model.
+    """
+    model_id = placement.model_id
+
+    if model_id not in gateway.model_details:
+        logger.error(
+            f"❌ Gateway {gateway.name} has {model_id} in catalog but "
+            f"missing from model_details. Catalog integrity violation."
+        )
+        return ConstraintFailure(
+            constraint="missing_gateway_resource_data",
+            reason=(
+                f"Gateway {gateway.name} advertises {model_id} but has no "
+                f"resource requirements in model_details"
+            ),
+            details={
+                "gateway": gateway.name,
+                "model_id": str(model_id),
+                "model_details_keys": len(gateway.model_details),
+            },
+        )
+
+    details = gateway.model_details[model_id]
+    if "vram_usage" not in details or "ram_usage" not in details:
+        logger.warning(
+            f"⚠️ Gateway {gateway.name} model_details[{model_id}] "
+            f"missing vram_usage/ram_usage keys: {list(details.keys())}. "
+            f"Defaulting missing values to 0 — resource checks may be inaccurate."
+        )
+    vram_mb = details.get("vram_usage", 0)
+    ram_mb = details.get("ram_usage", 0)
+
+    if vram_mb != placement.vram_mb or ram_mb != placement.ram_mb:
+        logger.info(
+            f"📊 Per-gateway override: {model_id} on {gateway.name} "
+            f"uses vram={vram_mb}MB, ram={ram_mb}MB "
+            f"(placement hint was vram={placement.vram_mb}MB, "
+            f"ram={placement.ram_mb}MB)"
+        )
+
+    return (vram_mb, ram_mb)
+
+
 def _check_resources(
     gateway: "Gateway",
     placement: "Placement",
@@ -84,9 +138,16 @@ def _check_resources(
                             for loading models (in-memory, no I/O)
         config: Optional config dict for resource margins
     """
+    # Per-gateway figures are authoritative; placement hint is overridden here
+    resolved = resolve_gateway_requirements(gateway, placement)
+    if isinstance(resolved, ConstraintFailure):
+        return False, resolved
+
+    gw_vram_mb, gw_ram_mb = resolved
+
     logger.info(
         f"🔍 RESOURCE CHECK START: {placement.model_id} on {gateway.name} | "
-        f"Placement requires: VRAM={placement.vram_mb}MB, RAM={placement.ram_mb}MB | "
+        f"Gateway requires: VRAM={gw_vram_mb}MB, RAM={gw_ram_mb}MB | "
         f"Gateway available: VRAM={gateway.vram_free_mb}MB, "
         f"RAM={gateway.ram_free_mb}MB | "
         f"Gateway loaded: {list(gateway.loaded_models)}, "
@@ -103,10 +164,10 @@ def _check_resources(
         vram_margin_config if vram_margin_config is not None else 1.0
     )  # Default: disabled
 
-    ram_needed = int(placement.ram_mb * ram_margin)
-    vram_needed = int(placement.vram_mb * vram_margin)
+    ram_needed = int(gw_ram_mb * ram_margin)
+    vram_needed = int(gw_vram_mb * vram_margin)
 
-    # NEW: Calculate resources reserved by loading models (exclude target)
+    # Calculate resources reserved by loading models (exclude target)
     vram_reserved = 0
     ram_reserved = 0
     loading_details: list[str] = []
@@ -156,7 +217,7 @@ def _check_resources(
         )
 
     # Check VRAM with loading reservation
-    if placement.vram_mb > 0 and effective_vram_free < vram_needed:
+    if gw_vram_mb > 0 and effective_vram_free < vram_needed:
         margin_info = (
             f" (+ {(vram_margin - 1) * 100:.0f}% margin)" if vram_margin > 1.0 else ""
         )
@@ -186,7 +247,7 @@ def _check_resources(
                 "vram_reserved_loading": vram_reserved,
                 "vram_free_effective": effective_vram_free,
                 "vram_needed": vram_needed,
-                "vram_base": placement.vram_mb,
+                "vram_base": gw_vram_mb,
                 "vram_margin": vram_margin,
                 "loading_models": [str(m) for m in gateway.loading_models],
                 "loading_details": loading_details,
@@ -194,7 +255,7 @@ def _check_resources(
         )
 
     # Check RAM with loading reservation
-    if placement.ram_mb > 0 and effective_ram_free < ram_needed:
+    if gw_ram_mb > 0 and effective_ram_free < ram_needed:
         reserved_info = (
             f" ({ram_reserved}MB reserved by {len(loading_details)} loading model(s))"
             if ram_reserved > 0

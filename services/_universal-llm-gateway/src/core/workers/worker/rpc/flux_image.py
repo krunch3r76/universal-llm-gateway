@@ -17,7 +17,7 @@ class FluxImageHandlers:
 
     async def handle_generate_image(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle generate_image RPC for Flux.2 image generation."""
-        if not self.model_loaded or not self.engine:
+        if not self.engine or not self.engine.is_loaded():
             raise EngineError(code="MODEL_NOT_LOADED", message="Model not loaded")
 
         prompt = params.get("prompt")

@@ -36,7 +36,7 @@ class InferenceHandlers:
         request_id = params.get("_request_id", str(uuid.uuid4()))
         timeout_hint = params.get("timeout_hint")
 
-        if not self.model_loaded or not self.engine:
+        if not self.engine or not self.engine.is_loaded():
             raise EngineError(code="MODEL_NOT_LOADED", message="Model not loaded")
 
         gate = self._inference_gate

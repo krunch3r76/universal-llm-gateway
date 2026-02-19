@@ -8,6 +8,7 @@ and graceful shutdown. Configuration lives in config.py.
 import asyncio
 import subprocess
 import time
+from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -42,14 +43,21 @@ class LlamaServerManager:
     - Graceful shutdown
     """
 
-    def __init__(self, config: ServerConfig):
+    def __init__(
+        self,
+        config: ServerConfig,
+        on_crash: Callable[[int], None] | None = None,
+    ):
         """
         Initialize server manager.
 
         Args:
             config: Server configuration
+            on_crash: Optional callback invoked when process death is detected (exit_code).
+                Called before status is set to STOPPED.
         """
         self.config = config
+        self._on_crash = on_crash
         self.process: subprocess.Popen | None = None
         self.status = ServerStatus.STOPPED
         self._health_task: asyncio.Task | None = None
@@ -273,11 +281,12 @@ class LlamaServerManager:
 
             # Check if process died
             if self.process and self.process.poll() is not None:
+                exit_code = self.process.returncode
                 # Capture any error output
                 try:
                     stdout, stderr = self.process.communicate(timeout=1.0)
                     logger.error(
-                        f"❌ [llama-server] Process died with exit code {self.process.returncode}"
+                        f"❌ [llama-server] Process died with exit code {exit_code}"
                     )
                     if stderr:
                         logger.error(f"❌ [llama-server] stderr: {stderr}")
@@ -285,6 +294,14 @@ class LlamaServerManager:
                         logger.error(f"❌ [llama-server] stdout: {stdout}")
                 except Exception as e:
                     logger.error(f"❌ [llama-server] Failed to capture output: {e}")
+                # Notify owner BEFORE status change
+                if self._on_crash:
+                    try:
+                        self._on_crash(exit_code)
+                    except Exception as cb_err:
+                        logger.error(
+                            f"❌ [llama-server] Crash callback failed: {cb_err}"
+                        )
                 self.status = ServerStatus.STOPPED
                 break
 

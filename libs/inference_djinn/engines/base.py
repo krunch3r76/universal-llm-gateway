@@ -5,12 +5,18 @@ Provides common functionality for all inference engines.
 All engines NEVER apply defaults - parameters are used exactly as provided.
 """
 
+from __future__ import annotations
+
 import asyncio
-from universal_logging import get_logger
 import os
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from universal_logging import get_logger
+
+if TYPE_CHECKING:
+    from inference_djinn.utils.types import TokenCountResult
 
 logger = get_logger(__name__)
 
@@ -82,13 +88,20 @@ class BaseEngine(ABC):
         """Get model information (informational only)"""
         pass
 
+    def is_loaded(self) -> bool:
+        """Check if engine is loaded and operational.
+
+        Subclasses with health monitoring should override to reflect live status.
+        """
+        return self.loaded
+
     @abstractmethod
     async def count_tokens_for_messages(
         self,
         messages_or_prompt: list[dict[str, Any]] | str,
         use_cpu: bool = True,
         context_length: int | None = None,
-    ):
+    ) -> TokenCountResult:
         """
         Count tokens for chat messages or prompt string.
 

@@ -16,7 +16,7 @@ class WhisperStreamingHandlers:
 
     async def handle_create_stream_session(self, params: dict[str, Any]) -> str:
         """Handle create_stream_session RPC for Whisper streaming."""
-        if not self.model_loaded or not self.engine:
+        if not self.engine or not self.engine.is_loaded():
             raise EngineError(code="MODEL_NOT_LOADED", message="Model not loaded")
 
         if not hasattr(self.engine, "create_stream_session"):
@@ -32,7 +32,7 @@ class WhisperStreamingHandlers:
 
     async def handle_process_audio_chunk(self, params: dict[str, Any]) -> list:
         """Handle process_audio_chunk RPC for Whisper streaming."""
-        if not self.model_loaded or not self.engine:
+        if not self.engine or not self.engine.is_loaded():
             raise EngineError(code="MODEL_NOT_LOADED", message="Model not loaded")
 
         if not hasattr(self.engine, "process_audio_chunk"):
@@ -58,7 +58,9 @@ class WhisperStreamingHandlers:
 
         return results
 
-    async def handle_close_stream_session(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def handle_close_stream_session(
+        self, params: dict[str, Any]
+    ) -> dict[str, Any]:
         """Handle close_stream_session RPC for Whisper streaming."""
         if not self.engine:
             return {"success": True, "pending_results": []}
@@ -84,7 +86,7 @@ class WhisperStreamingHandlers:
 
     async def handle_transcribe_file(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle transcribe_file RPC for Whisper file transcription."""
-        if not self.model_loaded or not self.engine:
+        if not self.engine or not self.engine.is_loaded():
             raise EngineError(code="MODEL_NOT_LOADED", message="Model not loaded")
 
         audio_path = params.get("audio_file_path")
@@ -112,5 +114,3 @@ class WhisperStreamingHandlers:
             f"✅ [worker] Transcription complete: {len(result.get('text', ''))} chars"
         )
         return result
-
-
