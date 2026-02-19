@@ -91,6 +91,9 @@ class RemotesScreen(Screen):
                 yield Label("Hostname:")
                 yield Input(id="inp-hostname", placeholder="jupiter")
             with Horizontal():
+                yield Label("SSH user:")
+                yield Input(id="inp-ssh-user", placeholder="username on remote")
+            with Horizontal():
                 yield Label("Network address:")
                 yield Input(id="inp-address", placeholder="jupiter (or 192.168.1.50)")
             with Horizontal():
@@ -146,12 +149,16 @@ class RemotesScreen(Screen):
 
     def _handle_add(self) -> None:
         hostname = self.query_one("#inp-hostname", Input).value.strip()
+        ssh_user = self.query_one("#inp-ssh-user", Input).value.strip()
         address = self.query_one("#inp-address", Input).value.strip()
         model_path = self.query_one("#inp-model-path", Input).value.strip()
         log = self.query_one("#remote-log", LogStream)
 
         if not hostname:
             log.write_line("[red]Hostname is required.[/]")
+            return
+        if not ssh_user:
+            log.write_line("[red]SSH user is required.[/]")
             return
         if not model_path:
             log.write_line("[red]Model path is required.[/]")
@@ -164,12 +171,13 @@ class RemotesScreen(Screen):
                 hostname=hostname,
                 address=address,
                 model_path=model_path,
+                ssh_user=ssh_user,
             )
         except (FileNotFoundError, ValueError) as e:
             log.write_line(f"[red]{e}[/]")
             return
 
-        log.write_line(f"[green]Added relay-{hostname} → {address}[/]")
+        log.write_line(f"[green]Added relay-{hostname} → {ssh_user}@{address}[/]")
         log.write_line(f"  Node env: {result['node_env_path']}")
         log.write_line("")
         log.write_line(
@@ -178,6 +186,7 @@ class RemotesScreen(Screen):
         log.write_line("")
 
         self.query_one("#inp-hostname", Input).value = ""
+        self.query_one("#inp-ssh-user", Input).value = ""
         self.query_one("#inp-address", Input).value = ""
         self.query_one("#inp-model-path", Input).value = ""
         self._refresh_table()

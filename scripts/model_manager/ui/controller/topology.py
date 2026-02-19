@@ -30,6 +30,7 @@ def add_remote(
     hostname: str,
     address: str,
     model_path: str,
+    ssh_user: str,
 ) -> dict[str, str]:
     """Add a remote node to the Master Stargate config and generate node env.
 
@@ -40,6 +41,7 @@ def add_remote(
         hostname: Node identifier (e.g., "jupiter")
         address: Network address (e.g., "jupiter", "192.168.1.50")
         model_path: Host path to models on the remote machine
+        ssh_user: SSH login user on the remote (e.g., "krunch3r")
 
     Returns:
         Dict with generated keys for display to user:
@@ -57,6 +59,7 @@ def add_remote(
     _write_node_env(
         hostname=hostname,
         model_path=model_path,
+        ssh_user=ssh_user,
         edge_key=edge_key,
         relay_key=relay_key,
         master_host=_get_local_address(),
@@ -122,11 +125,17 @@ async def deploy_remote(
     3. ssh ./manage relay [--restart] [--build]
     """
     repo = workspace_root.resolve()
-    dest = f"{address}:~/universal-llm-gateway/"
     node_env = _NODES_DIR / f"{hostname}.env"
     if not node_env.exists():
         yield f"[red]Node env not found: {node_env}. Add Remote first.[/red]"
         return
+
+    ssh_user = _read_node_env_key(node_env, "SSH_USER")
+    if not ssh_user:
+        yield f"[red]SSH_USER missing in {node_env}. Re-add the remote.[/red]"
+        return
+    ssh_target = f"{ssh_user}@{address}"
+    dest = f"{ssh_target}:~/universal-llm-gateway/"
 
     rsync_excludes = [
         ".env.local",
@@ -163,7 +172,7 @@ async def deploy_remote(
     scp_args = [
         "scp",
         str(node_env),
-        f"{address}:~/.gateway/nodes/{hostname}.env",
+        f"{ssh_target}:~/.gateway/nodes/{hostname}.env",
     ]
     yield f"$ {' '.join(scp_args)}"
     proc = await asyncio.create_subprocess_exec(
@@ -189,10 +198,10 @@ async def deploy_remote(
         "-t",
         "-o",
         "BatchMode=yes",
-        address,
+        ssh_target,
         f"cd ~/universal-llm-gateway && {relay_cmd}",
     ]
-    yield f"$ ssh -t -o BatchMode=yes {address} 'cd ~/universal-llm-gateway && {relay_cmd}'"
+    yield f"$ ssh -t -o BatchMode=yes {ssh_target} 'cd ~/universal-llm-gateway && {relay_cmd}'"
     proc = await asyncio.create_subprocess_exec(
         *ssh_args,
         stdout=asyncio.subprocess.PIPE,
@@ -214,10 +223,20 @@ def list_node_envs() -> list[Path]:
     return sorted(_NODES_DIR.glob("*.env"))
 
 
+def _read_node_env_key(node_env: Path, key: str) -> str | None:
+    """Read a single KEY=value from a node env file, return value or None."""
+    prefix = f"{key}="
+    for line in node_env.read_text().splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix) :]
+    return None
+
+
 def _write_node_env(
     *,
     hostname: str,
     model_path: str,
+    ssh_user: str,
     edge_key: str,
     relay_key: str,
     master_host: str,
@@ -229,6 +248,7 @@ def _write_node_env(
     lines = [
         f"NODE_ID={hostname}",
         f"MODEL_PATH={model_path}",
+        f"SSH_USER={ssh_user}",
         f"FEDERATION_KEY_EDGE={edge_key}",
         f"RELAY_ID=relay-{hostname}",
         f"MASTER_HOST={master_host}",
