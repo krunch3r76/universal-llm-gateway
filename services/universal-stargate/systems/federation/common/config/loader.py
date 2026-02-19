@@ -28,6 +28,8 @@ from .schema import (
     WSServerConfig,
 )
 
+_VALID_MODES = frozenset(m.value for m in StargateMode)
+
 logger = get_logger(__name__)
 
 
@@ -39,11 +41,18 @@ def load_federation_config(config_path: Path | None = None) -> FederationConfig:
     1. Check STARGATE_CONFIG env var
     2. Fall back to default location (config/stargate_config.yaml)
 
+    Environment overrides:
+        STARGATE_MODE: Override federation mode (master|remote|edge).
+            Allows same config file to serve multiple roles.
+
     Args:
         config_path: Optional path to config file
 
     Returns:
         FederationConfig with loaded settings (defaults to EDGE if no config)
+
+    Raises:
+        ConfigurationError: If STARGATE_MODE is set to an invalid value
 
     Note:
         Synchronous I/O is acceptable here - startup only, not request path
@@ -77,6 +86,21 @@ def load_federation_config(config_path: Path | None = None) -> FederationConfig:
     from .validation import _set_execution_capable
 
     fed_config = _parse_federation_config(federation_section)
+
+    # STARGATE_MODE env var overrides config file mode
+    # Allows same config to serve multiple roles (e.g. remote config reused as master)
+    mode_override = os.getenv("STARGATE_MODE")
+    if mode_override:
+        mode_lower = mode_override.strip().lower()
+        if mode_lower not in _VALID_MODES:
+            raise ConfigurationError(
+                f"Invalid STARGATE_MODE='{mode_override}'. "
+                f"Must be one of: {', '.join(sorted(_VALID_MODES))}"
+            )
+        fed_config.mode = StargateMode(mode_lower)
+        logger.info(
+            f"Federation mode overridden by STARGATE_MODE: {fed_config.mode.value}"
+        )
 
     # Set execution_capable based on gateway presence
     gateway_cfg = data.get("gateway", {})
