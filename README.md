@@ -1,22 +1,40 @@
 # Universal LLM Gateway
 
-A **privacy and security-first** federated LLM inference gateway built on zero-trust principles. Gateway containers run with zero network access (`network_mode: "none"`) and non-root Docker processes — your prompts never leave your hardware, and models cannot exfiltrate data, access the network, or escalate privileges regardless of their behavior. OpenAI-compatible API with multi-model pipeline orchestration.
+Privacy-by-design, zero-trust federated inference on your own GPUs.
+
+- **Privacy by design**: prompts and outputs stay on your hardware; the execution plane runs with zero network access (`network_mode: "none"`)
+- **Zero-trust security**: model execution is unprivileged and isolated — no network access, minimal host escalation surface
+
+Universal LLM Gateway is an OpenAI-compatible inference stack built for a hostile-model threat model. Under the hood:
+
+- **Stargate (9999)**: client API, routing, federation orchestration
+- **Gateway (9998)**: execution plane (workers + model loading) inside a network-isolated container (`network_mode: "none"`)
+
+## What it solves
+
+- **Contain untrusted models**: execution runs unprivileged with zero network access
+- **One API across many GPU nodes**: route to local + remote machines via federation
+- **Multi-model workflows**: pipelines are “virtual models” (DAGs) behind a single `model` name
 
 ## Status: Alpha (v0.1.0)
 
-Production-tested on single-GPU deployments. Under active development.
+Production-used on single-GPU deployments. Under active development.
 
-### What Works
-- **Privacy by design**: Gateway containers have zero network access — your prompts and outputs never leave your hardware
-- **Zero-trust security**: Models run as non-root in isolated containers — they cannot exfiltrate data, access external services, or escalate privileges regardless of behavior
-- **Defense in depth**: Network isolation (`network_mode: "none"`) + unprivileged processes + Unix socket communication
-- Federated inference routing with network-isolated Gateway containers
-- Single-GPU deployments: GGUF/llama.cpp, vLLM, Whisper, Flux
-- Pipeline system for multi-model DAG workflows (example pending)
-- WebSocket telemetry for real-time state synchronization
-- Docker-based deployment with Unix socket isolation
-- OpenAI-compatible API (`/v1/chat/completions`, `/v1/images/generations`, `/v1/audio/live_transcribe`)
-- Real-time audio transcription with VAD profiles
+## Capabilities (implemented)
+
+| Capability | Endpoint | Notes |
+|---|---|---|
+| Chat completions (SSE streaming) | `POST /v1/chat/completions` | Stargate |
+| Embeddings | `POST /v1/embeddings` | Stargate |
+| Images (Flux.2) | `POST /v1/images/generations` | Implemented; not recently revalidated |
+| Audio transcription (Whisper, file) | `POST /v1/audio/transcriptions` | Implemented on Gateway; last known working |
+| Audio live transcription (Whisper, WS) | `WS /v1/audio/live_transcribe` | Implemented; experimental / needs work |
+| Model list | `GET /v1/models` | Stargate |
+| Health | `GET /health` | Stargate + Gateway |
+
+Notes:
+- Most clients talk to **Stargate** on `:9999`. Gateway is the execution plane and is usually not accessed directly.
+- Stargate provides an authenticated Gateway forwarder: `GET/POST /gateway/{path}` forwards to Gateway (useful for execution-plane endpoints not yet first-class on Stargate).
 
 ### Roadmap
 - [x] **Simplified onboarding process** — `./manage` bootstraps environment and launches TUI ([demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4))
@@ -58,11 +76,11 @@ Client → Master Stargate:9999 (router-only)
 
 ### Key Design Decisions
 
-- **Network isolation**: Gateway containers run with `network_mode: "none"` — zero network access. All communication via Unix sockets. Models cannot exfiltrate prompts, outputs, or sensitive data over the network.
-- **Non-root execution**: All containers run as unprivileged users — no root escalation surface. Models cannot gain system-level privileges.
-- **Privilege separation**: Each Gateway runs in its own isolated container with minimal capabilities — models cannot affect other models or the host system.
+- **Network isolation**: Gateway containers run with `network_mode: "none"` — zero network access. All communication via Unix sockets.
+- **Non-root execution**: Containers run as unprivileged users — no root escalation surface.
+- **Privilege separation**: Each Gateway runs isolated with minimal capabilities — models cannot affect other models or the host system.
 - **Router-only Master**: Masters have no local Gateway. They orchestrate via relay stargates.
-- **HTTP-authoritative operations**: Model load completion verified via HTTP response, not telemetry events.
+- **HTTP-authoritative control plane**: Model load completion is determined by the HTTP response from the load endpoint. Telemetry is for monitoring, not authoritative completion.
 - **WebSocket telemetry**: Real-time state synchronization from relay stargates to Master.
 
 ### Request Flow
@@ -87,7 +105,7 @@ cd universal-llm-gateway
 
 ## API Endpoints
 
-OpenAI-compatible. All examples use Stargate port **9999**.
+OpenAI-compatible. Most examples use Stargate port **9999**.
 
 ### Chat Completions
 
@@ -95,7 +113,7 @@ OpenAI-compatible. All examples use Stargate port **9999**.
 
 ### Image Generation
 
-**`POST /v1/images/generations`** — Flux.2 model support with quality/style mapping and caption upsampling.
+**`POST /v1/images/generations`** — Flux.2 support with quality/style mapping and caption upsampling (implemented; not recently revalidated).
 
 ```bash
 curl -X POST http://localhost:9999/v1/images/generations \
@@ -105,7 +123,15 @@ curl -X POST http://localhost:9999/v1/images/generations \
 
 ### Audio Transcription
 
-**`WS /v1/audio/live_transcribe`** — Real-time Whisper transcription with VAD profiles (`sensitive` / `balanced` / `aggressive`).
+**`WS /v1/audio/live_transcribe`** — Real-time Whisper transcription with VAD profiles (`sensitive` / `balanced` / `aggressive`) (experimental / needs work).
+
+**`POST /v1/audio/transcriptions`** — File transcription (Whisper) (implemented on Gateway). If you need to access it via Stargate, use the Gateway forwarder:
+
+```bash
+curl -X POST http://localhost:9999/gateway/v1/audio/transcriptions \
+  -F "model=whisper-large-v3" \
+  -F "file=@audio.wav"
+```
 
 ### System
 

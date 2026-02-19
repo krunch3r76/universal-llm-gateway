@@ -1,20 +1,18 @@
 # Contributing to Universal LLM Gateway
 
+This repository is **TUI-first**. For most workflows (configure, build, start/stop, federation topology, model download/measurement), use:
+
+```bash
+./manage
+```
+
 ## Prerequisites
 
 - **Python 3.12+**
 - **Docker** with Compose v2
 - **NVIDIA Container Toolkit** (for GPU support)
 - **Git**
-- **IDE**: Cursor (recommended), VS Code, or Neovim
-
-### IDE Extensions
-
-For Cursor or VS Code, install:
-1. **Ruff** (charliermarsh.ruff) — formatting and linting
-2. **BasedPyright** (detachhead.basedpyright) — type checking
-
-Extensions bundle their own tooling — no system install needed. The project's `.vscode/settings.json` configures them automatically.
+- **Editor**: any (Neovim works great)
 
 ## Setup
 
@@ -23,7 +21,7 @@ Extensions bundle their own tooling — no system install needed. The project's 
 git clone https://github.com/krunch3r76/universal-llm-gateway.git
 cd universal-llm-gateway
 
-# Create virtual environment
+# Create shared virtual environment (used across the ecosystem)
 python3.12 -m venv ~/.venvs/universal
 source ~/.venvs/universal/bin/activate
 
@@ -37,37 +35,22 @@ python -c "import universal_logging; import universal_event_bus; import universa
 ## Running (Development)
 
 ```bash
-# Start local development stack
-./scripts/dev-start.sh
-
-# This starts:
-#   Master Stargate (host process, port 9999)
-#   Remote Stargate (Docker container)
-#   Gateway (Docker container, network_mode: "none")
-
-# Test
-curl http://localhost:9999/health
-
-# Chat completion
-curl -X POST http://localhost:9999/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "hermes3-llama3.1-8b-16384",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "stream": true
-  }'
-
-# Stop
-docker compose -f docker/compose/dev-local.yml down
-pkill -f "universal-stargate"
+# Preferred (TUI-first)
+./manage
 ```
+
+If you need a non-interactive/manual run for debugging, use the service scripts:
+
+- `services/universal-stargate/scripts/start-stargate.sh`
+- `services/_universal-llm-gateway/scripts/start-gateway.sh`
+
+Avoid `systemctl` for this project — use `./manage` or the direct scripts.
 
 ### Logs
 
 ```bash
 tail -f /tmp/logs/universal-stargate/*.log       # Master Stargate
 tail -f /tmp/logs/universal-llm-gateway/*.log    # Gateway
-docker compose -f docker/compose/dev-local.yml logs -f  # Containers
 ```
 
 ### Cleanup
@@ -76,6 +59,26 @@ docker compose -f docker/compose/dev-local.yml logs -f  # Containers
 pkill -f "universal-"
 rm -f /tmp/universal-protocol/*.sock /tmp/process_ipc/*.sock
 ```
+
+## Editor setup
+
+### Cursor / VS Code (same setup)
+
+Install:
+
+1. **Ruff** (charliermarsh.ruff) — formatting and linting
+2. **BasedPyright** (detachhead.basedpyright) — type checking
+
+The repo includes `.vscode/settings.json` which configures formatting/linting behavior for both.
+
+### Neovim (recommended)
+
+You can get an excellent experience with:
+
+- **pyright** (LSP) for type checking / IntelliSense
+- **ruff** for formatting + linting (via conform.nvim / none-ls / a formatter runner)
+
+Minimal approach: run `ruff` from CLI (below) and use pyright for in-editor types.
 
 ## Code Style
 
@@ -86,6 +89,7 @@ ruff format .              # Format
 ruff check .               # Lint
 ruff check --fix .         # Auto-fix
 ruff check --select=UP --fix .  # Modernize to Python 3.12+ patterns
+python -m compileall -q services/ libs/ pipelines.local/  # Compile check
 ```
 
 IDE auto-formats on save via the Ruff extension.
@@ -99,6 +103,14 @@ IDE auto-formats on save via the Ruff extension.
 - **Comments**: Explain "why", not "what"
 
 Configuration is in `pyproject.toml`.
+
+## Pipelines
+
+If you changed pipeline definitions (or pipeline infrastructure), validate before committing:
+
+```bash
+python scripts/validate-pipeline.py pipelines.local/
+```
 
 ## Project Structure
 
