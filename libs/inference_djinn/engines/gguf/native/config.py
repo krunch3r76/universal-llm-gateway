@@ -39,7 +39,7 @@ class ServerConfig:
 
     # Parallel processing (1 unless catalog configures higher)
     parallel_slots: int = 1
-    continuous_batching: bool = Trueg
+    continuous_batching: bool = True
 
     # Context configuration
     ctx_size: int = 8192
