@@ -75,7 +75,7 @@ Client → Master Stargate:9999 (router-only)
 
 ## Quick Start
 
-**[Watch: clone to running inference in minutes](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4)**
+[![Setup demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_thumbnail_02-18-2026_01.jpg)](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4)
 
 ```bash
 git clone https://github.com/krunch3r76/universal-llm-gateway.git
