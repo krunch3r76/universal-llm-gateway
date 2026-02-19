@@ -75,7 +75,10 @@ Client → Master Stargate:9999 (router-only)
 
 ## Quick Start
 
-[![Setup demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_thumbnail_02-18-2026_01.jpg)](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4)
+<a href="https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4">
+  <img src="https://krunch3r76.github.io/assets/universal-llm-gateway/measure_thumbnail_02-18-2026_01.jpg" alt="Setup demo" width="100%">
+  <br><b>▶ Click to play setup demo</b>
+</a>
 
 ```bash
 git clone https://github.com/krunch3r76/universal-llm-gateway.git
@@ -136,45 +139,6 @@ See [Pipeline System README](services/universal-stargate/systems/pipeline/README
 ## Federation
 
 Distributed inference routing across network-isolated Gateway containers.
-
-### Configuration
-
-**Master Stargate** (router-only):
-```yaml
-federation:
-  mode: master
-  stargate_id: "master-node"
-  remotes:
-    - stargate_id: "compute-1"
-      url: "https://compute-1:9999"
-      api_key: "${FEDERATION_KEY_COMPUTE_1}"
-```
-
-**Remote Stargate** (compute node):
-```yaml
-federation:
-  mode: remote
-  stargate_id: "compute-1"
-  local_edge:
-    socket_path: "/sockets/gateway.sock"
-    stargate_id: "edge-compute-1"
-    api_key: "${FEDERATION_KEY_EDGE}"
-  master:
-    stargate_id: "master-node"
-    url: "https://master:9999"
-    api_key: "${FEDERATION_KEY}"
-```
-
-**Gateway container** (network-isolated):
-```yaml
-services:
-  gateway:
-    image: universal-llm-gateway:gpu
-    network_mode: "none"
-    volumes:
-      - /tmp/universal-sockets:/sockets
-      - ${MODEL_PATH_ROOT}:/golem/models:ro
-```
 
 ### Federation API
 
