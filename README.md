@@ -1,20 +1,14 @@
 # Universal LLM Gateway
 
-Privacy-by-design, zero-trust federated inference on your own GPUs.
+An OpenAI-compatible inference stack built for a hostile-model threat model. Prompts and outputs stay on your hardware — the execution plane runs unprivileged with zero network access (`network_mode: "none"`), so even a compromised model cannot exfiltrate data or reach the internet.
 
-- **Privacy by design**: prompts and outputs stay on your hardware; the execution plane runs with zero network access (`network_mode: "none"`)
-- **Zero-trust security**: model execution is unprivileged and isolated — no network access, minimal host escalation surface
-
-Universal LLM Gateway is an OpenAI-compatible inference stack built for a hostile-model threat model. Under the hood:
-
-- **Stargate (9999)**: client API, routing, federation orchestration
-- **Gateway (9998)**: execution plane (workers + model loading) inside a network-isolated container (`network_mode: "none"`)
+Two services make this work: **Stargate** (`:9999`) is the client-facing API that handles routing, authentication, and federation. **Gateway** (`:9998`) is the execution plane that loads models and runs inference inside a network-isolated container.
 
 ## What it solves
 
 - **Contain untrusted models**: execution runs unprivileged with zero network access
 - **One API across many GPU nodes**: route to local + remote machines via federation
-- **Multi-model workflows**: pipelines are “virtual models” (DAGs) behind a single `model` name
+- **Multi-model workflows**: pipelines are "virtual models" behind a single `model` name
 
 ## Status: Alpha (v0.1.0)
 
@@ -130,7 +124,7 @@ curl -X POST http://localhost:9999/v1/chat/completions \
 ```
 
 **Key features:**
-- DAG-based execution with automatic parallelization
+- Directed acyclic graph (DAG) execution with automatic parallelization
 - Explicit object-flow (`stepName.json.field` bindings) — no hidden state
 - Automatic dependency resolution from `handler_inputs`
 - Built-in retry, timeout, checkpointing, and map/reduce
@@ -140,21 +134,7 @@ See [Pipeline System README](services/universal-stargate/systems/pipeline/README
 
 ## Federation
 
-Federation lets a Master Stargate distribute inference across multiple GPU nodes. Each node runs its own relay stargate + network-isolated Gateway container. The Master routes requests to the best available node based on feasibility scoring (loaded model, GPU capacity, queue depth).
-
-This is an internal protocol — clients never call these endpoints directly. They're documented here for operators debugging multi-node deployments.
-
-### Federation API (internal, inter-node)
-
-All endpoints are called between Stargate peers and require `X-Federation-Source` + `X-Federation-Key` headers.
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/v1/federation/models/load` | POST | Master tells a relay to load a model on its Gateway |
-| `/api/v1/federation/tokens/count` | POST | Token counting on a remote node |
-| `/api/v1/federation/inference` | POST | Master forwards an inference request to a relay |
-| `/api/v1/federation/inference/{id}` | DELETE | Cancel a running inference on a remote node |
-| `/ws/federation` | WebSocket | Persistent telemetry stream (relay → Master) for real-time state sync |
+Federation lets a Master Stargate distribute inference across multiple GPU nodes. Each node runs its own relay stargate + network-isolated Gateway container. The Master routes requests to the best available node based on feasibility scoring (loaded model, GPU capacity, queue depth). Clients still talk to `:9999` — federation is transparent.
 
 ## Project Structure
 
@@ -172,7 +152,7 @@ universal-llm-gateway/
 │   ├── universal_concurrency/        # Async concurrency primitives
 │   ├── universal_event_bus/          # Event messaging system
 │   ├── universal_logging/            # Structured logging
-│   ├── universal_protocol/           # RPC protocol definitions
+│   ├── universal_protocol/          # RPC protocol definitions
 │   ├── universal_transport/          # Transport layer (Unix sockets, HTTP)
 │   └── universal_workspace/          # Workspace path resolution
 ├── scripts/
