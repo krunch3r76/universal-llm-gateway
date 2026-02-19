@@ -56,6 +56,7 @@ class RemoteInfo:
     url: str
     status: str
     node_env: str | None
+    model_count: int | None = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -68,6 +69,16 @@ class ModelSummary:
 class Diagnostic:
     level: str
     message: str
+
+
+def _node_icon(status: str) -> str:
+    match status:
+        case "running":
+            return "●"
+        case "unreachable":
+            return "◌"
+        case _:
+            return "○"
 
 
 @dataclass(slots=True, kw_only=True)
@@ -121,11 +132,13 @@ class TopologySnapshot:
         if self.remotes:
             lines.append("  └─ remotes")
             for i, r in enumerate(self.remotes):
-                r_icon = "●" if r.status == "running" else "○"
+                r_icon = _node_icon(r.status)
                 branch = "└─" if i == len(self.remotes) - 1 else "├─"
-                env = f" [{r.node_env}]" if r.node_env else ""
+                models = (
+                    f", {r.model_count} models" if r.model_count is not None else ""
+                )
                 lines.append(
-                    f"      {branch} {r.stargate_id} ({r.url}) {r_icon} {r.status}{env}"
+                    f"      {branch} {r.stargate_id} ({r.url}) {r_icon} {r.status}{models}"
                 )
 
         if self.models.total > 0 or self.models.available_via_api is not None:
@@ -190,23 +203,64 @@ def _hostname_from_url(url: str) -> str:
         return "unknown"
 
 
+def probe_federation_sources(master_port: int) -> dict[str, int]:
+    """Query local master for federated model sources.
+
+    Calls ``GET localhost:{port}/v1/models?include_sources=true`` and extracts
+    ``_debug_sources`` to build a ``{stargate_id: model_count}`` mapping.
+    One localhost call replaces N possibly-failing remote probes.
+    """
+    url = f"http://localhost:{master_port}/v1/models?include_sources=true"
+    try:
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT) as resp:
+            data = json.loads(resp.read())
+    except Exception as e:
+        logger.warning("Federation source probe failed: %s", e)
+        return {}
+
+    debug_sources: dict[str, list[str]] = data.get("_debug_sources", {})
+    counts: dict[str, int] = {}
+    for stargate_ids in debug_sources.values():
+        for sid in stargate_ids:
+            counts[sid] = counts.get(sid, 0) + 1
+    return counts
+
+
 def _build_remotes(
-    config: dict[str, object], diagnostics: list[Diagnostic]
+    config: dict[str, object],
+    diagnostics: list[Diagnostic],
+    *,
+    master_port: int,
+    master_running: bool,
 ) -> list[RemoteInfo]:
     fed: dict[str, object] = config.get("federation", {})  # type: ignore[assignment]
     remote_cfgs: list[dict[str, object]] = fed.get("remotes") or []  # type: ignore[assignment]
+
+    sources = probe_federation_sources(master_port) if master_running else {}
+
     remotes: list[RemoteInfo] = []
     for rc in remote_cfgs:
         sid = str(rc.get("stargate_id", "unknown"))
         url = str(rc.get("url", ""))
         hostname = _hostname_from_url(url)
         node_env_path = _NODES_DIR / f"{hostname}.env"
+
+        model_count = sources.get(sid)
+        if model_count is not None:
+            status = "running"
+        elif not master_running:
+            status = "configured"
+        else:
+            status = "unreachable"
+
         remotes.append(
             RemoteInfo(
                 stargate_id=sid,
                 url=url,
-                status="configured",
+                status=status,
                 node_env=str(node_env_path) if node_env_path.exists() else None,
+                model_count=model_count,
             )
         )
     return remotes
@@ -270,11 +324,18 @@ def build_snapshot(
         config=str(_CONFIG_FILE) if _CONFIG_FILE.exists() else "missing",
     )
 
+    sg_running = sg_info is not None and sg_info.status == ServiceStatus.RUNNING
+
     return TopologySnapshot(
         generated_at=datetime.now(UTC).isoformat(),
         master=master,
         local_edge=_build_local_edge(config, gw_info),
-        remotes=_build_remotes(config, diagnostics),
+        remotes=_build_remotes(
+            config,
+            diagnostics,
+            master_port=port,
+            master_running=sg_running,
+        ),
         models=_probe_models(port, sg_info, diagnostics),
         diagnostics=diagnostics,
     )

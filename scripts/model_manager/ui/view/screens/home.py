@@ -1,4 +1,4 @@
-"""Home screen - dashboard with service status and quick actions."""
+"""Home screen - topology command center with onboarding steps."""
 
 import logging
 import os
@@ -12,6 +12,8 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Label, Static
 
 from scripts.model_manager.topology import build_snapshot
+
+from ..widgets.topology_panel import TopologyPanel
 
 logger = logging.getLogger(__name__)
 
@@ -87,14 +89,10 @@ class HomeScreen(Screen):
         padding: 0 2 1 2;
         text-align: center;
     }
-    #status-panel {
+    #info-panel {
         width: 100%;
         height: auto;
-        padding: 1 2;
-    }
-    #topology-diagram {
-        padding: 1 2;
-        width: 100%;
+        padding: 0 2;
     }
     #actions-panel {
         width: 100%;
@@ -179,14 +177,10 @@ class HomeScreen(Screen):
 
         yield Static("", id="next-action", markup=True)
 
-        with Vertical(id="status-panel"):
-            yield Static("[b]Service Status[/b]", markup=True)
-            yield Static("  Gateway:  checking...", id="gw-status")
-            yield Static("  Stargate: checking...", id="sg-status")
-            yield Static("  Docker:   checking...", id="img-status")
+        with Vertical(id="info-panel"):
+            yield Static("", id="img-status")
             yield Static("", id="model-paths")
             yield Static("", id="model-count")
-            yield Static("", id="topology-diagram")
 
         with Container(id="actions-panel"):
             with Horizontal(id="actions-row"):
@@ -196,6 +190,8 @@ class HomeScreen(Screen):
                 yield Button("Footprint [f]", id="btn-footprint")
                 yield Button("Settings [e]", id="btn-settings")
                 yield Button("Quit [q]", id="btn-quit", variant="error")
+
+        yield TopologyPanel(id="topology-panel")
 
         yield Footer()
 
@@ -229,23 +225,39 @@ class HomeScreen(Screen):
     async def _check_status(self) -> None:
         app = self.app
         svc = app.service_controller  # type: ignore[attr-defined]
-        build = app.service_controller.check_image()  # type: ignore[attr-defined]
+        build = svc.check_image()
         services = svc.service_state.check_all()
 
         gw = services[0]
         sg = services[1]
 
-        self.query_one("#gw-status", Static).update(
-            f"  Gateway:  {_status_icon(gw.status)} {gw.status} {gw.detail}"
-        )
-        self.query_one("#sg-status", Static).update(
-            f"  Stargate: {_status_icon(sg.status)} {sg.status} {sg.detail}"
-        )
+        workspace_root: Path = app._workspace_root  # type: ignore[attr-defined]
+        try:
+            snapshot = build_snapshot(workspace_root, services=services)
+            topo_panel = self.query_one("#topology-panel", TopologyPanel)
+            topo_panel.set_workspace_root(workspace_root)
+            topo_panel.update_from_snapshot(snapshot)
+            snapshot.write()
+        except Exception as e:
+            logger.error("Topology snapshot failed: %s", e)
+
         self.query_one("#img-status", Static).update(
-            f"  Docker:   {_status_icon(build.status)} {build.status}"
+            f"  Docker: {_status_icon(build.status)} {build.status}"
             + (f" ({build.size})" if build.size else "")
         )
 
+        self._update_model_paths(app)
+        self._update_model_count(app)
+
+        status_bar = app.query_one("StatusBar")  # type: ignore[attr-defined]
+        status_bar.gateway_status = gw.status
+        status_bar.stargate_status = sg.status
+        status_bar.image_status = build.status
+
+        catalog = app.catalog  # type: ignore[attr-defined]
+        self._update_steps(gw, sg, build, catalog)
+
+    def _update_model_paths(self, app: object) -> None:
         search_paths = app.local_env.model_search_paths  # type: ignore[attr-defined]
         path_parts: list[str] = []
         for p in search_paths:
@@ -264,9 +276,10 @@ class HomeScreen(Screen):
                 except PermissionError:
                     path_parts.append(f"{p} [red](permission denied)[/]")
         self.query_one("#model-paths", Static).update(
-            f"\n  [b]Model search path:[/b] {'  '.join(path_parts)}"
+            f"  [b]Model search path:[/b] {'  '.join(path_parts)}"
         )
 
+    def _update_model_count(self, app: object) -> None:
         catalog = app.catalog  # type: ignore[attr-defined]
         check = app.onboarding.check_downloaded  # type: ignore[attr-defined]
         models = list(catalog.models.values())
@@ -285,7 +298,7 @@ class HomeScreen(Screen):
             if not (m.has_gpu_profiles or m.has_cpu_profiles) and check(m)
         )
         not_local = total - measured - missing - downloaded
-        parts = [f"\n  Models: {total} in catalog —"]
+        parts = [f"  Models: {total} in catalog —"]
         parts.append(f"[green]{measured} measured[/]")
         if downloaded:
             parts.append(f"[cyan]{downloaded} downloaded (not measured)[/]")
@@ -293,21 +306,6 @@ class HomeScreen(Screen):
             parts.append(f"[yellow]{missing} missing[/]")
         parts.append(f"{not_local} not on disk")
         self.query_one("#model-count", Static).update("  ".join(parts))
-
-        try:
-            workspace_root: Path = app._workspace_root  # type: ignore[attr-defined]
-            snapshot = build_snapshot(workspace_root, services=services)
-            self.query_one("#topology-diagram", Static).update(snapshot.to_diagram())
-            snapshot.write()
-        except Exception as e:
-            logger.error("Topology snapshot failed: %s", e)
-
-        status_bar = app.query_one("StatusBar")  # type: ignore[attr-defined]
-        status_bar.gateway_status = gw.status
-        status_bar.stargate_status = sg.status
-        status_bar.image_status = build.status
-
-        self._update_steps(gw, sg, build, catalog)
 
     def _update_steps(self, gw, sg, build, catalog) -> None:  # type: ignore[no-untyped-def]
         env_local = self.app._workspace_root / ".env.local"  # type: ignore[attr-defined]

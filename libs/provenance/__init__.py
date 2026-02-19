@@ -37,6 +37,7 @@ from .cross_model import (
     count_eligible_verifiers,
     expand_models,
     group_by_eligible_models,
+    order_models_by_affinity,
     validate_provenance_present,
 )
 from .types import Provenance, create_provenance
@@ -54,6 +55,7 @@ __all__ = [
     # Cross-model utilities
     "expand_models",
     "group_by_eligible_models",
+    "order_models_by_affinity",
     "count_eligible_verifiers",
     "validate_provenance_present",
 ]

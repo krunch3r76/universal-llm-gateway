@@ -1,8 +1,10 @@
 """Topology management — add/remove remote nodes in Master Stargate config."""
 
 import asyncio
+import json
 import logging
 import secrets
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,14 @@ def list_remotes() -> list[dict[str, Any]]:
     data = yaml.safe_load(_MASTER_CONFIG.read_text()) or {}
     federation = data.get("federation", {})
     return federation.get("remotes") or []
+
+
+def get_master_port() -> int:
+    """Read the master Stargate port from config."""
+    if not _MASTER_CONFIG.exists():
+        return 9999
+    data = yaml.safe_load(_MASTER_CONFIG.read_text()) or {}
+    return int(data.get("proxy", {}).get("port", 9999))
 
 
 def add_remote(
@@ -116,13 +126,14 @@ async def deploy_remote(
     workspace_root: Path,
     build: bool = False,
     restart: bool = False,
+    scope: str = "all",
 ) -> AsyncIterator[str]:
     """Deploy relay+edge to a remote host via rsync + ssh.
 
     Yields log lines as they appear. Three steps:
     1. rsync repo (excludes local-only files)
     2. scp ~/.gateway/nodes/<hostname>.env
-    3. ssh ./manage relay [--restart] [--build]
+    3. ssh ./manage relay [--restart] [--build] [--scope SCOPE]
     """
     repo = workspace_root.resolve()
     node_env = _NODES_DIR / f"{hostname}.env"
@@ -192,7 +203,7 @@ async def deploy_remote(
     if restart:
         relay_cmd += " --restart"
     if build:
-        relay_cmd += " --build"
+        relay_cmd += f" --build --scope {scope}"
     ssh_args = [
         "ssh",
         "-t",
@@ -214,6 +225,144 @@ async def deploy_remote(
     if code != 0:
         yield f"[red]ssh relay failed (exit {code}).[/red]"
         return
+
+
+# ---------------------------------------------------------------------------
+# Event-driven relay readiness
+# ---------------------------------------------------------------------------
+
+_EVENTS_FILE = Path("/tmp/stargate-events/current.jsonl")
+_CONNECTION_EVENT = "federation.connection.established"
+
+
+async def wait_for_relay_connected(
+    remote_id: str,
+    *,
+    master_port: int = 9999,
+    timeout: float = 90.0,
+    interval: float = 3.0,
+) -> bool:
+    """Wait for a relay to appear in master's model sources after deploy.
+
+    Runs event-tail (if events file exists) and HTTP poll concurrently; returns
+    True as soon as either confirms. The concurrent approach handles the race
+    where the relay reconnects before we start tailing the events file.
+
+    Returns:
+        True if the relay was confirmed within *timeout* seconds.
+    """
+    tasks: list[asyncio.Task[bool]] = []
+    if _EVENTS_FILE.exists():
+        tasks.append(
+            asyncio.create_task(
+                asyncio.to_thread(_tail_events_for_connection, remote_id, timeout)
+            )
+        )
+    tasks.append(
+        asyncio.create_task(
+            _poll_master_for_relay(remote_id, master_port, timeout, interval)
+        )
+    )
+
+    connected = False
+    pending: set[asyncio.Task[bool]] = set(tasks)
+    while pending and not connected:
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            if not task.cancelled() and task.exception() is None and task.result():
+                connected = True
+    for t in pending:
+        t.cancel()
+    return connected
+
+
+def _tail_events_for_connection(remote_id: str, timeout: float) -> bool:
+    """Blocking: tail JSONL event log for a matching connection event."""
+    with _EVENTS_FILE.open() as fh:
+        fh.seek(0, 2)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            line = fh.readline()
+            if line:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    event.get("signal") == _CONNECTION_EVENT
+                    and event.get("payload", {}).get("remote_id") == remote_id
+                ):
+                    return True
+            else:
+                time.sleep(0.5)
+    return False
+
+
+async def _poll_master_for_relay(
+    remote_id: str,
+    master_port: int,
+    timeout: float,
+    interval: float,
+) -> bool:
+    """Fallback: poll master's model sources until remote_id appears."""
+    from scripts.model_manager.topology import probe_federation_sources
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        sources = await asyncio.to_thread(probe_federation_sources, master_port)
+        if remote_id in sources:
+            return True
+        await asyncio.sleep(interval)
+    return False
+
+
+async def restart_relay(
+    *,
+    hostname: str,
+    address: str,
+    build: bool = False,
+) -> AsyncIterator[str]:
+    """SSH into remote and restart (optionally rebuild) the relay.
+
+    Skips rsync — assumes repo is already deployed. Use deploy_remote for
+    first-time setup or when source changes need to be pushed.
+    """
+    node_env = _NODES_DIR / f"{hostname}.env"
+    if not node_env.exists():
+        yield f"[red]Node env not found: {node_env}. Run Deploy first.[/red]"
+        return
+    ssh_user = _read_node_env_key(node_env, "SSH_USER")
+    if not ssh_user:
+        yield f"[red]SSH_USER missing in {node_env}. Re-add the remote.[/red]"
+        return
+    ssh_target = f"{ssh_user}@{address}"
+    relay_cmd = "./manage relay --restart"
+    if build:
+        relay_cmd += " --build"
+    ssh_args = [
+        "ssh",
+        "-t",
+        "-o",
+        "BatchMode=yes",
+        ssh_target,
+        f"cd ~/universal-llm-gateway && {relay_cmd}",
+    ]
+    yield f"$ {' '.join(ssh_args)}"
+    proc = await asyncio.create_subprocess_exec(
+        *ssh_args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    assert proc.stdout is not None
+    async for raw in proc.stdout:
+        yield raw.decode(errors="replace").rstrip()
+    code = await proc.wait()
+    if code != 0:
+        yield f"[red]ssh relay restart failed (exit {code}).[/red]"
 
 
 def list_node_envs() -> list[Path]:

@@ -141,6 +141,29 @@ def group_by_eligible_models(
     return result
 
 
+def order_models_by_affinity(
+    models: list[str],
+    priority_models: set[str],
+) -> list[str]:
+    """Order models for sequential dispatch: priority models first, remainder last.
+
+    Maximizes request locality — grouping requests for likely-loaded models
+    before models that may require loading.  Preserves relative order within
+    each partition so callers control intra-group ordering.
+
+    Args:
+        models: Model identifiers to reorder (aliases or resolved IDs).
+        priority_models: Models expected to be loaded (e.g. answer pool).
+            Models in this set are dispatched first.
+
+    Returns:
+        Reordered list: [priority ∩ models] ++ [models ∖ priority]
+    """
+    priority = [m for m in models if m in priority_models]
+    deferred = [m for m in models if m not in priority_models]
+    return priority + deferred
+
+
 def count_eligible_verifiers(
     item: dict[str, Any],
     models: Iterable[str],

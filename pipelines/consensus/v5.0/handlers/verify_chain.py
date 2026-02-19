@@ -15,6 +15,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, override
 
+from provenance.cross_model import order_models_by_affinity
 from systems.pipeline.core.events.verification import (
     ClaimsClassified,
     ClaimsContextualized,
@@ -111,6 +112,20 @@ class VerifyChainHandler(BaseHandler):
 
         # Resolve config from domain fields
         verify_model_aliases = self._resolve_verify_models(step, context, originator)
+
+        # Order by affinity: answer-pool models first (likely loaded), others last
+        answer_models_opt = (context.options or {}).get("answer_models", {})
+        answer_pool: set[str] = (
+            set(answer_models_opt.values())
+            if isinstance(answer_models_opt, dict)
+            else set(answer_models_opt)
+            if isinstance(answer_models_opt, list)
+            else set()
+        )
+        if answer_pool:
+            verify_model_aliases = order_models_by_affinity(
+                verify_model_aliases, answer_pool
+            )
 
         # Full verifier pool (before exclude_self) — for event metadata
         _pool_raw = step.get_domain_field("model_pool")
@@ -473,6 +488,7 @@ class VerifyChainHandler(BaseHandler):
             prompt_ref=prompt_ref_verify,
             exec_configs=exec_configs,
             prompt_ref_verify_batch=prompt_ref_verify_batch,
+            sequential_dispatch=bool(answer_pool),
         )
 
         # Event: per-model verdicts

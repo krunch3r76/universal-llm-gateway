@@ -213,7 +213,6 @@ def create_periodic_heartbeat_task(
 
                 # Send as generic telemetry (lightweight, no pipeline reload)
                 await broadcast_callback(heartbeat_msg.to_dict())
-                logger.debug(f"📤 Sent telemetry heartbeat for {gateway_id}")
 
             except asyncio.CancelledError:
                 logger.debug("Periodic heartbeat task cancelled")

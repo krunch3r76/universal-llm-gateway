@@ -3,8 +3,10 @@
 import argparse
 import logging
 import os
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from scripts.model_manager.ui.controller.service_ctl import (
@@ -23,13 +25,16 @@ _REQUIRED_KEYS = (
     "FEDERATION_KEY_RELAY",
 )
 _ROOT = Path(__file__).resolve().parents[2]
-_NODES_DIR = Path.home() / ".gateway" / "nodes"
+_GATEWAY_DIR = Path.home() / ".gateway"
+_NODES_DIR = _GATEWAY_DIR / "nodes"
 _RELAY_TEMPLATE = _ROOT / "config" / "templates" / "relay-stargate.yaml"
 _COMPOSE_PATH = _ROOT / "docker" / "compose" / "gpu-edge.yml"
 _STARGATE_SCRIPT = (
     _ROOT / "services" / "universal-stargate" / "scripts" / "start-stargate.sh"
 )
 _BUILD_SCRIPT = _ROOT / "docker" / "scripts" / "build" / "build-gpu.sh"
+
+_ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
 
 
 def _node_env_path(node_id: str) -> Path:
@@ -48,12 +53,45 @@ def _build_env(node_env: dict[str, str]) -> dict[str, str]:
     return env
 
 
-def _run_build() -> int:
+def _render_template(template: Path, env: dict[str, str]) -> Path:
+    """Expand ${VAR} placeholders in the relay template and write rendered config.
+
+    Returns path to the rendered config file at ~/.gateway/stargate.yaml.
+    """
+    text = template.read_text()
+
+    def _replace(m: re.Match[str]) -> str:
+        key = m.group(1)
+        value = env.get(key)
+        if value is None:
+            logger.error("Template variable ${%s} has no value in env", key)
+            return m.group(0)
+        return value
+
+    rendered = _ENV_VAR_RE.sub(_replace, text)
+    config_path = _GATEWAY_DIR / "stargate.yaml"
+    _GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(rendered)
+    logger.info("Rendered relay config: %s", config_path)
+    return config_path
+
+
+_SCOPE_FLAGS: dict[str, list[str]] = {
+    "all": ["--cpu-native", "--gpu-native"],
+    "llama": ["--cpu-native", "--gpu-native", "--no-vllm"],
+}
+
+_STARGATE_SENTINEL = "Stargate Proxy started successfully"
+_STARGATE_STARTUP_TIMEOUT = 60
+
+
+def _run_build(scope: str = "all") -> int:
     if not _BUILD_SCRIPT.exists():
         print("ERROR: Build script not found:", _BUILD_SCRIPT, file=sys.stderr)
         return 1
+    flags = _SCOPE_FLAGS.get(scope, _SCOPE_FLAGS["all"])
     return subprocess.run(
-        [str(_BUILD_SCRIPT), "--refresh-source"],
+        [str(_BUILD_SCRIPT), *flags, "--refresh-source"],
         cwd=str(_ROOT),
     ).returncode
 
@@ -87,8 +125,10 @@ def _run_stop(node_id: str) -> int:
     return 0 if result.returncode == 0 else result.returncode
 
 
-def _run_start(node_id: str, node_env: dict[str, str], do_build: bool) -> int:
-    if do_build and _run_build() != 0:
+def _run_start(
+    node_id: str, node_env: dict[str, str], do_build: bool, scope: str = "all"
+) -> int:
+    if do_build and _run_build(scope) != 0:
         return 1
     if not _COMPOSE_PATH.exists():
         print("ERROR: Compose file not found:", _COMPOSE_PATH, file=sys.stderr)
@@ -120,12 +160,55 @@ def _run_start(node_id: str, node_env: dict[str, str], do_build: bool) -> int:
         print("ERROR: start-stargate.sh not found:", _STARGATE_SCRIPT, file=sys.stderr)
         return 1
     stargate_env = _build_env(node_env)
-    stargate_env["STARGATE_CONFIG"] = str(_RELAY_TEMPLATE.resolve())
-    return subprocess.run(
-        [str(_STARGATE_SCRIPT), "debug"],
-        env=stargate_env,
-        cwd=str(_ROOT),
-    ).returncode
+    rendered_config = _render_template(_RELAY_TEMPLATE, stargate_env)
+    stargate_env["STARGATE_CONFIG"] = str(rendered_config)
+    return _launch_stargate(node_id, stargate_env)
+
+
+def _launch_stargate(node_id: str, stargate_env: dict[str, str]) -> int:
+    """Start Stargate detached, tail its log until startup is confirmed.
+
+    Uses start_new_session=True so the Stargate survives SSH disconnection.
+    Monitors the log file for the startup sentinel or early exit.
+    """
+    log_path = Path(f"/tmp/logs/relay/stargate-{node_id}.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with log_path.open("w") as log_fh:
+        proc = subprocess.Popen(
+            [str(_STARGATE_SCRIPT), "debug"],
+            env=stargate_env,
+            cwd=str(_ROOT),
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    deadline = time.monotonic() + _STARGATE_STARTUP_TIMEOUT
+    with log_path.open("r") as reader:
+        while time.monotonic() < deadline:
+            line = reader.readline()
+            if line:
+                print(line.rstrip())
+                if _STARGATE_SENTINEL in line:
+                    print(f"Relay started (PID {proc.pid})")
+                    return 0
+            elif proc.poll() is not None:
+                for rest in reader:
+                    print(rest.rstrip())
+                logger.error("Stargate exited early (code %d)", proc.returncode)
+                return proc.returncode
+            else:
+                time.sleep(0.2)
+
+    if proc.poll() is None:
+        logger.warning(
+            "Stargate running (PID %d) but startup not confirmed within %ds",
+            proc.pid,
+            _STARGATE_STARTUP_TIMEOUT,
+        )
+        return 0
+    return proc.returncode
 
 
 def main() -> int:
@@ -146,6 +229,12 @@ def main() -> int:
         help="Stop running relay+edge, then start again (combine with --build to rebuild)",
     )
     parser.add_argument(
+        "--scope",
+        choices=["all", "llama"],
+        default="all",
+        help="Build scope: 'all' (vLLM + llama) or 'llama' only (default: all)",
+    )
+    parser.add_argument(
         "--stop", action="store_true", help="Stop relay stargate and edge container"
     )
     args = parser.parse_args()
@@ -154,7 +243,6 @@ def main() -> int:
         code = _run_stop(node_id)
         if code != 0:
             logger.warning("Stop returned %d, continuing with start", code)
-        # fall through to _run_start below
     elif args.stop:
         return _run_stop(node_id)
     node_path = _node_env_path(node_id)
@@ -175,7 +263,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    return _run_start(node_id, node_env, args.build)
+    return _run_start(node_id, node_env, args.build, scope=args.scope)
 
 
 if __name__ == "__main__":
