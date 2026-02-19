@@ -711,6 +711,12 @@ def _build_updated_catalog_entry(
             }
         )
 
+    # vLLM requires gpu_memory_utilization for AWQ/GPTQ/HF models —
+    # the measurement used this value but we must persist it to the catalog
+    # so the engine receives it at load time.
+    if model_format in ("hf", "awq", "gptq"):
+        loader.setdefault("gpu_memory_utilization", 0.9)
+
     # Handle vision parameters in loader
     if mmproj_path:
         vision_arch = vision_architecture or _detect_vision_architecture(model_id)

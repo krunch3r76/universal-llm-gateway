@@ -155,8 +155,9 @@ class MeasurementJob(Job):
             # Detect engine type for dispatch
             entry = _lookup_catalog_entry(self.request.model_id)
             schema = (entry or {}).get("schema")
+            loader_updates: dict[str, Any] | None = None
             if schema == "vllm":
-                results = await self._measure_vllm(model_path, tracker)
+                results, loader_updates = await self._measure_vllm(model_path, tracker)
             elif self.request.mode == "gpu":
                 results = await measure_gpu_with_stepdown(
                     model_path,
@@ -205,6 +206,7 @@ class MeasurementJob(Job):
                 results,
                 self.emit_log,
                 use_static=self.request.use_static_catalog,
+                loader_updates=loader_updates,
             )
 
             self.result = {"profiles": results}
@@ -279,8 +281,12 @@ class MeasurementJob(Job):
 
     async def _measure_vllm(
         self, model_path: Path, tracker: SubprocessTracker
-    ) -> dict[str, dict[str, Any]]:
-        """Run vLLM-specific measurement (GPU only, no hybrid)."""
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+        """Run vLLM-specific measurement (GPU only, no hybrid).
+
+        Returns:
+            Tuple of (profile_results, loader_updates_to_persist)
+        """
         if self.request.mode == "cpu":
             raise RuntimeError("vLLM does not support CPU-only measurement")
 
@@ -296,7 +302,7 @@ class MeasurementJob(Job):
         self.emit_log(f"  Quantization: {quantization or 'none'}")
         self.emit_log(f"  GPU memory utilization: {gpu_mem_util}")
 
-        return await measure_vllm_contexts(
+        results = await measure_vllm_contexts(
             model_path,
             self.request.contexts or [32768, 16384, 8192, 4096],
             quantization,
@@ -304,6 +310,9 @@ class MeasurementJob(Job):
             self.emit_log,
             tracker,
         )
+
+        loader_updates = {"gpu_memory_utilization": gpu_mem_util}
+        return results, loader_updates
 
     async def _resolve_model_path(self) -> Path | None:
         """Resolve model ID to file path (GGUF) or directory (vLLM)."""

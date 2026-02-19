@@ -79,6 +79,7 @@ async def update_catalog_with_results(
     results: dict[str, dict[str, Any]],
     emit_log: callable,
     use_static: bool = False,
+    loader_updates: dict[str, Any] | None = None,
 ) -> None:
     """
     Update local catalog (~/.gateway/catalog/) with measurement results.
@@ -92,13 +93,16 @@ async def update_catalog_with_results(
         results: Profile results to write to catalog
         emit_log: Logging callback for job progress
         use_static: If True, skip (CLI handles dual-write on host filesystem)
+        loader_updates: Loader params to persist (e.g. gpu_memory_utilization)
     """
     if use_static:
-        # Dual-write handled by CLI (host filesystem access for both catalogs)
         emit_log("📝 Catalog update skipped (CLI will dual-write to host)")
         return
 
-    from inference_djinn.catalog.local_config import load_local_catalog
+    from inference_djinn.catalog.local_config import (
+        load_local_catalog,
+        save_local_catalog,
+    )
 
     from ..context_detection import (
         determine_activated_contexts,
@@ -109,25 +113,25 @@ async def update_catalog_with_results(
     emit_log("Updating local catalog...")
 
     try:
-        # Check if model exists in local catalog before attempting updates
         local_catalog = load_local_catalog()
         local_models = local_catalog.get("models", {})
         if model_id not in local_models:
-            # Model only in static catalog - local updates not applicable
-            # (CLI handles static catalog writes on host filesystem)
             emit_log("  → Model not in local catalog (static-only), skipping")
             return
 
-        # Update individual profile measurements
+        # Persist loader-level params (e.g. gpu_memory_utilization for vLLM)
+        if loader_updates:
+            model_entry = local_models[model_id]
+            loader = model_entry.setdefault("loader", {})
+            for key, value in loader_updates.items():
+                loader.setdefault(key, value)
+            save_local_catalog(local_catalog)
+            emit_log(f"  ✅ Updated loader params: {list(loader_updates)}")
+
         for ctx_str, profile in results.items():
             if profile.get("error"):
                 continue
 
-            # Safety margin is now applied during measurement phase:
-            # - First hybrid context: -2 margin (at edge of fitting)
-            # - Subsequent hybrid contexts: no margin (comfortable fit)
-            # - Full GPU (-1): no margin needed
-            # Write measured values directly to catalog
             measured_layers = profile.get("n_gpu_layers")
 
             success = update_local_catalog_profile(
@@ -142,7 +146,6 @@ async def update_catalog_with_results(
             else:
                 emit_log(f"  ⚠️ Failed to update {ctx_str} in local catalog")
 
-        # Determine and set activated contexts
         gpu_contexts, cpu_contexts, reason = determine_activated_contexts(results, mode)
 
         if reason:
