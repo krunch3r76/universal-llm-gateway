@@ -26,15 +26,14 @@ Production-used on single-GPU deployments. Under active development.
 |---|---|---|
 | Chat completions (SSE streaming) | `POST /v1/chat/completions` | Stargate |
 | Embeddings | `POST /v1/embeddings` | Stargate |
-| Images (Flux.2) | `POST /v1/images/generations` | Implemented; not recently revalidated |
-| Audio transcription (Whisper, file) | `POST /v1/audio/transcriptions` | Implemented on Gateway; last known working |
-| Audio live transcription (Whisper, WS) | `WS /v1/audio/live_transcribe` | Implemented; experimental / needs work |
+| Images (Flux.2) | `POST /v1/images/generations` | Under active development |
+| Audio transcription (Whisper) | `POST /v1/audio/transcriptions` | Under active development |
 | Model list | `GET /v1/models` | Stargate |
 | Health | `GET /health` | Stargate + Gateway |
 
-Notes:
-- Most clients talk to **Stargate** on `:9999`. Gateway is the execution plane and is usually not accessed directly.
-- Stargate provides an authenticated Gateway forwarder: `GET/POST /gateway/{path}` forwards to Gateway (useful for execution-plane endpoints not yet first-class on Stargate).
+**Stargate vs Gateway**: Stargate (`:9999`) is the only endpoint clients need. It handles authentication, model routing, federation, and streaming. Gateway (`:9998`) is the execution plane — it runs inside a network-isolated container and is never exposed to clients directly.
+
+Some Gateway capabilities (e.g. file-based audio transcription) haven't been promoted to first-class Stargate endpoints yet. For these, Stargate provides an authenticated forwarder at `GET/POST /gateway/{path}` that proxies requests to the local Gateway on the client's behalf.
 
 ### Roadmap
 - [x] **Simplified onboarding process** — `./manage` bootstraps environment and launches TUI ([demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4))
@@ -111,28 +110,6 @@ OpenAI-compatible. Most examples use Stargate port **9999**.
 
 **`POST /v1/chat/completions`** — Text generation with streaming support, pipeline routing, and automatic model loading.
 
-### Image Generation
-
-**`POST /v1/images/generations`** — Flux.2 support with quality/style mapping and caption upsampling (implemented; not recently revalidated).
-
-```bash
-curl -X POST http://localhost:9999/v1/images/generations \
-  -H "Content-Type: application/json" \
-  -d '{"model": "flux.2-dev", "prompt": "A serene mountain landscape at sunset", "size": "1024x1024"}'
-```
-
-### Audio Transcription
-
-**`WS /v1/audio/live_transcribe`** — Real-time Whisper transcription with VAD profiles (`sensitive` / `balanced` / `aggressive`) (experimental / needs work).
-
-**`POST /v1/audio/transcriptions`** — File transcription (Whisper) (implemented on Gateway). If you need to access it via Stargate, use the Gateway forwarder:
-
-```bash
-curl -X POST http://localhost:9999/gateway/v1/audio/transcriptions \
-  -F "model=whisper-large-v3" \
-  -F "file=@audio.wav"
-```
-
 ### System
 
 | Endpoint | Purpose |
@@ -163,19 +140,21 @@ See [Pipeline System README](services/universal-stargate/systems/pipeline/README
 
 ## Federation
 
-Distributed inference routing across network-isolated Gateway containers.
+Federation lets a Master Stargate distribute inference across multiple GPU nodes. Each node runs its own relay stargate + network-isolated Gateway container. The Master routes requests to the best available node based on feasibility scoring (loaded model, GPU capacity, queue depth).
 
-### Federation API
+This is an internal protocol — clients never call these endpoints directly. They're documented here for operators debugging multi-node deployments.
 
-All endpoints require `X-Federation-Source` + `X-Federation-Key` headers.
+### Federation API (internal, inter-node)
+
+All endpoints are called between Stargate peers and require `X-Federation-Source` + `X-Federation-Key` headers.
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/v1/federation/models/load` | POST | Model load orchestration |
-| `/api/v1/federation/tokens/count` | POST | Token counting |
-| `/api/v1/federation/inference` | POST | Inference request |
-| `/api/v1/federation/inference/{id}` | DELETE | Cancel inference |
-| `/ws/federation` | WebSocket | Telemetry connection |
+| `/api/v1/federation/models/load` | POST | Master tells a relay to load a model on its Gateway |
+| `/api/v1/federation/tokens/count` | POST | Token counting on a remote node |
+| `/api/v1/federation/inference` | POST | Master forwards an inference request to a relay |
+| `/api/v1/federation/inference/{id}` | DELETE | Cancel a running inference on a remote node |
+| `/ws/federation` | WebSocket | Persistent telemetry stream (relay → Master) for real-time state sync |
 
 ## Project Structure
 
