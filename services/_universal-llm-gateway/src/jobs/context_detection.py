@@ -197,7 +197,7 @@ async def get_training_context(model_id: str) -> int | None:
 
 
 def resolve_model_path(model_id: str) -> Path | None:
-    """Resolve model ID to file path."""
+    """Resolve model ID to file path (GGUF) or directory (vLLM/HF)."""
     try:
         from ..core.catalog import get_catalog_loader
 
@@ -209,13 +209,20 @@ def resolve_model_path(model_id: str) -> Path | None:
             hf_info = download.get("huggingface", {})
             filename = hf_info.get("file")
 
+            model_root = Path(os.environ.get("MODEL_PATH_ROOT", "/mnt/torus/models"))
+
             if filename:
-                model_root = Path(
-                    os.environ.get("MODEL_PATH_ROOT", "/mnt/torus/models")
-                )
                 path = model_root / filename
                 if path.exists():
                     return path
+            else:
+                # vLLM/HF models: directory from repo name
+                repo = hf_info.get("repo")
+                if repo:
+                    dir_name = repo.split("/")[-1] if "/" in repo else repo
+                    path = model_root / dir_name
+                    if path.exists() and path.is_dir():
+                        return path
     except Exception as e:
         logger.debug(f"Catalog lookup failed: {e}")
 

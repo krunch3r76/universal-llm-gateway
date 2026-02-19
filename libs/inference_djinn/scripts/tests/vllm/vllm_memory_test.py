@@ -264,8 +264,19 @@ def test_vllm_load(
 
             print("[MEMORY_TEST] Loading vLLM model...", file=sys.stderr)
 
-            # Load model - vLLM logs will go directly to console
-            llm = LLM(**vllm_params)
+            # Redirect fd 1 → fd 2 during vLLM load: vLLM V1 forks an
+            # EngineCore subprocess that inherits OS file descriptors.
+            # Its stdout writes bypass Python's sys.stdout, so we must
+            # redirect at the fd level to keep our stdout clean for JSON.
+            sys.stdout.flush()
+            saved_fd = os.dup(1)
+            os.dup2(2, 1)
+            try:
+                llm = LLM(**vllm_params)
+            finally:
+                sys.stdout.flush()
+                os.dup2(saved_fd, 1)
+                os.close(saved_fd)
 
             print("[MEMORY_TEST] Model loaded successfully", file=sys.stderr)
 

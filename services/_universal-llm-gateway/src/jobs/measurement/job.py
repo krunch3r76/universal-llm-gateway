@@ -10,7 +10,7 @@ Smart context detection:
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, override
+from typing import TYPE_CHECKING, Any, Literal, override
 
 from universal_logging import get_logger
 
@@ -31,11 +31,23 @@ from .helpers import (
     check_measurement_resources,
     update_catalog_with_results,
 )
+from .vllm import measure_vllm_contexts
 
 if TYPE_CHECKING:
     from ...core.gateway_config import GatewayConfig
 
 logger = get_logger(__name__)
+
+
+def _lookup_catalog_entry(model_id: str) -> dict[str, Any] | None:
+    """Fetch catalog entry for model (None if unavailable)."""
+    try:
+        from ...core.catalog import get_catalog_loader
+
+        return get_catalog_loader().get_model(model_id)
+    except Exception as e:
+        logger.debug("Catalog lookup failed for '%s': %s", model_id, e)
+        return None
 
 
 @dataclass
@@ -140,8 +152,12 @@ class MeasurementJob(Job):
 
             self.emit_log(f"  Contexts: {self.request.contexts}")
 
-            # Use smart measurement based on mode
-            if self.request.mode == "gpu":
+            # Detect engine type for dispatch
+            entry = _lookup_catalog_entry(self.request.model_id)
+            schema = (entry or {}).get("schema")
+            if schema == "vllm":
+                results = await self._measure_vllm(model_path, tracker)
+            elif self.request.mode == "gpu":
                 results = await measure_gpu_with_stepdown(
                     model_path,
                     self.request.contexts or [32768, 16384, 8192, 4096],
@@ -163,7 +179,6 @@ class MeasurementJob(Job):
                     self.emit_log,
                 )
             else:
-                # Auto mode: try GPU with step-down, record both GPU and CPU capable
                 results = await measure_auto_mode(
                     model_path,
                     self.request.contexts or [32768, 16384, 8192, 4096],
@@ -262,6 +277,34 @@ class MeasurementJob(Job):
             self.emit_log(f"  ❌ {error_msg}")
             raise RuntimeError(error_msg)
 
+    async def _measure_vllm(
+        self, model_path: Path, tracker: SubprocessTracker
+    ) -> dict[str, dict[str, Any]]:
+        """Run vLLM-specific measurement (GPU only, no hybrid)."""
+        if self.request.mode == "cpu":
+            raise RuntimeError("vLLM does not support CPU-only measurement")
+
+        self.emit_log("  Engine: vLLM (GPU-only, no hybrid)")
+
+        entry = _lookup_catalog_entry(self.request.model_id)
+        model_format = (entry or {}).get("metadata", {}).get("format")
+        loader_config = (entry or {}).get("loader", {})
+
+        quantization = model_format if model_format in ("awq", "gptq") else None
+        gpu_mem_util = loader_config.get("gpu_memory_utilization", 0.9)
+
+        self.emit_log(f"  Quantization: {quantization or 'none'}")
+        self.emit_log(f"  GPU memory utilization: {gpu_mem_util}")
+
+        return await measure_vllm_contexts(
+            model_path,
+            self.request.contexts or [32768, 16384, 8192, 4096],
+            quantization,
+            gpu_mem_util,
+            self.emit_log,
+            tracker,
+        )
+
     async def _resolve_model_path(self) -> Path | None:
-        """Resolve model ID to file path."""
+        """Resolve model ID to file path (GGUF) or directory (vLLM)."""
         return resolve_model_path(self.request.model_id)
