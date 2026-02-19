@@ -47,7 +47,7 @@ class LoadHandlers:
         """
         Validate load request parameters against already-loaded model.
 
-        Pre: self.model_loaded ∧ self.engine ∧ (rpc_name ∨ rpc_path)
+        Pre: self.engine is not None ∧ self.engine.is_loaded() ∧ (rpc_name ∨ rpc_path)
         Post: (loaded_model ≡ requested_model) ∨ EngineError raised
 
         Args:

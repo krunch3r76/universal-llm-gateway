@@ -228,7 +228,7 @@ class NativeGGUFEngine(BaseEngine):
         """
         logger.info("🚀 [NativeGGUFEngine] Loading engine...")
 
-        self._crashed = False  # Reset on fresh load
+        self._crashed = False
         # Create server manager
         self.server_manager = LlamaServerManager(self.config)
 
