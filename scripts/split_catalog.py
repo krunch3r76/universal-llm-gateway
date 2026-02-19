@@ -15,7 +15,7 @@ Creates:
     ├── text_llm/vllm/*.yaml
     ├── audio/whisper/*.yaml
     ├── translation/ctranslate2/*.yaml
-    ├── visual/llava/*.yaml
+    ├── visual/llama-cpp/*.yaml
     └── graphics/diffusers/*.yaml
 
 Strategy:

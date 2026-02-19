@@ -88,33 +88,67 @@ def get_ram_info() -> dict[str, int]:
         return {"total_ram_mb": 0, "available_ram_mb": 0}
 
 
-def get_process_gpu_memory(pid: int) -> int | None:
-    """
-    Get actual GPU memory usage for a specific process via pynvml.
+def _collect_process_tree_pids(pid: int) -> set[int]:
+    """Collect PIDs for a process and all its descendants.
 
-    Uses nvmlDeviceGetComputeRunningProcesses() to get real VRAM usage
-    for the worker process, which is more accurate than catalog estimates.
+    Engines like vLLM spawn child processes (e.g. VLLM::EngineCore) that hold
+    the actual model weights.  Summing only the parent would dramatically
+    under-report VRAM.
+    """
+    pids = {pid}
+    if not PSUTIL_AVAILABLE:
+        return pids
+    try:
+        parent = psutil.Process(pid)
+        for child in parent.children(recursive=True):
+            pids.add(child.pid)
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        pass
+    return pids
+
+
+def get_process_gpu_memory(pid: int) -> int | None:
+    """Get GPU memory for a process *tree* (parent + all descendants).
+
+    Multiprocess engines (vLLM) split work across processes: the worker
+    holds a small CUDA context while a child EngineCore holds the model
+    weights.  We sum VRAM across the full tree so callers get the true
+    footprint.
 
     Args:
-        pid: Process ID of the worker
+        pid: Root process ID of the worker.
 
     Returns:
-        GPU memory usage in MB, or None if measurement failed
+        Total GPU memory in MB across the process tree, or None if
+        measurement failed or no GPU memory found.
     """
     if not PYNVML_AVAILABLE or not pid:
         return None
 
     try:
+        tree_pids = _collect_process_tree_pids(pid)
+        total_vram_mb = 0
+        matched = False
+
         for device_id in range(pynvml.nvmlDeviceGetCount()):
             handle = pynvml.nvmlDeviceGetHandleByIndex(device_id)
             procs = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
             for proc in procs:
-                if proc.pid == pid:
-                    vram_mb = int(proc.usedGpuMemory / (1024 * 1024))
-                    logger.debug(
-                        f"Process {pid} using {vram_mb}MB VRAM on GPU {device_id}"
-                    )
-                    return vram_mb
+                if proc.pid in tree_pids:
+                    mb = int(proc.usedGpuMemory / (1024 * 1024))
+                    total_vram_mb += mb
+                    matched = True
+
+        if matched:
+            if len(tree_pids) > 1:
+                logger.debug(
+                    f"Process tree {pid} ({len(tree_pids)} pids) "
+                    f"using {total_vram_mb}MB VRAM"
+                )
+            else:
+                logger.debug(f"Process {pid} using {total_vram_mb}MB VRAM")
+            return total_vram_mb
+
         return None
     except Exception as e:
         logger.warning(f"Failed to get GPU memory for PID {pid}: {e}")
@@ -122,23 +156,33 @@ def get_process_gpu_memory(pid: int) -> int | None:
 
 
 def get_process_ram_usage(pid: int) -> int | None:
-    """
-    Get actual RAM usage for a specific process via psutil.
+    """Get RSS for a process *tree* (parent + all descendants).
 
     Args:
-        pid: Process ID of the worker
+        pid: Root process ID of the worker.
 
     Returns:
-        RAM usage in MB (RSS), or None if measurement failed
+        Total RAM usage in MB (RSS) across the process tree, or None if
+        measurement failed.
     """
     if not PSUTIL_AVAILABLE or not pid:
         return None
 
     try:
-        process = psutil.Process(pid)
-        ram_mb = int(process.memory_info().rss / (1024 * 1024))
-        logger.debug(f"Process {pid} using {ram_mb}MB RAM")
-        return ram_mb
+        tree_pids = _collect_process_tree_pids(pid)
+        total_ram_mb = 0
+        for p in tree_pids:
+            try:
+                total_ram_mb += int(psutil.Process(p).memory_info().rss / (1024 * 1024))
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+        if len(tree_pids) > 1:
+            logger.debug(
+                f"Process tree {pid} ({len(tree_pids)} pids) using {total_ram_mb}MB RAM"
+            )
+        else:
+            logger.debug(f"Process {pid} using {total_ram_mb}MB RAM")
+        return total_ram_mb
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         return None
     except Exception as e:
