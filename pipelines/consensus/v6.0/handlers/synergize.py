@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_DEFAULT_EMBEDDING_MODEL = "nomic-embed-text-v1-5-q8-0-2048-cpu"
+_DEFAULT_EMBEDDING_MODEL = "embedding"
 _DEFAULT_SIMILARITY_THRESHOLD = 0.82
 # Metadata keys stamped during merge, stripped before output
 _SOURCE_RANK = "_source_rank"

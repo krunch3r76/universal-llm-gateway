@@ -224,7 +224,7 @@ models:
   # ==========================================================================
 
   embedding:
-    model: nomic-embed-text-v1-5-q8-0-2048-cpu
+    model: nomic-embed-text-v1-5-q8-0-2048
     system_prompt: ""
     # 141M | semantic similarity | text embeddings
     # USE FOR: Deduplication via semantic clustering

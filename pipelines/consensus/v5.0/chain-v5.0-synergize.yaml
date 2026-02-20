@@ -267,7 +267,7 @@ steps:
     handler_outputs:
       verified_facts: synergize.json.verified_facts
       authority_verdicts: synergize.json.authority_verdicts
-    embedding_model: nomic-embed-text-v1-5-q8-0-2048-cpu
+    embedding_model: embedding
     similarity_threshold: 0.82
     timeout_seconds: 60
 
