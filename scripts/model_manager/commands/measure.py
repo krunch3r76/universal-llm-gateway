@@ -644,6 +644,38 @@ def _update_catalog_after_measurement(
         return False
 
 
+_EMBEDDING_ARCHITECTURES = frozenset({"nomic-bert", "bert", "jina-bert-v2"})
+
+_NOMIC_TASK_PREFIXES: dict[str, str] = {
+    "search_document": "search_document: ",
+    "search_query": "search_query: ",
+    "clustering": "clustering: ",
+    "classification": "classification: ",
+}
+
+
+def _infer_embedding_loader(loader: dict[str, Any], metadata: dict[str, Any]) -> None:
+    """Set embedding-specific loader fields from metadata when applicable.
+
+    Detection: explicit loader.embedding flag OR known embedding architecture.
+    Uses setdefault to preserve any existing values from the catalog entry.
+    """
+    arch = metadata.get("arch", "")
+    is_embedding = loader.get("embedding") is True or arch in _EMBEDDING_ARCHITECTURES
+
+    if not is_embedding:
+        return
+
+    loader.setdefault("embedding", True)
+
+    training_ctx = metadata.get("training_context_length")
+    loader.setdefault("n_ctx", training_ctx or 2048)
+
+    loader.setdefault("embedding_task_default", "search_document")
+    if "nomic" in arch:
+        loader.setdefault("embedding_task_prefixes", dict(_NOMIC_TASK_PREFIXES))
+
+
 def _build_updated_catalog_entry(
     catalog_entry: dict[str, Any],
     result: dict[str, Any],
@@ -688,28 +720,31 @@ def _build_updated_catalog_entry(
             else:
                 print(f"   Detected vision architecture: {vision_arch}")
 
-    # V2: Use 'loader' instead of top-level 'base_loader'
-    loader = catalog_entry.setdefault("loader", {})
+    # Merge loader: prefer 'loader' over 'base_loader' (gateway config shape)
+    existing_loader = (
+        catalog_entry.get("loader") or catalog_entry.get("base_loader") or {}
+    )
+    loader: dict[str, Any] = dict(existing_loader)
+    catalog_entry["loader"] = loader
 
-    # Set default loader params if not present (based on format)
-    if model_format == "gguf" and not loader:
-        loader.update(
-            {
-                "f16_kv": True,
-                "use_mmap": True,
-                "use_mlock": True,
-                "verbose": False,
-                "n_batch": 512,
-            }
-        )
-    elif model_format in ("hf", "awq", "gptq") and not loader:
-        loader.update(
-            {
-                "trust_remote_code": False,
-                "disable_custom_all_reduce": True,
-                "disable_log_stats": True,
-            }
-        )
+    # Apply default loader params for missing keys (based on format)
+    if model_format == "gguf":
+        for k, v in {
+            "f16_kv": True,
+            "use_mmap": True,
+            "use_mlock": True,
+            "verbose": False,
+            "n_batch": 512,
+        }.items():
+            loader.setdefault(k, v)
+        _infer_embedding_loader(loader, metadata)
+    elif model_format in ("hf", "awq", "gptq"):
+        for k, v in {
+            "trust_remote_code": False,
+            "disable_custom_all_reduce": True,
+            "disable_log_stats": True,
+        }.items():
+            loader.setdefault(k, v)
 
     # Persist required vLLM loader params for AWQ/GPTQ/HF models.
     # enforce_eager skips CUDA graph capture (2-5 min for 32B+) — correct default
