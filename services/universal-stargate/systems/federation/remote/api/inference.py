@@ -141,7 +141,7 @@ async def forward_to_gateway_streaming(
     http_url: str | None,
     request_body: dict[str, Any],
     request_id: str,
-    read_timeout: float = 300.0,
+    timeout_hint: float | None = None,
     endpoint: str = "/v1/chat/completions",
 ) -> AsyncIterator[bytes]:
     """
@@ -156,7 +156,7 @@ async def forward_to_gateway_streaming(
         http_url: HTTP URL to gateway (if HTTP-based)
         request_body: OpenAI-compatible request (model, messages, stream=True, etc.)
         request_id: Request ID for tracing
-        read_timeout: HTTP read timeout in seconds (default: 300.0)
+        timeout_hint: Explicit timeout in seconds (None = no worker-level timeout)
         endpoint: Gateway endpoint path (default: /v1/chat/completions)
 
     Yields:
@@ -166,7 +166,6 @@ async def forward_to_gateway_streaming(
         httpx.HTTPStatusError: On 4xx/5xx response
         httpx.RequestError: On connection failure
     """
-    # Determine endpoint and transport
     if socket_path:
         gateway_url = "http://gateway"
         transport = httpx.AsyncHTTPTransport(uds=socket_path)
@@ -180,7 +179,7 @@ async def forward_to_gateway_streaming(
 
     async with httpx.AsyncClient(
         transport=transport,
-        timeout=httpx.Timeout(connect=10.0, read=read_timeout, write=10.0, pool=10.0),
+        timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0),
     ) as client:
         conn_type = "socket" if socket_path else "HTTP"
         logger.debug(
@@ -188,15 +187,18 @@ async def forward_to_gateway_streaming(
             extra={"request_id": request_id},
         )
 
+        headers = {
+            "Content-Type": "application/json",
+            "X-Request-ID": request_id,
+        }
+        if timeout_hint is not None:
+            headers["X-Request-Timeout"] = str(timeout_hint)
+
         async with client.stream(
             "POST",
             inference_endpoint,
             json=request_body,
-            headers={
-                "Content-Type": "application/json",
-                "X-Request-ID": request_id,
-                "X-Request-Timeout": str(read_timeout),
-            },
+            headers=headers,
         ) as response:
             if response.status_code >= 400:
                 error_body = await response.aread()
@@ -207,7 +209,6 @@ async def forward_to_gateway_streaming(
                     response=response,
                 )
 
-            # Preserve NDJSON framing without decode/encode overhead.
             async for framed_line in iter_ndjson_lines_bytes(response):
                 yield framed_line
 
@@ -217,7 +218,7 @@ async def forward_to_gateway_nonstreaming(
     http_url: str | None,
     request_body: dict[str, Any],
     request_id: str,
-    read_timeout: float = 300.0,
+    timeout_hint: float | None = None,
     endpoint: str = "/v1/chat/completions",
 ) -> dict[str, Any]:
     """
@@ -230,7 +231,7 @@ async def forward_to_gateway_nonstreaming(
         http_url: HTTP URL to gateway (if HTTP-based)
         request_body: OpenAI-compatible request (model, messages, stream=False, etc.)
         request_id: Request ID for tracing
-        read_timeout: HTTP read timeout in seconds (default: 300.0)
+        timeout_hint: Explicit timeout in seconds (None = no worker-level timeout)
         endpoint: Gateway endpoint path (default: /v1/chat/completions)
 
     Returns:
@@ -240,7 +241,6 @@ async def forward_to_gateway_nonstreaming(
         httpx.HTTPStatusError: On 4xx/5xx response
         httpx.RequestError: On connection failure
     """
-    # Determine endpoint and transport
     if socket_path:
         gateway_url = "http://gateway"
         transport = httpx.AsyncHTTPTransport(uds=socket_path)
@@ -254,7 +254,7 @@ async def forward_to_gateway_nonstreaming(
 
     async with httpx.AsyncClient(
         transport=transport,
-        timeout=httpx.Timeout(connect=10.0, read=read_timeout, write=10.0, pool=10.0),
+        timeout=httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0),
     ) as client:
         conn_type = "socket" if socket_path else "HTTP"
         logger.debug(
@@ -262,14 +262,17 @@ async def forward_to_gateway_nonstreaming(
             extra={"request_id": request_id},
         )
 
+        headers = {
+            "Content-Type": "application/json",
+            "X-Request-ID": request_id,
+        }
+        if timeout_hint is not None:
+            headers["X-Request-Timeout"] = str(timeout_hint)
+
         response = await client.post(
             inference_endpoint,
             json=request_body,
-            headers={
-                "Content-Type": "application/json",
-                "X-Request-ID": request_id,
-                "X-Request-Timeout": str(read_timeout),
-            },
+            headers=headers,
         )
         _ = response.raise_for_status()
         return response.json()
@@ -492,13 +495,14 @@ def create_inference_router(
             target_gateway = federation.get("target_gateway")
             endpoint = federation.get("endpoint", "/v1/chat/completions")
 
-            # Extract timeout hint from federation metadata
+            # Extract explicit timeout hint (None = no worker-level timeout)
             hints = federation.get("hints", {})
-            read_timeout = float(hints.get("timeout", 300.0))
-
-            if read_timeout != 300.0:
+            explicit_timeout: float | None = None
+            if "timeout" in hints:
+                explicit_timeout = float(hints["timeout"])
                 logger.debug(
-                    f"Using timeout hint: {read_timeout}s",
+                    "Using explicit timeout hint: %ss",
+                    explicit_timeout,
                     extra={"request_id": request_id},
                 )
 
@@ -588,7 +592,7 @@ def create_inference_router(
                         http_url,
                         original_request,
                         request_id,
-                        read_timeout,
+                        explicit_timeout,
                         endpoint,
                     )
                     first_chunk = await stream_iter.__anext__()
@@ -675,7 +679,7 @@ def create_inference_router(
                         http_url,
                         original_request,
                         request_id,
-                        read_timeout,
+                        explicit_timeout,
                         endpoint,
                     )
                     request_store.complete(request_id)

@@ -215,14 +215,14 @@ class FederatedRequestForwarder:
             extra={"gateway_id": gateway.gateway_id, "request_id": request_id},
         )
 
-        # Use timeout from hints or default
-        request_timeout = 300.0  # Default
+        # Only override client-level timeout if explicitly configured
+        timeout_kwargs: dict[str, Any] = {}
         if hints and "timeout" in hints:
-            request_timeout = float(hints["timeout"])
-            logger.debug(f"Using timeout hint: {request_timeout}s")
+            timeout_kwargs["timeout"] = float(hints["timeout"])
+            logger.debug("Using timeout hint: %ss", hints["timeout"])
 
         response = await client.post(
-            endpoint, json=body, headers=headers, timeout=request_timeout
+            endpoint, json=body, headers=headers, **timeout_kwargs
         )
         response.raise_for_status()
         return response
@@ -295,13 +295,13 @@ class FederatedRequestForwarder:
             },
         )
 
-        # Use timeout from hints or default
-        request_timeout = 300.0
+        # Only override client-level timeout if explicitly configured
+        timeout_kwargs: dict[str, Any] = {}
         if hints and "timeout" in hints:
-            request_timeout = float(hints["timeout"])
+            timeout_kwargs["timeout"] = float(hints["timeout"])
 
         async with client.stream(
-            "POST", endpoint, json=body, headers=headers, timeout=request_timeout
+            "POST", endpoint, json=body, headers=headers, **timeout_kwargs
         ) as response:
             if response.status_code >= 400:
                 error_body = await response.aread()

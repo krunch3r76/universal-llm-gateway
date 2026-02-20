@@ -1,12 +1,13 @@
 """Streaming inference loop (worker-side)."""
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 from universal_logging import get_logger
 from universal_protocol.errors import EngineError
 
-from ..deadline import enforce_deadline
+from ..deadline import enforce_idle_timeout
 
 logger = get_logger(__name__)
 
@@ -42,8 +43,9 @@ class StreamInferenceRunHandlers:
             )
 
         try:
-            # Wrap with deadline enforcement
-            async with enforce_deadline(timeout_hint, cancellation_event, request_id):
+            async with enforce_idle_timeout(
+                timeout_hint, cancellation_event, request_id
+            ) as reset_idle:
                 try:
                     await gate.acquire(
                         request_id,
@@ -59,6 +61,7 @@ class StreamInferenceRunHandlers:
                             messages=messages,
                             parameters=parameters,
                             request_id=request_id,
+                            reset_idle=reset_idle,
                         )
                     finally:
                         await asyncio.shield(gate.release())
@@ -125,6 +128,7 @@ class StreamInferenceRunHandlers:
         messages: list[dict[str, str]] | None,
         parameters: dict[str, Any],
         request_id: str,
+        reset_idle: Callable[[], None] = lambda: None,
     ) -> None:
         """Run the actual streaming inference (called after slot acquired)."""
         # Filter out metadata that shouldn't be passed to engine
@@ -149,17 +153,15 @@ class StreamInferenceRunHandlers:
             async for chunk in self.engine.generate_stream(
                 data, cancellation_event=cancellation_event
             ):
-                # Check cancellation event each iteration
                 if cancellation_event.is_set():
                     logger.info(
                         f"🛑 [worker] [request_id={request_id}] Stream {stream_id} "
                         "cancelled during generation"
                     )
-                    # Emit SSE error frame before exit
                     error_frame = {
                         "t": "err",
                         "code": "CANCELLED",
-                        "message": "Stream cancelled by client",
+                        "message": "Stream cancelled (idle timeout or external)",
                         "source": "stream",
                         "data": {},
                     }
@@ -170,6 +172,7 @@ class StreamInferenceRunHandlers:
                     return
 
                 chunk_count += 1
+                reset_idle()
 
                 # Extract content from OpenAI-format chunk
                 # Engine returns: {"choices": [{"delta": {"content": "..."}}]} for chat

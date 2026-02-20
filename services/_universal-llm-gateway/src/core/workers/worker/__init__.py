@@ -5,7 +5,7 @@ Provides the Worker class for model inference workers.
 
 from typing import Any, override
 
-from .deadline import DEADLINE_GRACE_S, enforce_deadline
+from .deadline import enforce_deadline, enforce_idle_timeout
 from .engine_lifecycle import EngineLifecycle
 from .process import Worker as WorkerBase
 from .rpc import (
@@ -76,4 +76,4 @@ class Worker(
         return await EngineLifecycle.process_command(self, command)
 
 
-__all__ = ["Worker", "enforce_deadline", "DEADLINE_GRACE_S"]
+__all__ = ["Worker", "enforce_deadline", "enforce_idle_timeout"]
