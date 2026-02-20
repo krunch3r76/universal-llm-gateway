@@ -8,7 +8,6 @@ from universal_logging import get_logger
 from src.core.gpu_detection import GPUCapabilities
 from src.core.model_registry.metadata import ModelMetadata
 from src.core.model_registry.validation import ModelValidator
-from src.core.resources.hardware import get_vram_info
 from src.core.synthetic_models import SyntheticModelResolver
 from src.schemas.model_info import ModelInfo, ModelValidationReport
 
@@ -332,10 +331,11 @@ class ModelRegistry:
 
         synthetic_models = SyntheticModelResolver.get_all_synthetic_models(config)
 
-        # Check hardware capabilities for hardware-based filtering
-        vram_info = get_vram_info()
-        total_vram_mb = vram_info.get("total_vram_mb", 0)
-        is_cpu_only = total_vram_mb == 0
+        # Use the same GPU detection as apply_availability_report() so both code
+        # paths agree. pynvml (get_vram_info) can return 0 even when a GPU is
+        # present (e.g. NVML not accessible inside a container), which would
+        # silently exclude all GPU model variants from the INIT message.
+        is_cpu_only = not GPUCapabilities.is_hardware_gpu_available()
 
         # Apply filters
         model_ids = []
