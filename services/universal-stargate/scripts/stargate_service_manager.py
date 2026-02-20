@@ -38,6 +38,10 @@ else:
     if parent_dir.exists():
         sys.path.insert(0, str(parent_dir))
 
+# Repo root — derived from this file's position in the tree.
+# {repo}/services/universal-stargate/scripts/stargate_service_manager.py
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent.parent)
+
 # Note: Environment loading is now handled by wrapper script (start-stargate.sh)
 # which sources config/env/stargate.env and config/env/stargate.env.local from project root before
 # starting this Python service manager. All config is read from os.environ.
@@ -552,6 +556,12 @@ class StargateServiceManager:
             "DATA_DIR": os.getenv("DATA_DIR", "/tmp"),
             "LOG_DIR": log_dir,
             "PROXY_PORT": str(self.config.port),
+            # Pipeline search_paths resolve relative to this.
+            # Derived from __file__ — works regardless of cwd or clone path.
+            "STARGATE_PROJECT_ROOT": os.getenv(
+                "STARGATE_PROJECT_ROOT",
+                _PROJECT_ROOT,
+            ),
         }
 
         # Update environment

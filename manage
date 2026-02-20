@@ -38,6 +38,9 @@ is_headless() {
     [[ -n "${1:-}" ]] && [[ " $HEADLESS_SUBCOMMANDS " == *" $1 "* ]]
 }
 
+REQUIREMENTS_FILE="$SCRIPT_DIR/requirements.host.txt"
+STAMP_FILE="$VENV_DIR/.requirements-stamp"
+
 if [[ ! -f "$VENV_PYTHON" ]]; then
     check_venv_support
 
@@ -66,7 +69,8 @@ if [[ ! -f "$VENV_PYTHON" ]]; then
     cp "$SCRIPT_DIR/sitecustomize.py" $SITE_PACKAGES/
 
     echo "Installing host requirements ..." >&2
-    "$VENV_DIR/bin/pip" install -r "$SCRIPT_DIR/requirements.host.txt"
+    "$VENV_DIR/bin/pip" install -r "$REQUIREMENTS_FILE"
+    cp "$REQUIREMENTS_FILE" "$STAMP_FILE"
     echo ""
     if is_headless "${1:-}"; then
         echo "Done."
@@ -74,6 +78,11 @@ if [[ ! -f "$VENV_PYTHON" ]]; then
         echo "Done. Launching TUI ..."
     fi
     echo ""
+elif ! diff -q "$REQUIREMENTS_FILE" "$STAMP_FILE" &>/dev/null; then
+    echo "requirements.host.txt changed — syncing venv ..." >&2
+    "$VENV_DIR/bin/pip" install -r "$REQUIREMENTS_FILE"
+    cp "$REQUIREMENTS_FILE" "$STAMP_FILE"
+    echo "" >&2
 fi
 
 # Ensure model directory exists as current user (not root via Docker bind mount)

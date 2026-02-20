@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -413,15 +414,17 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
         # Get pipeline config from stargate config
         pipelines_config = proxy.config.get_pipelines_config()
 
-        # Use project root as base directory for resolving relative paths
-        # Derive from config file path: config/stargate_config.yaml -> project root
-        # This makes pipeline paths intuitive
-        # (e.g., "pipelines.local" works from project root)
-        if proxy.config.config_path:
-            # Config is at config/stargate_config.yaml, so parent.parent is project root
+        # Use project root as base directory for resolving relative search paths.
+        # Priority:
+        #   1. STARGATE_PROJECT_ROOT env var — set by service manager, always correct
+        #   2. parent.parent of config_path — works for project_root/config/ layout
+        #   3. cwd fallback
+        if project_root_env := os.environ.get("STARGATE_PROJECT_ROOT"):
+            config_base_dir = Path(project_root_env).resolve()
+        elif proxy.config.config_path:
+            # Assumes config at {project_root}/config/stargate_config.yaml
             config_base_dir = Path(proxy.config.config_path).parent.parent.resolve()
         else:
-            # Fallback to current directory
             config_base_dir = Path.cwd()
 
         # Load user handlers from all search paths (colocated with pipelines)
