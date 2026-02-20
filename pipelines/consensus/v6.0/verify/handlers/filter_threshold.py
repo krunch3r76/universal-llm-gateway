@@ -1,4 +1,22 @@
-"""Apply consensus threshold filtering and merge authority verdicts."""
+"""Final verification gate: decide which claims survive consensus.
+
+Collects per-model verdicts from the general verification step and
+authority verdicts from domain-specific verifiers (e.g. math), then:
+
+1. **Threshold filtering** — each general claim is accepted or rejected
+   by applying a configurable voting policy (majority, unanimous, etc.)
+   to the per-model boolean verdicts.  Cascade rejection removes claims
+   whose logical antecedents were rejected.
+2. **Compound parent resolution** — a compound (decomposed) claim is
+   accepted only when *all* of its sub-claims passed.
+3. **Authority merge** — domain verifier results take precedence:
+   authority-rejected claims are always rejected, authority-accepted
+   (final) claims bypass general voting, and non-final authority claims
+   fall through to the general result.
+
+Produces the terminal verified_facts / rejected_claims partition that
+the synthesize stage consumes.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +38,12 @@ logger = get_logger(__name__)
 
 
 class FilterThresholdHandler(BaseHandler):
-    """Apply threshold policy, derive compound verdicts, merge authority results."""
+    """Partition all claims into verified_facts and rejected_claims.
+
+    Applies the configured verification_policy to general verdicts,
+    resolves compound parents via sub-claim conjunction, and merges
+    authority (domain-verifier) outcomes into the final partition.
+    """
 
     step_type: str = "consensus_filter_threshold_v6_0"
 

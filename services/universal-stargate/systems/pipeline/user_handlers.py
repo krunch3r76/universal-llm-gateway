@@ -65,6 +65,38 @@ class HandlerLoadError(Exception):
     pass
 
 
+class _VariantScopedRouter:
+    """Proxy that injects variant into all handler registrations.
+
+    Shared handlers (domain/handlers/) use variant="".
+    Variant handlers (domain/v6.0/handlers/) get the variant name injected
+    transparently — register_handlers() signature stays unchanged.
+    """
+
+    _inner: DomainRouter
+    _variant: str
+
+    def __init__(self, inner: DomainRouter, variant: str) -> None:
+        self._inner = inner
+        self._variant = variant
+
+    def register_domain_handler_class(
+        self,
+        domain: str,
+        step_type: str,
+        handler_class: type,
+        *,
+        external: bool = False,
+    ) -> None:
+        self._inner.register_domain_handler_class(
+            domain,
+            step_type,
+            handler_class,
+            variant=self._variant,
+            external=external,
+        )
+
+
 def load_user_handlers(config_base_dir: Path | None = None) -> int:
     """
     Load handlers from {domain}/handlers/ AND {domain}/{variant}/handlers/.
@@ -113,6 +145,8 @@ def load_user_handlers(config_base_dir: Path | None = None) -> int:
                 continue  # variants likely depend on shared, skip entire domain
 
         # Load variant-specific handlers (alphabetical order)
+        # Each variant gets a scoped router that tags registrations
+        # with the variant name, enabling isolated dispatch.
         for variant_dir in sorted(domain_dir.iterdir()):
             if not variant_dir.is_dir():
                 continue
@@ -125,6 +159,7 @@ def load_user_handlers(config_base_dir: Path | None = None) -> int:
 
             variant_handlers = variant_dir / "handlers"
             if variant_handlers.is_dir():
+                scoped_router = _VariantScopedRouter(router, variant_dir.name)
                 try:
                     loaded_count += _load_handlers_package(
                         handlers_dir=variant_handlers,
@@ -132,7 +167,7 @@ def load_user_handlers(config_base_dir: Path | None = None) -> int:
                             domain_dir.name, variant_dir.name
                         ),
                         display_path=(f"{domain_dir.name}/{variant_dir.name}/handlers"),
-                        router=router,
+                        router=scoped_router,
                     )
                 except HandlerLoadError as e:
                     logger.error(
@@ -166,7 +201,7 @@ def _load_handlers_package(
     handlers_dir: Path,
     package_name: str,
     display_path: str,
-    router: DomainRouter,
+    router: DomainRouter | _VariantScopedRouter,
 ) -> int:
     """
     Load a handlers directory as an isolated Python package.

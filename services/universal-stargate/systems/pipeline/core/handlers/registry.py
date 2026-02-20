@@ -66,38 +66,44 @@ class HandlerRegistry:
         return handler_class
 
     @classmethod
-    def get_class(cls, domain: str, step_type: str) -> type | None:
+    def get_class(
+        cls, domain: str, step_type: str, *, variant: str = ""
+    ) -> type | None:
         """
-        Get handler CLASS for (domain, step_type).
+        Get handler CLASS for (domain, variant, step_type).
 
-        Uses domain router for resolution.
+        Uses domain router for resolution with variant fallback.
         """
         cls._ensure_initialized()
         try:
             router = get_domain_router()
-            return router.resolve_class(domain, step_type)
+            return router.resolve_class(domain, step_type, variant=variant)
         except KeyError:
             return None
 
     @classmethod
-    def get_class_or_raise(cls, domain: str, step_type: str) -> type:
+    def get_class_or_raise(
+        cls, domain: str, step_type: str, *, variant: str = ""
+    ) -> type:
         """Get handler class or raise KeyError (fail-fast)."""
-        handler_class = cls.get_class(domain, step_type)
+        handler_class = cls.get_class(domain, step_type, variant=variant)
         if handler_class is None:
             raise KeyError(
-                f"No handler for ({domain}, {step_type}). "
+                f"No handler for ({domain}, {variant!r}, {step_type}). "
                 f"Available: {cls.list_handlers()}"
             )
         return handler_class
 
     @classmethod
-    def create_handler(cls, domain: str, step_type: str) -> StepHandler:
+    def create_handler(
+        cls, domain: str, step_type: str, *, variant: str = ""
+    ) -> StepHandler:
         """
         Create a fresh handler instance for step execution.
 
         Called once per step execution to ensure no shared state.
         """
-        handler_class = cls.get_class_or_raise(domain, step_type)
+        handler_class = cls.get_class_or_raise(domain, step_type, variant=variant)
         return handler_class()
 
     @classmethod
@@ -119,17 +125,19 @@ class HandlerRegistry:
         NOTE: This returns StepOutput. The caller (DAGExecutor)
         is responsible for writing to context.outputs.
         """
-        # Create fresh handler instance for this execution
-        handler = cls.create_handler(context.domain, step.type)
+        handler = cls.create_handler(
+            context.domain, step.type, variant=context.pipeline.source_variant
+        )
         return await handler.execute(step, context)
 
     @classmethod
-    def validate_step(cls, domain: str, step: StepConfig) -> list[str]:
+    def validate_step(
+        cls, domain: str, step: StepConfig, *, variant: str = ""
+    ) -> list[str]:
         """Validate a step configuration using a temporary handler."""
-        handler_class = cls.get_class(domain, step.type)
+        handler_class = cls.get_class(domain, step.type, variant=variant)
         if handler_class is None:
             return [f"Unknown step type: {step.type} for domain: {domain}"]
-        # Create temporary instance for validation
         handler = handler_class()
         return handler.validate(step)
 

@@ -72,7 +72,6 @@ token_defaults:
   classify: 256
   answer: 4096
   verify: 777
-  post_process: 4096
   verify_decompose: 1776
   verify_batch: 2048
   verify_individual: 1024
@@ -88,6 +87,7 @@ steps:
   # CLASSIFY
   # ==========================================================================
 
+  # Classify the question and emit a structural contract (type, required_items, ordering) for synthesis.
   - name: analyze_question
     type: consensus_analyze_v5_0
     model_ref: qwen
@@ -106,6 +106,7 @@ steps:
   # ANSWER (parallel across models)
   # ==========================================================================
 
+  # Generate candidate answers in parallel, one per model in the answer pool.
   - name: answer_all
     type: consensus_answer_v3_3
     model_ref: qwen
@@ -127,6 +128,7 @@ steps:
   # VERIFY + MERGE (sub-pipeline verify + synergize)
   # ==========================================================================
 
+  # Decompose, classify, and cross-verify qwen's answer → verified_facts + authority_verdicts.
   - name: verify_link0
     type: sub_pipeline
     pipeline_ref: verify/verify.yaml
@@ -137,6 +139,7 @@ steps:
       originator: optionsNs.originator_link0
     timeout_seconds: 600
 
+  # Decompose, classify, and cross-verify gemma_2_9b's answer → verified_facts + authority_verdicts.
   - name: verify_link1
     type: sub_pipeline
     pipeline_ref: verify/verify.yaml
@@ -147,6 +150,7 @@ steps:
       originator: optionsNs.originator_link1
     timeout_seconds: 600
 
+  # Decompose, classify, and cross-verify llama_3_1_8b's answer → verified_facts + authority_verdicts.
   - name: verify_link2
     type: sub_pipeline
     pipeline_ref: verify/verify.yaml
@@ -175,6 +179,7 @@ steps:
     similarity_threshold: 0.82
     timeout_seconds: 60
 
+  # Remove universal-negative claims that poison synthesis when contradicted by positive facts.
   - name: filter_negatives
     type: consensus_filter_negatives_v5_0
     model_ref: qwen
@@ -192,6 +197,7 @@ steps:
         type: json_object
     timeout_seconds: 60
 
+  # Second-opinion veto check on authority-accepted claims; unanimous rejection overrides authority.
   - name: veto_pass
     type: sub_pipeline
     pipeline_ref: veto/veto.yaml
@@ -206,6 +212,7 @@ steps:
   # SYNTHESIZE (sub-pipeline)
   # ==========================================================================
 
+  # Synthesize final answer from verified facts, then review and audit coverage.
   - name: synthesize
     type: sub_pipeline
     pipeline_ref: synthesize/synthesize.yaml

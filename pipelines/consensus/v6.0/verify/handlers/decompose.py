@@ -1,4 +1,18 @@
-"""Decompose answer into atomic claims."""
+"""First verification step: break a model's answer into atomic claims.
+
+Sends the raw answer text and the original question to an LLM with a
+decomposition prompt. The model returns a list of self-contained
+factual statements (claims), each tagged with a statement_id and
+mapped back to the source sentence in the answer (sentence provenance).
+
+The resulting claim list is the unit of verification for every
+downstream step — classify_domain, atomicity_gate, domain_verify,
+verify_general, and filter_threshold all operate on these claims.
+
+Outputs:
+    json.claims          — list of claim dicts (statement_id, text, ...)
+    json.answer_sentences — original answer split into sentences
+"""
 
 from __future__ import annotations
 
@@ -19,7 +33,12 @@ logger = get_logger(__name__)
 
 
 class DecomposeHandler(BaseHandler):
-    """Decompose answer text into atomic claims with sentence provenance."""
+    """Break answer text into atomic claims with sentence provenance.
+
+    Each claim is a self-contained factual statement that can be
+    independently verified.  Downstream steps classify, route, and
+    vote on these claims to decide which survive into the final answer.
+    """
 
     step_type: str = "consensus_decompose_v6_0"
 

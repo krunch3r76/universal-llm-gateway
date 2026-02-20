@@ -51,7 +51,11 @@ def _resolve_embedding_model_alias(model_id: str, context: PipelineContext) -> s
     domain = context.pipeline.domain
 
     try:
-        model_config = registry.get_model_config(model_id, domain=domain)
+        model_config = registry.get_model_config(
+            model_id,
+            domain=domain,
+            search_path=context.pipeline.source_search_path,
+        )
         return model_config.model
     except KeyError:
         logger.warning(

@@ -1,4 +1,26 @@
-"""Route domain-specific claims to authority models."""
+"""Route domain-tagged claims to specialist authority models.
+
+Partitions the claim list into two tracks:
+
+1. **Authority track** — claims whose domain has a configured verifier
+   (e.g. math claims verified by a specialist math model).  These
+   receive authority verdicts: ``verdict=True, final=True`` means the
+   claim is accepted without needing general-pool votes;
+   ``verdict=False`` means authority-rejected (overrides general votes).
+2. **General track** — all remaining claims (domain=general or no
+   configured verifier).  These are passed to verify_general for
+   cross-model majority voting.
+
+Compound parent claims (``has_sub_claims=True``) are excluded from
+both tracks — their verdict is derived later by filter_threshold
+from their sub-claims.
+
+Outputs:
+    json.claims_for_general   — claims needing general verification
+    json.authority_verdicts   — {statement_id: {verdict, domain, final, ...}}
+    json.all_claims           — full claim list (for filter_threshold)
+    json.compound_parents     — compound parent claims (for filter_threshold)
+"""
 
 from __future__ import annotations
 
@@ -19,7 +41,12 @@ logger = get_logger(__name__)
 
 
 class DomainVerifyHandler(BaseHandler):
-    """Route domain claims to authority models, partition for general flow."""
+    """Send domain claims to authority models, partition remainder for general voting.
+
+    Authority verdicts can short-circuit general verification: a
+    final-accepted claim skips voting, a rejected claim is immediately
+    excluded.
+    """
 
     step_type: str = "consensus_domain_verify_v6_0"
 

@@ -1,10 +1,22 @@
-"""
-Consensus answer handler with domain-aware prompt selection.
+"""Generate a candidate answer from a single model in the answer pool.
 
-When domain_questions is present (multi-domain query), selects the
-answer_domain_structured prompt and builds domain_sections from the map.
+Each model in the consensus pipeline independently answers the user's
+question through this handler.  The raw answer text feeds into the
+verify sub-pipeline, where it is decomposed into atomic claims and
+cross-verified by other models.
 
-Invariant: forall domain in domain_questions: exists section in prompt addressing domain
+For multi-domain queries (where ``domain_questions`` is present), the
+handler selects a structured prompt variant that addresses each domain
+explicitly, building ``domain_sections`` from the domain-to-question
+map.  Single-domain queries use the standard answer prompt.
+
+Provenance metadata (model_id, step_id) is attached to the output so
+that downstream decompose steps can trace each claim back to its
+originating model — this enables the exclude_self logic in
+verify_general (the originator is excluded from its own verification
+pool).
+
+Invariant: ∀ domain ∈ domain_questions: ∃ section in prompt addressing domain
 """
 
 from __future__ import annotations
@@ -24,15 +36,12 @@ logger = get_logger(__name__)
 
 
 class ConsensusAnswerHandler(GenericGenerateHandler):
-    """
-    Generate answer with domain-aware prompt selection.
+    """Produce a candidate answer for one model in the consensus pool.
 
-    Extends generic generate with:
-    - Conditional prompt selection based on domain_questions
-    - domain_sections formatting for multi-domain queries
-
-    Single-domain: Uses standard answer prompt
-    Multi-domain: Uses answer_domain_structured with explicit domain sections
+    Extends GenericGenerateHandler with domain-aware prompt selection:
+    single-domain queries use the standard answer prompt, multi-domain
+    queries switch to ``answer_domain_structured`` with explicit
+    per-domain sections.  Attaches provenance for downstream tracing.
     """
 
     step_type: str = "consensus_answer_v3_3"
@@ -55,7 +64,9 @@ class ConsensusAnswerHandler(GenericGenerateHandler):
         registry = context._registry
         prompt_config = registry.get_prompt(prompt_ref)
         model_config = registry.get_model_config(
-            step.model_ref, domain=context.pipeline.domain
+            step.model_ref,
+            domain=context.pipeline.domain,
+            search_path=context.pipeline.source_search_path,
         )
 
         resolved = self._resolve_execution_config(

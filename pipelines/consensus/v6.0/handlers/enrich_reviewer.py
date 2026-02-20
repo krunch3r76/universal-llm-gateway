@@ -21,6 +21,8 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
+from .shared._chain_post_process import _MIN_SYNTHESIS_TOKENS, _TOKENS_PER_FACT
+
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
     from systems.pipeline.core.schemas import StepConfig
@@ -81,7 +83,7 @@ class EnrichReviewerHandler(BaseHandler):
         total_prompt_tokens = 0
         total_completion_tokens = 0
         rounds_used = 0
-        final_missing = 0
+        last_check_missing = 0
 
         for round_idx in range(max_rounds):
             rounds_used = round_idx + 1
@@ -95,15 +97,27 @@ class EnrichReviewerHandler(BaseHandler):
             )
             total_prompt_tokens += pt
             total_completion_tokens += ct
-            final_missing = missing_count
+            last_check_missing = missing_count
             logger.info(
-                "Step '%s': round %d — %d missing facts",
+                "Step '%s': round %d — %d missing facts (pre-revision)",
                 step.id,
                 rounds_used,
                 missing_count,
             )
             if missing_count == 0:
                 break
+
+        final_missing = last_check_missing
+        if last_check_missing > 0:
+            final_missing, pt = await self._check_only(
+                step, context, answer, numbered_facts, verified_facts
+            )
+            total_prompt_tokens += pt
+            logger.info(
+                "Step '%s': post-revision check — %d facts still missing",
+                step.id,
+                final_missing,
+            )
 
         latency_ms = (time.time() - start_time) * 1000
         return StepOutput(
@@ -114,9 +128,45 @@ class EnrichReviewerHandler(BaseHandler):
             completion_tokens=total_completion_tokens,
             json={
                 "review_rounds": rounds_used,
+                "last_check_missing": last_check_missing,
                 "final_missing": final_missing,
             },
         )
+
+    async def _check_only(
+        self,
+        step: StepConfig,
+        context: PipelineContext,
+        answer: str,
+        numbered_facts: str,
+        verified_facts: list[dict[str, Any]],
+    ) -> tuple[int, int]:
+        """Check-only pass (no revision). Returns (missing_count, prompt_tokens)."""
+        check_prompt_ref = step.prompt_ref
+        assert check_prompt_ref and step.model_ref
+        rendered = self._render_prompt(
+            check_prompt_ref,
+            {
+                "enriched_answer": answer,
+                "numbered_facts": numbered_facts,
+                "question": "",
+            },
+            context,
+            safe=True,
+        )
+        model_id = self._resolve_model_alias(step.model_ref, context)
+        result = await self._call_model(
+            model_id,
+            rendered.user_prompt,
+            step,
+            context,
+            system_prompt=rendered.system_prompt,
+            temperature=0.0,
+            max_tokens=self._resolve_max_tokens(step, context, handler_default=512),
+            json_schema=_CHECK_JSON_SCHEMA,
+        )
+        missing = _parse_missing_indices(result.content, len(verified_facts))
+        return (len(missing), result.prompt_tokens or 0)
 
     async def _check_and_revise(
         self,
@@ -179,6 +229,9 @@ class EnrichReviewerHandler(BaseHandler):
             safe=True,
         )
         gen_params = step.generation_parameters or {}
+        dynamic_budget = max(
+            _MIN_SYNTHESIS_TOKENS, _TOKENS_PER_FACT * len(verified_facts)
+        )
         re_enrich_result = await self._call_model(
             model_id,
             rendered_re_enrich.user_prompt,
@@ -186,7 +239,9 @@ class EnrichReviewerHandler(BaseHandler):
             context,
             system_prompt=rendered_re_enrich.system_prompt,
             temperature=gen_params.get("temperature", 0.3),
-            max_tokens=self._resolve_max_tokens(step, context, handler_default=4096),
+            max_tokens=self._resolve_max_tokens(
+                step, context, handler_default=dynamic_budget
+            ),
         )
         final_answer = re_enrich_result.content.strip()
         pt += re_enrich_result.prompt_tokens or 0

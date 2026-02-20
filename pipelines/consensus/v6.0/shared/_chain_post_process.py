@@ -94,9 +94,7 @@ async def post_process_synthesize(
     )
 
     gen_params = step.generation_parameters or {}
-    dynamic_budget = max(
-        _MIN_SYNTHESIS_TOKENS, _TOKENS_PER_FACT * len(accepted_facts)
-    )
+    dynamic_budget = max(_MIN_SYNTHESIS_TOKENS, _TOKENS_PER_FACT * len(accepted_facts))
     call_result = await handler._call_model(
         model_id,
         rendered.user_prompt,

@@ -1,16 +1,17 @@
 """
 Domain routing for pipeline execution.
 
-Routes (pipeline_type, step_type) to appropriate handler.
+Routes (pipeline_type, variant, step_type) to appropriate handler.
 
 Resolution order:
-1. Domain-specific handler: domains/{pipeline.type}/handlers.py
-2. Generic handler: core/handlers/builtin.py
-3. Error if not found (fail-fast)
+1. Variant-specific handler: (domain, variant, step_type)
+2. Shared domain handler: (domain, "", step_type)
+3. Generic handler: (step_type)
+4. Error if not found (fail-fast)
 
 Invariants:
-- ∀ (domain, step_type): resolve() returns handler or raises
-- Domain handlers take precedence over generic
+- ∀ (domain, variant, step_type): resolve() returns handler or raises
+- Variant handlers take precedence over shared, shared over generic
 """
 
 from __future__ import annotations
@@ -22,24 +23,26 @@ logger = get_logger(__name__)
 
 class DomainRouter:
     """
-    Route step execution to domain-specific or generic handlers.
+    Route step execution to variant-scoped or shared domain handlers.
 
     Handler resolution order:
-    1. Domain-specific handler (domain, step_type)
-    2. Generic handler (step_type)
-    3. KeyError (fail-fast)
+    1. Variant-specific handler (domain, variant, step_type)
+    2. Shared domain handler (domain, "", step_type)
+    3. Generic handler (step_type)
+    4. KeyError (fail-fast)
 
     Handler sources:
-    - User handlers (from ~/.local/share/universal-stargate/handlers/)
+    - User handlers (from pipeline search paths)
     - External plugins (via entry points)
     - No built-in domains (pipeline system is fully domain-agnostic)
 
-    Invariant: ∀ (domain, step_type): ∃! handler ∈ (domain ∪ generic)
+    Invariant: ∀ (domain, variant, step_type): ∃! handler ∈ (variant ∪ shared ∪ generic)
     """
 
-    def __init__(self):
-        # (domain, step_type) -> handler CLASS
-        self._domain_handler_classes: dict[tuple[str, str], type] = {}
+    def __init__(self) -> None:
+        # (domain, variant, step_type) -> handler CLASS
+        # variant="" for shared (domain-level) handlers
+        self._domain_handler_classes: dict[tuple[str, str, str], type] = {}
 
         # step_type -> handler CLASS (fallback)
         self._generic_handler_classes: dict[str, type] = {}
@@ -54,25 +57,33 @@ class DomainRouter:
         domain: str,
         step_type: str,
         handler_class: type,
+        *,
+        variant: str = "",
         external: bool = False,
     ) -> None:
         """
-        Register a domain-specific handler class.
+        Register a domain-specific handler class, optionally scoped to a variant.
 
-        Override semantics: If step_type already registered for domain,
+        Override semantics: If (domain, variant, step_type) already registered,
         the new handler replaces it (last registration wins). Logs at INFO.
 
         Args:
-            domain: Pipeline type (e.g., "ocr", "translation")
-            step_type: Step type (e.g., "generate", "detect_issues")
+            domain: Pipeline type (e.g., "consensus", "translation")
+            step_type: Step type (e.g., "consensus_answer_v3_3")
             handler_class: Handler class to register
+            variant: Variant directory name (e.g., "v6.0"); "" for shared
             external: True if registered by external plugin
         """
-        key = (domain, step_type)
+        key = (domain, variant, step_type)
         if key in self._domain_handler_classes:
             old_class = self._domain_handler_classes[key]
+            scope = (
+                f"{domain}/{variant}/{step_type}"
+                if variant
+                else f"{domain}/{step_type}"
+            )
             logger.info(
-                f"Handler override: {domain}/{step_type} "
+                f"Handler override: {scope} "
                 f"{old_class.__name__} → {handler_class.__name__}"
             )
         self._domain_handler_classes[key] = handler_class
@@ -95,13 +106,19 @@ class DomainRouter:
             logger.warning(f"Overwriting generic handler class for '{step_type}'")
         self._generic_handler_classes[step_type] = handler_class
 
-    def resolve_class(self, domain: str, step_type: str) -> type:
+    def resolve_class(self, domain: str, step_type: str, *, variant: str = "") -> type:
         """
-        Resolve handler CLASS for (domain, step_type).
+        Resolve handler CLASS for (domain, variant, step_type).
+
+        Resolution order:
+        1. (domain, variant, step_type) — variant-specific
+        2. (domain, "", step_type) — shared domain handler
+        3. step_type — generic handler
 
         Args:
-            domain: Pipeline type (e.g., "translation", "code_review")
-            step_type: Step type (e.g., "generate", "judge")
+            domain: Pipeline type (e.g., "consensus", "translation")
+            step_type: Step type (e.g., "consensus_answer_v3_3")
+            variant: Variant directory name (e.g., "v6.0"); "" for shared
 
         Returns:
             Handler class (caller instantiates)
@@ -111,24 +128,30 @@ class DomainRouter:
         """
         self._ensure_initialized()
 
-        # Try domain-specific first
-        key = (domain, step_type)
+        # 1. Try variant-specific
+        key = (domain, variant, step_type)
         if key in self._domain_handler_classes:
             return self._domain_handler_classes[key]
 
-        # Fall back to generic
+        # 2. Fall back to shared (variant="")
+        if variant:
+            shared_key = (domain, "", step_type)
+            if shared_key in self._domain_handler_classes:
+                return self._domain_handler_classes[shared_key]
+
+        # 3. Fall back to generic
         if step_type in self._generic_handler_classes:
-            # logger.debug(f"Resolved generic handler class: {step_type}")
             return self._generic_handler_classes[step_type]
 
         # No handler found - fail fast
         available_domain = [
-            f"{d}.{s}" for (d, s) in self._domain_handler_classes.keys()
+            f"{d}.{v}.{s}" if v else f"{d}.{s}"
+            for (d, v, s) in self._domain_handler_classes.keys()
         ]
         available_generic = list(self._generic_handler_classes.keys())
 
         msg = (
-            f"No handler for ({domain}, {step_type}). "
+            f"No handler for ({domain}, {variant!r}, {step_type}). "
             f"Domain handlers: {available_domain}, "
             f"Generic handlers: {available_generic}"
         )
@@ -150,8 +173,12 @@ class DomainRouter:
         domain_handlers = []
         external_handlers = []
 
-        for domain, step_type in self._domain_handler_classes.keys():
-            handler_str = f"{domain}.{step_type}"
+        for domain, variant, step_type in self._domain_handler_classes.keys():
+            handler_str = (
+                f"{domain}.{variant}.{step_type}"
+                if variant
+                else f"{domain}.{step_type}"
+            )
             if domain in self._external_domains:
                 external_handlers.append(handler_str)
             else:

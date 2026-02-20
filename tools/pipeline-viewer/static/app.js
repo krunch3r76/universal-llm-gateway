@@ -10,8 +10,24 @@ async function fetchJSON(url) {
   return res.json();
 }
 
+// -- Theme ----------------------------------------------------------------
+function initTheme() {
+  const saved = localStorage.getItem('pv-theme') || '';
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+  const sel = document.getElementById('theme-select');
+  if (!sel) return;
+  sel.value = saved;
+  sel.addEventListener('change', () => {
+    const theme = sel.value;
+    if (theme) document.documentElement.setAttribute('data-theme', theme);
+    else document.documentElement.removeAttribute('data-theme');
+    localStorage.setItem('pv-theme', theme);
+  });
+}
+
 // -- Init -----------------------------------------------------------------
 async function init() {
+  initTheme();
   const executions = await fetchJSON('/api/executions');
   renderExecList(executions);
   startExecListPolling();

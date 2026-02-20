@@ -1,8 +1,24 @@
-"""
-Analyze question and extract structural metadata (v4.0).
+"""Classify the user's question and extract structural metadata.
 
-Produces question_type + structure_notes consumed by synthesize step.
-Replaces v3.3's rewrite_prompt + join_questions.
+Runs before any answer generation.  An LLM analyzes the raw question
+and produces a structured contract that guides downstream synthesis:
+
+- **question_type** (enumeration, comparison, definition, explanation,
+  simple, proof) — controls which verification policies and synthesis
+  prompts are selected.
+- **required_items** — explicit items the answer must cover (e.g. for
+  "list the 5 largest planets", each planet is a required item).
+- **cardinality** — expected item count (0 when not applicable).
+- **ordering** — whether items have a canonical order.
+- **structure_notes** — free-text hints for the synthesis prompt.
+- **cleaned_question** — normalized question text used as the canonical
+  reference throughout the pipeline (prompt rendering, verification).
+
+The contract is consumed by the synthesize step and by post_process
+to shape the final answer's structure and coverage.
+
+Outputs:
+    json — QuestionContract (see v4_types.py)
 """
 
 from __future__ import annotations
@@ -71,7 +87,12 @@ CONTRACT_SCHEMA: dict[str, Any] = {
 
 
 class AnalyzeQuestionHandler(BaseHandler):
-    """Classify question and produce structure hints for downstream synthesis."""
+    """Classify the question and emit a structural contract for synthesis.
+
+    The contract (question_type, required_items, cardinality, ordering)
+    tells downstream steps what shape the answer should take and which
+    verification policies to apply.
+    """
 
     step_type = "consensus_analyze_v4"
 

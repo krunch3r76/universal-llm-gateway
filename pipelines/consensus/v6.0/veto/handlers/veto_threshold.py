@@ -1,4 +1,22 @@
-"""Apply veto threshold and rebuild verified/rejected lists."""
+"""Apply veto voting policy and finalize verified/rejected partition.
+
+Consumes the veto vote vectors from veto_verify and applies the
+configured veto policy (default: ``unanimous_reject`` — a claim is
+vetoed only when *every* veto-pool model rejects it).
+
+For each authority-accepted claim:
+- If veto votes meet the rejection threshold → move from
+  verified_facts to rejected_claims.
+- Otherwise → keep in verified_facts (authority decision stands).
+
+This is the final claim-level gate before synthesis.  The output
+verified_facts and rejected_claims lists are the definitive partition
+consumed by post_process / synthesize.
+
+Outputs:
+    json.verified_facts  — surviving claims (general + unvetoed authority)
+    json.rejected_claims — general-rejected + vetoed authority claims
+"""
 
 from __future__ import annotations
 
@@ -19,7 +37,11 @@ logger = get_logger(__name__)
 
 
 class VetoThresholdHandler(BaseHandler):
-    """Apply veto policy and rebuild verified/rejected claim lists."""
+    """Apply veto voting policy to authority-accepted claims.
+
+    Claims that fail the veto threshold are moved from verified_facts
+    to rejected_claims, overriding the authority acceptance.
+    """
 
     step_type: str = "consensus_veto_threshold_v6_0"
 

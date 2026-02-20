@@ -342,12 +342,14 @@ class PipelineRegistry:
             if step.type == "sub_pipeline":
                 continue
 
-            # 1. Check handler exists
-            handler_class = HandlerRegistry.get_class(pipeline.type, step.type)
+            # 1. Check handler exists (scoped to pipeline's variant)
+            handler_class = HandlerRegistry.get_class(
+                pipeline.type, step.type, variant=pipeline.source_variant
+            )
             if handler_class is None:
                 errors.append(
                     f"Step '{step.id}': No handler for type '{step.type}' "
-                    f"in domain '{pipeline.type}'"
+                    f"in domain '{pipeline.type}' variant '{pipeline.source_variant}'"
                 )
                 continue
 
@@ -485,7 +487,7 @@ class PipelineRegistry:
         for yaml_file in sorted(domain_dir.rglob("*.yaml")):
             excluded = ("prompts.yaml", "models.yaml", "categories.yaml")
             if yaml_file.name not in excluded:
-                self._load_pipeline(yaml_file, path_name)
+                self._load_pipeline(yaml_file, path_name, domain_dir=domain_dir)
 
     def _load_domain_prompts(self, prompts_file: Path, namespace: str) -> None:
         """Load prompts from domain prompts.yaml with namespace."""
@@ -594,7 +596,13 @@ class PipelineRegistry:
         for bucket in self._domain_models.values():
             self.models.update(bucket)
 
-    def _load_pipeline(self, path: Path, path_name: str) -> None:
+    def _load_pipeline(
+        self,
+        path: Path,
+        path_name: str,
+        *,
+        domain_dir: Path | None = None,
+    ) -> None:
         """Load a single pipeline with availability filtering."""
         try:
             with path.open() as f:
@@ -620,6 +628,18 @@ class PipelineRegistry:
                 pipeline_data["options"] = merged_options
 
             pipeline_data["source_search_path"] = path_name
+
+            # Derive variant from first subdirectory under domain_dir
+            source_variant = ""
+            if domain_dir is not None:
+                try:
+                    relative = path.relative_to(domain_dir)
+                    if len(relative.parts) > 1:
+                        source_variant = relative.parts[0]
+                except ValueError:
+                    pass
+            pipeline_data["source_variant"] = source_variant
+
             pipeline = PipelineSpec(**pipeline_data)
 
             # Resolve sub-pipeline references (pipeline_ref → SubPipelineSpec)

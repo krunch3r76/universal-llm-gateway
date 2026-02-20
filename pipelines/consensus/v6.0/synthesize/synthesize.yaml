@@ -21,6 +21,7 @@ inputs:
   - mode
 
 steps:
+  # Synthesize a clean answer from verified facts, or pass through enriched answer if no claims were rejected.
   - name: post_process
     type: consensus_post_process_v5_0
     model_ref: qwen
@@ -38,6 +39,7 @@ steps:
       temperature: 0.3
     timeout_seconds: 600
 
+  # Iterative check → revise loop (up to max_review_rounds) to ensure all verified facts appear in the answer.
   - name: review_synthesis
     type: consensus_enrich_review_v5_0
     model_ref: qwen
@@ -54,8 +56,10 @@ steps:
       temperature: 0.3
     timeout_seconds: 600
 
+  # Embedding-based audit of fact coverage in the final answer; audit-only, no pipeline side effects.
   - name: coverage_audit
     type: consensus_coverage_audit_v6_0
+    enabled: true                        # set false to skip audit (passthrough)
     handler_inputs:
       final_answer: review_synthesis.raw
       verified_facts: inputs.verified_facts

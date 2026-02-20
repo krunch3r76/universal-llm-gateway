@@ -1,4 +1,28 @@
-"""LLM-based atomicity classifier + compound decomposition."""
+"""Ensure every claim is atomic before verification.
+
+Some claims produced by decompose are compound — they bundle multiple
+independent assertions into a single statement.  Compound claims are
+problematic for verification because a single false sub-assertion
+would reject the entire compound, losing the true sub-assertions.
+
+This step uses an LLM to:
+
+1. **Classify** each claim as atomic or compound.
+2. **Decompose** compound claims into atomic sub-claims, linking each
+   sub-claim back to its parent via ``parent_statement_id``.
+
+The parent claim is retained with ``has_sub_claims=True`` so that
+filter_threshold can later derive the parent's verdict from the
+conjunction of its sub-claim verdicts (parent passes iff ALL
+sub-claims pass).
+
+Configurable per domain — ``decompose_compound_math`` controls whether
+math-domain compounds are also decomposed.
+
+Outputs:
+    json.claims            — updated claim list (compounds replaced by sub-claims)
+    json.compound_details  — decomposition metadata for the viewer
+"""
 
 from __future__ import annotations
 
@@ -19,7 +43,12 @@ logger = get_logger(__name__)
 
 
 class AtomicityGateHandler(BaseHandler):
-    """Identify compound claims and decompose them into atomic sub-claims."""
+    """Split compound claims into independently verifiable atomic sub-claims.
+
+    Compounds are replaced by their sub-claims in the output list;
+    the parent is preserved with ``has_sub_claims=True`` for downstream
+    conjunction logic in filter_threshold.
+    """
 
     step_type: str = "consensus_atomicity_gate_v6_0"
 

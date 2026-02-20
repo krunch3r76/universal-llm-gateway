@@ -1,4 +1,21 @@
-"""Classify claims by domain (math, general, etc.)."""
+"""Assign each claim to a verification domain (math or general).
+
+Takes the flat claim list from decompose and asks an LLM to label each
+claim's domain.  The domain tag determines how the claim is verified
+downstream:
+
+- **math** claims are routed to a specialist math model in domain_verify
+  and may receive authority verdicts that bypass general voting.
+- **general** claims flow through cross-model verification in
+  verify_general, where multiple models independently vote.
+
+Domain classification must happen before atomicity_gate so that
+compound decomposition can be domain-aware (e.g. decomposing math
+compounds differently from general ones).
+
+Outputs:
+    json.claims — same claim list with ``domain`` field populated
+"""
 
 from __future__ import annotations
 
@@ -19,7 +36,11 @@ logger = get_logger(__name__)
 
 
 class ClassifyDomainHandler(BaseHandler):
-    """Classify each claim's domain (math vs general)."""
+    """Label each claim as math or general to control routing.
+
+    Claims tagged ``math`` are sent to domain_verify's specialist model;
+    ``general`` claims go through cross-model majority voting.
+    """
 
     step_type: str = "consensus_classify_domain_v6_0"
 

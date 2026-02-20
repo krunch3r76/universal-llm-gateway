@@ -53,6 +53,11 @@ class CoverageAuditHandler(BaseHandler):
         final_answer = str(
             self._resolve_input(resolver, step, "final_answer", hi) or ""
         )
+
+        enabled = step.get_domain_field("enabled")
+        if enabled is not None and not enabled:
+            return StepOutput(raw=final_answer, step_id=step.id)
+
         verified_facts: list[dict[str, Any]] = (
             self._resolve_input(resolver, step, "verified_facts", hi) or []
         )

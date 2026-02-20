@@ -1,4 +1,33 @@
-"""Cross-model general verification with affinity ordering."""
+"""Cross-model majority voting on general-domain claims.
+
+Takes the claims_for_general list from domain_verify and fans them out
+to every model in the verifier pool.  Each model independently judges
+each claim as true or false, producing a boolean vote vector per claim.
+
+Key behaviors:
+
+1. **Pool resolution** — the verifier pool is read from pipeline
+   options (``verifier_pool``).  If ``exclude_self`` is set, the
+   originator model that produced the answer is removed from the pool
+   to avoid self-confirmation bias.
+2. **Affinity ordering** — models that also appear in the answer pool
+   are moved to the front of the verification order, so the most
+   relevant models vote first (useful when execution is budget-limited).
+3. **Chunked execution** — large claim lists are batched per-model
+   according to each model's execution config (chunk_size), allowing
+   models with different context windows to participate.
+
+The raw verdicts and per-model vote matrix are passed to
+filter_threshold, which applies the configured voting policy
+(majority, unanimous, etc.) to decide acceptance.
+
+Outputs:
+    json.verdicts          — {statement_id: [bool, ...]} vote vectors
+    json.verdicts_by_model — {model_alias: {statement_id: {v, r}}}
+    json.verification_timing — latency breakdown per model
+    json.verified_facts    — preliminary majority split (viewer only)
+    json.rejected_claims   — preliminary majority split (viewer only)
+"""
 
 from __future__ import annotations
 
@@ -24,7 +53,12 @@ logger = get_logger(__name__)
 
 
 class VerifyGeneralHandler(BaseHandler):
-    """Run cross-model verification on general claims."""
+    """Fan claims out to the verifier pool and collect per-model votes.
+
+    Each model independently judges every claim.  The resulting vote
+    matrix is consumed by filter_threshold to apply the final
+    acceptance policy.
+    """
 
     step_type: str = "consensus_verify_general_v6_0"
 
@@ -98,7 +132,9 @@ class VerifyGeneralHandler(BaseHandler):
             )
         for alias in verify_model_aliases:
             model_config = registry.get_model_config(
-                alias, domain=context.pipeline.domain
+                alias,
+                domain=context.pipeline.domain,
+                search_path=context.pipeline.source_search_path,
             )
             exec_config = get_execution_config(model_config)
             if verification_chunk_size is not None:

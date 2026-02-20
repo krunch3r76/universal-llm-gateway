@@ -1,4 +1,31 @@
-"""Run veto verification on authority-accepted claims."""
+"""Second-opinion veto check on authority-accepted claims.
+
+Authority verifiers (e.g. the math specialist) can accept claims with
+``final=True``, bypassing general majority voting.  This step provides
+a safety net: it re-verifies those authority-accepted claims against
+a separate veto pool of general-purpose models.
+
+If the veto pool unanimously rejects a claim that authority accepted,
+veto_threshold can override the authority decision and reject it.
+This catches cases where a domain specialist hallucinates or
+misinterprets a claim.
+
+Key behaviors:
+
+1. **Scope** — only authority-accepted (``verdict=True, final=True``)
+   claims are sent for veto verification; general-track claims are
+   untouched.
+2. **Parent stripping** — ``parent_text`` and ``parent_statement_id``
+   are removed from veto candidates to prevent the parent context
+   from biasing the veto verifiers.
+3. **Affinity ordering** — same as verify_general: answer-pool models
+   are moved to the front.
+
+Outputs:
+    json.veto_verdicts     — {statement_id: [bool, ...]} vote vectors
+    json.verdicts_by_model — {model_alias: {statement_id: {v, r}}}
+    json.authority_claims  — the subset of claims that were veto-checked
+"""
 
 from __future__ import annotations
 
@@ -27,7 +54,11 @@ def _strip_parent_context(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 class VetoVerifyHandler(BaseHandler):
-    """Identify authority-accepted claims and run veto verification."""
+    """Re-verify authority-accepted claims with a general veto pool.
+
+    Only claims that authority accepted with ``final=True`` are checked.
+    The veto votes are passed to veto_threshold for policy application.
+    """
 
     step_type: str = "consensus_veto_verify_v6_0"
 
@@ -120,7 +151,9 @@ class VetoVerifyHandler(BaseHandler):
             )
         for alias in veto_pool_aliases:
             model_config = registry.get_model_config(
-                alias, domain=context.pipeline.domain
+                alias,
+                domain=context.pipeline.domain,
+                search_path=context.pipeline.source_search_path,
             )
             exec_config = get_execution_config(model_config)
             if verification_chunk_size is not None:

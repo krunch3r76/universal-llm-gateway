@@ -16,6 +16,7 @@ inputs:
   - question
 
 steps:
+  # Re-verify authority-accepted claims with a general veto pool to catch authority hallucinations.
   - name: veto_verify
     type: consensus_veto_verify_v6_0
     handler_inputs:
@@ -27,6 +28,7 @@ steps:
     prompt_ref_verify_batch: consensus.v5.0.verify_batch_specific
     timeout_seconds: 120
 
+  # Apply veto policy; move unanimously-rejected authority claims into rejected_claims.
   - name: veto_threshold
     type: consensus_veto_threshold_v6_0
     handler_inputs:

@@ -728,7 +728,11 @@ class DAGExecutor:
 
         # Use step.type directly - it's always a real handler type
         # (type="map" is rejected at parse time)
-        handler = HandlerRegistry.create_handler(self.context.domain, step.type)
+        handler = HandlerRegistry.create_handler(
+            self.context.domain,
+            step.type,
+            variant=self.context.pipeline.source_variant,
+        )
         resolver = NamespaceResolver(self.context)
 
         # Get ProxyClient for cancel callback

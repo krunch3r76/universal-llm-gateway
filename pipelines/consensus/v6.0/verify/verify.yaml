@@ -19,6 +19,7 @@ inputs:
   - originator
 
 steps:
+  # Break answer text into atomic claims with sentence provenance — the unit for all downstream verification.
   - name: decompose
     type: consensus_decompose_v6_0
     model_ref: gemma_2_9b
@@ -28,6 +29,7 @@ steps:
     prompt_ref_decompose: consensus.v5.0.decompose
     timeout_seconds: 120
 
+  # Label each claim as math or general to control routing into authority vs. general verification.
   - name: classify_domain
     type: consensus_classify_domain_v6_0
     model_ref: gemma_2_9b
@@ -36,6 +38,7 @@ steps:
     prompt_ref_classify: consensus.v5.0.classify_math
     timeout_seconds: 120
 
+  # Split compound claims into atomic sub-claims; parent verdict later derived from sub-claim conjunction.
   - name: atomicity_gate
     type: consensus_atomicity_gate_v6_0
     model_ref: gemma_2_9b
@@ -46,6 +49,7 @@ steps:
     prompt_ref_decompose_compound: consensus.v5.0.decompose_general_compound
     timeout_seconds: 120
 
+  # Route domain claims to authority models (math specialist); remainder flows to general voting.
   - name: domain_verify
     type: consensus_domain_verify_v6_0
     handler_inputs:
@@ -62,6 +66,7 @@ steps:
             temperature: 0.0
     timeout_seconds: 180
 
+  # Fan general claims to the verifier pool; each model independently votes true/false per claim.
   - name: verify_general
     type: consensus_verify_general_v6_0
     handler_inputs:
@@ -74,6 +79,7 @@ steps:
     prompt_ref_verify_batch: consensus.v5.0.verify_batch_specific
     timeout_seconds: 360
 
+  # Apply voting policy, resolve compound parents, merge authority verdicts → verified_facts / rejected_claims.
   - name: filter_threshold
     type: consensus_filter_threshold_v6_0
     handler_inputs:

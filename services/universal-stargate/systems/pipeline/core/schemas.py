@@ -113,6 +113,10 @@ class PipelineSpec(BaseModel):
     # Used for search-path-scoped model resolution (isolation semantics)
     source_search_path: str = ""
 
+    # Which variant directory this pipeline was loaded from (e.g. "v6.0")
+    # Used for variant-scoped handler dispatch (isolation semantics)
+    source_variant: str = ""
+
     @property
     def domain(self) -> str:
         """Alias for type - clarifies domain routing."""
