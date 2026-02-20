@@ -185,6 +185,7 @@ def initialize_request_components(proxy: StargateProxy) -> None:
         federated_load_orchestrator=proxy.federated_load_orchestrator,
         transformation_engine=transformation_engine,
         federation_integration=getattr(proxy, "federation_integration", None),
+        admission_queue=getattr(proxy, "admission_queue", None),
     )
 
 
@@ -286,7 +287,8 @@ def initialize_router_only_request_components(proxy: StargateProxy) -> None:
         routing_config=proxy.routing_config,
         stability_tracker=proxy.stability_tracker,
         transformation_engine=transformation_engine,
-        federation_integration=proxy.federation_integration,  # Worker limit enforcement
+        federation_integration=proxy.federation_integration,
+        admission_queue=getattr(proxy, "admission_queue", None),
     )
 
     # No request forwarder or stream handler (no local gateway)

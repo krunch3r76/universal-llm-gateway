@@ -43,6 +43,7 @@ steps:
     model_ref: qwen
     prompt_ref: consensus.v5.0.check_synthesis
     prompt_ref_re_enrich: consensus.v5.0.revise_synthesis
+    max_review_rounds: 2
     handler_inputs:
       enriched_answer: post_process.raw
       verified_facts: inputs.verified_facts
@@ -51,6 +52,15 @@ steps:
       raw: review_synthesis.raw
     generation_parameters:
       temperature: 0.3
-    timeout_seconds: 300
+    timeout_seconds: 600
 
-output: review_synthesis
+  - name: coverage_audit
+    type: consensus_coverage_audit_v6_0
+    handler_inputs:
+      final_answer: review_synthesis.raw
+      verified_facts: inputs.verified_facts
+    embedding_model: embedding
+    coverage_threshold: 0.70
+    timeout_seconds: 60
+
+output: coverage_audit

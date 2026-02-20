@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_MIN_SYNTHESIS_TOKENS: int = 4096
+_TOKENS_PER_FACT: int = 150
+
 
 def _format_rejected_blacklist(rejected_claims: list[dict[str, Any]]) -> str:
     """Format rejected claims as a blacklist section for the synthesis prompt.
@@ -84,12 +87,16 @@ async def post_process_synthesize(
             "numbered_facts": numbered_facts,
             "original_answer": original_answer,
             "rejected_blacklist": rejected_blacklist,
+            "fact_count": str(len(accepted_facts)),
         },
         context,
         safe=True,
     )
 
     gen_params = step.generation_parameters or {}
+    dynamic_budget = max(
+        _MIN_SYNTHESIS_TOKENS, _TOKENS_PER_FACT * len(accepted_facts)
+    )
     call_result = await handler._call_model(
         model_id,
         rendered.user_prompt,
@@ -97,19 +104,34 @@ async def post_process_synthesize(
         context,
         system_prompt=rendered.system_prompt,
         temperature=gen_params.get("temperature", 0.3),
-        max_tokens=handler._resolve_max_tokens(step, context, handler_default=4096),
+        max_tokens=handler._resolve_max_tokens(
+            step, context, handler_default=dynamic_budget
+        ),
         call_label="post_process",
     )
 
-    # Check if response was truncated due to length limit
     if call_result.finish_reason == "length":
         logger.warning(
-            "Post process synthesize: model '%s' stopped due to length limit "
-            "(tokens: %d prompt + %d completion). Synthesized answer may be incomplete.",
-            model_id,
-            call_result.prompt_tokens,
+            "Post process synthesize: truncated at %d tokens — retrying with 2× budget",
             call_result.completion_tokens,
         )
+        retry_budget = (call_result.completion_tokens or dynamic_budget) * 2
+        call_result = await handler._call_model(
+            model_id,
+            rendered.user_prompt,
+            step,
+            context,
+            system_prompt=rendered.system_prompt,
+            temperature=gen_params.get("temperature", 0.3),
+            max_tokens=retry_budget,
+            call_label="post_process_retry",
+        )
+        if call_result.finish_reason == "length":
+            logger.warning(
+                "Post process synthesize: still truncated after retry (%d tokens). "
+                "Answer may be incomplete.",
+                call_result.completion_tokens,
+            )
 
     logger.info(
         "Step '%s': synthesized from %d accepted facts",

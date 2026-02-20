@@ -160,7 +160,7 @@ class NonStreamingChatCompletion:
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
         total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
-        return {
+        result: dict = {
             "content": content,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -168,6 +168,11 @@ class NonStreamingChatCompletion:
             "finish_reason": finish_reason,
             "model_id": model_id,
         }
+        # Preserve llama.cpp timings for inference duration observability.
+        # timings.predicted_ms = actual generation time (excludes queue wait).
+        if "timings" in response:
+            result["timings"] = response["timings"]
+        return result
 
     async def _capture_peak_usage(
         self, model_id: str, request_id: str, worker_config: dict

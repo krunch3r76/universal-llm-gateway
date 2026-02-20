@@ -109,6 +109,10 @@ class PipelineSpec(BaseModel):
     # Checkpoint (Phase 3)
     checkpoint: dict[str, Any] | None = None  # Checkpoint configuration
 
+    # Which search path this pipeline was loaded from (e.g. "pipelines.local")
+    # Used for search-path-scoped model resolution (isolation semantics)
+    source_search_path: str = ""
+
     @property
     def domain(self) -> str:
         """Alias for type - clarifies domain routing."""
@@ -776,14 +780,20 @@ class StepConfig(BaseModel):
             )
 
     def get_target_model_id(
-        self, registry: Any, *, domain: str | None = None
+        self,
+        registry: Any,
+        *,
+        domain: str | None = None,
+        search_path: str | None = None,
     ) -> str | None:
         """Get the model_id this step will invoke."""
         if not self.model_ref:
             return None
         self.validate_model_ref()
         try:
-            model_config = registry.get_model_config(self.model_ref, domain=domain)
+            model_config = registry.get_model_config(
+                self.model_ref, domain=domain, search_path=search_path
+            )
             return model_config.model if model_config else None
         except Exception:
             return None

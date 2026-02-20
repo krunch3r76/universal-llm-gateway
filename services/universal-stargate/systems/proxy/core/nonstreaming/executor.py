@@ -102,6 +102,7 @@ class RequestExecutor:
         stability_tracker=None,
         transformation_engine=None,
         federation_integration=None,
+        admission_queue=None,
     ):
         self.gateway_url = gateway_url
         self.monitor = monitor
@@ -122,6 +123,7 @@ class RequestExecutor:
         self._stability_tracker = stability_tracker
         self._transformation_engine = transformation_engine
         self._federation_integration = federation_integration
+        self._admission_queue = admission_queue
 
     async def execute_request(self, context: RequestContext) -> Response:
         """
@@ -164,15 +166,7 @@ class RequestExecutor:
         if self._federation_integration is not None:
             request_tracker = self._federation_integration.request_tracker
 
-        # Get admission_queue from proxy/federation_integration if available
-        # Admission control: CapacityLedger in systems/routing/capacity/
-        admission_queue = None
-        if self._federation_integration and hasattr(
-            self._federation_integration, "_proxy"
-        ):
-            admission_queue = getattr(
-                self._federation_integration._proxy, "admission_queue", None
-            )
+        admission_queue = self._admission_queue
 
         gateway_name, _ = await select_gateway_and_load_model(
             context=context,
@@ -734,7 +728,7 @@ class RequestExecutor:
                         request_body=request_body,
                         hop_count=hop_count,
                         endpoint_category=endpoint_category,
-                        model_id=str(context.selected_model),
+                        model_id=context.selected_model.routing_key,
                         hints=hints,
                         request_id=request_id,
                     )
@@ -887,7 +881,7 @@ class RequestExecutor:
             await emit_execution_completed(
                 event_bus=self.event_bus,
                 url=fed_gateway.remote_stargate_url,
-                model_id=str(context.selected_model),
+                model_id=context.selected_model.routing_key,
                 request_id=context.request_id,
                 gateway_id=fed_gateway.gateway_id,
             )
@@ -929,7 +923,7 @@ class RequestExecutor:
             await emit_execution_completed(
                 event_bus=self.event_bus,
                 url=fed_gateway.remote_stargate_url,
-                model_id=str(context.selected_model),
+                model_id=context.selected_model.routing_key,
                 request_id=context.request_id,
                 gateway_id=fed_gateway.gateway_id,
             )
@@ -964,7 +958,7 @@ class RequestExecutor:
             await emit_execution_completed(
                 event_bus=self.event_bus,
                 url=fed_gateway.remote_stargate_url,
-                model_id=str(context.selected_model),
+                model_id=context.selected_model.routing_key,
                 request_id=context.request_id,
                 gateway_id=fed_gateway.gateway_id,
             )
@@ -986,7 +980,7 @@ class RequestExecutor:
             await emit_execution_completed(
                 event_bus=self.event_bus,
                 url=fed_gateway.remote_stargate_url,
-                model_id=str(context.selected_model),
+                model_id=context.selected_model.routing_key,
                 request_id=context.request_id,
                 gateway_id=fed_gateway.gateway_id,
             )
@@ -1080,7 +1074,7 @@ class RequestExecutor:
             await emit_execution_completed(
                 event_bus=self.event_bus,
                 url=fed_gateway.remote_stargate_url,
-                model_id=model_id,
+                model_id=context.selected_model.routing_key,
                 request_id=resolved_request_id,
                 gateway_id=fed_gateway.gateway_id,
             )
@@ -1092,7 +1086,7 @@ class RequestExecutor:
             await emit_execution_completed(
                 event_bus=self.event_bus,
                 url=fed_gateway.remote_stargate_url if fed_gateway else "unknown",
-                model_id=model_id,
+                model_id=context.selected_model.routing_key,
                 request_id=resolved_request_id,
                 gateway_id=fed_gateway.gateway_id if fed_gateway else "unknown",
             )

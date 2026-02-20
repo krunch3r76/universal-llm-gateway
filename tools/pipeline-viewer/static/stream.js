@@ -132,6 +132,25 @@ function applyEvent(sd, ev) {
       if (ev.system_prompt) sd.system_prompt = ev.system_prompt;
       if (ev.user_prompt) sd.user_prompt = ev.user_prompt;
       if (ev.request_body) sd.request_body = ev.request_body;
+      // Convention-based enrichment from well-known StepOutput.json fields
+      if (sd.json_data && typeof sd.json_data === 'object') {
+        const jd = sd.json_data;
+        if (jd.authority_verdicts && !sd.domain_routing) {
+          sd.domain_routing = {
+            authority_verdicts: jd.authority_verdicts,
+            claims_routed_to_general: (jd.claims_for_general || []).map(
+              c => c.statement_id || ''
+            ),
+          };
+        }
+        if (jd.verified_facts && jd.rejected_claims && !jd.stats) {
+          jd.stats = {
+            total_claims: jd.verified_facts.length + jd.rejected_claims.length,
+            accepted: jd.verified_facts.length,
+            rejected: jd.rejected_claims.length,
+          };
+        }
+      }
       break;
     case 'step_completed':
       sd.status = 'completed';
@@ -160,6 +179,7 @@ function applyEvent(sd, ev) {
         response_text: ev.response_text || null,
         error: ev.error || null,
         latency_ms: ev.latency_ms || 0,
+        inference_ms: ev.inference_ms || 0,
         prompt_tokens: ev.prompt_tokens || 0,
         completion_tokens: ev.completion_tokens || 0,
         success: ev.success !== false,
@@ -266,6 +286,12 @@ function buildSummary(steps) {
       totalClaims += jd.stats.total_claims || 0;
       totalAccepted += jd.stats.accepted || 0;
       totalRejected += jd.stats.rejected || 0;
+    } else if (jd?.verified_facts) {
+      const nv = jd.verified_facts.length;
+      const nr = (jd.rejected_claims || []).length;
+      totalClaims += nv + nr;
+      totalAccepted += nv;
+      totalRejected += nr;
     }
     if (jd?.verdicts_by_model) {
       totalModelCalls += Object.keys(jd.verdicts_by_model).length;

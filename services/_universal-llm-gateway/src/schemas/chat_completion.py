@@ -166,6 +166,10 @@ class ChatCompletionResponse(BaseModel):
         ..., description="List of completion choices"
     )
     usage: ChatCompletionUsage = Field(..., description="Token usage information")
+    timings: dict[str, Any] | None = Field(
+        default=None,
+        description="llama.cpp timings (predicted_ms = actual generation time)",
+    )
 
 
 # Streaming response schemas (for future implementation)

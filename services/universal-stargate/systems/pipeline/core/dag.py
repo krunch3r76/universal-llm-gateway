@@ -70,6 +70,7 @@ class DAGBuilder:
     def __init__(self, steps: list[StepConfig], validate_only: bool = False):
         self.steps = steps
         self.nodes: dict[str, StepNode] = {}
+        self.output_aliases: dict[str, str] = {}
         self.validate_only = validate_only
 
     def build(self) -> dict[str, StepNode]:
@@ -79,13 +80,17 @@ class DAGBuilder:
         Pre-pass: expand ``sub_pipeline`` steps into namespaced flat steps.
         After expansion, the DAG contains only concrete handler steps.
 
+        Sets ``self.output_aliases``: maps each sub-pipeline parent step name
+        to its resolved output step ID.  Callers must use this to resolve
+        ``pipeline.output`` when it names a sub-pipeline step.
+
         Returns:
             Dict of step_id -> StepNode
 
         Raises:
             ValueError: If DAG is invalid (cycles, dangling refs)
         """
-        self.steps = _expand_all_sub_pipelines(self.steps)
+        self.steps, self.output_aliases = _expand_all_sub_pipelines(self.steps)
 
         # Create nodes with computed dependencies (v5 schema)
         for step in self.steps:
@@ -194,7 +199,9 @@ break binding resolution.
 """
 
 
-def _expand_all_sub_pipelines(steps: list[StepConfig]) -> list[StepConfig]:
+def _expand_all_sub_pipelines(
+    steps: list[StepConfig],
+) -> tuple[list[StepConfig], dict[str, str]]:
     """Replace ``sub_pipeline`` steps with namespaced flat steps.
 
     For each step with ``type == "sub_pipeline"``, the attached
@@ -203,11 +210,14 @@ def _expand_all_sub_pipelines(steps: list[StepConfig]) -> list[StepConfig]:
     to point at the sub-pipeline's output step.
 
     Returns:
-        New step list with all sub_pipeline steps replaced.
+        (expanded_steps, output_aliases) where output_aliases maps each
+        sub-pipeline parent name to its resolved output step ID.
+        Callers must use output_aliases to resolve ``pipeline.output``
+        references that name a sub-pipeline step.
     """
     has_sub = any(s.type == "sub_pipeline" for s in steps)
     if not has_sub:
-        return steps
+        return steps, {}
 
     output_aliases: dict[str, str] = {}
     expanded: list[StepConfig] = []
@@ -242,7 +252,7 @@ def _expand_all_sub_pipelines(steps: list[StepConfig]) -> list[StepConfig]:
         for step in expanded:
             _rewrite_aliases(step, output_aliases)
 
-    return expanded
+    return expanded, output_aliases
 
 
 def _namespace_step(
@@ -261,7 +271,15 @@ def _namespace_step(
     from .schemas import InputBinding, StepConfig
 
     data: dict[str, Any] = sub_step.model_dump(by_alias=True, exclude_none=True)
-    data["name"] = f"{prefix}{SUB_PIPELINE_SEP}{sub_step.name}"
+    # model_dump(by_alias=True) emits "id" (alias for `name`). Overwrite the alias
+    # key directly so Pydantic does not see a conflict between alias ("id") and field
+    # name ("name") — Pydantic v2 with populate_by_name=True resolves ambiguity in
+    # favour of the alias, which would silently keep the un-namespaced step name.
+    data["id"] = f"{prefix}{SUB_PIPELINE_SEP}{sub_step.name}"
+    # Opt out of exclusive DAG model locking: inference server manages concurrency.
+    # Sub-pipeline steps share model_refs across chains; serialising at DAG level
+    # would collapse all three verify chains into a sequential queue.
+    data["_sub_pipeline_step"] = True
 
     new_inputs: dict[str, Any] = {}
     for key, binding in sub_step.handler_inputs.items():

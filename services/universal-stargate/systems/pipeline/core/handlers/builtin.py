@@ -222,6 +222,17 @@ class BaseHandler(AbstractStepHandler):
             user_prompt=rendered_template,
         )
 
+    def _require_domain_field(self, step: StepConfig, key: str) -> str:
+        """Get a required string config from step domain fields (model_extra).
+
+        Raises:
+            ValueError: If the field is missing or empty.
+        """
+        value = step.get_domain_field(key, "")
+        if not value:
+            raise ValueError(f"Step '{step.id}' missing '{key}' in step config")
+        return value
+
     def _resolve_input(
         self,
         resolver: Any,
@@ -393,7 +404,11 @@ class BaseHandler(AbstractStepHandler):
         domain = context.pipeline.domain
 
         try:
-            model_config = registry.get_model_config(model_id, domain=domain)
+            model_config = registry.get_model_config(
+                model_id,
+                domain=domain,
+                search_path=context.pipeline.source_search_path,
+            )
             resolved = model_config.model
             if resolved != model_id:
                 logger.debug(f"Resolved model alias: {model_id} → {resolved}")
@@ -559,6 +574,12 @@ class BaseHandler(AbstractStepHandler):
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
 
+        # Extract actual inference duration from llama.cpp timings.
+        # predicted_ms = generation time only (excludes queue wait + prompt eval).
+        # queue_wait = latency_ms - inference_ms gives the scheduling delay.
+        timings = response.get("timings", {})
+        inference_ms = float(timings.get("predicted_ms", 0.0))
+
         # Extract content and finish_reason with validation
         try:
             choice = response["choices"][0]
@@ -617,6 +638,7 @@ class BaseHandler(AbstractStepHandler):
                     request_body=request_body,
                     response_text=content,
                     latency_ms=call_duration_ms,
+                    inference_ms=inference_ms,
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     success=True,

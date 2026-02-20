@@ -1,4 +1,4 @@
-# Verify sub-pipeline: decompose → classify → compound → atomicity → domain → verify → filter
+# Verify sub-pipeline: decompose → classify → atomicity → domain → verify → filter
 #
 # Replaces the monolithic verify_chain handler (v5.0) with declarative steps.
 # Each step is a thin handler wrapping a single function from shared/.
@@ -36,21 +36,11 @@ steps:
     prompt_ref_classify: consensus.v5.0.classify_math
     timeout_seconds: 120
 
-  - name: decompose_compound
-    type: consensus_decompose_compound_v6_0
-    model_ref: gemma_2_9b
-    handler_inputs:
-      claims: classify_domain.json.claims
-    decompose_compound_general: true
-    decompose_compound_math: true
-    prompt_ref_decompose_compound: consensus.v5.0.decompose_general_compound
-    timeout_seconds: 120
-
   - name: atomicity_gate
     type: consensus_atomicity_gate_v6_0
     model_ref: gemma_2_9b
     handler_inputs:
-      claims: decompose_compound.json.claims
+      claims: classify_domain.json.claims
     decompose_compound_math: true
     prompt_ref_atomicity_classify: consensus.v5.0.classify_atomicity
     prompt_ref_decompose_compound: consensus.v5.0.decompose_general_compound

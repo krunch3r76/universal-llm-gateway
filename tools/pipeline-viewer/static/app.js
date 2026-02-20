@@ -26,12 +26,13 @@ function renderExecList(executions) {
   }
   container.innerHTML = executions.map((ex) => {
     const liveTag = ex.is_live ? '<span class="live-badge">LIVE</span>' : '';
+    const pipelineLabel = escHtml(ex.pipeline_id);
     return `
       <div class="exec-card ${ex.is_live ? 'live' : ''}"
            data-pipeline="${ex.pipeline_id}" data-exec="${ex.execution_id}"
            data-live="${ex.is_live}" onclick="loadExecution(this)">
         <div class="question">${liveTag}${escHtml(ex.question)}</div>
-        <div class="meta">${ex.step_count} steps &middot; ${ex.timestamp}</div>
+        <div class="meta">${ex.step_count} steps &middot; ${ex.timestamp} &middot; <span class="pipeline-label">${pipelineLabel}</span></div>
       </div>
     `;
   }).join('');
@@ -100,51 +101,108 @@ function renderSummaryBanner(summary) {
 function renderPipelineFlow(steps) {
   const el = document.getElementById('pipeline-flow');
   const phases = groupByPhase(steps);
-  el.innerHTML = phases.map(phase => `
-    <div class="phase-group">
-      <div class="phase-label">${escHtml(phase.name)}</div>
-      <div class="steps-row">
-        ${phase.steps.map((step, i) => {
-          const idx = steps.indexOf(step);
-          const latency = step.latency_ms ? `${(step.latency_ms/1000).toFixed(1)}s` : '-';
-          const tokens = step.tokens.total || 0;
-          const hasFailed = !!step.error;
-          const tokStr = hasFailed ? 'ERROR' : (tokens > 1000 ? `${(tokens/1000).toFixed(0)}K tok` : `${tokens} tok`);
-          const model = shortModel(step.model_ref || step.model || '');
-          const badge = getBadge(step);
-          const statusCls = step.status === 'running' ? 'running' : (hasFailed || step.status === 'failed' ? 'failed' : '');
-          const parentLabel = parentStepLabel(step.step_id);
-          const nameHtml = parentLabel
-            ? `<div class="step-parent-label">${escHtml(parentLabel)}</div><div class="step-name">${escHtml(displayStepName(step.step_id))}</div>`
-            : `<div class="step-name">${escHtml(step.step_id)}</div>`;
-          return `
-            ${i > 0 ? '<span class="step-arrow">\u2192</span>' : ''}
-            <div class="step-node cat-${step.category} ${selectedStepIdx === idx ? 'selected' : ''} ${statusCls}"
-                 onclick="selectStep(${idx})">
-              ${badge}
-              ${nameHtml}
-              <div class="step-meta">${model} &middot; ${latency} &middot; ${tokStr}</div>
-            </div>
-          `;
-        }).join('')}
-      </div>
-    </div>
-  `).join('');
+  el.innerHTML = phases.map(phase =>
+    phase.type === 'parallel'
+      ? renderParallelPhase(phase, steps)
+      : renderSequentialPhase(phase, steps)
+  ).join('');
   el.classList.add('visible');
 }
 
+function renderSequentialPhase(phase, allSteps) {
+  return `
+    <div class="phase-group">
+      <div class="phase-label">${escHtml(phase.name)}</div>
+      <div class="steps-row">
+        ${phase.steps.map((step, i) => renderStepCard(step, allSteps, i > 0, false, true)).join('')}
+      </div>
+    </div>`;
+}
+
+function renderParallelPhase(phase, allSteps) {
+  return `
+    <div class="phase-group">
+      <div class="phase-label">${escHtml(phase.name)} <span class="phase-parallel-tag">\u00d7${phase.lanes.length} parallel</span></div>
+      <div class="parallel-lanes" style="--lane-count:${phase.lanes.length}">
+        ${phase.lanes.map(lane => {
+          const laneMs = lane.steps.reduce((s, st) => s + (st.latency_ms || 0), 0);
+          return `
+            <div class="lane">
+              <div class="lane-header">${escHtml(formatLaneId(lane.id))} <span class="lane-latency">${(laneMs / 1000).toFixed(1)}s</span></div>
+              <div class="lane-steps">
+                ${lane.steps.map((step, i) => renderStepCard(step, allSteps, i > 0, true, false)).join('')}
+              </div>
+            </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+function renderStepCard(step, allSteps, showArrow, vertical, showParent) {
+  const idx = allSteps.indexOf(step);
+  const latency = step.latency_ms ? `${(step.latency_ms/1000).toFixed(1)}s` : '-';
+  const tokens = step.tokens.total || 0;
+  const hasFailed = !!step.error;
+  const tokStr = hasFailed ? 'ERROR' : (tokens > 1000 ? `${(tokens/1000).toFixed(0)}K tok` : `${tokens} tok`);
+  const model = shortModel(step.model_ref || step.model || '');
+  const badge = getBadge(step);
+  const statusCls = step.status === 'running' ? 'running' : (hasFailed || step.status === 'failed' ? 'failed' : '');
+  const parentLabel = parentStepLabel(step.step_id);
+  let nameHtml;
+  if (showParent && parentLabel) {
+    nameHtml = `<div class="step-parent-label">${escHtml(parentLabel)}</div><div class="step-name">${escHtml(displayStepName(step.step_id))}</div>`;
+  } else if (parentLabel) {
+    nameHtml = `<div class="step-name">${escHtml(displayStepName(step.step_id))}</div>`;
+  } else {
+    nameHtml = `<div class="step-name">${escHtml(step.step_id)}</div>`;
+  }
+  const arrowCls = vertical ? 'step-arrow vertical' : 'step-arrow';
+  return `
+    ${showArrow ? `<span class="${arrowCls}">${vertical ? '\u2193' : '\u2192'}</span>` : ''}
+    <div class="step-node cat-${step.category} ${selectedStepIdx === idx ? 'selected' : ''} ${statusCls}"
+         onclick="selectStep(${idx})">
+      ${badge}
+      ${nameHtml}
+      <div class="step-meta">${model} &middot; ${latency} &middot; ${tokStr}</div>
+    </div>`;
+}
+
+function formatLaneId(id) {
+  const m = id.match(/^(?:verify_)?link(\d+)$/);
+  if (m) return `Link ${m[1]}`;
+  return id.replace(/_/g, ' ');
+}
+
 function groupByPhase(steps) {
-  const phases = [];
+  const raw = [];
   let current = null;
   for (const step of steps) {
     const phaseName = getPhase(step);
     if (!current || current.name !== phaseName) {
       current = { name: phaseName, steps: [] };
-      phases.push(current);
+      raw.push(current);
     }
     current.steps.push(step);
   }
-  return phases;
+  return raw.map(phase => {
+    const lanes = detectParallelLanes(phase.steps);
+    if (lanes) return { name: phase.name, type: 'parallel', lanes };
+    return { name: phase.name, type: 'sequential', steps: phase.steps };
+  });
+}
+
+function detectParallelLanes(steps) {
+  if (steps.length < 2) return null;
+  const byParent = {};
+  for (const step of steps) {
+    if (!step.step_id.includes('__')) return null;
+    const parent = step.step_id.split('__')[0];
+    if (!byParent[parent]) byParent[parent] = [];
+    byParent[parent].push(step);
+  }
+  const parents = Object.keys(byParent);
+  if (parents.length < 2) return null;
+  return parents.map(p => ({ id: p, steps: byParent[p] }));
 }
 
 function getPhase(step) {

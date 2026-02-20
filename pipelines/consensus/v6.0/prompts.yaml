@@ -559,13 +559,11 @@ prompts:
       paragraph per domain. Do NOT mix domains within a paragraph. Place each
       fact in the single most natural domain paragraph.
 
-      COMPLETENESS:
-      Include EVERY fact from the list. Every fact was independently verified
-      and survived deduplication — dropping any is a critical error.
-
-      ORPHAN FACT RULE: If a fact does not explicitly mention the question
-      subject ("{question}") AND no other fact in the list explicitly connects
-      it to the subject, OMIT it. Do not invent a connection.
+      COMPLETENESS (MANDATORY — {fact_count} facts below):
+      Include ALL {fact_count} facts. Every fact was independently verified
+      and survived deduplication — omitting any is a critical error. If you
+      cannot find a natural place for a fact, add a brief standalone sentence
+      rather than drop it.
 
       {rejected_blacklist}
 

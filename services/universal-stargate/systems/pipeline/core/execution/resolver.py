@@ -593,5 +593,9 @@ def resolve_model_alias(
     registry = context._registry
     resolved_domain = domain or context.pipeline.domain
 
-    model_config = registry.get_model_config(model_key, domain=resolved_domain)
+    model_config = registry.get_model_config(
+        model_key,
+        domain=resolved_domain,
+        search_path=context.pipeline.source_search_path,
+    )
     return model_config.model

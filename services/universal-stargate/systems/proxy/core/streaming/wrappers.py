@@ -104,7 +104,7 @@ def wrap_streaming_response_for_tracking(
                 await emit_execution_completed(
                     event_bus,
                     url=gateway_url or "unknown",
-                    model_id=model_id,
+                    model_id=context.selected_model.routing_key,
                     request_id=context.request_id,
                     gateway_id=gateway_id,
                 )

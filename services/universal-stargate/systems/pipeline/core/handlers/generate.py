@@ -51,7 +51,9 @@ class GenericGenerateHandler(BaseHandler):
         prompt_config = registry.get_prompt(step.prompt_ref)
 
         model_config = registry.get_model_config(
-            step.model_ref, domain=context.pipeline.domain
+            step.model_ref,
+            domain=context.pipeline.domain,
+            search_path=context.pipeline.source_search_path,
         )
 
         # Resolve configuration hierarchy (includes dynamic token adjustment)

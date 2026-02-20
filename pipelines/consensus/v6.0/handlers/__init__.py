@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from .analyze_question import AnalyzeQuestionHandler
 from .answer import ConsensusAnswerHandler
+from .coverage_audit import CoverageAuditHandler
 from .enrich_reviewer import EnrichReviewerHandler
 from .filter_negatives import FilterNegativesHandler
 from .post_process import PostProcessHandler
 from .synergize import SynergizeHandler
-from .verify.handlers import register_verify_handlers
-from .veto.handlers import register_veto_handlers
+from .verify.handlers import register_handlers as register_verify_handlers
+from .veto.handlers import register_handlers as register_veto_handlers
 
 
 def register_handlers(router) -> None:
@@ -35,6 +36,9 @@ def register_handlers(router) -> None:
     )
     router.register_domain_handler_class(
         "consensus", "consensus_enrich_review_v5_0", EnrichReviewerHandler
+    )
+    router.register_domain_handler_class(
+        "consensus", "consensus_coverage_audit_v6_0", CoverageAuditHandler
     )
 
     register_verify_handlers(router)

@@ -201,6 +201,20 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
         )
         logger.info("✅ Federation integration initialized")
 
+        # Admission control: CapacityLedger must be wired to FederatedGatewayManager
+        # in ALL Master modes (including router-only). Otherwise, AdmissionQueue
+        # will never admit and requests will time out as MODEL_NOT_FOUND.
+        if (
+            proxy.federation_integration
+            and proxy.federation_integration.federated_manager
+            and hasattr(proxy, "capacity_ledger")
+            and proxy.capacity_ledger
+        ):
+            proxy.federation_integration.federated_manager.set_capacity_ledger(
+                proxy.capacity_ledger
+            )
+            logger.info("✅ Capacity ledger wired to federated gateway manager")
+
         # Determine if this is Relay mode (Remote with local_edge, no local Gateway)
         is_relay_mode = (
             proxy.federation_integration
@@ -313,14 +327,6 @@ def _wire_federation_manager(proxy: StargateProxy) -> None:
         config=config,
     )
     logger.info("✅ Federation manager wired to gateway manager for routing")
-
-    # Wire capacity ledger to federated gateway manager
-    # Admission control: CapacityLedger in systems/routing/capacity/
-    if hasattr(proxy, "capacity_ledger") and proxy.capacity_ledger:
-        proxy.federation_integration.federated_manager.set_capacity_ledger(
-            proxy.capacity_ledger
-        )
-        logger.info("✅ Capacity ledger wired to federated gateway manager")
 
 
 def _wire_federation_telemetry(proxy: StargateProxy) -> None:

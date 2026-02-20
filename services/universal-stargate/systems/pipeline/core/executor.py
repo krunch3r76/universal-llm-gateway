@@ -362,8 +362,10 @@ class PipelineExecutor:
             e.execution_id = pipeline_context.execution_id  # type: ignore[union-attr]
             raise
 
-        # Extract final result
-        final_result = self._get_final_result(pipeline, pipeline_context)
+        # Extract final result, resolving sub-pipeline output aliases
+        final_result = self._get_final_result(
+            pipeline, pipeline_context, dag_builder.output_aliases
+        )
 
         # Convert outputs for response builder (skip MapOutputCollection)
         step_outputs = {
@@ -430,18 +432,35 @@ class PipelineExecutor:
         self,
         pipeline: PipelineSpec,
         context: PipelineContext,
+        output_aliases: dict[str, str] | None = None,
     ) -> str:
         """
         Get final result from pipeline output step.
 
         Handles:
         - Simple step references: "step_name" → StepOutput.text
+        - Sub-pipeline references: "synthesize" → resolved via output_aliases
+          to e.g. "synthesize__review_synthesis"
         - Map output with key: "step_name.key" → specific iteration's text
         - MapOutputCollection: concatenates all outputs with double newlines
         """
         from .execution.map_reduce.collection import MapOutputCollection
 
         output_ref = pipeline.output
+
+        # Resolve sub-pipeline aliases: "synthesize" → "synthesize__review_synthesis"
+        if output_aliases and output_ref in output_aliases:
+            resolved_ref = output_aliases[output_ref]
+            logger.info(
+                f"Pipeline output '{output_ref}' resolved via sub-pipeline "
+                f"alias to '{resolved_ref}'"
+            )
+            output_ref = resolved_ref
+        else:
+            logger.info(
+                f"Pipeline output '{output_ref}' — no alias resolved "
+                f"(aliases={list(output_aliases.keys()) if output_aliases else None})"
+            )
 
         # Try direct lookup first (for simple step names)
         output = context.get_output(output_ref)
@@ -450,7 +469,18 @@ class PipelineExecutor:
                 # No specific iteration requested, concatenate all
                 text_parts = [item.text for item in output.all_outputs()]
                 return "\n\n".join(text_parts)
-            return output.text
+            text = output.text
+            logger.info(
+                f"Pipeline output '{output_ref}': text={text[:80]!r} "
+                f"(raw={output.raw[:40]!r}, json={output.json is not None})"
+            )
+            return text
+        else:
+            available = list(context.outputs.keys())
+            logger.error(
+                f"Pipeline output '{output_ref}' not found in context.outputs. "
+                f"Available keys: {available}"
+            )
 
         # Handle dotted references like "synthesize_all.qwen"
         if "." in output_ref:

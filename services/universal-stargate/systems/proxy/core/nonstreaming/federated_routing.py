@@ -15,6 +15,7 @@ from ..endpoint_category import derive_endpoint_category
 from .selection_errors import (
     raise_capacity_error,
     raise_eviction_failed_error,
+    raise_gateway_capacity_error,
     raise_model_unavailable_error,
     raise_no_gateways_error,
 )
@@ -235,10 +236,16 @@ async def _route_to_federated_gateway(
                     f"📊 Admission control reassigned {model_id} from "
                     f"{original_gateway_name} → {assigned_gateway_id}"
                 )
+        except TimeoutError:
+            logger.warning(
+                f"⏳ Admission queue timeout: model={model_id.routing_key} "
+                f"gateway={selected_gateway.name} timeout_s={timeout_s} "
+                f"allowed_gateways={sorted(allowed_gateway_ids)}"
+            )
+            raise_gateway_capacity_error(selected_gateway.name)
         except Exception as e:
             logger.error(f"❌ Admission queue acquire failed: {e}")
-            # Failed to acquire slot - treat as no gateway available
-            selected_gateway = None
+            raise_gateway_capacity_error(selected_gateway.name)
 
     # Emit orchestrator decision event
     if event_bus:

@@ -1,16 +1,13 @@
 """
 Review enriched answer for missing facts and re-enrich if needed.
 
-Single-step quality gate: asks one model "which facts are NOT adequately
-represented in this answer?" and, if any are missing, makes one more
-enrich call with the missing facts highlighted.
-
-Placed between enrich and post_process so the enriched answer reaching
-post_process has maximum fact coverage.
+Iterative quality gate: check → revise → re-check, up to max_review_rounds.
+Exits early when no missing facts. Covers cases where one revision pass
+cannot incorporate all missing facts.
 
 Contract:
     Inputs: enriched_answer, verified_facts, question
-    Outputs: raw (enriched answer — original or re-enriched)
+    Outputs: raw (enriched answer), json.review_rounds, json.final_missing
 """
 
 from __future__ import annotations
@@ -19,7 +16,6 @@ import json
 import time
 from typing import TYPE_CHECKING, Any, override
 
-from systems.pipeline.core.events.verification import EnrichReviewCompleted
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -55,7 +51,7 @@ class EnrichReviewerHandler(BaseHandler):
         step: StepConfig,
         context: PipelineContext,
     ) -> StepOutput:
-        """Review enrichment completeness; re-enrich on missing facts."""
+        """Review enrichment completeness; iterative check→revise up to max_rounds."""
         start_time = time.time()
         resolver = NamespaceResolver(context)
 
@@ -79,11 +75,64 @@ class EnrichReviewerHandler(BaseHandler):
             return StepOutput(raw=enriched_answer, step_id=step.id)
 
         numbered_facts = _format_numbered_facts(verified_facts)
+        max_rounds: int = int(step.get_domain_field("max_review_rounds") or 2)
 
-        # 1. Check which facts are missing from enriched answer
+        answer = enriched_answer
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        rounds_used = 0
+        final_missing = 0
+
+        for round_idx in range(max_rounds):
+            rounds_used = round_idx + 1
+            answer, missing_count, pt, ct = await self._check_and_revise(
+                step,
+                context,
+                answer,
+                numbered_facts,
+                verified_facts,
+                question,
+            )
+            total_prompt_tokens += pt
+            total_completion_tokens += ct
+            final_missing = missing_count
+            logger.info(
+                "Step '%s': round %d — %d missing facts",
+                step.id,
+                rounds_used,
+                missing_count,
+            )
+            if missing_count == 0:
+                break
+
+        latency_ms = (time.time() - start_time) * 1000
+        return StepOutput(
+            raw=answer,
+            step_id=step.id,
+            latency_ms=latency_ms,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
+            json={
+                "review_rounds": rounds_used,
+                "final_missing": final_missing,
+            },
+        )
+
+    async def _check_and_revise(
+        self,
+        step: StepConfig,
+        context: PipelineContext,
+        enriched_answer: str,
+        numbered_facts: str,
+        verified_facts: list[dict[str, Any]],
+        question: str,
+    ) -> tuple[str, int, int, int]:
+        """One round: check for missing facts; if any, revise and return (answer, missing_count, pt, ct)."""
         check_prompt_ref = step.prompt_ref
         if not check_prompt_ref:
             raise ValueError(f"Step '{step.id}' missing prompt_ref")
+        if not step.model_ref:
+            raise ValueError(f"Step '{step.id}' missing model_ref")
 
         rendered_check = self._render_prompt(
             check_prompt_ref,
@@ -95,11 +144,7 @@ class EnrichReviewerHandler(BaseHandler):
             context,
             safe=True,
         )
-
-        if not step.model_ref:
-            raise ValueError(f"Step '{step.id}' missing model_ref")
         model_id = self._resolve_model_alias(step.model_ref, context)
-
         check_result = await self._call_model(
             model_id,
             rendered_check.user_prompt,
@@ -110,39 +155,19 @@ class EnrichReviewerHandler(BaseHandler):
             max_tokens=self._resolve_max_tokens(step, context, handler_default=512),
             json_schema=_CHECK_JSON_SCHEMA,
         )
-
         missing_indices = _parse_missing_indices(
             check_result.content, len(verified_facts)
         )
+        pt = check_result.prompt_tokens or 0
+        ct = check_result.completion_tokens or 0
 
-        total_prompt_tokens = check_result.prompt_tokens or 0
-        total_completion_tokens = check_result.completion_tokens or 0
-
-        # 2. If no missing facts, pass through enriched answer
         if not missing_indices:
-            latency_ms = (time.time() - start_time) * 1000
-            _emit_event(context, step, len(verified_facts), [], False, latency_ms)
-            logger.info(
-                "Step '%s': all %d facts present in enriched answer (%.0fms)",
-                step.id,
-                len(verified_facts),
-                latency_ms,
-            )
-            return StepOutput(
-                raw=enriched_answer,
-                step_id=step.id,
-                latency_ms=latency_ms,
-                prompt_tokens=total_prompt_tokens,
-                completion_tokens=total_completion_tokens,
-            )
+            return (enriched_answer, 0, pt, ct)
 
-        # 3. Re-enrich with missing facts highlighted
         missing_facts_text = _format_missing_facts(verified_facts, missing_indices)
-
         re_enrich_ref = str(step.get_domain_field("prompt_ref_re_enrich") or "")
         if not re_enrich_ref:
             raise ValueError(f"Step '{step.id}' missing prompt_ref_re_enrich")
-
         rendered_re_enrich = self._render_prompt(
             re_enrich_ref,
             {
@@ -153,7 +178,6 @@ class EnrichReviewerHandler(BaseHandler):
             context,
             safe=True,
         )
-
         gen_params = step.generation_parameters or {}
         re_enrich_result = await self._call_model(
             model_id,
@@ -164,33 +188,10 @@ class EnrichReviewerHandler(BaseHandler):
             temperature=gen_params.get("temperature", 0.3),
             max_tokens=self._resolve_max_tokens(step, context, handler_default=4096),
         )
-
         final_answer = re_enrich_result.content.strip()
-        total_prompt_tokens += re_enrich_result.prompt_tokens or 0
-        total_completion_tokens += re_enrich_result.completion_tokens or 0
-        latency_ms = (time.time() - start_time) * 1000
-
-        _emit_event(
-            context, step, len(verified_facts), missing_indices, True, latency_ms
-        )
-
-        logger.info(
-            "Step '%s': %d/%d facts missing — re-enriched %d → %d chars (%.0fms)",
-            step.id,
-            len(missing_indices),
-            len(verified_facts),
-            len(enriched_answer),
-            len(final_answer),
-            latency_ms,
-        )
-
-        return StepOutput(
-            raw=final_answer,
-            step_id=step.id,
-            latency_ms=latency_ms,
-            prompt_tokens=total_prompt_tokens,
-            completion_tokens=total_completion_tokens,
-        )
+        pt += re_enrich_result.prompt_tokens or 0
+        ct += re_enrich_result.completion_tokens or 0
+        return (final_answer, len(missing_indices), pt, ct)
 
     @override
     def validate(self, step: StepConfig) -> list[str]:
@@ -209,28 +210,6 @@ class EnrichReviewerHandler(BaseHandler):
                     f"Step '{step.id}' missing '{required}' in handler_inputs"
                 )
         return errors
-
-
-def _emit_event(
-    context: PipelineContext,
-    step: StepConfig,
-    total_facts: int,
-    missing_indices: list[int],
-    re_enriched: bool,
-    latency_ms: float,
-) -> None:
-    """Emit observability event for enrich review."""
-    if context.recorder:
-        context.recorder.emit(
-            EnrichReviewCompleted(
-                step_name=step.id,
-                total_facts=total_facts,
-                missing_count=len(missing_indices),
-                missing_indices=missing_indices,
-                re_enriched=re_enriched,
-                latency_ms=latency_ms,
-            )
-        )
 
 
 def _format_numbered_facts(facts: list[dict[str, Any]]) -> str:

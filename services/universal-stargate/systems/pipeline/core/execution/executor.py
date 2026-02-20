@@ -166,7 +166,9 @@ class DAGExecutor:
             node = self.nodes.get(step_id)
             if node:
                 target_model = node.step.get_target_model_id(
-                    self.context._registry, domain=self.context.pipeline.domain
+                    self.context._registry,
+                    domain=self.context.pipeline.domain,
+                    search_path=self.context.pipeline.source_search_path,
                 )
                 if target_model:
                     self._model_tracker.release(target_model, step_id)
@@ -254,18 +256,28 @@ class DAGExecutor:
 
         for node in steps_to_launch:
             target_model = node.step.get_target_model_id(
-                self.context._registry, domain=self.context.pipeline.domain
+                self.context._registry,
+                domain=self.context.pipeline.domain,
+                search_path=self.context.pipeline.source_search_path,
+            )
+            # Sub-pipeline steps share model_refs across parallel chains; exclusive
+            # locking would serialize them. The inference server is FIFO and manages
+            # its own queue — locking here only adds wall-clock latency.
+            lock_model = (
+                None
+                if node.step.get_domain_field("_sub_pipeline_step")
+                else target_model
             )
 
             # Check model availability
-            if target_model:
-                if not self._model_tracker.can_acquire(target_model):
+            if lock_model:
+                if not self._model_tracker.can_acquire(lock_model):
                     logger.debug(
-                        f"Step '{node.step.id}' waiting for model {target_model}"
+                        f"Step '{node.step.id}' waiting for model {lock_model}"
                     )
                     continue
 
-                if target_model in models_in_use_this_iteration:
+                if lock_model in models_in_use_this_iteration:
                     logger.debug(
                         f"Step '{node.step.id}' deferred: model already claimed"
                     )
@@ -273,10 +285,12 @@ class DAGExecutor:
 
             # Launch step
             node.state = StepState.RUNNING
+            if lock_model:
+                self._model_tracker.acquire(lock_model, node.step.id)
+                models_in_use_this_iteration.add(lock_model)
             if target_model:
-                self._model_tracker.acquire(target_model, node.step.id)
-                models_in_use_this_iteration.add(target_model)
-                # Register with global tracker for eviction protection
+                # Eviction protection: prevent federation from routing models away
+                # while a pipeline step is actively using them (lock or not).
                 self._register_global_tracking(target_model, node.step.id)
 
             task = asyncio.create_task(
@@ -322,11 +336,17 @@ class DAGExecutor:
                 self._propagate_completion(node.step.id)
                 continue
 
-            # Check model usage
             target_model = node.step.get_target_model_id(
-                self.context._registry, domain=self.context.pipeline.domain
+                self.context._registry,
+                domain=self.context.pipeline.domain,
+                search_path=self.context.pipeline.source_search_path,
             )
-            if target_model and not self._model_tracker.can_acquire(target_model):
+            lock_model = (
+                None
+                if node.step.get_domain_field("_sub_pipeline_step")
+                else target_model
+            )
+            if lock_model and not self._model_tracker.can_acquire(lock_model):
                 logger.debug(f"Step '{node.step.id}' deferred: model in use")
                 continue
 
@@ -365,7 +385,9 @@ class DAGExecutor:
 
             node = self.nodes[step_id]
             target_model = node.step.get_target_model_id(
-                self.context._registry, domain=self.context.pipeline.domain
+                self.context._registry,
+                domain=self.context.pipeline.domain,
+                search_path=self.context.pipeline.source_search_path,
             )
             self._model_tracker.release(target_model, step_id)
             # Unregister from global tracker
@@ -402,7 +424,9 @@ class DAGExecutor:
 
         pipeline_id, execution_id = self._get_event_context()
         target_model = node.step.get_target_model_id(
-            self.context._registry, domain=self.context.pipeline.domain
+            self.context._registry,
+            domain=self.context.pipeline.domain,
+            search_path=self.context.pipeline.source_search_path,
         )
 
         # Emit step started (recorder + bus)

@@ -35,6 +35,7 @@ class ModelInvocation(PipelineEvent):
     response_text: str | None = None
     error: str | None = None
     latency_ms: float = 0.0
+    inference_ms: float = 0.0  # llama.cpp timings.predicted_ms: actual generation time
     prompt_tokens: int = 0
     completion_tokens: int = 0
     success: bool = True

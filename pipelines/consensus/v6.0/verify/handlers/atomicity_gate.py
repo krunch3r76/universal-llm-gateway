@@ -1,4 +1,4 @@
-"""LLM-based atomicity gate for compound claims missed by heuristics."""
+"""LLM-based atomicity classifier + compound decomposition."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 
 
 class AtomicityGateHandler(BaseHandler):
-    """Catch compound claims that the heuristic decomposition missed."""
+    """Identify compound claims and decompose them into atomic sub-claims."""
 
     step_type: str = "consensus_atomicity_gate_v6_0"
 
@@ -54,7 +54,7 @@ class AtomicityGateHandler(BaseHandler):
             or "consensus.v4.0.decompose_general_compound"
         )
 
-        claims, _details = await atomicity_gate_decompose(
+        claims, compound_details = await atomicity_gate_decompose(
             handler=self,
             claims=claims,
             model_id=model_id,
@@ -65,4 +65,7 @@ class AtomicityGateHandler(BaseHandler):
             domains=frozenset(gate_domains),
         )
 
-        return StepOutput(raw="", json={"claims": claims})
+        return StepOutput(
+            raw="",
+            json={"claims": claims, "compound_details": compound_details},
+        )

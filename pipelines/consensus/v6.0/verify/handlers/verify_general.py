@@ -145,11 +145,24 @@ class VerifyGeneralHandler(BaseHandler):
             ],
         }
 
+        # Preliminary majority classification for viewer display.
+        # Definitive classification (with math policy, compound parents) is applied
+        # by the downstream filter_threshold step.
+        verified_facts: list[dict[str, Any]] = []
+        rejected_claims: list[dict[str, Any]] = []
+        for claim in claims_for_general:
+            sid = claim.get("statement_id", "")
+            votes = verdicts.get(sid, [])
+            accepted = bool(votes) and sum(1 for v in votes if v) > len(votes) / 2
+            (verified_facts if accepted else rejected_claims).append(claim)
+
         return StepOutput(
             raw="",
             json={
                 "verdicts": verdicts,
                 "verdicts_by_model": verdicts_by_model,
                 "verification_timing": timing_data,
+                "verified_facts": verified_facts,
+                "rejected_claims": rejected_claims,
             },
         )

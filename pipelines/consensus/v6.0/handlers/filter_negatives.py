@@ -21,7 +21,6 @@ import json
 import time
 from typing import TYPE_CHECKING, Any, override
 
-from systems.pipeline.core.events.verification import FilterNegativesCompleted
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -162,19 +161,6 @@ class FilterNegativesHandler(BaseHandler):
                 filtered_facts.append(fact)
 
         latency_ms = (time.time() - start_time) * 1000
-
-        # 6. Emit observability event
-        total_removed = len(overlong_claims) + len(removed_texts)
-        if context.recorder:
-            context.recorder.emit(
-                FilterNegativesCompleted(
-                    step_name=step.id,
-                    input_count=len(verified_facts),
-                    removed_count=total_removed,
-                    removed_texts=removed_texts,
-                    latency_ms=latency_ms,
-                )
-            )
 
         if removed_texts:
             logger.info(

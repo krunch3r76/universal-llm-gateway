@@ -7,7 +7,7 @@ Pipeline loading filtered by model availability across connected gateways.
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Never
 
 import yaml
 from model_id import validate_model_id
@@ -48,8 +48,10 @@ class PipelineRegistry:
         Initialize registry.
 
         Args:
-            search_paths: List of directories to search for pipelines
-                          (later overrides earlier). Relative paths resolved relative to config_base_dir.
+            search_paths: List of directories to search for pipelines.
+                          Each path is an isolated model namespace.
+                          Later paths override earlier for same pipeline ID.
+                          Relative paths resolved relative to config_base_dir.
             get_gateway_catalogs: Callable returning Iterable[set[str]] of model sets
                                   from connected gateways. None disables filtering.
             config_defaults: Default pipeline options from stargate_config.yaml
@@ -65,51 +67,46 @@ class PipelineRegistry:
         self.prompts: dict[str, Any] = {}
         self._validation_errors: list[str] = []
 
-        # Two-tier model alias storage
-        # Root: "qwen" → ModelRef (pipelines.local/models.yaml)
-        # Domain: "consensus.qwen" → ModelRef (pipelines.local/{domain}/models.yaml)
-        self._root_models: dict[str, ModelRef] = {}
-        self._domain_models: dict[str, ModelRef] = {}
+        # Search-path-scoped model storage (isolation: no cross-path fallback)
+        # Outer key = search path name (e.g. "pipelines", "pipelines.local")
+        # Root: path_name → {"qwen": ModelRef, ...}
+        # Domain: path_name → {"consensus.qwen": ModelRef, ...}
+        self._root_models: dict[str, dict[str, ModelRef]] = {}
+        self._domain_models: dict[str, dict[str, ModelRef]] = {}
 
-        # Unified view for backward compatibility (domain overrides root)
+        # Flattened view for log counts (rebuilt by _merge_models)
         self.models: dict[str, ModelRef] = {}
 
     def load(self) -> None:
         """
         Load all configurations from search paths.
 
-        Invariant: ∀ path ∈ search_paths, later paths override earlier
+        Invariant: each search path is an isolated model namespace.
+        Pipelines resolve models only from their own search path.
+        Later paths override earlier for same pipeline ID only.
+
         Pre: search_paths ≠ ∅
         Post: pipelines ∪ models ∪ prompts loaded ∧ validated
-
-        Validation is always enabled (fail-fast).
-        Later paths override earlier for same pipeline ID.
 
         Raises:
             PipelineConfigError: If validation errors found
         """
         self._validation_errors = []
 
-        # Load from all search paths (later override earlier)
         for search_path in self._search_paths:
             try:
-                # Expand user home directory (~)
                 expanded = Path(search_path).expanduser()
 
-                # Resolve relative paths relative to config_base_dir
-                # Absolute paths and paths starting with ~ are left as-is
                 if not expanded.is_absolute():
                     resolved = (self._config_base_dir / expanded).resolve()
                 else:
                     resolved = expanded.resolve()
 
+                path_name = resolved.name
                 logger.info(f"🔍 Searching pipeline path: '{search_path}' → {resolved}")
 
-                # Load root models first (pipelines.local/models.yaml)
-                self._load_root_models(resolved)
-
-                # Load domains (which loads domain-specific models.yaml)
-                self._load_from_search_path(resolved)
+                self._load_root_models(resolved, path_name)
+                self._load_from_search_path(resolved, path_name)
             except Exception as e:
                 logger.warning(f"Failed to resolve search path '{search_path}': {e}")
 
@@ -173,24 +170,19 @@ class PipelineRegistry:
         self.prompts.clear()
         self._validation_errors = []
 
-        # Reload everything from all search paths
         for search_path in self._search_paths:
             try:
-                # Expand user home directory (~)
                 expanded = Path(search_path).expanduser()
 
-                # Resolve relative paths relative to config_base_dir
-                # Absolute paths and paths starting with ~ are left as-is
                 if not expanded.is_absolute():
                     resolved = (self._config_base_dir / expanded).resolve()
                 else:
                     resolved = expanded.resolve()
 
                 if resolved.exists():
-                    # Load root models first
-                    self._load_root_models(resolved)
-                    # Load domains
-                    self._load_from_search_path(resolved)
+                    path_name = resolved.name
+                    self._load_root_models(resolved, path_name)
+                    self._load_from_search_path(resolved, path_name)
             except Exception as e:
                 logger.warning(f"Failed to resolve search path '{search_path}': {e}")
 
@@ -260,9 +252,12 @@ class PipelineRegistry:
         if self._get_gateway_catalogs is None:
             return (False, set())  # No filtering when gateway catalogs unavailable
 
-        # Create domain-bound resolver
         def resolve_for_domain(ref: str) -> ModelRef:
-            return self.get_model_config(ref, domain=pipeline.domain)
+            return self.get_model_config(
+                ref,
+                domain=pipeline.domain,
+                search_path=pipeline.source_search_path,
+            )
 
         required = get_pipeline_required_models(
             pipeline,
@@ -364,9 +359,12 @@ class PipelineRegistry:
 
             # 3. Check model_ref exists
             if step.model_ref:
-                # TRY domain-aware lookup instead of direct dict check
                 try:
-                    self.get_model_config(step.model_ref, domain=pipeline.domain)
+                    self.get_model_config(
+                        step.model_ref,
+                        domain=pipeline.domain,
+                        search_path=pipeline.source_search_path,
+                    )
                 except KeyError:
                     errors.append(
                         f"Step '{step.id}': Unknown model_ref '{step.model_ref}'"
@@ -420,7 +418,7 @@ class PipelineRegistry:
 
         return errors
 
-    def _load_from_search_path(self, search_path: Path) -> None:
+    def _load_from_search_path(self, search_path: Path, path_name: str) -> None:
         """Load all domains from a search path."""
         if not search_path.exists():
             logger.info(f"⚠️  Search path does not exist: {search_path}")
@@ -428,16 +426,15 @@ class PipelineRegistry:
 
         logger.info(f"📂 Loading from: {search_path}")
 
-        # Load each domain directory
         for domain_dir in sorted(search_path.iterdir()):
             if (
                 domain_dir.is_dir()
                 and not domain_dir.name.startswith(".")
                 and domain_dir.name != "__pycache__"
             ):
-                self._load_domain(domain_dir, search_path)
+                self._load_domain(domain_dir, search_path, path_name)
 
-    def _load_domain(self, domain_dir: Path, search_path: Path) -> None:
+    def _load_domain(self, domain_dir: Path, search_path: Path, path_name: str) -> None:
         """
         Load all components of a domain.
 
@@ -445,7 +442,7 @@ class PipelineRegistry:
             {domain}/
                 *.yaml              - Pipeline specs (root level)
                 prompts.yaml        - Domain prompts (root level, namespaced by domain)
-                models.yaml         - Domain model refs
+                models.yaml         - Domain model refs (scoped to this search path)
                 handlers/           - Domain handlers (loaded separately)
                 {subdir}/
                     prompts.yaml    - Subdomain prompts (namespaced as domain.subdir)
@@ -454,14 +451,15 @@ class PipelineRegistry:
         domain_name = domain_dir.name
         logger.info(f"  📁 Loading domain: {domain_name}")
 
-        # Load models (models.yaml in domain root)
         models_file = domain_dir / "models.yaml"
         if models_file.exists():
-            old_count = len(self._domain_models)
-            self._load_models(models_file, domain_name)
-            new_count = len(self._domain_models) - old_count
+            bucket = self._domain_models.setdefault(path_name, {})
+            old_count = len(bucket)
+            self._load_models(models_file, domain_name, path_name)
+            new_count = len(bucket) - old_count
             logger.info(
-                f"    📄 Loaded {new_count} model ref(s) from {domain_name}/models.yaml"
+                f"    📄 Loaded {new_count} model ref(s) "
+                f"from {path_name}/{domain_name}/models.yaml"
             )
 
         # Load prompts (prompts.yaml in domain root, namespaced by domain)
@@ -484,13 +482,10 @@ class PipelineRegistry:
 
             self._load_domain_prompts(prompts_file, namespace)
 
-        # Load pipeline specs
-        # Exclude: prompts.yaml, models.yaml, categories.yaml
-        # Recursively search subdirectories
         for yaml_file in sorted(domain_dir.rglob("*.yaml")):
             excluded = ("prompts.yaml", "models.yaml", "categories.yaml")
             if yaml_file.name not in excluded:
-                self._load_pipeline(yaml_file)
+                self._load_pipeline(yaml_file, path_name)
 
     def _load_domain_prompts(self, prompts_file: Path, namespace: str) -> None:
         """Load prompts from domain prompts.yaml with namespace."""
@@ -519,12 +514,12 @@ class PipelineRegistry:
         except Exception as e:
             logger.warning(f"Failed to load prompts from {prompts_file}: {e}")
 
-    def _load_root_models(self, search_path: Path) -> None:
+    def _load_root_models(self, search_path: Path, path_name: str) -> None:
         """
         Load root namespace models from search_path/models.yaml.
 
-        Root models are stored with unqualified keys (e.g., "qwen").
-        Domain models can override these by defining the same key.
+        Root models are stored with unqualified keys (e.g., "qwen"),
+        scoped to the search path namespace.
         """
         root_models_file = search_path / "models.yaml"
         if not root_models_file.exists():
@@ -538,6 +533,7 @@ class PipelineRegistry:
             if not models_data:
                 return
 
+            bucket = self._root_models.setdefault(path_name, {})
             for ref_name, ref_config in models_data.items():
                 model_id = ref_config.get("model")
                 if not model_id:
@@ -545,30 +541,29 @@ class PipelineRegistry:
                         f"Root model ref '{ref_name}' missing 'model' field"
                     )
 
-                # Validate model ID format
                 error = validate_model_id(model_id)
                 if error:
                     raise PipelineConfigError(
                         f"Root model ref '{ref_name}' has invalid model ID: {error}"
                     )
 
-                # Store WITHOUT domain prefix (root namespace)
-                self._root_models[ref_name] = ModelRef(**ref_config)
+                bucket[ref_name] = ModelRef(**ref_config)
 
             logger.info(
                 f"  📄 Loaded {len(models_data)} root model ref(s) "
-                f"from {search_path.name}/models.yaml"
+                f"from {path_name}/models.yaml"
             )
         except PipelineConfigError:
             raise
         except Exception as e:
             logger.warning(f"Failed to load root models from {root_models_file}: {e}")
 
-    def _load_models(self, models_file: Path, domain: str) -> None:
-        """Load pipeline model references with domain namespacing."""
+    def _load_models(self, models_file: Path, domain: str, path_name: str) -> None:
+        """Load pipeline model references with domain namespacing into path scope."""
         with open(models_file) as f:
             data = yaml.safe_load(f)
 
+        bucket = self._domain_models.setdefault(path_name, {})
         for ref_name, ref_config in data.get("models", {}).items():
             model_id = ref_config.get("model")
             if not model_id:
@@ -576,30 +571,30 @@ class PipelineRegistry:
                     f"Model ref '{domain}.{ref_name}' missing 'model' field"
                 )
 
-            # Validate model ID format
             error = validate_model_id(model_id)
             if error:
                 raise PipelineConfigError(
                     f"Model ref '{domain}.{ref_name}' has invalid model ID: {error}"
                 )
 
-            # Namespace by domain, store in domain models
             qualified_ref = f"{domain}.{ref_name}"
-            self._domain_models[qualified_ref] = ModelRef(**ref_config)
+            bucket[qualified_ref] = ModelRef(**ref_config)
 
     def _merge_models(self) -> None:
         """
-        Merge root and domain models into unified view.
+        Flatten scoped model dicts into unified view for log counts.
 
-        Domain models override root models with the same base name.
-        Called after all loading is complete.
+        The flattened view is NOT used for resolution (get_model_config
+        resolves within a single search path). It exists only so that
+        len(self.models) reports total model refs across all paths.
         """
-        # Start with root models
-        self.models = dict(self._root_models)
-        # Add domain models (may have same keys as root - that's fine, domain wins on lookup)
-        self.models.update(self._domain_models)
+        self.models = {}
+        for bucket in self._root_models.values():
+            self.models.update(bucket)
+        for bucket in self._domain_models.values():
+            self.models.update(bucket)
 
-    def _load_pipeline(self, path: Path) -> None:
+    def _load_pipeline(self, path: Path, path_name: str) -> None:
         """Load a single pipeline with availability filtering."""
         try:
             with path.open() as f:
@@ -613,20 +608,18 @@ class PipelineRegistry:
             if "version" not in pipeline_data and "schema_version" not in pipeline_data:
                 return
 
-            # Parse steps
             steps = []
             for step_data in pipeline_data.get("steps", []):
                 steps.append(StepConfig(**step_data))
 
             pipeline_data["steps"] = steps
 
-            # Merge config defaults with pipeline-specific options
-            # Pipeline-specific options take precedence (override defaults)
             if self._config_defaults:
                 pipeline_options = pipeline_data.get("options", {})
                 merged_options = {**self._config_defaults, **pipeline_options}
                 pipeline_data["options"] = merged_options
 
+            pipeline_data["source_search_path"] = path_name
             pipeline = PipelineSpec(**pipeline_data)
 
             # Resolve sub-pipeline references (pipeline_ref → SubPipelineSpec)
@@ -651,7 +644,9 @@ class PipelineRegistry:
                 return
 
             self.pipelines[pipeline.id] = pipeline
-            logger.info(f"    ✅ Loaded pipeline '{pipeline.id}' from {path.name}")
+            logger.info(
+                f"    ✅ Loaded pipeline '{pipeline.id}' from {path_name}/{path.name}"
+            )
 
         except Exception as e:
             logger.error(f"Failed to load pipeline from {path}: {e}")
@@ -663,20 +658,28 @@ class PipelineRegistry:
         return self.pipelines[pipeline_id]
 
     def get_model_config(
-        self, model_ref: str, *, domain: str | None = None
+        self,
+        model_ref: str,
+        *,
+        domain: str | None = None,
+        search_path: str | None = None,
     ) -> ModelRef:
         """
-        Get model configuration with two-tier resolution.
+        Get model configuration with search-path-scoped resolution.
 
-        Resolution order:
-        1. Domain-qualified: "{domain}.{ref}" in _domain_models
-        2. Root namespace: "{ref}" in _root_models
-        3. Explicit qualified: "{ref}" in _domain_models (cross-domain access)
-        4. KeyError with helpful guidance
+        Invariant: resolution restricted to models from `search_path` only.
+        Each search path is an isolated namespace — no cross-path fallback.
+
+        Resolution order (within the given search path):
+        1. Domain-qualified: "{domain}.{ref}" in domain models
+        2. Root namespace: "{ref}" in root models
+        3. Explicit qualified: "{ref}" in domain models (cross-domain)
+        4. KeyError with guidance
 
         Args:
             model_ref: Reference like "qwen" or "translation.qwen"
             domain: Pipeline domain for auto-resolution (e.g., "consensus")
+            search_path: Search path name to scope resolution (e.g., "pipelines.local")
 
         Returns:
             ModelRef configuration
@@ -684,56 +687,57 @@ class PipelineRegistry:
         Raises:
             KeyError: If model ref not found, with available options
         """
-        # 1. Try domain-local resolution (domain.ref in _domain_models)
+        domain_bucket = self._domain_models.get(search_path or "", {})
+        root_bucket = self._root_models.get(search_path or "", {})
+
         if domain:
             qualified = f"{domain}.{model_ref}"
-            if qualified in self._domain_models:
-                return self._domain_models[qualified]
+            if qualified in domain_bucket:
+                return domain_bucket[qualified]
 
-        # 2. Try root namespace (ref in _root_models)
-        if model_ref in self._root_models:
-            return self._root_models[model_ref]
+        if model_ref in root_bucket:
+            return root_bucket[model_ref]
 
-        # 3. Try as explicit qualified ref (e.g., "translation.qwen" in _domain_models)
-        if model_ref in self._domain_models:
-            return self._domain_models[model_ref]
+        if model_ref in domain_bucket:
+            return domain_bucket[model_ref]
 
-        # 4. Not found - provide helpful error with guidance
-        self._raise_model_not_found(model_ref, domain)
+        self._raise_model_not_found(model_ref, domain, search_path)
 
-    def _raise_model_not_found(self, model_ref: str, domain: str | None) -> None:
+    def _raise_model_not_found(
+        self, model_ref: str, domain: str | None, search_path: str | None
+    ) -> Never:
         """Raise KeyError with actionable guidance."""
-        # Collect available refs by category
-        root_refs = sorted(self._root_models.keys())
+        sp = search_path or ""
+        domain_bucket = self._domain_models.get(sp, {})
+        root_bucket = self._root_models.get(sp, {})
+
+        root_refs = sorted(root_bucket.keys())
         domain_refs = (
             sorted(
-                k.split(".", 1)[1]
-                for k in self._domain_models
-                if k.startswith(f"{domain}.")
+                k.split(".", 1)[1] for k in domain_bucket if k.startswith(f"{domain}.")
             )
             if domain
             else []
         )
-        all_domains = sorted(set(k.split(".")[0] for k in self._domain_models))
+        all_domains = sorted(set(k.split(".")[0] for k in domain_bucket))
 
-        # Build helpful message
         msg_parts = [f"Model ref '{model_ref}' not found"]
         if domain:
             msg_parts.append(f" in domain '{domain}'")
+        if search_path:
+            msg_parts.append(f" (search path: '{search_path}')")
         msg_parts.append(".\n")
 
-        # Suggest where to define
-        if domain:
+        if domain and search_path:
             msg_parts.append(
-                f"  Define in: pipelines.local/{domain}/models.yaml "
-                f"or pipelines.local/models.yaml\n"
+                f"  Define in: {search_path}/{domain}/models.yaml "
+                f"or {search_path}/models.yaml\n"
             )
+        elif domain:
+            msg_parts.append(f"  Define in: {{search_path}}/{domain}/models.yaml\n")
         else:
-            msg_parts.append(
-                "  Define in: pipelines.local/models.yaml (root namespace)\n"
-            )
+            msg_parts.append("  Define in: {search_path}/models.yaml (root)\n")
 
-        # Show available
         if domain_refs:
             msg_parts.append(f"  Available in '{domain}': {domain_refs}\n")
         if root_refs:

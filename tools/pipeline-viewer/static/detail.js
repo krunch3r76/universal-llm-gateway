@@ -683,7 +683,20 @@ function renderModelCallsTab(step) {
       const statusCls = isFailed ? 'failed' : 'success';
       const label = call.call_label || 'call';
       const model = shortModel(call.model || '');
-      const latency = call.latency_ms ? `${(call.latency_ms/1000).toFixed(2)}s` : '-';
+      const wallMs = call.latency_ms || 0;
+      const inferMs = call.inference_ms || 0;
+      let latency;
+      if (wallMs > 0 && inferMs > 0) {
+        const queueMs = wallMs - inferMs;
+        latency = `${(wallMs/1000).toFixed(2)}s `
+          + `<span class="timing-split">`
+          + `<span class="timing-infer" title="Actual generation time">${(inferMs/1000).toFixed(2)}s infer</span>`
+          + ` · `
+          + `<span class="timing-queue" title="Queue wait time">${(queueMs/1000).toFixed(2)}s queue</span>`
+          + `</span>`;
+      } else {
+        latency = wallMs ? `${(wallMs/1000).toFixed(2)}s` : '-';
+      }
       const tokens = (call.prompt_tokens || 0) + (call.completion_tokens || 0);
       const tokStr = tokens ? `${tokens} tok` : '';
       const openAttr = isFailed ? 'open' : '';

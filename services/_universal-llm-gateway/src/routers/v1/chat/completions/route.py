@@ -215,7 +215,12 @@ def _build_completion_response(
         completion_tokens=completion_result.get("completion_tokens", 0),
         total_tokens=completion_result.get("total_tokens", 0),
     )
-    return ChatCompletionResponse(model=model_id, choices=[choice], usage=usage)
+    return ChatCompletionResponse(
+        model=model_id,
+        choices=[choice],
+        usage=usage,
+        timings=completion_result.get("timings"),
+    )
 
 
 async def _generate_non_streaming_response(

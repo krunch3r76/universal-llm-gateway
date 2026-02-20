@@ -20,7 +20,6 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, override
 
-from systems.pipeline.core.events.verification import SynergizeCompleted
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -141,21 +140,6 @@ class SynergizeHandler(BaseHandler):
 
         duplicate_count = total_input - len(representatives)
         latency_ms = (time.time() - start_time) * 1000
-
-        # 8. Emit observability event
-        recorder = context.recorder
-        if recorder:
-            recorder.emit(
-                SynergizeCompleted(
-                    step_name=step.id,
-                    input_counts=input_counts,
-                    output_count=len(representatives),
-                    duplicate_count=duplicate_count,
-                    embedding_model=embedding_model,
-                    similarity_threshold=threshold,
-                    latency_ms=latency_ms,
-                )
-            )
 
         logger.info(
             "Step '%s': synergized %d facts → %d unique (%d duplicates removed) "

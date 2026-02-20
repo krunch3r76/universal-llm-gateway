@@ -6,7 +6,7 @@ from .veto_threshold import VetoThresholdHandler
 from .veto_verify import VetoVerifyHandler
 
 
-def register_veto_handlers(router) -> None:
+def register_handlers(router) -> None:
     """Register veto sub-pipeline handlers."""
     router.register_domain_handler_class(
         "consensus", "consensus_veto_verify_v6_0", VetoVerifyHandler
