@@ -146,7 +146,6 @@ class VetoVerifyHandler(BaseHandler):
             prompt_ref_verify_batch=(
                 str(prompt_ref_batch) if prompt_ref_batch else None
             ),
-            sequential_dispatch=bool(answer_pool),
         )
 
         id_to_alias = dict(zip(veto_model_ids, veto_pool_aliases, strict=True))

@@ -488,7 +488,6 @@ class VerifyChainHandler(BaseHandler):
             prompt_ref=prompt_ref_verify,
             exec_configs=exec_configs,
             prompt_ref_verify_batch=prompt_ref_verify_batch,
-            sequential_dispatch=bool(answer_pool),
         )
 
         # Event: per-model verdicts
