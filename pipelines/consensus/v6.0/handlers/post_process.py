@@ -28,7 +28,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
-from ..shared._chain_post_process import post_process_synthesize
+from .shared._chain_post_process import post_process_synthesize
 
 # Matches "[N]" fact-reference markers that LLMs leak despite prompt instructions.
 # Handles optional leading space to avoid orphaned whitespace.

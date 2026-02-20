@@ -15,6 +15,7 @@ from universal_logging import get_logger
 
 from .availability import are_models_available, get_pipeline_required_models
 from .core.schemas import PipelineSpec, PromptConfig, StepConfig
+from .loader import resolve_sub_pipelines
 from .schemas import ModelRef
 
 logger = get_logger(__name__)
@@ -341,6 +342,11 @@ class PipelineRegistry:
         step_ids = {step.id for step in pipeline.steps}
 
         for step in pipeline.steps:
+            # sub_pipeline steps are expanded by the DAG builder, not executed
+            # by a handler — skip handler/model/prompt checks for them
+            if step.type == "sub_pipeline":
+                continue
+
             # 1. Check handler exists
             handler_class = HandlerRegistry.get_class(pipeline.type, step.type)
             if handler_class is None:
@@ -601,6 +607,12 @@ class PipelineRegistry:
 
             pipeline_data = data.get("pipeline", data)
 
+            # Sub-pipeline fragments (verify.yaml, veto.yaml, etc.) lack
+            # the required ``version`` field — skip them silently since they
+            # are loaded on-demand via pipeline_ref resolution.
+            if "version" not in pipeline_data and "schema_version" not in pipeline_data:
+                return
+
             # Parse steps
             steps = []
             for step_data in pipeline_data.get("steps", []):
@@ -616,6 +628,10 @@ class PipelineRegistry:
                 pipeline_data["options"] = merged_options
 
             pipeline = PipelineSpec(**pipeline_data)
+
+            # Resolve sub-pipeline references (pipeline_ref → SubPipelineSpec)
+            # so the DAG builder can expand them during validation and execution
+            resolve_sub_pipelines(pipeline.steps, path.parent, visited=set())
 
             # Filter by model availability
             should_filter, required = self._should_filter_pipeline(pipeline)

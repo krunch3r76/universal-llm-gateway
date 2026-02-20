@@ -138,19 +138,22 @@ class RequestExecutor:
         """Execute request in bypass mode."""
         await self._select_gateway_and_load_model(context)
 
-        # Get model configuration for monitoring (can pass ModelId directly)
-        model_metadata = await self._get_model_configuration_for_monitoring(
-            context.selected_model
-        )
+        try:
+            model_metadata = await self._get_model_configuration_for_monitoring(
+                context.selected_model
+            )
 
-        return await execute_bypass_mode(
-            context=context,
-            gateway_url=self.gateway_url,
-            monitor=self.monitor,
-            forward_request_func=self.forward_request,
-            forward_streaming_request_func=self.forward_streaming_request,
-            model_metadata=model_metadata,
-        )
+            return await execute_bypass_mode(
+                context=context,
+                gateway_url=self.gateway_url,
+                monitor=self.monitor,
+                forward_request_func=self.forward_request,
+                forward_streaming_request_func=self.forward_streaming_request,
+                model_metadata=model_metadata,
+            )
+        except BaseException:
+            self._release_routing_key_on_error(context.request_id)
+            raise
 
     async def _select_gateway_and_load_model(self, context: RequestContext) -> None:
         """Ensure gateway is selected and model is loaded."""
@@ -185,6 +188,30 @@ class RequestExecutor:
             admission_queue=admission_queue,
         )
 
+    def _release_routing_key_on_error(self, request_id: str) -> None:
+        """Release routing key when request fails between load and forward.
+
+        The load orchestrator tracks routing_key for eviction protection on
+        load success.  Normally MasterRequestTracker.forward() releases it
+        in its finally block.  If the request fails before forward() runs
+        (e.g. token counting error), the key leaks and permanently blocks
+        eviction of the loaded model.
+
+        Idempotent — safe to call even if forward() already released the key.
+        """
+        if self._federation_integration is None:
+            return
+        tracker = self._federation_integration.request_tracker
+        if tracker is None:
+            return
+        released = tracker.release_routing_key(request_id)
+        if released:
+            logger.warning(
+                "🔓 Released routing key for request %s "
+                "(failed between load and forward)",
+                request_id[:8],
+            )
+
     async def _execute_normal_mode(self, context: RequestContext) -> Response:
         """
         Execute request with full transformations.
@@ -194,10 +221,15 @@ class RequestExecutor:
         INVARIANT:
             ∀ request: forwarded via MasterRequestTracker (atomic capacity)
             ∀ capacity: reserved atomically during feasibility check
+            ∀ routing_key tracked by load: released on ANY exit path
         """
         logger.debug(f"Forwarding request for model {context.selected_model}")
 
         # Step 1: Select gateway (federated)
+        # ensure_model_loaded_on_remote tracks routing_key for eviction protection.
+        # On load success, the key persists until MasterRequestTracker.forward()
+        # releases it in its finally block.  If steps 3-4 fail before forward()
+        # runs, the key would leak — caught by the except below.
         await self._select_gateway_and_load_model(context)
 
         # Step 2: Validate gateway was selected
@@ -214,18 +246,26 @@ class RequestExecutor:
                 ),
             )
 
-        # Step 3: Apply token management via federation forwarder
-        from .token_management import apply_federated_token_management
+        try:
+            # Step 3: Apply token management via federation forwarder
+            from .token_management import apply_federated_token_management
 
-        await apply_federated_token_management(
-            context,
-            self._token_allocation_policy,
-            context.federated_gateway,
-            self._federation_forwarder,
-        )
+            await apply_federated_token_management(
+                context,
+                self._token_allocation_policy,
+                context.federated_gateway,
+                self._federation_forwarder,
+            )
 
-        # Step 4: Execute federated request
-        return await self._execute_federated_request(context)
+            # Step 4: Execute federated request
+            return await self._execute_federated_request(context)
+
+        except BaseException:
+            # Release routing key tracked by load orchestrator (step 1) when
+            # the request fails before MasterRequestTracker.forward() completes.
+            # Idempotent: safe if forward()'s finally already released it.
+            self._release_routing_key_on_error(context.request_id)
+            raise
 
     async def _get_model_configuration_for_monitoring(
         self, model_id: "ModelId"
@@ -1017,6 +1057,7 @@ class RequestExecutor:
 
         fed_gateway = context.federated_gateway
         if not fed_gateway:
+            self._release_routing_key_on_error(resolved_request_id)
             raise HTTPException(
                 status_code=500,
                 detail=error_envelope(
@@ -1045,6 +1086,7 @@ class RequestExecutor:
             )
             return result
         except Exception:
+            self._release_routing_key_on_error(resolved_request_id)
             from systems.proxy.core.lifecycle import emit_execution_completed
 
             await emit_execution_completed(

@@ -87,8 +87,9 @@ fi
 
 # Ensure model directory exists as current user (not root via Docker bind mount)
 MODEL_DIR="$HOME/.models"
-if [[ -f "$SCRIPT_DIR/.env.local" ]]; then
-    _val=$(grep -E '^MODEL_PATH_ROOT=' "$SCRIPT_DIR/.env.local" | head -1 | cut -d= -f2-)
+_node_env="$HOME/.gateway/nodes/localhost.env"
+if [[ -f "$_node_env" ]]; then
+    _val=$(grep -E '^MODEL_PATH=' "$_node_env" | head -1 | cut -d= -f2-)
     [[ -n "$_val" ]] && MODEL_DIR="$_val"
 fi
 

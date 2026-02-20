@@ -33,10 +33,7 @@ from ...validation.json_schema_validator import (  # noqa: E402
 from src.schemas.chat_completion import ChatCompletionRequest  # noqa: E402,I001
 
 from model_id import ModelId, validate_model_id  # noqa: E402,I001
-from ...utils.model_metadata_helpers import (  # noqa: E402,I001
-    extract_input_schema,
-    should_transform_to_prompt,
-)
+from ...utils.model_metadata_helpers import extract_input_schema  # noqa: E402,I001
 from ....transformations import TransformationEngine  # noqa: E402,I001
 
 # Remove import - truncation now automatic
@@ -565,45 +562,28 @@ class RequestPreparer:
                 context.selected_model
             )
             if not model_config:
-                # Check if model exists in federation before failing
                 if self.gateway_manager.model_exists_in_federation(
                     str(context.selected_model)
                 ):
                     logger.debug(
                         f"Model {context.selected_model} not in local gateway, "
-                        "but exists in federation - deferring configuration fetch"
+                        "but exists in federation - applying local transformations"
                     )
-                    # For federated models: extract messages but skip transformations
-                    original_messages = self._extract_messages(context)
-
-                    # Apply filters only (no transformation to prompt format)
-                    filtered_messages = self._transformation_engine.apply_filters_only(
-                        original_messages, context.selected_model
-                    )
-
-                    context.processed_messages = filtered_messages
-                    context.transformation_metadata = {}  # No local transformations
                     context.model_metadata = None
-                    context.model_sticky = resolve_model_sticky(
-                        context.selected_model, self._config
-                    )
                     context.middleware_actions.append(
-                        f"model_sticky:{'true' if context.model_sticky else 'false'}"
+                        "federated_model_local_transformation"
                     )
-                    context.middleware_actions.append(
-                        "federated_model_deferred_metadata"
+                else:
+                    logger.error(
+                        f"❌ Model {context.selected_model} not found "
+                        f"in local or federated catalogs"
                     )
-                    return
+                    from ..errors.model_errors import ModelErrorBuilder as ModelErrors
 
-                # Model doesn't exist anywhere - fail immediately
-                logger.error(
-                    f"❌ Model {context.selected_model} not found in local or federated catalogs"
-                )
-                from ..errors.model_errors import ModelErrorBuilder as ModelErrors
+                    raise ModelErrors.model_not_found(str(context.selected_model))
+            else:
+                context.model_metadata = model_config
 
-                raise ModelErrors.model_not_found(str(context.selected_model))
-
-            context.model_metadata = model_config
             context.model_sticky = resolve_model_sticky(
                 context.selected_model, self._config
             )
@@ -611,19 +591,29 @@ class RequestPreparer:
                 f"model_sticky:{'true' if context.model_sticky else 'false'}"
             )
         except HTTPException:
-            # Re-raise HTTPExceptions (like our model_not_found error) as-is
             raise
         except Exception as e:
             logger.error(
                 f"Failed to get model information for {context.selected_model}: {e}"
             )
-            # For other errors, use generic error
             raise HTTPException(
                 status_code=500,
                 detail=f"Error retrieving model {context.selected_model}: {str(e)}",
             )
 
-        input_schema = extract_input_schema(context.model_metadata)
+        # Derive input_schema from gateway metadata when available,
+        # otherwise from transformation engine YAML config (federated models)
+        if context.model_metadata is not None:
+            input_schema = extract_input_schema(context.model_metadata)
+        else:
+            transform_config = self._transformation_engine.get_config_for_model(
+                context.selected_model
+            )
+            input_schema = (
+                transform_config.get("settings", {}).get("input_schema", "prompt")
+                if transform_config
+                else "prompt"
+            )
 
         # Get complete profile data (single query)
         profile_data = None
@@ -662,7 +652,7 @@ class RequestPreparer:
             original_messages, context.selected_model
         )
 
-        if should_transform_to_prompt(context.model_metadata):
+        if input_schema != "messages":
             processed_messages, transformation_metadata = (
                 self.transformer.transform_to_prompt(
                     filtered_messages,
@@ -694,7 +684,9 @@ class RequestPreparer:
         context.processed_messages = processed_messages
         context.transformation_metadata = transformation_metadata
 
-        transformation_metadata["model_format"] = context.model_metadata.format
+        transformation_metadata["model_format"] = (
+            context.model_metadata.format if context.model_metadata else None
+        )
         transformation_metadata["input_schema"] = input_schema
         transformation_metadata["transformation_applied"] = str(
             input_schema != "messages"

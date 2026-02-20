@@ -95,7 +95,7 @@ class FootprintInspector:
         a(
             self._mf(
                 self._root / ".env.local",
-                "Environment overrides (MODEL_PATH_ROOT, HF_TOKEN)",
+                "Environment overrides (HF_TOKEN, etc.)",
                 "workspace",
             )
         )

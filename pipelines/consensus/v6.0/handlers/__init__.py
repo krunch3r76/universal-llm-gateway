@@ -6,14 +6,14 @@ Registers top-level handlers plus verify and veto sub-pipeline thin handlers.
 
 from __future__ import annotations
 
-from ..verify.handlers import register_verify_handlers
-from ..veto.handlers import register_veto_handlers
 from .analyze_question import AnalyzeQuestionHandler
 from .answer import ConsensusAnswerHandler
 from .enrich_reviewer import EnrichReviewerHandler
 from .filter_negatives import FilterNegativesHandler
 from .post_process import PostProcessHandler
 from .synergize import SynergizeHandler
+from .verify.handlers import register_verify_handlers
+from .veto.handlers import register_veto_handlers
 
 
 def register_handlers(router) -> None:

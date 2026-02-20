@@ -26,9 +26,9 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
-from ..shared._dedup_clustering import cluster_similar
-from ..shared._dedup_embeddings import get_embeddings
-from ..shared._text_utils import get_statement_text
+from .shared._dedup_clustering import cluster_similar
+from .shared._dedup_embeddings import get_embeddings
+from .shared._text_utils import get_statement_text
 
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext

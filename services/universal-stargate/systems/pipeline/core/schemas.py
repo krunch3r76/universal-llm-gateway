@@ -591,7 +591,13 @@ class StepConfig(BaseModel):
     @field_validator("handler_inputs", mode="before")
     @classmethod
     def parse_handler_inputs(cls, v: dict[str, Any]) -> dict[str, InputBinding]:
-        """Convert string bindings to InputBinding objects."""
+        """Convert string bindings to InputBinding objects.
+
+        Accepts three forms to support round-tripping through model_dump():
+        1. String: "step.json.field" → InputBinding.parse(...)
+        2. Dict: serialized InputBinding from model_dump() → InputBinding(**dict)
+        3. InputBinding: already parsed, pass through
+        """
         if not isinstance(v, dict):
             return v
 
@@ -601,6 +607,14 @@ class StepConfig(BaseModel):
                 result[key] = InputBinding.parse(value)
             elif isinstance(value, InputBinding):
                 result[key] = value
+            elif isinstance(value, dict):
+                # model_dump(exclude_none=True) serializes InputBinding as a plain dict,
+                # omitting step_name=None. Reconstruct explicitly to handle missing key.
+                result[key] = InputBinding(
+                    namespace=value["namespace"],
+                    step_name=value.get("step_name"),
+                    field_path=value["field_path"],
+                )
             else:
                 # Let Pydantic handle the error for invalid types
                 result[key] = value
@@ -612,10 +626,13 @@ class StepConfig(BaseModel):
         """
         Convert string bindings or dict specs to OutputBinding objects.
 
-        Supports three formats:
+        Supports four formats to handle round-tripping through model_dump():
         1. String: "step.json.field" → OutputBinding(binding=..., optional=False)
-        2. Dict: {binding: "step.json.field", optional: true} → OutputBinding(...)
-        3. OutputBinding: Already parsed
+        2. Dict with string binding: {binding: "step.json.field", optional: true}
+        3. Dict with serialized InputBinding: {binding: {...}, optional: false}
+           — produced by model_dump() in _namespace_step; reconstructed via
+           InputBinding(**dict)
+        4. OutputBinding: Already parsed
         """
         if not isinstance(v, dict):
             return v
@@ -627,17 +644,33 @@ class StepConfig(BaseModel):
                 input_binding = InputBinding.parse(value)
                 result[key] = OutputBinding(binding=input_binding)
             elif isinstance(value, dict):
-                # Format 2: Dict with "binding" and "optional" keys
-                binding_str = value.get("binding")
+                # Formats 2 & 3: Dict with "binding" and "optional" keys
+                binding_val = value.get("binding")
                 optional = value.get("optional", False)
-                if binding_str is None:
+                if binding_val is None:
                     raise ValueError(
                         f"handler_outputs[{key!r}]: dict format requires 'binding' key"
                     )
-                input_binding = InputBinding.parse(binding_str)
+                if isinstance(binding_val, str):
+                    input_binding = InputBinding.parse(binding_val)
+                elif isinstance(binding_val, dict):
+                    # model_dump(exclude_none=True) serializes InputBinding as a plain
+                    # dict, omitting step_name=None. Reconstruct explicitly.
+                    input_binding = InputBinding(
+                        namespace=binding_val["namespace"],
+                        step_name=binding_val.get("step_name"),
+                        field_path=binding_val["field_path"],
+                    )
+                elif isinstance(binding_val, InputBinding):
+                    input_binding = binding_val
+                else:
+                    raise ValueError(
+                        f"handler_outputs[{key!r}]: binding must be str, dict, or "
+                        f"InputBinding, got {type(binding_val).__name__}"
+                    )
                 result[key] = OutputBinding(binding=input_binding, optional=optional)
             elif isinstance(value, OutputBinding):
-                # Format 3: Already parsed
+                # Format 4: Already parsed
                 result[key] = value
             else:
                 # Let Pydantic handle the error for invalid types

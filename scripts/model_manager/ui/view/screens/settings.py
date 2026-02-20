@@ -50,7 +50,7 @@ class SettingsScreen(Screen):
         yield Header()
 
         with Vertical(id="env-section"):
-            yield Static("[b]Environment (.env.local)[/b]", markup=True)
+            yield Static("[b]Environment[/b]", markup=True)
             with Horizontal():
                 yield Label("Model Path: ")
                 yield Input(id="model-path-input", placeholder="~/.models")
@@ -128,7 +128,7 @@ class SettingsScreen(Screen):
 
         local_env.save()
         self.query_one("#save-status", Static).update(
-            f"[green]Saved to {local_env.path}[/]"
+            f"[green]Saved (model path → {local_env.node_env_path})[/]"
         )
         self.app.pop_screen()
 

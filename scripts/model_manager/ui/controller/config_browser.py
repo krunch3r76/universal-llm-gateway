@@ -41,7 +41,7 @@ class ConfigBrowser:
             self._cf(
                 self._root / ".env.local",
                 "Environment",
-                "Local overrides (MODEL_PATH_ROOT, HF_TOKEN, etc.)",
+                "Local overrides (HF_TOKEN, etc.)",
             )
         )
         items.append(

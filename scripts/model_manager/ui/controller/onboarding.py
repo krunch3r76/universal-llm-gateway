@@ -32,7 +32,7 @@ class OnboardingController:
 
     @property
     def _model_path(self) -> Path:
-        """Live read — reflects MODEL_PATH_ROOT changes made in Settings."""
+        """Live read — reflects MODEL_PATH changes made in Settings."""
         return self._local_env.model_path_root
 
     def check_downloaded(self, model: ModelInfo) -> bool:

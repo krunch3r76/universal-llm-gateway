@@ -122,7 +122,7 @@ class HomeScreen(Screen):
     }
 
     STEP_HINTS = {
-        "step-config": r"open Settings \[e] → set MODEL_PATH_ROOT",
+        "step-config": r"open Settings \[e] → set model path",
         "step-build": r"press \[s] Services → Build Image",
         "step-start": r"press \[s] Services → Start Gateway + Stargate",
         "step-download": r"press \[d] Download → select a model → Download",
