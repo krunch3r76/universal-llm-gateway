@@ -80,6 +80,38 @@ log_debug() {
 }
 
 # ============================================================================
+# Runtime Directory Setup
+# ============================================================================
+
+ensure_runtime_dirs() {
+    # Single source of truth for all dirs that must exist at runtime.
+    # Bind-mounted paths (logs, output, socket, vllm_cache) are created on the
+    # host before docker compose up; mkdir here is defensive and ensures subdirs
+    # are owned by appuser even when the parent was just created by Docker.
+    mkdir -p \
+        "${GOLEM_LOGS}" \
+        "${GOLEM_LOGS}/gateway" \
+        "${GOLEM_LOGS}/stargate" \
+        "${GOLEM_LOGS}/stargate-edge" \
+        "${WORKER_LOG_DIR}" \
+        "${SOCKET_DIR}" \
+        "${GOLEM_OUTPUT}"
+
+    # GPU inference caches. The bind mount at /golem/vllm_cache hides the
+    # Dockerfile-created subdirs; creating them here ensures each library finds
+    # its cache dir on first use instead of falling back to ephemeral paths.
+    if [[ "${GPU_ENABLED:-false}" == "true" ]]; then
+        local vllm_cache="${VLLM_CACHE_ROOT:-/golem/vllm_cache}"
+        local fi_base="${FLASHINFER_WORKSPACE_BASE:-${HOME}}"
+        mkdir -p \
+            "${vllm_cache}/triton" \
+            "${vllm_cache}/cuda" \
+            "${fi_base}/.cache/flashinfer"
+        log_info "GPU cache dirs ensured under ${vllm_cache}"
+    fi
+}
+
+# ============================================================================
 # GPU Detection and Validation
 # ============================================================================
 
@@ -188,8 +220,7 @@ validate_environment() {
         return 1
     fi
     
-    # Create required directories if they don't exist
-    mkdir -p "${GOLEM_LOGS}" "${WORKER_LOG_DIR}" "${SOCKET_DIR}" "${GOLEM_OUTPUT}"
+    ensure_runtime_dirs
     
     # Check Python version
     local python_version
@@ -304,9 +335,6 @@ start_gateway() {
         log_info "  TOKENIZERS_PARALLELISM: ${TOKENIZERS_PARALLELISM}"
     fi
     
-    # Create gateway log directory
-    mkdir -p "${GATEWAY_LOG_DIR}"
-    
     # Cleanup old Unix socket if exists
     if [[ -n "${GATEWAY_UNIX_SOCKET:-}" ]]; then
         rm -f "${GATEWAY_UNIX_SOCKET}"
@@ -374,9 +402,6 @@ start_stargate() {
     export GATEWAY_HOST GATEWAY_PORT
     export STARGATE_LOG_DIR="${GOLEM_LOGS}/stargate"
     export LOG_DIR="${GOLEM_LOGS}/stargate"  # Used by logging.yaml
-    
-    # Create stargate log directory
-    mkdir -p "${STARGATE_LOG_DIR}"
     
     # Cleanup old Unix socket if exists
     if [[ -n "${STARGATE_UNIX_SOCKET:-}" ]]; then
@@ -453,12 +478,6 @@ start_both() {
     
     # Gateway configuration is now in stargate_config.yaml (no separate gateways.yaml)
     
-    # Create log directories
-    mkdir -p "${GOLEM_LOGS}/gateway"
-    mkdir -p "${GOLEM_LOGS}/stargate"
-    mkdir -p "${WORKER_LOG_DIR}"
-    mkdir -p "${SOCKET_DIR}"
-    
     # Cleanup old Unix sockets if they exist
     if [[ -n "${GATEWAY_UNIX_SOCKET:-}" ]]; then
         rm -f "${GATEWAY_UNIX_SOCKET}"
@@ -533,7 +552,6 @@ start_both() {
         log_info "  Edge socket: ${EDGE_STARGATE_SOCKET}"
         log_info "  Edge config: ${EDGE_STARGATE_CONFIG}"
 
-        mkdir -p "/tmp/universal-protocol"
         rm -f "${EDGE_STARGATE_SOCKET}"
 
         (
@@ -544,8 +562,6 @@ start_both() {
             # Edge-specific config/env
             export STARGATE_CONFIG="${EDGE_STARGATE_CONFIG}"
             export STARGATE_SOCKET_PATH="${EDGE_STARGATE_SOCKET}"
-
-            mkdir -p "${LOG_DIR}"
 
             python3 -m uvicorn systems.proxy.app:app \
                 --uds "${EDGE_STARGATE_SOCKET}" \

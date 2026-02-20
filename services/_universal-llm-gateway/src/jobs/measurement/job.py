@@ -311,7 +311,10 @@ class MeasurementJob(Job):
             tracker,
         )
 
-        loader_updates = {"gpu_memory_utilization": gpu_mem_util}
+        loader_updates = {
+            "gpu_memory_utilization": gpu_mem_util,
+            "enforce_eager": True,
+        }
         return results, loader_updates
 
     async def _resolve_model_path(self) -> Path | None:

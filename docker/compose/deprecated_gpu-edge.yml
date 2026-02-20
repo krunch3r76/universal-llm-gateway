@@ -27,7 +27,7 @@ services:
 
     ipc: shareable
 
-    shm_size: '32gb'
+    shm_size: '42gb'
 
     ulimits:
       memlock:

@@ -9,6 +9,17 @@ metadata:
   training_context_length: 40960
   supports_chat_history: true
   input_schema: messages
+loader:
+  # enforce_eager disables CUDA graph capture at load time.
+  # Without it, vLLM captures graphs for every batch size (1,2,4,8…) on startup,
+  # costing 2-5 minutes for a 32B model. In a load-on-demand multi-model gateway
+  # fast startup outweighs the ~10% throughput gain from graphs.
+  enforce_eager: true
+  gpu_memory_utilization: 0.9
+  trust_remote_code: false
+  disable_custom_all_reduce: true
+  disable_log_stats: true
+
 download:
   huggingface:
     repo: Qwen/Qwen3-32B-AWQ

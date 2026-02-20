@@ -711,11 +711,12 @@ def _build_updated_catalog_entry(
             }
         )
 
-    # vLLM requires gpu_memory_utilization for AWQ/GPTQ/HF models —
-    # the measurement used this value but we must persist it to the catalog
-    # so the engine receives it at load time.
+    # Persist required vLLM loader params for AWQ/GPTQ/HF models.
+    # enforce_eager skips CUDA graph capture (2-5 min for 32B+) — correct default
+    # for load-on-demand gateways where fast startup > peak throughput.
     if model_format in ("hf", "awq", "gptq"):
         loader.setdefault("gpu_memory_utilization", 0.9)
+        loader.setdefault("enforce_eager", True)
 
     # Handle vision parameters in loader
     if mmproj_path:
