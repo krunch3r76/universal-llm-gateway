@@ -198,7 +198,13 @@ async def _route_to_federated_gateway(
 
     # Admission control: acquire slot before proceeding
     # CRITICAL: This must happen AFTER select() and BEFORE any await
-    if selected_gateway and admission_queue:
+    # SKIP for cold loads: model not loaded → ledger has no capacity registered
+    # → acquire() would block until MODEL_EXECUTION_COMPLETED (never fires)
+    # → deadlock. Load must happen first; capacity appears via telemetry.
+    is_cold_load = (
+        selected_gateway is not None and model_id not in selected_gateway.loaded_models
+    )
+    if selected_gateway and admission_queue and not is_cold_load:
         # Determine allowed gateways for admission
         if context.model_sticky:
             # Sticky: only allow the selected gateway
