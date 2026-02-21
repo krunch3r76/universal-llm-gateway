@@ -154,15 +154,11 @@ def _check_resources(
         f"loading: {list(gateway.loading_models)}"
     )
 
-    ram_margin = 1.03  # 3% safety margin
-    # VRAM margin: configurable, disabled by default (rely on catalog accuracy)
-    # Enable only if catalog systematically underestimates VRAM requirements
-    vram_margin_config = (
-        config.get("resource_margins", {}).get("vram_margin") if config else None
-    )
-    vram_margin = (
-        vram_margin_config if vram_margin_config is not None else 1.0
-    )  # Default: disabled
+    margins = config.get("resource_margins", {}) if config else {}
+    ram_margin_pct = margins.get("ram_margin_pct", 3)
+    vram_margin_pct = margins.get("vram_margin_pct", 2)
+    ram_margin = 1.0 + ram_margin_pct / 100
+    vram_margin = 1.0 + vram_margin_pct / 100
 
     ram_needed = int(gw_ram_mb * ram_margin)
     vram_needed = int(gw_vram_mb * vram_margin)
@@ -248,7 +244,7 @@ def _check_resources(
                 "vram_free_effective": effective_vram_free,
                 "vram_needed": vram_needed,
                 "vram_base": gw_vram_mb,
-                "vram_margin": vram_margin,
+                "vram_margin_pct": vram_margin_pct,
                 "loading_models": [str(m) for m in gateway.loading_models],
                 "loading_details": loading_details,
             },
@@ -262,9 +258,10 @@ def _check_resources(
             else ""
         )
 
+        margin_info = f" (+ {ram_margin_pct}% margin)" if ram_margin_pct > 0 else ""
         logger.warning(
             f"❌ RESOURCE CHECK FAILED (RAM): {placement.model_id} on {gateway.name} | "
-            f"Need {ram_needed}MB (+ 10% margin), "
+            f"Need {ram_needed}MB{margin_info}, "
             f"Available {effective_ram_free}MB "
             f"(hardware={gateway.ram_free_mb}MB{reserved_info})"
         )

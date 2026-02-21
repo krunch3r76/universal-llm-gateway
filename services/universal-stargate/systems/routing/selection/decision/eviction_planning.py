@@ -166,55 +166,26 @@ def _compute_eviction_plan(
         freed_ram_catalog += ram_usage
 
     # Check if eviction provides enough
-    ram_margin = 1.03  # 3% safety margin
-    vram_margin_config = (
-        config.get("resource_margins", {}).get("vram_margin") if config else None
-    )
-    vram_margin = vram_margin_config if vram_margin_config is not None else 1.0
+    margins = config.get("resource_margins", {}) if config else {}
+    ram_margin_pct = margins.get("ram_margin_pct", 3)
+    vram_margin_pct = margins.get("vram_margin_pct", 2)
+    ram_margin = 1.0 + ram_margin_pct / 100
+    vram_margin = 1.0 + vram_margin_pct / 100
     ram_needed = int(gw_ram_mb * ram_margin)
     vram_needed = int(gw_vram_mb * vram_margin)
 
-    # Conservative estimate combining actual measurements + catalog + totals
-    # Invariant: available = max(catalog_estimate, hardware_measured,
-    #                            total_if_full_eviction)
+    # Catalog-based estimate: effective free + VRAM freed by evicted models.
+    # This is conservative: non-model VRAM consumers (video players, driver
+    # overhead, reserved memory) are implicitly accounted for because they
+    # reduce gateway.vram_free_mb but are never "freed" by eviction.
+    total_vram = effective_vram_free + freed_vram_catalog
+    total_ram = effective_ram_free + freed_ram_catalog
 
-    # Method 1: Catalog-based (what we plan to evict) + effective free
-    # (after loading reservation)
-    catalog_based_vram = effective_vram_free + freed_vram_catalog
-    catalog_based_ram = effective_ram_free + freed_ram_catalog
-
-    # Method 2: Hardware-measured actual usage (what's really used)
-    hardware_used_vram = gateway.vram_total_mb - gateway.vram_free_mb
-    hardware_used_ram = gateway.ram_total_mb - gateway.ram_free_mb
-
-    # For full eviction: use actual hardware measurements
-    # For partial eviction: use catalog estimates
-    if len(models_to_evict) == len(gateway.loaded_models) and len(models_to_evict) > 0:
-        # Full eviction - freed amount = actual hardware-measured usage
-        hardware_freed_vram = hardware_used_vram
-        hardware_freed_ram = hardware_used_ram
-        hardware_based_vram = effective_vram_free + hardware_freed_vram
-        hardware_based_ram = effective_ram_free + hardware_freed_ram
-
-        # Conservative: max of catalog vs hardware vs total
-        # (total is fallback if both underestimate)
-        total_vram = max(catalog_based_vram, hardware_based_vram, gateway.vram_total_mb)
-        total_ram = max(catalog_based_ram, hardware_based_ram, gateway.ram_total_mb)
-
-        logger.debug(
-            f"Full eviction ({len(models_to_evict)} models): "
-            f"catalog={catalog_based_vram}MB, hardware={hardware_based_vram}MB, "
-            f"total={gateway.vram_total_mb}MB, using max={total_vram}MB VRAM"
-        )
-    else:
-        # Partial eviction - use catalog estimates (no per-model hardware metrics)
-        total_vram = catalog_based_vram
-        total_ram = catalog_based_ram
-        logger.debug(
-            f"Partial eviction "
-            f"({len(models_to_evict)}/{len(gateway.loaded_models)} models): "
-            f"catalog_based={catalog_based_vram}MB VRAM"
-        )
+    logger.debug(
+        f"Eviction estimate ({len(models_to_evict)}/{len(gateway.loaded_models)} "
+        f"models): available_after={total_vram}MB VRAM, {total_ram}MB RAM "
+        f"(effective_free={effective_vram_free}MB + freed={freed_vram_catalog}MB)"
+    )
 
     logger.debug(
         f"Eviction calculation: "

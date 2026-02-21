@@ -797,7 +797,8 @@ def _build_updated_catalog_entry(
                 "exceeds_cap",
                 "cap_exceeded_reason",
                 "total_layers",
-                # Timing/debugging fields (not part of schema)
+                # Measurement-time validation/debugging fields (not part of schema)
+                "offloaded_layers",
                 "stderr",
                 "load_time_sec",
                 "warmup_time_sec",

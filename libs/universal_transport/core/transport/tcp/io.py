@@ -2,6 +2,10 @@
 TCP I/O operations.
 
 This module handles sending and receiving data over TCP connections.
+
+Mirrors unix/io.py — send/receive/receive_with_timeout/close/is_connected are
+intentionally kept in sync. If you change the shared logic here, apply the
+same change there. A shared base is deferred until a third transport type exists.
 """
 
 import asyncio

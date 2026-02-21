@@ -86,6 +86,23 @@ def raise_model_unavailable_error(model_id: str) -> None:
     )
 
 
+def raise_load_failed_error(model_id: str, failed_gateways: list[str]) -> None:
+    """Raise non-retryable error when model failed to load on all gateways."""
+    raise HTTPException(
+        status_code=get_http_status(ErrorCode.RESOURCE_UNAVAILABLE),
+        detail=error_envelope(
+            code=ErrorCode.RESOURCE_UNAVAILABLE,
+            message=(f"Model {model_id} failed to load on all available gateways"),
+            source="master",
+            retryable=False,
+            data={
+                "model_id": str(model_id),
+                "failed_gateways": failed_gateways,
+            },
+        ),
+    )
+
+
 def raise_eviction_failed_error(
     model_id: str,
     gateway_name: str,

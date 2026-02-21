@@ -76,6 +76,17 @@ class FederatedGatewayManager(Sequential):
         # Remote configs by remote_stargate_id
         self._remote_configs: dict[str, Any] = {}  # RemoteStargateConfig
 
+        # Load failure tracking: gateway_id → {routing_key, ...}
+        # INV: routing_key ∈ _load_failed_models[gw] ⟹ model ineligible on gw
+        # INV: cleared on gateway disconnect/reconnect or telemetry MODEL_LOADED
+        # TODO: blacklist is permanent until gateway reconnects. For transient
+        # failures (e.g. OOM due to marginal VRAM when a non-CUDA consumer
+        # releases memory between check and load), this permanently blocks retry
+        # on the only eligible gateway. Implement a time-based TTL (e.g. 5 min)
+        # or a retry budget (e.g. 3 attempts) keyed by (gateway_id, routing_key)
+        # so that transient OOMs are retried while persistent failures are not.
+        self._load_failed_models: dict[str, set[str]] = {}
+
     async def start(self) -> None:
         """
         Start the sequential executor.
@@ -502,6 +513,49 @@ class FederatedGatewayManager(Sequential):
                 f"(loading_count={len(gw.loading_models)})"
             )
 
+    # === Load Failure Tracking ===
+
+    def mark_load_failed(self, gateway_id: str, model_id: ModelId) -> None:
+        """Record that a model failed to load on a gateway.
+
+        The model becomes ineligible for routing on this gateway until
+        the gateway disconnects/reconnects or telemetry confirms it loaded.
+        """
+        routing_key = model_id.routing_key
+        failed = self._load_failed_models.setdefault(gateway_id, set())
+        failed.add(routing_key)
+        logger.warning(
+            "🚫 Load failure recorded: %s on %s (%d total failures)",
+            model_id,
+            gateway_id,
+            len(failed),
+        )
+
+    def is_load_failed(self, gateway_id: str, model_id: ModelId) -> bool:
+        """Check whether a model previously failed to load on a gateway."""
+        return model_id.routing_key in self._load_failed_models.get(gateway_id, set())
+
+    def clear_load_failures(self, gateway_id: str) -> None:
+        """Clear all load failures for a gateway (called on disconnect/reconnect)."""
+        removed = self._load_failed_models.pop(gateway_id, None)
+        if removed:
+            logger.info(
+                "🔓 Cleared %d load failure(s) for %s", len(removed), gateway_id
+            )
+
+    def _clear_model_load_failure(self, gateway_id: str, model_id: ModelId) -> None:
+        """Clear a single model's load failure (called when telemetry confirms load)."""
+        failed = self._load_failed_models.get(gateway_id)
+        if failed and model_id.routing_key in failed:
+            failed.discard(model_id.routing_key)
+            if not failed:
+                del self._load_failed_models[gateway_id]
+            logger.info(
+                "🔓 Cleared load failure for %s on %s (telemetry confirmed loaded)",
+                model_id,
+                gateway_id,
+            )
+
     # === Gateway Creation (shared by all ingestion paths) ===
 
     def _ensure_gateway(
@@ -846,7 +900,7 @@ class FederatedGatewayManager(Sequential):
         # Validation logging for telemetry flow
         logger.info(
             f"📥 RESOURCE_UPDATE from {gw.gateway_id}: "
-            f"available={state.get('available_vram_mb')}MB, "
+            f"available={state.get('vram_free_mb')}MB, "
             f"total={state.get('vram_total_mb')}MB"
         )
 
@@ -908,6 +962,10 @@ class FederatedGatewayManager(Sequential):
         # Apply update (idempotent set union)
         gw.loaded_models = gw.loaded_models | {model_id}
         gw.loading_models = gw.loading_models - {model_id}
+
+        # Telemetry confirms model loaded — clear any prior load failure
+        if isinstance(model_id, ModelId):
+            self._clear_model_load_failure(gw.gateway_id, model_id)
 
         # Post-condition observation
         logger.debug(
@@ -1004,6 +1062,7 @@ class FederatedGatewayManager(Sequential):
                 if self._capacity_ledger:
                     self._capacity_ledger.remove_gateway(gateway_id)
                     logger.debug(f"📊 Capacity ledger: removed gateway {gateway_id}")
+                self.clear_load_failures(gateway_id)
                 del self._gateways[gateway_id]
                 removed.append(gateway_id)
 

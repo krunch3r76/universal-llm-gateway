@@ -16,6 +16,7 @@ from .selection_errors import (
     raise_capacity_error,
     raise_eviction_failed_error,
     raise_gateway_capacity_error,
+    raise_load_failed_error,
     raise_model_unavailable_error,
     raise_no_gateways_error,
 )
@@ -128,6 +129,19 @@ async def _route_to_federated_gateway(
         if kept:
             logger.info("🚫 Routing: excluded %s", context.excluded_gateway_ids)
             gateways_for_routing = kept
+
+    # Exclude gateways with persistent load failures for this model+context
+    load_failed_ids = [
+        g.name
+        for g in gateways_for_routing
+        if federated_manager.is_load_failed(g.name, model_id)
+    ]
+    if load_failed_ids:
+        eligible = [g for g in gateways_for_routing if g.name not in load_failed_ids]
+        if not eligible:
+            raise_load_failed_error(str(model_id), load_failed_ids)
+        logger.info("🚫 Filtered load-failed gateways: %s", load_failed_ids)
+        gateways_for_routing = eligible
 
     logger.debug(
         f"Router-only: {len(gateways_for_routing)} federated gateways available"
@@ -464,12 +478,18 @@ async def _route_to_federated_gateway(
 
         # Load model on remote gateway
         if federated_load_orchestrator:
-            await federated_load_orchestrator.ensure_model_loaded_on_remote(
-                selected_gateway.ref,  # FederatedGateway
-                model_id,
-                sticky=context.model_sticky,
-                request_id=context.request_id,
-            )
+            try:
+                await federated_load_orchestrator.ensure_model_loaded_on_remote(
+                    selected_gateway.ref,  # FederatedGateway
+                    model_id,
+                    sticky=context.model_sticky,
+                    request_id=context.request_id,
+                )
+            except Exception:
+                federated_manager.mark_load_failed(
+                    selected_gateway.ref.gateway_id, model_id
+                )
+                raise
             logger.info(f"✅ Model {model_id} loaded on {selected_gateway.name}")
         else:
             logger.warning(
