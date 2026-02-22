@@ -1,7 +1,7 @@
 # PRODUCTION: Multi-Host GPU Deployment Configuration
 #
 # USE CASE: Production deployment spanning multiple physical GPU workstations
-# DEPLOY: ./manage → Remotes → Add Remote, then Deploy Selected; or scripts/deploy-gpu-relay.sh
+# DEPLOY: ./manage → Remotes → Add Remote, then Deploy Selected
 #
 # ARCHITECTURE:
 #   Master Stargate (localhost:9999, host process)

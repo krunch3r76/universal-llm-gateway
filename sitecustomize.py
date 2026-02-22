@@ -5,14 +5,12 @@
 import os
 import sys
 
-# Detect if running from venv (site-packages) or project root
 _this_file = os.path.abspath(__file__)
 
-if 'site-packages' in _this_file:
-    # Running from venv - use hardcoded project root
-    _project_root = '/mnt/torus/projects/universal-llm-gateway'
+if "site-packages" in _this_file:
+    # Running from venv — launch scripts set PROJECT_ROOT in the environment
+    _project_root = os.environ.get("PROJECT_ROOT", "")
 else:
-    # Running from project root
     _project_root = os.path.dirname(_this_file)
 
 extra = [

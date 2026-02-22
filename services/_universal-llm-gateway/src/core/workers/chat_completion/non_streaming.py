@@ -144,18 +144,17 @@ class NonStreamingChatCompletion:
     def _format_response(self, response: dict, model_id: str) -> dict:
         """Format worker response for API layer."""
         content, finish_reason = "", "stop"
+        tool_calls = None
         if "choices" in response and response.get("choices"):
             c = response["choices"][0]
             if "message" in c:
-                content, finish_reason = (
-                    c["message"].get("content", ""),
-                    c.get("finish_reason", "stop"),
-                )
+                msg = c["message"]
+                content = msg.get("content", "")
+                finish_reason = c.get("finish_reason", "stop")
+                tool_calls = msg.get("tool_calls")
             elif "text" in c:
-                content, finish_reason = (
-                    c.get("text", ""),
-                    c.get("finish_reason", "stop"),
-                )
+                content = c.get("text", "")
+                finish_reason = c.get("finish_reason", "stop")
         usage = response.get("usage", {})
         prompt_tokens = usage.get("prompt_tokens", 0)
         completion_tokens = usage.get("completion_tokens", 0)
@@ -168,6 +167,8 @@ class NonStreamingChatCompletion:
             "finish_reason": finish_reason,
             "model_id": model_id,
         }
+        if tool_calls is not None:
+            result["tool_calls"] = tool_calls
         # Preserve llama.cpp timings for inference duration observability.
         # timings.predicted_ms = actual generation time (excludes queue wait).
         if "timings" in response:

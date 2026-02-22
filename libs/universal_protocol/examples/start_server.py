@@ -8,8 +8,8 @@ Usage:
     python start_server.py --worker-id 2
 
 Environment:
-    PYTHONPATH must include /mnt/torus/projects/universal-llm-gateway/libs
-    Use: sitecustomize.py automatically configures this.
+    PYTHONPATH must include <project_root>/libs
+    sitecustomize.py configures this automatically when run from the project root.
 
 Socket Path:
     /tmp/universal-protocol/worker-{id}.sock
@@ -118,7 +118,7 @@ Examples:
     except ImportError as e:
         logger.error(f"Failed to import Universal Protocol modules: {e}")
         logger.error(
-            "Ensure PYTHONPATH includes /mnt/torus/projects/universal-llm-gateway/libs"
+            "Ensure PYTHONPATH includes <project_root>/libs (sitecustomize.py handles this)"
         )
         return 1
 

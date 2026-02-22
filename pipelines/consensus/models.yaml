@@ -226,8 +226,39 @@ models:
   embedding:
     model: nomic-embed-text-v1-5-q8-0-2048-cpu
     system_prompt: ""
-    # 141M | semantic similarity | text embeddings
-    # USE FOR: Deduplication via semantic clustering
+    # 141M | 768-dim | 2K context | semantic similarity
+    # USE FOR: Lightweight dedup (threshold 0.95+ for topically dense claims)
+
+  # bge_large:
+  #   model: bge-large-en-v1-5   # TODO: confirm GGUF model ID on gateway
+  #   system_prompt: ""
+  #   # 335M | 1024-dim | 512 context | MTEB top-tier at size
+  #   # USE FOR: Drop-in upgrade from nomic with better discrimination
+
+  # gte_large:
+  #   model: gte-large-en-v1-5   # TODO: confirm GGUF model ID on gateway
+  #   system_prompt: ""
+  #   # 434M | 1024-dim | 8K context | Alibaba, strong retrieval
+  #   # USE FOR: Better context window than bge-large, similar quality
+
+  # octen_embedding_06b:
+  #   model: octen-embedding-0-6b   # TODO: confirm GGUF model ID on gateway
+  #   system_prompt: ""
+  #   # 0.6B | 1024-dim | 32K context | multilingual
+  #   # USE FOR: Primary dedup upgrade from nomic — 1024-dim allows ~0.92 threshold
+  #   #          (vs 0.95+ needed at 768-dim); still lightweight enough for pipeline use
+
+  # octen_embedding_4b:
+  #   model: octen-embedding-4b   # TODO: confirm GGUF model ID on gateway
+  #   system_prompt: ""
+  #   # 4B | 2560-dim | 32K context | healthcare + code + legal domain expertise
+  #   # NOT recommended for dedup — oversized for single-sentence claim comparison
+
+  # octen_embedding_8b:
+  #   model: octen-embedding-8b   # TODO: confirm GGUF model ID on gateway
+  #   system_prompt: ""
+  #   # 7.6B | 4096-dim | 32K context | RTEB #1 | best precision
+  #   # NOT recommended for dedup — far too large for the task
 
 
 # ==========================================================================

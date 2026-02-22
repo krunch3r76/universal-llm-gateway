@@ -34,13 +34,13 @@
 # ──────────────────────────────────────────────────────────────────────
 # BUILD_SCOPE Integration
 # ──────────────────────────────────────────────────────────────────────
-# When called with BUILD_SCOPE=llama (e.g. deploy-gpu-relay.sh or custom):
+# When called with BUILD_SCOPE=llama:
 #   - --no-vllm is passed, setting ENABLE_VLLM=false
 #   - vllm-builder produces an empty package directory (instant)
 #   - Only llama-builder and llama-server-builder do real work
 #
-# Example: BUILD_SCOPE=llama ./scripts/deploy-gpu-relay.sh rebuild
-#          BUILD_SCOPE=all  ./scripts/deploy-gpu-relay.sh rebuild   # default
+# Example: BUILD_SCOPE=llama ./docker/scripts/build/build-gpu.sh
+#          BUILD_SCOPE=all  ./docker/scripts/build/build-gpu.sh   # default
 #          TUI: ./manage → Services → Build Image
 
 # ──────────────────────────────────────────────────────────────────────
@@ -48,7 +48,6 @@
 # ──────────────────────────────────────────────────────────────────────
 # This script is called by:
 #   - ./manage (TUI → Services → Build Image)
-#   - scripts/deploy-gpu-relay.sh (build/rebuild commands, if used)
 #   - Developers directly (./docker/scripts/build/build-gpu.sh [OPTIONS])
 #
 # It constructs --build-arg flags and invokes:

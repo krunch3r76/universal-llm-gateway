@@ -4,7 +4,8 @@
 set -e
 
 STARGATE_URL="${STARGATE_URL:-http://localhost:9999}"
-PROJECT_ROOT="/mnt/torus/projects/universal-llm-gateway"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STARGATE_DIR="$PROJECT_ROOT/services/universal-stargate"
 
 echo "=== Phase 3: Pipeline HTTP Path Verification ==="

@@ -17,30 +17,14 @@ from pathlib import Path
 
 import psutil
 
-# Early path setup for universal_logging import (if needed in future)
-# This ensures ecosystem modules can be imported before configuration is loaded
-current_workdir = Path.cwd()
-use_superdir_early = (
-    os.getenv("USESUPERDIR", "").lower() in ("1", "true", "yes")
-    if os.getenv("USESUPERDIR")
-    else current_workdir.name == "universal-llm-gateway"
-)
-
-# Add appropriate paths for ecosystem module imports
-if use_superdir_early:
-    # Super repo mode: libs/ subdirectory of current working directory
-    libs_path = current_workdir / "libs"
-    if libs_path.exists():
-        sys.path.insert(0, str(libs_path))
-else:
-    # Non-super repo mode: parent directory of current working directory
-    parent_dir = current_workdir.parent
-    if parent_dir.exists():
-        sys.path.insert(0, str(parent_dir))
-
 # Repo root — derived from this file's position in the tree.
 # {repo}/services/universal-stargate/scripts/stargate_service_manager.py
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent.parent)
+
+# Early path setup for universal_logging import
+_libs_path = Path(_PROJECT_ROOT) / "libs"
+if _libs_path.exists() and str(_libs_path) not in sys.path:
+    sys.path.insert(0, str(_libs_path))
 
 # Note: Environment loading is now handled by wrapper script (start-stargate.sh)
 # which sources config/env/stargate.env and config/env/stargate.env.local from project root before
@@ -88,7 +72,7 @@ class StargateConfig:
         default_factory=lambda: os.path.expanduser("~/.venvs/universal")
     )
     workdir: str = ""
-    superrepo_root: str = ""
+    project_root: str = ""
 
     # Process configuration
     workers: int = 1
@@ -98,9 +82,6 @@ class StargateConfig:
     # Feature flags
     debug_mode: bool = True
     enable_tcp_monitoring: bool = False
-
-    # Runtime flags
-    use_superdir: bool = False
 
     @classmethod
     def from_environment(cls, environment: str = "default") -> "StargateConfig":
@@ -117,16 +98,6 @@ class StargateConfig:
             Configured StargateConfig instance
         """
 
-        # Path configuration - working directory detection is primary method
-        # Check environment variable first, then fall back to working directory name
-        use_superdir_env = os.getenv("USESUPERDIR")
-        if use_superdir_env:
-            use_superdir = use_superdir_env.lower() in ("1", "true", "yes")
-        else:
-            # Primary method: detect based on current working directory name
-            use_superdir = Path.cwd().name == "universal-llm-gateway"
-
-        # Create config from environment variables
         config = cls(
             host=os.getenv("STARGATE_HOST", "0.0.0.0"),
             port=int(os.getenv("STARGATE_PORT", "9999")),
@@ -145,22 +116,12 @@ class StargateConfig:
                 "STARGATE_ENABLE_TCP_MONITORING", "false"
             ).lower()
             == "true",
-            # Use the determined use_superdir value consistently
-            use_superdir=use_superdir,
+            project_root=_PROJECT_ROOT,
         )
 
-        # Use the determined use_superdir value consistently for path configuration
-        if config.use_superdir:
-            config.superrepo_root = (
-                os.getenv("SUPERREPO_ROOT")
-                or "/mnt/torus/projects/universal-llm-gateway"
-            )
-            config.workdir = os.getenv("STARGATE_WORKDIR") or str(
-                Path.cwd() / "services" / "universal-stargate"
-            )
-        else:
-            config.superrepo_root = os.getenv("SUPERREPO_ROOT") or "/mnt/torus/projects"
-            config.workdir = os.getenv("STARGATE_WORKDIR") or str(Path.cwd().resolve())
+        config.workdir = os.getenv("STARGATE_WORKDIR") or str(
+            Path(config.project_root) / "services" / "universal-stargate"
+        )
 
         return config
 
@@ -514,15 +475,9 @@ class StargateServiceManager:
 
     def _setup_environment(self) -> None:
         """Set up environment variables for the stargate process"""
-        # Build PYTHONPATH
-        if self.config.use_superdir:
-            # Super repo mode: libs/ subdirectory of superrepo root (not workdir)
-            libs_dir = str(Path(self.config.superrepo_root) / "libs")
-            pythonpath_parts = [libs_dir, self.config.workdir]
-        else:
-            pythonpath_parts = [self.config.workdir, "/mnt/torus/projects"]
+        libs_dir = str(Path(self.config.project_root) / "libs")
+        pythonpath_parts = [libs_dir, self.config.workdir]
 
-        # Preserve existing PYTHONPATH
         existing_pythonpath = os.environ.get("PYTHONPATH")
         if existing_pythonpath:
             pythonpath_parts.append(existing_pythonpath)

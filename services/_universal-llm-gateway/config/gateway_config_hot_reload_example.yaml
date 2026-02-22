@@ -33,7 +33,7 @@ process_isolation:
 
 worker_processes:
   use_inference_djinn_venv: false
-  inference_djinn_venv_path: "/mnt/torus/projects/inference-djinn/.djinn-venv/bin/python"
+  inference_djinn_venv_path: ""  # Set to absolute path of djinn venv python if use_inference_djinn_venv is true
   detached: true
 
 model_registry:

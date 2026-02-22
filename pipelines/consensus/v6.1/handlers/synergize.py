@@ -46,7 +46,7 @@ _INPUT_INDEX = "_input_index"
 class SynergizeHandler(BaseHandler):
     """Merge N verified fact sets via embedding dedup. No LLM call."""
 
-    step_type: str = "consensus_synergize_v5"
+    step_type: str = "consensus_synergize_v5_0"
 
     @override
     async def execute(

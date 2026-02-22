@@ -246,12 +246,12 @@ class EngineFactory:
 
         elif engine_type == "vllm":
             try:
-                from inference_djinn.engines.vllm.engine import VLLMEngine
+                from inference_djinn.engines.vllm.server import VLLMServerEngine
 
-                return VLLMEngine
+                return VLLMServerEngine
             except ImportError as e:
                 raise ImportError(
-                    "vLLM engine is not available - inference_djinn module not found"
+                    "vLLM server engine not available (inference_djinn)"
                 ) from e
 
         elif engine_type == "faster-whisper":

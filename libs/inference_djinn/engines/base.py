@@ -125,17 +125,14 @@ class BaseEngine(ABC):
         # This allows engines to receive all generation parameters without hardcoded filtering
         generation_params = {}
 
-        # Fields that are NOT generation parameters and should be excluded
+        # Fields that are NOT generation parameters and should be excluded.
+        # tools, tool_choice, function_call, functions pass through for engines that forward to OpenAI-compatible servers.
         non_generation_fields = {
             "prompt",
             "messages",
             "model",
             "user",
             "logit_bias",
-            "tools",
-            "tool_choice",
-            "function_call",
-            "functions",
         }
 
         for key, value in data.items():

@@ -72,9 +72,7 @@ class WorkerProcessesConfig(BaseModel):
     """Worker process configuration settings"""
 
     use_inference_djinn_venv: bool = False
-    inference_djinn_venv_path: str = (
-        "/mnt/torus/projects/inference-djinn/.djinn-venv/bin/python"
-    )
+    inference_djinn_venv_path: str = ""
     detached: bool = True
 
 

@@ -51,7 +51,7 @@ process_isolation:
 # Worker process settings
 worker_processes:
   use_inference_djinn_venv: false  # Set to false to inherit gateway's venv ($HOME/.venvs/universal)
-  inference_djinn_venv_path: "/mnt/torus/projects/inference_djinn/.djinn-venv/bin/python"  # Only used if use_inference_djinn_venv is true
+  inference_djinn_venv_path: ""  # Set to absolute path of djinn venv python if use_inference_djinn_venv is true
   detached: false  # Run workers as detached background processes
 
 # Model registry settings

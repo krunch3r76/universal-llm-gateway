@@ -47,6 +47,8 @@ from src.schemas.chat_completion import (
     ChatMessage,
 )
 
+from .disconnect import inference_with_disconnect_watch
+
 # Remove import - truncation now automatic
 from .events import emit_inference_failed_nowait, emit_request_queued_nowait
 from .model_resolution import resolve_model_id
@@ -164,6 +166,7 @@ async def create_chat_completion(
             gateway_config=gateway_config,
             generation_params=generation_params,
             timeout_hint=timeout_hint,
+            request=request,
         )
 
 
@@ -206,9 +209,13 @@ def _build_completion_response(
         ChatCompletionResponse: OpenAI-format response
     """
     content = completion_result.get("content", "")
-    response_message = ChatMessage(role="assistant", content=content)
+    finish_reason = completion_result.get("finish_reason", "stop")
+    message_kw: dict = {"role": "assistant", "content": content}
+    if "tool_calls" in completion_result:
+        message_kw["tool_calls"] = completion_result["tool_calls"]
+    response_message = ChatMessage(**message_kw)
     choice = ChatCompletionChoice(
-        index=0, message=response_message, finish_reason="stop"
+        index=0, message=response_message, finish_reason=finish_reason
     )
     usage = ChatCompletionUsage(
         prompt_tokens=completion_result.get("prompt_tokens", 0),
@@ -234,6 +241,7 @@ async def _generate_non_streaming_response(
     gateway_config: GatewayConfig,
     generation_params: dict,
     timeout_hint: float | None = None,
+    request: Request | None = None,
 ):
     """Generate non-streaming completion response."""
     try:
@@ -267,15 +275,21 @@ async def _generate_non_streaming_response(
 
                 raise RuntimeError(f"Failed to load model {model_id}")
 
-        # Generate completion with optional timeout hint
-        completion_result = await worker_controller.generate_chat_completion(
+        inference_coro = worker_controller.generate_chat_completion(
             model_id=model_id,
             messages=messages,
             correlation_id=correlation_id,
-            _request_id=request_id,  # Pass request_id for cancellation tracking
-            _timeout_hint=timeout_hint,  # Pass timeout hint from upstream
+            _request_id=request_id,
+            _timeout_hint=timeout_hint,
             **generation_params,
         )
+
+        if request is None:
+            completion_result = await inference_coro
+        else:
+            completion_result = await inference_with_disconnect_watch(
+                inference_coro, request, worker_controller, model_id, request_id
+            )
 
         # Build and return response
         response = _build_completion_response(completion_result, model_id)

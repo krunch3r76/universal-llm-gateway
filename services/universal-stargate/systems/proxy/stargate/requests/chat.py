@@ -28,9 +28,12 @@ logger = get_logger(__name__)
 
 
 def _is_capacity_error(exc: HTTPException) -> bool:
-    """Return True iff HTTPException indicates retryable capacity/load error."""
-    # 503 = resource unavailable / at capacity
-    # 504 = load timeout (model may still be loading on remote)
+    """Return True iff HTTPException indicates retryable capacity/load error.
+
+    Priority: explicit retryable field > metadata-based is_retryable(code).
+    The explicit field is authoritative when present (set by our error factories).
+    The code-based fallback handles upstream errors without the field.
+    """
     if exc.status_code not in (503, 504):
         return False
 
@@ -38,8 +41,8 @@ def _is_capacity_error(exc: HTTPException) -> bool:
     if not isinstance(detail, dict):
         return False
 
-    if detail.get("retryable", False):
-        return True
+    if "retryable" in detail:
+        return detail["retryable"]
 
     code = detail.get("code", "")
     return is_retryable(code)

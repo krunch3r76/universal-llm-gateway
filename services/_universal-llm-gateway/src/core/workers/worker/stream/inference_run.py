@@ -174,26 +174,29 @@ class StreamInferenceRunHandlers:
                 chunk_count += 1
                 reset_idle()
 
-                # Extract content from OpenAI-format chunk
-                # Engine returns: {"choices": [{"delta": {"content": "..."}}]} for chat
+                # Extract content and tool_calls from OpenAI-format chunk
+                # Engine returns: {"choices": [{"delta": {"content": "...", "tool_calls": [...]}}]} for chat
                 # or {"choices": [{"text": "..."}]} for completions
                 content = ""
+                tool_calls = None
                 if isinstance(chunk, dict) and chunk.get("choices"):
                     choice = chunk["choices"][0]
-                    # Try chat format first (delta.content)
                     delta = choice.get("delta", {})
                     if "content" in delta:
                         content = delta["content"] or ""
-                    # Fall back to completion format (text)
                     elif "text" in choice:
                         content = choice["text"] or ""
+                    if "tool_calls" in delta:
+                        tool_calls = delta["tool_calls"]
 
                 # Format as SSE token frame
-                frame = {
+                frame: dict = {
                     "t": "token",
                     "i": chunk_count - 1,
                     "txt": content,
                 }
+                if tool_calls is not None:
+                    frame["tool_calls"] = tool_calls
 
                 # Track token count (approximate - count words as tokens)
                 if content:

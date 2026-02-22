@@ -14,6 +14,7 @@ ARCHITECTURE NOTES (embedding mode):
 - Flash attention auto-disabled for BERT/embedding architectures
 """
 
+import asyncio
 import hashlib
 import os
 from collections.abc import AsyncGenerator
@@ -23,9 +24,9 @@ import httpx
 from universal_logging import get_logger
 
 from inference_djinn.engines.base import BaseEngine
+from inference_djinn.http.openai_client import OpenAIServerClient
 from inference_djinn.utils.types import TokenCountResult
 
-from .client import LlamaServerClient
 from .config import APIFormat, ServerConfig
 from .server import (
     LlamaServerManager,
@@ -203,7 +204,7 @@ class NativeGGUFEngine(BaseEngine):
         self.startup_timeout = startup_timeout
 
         self.server_manager: LlamaServerManager | None = None
-        self.client: LlamaServerClient | None = None
+        self.client: OpenAIServerClient | None = None
         self._crashed = False
 
         # Embedding task prefix configuration (for models like Nomic)
@@ -237,7 +238,7 @@ class NativeGGUFEngine(BaseEngine):
             await self.server_manager.start(startup_timeout=self.startup_timeout)
 
             # Create client — pass socket_path for UDS transport
-            self.client = LlamaServerClient(
+            self.client = OpenAIServerClient(
                 base_url=self.server_manager.base_url,
                 timeout=self.config.timeout,
                 socket_path=self.config.socket_path,
@@ -285,13 +286,13 @@ class NativeGGUFEngine(BaseEngine):
     async def generate(
         self,
         data: dict[str, Any],
-        cancellation_event: Any = None,
+        cancellation_event: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """Non-streaming generation via llama-server HTTP API.
 
         Args:
             data: Generation parameters with prompt/messages
-            cancellation_event: Optional cancellation signal (not yet implemented)
+            cancellation_event: Optional cancellation signal
 
         Returns:
             OpenAI-compatible completion response
@@ -312,17 +313,38 @@ class NativeGGUFEngine(BaseEngine):
             validate_response_format(response_format)
 
         if messages:
-            result = await self.client.chat_completions(
+            coro = self.client.chat_completions(
                 messages=messages,
                 **params,
             )
         elif prompt:
-            result = await self.client.completions(
+            coro = self.client.completions(
                 prompt=prompt,
                 **params,
             )
         else:
             raise ValueError("data must contain 'messages' or 'prompt'")
+
+        # Cancellation: poll event while waiting so connection closes → slot freed
+        if cancellation_event is None:
+            result = await coro
+        else:
+            task = asyncio.create_task(coro)
+            try:
+                while not task.done():
+                    if cancellation_event.is_set():
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+                        raise asyncio.CancelledError
+                    await asyncio.sleep(0.1)
+                result = task.result()
+            except asyncio.CancelledError:
+                if not task.done():
+                    task.cancel()
+                raise
 
         # Post-validation: verify output matches schema
         if response_format and response_format.get("type") == "json_schema":
@@ -334,7 +356,7 @@ class NativeGGUFEngine(BaseEngine):
     async def generate_stream(
         self,
         data: dict[str, Any],
-        cancellation_event: Any = None,
+        cancellation_event: asyncio.Event | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Streaming generation via llama-server SSE.
 
@@ -377,7 +399,7 @@ class NativeGGUFEngine(BaseEngine):
 
         async for chunk in stream:
             if cancellation_event and cancellation_event.is_set():
-                # Yield cancellation chunk per BaseEngine contract
+                await stream.aclose()
                 yield {"choices": [{"delta": {}, "finish_reason": "cancelled"}]}
                 return
 

@@ -39,7 +39,7 @@ def _split_sentences(text: str) -> list[str]:
 class CoverageAuditHandler(BaseHandler):
     """Embedding-based fact coverage audit. Audit-only, no pipeline side effects."""
 
-    step_type: str = "consensus_coverage_audit_v6"
+    step_type: str = "consensus_coverage_audit_v6_1"
 
     @override
     async def execute(

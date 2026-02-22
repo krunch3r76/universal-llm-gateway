@@ -57,12 +57,11 @@ def convert_worker_chunk_to_openai_format(chunk: dict) -> dict:
     for choice in chunk["choices"]:
         openai_choice: dict = {}
 
-        # Convert 'text' field to 'delta' format
-        if "text" in choice:
-            openai_choice["delta"] = {"content": choice["text"]}
-        elif "delta" in choice:
-            # Already in delta format
+        # Convert 'text' field to 'delta' format; preserve full delta (content + tool_calls)
+        if "delta" in choice:
             openai_choice["delta"] = choice["delta"]
+        elif "text" in choice:
+            openai_choice["delta"] = {"content": choice["text"]}
 
         # Preserve index and finish_reason
         if "index" in choice:

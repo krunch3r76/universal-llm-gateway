@@ -76,16 +76,11 @@ class FederatedGatewayManager(Sequential):
         # Remote configs by remote_stargate_id
         self._remote_configs: dict[str, Any] = {}  # RemoteStargateConfig
 
-        # Load failure tracking: gateway_id → {routing_key, ...}
-        # INV: routing_key ∈ _load_failed_models[gw] ⟹ model ineligible on gw
-        # INV: cleared on gateway disconnect/reconnect or telemetry MODEL_LOADED
-        # TODO: blacklist is permanent until gateway reconnects. For transient
-        # failures (e.g. OOM due to marginal VRAM when a non-CUDA consumer
-        # releases memory between check and load), this permanently blocks retry
-        # on the only eligible gateway. Implement a time-based TTL (e.g. 5 min)
-        # or a retry budget (e.g. 3 attempts) keyed by (gateway_id, routing_key)
-        # so that transient OOMs are retried while persistent failures are not.
-        self._load_failed_models: dict[str, set[str]] = {}
+        # Load failure tracking: gateway_id → {routing_key → monotonic_timestamp}
+        # INV: routing_key ∈ _load_failed_models[gw] ∧ age < TTL ⟹ model ineligible
+        # INV: cleared on gateway disconnect/reconnect, telemetry MODEL_LOADED, or TTL
+        self._load_failed_models: dict[str, dict[str, float]] = {}
+        self._load_failure_ttl_s: float = 120.0
 
     async def start(self) -> None:
         """
@@ -519,21 +514,44 @@ class FederatedGatewayManager(Sequential):
         """Record that a model failed to load on a gateway.
 
         The model becomes ineligible for routing on this gateway until
-        the gateway disconnects/reconnects or telemetry confirms it loaded.
+        TTL expires, gateway disconnects/reconnects, or telemetry confirms load.
         """
         routing_key = model_id.routing_key
-        failed = self._load_failed_models.setdefault(gateway_id, set())
-        failed.add(routing_key)
+        failed = self._load_failed_models.setdefault(gateway_id, {})
+        failed[routing_key] = time.monotonic()
         logger.warning(
-            "🚫 Load failure recorded: %s on %s (%d total failures)",
+            "🚫 Load failure recorded: %s on %s (%d total failures, ttl=%ds)",
             model_id,
             gateway_id,
             len(failed),
+            self._load_failure_ttl_s,
         )
 
     def is_load_failed(self, gateway_id: str, model_id: ModelId) -> bool:
-        """Check whether a model previously failed to load on a gateway."""
-        return model_id.routing_key in self._load_failed_models.get(gateway_id, set())
+        """Check whether a model previously failed to load on a gateway.
+
+        Returns False if the failure has expired (age > TTL), cleaning up the entry.
+        """
+        failed = self._load_failed_models.get(gateway_id)
+        if not failed:
+            return False
+        ts = failed.get(model_id.routing_key)
+        if ts is None:
+            return False
+        age = time.monotonic() - ts
+        if age > self._load_failure_ttl_s:
+            del failed[model_id.routing_key]
+            if not failed:
+                del self._load_failed_models[gateway_id]
+            logger.info(
+                "🔓 Load failure expired for %s on %s (age=%.0fs > ttl=%.0fs)",
+                model_id,
+                gateway_id,
+                age,
+                self._load_failure_ttl_s,
+            )
+            return False
+        return True
 
     def clear_load_failures(self, gateway_id: str) -> None:
         """Clear all load failures for a gateway (called on disconnect/reconnect)."""
@@ -547,7 +565,7 @@ class FederatedGatewayManager(Sequential):
         """Clear a single model's load failure (called when telemetry confirms load)."""
         failed = self._load_failed_models.get(gateway_id)
         if failed and model_id.routing_key in failed:
-            failed.discard(model_id.routing_key)
+            del failed[model_id.routing_key]
             if not failed:
                 del self._load_failed_models[gateway_id]
             logger.info(
@@ -966,6 +984,38 @@ class FederatedGatewayManager(Sequential):
         # Telemetry confirms model loaded — clear any prior load failure
         if isinstance(model_id, ModelId):
             self._clear_model_load_failure(gw.gateway_id, model_id)
+
+        # Restore capacity in ledger (symmetric with remove_model in unload handler).
+        # model_resources persists across unload/reload cycles (populated from initial
+        # snapshot only), so max_concurrent_requests is always available here.
+        if self._capacity_ledger and isinstance(model_id, ModelId):
+            res = gw.model_resources.get(model_id)
+            if res is not None:
+                max_concurrent_raw = res.get("max_concurrent_requests", 1)
+                try:
+                    max_concurrent = int(max_concurrent_raw)
+                except (TypeError, ValueError):
+                    logger.error(
+                        "Invalid max_concurrent_requests=%r for %s/%s; defaulting to 1",
+                        max_concurrent_raw,
+                        gw.gateway_id,
+                        model_id.routing_key,
+                    )
+                    max_concurrent = 1
+                self._capacity_ledger.set_capacity(
+                    gateway_id=gw.gateway_id,
+                    model_id=model_id.routing_key,
+                    max_concurrent=max_concurrent,
+                )
+                logger.debug(
+                    f"📊 Capacity ledger: restored {gw.gateway_id}/{model_id} "
+                    f"max_concurrent={max_concurrent}"
+                )
+            else:
+                logger.warning(
+                    f"📊 Capacity ledger: no model_resources for {model_id} on "
+                    f"{gw.gateway_id}, capacity not restored"
+                )
 
         # Post-condition observation
         logger.debug(

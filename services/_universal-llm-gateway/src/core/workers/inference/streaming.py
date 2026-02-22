@@ -391,11 +391,14 @@ class StreamingInferenceManager:
                                     code=error_code, message=error_msg, data=error_data
                                 )
                             elif frame_type == "token":
-                                # Regular token - yield the chunk
+                                # Regular token - yield the chunk (content + optional tool_calls)
+                                delta: dict = {"content": message.get("txt", "")}
+                                if "tool_calls" in message:
+                                    delta["tool_calls"] = message["tool_calls"]
                                 chunk_data = {
                                     "choices": [
                                         {
-                                            "text": message.get("txt", ""),
+                                            "delta": delta,
                                             "index": 0,
                                             "finish_reason": message.get(
                                                 "finish_reason"
@@ -406,8 +409,6 @@ class StreamingInferenceManager:
                                 # Add token index if available
                                 if "i" in message:
                                     chunk_data["token_index"] = message["i"]
-
-                                message.get("txt", "")[:20]
 
                                 yield chunk_data
 

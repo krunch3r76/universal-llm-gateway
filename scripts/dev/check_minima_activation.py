@@ -11,11 +11,11 @@ Usage:
 """
 
 import sys
+from pathlib import Path
 
 import numpy as np
 
-# Add libs to path for imports
-sys.path.insert(0, "/mnt/torus/projects/universal-llm-gateway/libs")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "libs"))
 
 from inference_djinn.engines.whisper.streaming.sliding_window.probability_analyzer import (
     SpeechProbabilityAnalyzer,

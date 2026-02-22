@@ -4,12 +4,13 @@ Script to update all log_process_event calls in the process manager to use nativ
 """
 
 import re
+from pathlib import Path
 
 
 def update_logging_calls():
     """Update all log_process_event calls to use structured_logger.log_operation."""
 
-    file_path = "/mnt/torus/projects/process_ipc/process/manager.py"
+    file_path = str(Path(__file__).resolve().parent / "process" / "manager.py")
 
     # Read the file
     with open(file_path) as f:

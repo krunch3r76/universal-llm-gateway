@@ -9,7 +9,7 @@ Maintainer workflow for adding and measuring a CPU-profiled model in federated d
 
 ### Quick env setup
 ```bash
-export ROOT="/mnt/torus/projects/universal-llm-gateway"
+export ROOT="/path/to/universal-llm-gateway"
 export PY="$HOME/.venvs/universal/bin/python"
 export STARGATE_URL="http://localhost:9999"  # Master/Relay Stargate endpoint
 export DEST="/mnt/torus/models"
@@ -59,7 +59,7 @@ $PY -m scripts.model_manager generate "$MODEL_PATH" \
 
 **Expected output:**
 ```
-✅ gemma-3-1b-it-q6-k (created at /mnt/torus/projects/universal-llm-gateway/config/models/text_llm/llama-cpp/gemma-3-1b-it-q6-k.yaml)
+✅ gemma-3-1b-it-q6-k (created at /path/to/universal-llm-gateway/config/models/text_llm/llama-cpp/gemma-3-1b-it-q6-k.yaml)
 
 1 model(s) written to static catalog
 ```
@@ -114,7 +114,7 @@ Streaming logs from /gateway/jobs/<job-id>/logs...
 ✅ Job completed successfully
 
 📝 Updating catalog with measurement results...
-   Updated static catalog: /mnt/torus/projects/universal-llm-gateway/config/models/text_llm/llama-cpp/gemma-3-1b-it-q6-k.yaml
+   Updated static catalog: /path/to/universal-llm-gateway/config/models/text_llm/llama-cpp/gemma-3-1b-it-q6-k.yaml
 ✅ Catalog updated successfully
 ```
 

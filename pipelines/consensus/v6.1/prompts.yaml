@@ -460,9 +460,6 @@ prompts:
 
       QUESTION CONTEXT: {cleaned_question}
 
-      CONTEXT (neighboring claims for disambiguation):
-      {neighbor_context}
-
       {parent_claim_context}
     template: |
       {claim_text}
@@ -515,9 +512,6 @@ prompts:
       You MUST return exactly {claim_count} evaluations, one per numbered claim so not no indices repeat.
 
       QUESTION CONTEXT: {cleaned_question}
-
-      SURROUNDING CONTEXT (neighboring claims outside this batch, for disambiguation only):
-      {surrounding_context}
     template: |
 
       {numbered_claims}

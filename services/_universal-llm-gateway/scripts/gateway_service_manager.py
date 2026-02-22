@@ -16,36 +16,14 @@ from pathlib import Path
 
 import psutil
 
+# Repo root — derived from this file's position in the tree.
+# {repo}/services/_universal-llm-gateway/scripts/gateway_service_manager.py
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent.parent)
+
 # Early path setup for universal_logging import
-script_dir = Path(__file__).parent.resolve()
-
-try:
-    # Determine mode based on current working directory (primary method)
-    current_workdir = Path.cwd()
-    use_superdir = (
-        os.getenv("USESUPERDIR", "").lower() in ("1", "true", "yes")
-        if os.getenv("USESUPERDIR")
-        else current_workdir.name == "universal-llm-gateway"
-    )
-
-    # Add appropriate paths for universal_logging import
-    if use_superdir:
-        # Super repo mode: libs/ subdirectory of current working directory
-        libs_path = current_workdir / "libs"
-        if libs_path.exists():
-            sys.path.insert(0, str(libs_path))
-    else:
-        # Non-super repo mode: parent directory of current working directory
-        parent_dir = current_workdir.parent
-        if parent_dir.exists():
-            sys.path.insert(0, str(parent_dir))
-
-except Exception:
-    # Fallback if path detection fails
-    fallback_paths = ["/mnt/torus/projects"]
-    for path in fallback_paths:
-        if Path(path).exists():
-            sys.path.insert(0, path)
+_libs_path = Path(_PROJECT_ROOT) / "libs"
+if _libs_path.exists() and str(_libs_path) not in sys.path:
+    sys.path.insert(0, str(_libs_path))
 
 from universal_logging import get_logger  # noqa: E402
 
@@ -111,7 +89,7 @@ class GatewayConfig:
         default_factory=lambda: os.path.expanduser("~/.venvs/universal")
     )
     workdir: str = ""
-    superrepo_root: str = ""
+    project_root: str = ""
 
     # Resource configuration
     metrics_message_retention: int = 10000
@@ -150,9 +128,6 @@ class GatewayConfig:
     omp_num_threads: int | None = None  # OpenMP threads (auto-detect optimal value)
     mkl_num_threads: int | None = None  # Intel MKL threads (Intel CPUs only)
     tokenizers_parallelism: str | None = None  # HuggingFace tokenizers parallelism
-
-    # Runtime flags
-    use_superdir: bool = False
 
     @classmethod
     def from_environment(cls, environment: str = "default") -> "GatewayConfig":
@@ -218,24 +193,12 @@ class GatewayConfig:
             tokenizers_parallelism=(
                 tok_val if (tok_val := os.getenv("TOKENIZERS_PARALLELISM")) else None
             ),
-            # Path configuration - working directory detection is primary method
-            use_superdir=os.getenv("USESUPERDIR", "").lower() in ("1", "true", "yes")
-            if os.getenv("USESUPERDIR")
-            else Path.cwd().name == "universal-llm-gateway",
+            project_root=_PROJECT_ROOT,
         )
 
-        # Use the determined use_superdir value consistently for path configuration
-        if config.use_superdir:
-            config.superrepo_root = (
-                os.getenv("SUPERREPO_ROOT")
-                or "/mnt/torus/projects/universal-llm-gateway"
-            )
-            config.workdir = os.getenv("GATEWAY_WORKDIR") or str(
-                Path.cwd() / "services" / "_universal-llm-gateway"
-            )
-        else:
-            config.superrepo_root = os.getenv("SUPERREPO_ROOT") or "/mnt/torus/projects"
-            config.workdir = os.getenv("GATEWAY_WORKDIR") or str(Path.cwd().resolve())
+        config.workdir = os.getenv("GATEWAY_WORKDIR") or str(
+            Path(config.project_root) / "services" / "_universal-llm-gateway"
+        )
 
         return config
 
@@ -287,6 +250,7 @@ class GatewayConfig:
         if self.unix_socket:
             # Use socket path hash for unique PID file
             import hashlib
+
             socket_hash = hashlib.md5(self.unix_socket.encode()).hexdigest()[:8]
             return f"/tmp/universal-llm-gateway-unix-{socket_hash}.pid"
         return f"/tmp/universal-llm-gateway-{self.port}.pid"
@@ -595,20 +559,11 @@ class GatewayServiceManager:
 
     def _setup_environment(self) -> None:
         """Set up environment variables for the gateway process"""
-        # Build PYTHONPATH based on super repo mode
-        if self.config.use_superdir:
-            # Super repo mode: libs/ subdirectory of superrepo root (not workdir)
-            libs_dir = str(Path(self.config.superrepo_root) / "libs")
-            pythonpath_parts = [libs_dir, self.config.workdir]
-        else:
-            # Non-super repo mode: parent directory of current working directory
-            parent_dir = str(Path(self.config.workdir).parent)
-            pythonpath_parts = [self.config.workdir, parent_dir]
+        libs_dir = str(Path(self.config.project_root) / "libs")
+        pythonpath_parts = [libs_dir, self.config.workdir]
 
-        # Add any additional paths from environment
         pythonpath_from_env = os.environ.get("PYTHONPATH", "")
         if pythonpath_from_env:
-            # Only add paths that aren't already included
             for path in pythonpath_from_env.split(":"):
                 if path and path not in pythonpath_parts:
                     pythonpath_parts.append(path)
@@ -766,7 +721,7 @@ class GatewayServiceManager:
         # Find and stop existing processes (excluding ourselves)
         gateway_processes = self.process_manager.find_gateway_processes(
             port=self.config.port if not self.config.unix_socket else None,
-            unix_socket=self.config.unix_socket
+            unix_socket=self.config.unix_socket,
         )
         port_processes = []
         if not self.config.unix_socket:
@@ -870,10 +825,7 @@ class GatewayServiceManager:
             )
         else:
             # TCP mode
-            cmd.extend([
-                "--host", self.config.host,
-                "--port", str(self.config.port)
-            ])
+            cmd.extend(["--host", self.config.host, "--port", str(self.config.port)])
             self.logger.info(
                 f"Starting uvicorn on TCP: {self.config.host}:{self.config.port}"
             )
@@ -922,7 +874,7 @@ class GatewayServiceManager:
             # Clean up any orphaned processes with immediate termination
             remaining_processes = self.process_manager.find_gateway_processes(
                 port=self.config.port if not self.config.unix_socket else None,
-                unix_socket=self.config.unix_socket
+                unix_socket=self.config.unix_socket,
             )
             current_pid = os.getpid()
             remaining_processes = [
@@ -980,7 +932,7 @@ class GatewayServiceManager:
             # Clean up any orphaned processes (excluding ourselves)
             remaining_processes = self.process_manager.find_gateway_processes(
                 port=self.config.port if not self.config.unix_socket else None,
-                unix_socket=self.config.unix_socket
+                unix_socket=self.config.unix_socket,
             )
             current_pid = os.getpid()
             remaining_processes = [

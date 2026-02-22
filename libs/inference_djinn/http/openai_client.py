@@ -1,13 +1,8 @@
 """
-HTTP client for llama-server.
+Generic HTTP client for OpenAI-compatible inference servers.
 
-Provides high-level interface for:
-- Text completion
-- Chat completion
-- Streaming
-- Embeddings (requires --embedding mode)
-- Model management (router mode)
-- Token counting
+Provides high-level interface for chat completions, streaming, and embeddings.
+Used by both llama-server (GGUF) and vllm serve backends.
 """
 
 import json
@@ -20,16 +15,16 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 
-class LlamaServerClient:
+class OpenAIServerClient:
     """
-    HTTP client for llama-server.
+    HTTP client for any OpenAI-compatible server (llama-server, vllm serve, etc.).
 
-    Provides high-level interface for:
+    Provides:
+    - Chat completion (streaming and non-streaming)
     - Text completion
-    - Chat completion
-    - Streaming
-    - Embeddings (requires --embedding mode)
-    - Model management (router mode)
+    - Embeddings
+    - Health check
+    - Optional: tokenize, model management (server-specific)
     """
 
     def __init__(
@@ -37,13 +32,12 @@ class LlamaServerClient:
         base_url: str,
         timeout: float = 600.0,
         socket_path: str | None = None,
-    ):
-        """Initialize client.
-
+    ) -> None:
+        """
         Args:
-            base_url: Base URL of llama-server (e.g., http://localhost:8080)
-            timeout: Default timeout for requests
-            socket_path: Unix socket path (preferred over TCP when set)
+            base_url: Base URL (e.g., http://localhost:8080)
+            timeout: Request timeout in seconds
+            socket_path: Unix socket path (overrides base_url when set)
         """
         self.base_url = base_url
         self.timeout = timeout
@@ -64,12 +58,12 @@ class LlamaServerClient:
             timeout=self.timeout,
         )
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "OpenAIServerClient":
         """Async context manager entry."""
         self._client = self._build_client()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Async context manager exit."""
         if self._client:
             await self._client.aclose()
@@ -108,14 +102,14 @@ class LlamaServerClient:
                         logger.warning(f"Failed to parse SSE data: {data}")
 
     async def chat_completions(
-        self, messages: list[dict[str, str]], **params: Any
+        self, messages: list[dict[str, Any]], **params: Any
     ) -> dict[str, Any]:
         """POST /v1/chat/completions (non-streaming)."""
-        body = {"messages": messages, **params}
+        body: dict[str, Any] = {"messages": messages, **params}
         return await self._post("/v1/chat/completions", body)
 
     async def chat_completions_stream(
-        self, messages: list[dict[str, str]], **params: Any
+        self, messages: list[dict[str, Any]], **params: Any
     ) -> AsyncGenerator[dict[str, Any], None]:
         """POST /v1/chat/completions (streaming SSE)."""
         body = {"messages": messages, **params}
@@ -140,44 +134,33 @@ class LlamaServerClient:
         input_texts: list[str] | str,
         **params: Any,
     ) -> dict[str, Any]:
-        """POST /v1/embeddings — generate text embeddings.
-
-        Args:
-            input_texts: Single string or list of strings to embed
-            **params: Additional parameters (encoding_format, etc.)
-
-        Returns:
-            OpenAI-compatible embedding response
-        """
+        """POST /v1/embeddings — generate text embeddings."""
         body: dict[str, Any] = {"input": input_texts, **params}
         return await self._post("/v1/embeddings", body)
 
-    async def tokenize(self, text: str) -> list[int]:
-        """POST /tokenize — accurate token counting."""
-        result = await self._post("/tokenize", {"content": text})
+    async def tokenize(self, text: str, *, model: str | None = None) -> list[int]:
+        """POST /tokenize — token counting.
+
+        Args:
+            text: Text to tokenize.
+            model: When set, uses vLLM format `{"model": ..., "prompt": ...}`.
+                   When None, uses llama-server format `{"content": ...}`.
+        """
+        if model:
+            payload = {"model": model, "prompt": text}
+        else:
+            payload = {"content": text}
+        result = await self._post("/tokenize", payload)
         return result["tokens"]
 
     async def list_models(self) -> dict[str, Any]:
-        """
-        List available models (router mode).
-
-        Returns:
-            Models list with status (loaded, loading, unloaded)
-        """
+        """GET /models — list models (llama-server router mode)."""
         response = await self.client.get("/models")
         response.raise_for_status()
         return response.json()
 
     async def load_model(self, model: str) -> dict[str, Any]:
-        """
-        Manually load model (router mode).
-
-        Args:
-            model: Model ID to load
-
-        Returns:
-            Load status response
-        """
+        """POST /models/load — load model (llama-server router mode)."""
         response = await self.client.post(
             "/models/load",
             json={"model": model},
@@ -186,15 +169,7 @@ class LlamaServerClient:
         return response.json()
 
     async def unload_model(self, model: str) -> dict[str, Any]:
-        """
-        Manually unload model (router mode).
-
-        Args:
-            model: Model ID to unload
-
-        Returns:
-            Unload status response
-        """
+        """POST /models/unload — unload model (llama-server router mode)."""
         response = await self.client.post(
             "/models/unload",
             json={"model": model},
@@ -203,12 +178,7 @@ class LlamaServerClient:
         return response.json()
 
     async def health(self) -> dict[str, Any]:
-        """
-        Check server health.
-
-        Returns:
-            Health status
-        """
+        """GET /health — server health check."""
         response = await self.client.get("/health")
         response.raise_for_status()
         return response.json()

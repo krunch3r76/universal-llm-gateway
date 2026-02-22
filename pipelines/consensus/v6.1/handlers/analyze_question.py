@@ -94,7 +94,7 @@ class AnalyzeQuestionHandler(BaseHandler):
     verification policies to apply.
     """
 
-    step_type = "consensus_analyze_v4"
+    step_type = "consensus_analyze_v5_0"
 
     @override
     async def execute(

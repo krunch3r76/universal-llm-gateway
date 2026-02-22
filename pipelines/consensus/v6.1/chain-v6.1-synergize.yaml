@@ -167,7 +167,21 @@ steps:
       originator: optionsNs.originator_link2
     timeout_seconds: 600
 
-  # Synergize: merge 3 verified fact sets via embedding dedup + union rejected claims for blacklist.
+  # Synergize: merge 3 verified fact sets + optional embedding dedup.
+  #
+  # Dedup currently disabled (threshold 1.0 = merge only, no clustering).
+  # The 141M nomic-embed model lacks discriminative power for topically
+  # dense claims (mean pairwise sim 0.824 on metformin). At 0.88,
+  # 42 verified facts collapsed to 15 — merging mechanistically distinct
+  # claims that share the same topic.
+  #
+  # Embedding model options (uncomment in models.yaml + set threshold):
+  #   embedding            (nomic-embed-text-v1.5, 141M, 768-dim)   — threshold 0.95+
+  #   bge_large            (bge-large-en-v1.5, 335M, 1024-dim)      — threshold 0.90
+  #   gte_large            (gte-large-en-v1.5, 434M, 1024-dim)      — threshold 0.90
+  #   octen_embedding_06b  (Octen-Embedding-0.6B, 0.6B, 1024-dim)   — threshold 0.90
+  #   octen_embedding_4b   (Octen-Embedding-4B, 4B, 2560-dim)       — threshold 0.88
+  #   octen_embedding_8b   (Octen-Embedding-8B, 7.6B, 4096-dim)     — threshold 0.88
   - name: synergize
     type: consensus_synergize_v5_0
     handler_inputs:
@@ -186,7 +200,12 @@ steps:
       rejected_claims: synergize.json.rejected_claims
       authority_verdicts: synergize.json.authority_verdicts
     embedding_model: embedding
-    similarity_threshold: 0.88
+    # embedding_model: bge_large
+    # embedding_model: gte_large
+    # embedding_model: octen_embedding_06b
+    # embedding_model: octen_embedding_4b
+    # embedding_model: octen_embedding_8b
+    similarity_threshold: 1.0    # 1.0 = merge only (no dedup); 0.88 = dedup enabled
     timeout_seconds: 60
 
   # Remove universal-negative claims that poison synthesis when contradicted by positive facts.

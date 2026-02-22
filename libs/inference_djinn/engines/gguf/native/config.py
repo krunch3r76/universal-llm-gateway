@@ -52,6 +52,9 @@ class ServerConfig:
     # API format
     api_format: APIFormat = APIFormat.OPENAI
 
+    # Tool calling (Jinja2 template processing for native tool-use)
+    jinja: bool = True
+
     # Batch size (-b)
     batch_size: int = 512
 
@@ -142,6 +145,10 @@ class ServerConfig:
         else:
             args.extend(["--host", self.host])
             args.extend(["--port", str(self.port)])
+
+        # Tool calling
+        if self.jinja:
+            args.append("--jinja")
 
         # Parallel processing
         args.extend(["-np", str(self.parallel_slots)])

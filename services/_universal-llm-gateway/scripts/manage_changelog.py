@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-CHANGELOG_DIR = Path("/mnt/torus/projects/universal-llm-gateway/changelog")
+CHANGELOG_DIR = Path(__file__).resolve().parents[3] / "changelog"
 RESOLVED_DIR = CHANGELOG_DIR / "resolved"
 ARCHIVED_DIR = CHANGELOG_DIR / "archived"
 

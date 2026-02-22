@@ -54,7 +54,7 @@ _JSON_SCHEMA: dict[str, Any] = {
 class FilterNegativesHandler(BaseHandler):
     """Remove universal negatives from verified facts via LLM classification."""
 
-    step_type: str = "consensus_filter_negatives_v5"
+    step_type: str = "consensus_filter_negatives_v5_0"
 
     @override
     async def execute(
