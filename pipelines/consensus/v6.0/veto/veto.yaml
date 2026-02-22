@@ -24,8 +24,8 @@ steps:
       authority_verdicts: inputs.authority_verdicts
       question: inputs.question
     veto_pool: optionsNs.veto_pool
-    prompt_ref_verify: consensus.v5.0.verify_specific
-    prompt_ref_verify_batch: consensus.v5.0.verify_batch_specific
+    prompt_ref_verify: consensus.v6.0.verify_specific
+    prompt_ref_verify_batch: consensus.v6.0.verify_batch_specific
     timeout_seconds: 120
 
   # Apply veto policy; move unanimously-rejected authority claims into rejected_claims.

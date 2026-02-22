@@ -7,6 +7,7 @@ Invariant: chunk_size >= 1
 Invariant: sequential ⟹ max_concurrent = 1
 """
 
+import sys
 from dataclasses import dataclass
 
 from .strategies import (
@@ -15,6 +16,9 @@ from .strategies import (
     ChunkStrategy,
     Individual,
 )
+
+# Sentinel: model imposes no cap — step chunk_size drives the batch size.
+_UNLIMITED: int = sys.maxsize
 
 
 @dataclass(slots=True, kw_only=True)
@@ -26,7 +30,7 @@ class ModelExecutionConfig:
     Invariant: sequential ⟹ max_concurrent = 1
     """
 
-    chunk_size: int = 10
+    chunk_size: int = _UNLIMITED
     max_concurrent: int | None = None
     timeout_ms: int | None = None
     sequential: bool = False
@@ -42,6 +46,9 @@ def get_execution_config(model_config: object) -> ModelExecutionConfig:
     """
     Extract execution config from a ModelRef.
 
+    No ``execution`` block ⟹ model imposes no cap (chunk_size = sys.maxsize).
+    Step-level chunk_size then drives the effective batch size.
+
     Args:
         model_config: Resolved ModelRef with optional `execution` dict field
 
@@ -51,7 +58,7 @@ def get_execution_config(model_config: object) -> ModelExecutionConfig:
     execution = getattr(model_config, "execution", None) or {}
 
     return ModelExecutionConfig(
-        chunk_size=execution.get("chunk_size", 10),
+        chunk_size=execution.get("chunk_size", _UNLIMITED),
         max_concurrent=execution.get("max_concurrent", None),
         timeout_ms=execution.get("timeout_ms", None),
         sequential=execution.get("sequential", False),

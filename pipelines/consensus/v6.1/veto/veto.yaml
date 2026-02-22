@@ -1,0 +1,43 @@
+# Veto sub-pipeline: verify authority-accepted claims with independent pool
+#
+# Inputs (bound by parent pipeline):
+#   verified_facts     - Current verified facts list
+#   rejected_claims    - Current rejected claims list
+#   authority_verdicts - Authority verdict dict from verify sub-pipeline
+#   question           - Cleaned question text
+
+id: consensus-veto
+type: consensus
+
+inputs:
+  - verified_facts
+  - rejected_claims
+  - authority_verdicts
+  - question
+
+steps:
+  # Re-verify authority-accepted claims with a general veto pool to catch authority hallucinations.
+  - name: veto_verify
+    type: consensus_veto_verify_v6_1
+    chunk_size: 4
+    handler_inputs:
+      verified_facts: inputs.verified_facts
+      authority_verdicts: inputs.authority_verdicts
+      question: inputs.question
+    veto_pool: optionsNs.veto_pool
+    prompt_ref_verify: consensus.v6.1.verify_specific
+    prompt_ref_verify_batch: consensus.v6.1.verify_batch_specific
+    timeout_seconds: 120
+
+  # Apply veto policy; move unanimously-rejected authority claims into rejected_claims.
+  - name: veto_threshold
+    type: consensus_veto_threshold_v6_1
+    handler_inputs:
+      verified_facts: inputs.verified_facts
+      rejected_claims: inputs.rejected_claims
+      veto_verdicts: veto_verify.json.veto_verdicts
+      authority_claims: veto_verify.json.authority_claims
+    veto_policy: unanimous_reject
+    timeout_seconds: 30
+
+output: veto_threshold

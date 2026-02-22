@@ -209,6 +209,19 @@ function renderSourceAnswer(step) {
   `;
 }
 
+function _collectSiblingModelCalls(step) {
+  const calls = step.model_calls || [];
+  if (!step.step_id || !step.step_id.includes('__') || !currentExecution) return calls;
+  const parent = step.step_id.split('__')[0];
+  const all = [];
+  for (const s of currentExecution.steps) {
+    if (s.step_id && s.step_id.startsWith(parent + '__') && s.model_calls) {
+      all.push(...s.model_calls);
+    }
+  }
+  return all.length > 0 ? all : calls;
+}
+
 function renderVoteMatrix(step) {
   const jd = step.json_data;
   const verdicts = jd.verdicts_by_model;
@@ -314,10 +327,12 @@ function renderVoteMatrix(step) {
       rendered.add(child.statement_id);
     }
   }
-  // Orphan sub-claims whose parent isn't in allClaims
+  // Orphan sub-claims whose parent isn't in allClaims — render as
+  // top-level rows (not indented) since the parent compound claim was
+  // excluded from verification (verdict derived from sub-claims).
   for (const claim of allClaims) {
     if (!rendered.has(claim.statement_id)) {
-      orderedClaims.push({ claim, isChild: true });
+      orderedClaims.push({ claim, isChild: false });
     }
   }
 
@@ -392,6 +407,7 @@ function renderVoteMatrix(step) {
   _reasoningCtx = {
     verdicts, pool, votedModels, authVerdicts, authorityModels,
     claimMap, verifiedSet, rejectedSet, vetoVerdictMap, vetoSpecialists,
+    stepModelCalls: _collectSiblingModelCalls(step),
   };
 
   return `
@@ -717,7 +733,7 @@ function renderModelCallsTab(step) {
             ${isFailed ? `<div class="model-call-error">${escHtml(call.error || 'Unknown error')}</div>` : ''}
             ${call.response_text ? `
               <div class="output-label">Response</div>
-              <div class="output-block model-call-response">${escHtml(call.response_text.length > 2000 ? call.response_text.slice(0, 2000) + '...' : call.response_text)}</div>` : ''}
+              <div class="output-block model-call-response">${escHtml(call.response_text)}</div>` : ''}
             ${call.user_prompt ? `
               <details class="collapsible-section">
                 <summary class="collapsible-header">User Prompt</summary>
@@ -741,7 +757,7 @@ function renderModelCallsTab(step) {
 }
 
 async function loadSnapshot(requestId, btn) {
-  const container = btn.closest('.model-call-card').querySelector('.snapshot-container');
+  const container = btn.closest('.model-call-card, .reasoning-prompt-section')?.querySelector('.snapshot-container');
   if (container.dataset.loaded) {
     container.style.display = container.style.display === 'none' ? 'block' : 'none';
     return;

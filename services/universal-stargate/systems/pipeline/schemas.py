@@ -24,7 +24,7 @@ class ModelRef(BaseModel):
 
     Extra fields (optional, read by handlers):
         execution: Execution hints for handlers that support ChunkedModelExecutor
-            - chunk_size: int (default 10)
+            - chunk_size: int (default 1)
             - max_concurrent: int | None
             - timeout_ms: int | None
             - sequential: bool (default False)

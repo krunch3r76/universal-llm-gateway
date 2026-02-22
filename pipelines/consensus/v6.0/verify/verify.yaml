@@ -26,7 +26,7 @@ steps:
     handler_inputs:
       answer: inputs.answer
       question: inputs.question
-    prompt_ref_decompose: consensus.v5.0.decompose
+    prompt_ref_decompose: consensus.v6.0.decompose
     timeout_seconds: 120
 
   # Label each claim as math or general to control routing into authority vs. general verification.
@@ -35,7 +35,7 @@ steps:
     model_ref: gemma_2_9b
     handler_inputs:
       claims: decompose.json.claims
-    prompt_ref_classify: consensus.v5.0.classify_math
+    prompt_ref_classify: consensus.v6.0.classify_math
     timeout_seconds: 120
 
   # Split compound claims into atomic sub-claims; parent verdict later derived from sub-claim conjunction.
@@ -45,8 +45,8 @@ steps:
     handler_inputs:
       claims: classify_domain.json.claims
     decompose_compound_math: true
-    prompt_ref_atomicity_classify: consensus.v5.0.classify_atomicity
-    prompt_ref_decompose_compound: consensus.v5.0.decompose_general_compound
+    prompt_ref_atomicity_classify: consensus.v6.0.classify_atomicity
+    prompt_ref_decompose_compound: consensus.v6.0.decompose_general_compound
     timeout_seconds: 120
 
   # Route domain claims to authority models (math specialist); remainder flows to general voting.
@@ -59,7 +59,7 @@ steps:
       domain_verifiers:
         math:
           model_ref: zyphra_math
-          prompt_ref: consensus.v5.0.verify_math
+          prompt_ref: consensus.v6.0.verify_math
           veto_policy:
             enabled: false
           generation_parameters:
@@ -75,8 +75,8 @@ steps:
       originator: inputs.originator
     model_pool: optionsNs.verifier_pool
     exclude_self: true
-    prompt_ref_verify: consensus.v5.0.verify_specific
-    prompt_ref_verify_batch: consensus.v5.0.verify_batch_specific
+    prompt_ref_verify: consensus.v6.0.verify_specific
+    prompt_ref_verify_batch: consensus.v6.0.verify_batch_specific
     timeout_seconds: 360
 
   # Apply voting policy, resolve compound parents, merge authority verdicts → verified_facts / rejected_claims.

@@ -163,6 +163,7 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
                     "completion_tokens": ev.get("completion_tokens", 0),
                     "success": ev.get("success", True),
                     "wall_clock": ev.get("wall_clock", ""),
+                    "metadata": ev.get("metadata"),
                 }
             )
 

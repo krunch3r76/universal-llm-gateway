@@ -12,7 +12,7 @@
 #
 # Execution Configuration (optional):
 #   execution:
-#     chunk_size: int       # Statements per model call (default: 10, use 1 for isolation)
+#     chunk_size: int       # Statements per model call (omit = unlimited; set to 1 for isolation)
 #     max_concurrent: int   # Max parallel chunks for this model (default: unlimited)
 #     timeout_ms: int       # Per-chunk timeout in milliseconds (default: none)
 #     sequential: bool      # Force sequential execution (default: false)

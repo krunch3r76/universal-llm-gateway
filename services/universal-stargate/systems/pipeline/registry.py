@@ -27,6 +27,20 @@ class PipelineConfigError(Exception):
     pass
 
 
+def _collect_prompt_refs(
+    data: dict[str, Any], prefix: str = "",
+) -> list[tuple[str, str]]:
+    """Recursively collect (path, value) for prompt_ref* keys."""
+    refs: list[tuple[str, str]] = []
+    for key, val in data.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if key.startswith("prompt_ref") and isinstance(val, str):
+            refs.append((path, val))
+        elif isinstance(val, dict):
+            refs.extend(_collect_prompt_refs(val, path))
+    return refs
+
+
 class PipelineRegistry:
     """
     Registry for pipeline configurations.
@@ -417,6 +431,26 @@ class PipelineRegistry:
             errors.append(
                 f"Output step '{pipeline.output}' not found in steps (expected step name: '{output_step_name}')"
             )
+
+        # 9. Cross-version prompt_ref isolation
+        if pipeline.source_variant:
+            expected_prefix = f"{pipeline.type}.{pipeline.source_variant}."
+            for step in pipeline.steps:
+                if step.type == "sub_pipeline":
+                    continue
+                all_refs: list[tuple[str, str]] = []
+                if step.prompt_ref and "{{" not in step.prompt_ref:
+                    all_refs.append(("prompt_ref", step.prompt_ref))
+                if step.model_extra:
+                    all_refs.extend(_collect_prompt_refs(step.model_extra))
+                for field, ref in all_refs:
+                    if "{{" in ref:
+                        continue
+                    if not ref.startswith(expected_prefix):
+                        errors.append(
+                            f"Step '{step.id}': {field} '{ref}' references "
+                            f"outside version namespace '{expected_prefix[:-1]}'"
+                        )
 
         return errors
 

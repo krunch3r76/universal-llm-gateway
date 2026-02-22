@@ -30,12 +30,16 @@ def _compute_eviction_plan(
     """
     Compute eviction plan to make room for model.
 
+    Invariant: eviction feasibility uses raw catalog requirements (no margin).
+    The margin is enforced by the direct availability check in resource_checks.py
+    before eviction is attempted. Applying it again here would double-count.
+
     Args:
         gateway: Gateway to compute eviction plan for
         placement: Model placement requirements
         requirements_lookup: MANDATORY function to look up (vram_mb, ram_mb)
                            for loading models (in-memory, no I/O)
-        config: Optional config dict for resource margins
+        config: Reserved for future use (unused; margins not applied here)
         routing_key_tracker: Tracker for in-flight routing keys (eviction protection).
             REQUIRED for Master mode - prevents eviction of models with active requests.
 
@@ -165,19 +169,9 @@ def _compute_eviction_plan(
         freed_vram_catalog += vram_usage
         freed_ram_catalog += ram_usage
 
-    # Check if eviction provides enough
-    margins = config.get("resource_margins", {}) if config else {}
-    ram_margin_pct = margins.get("ram_margin_pct", 3)
-    vram_margin_pct = margins.get("vram_margin_pct", 2)
-    ram_margin = 1.0 + ram_margin_pct / 100
-    vram_margin = 1.0 + vram_margin_pct / 100
-    ram_needed = int(gw_ram_mb * ram_margin)
-    vram_needed = int(gw_vram_mb * vram_margin)
-
     # Catalog-based estimate: effective free + VRAM freed by evicted models.
-    # This is conservative: non-model VRAM consumers (video players, driver
-    # overhead, reserved memory) are implicitly accounted for because they
-    # reduce gateway.vram_free_mb but are never "freed" by eviction.
+    # Non-model VRAM consumers (driver overhead, reserved memory) are implicitly
+    # accounted for because they reduce gateway.vram_free_mb but are never "freed".
     total_vram = effective_vram_free + freed_vram_catalog
     total_ram = effective_ram_free + freed_ram_catalog
 
@@ -190,23 +184,26 @@ def _compute_eviction_plan(
     logger.debug(
         f"Eviction calculation: "
         f"catalog_freed={freed_vram_catalog}MB VRAM, "
-        f"total_available={total_vram}MB VRAM (need {vram_needed}MB), "
-        f"total_available={total_ram}MB RAM (need {ram_needed}MB)"
+        f"total_available={total_vram}MB VRAM (need {gw_vram_mb}MB), "
+        f"total_available={total_ram}MB RAM (need {gw_ram_mb}MB)"
     )
 
-    # Check BOTH resources for hybrid models (vram_mb > 0 AND ram_mb > 0)
-    if gw_vram_mb > 0 and total_vram < vram_needed:
+    # Check BOTH resources for hybrid models (vram_mb > 0 AND ram_mb > 0).
+    # Compare against raw catalog requirements (no margin): the catalog value is
+    # authoritative for what the model physically needs; the margin is already
+    # enforced by the direct availability check before eviction is attempted.
+    if gw_vram_mb > 0 and total_vram < gw_vram_mb:
         logger.warning(
             f"❌ EVICTION FAILED for {placement.model_id}: "
-            f"Insufficient VRAM even with eviction - need {vram_needed}MB, "
+            f"Insufficient VRAM even with eviction - need {gw_vram_mb}MB, "
             f"can only get {total_vram}MB (current free: {gateway.vram_free_mb}MB + "
             f"freeable: {freed_vram_catalog}MB from {len(models_to_evict)} models)"
         )
         return None
-    if gw_ram_mb > 0 and total_ram < ram_needed:
+    if gw_ram_mb > 0 and total_ram < gw_ram_mb:
         logger.warning(
             f"❌ EVICTION FAILED for {placement.model_id}: "
-            f"Insufficient RAM even with eviction - need {ram_needed}MB, "
+            f"Insufficient RAM even with eviction - need {gw_ram_mb}MB, "
             f"can only get {total_ram}MB (current free: {gateway.ram_free_mb}MB + "
             f"freeable: {freed_ram_catalog}MB from {len(models_to_evict)} models)"
         )

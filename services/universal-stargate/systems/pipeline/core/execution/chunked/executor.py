@@ -62,7 +62,7 @@ class ChunkedModelExecutor:
         Args:
             model_selector: Strategy for assigning models to chunks (required).
                 Use FirstAvailable([model_id]) for single-model execution.
-            chunk_strategy: Strategy for partitioning items. Default: BySize(10).
+            chunk_strategy: Strategy for partitioning items. Default: BySize(1).
             fallback_handler: Error handler for failed chunks. Default: RaiseFallback.
             max_concurrent: Max parallel chunk processing. None = unlimited.
             timeout_per_chunk_ms: Per-chunk timeout. None = no timeout.
@@ -77,7 +77,7 @@ class ChunkedModelExecutor:
                 f"timeout_per_chunk_ms must be >= 0, got {timeout_per_chunk_ms}"
             )
 
-        self._chunk_strategy = chunk_strategy or BySize(chunk_size=10)
+        self._chunk_strategy = chunk_strategy or BySize(chunk_size=1)
         self._model_selector = model_selector
         self._fallback_handler = fallback_handler or RaiseFallback()
         self._max_concurrent = max_concurrent

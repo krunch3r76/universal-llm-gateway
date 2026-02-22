@@ -96,12 +96,15 @@ function aggregateClientSide(events) {
 
   inferVerifierPool(steps);
 
+  const completed = events.find(e => e.event_type === 'pipeline_completed');
+  const wallClockMs = completed?.duration_ms || null;
+
   return {
     pipeline_id: first.pipeline_id || '',
     execution_id: first.execution_id || '',
     question,
     steps,
-    summary: buildSummary(steps),
+    summary: buildSummary(steps, wallClockMs),
   };
 }
 
@@ -184,6 +187,7 @@ function applyEvent(sd, ev) {
         completion_tokens: ev.completion_tokens || 0,
         success: ev.success !== false,
         wall_clock: ev.wall_clock || '',
+        metadata: ev.metadata || null,
       });
       break;
     case 'step_skipped':
@@ -265,8 +269,8 @@ function categorizeStep(stepId) {
   return 'other';
 }
 
-function buildSummary(steps) {
-  let totalPrompt = 0, totalCompletion = 0, totalLatency = 0;
+function buildSummary(steps, wallClockMs) {
+  let totalPrompt = 0, totalCompletion = 0, summedLatency = 0;
   let totalClaims = 0, totalAccepted = 0, totalRejected = 0;
   let totalModelCalls = 0;
   const models = new Set();
@@ -275,7 +279,7 @@ function buildSummary(steps) {
     const tok = step.tokens || {};
     totalPrompt += tok.prompt || 0;
     totalCompletion += tok.completion || 0;
-    if (step.latency_ms) totalLatency += step.latency_ms;
+    if (step.latency_ms) summedLatency += step.latency_ms;
     if (step.model) models.add(step.model);
     if (step.iterations) {
       totalModelCalls += step.iterations.length;
@@ -302,7 +306,9 @@ function buildSummary(steps) {
     total_tokens: totalPrompt + totalCompletion,
     prompt_tokens: totalPrompt,
     completion_tokens: totalCompletion,
-    total_latency_ms: totalLatency,
+    wall_clock_ms: wallClockMs,
+    total_latency_ms: wallClockMs != null ? wallClockMs : summedLatency,
+    summed_latency_ms: summedLatency,
     total_steps: steps.length,
     models_used: [...models].sort(),
     total_claims_verified: totalClaims,

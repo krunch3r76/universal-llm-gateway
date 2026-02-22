@@ -79,6 +79,14 @@ pipelines:
   hot_reload:
     enabled: true
     debounce_ms: 2000
+
+debug_events:
+  persistence:
+    enabled: false
+    directory: "/tmp/stargate-events"
+    max_file_size_mb: 50
+    max_files: 1
+    flush_interval_seconds: 1.0
 """
 
 

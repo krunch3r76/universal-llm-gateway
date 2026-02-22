@@ -145,7 +145,7 @@ async def _verify_batch(
             prompt_ref=prompt_ref,
             gen_params=gen_params,
         )
-    batch_ref = prompt_ref_verify_batch or "consensus.v4.0.verify_batch"
+    batch_ref = prompt_ref_verify_batch or "consensus.v6.0.verify_batch_specific"
     return await verify_batch_chunked(
         handler=handler,
         eligible=eligible,

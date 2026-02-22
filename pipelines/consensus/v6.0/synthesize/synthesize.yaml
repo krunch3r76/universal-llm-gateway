@@ -34,7 +34,7 @@ steps:
     handler_outputs:
       final: post_process.raw
     allow_passthrough: false
-    prompt_ref_synthesize: consensus.v5.0.post_synthesize
+    prompt_ref_synthesize: consensus.v6.0.post_synthesize
     generation_parameters:
       temperature: 0.3
     timeout_seconds: 600
@@ -43,8 +43,8 @@ steps:
   - name: review_synthesis
     type: consensus_enrich_review_v5_0
     model_ref: qwen
-    prompt_ref: consensus.v5.0.check_synthesis
-    prompt_ref_re_enrich: consensus.v5.0.revise_synthesis
+    prompt_ref: consensus.v6.0.check_synthesis
+    prompt_ref_re_enrich: consensus.v6.0.revise_synthesis
     max_review_rounds: 2
     handler_inputs:
       enriched_answer: post_process.raw

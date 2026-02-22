@@ -91,7 +91,7 @@ steps:
   - name: analyze_question
     type: consensus_analyze_v5_0
     model_ref: qwen
-    prompt_ref: consensus.v5.0.analyze_question
+    prompt_ref: consensus.v6.0.analyze_question
     handler_inputs:
       text: sourceNs.text
     handler_outputs:
@@ -114,7 +114,7 @@ steps:
       model: optionsNs.answer_models
     map_inputs:
       model_ref: mapNs.iteration.value
-    prompt_ref: consensus.v5.0.answer
+    prompt_ref: consensus.v6.0.answer
     handler_inputs:
       text: sourceNs.text
       question: analyze_question.json.cleaned_question
@@ -183,7 +183,7 @@ steps:
   - name: filter_negatives
     type: consensus_filter_negatives_v5_0
     model_ref: qwen
-    prompt_ref: consensus.v5.0.filter_negatives
+    prompt_ref: consensus.v6.0.filter_negatives
     handler_inputs:
       verified_facts: synergize.json.verified_facts
       authority_verdicts: synergize.json.authority_verdicts

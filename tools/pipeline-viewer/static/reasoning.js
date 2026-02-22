@@ -4,6 +4,28 @@
 
 let _drawerFilterRejectsOnly = false;
 
+function _modelMatches(callModel, alias) {
+  if (callModel === alias) return true;
+  const norm = alias.replaceAll('_', '-');
+  return callModel.includes(norm);
+}
+
+function _findModelCall(calls, model, statementId, claimText) {
+  for (const c of calls) {
+    if (c.call_label === 'verify_batch' && _modelMatches(c.model, model)
+        && (c.metadata?.claim_ids || []).includes(statementId)) {
+      return c;
+    }
+  }
+  for (const c of calls) {
+    if (c.call_label === 'verify_batch' && _modelMatches(c.model, model)
+        && c.user_prompt && c.user_prompt.includes(claimText)) {
+      return c;
+    }
+  }
+  return null;
+}
+
 function openReasoningDrawer(statementId) {
   const ctx = _reasoningCtx;
   if (!ctx) return;
@@ -18,10 +40,10 @@ function openReasoningDrawer(statementId) {
   const badgeClass = isRejected ? 'rejected' : 'accepted';
   const badgeLabel = isRejected ? 'Rejected' : 'Accepted';
 
-  // Collect per-model reasoning entries
+  const calls = ctx.stepModelCalls || [];
+
   const entries = [];
 
-  // Authority verdicts
   for (const am of ctx.authorityModels) {
     const auth = ctx.authVerdicts[statementId];
     if (auth && auth.authority_model === am) {
@@ -30,11 +52,11 @@ function openReasoningDrawer(statementId) {
         verdict: auth.verdict,
         reasoning: auth.reasoning || '',
         isAuthority: true,
+        call: _findModelCall(calls, am, statementId, claim.text),
       });
     }
   }
 
-  // Pool verdicts
   for (const m of ctx.pool) {
     if (!ctx.votedModels.has(m)) continue;
     const vr = getVerdict(ctx.verdicts[m]?.[statementId]);
@@ -44,10 +66,10 @@ function openReasoningDrawer(statementId) {
       verdict: vr.v,
       reasoning: vr.r || '',
       isAuthority: false,
+      call: _findModelCall(calls, m, statementId, claim.text),
     });
   }
 
-  // Sort: rejecting models first, then accepting
   entries.sort((a, b) => {
     if (a.verdict === b.verdict) return 0;
     return a.verdict ? 1 : -1;
@@ -80,9 +102,41 @@ function toggleReasoningFilter(btn) {
   }
 }
 
+function _renderPromptSection(call) {
+  if (!call) return '';
+  const snapBtn = call.snapshot_request_id
+    ? `<button class="snapshot-btn" onclick="event.stopPropagation(); loadSnapshot('${call.snapshot_request_id}', this)">View Snapshot</button>`
+    : '';
+  return `
+    <details class="collapsible-section reasoning-prompt-section">
+      <summary class="collapsible-header">
+        Verification Prompt
+        <span class="reasoning-prompt-model">${escHtml(shortModel(call.model || ''))}</span>
+        ${snapBtn}
+      </summary>
+      <div class="reasoning-prompt-body">
+        ${call.response_text ? `
+          <div class="output-label">Response</div>
+          <div class="output-block">${escHtml(call.response_text)}</div>` : ''}
+        ${call.user_prompt ? `
+          <div class="output-label">User Prompt</div>
+          <div class="output-block">${escHtml(call.user_prompt)}</div>` : ''}
+        ${call.system_prompt ? `
+          <div class="output-label">System Prompt</div>
+          <div class="output-block">${escHtml(call.system_prompt)}</div>` : ''}
+        <div class="snapshot-container"></div>
+      </div>
+    </details>
+  `;
+}
+
 function _renderDrawerContent(claim, badgeClass, badgeLabel, entries) {
   const hasReasoning = entries.some(e => e.reasoning);
   const rejectCount = entries.filter(e => !e.verdict).length;
+
+  // Pick the first available call for the shared prompt section
+  const representativeCall = entries.find(e => e.call)?.call || null;
+  const promptSection = _renderPromptSection(representativeCall);
 
   const cards = entries.map(e => {
     const icon = e.verdict ? '\u2713' : '\u2717';
@@ -121,6 +175,7 @@ function _renderDrawerContent(claim, badgeClass, badgeLabel, entries) {
         <button class="reasoning-close-btn" onclick="closeReasoningDrawer()">\u2715</button>
       </div>
     </div>
+    ${promptSection}
     <div class="reasoning-cards">
       ${hasReasoning ? cards : '<div class="reasoning-empty-state">No reasoning data available. Run a new pipeline execution to capture model reasoning.</div>'}
     </div>

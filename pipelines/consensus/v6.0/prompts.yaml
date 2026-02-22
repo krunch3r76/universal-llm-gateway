@@ -1,7 +1,7 @@
-# Consensus v5.0 prompts — Parallel verify + synergize
-# Namespace: consensus.v5.0
+# Consensus v6.0 prompts — Parallel verify + synergize
+# Namespace: consensus.v6.0
 #
-# Includes enrich (v4.0-style) after veto_pass to reduce synthesis drop-off.
+# Self-contained prompt set for v6.0 pipeline.
 
 prompts:
   analyze_question:

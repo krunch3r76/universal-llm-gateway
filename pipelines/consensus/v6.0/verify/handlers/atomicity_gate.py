@@ -76,11 +76,11 @@ class AtomicityGateHandler(BaseHandler):
 
         prompt_ref_classify = str(
             step.get_domain_field("prompt_ref_atomicity_classify")
-            or "consensus.v4.0.classify_atomicity"
+            or "consensus.v6.0.classify_atomicity"
         )
         prompt_ref_decompose = str(
             step.get_domain_field("prompt_ref_decompose_compound")
-            or "consensus.v4.0.decompose_general_compound"
+            or "consensus.v6.0.decompose_general_compound"
         )
 
         claims, compound_details = await atomicity_gate_decompose(

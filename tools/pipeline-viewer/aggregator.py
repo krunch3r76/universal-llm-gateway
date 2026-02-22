@@ -49,6 +49,9 @@ def aggregate_execution(exec_dir: Path) -> dict[str, Any]:
     # Extract question from PipelineStarted event
     question = _extract_question(events)
 
+    # Extract wall-clock duration from PipelineCompleted event
+    wall_clock_ms = _extract_wall_clock_ms(events)
+
     # Build steps from events
     steps = _build_steps(events)
 
@@ -58,7 +61,7 @@ def aggregate_execution(exec_dir: Path) -> dict[str, Any]:
         "timestamp": timestamp,
         "question": question,
         "steps": steps,
-        "summary": _build_summary(steps),
+        "summary": _build_summary(steps, wall_clock_ms=wall_clock_ms),
     }
 
 
@@ -157,6 +160,14 @@ def _extract_question(events: list[dict[str, Any]]) -> str:
     return "Unknown question"
 
 
+def _extract_wall_clock_ms(events: list[dict[str, Any]]) -> float | None:
+    """Extract actual wall-clock duration from PipelineCompleted event."""
+    for ev in events:
+        if ev.get("event_type") == "pipeline_completed":
+            return ev.get("duration_ms")
+    return None
+
+
 def _build_steps(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Build ordered step list from events."""
     # Collect step data keyed by step_name
@@ -232,11 +243,21 @@ def _categorize_step(step_id: str) -> str:
     return "other"
 
 
-def _build_summary(steps: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build aggregate summary statistics (matches parser.py shape)."""
+def _build_summary(
+    steps: list[dict[str, Any]],
+    *,
+    wall_clock_ms: float | None = None,
+) -> dict[str, Any]:
+    """Build aggregate summary statistics.
+
+    Args:
+        steps: Processed step dicts.
+        wall_clock_ms: Actual elapsed time from PipelineCompleted event.
+            Falls back to summed step latencies when unavailable (live streams).
+    """
     total_prompt = 0
     total_completion = 0
-    total_latency = 0.0
+    summed_latency = 0.0
     total_model_calls = 0
     total_claims = 0
     total_accepted = 0
@@ -249,7 +270,7 @@ def _build_summary(steps: list[dict[str, Any]]) -> dict[str, Any]:
         total_completion += tokens.get("completion", 0)
 
         if step.get("latency_ms"):
-            total_latency += step["latency_ms"]
+            summed_latency += step["latency_ms"]
 
         if step.get("model"):
             models_used.add(step["model"])
@@ -279,7 +300,9 @@ def _build_summary(steps: list[dict[str, Any]]) -> dict[str, Any]:
         "total_tokens": total_prompt + total_completion,
         "prompt_tokens": total_prompt,
         "completion_tokens": total_completion,
-        "total_latency_ms": total_latency,
+        "wall_clock_ms": wall_clock_ms,
+        "total_latency_ms": wall_clock_ms if wall_clock_ms is not None else summed_latency,
+        "summed_latency_ms": summed_latency,
         "total_steps": len(steps),
         "models_used": sorted(models_used),
         "total_claims_verified": total_claims,

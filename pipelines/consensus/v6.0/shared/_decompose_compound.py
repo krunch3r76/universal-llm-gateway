@@ -25,6 +25,12 @@ logger = get_logger(__name__)
 _ATOMICITY_CLASSIFY_MAX_CLAIMS = 32
 _ATOMICITY_CLASSIFY_MAX_CHARS = 9000
 
+
+def _normalize_for_comparison(text: str) -> str:
+    """Lowercase, strip trailing punctuation — for parent/sub-claim dedup."""
+    return text.lower().rstrip(".!?").strip()
+
+
 _DECOMPOSE_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -124,6 +130,10 @@ async def _decompose_one_claim(
         return None
 
     valid = [t.strip() for t in sub_texts_raw if isinstance(t, str) and t.strip()]
+
+    norm = _normalize_for_comparison
+    valid = [v for v in valid if norm(v) != norm(text)]
+
     if len(valid) <= 1:
         logger.info(
             "Step '%s': LLM returned %d sub-claim(s) for '%s' — keeping original",

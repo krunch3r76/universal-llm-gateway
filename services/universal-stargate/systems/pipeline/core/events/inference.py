@@ -39,3 +39,4 @@ class ModelInvocation(PipelineEvent):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     success: bool = True
+    metadata: dict[str, Any] | None = None

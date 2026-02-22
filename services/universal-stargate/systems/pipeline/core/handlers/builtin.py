@@ -380,6 +380,56 @@ class BaseHandler(AbstractStepHandler):
 
         return False
 
+    def _resolve_model_pool(
+        self,
+        step: StepConfig,
+        context: PipelineContext,
+        *,
+        exclude: str | None = None,
+    ) -> list[str]:
+        """Resolve model_pool domain field to a list of model aliases.
+
+        Reads step's ``model_pool`` domain field (via model_extra), which may be:
+        - list[str]: literal alias list — used directly
+        - "optionsNs.KEY" or "KEY": resolved via pipeline options
+        - None: returns []
+
+        Args:
+            step: Current step config.
+            context: Pipeline execution context.
+            exclude: Alias to remove from the pool (e.g. the originator model).
+
+        Returns:
+            List of resolved model aliases (may be empty).
+        """
+        pool = step.get_domain_field("model_pool")
+
+        if pool is None:
+            return []
+
+        if isinstance(pool, list):
+            aliases = list(pool)
+        elif isinstance(pool, str):
+            key = pool.removeprefix("optionsNs.")
+            resolved = (context.options or {}).get(key, [])
+            if not isinstance(resolved, list):
+                logger.error(
+                    "Step '%s': model_pool option '%s' is not a list: %r",
+                    step.id,
+                    key,
+                    resolved,
+                )
+                return []
+            aliases = list(resolved)
+        else:
+            logger.error("Step '%s': unexpected model_pool type: %r", step.id, pool)
+            return []
+
+        if exclude:
+            aliases = [a for a in aliases if a != exclude]
+
+        return aliases
+
     def _resolve_model_alias(
         self,
         model_id: str,
@@ -388,10 +438,10 @@ class BaseHandler(AbstractStepHandler):
         """
         Resolve model alias to full ID via registry.
 
-        Resolution order: domain-specific → root → passthrough
+        Resolution order: optionsNs binding → domain-specific → root → passthrough
 
         Args:
-            model_id: Alias (e.g., "phi") or full ID
+            model_id: Alias (e.g., "phi"), optionsNs binding, or full ID
             context: Pipeline context with registry
 
         Returns:
@@ -399,7 +449,18 @@ class BaseHandler(AbstractStepHandler):
 
         Raises:
             KeyError: If alias not found and doesn't appear to be full ID
+            ValueError: If optionsNs binding references missing/invalid option
         """
+        if model_id.startswith("optionsNs."):
+            key = model_id[len("optionsNs.") :]
+            resolved = (context.options or {}).get(key)
+            if not resolved or not isinstance(resolved, str):
+                raise ValueError(
+                    f"model_ref '{model_id}' references optionsNs.{key} "
+                    f"but no string value found in pipeline options"
+                )
+            model_id = resolved
+
         registry = context._registry
         domain = context.pipeline.domain
 
@@ -441,6 +502,7 @@ class BaseHandler(AbstractStepHandler):
         json_schema: dict[str, Any] | None = None,
         disable_json_response: bool = False,
         call_label: str = "",
+        metadata: dict[str, Any] | None = None,
     ) -> ModelCallResult:
         """
         Invoke model and return complete result.
@@ -463,6 +525,8 @@ class BaseHandler(AbstractStepHandler):
             disable_json_response: Remove response_format from params
             call_label: Purpose identifier for observability (e.g., "decompose",
                 "verify", "classify"). Helps distinguish sub-calls in complex handlers.
+            metadata: Optional dict forwarded to ModelInvocation for viewer linkage
+                (e.g., claim_ids for verify_batch).
 
         Returns:
             ModelCallResult with content, request body, tokens,
@@ -565,6 +629,7 @@ class BaseHandler(AbstractStepHandler):
                         ),
                         latency_ms=call_duration_ms,
                         success=False,
+                        metadata=metadata,
                     )
                 )
             raise
@@ -642,6 +707,7 @@ class BaseHandler(AbstractStepHandler):
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     success=True,
+                    metadata=metadata,
                 )
             )
 
