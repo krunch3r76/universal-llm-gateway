@@ -375,16 +375,30 @@ class PipelineRegistry:
 
             # 3. Check model_ref exists
             if step.model_ref:
-                try:
-                    self.get_model_config(
-                        step.model_ref,
-                        domain=pipeline.domain,
-                        search_path=pipeline.source_search_path,
-                    )
-                except KeyError:
-                    errors.append(
-                        f"Step '{step.id}': Unknown model_ref '{step.model_ref}'"
-                    )
+                # optionsNs.<key> — resolve via pipeline options before registry lookup
+                model_ref_to_check = step.model_ref
+                if model_ref_to_check.startswith("optionsNs."):
+                    option_key = model_ref_to_check[len("optionsNs."):]
+                    resolved = pipeline.options.get(option_key)
+                    if resolved and isinstance(resolved, str):
+                        model_ref_to_check = resolved
+                    else:
+                        errors.append(
+                            f"Step '{step.id}': Unknown model_ref '{step.model_ref}' "
+                            f"(option '{option_key}' not found in pipeline options)"
+                        )
+                        model_ref_to_check = None
+                if model_ref_to_check:
+                    try:
+                        self.get_model_config(
+                            model_ref_to_check,
+                            domain=pipeline.domain,
+                            search_path=pipeline.source_search_path,
+                        )
+                    except KeyError:
+                        errors.append(
+                            f"Step '{step.id}': Unknown model_ref '{step.model_ref}'"
+                        )
 
             # 4. Check prompt_ref exists (skip templated refs)
             if step.prompt_ref:

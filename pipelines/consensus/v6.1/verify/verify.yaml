@@ -32,7 +32,7 @@ steps:
   # Label each claim as math or general to control routing into authority vs. general verification.
   - name: classify_domain
     type: consensus_classify_domain_v6_1
-    model_ref: optionsNs.decompose_model
+    model_ref: optionsNs.domain_classify_model
     chunk_size: 16
     handler_inputs:
       claims: decompose.json.claims
@@ -42,7 +42,7 @@ steps:
   # Split compound claims into atomic sub-claims; parent verdict later derived from sub-claim conjunction.
   - name: atomicity_gate
     type: consensus_atomicity_gate_v6_1
-    model_ref: optionsNs.decompose_model
+    model_ref: optionsNs.domain_classify_model
     chunk_size: 16
     handler_inputs:
       claims: classify_domain.json.claims

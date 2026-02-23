@@ -28,11 +28,6 @@ REMOTE_SYNC_TIMEOUT_MS = 500  # Short timeout to avoid blocking
 # Standard context sizes for step-down (descending order)
 STANDARD_CONTEXTS = [131072, 65536, 32768, 16384, 8192, 4096, 2048, 1024]
 
-# Embedding models: KV cache still scales with n_ctx in llama.cpp.
-# Cap at 8192 — embedding workloads rarely need more, and measuring at
-# training_context_length would misreport (inflate) actual required VRAM.
-EMBEDDING_MAX_CONTEXT = 8192
-
 
 @contextmanager
 def catalog_write_lock(catalog_path: Path):
@@ -67,16 +62,20 @@ def get_step_down_contexts(training_ctx: int) -> list[int]:
     return sorted(contexts, reverse=True)
 
 
-def get_embedding_step_down_contexts(training_ctx: int) -> list[int]:
+def get_embedding_contexts(training_ctx: int) -> list[int]:
     """
-    Get context sizes for embedding model measurement.
+    Get contexts for embedding model measurement.
 
-    Caps at EMBEDDING_MAX_CONTEXT: KV cache in llama.cpp scales with n_ctx
-    even in embedding mode, so measuring at training_context_length inflates
-    reported VRAM. Embedding workloads rarely exceed 8192 tokens.
+    ∀ embedding model: [training_ctx, next_standard_below]
+    - training_ctx always first (even if non-standard)
+    - one step down to the next standard size below training_ctx
+      so callers have a lower-VRAM option without a full sweep
     """
-    effective_max = min(training_ctx, EMBEDDING_MAX_CONTEXT)
-    return get_step_down_contexts(effective_max)
+    below = [c for c in STANDARD_CONTEXTS if c < training_ctx]
+    if below:
+        return [training_ctx, max(below)]
+    return [training_ctx]
+
 
 
 def extract_training_context_from_gguf(file_path: Path) -> int | None:

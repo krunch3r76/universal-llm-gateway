@@ -106,7 +106,7 @@ class FederatedGateway:
     loaded_models: frozenset[ModelId] = field(default_factory=frozenset)
     busy_models: frozenset[ModelId] = field(default_factory=frozenset)
     loading_models: frozenset[ModelId] = field(default_factory=frozenset)
-    # available_models: ALL models in catalog that CAN be loaded (routing capability)
+    # available_models: Measured catalog — models with vram/ram data in ~/.gateway/catalog (routing capability)
     available_models: frozenset[ModelId] = field(default_factory=frozenset)
     # activated_models: Filtered subset for public /v1/models endpoint
     # None = not provided (fallback to available_models), frozenset() = explicitly empty

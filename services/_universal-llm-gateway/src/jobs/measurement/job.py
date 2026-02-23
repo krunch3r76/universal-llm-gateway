@@ -17,7 +17,7 @@ from universal_logging import get_logger
 from ...core.events import get_event_bus
 from ...core.events.measurement import MeasurementEmbeddingDetected
 from ..context_detection import (
-    get_embedding_step_down_contexts,
+    get_embedding_contexts,
     get_step_down_contexts,
     get_training_context,
     resolve_model_path,
@@ -381,59 +381,64 @@ class MeasurementJob(Job):
         tracker: SubprocessTracker,
         entry: dict[str, Any] | None,
     ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
-        """Single-probe GGUF embedding measurement.
+        """Step-down GGUF embedding measurement.
 
-        ∀ llama-cpp embedding model: VRAM is constant (no KV cache).
-        One probe at training_context_length suffices.
+        ∀ llama-cpp embedding model: KV cache scales with n_ctx even in
+        embedding mode. Step down from training_context_length so each
+        profile's VRAM/RAM reflects the actual cost at that context size.
         """
         loader_config = (entry or {}).get("loader", {})
 
-        ctx = self.request.training_context_length
-        if not ctx:
+        training_ctx = self.request.training_context_length
+        if not training_ctx:
             raise RuntimeError(
                 f"Embedding model '{self.request.model_id}' has no "
-                "training_context_length; cannot determine single probe size."
+                "training_context_length; cannot determine contexts to probe."
             )
 
+        contexts = self.request.contexts or get_embedding_contexts(training_ctx)
         n_layers = 0 if self.request.mode == "cpu" else -1
         mode_label = "CPU" if self.request.mode == "cpu" else "GPU"
 
         self.emit_log(
             f"  Engine: llama-cpp (embedding {mode_label}, "
-            f"single probe at context {ctx})"
+            f"contexts: {contexts})"
         )
         await get_event_bus().publish_async_nowait(
             MeasurementEmbeddingDetected(
-                model_id=self.request.model_id, context_length=ctx
+                model_id=self.request.model_id, context_length=contexts[0]
             )
         )
 
         pooling = loader_config.get("pooling")
         ubatch_size = loader_config.get("ubatch_size")
 
-        profile = await run_layer_test(
-            model_path,
-            n_layers=n_layers,
-            context=ctx,
-            n_batch=self.request.n_batch,
-            gpu_index=self.request.gpu_index,
-            mmproj_path=None,
-            tracker=tracker,
-            embedding=True,
-            pooling=pooling,
-            ubatch_size=ubatch_size,
-        )
+        results: dict[str, dict[str, Any]] = {}
+        for ctx in contexts:
+            self.emit_log(f"  Probing context {ctx}...")
+            profile = await run_layer_test(
+                model_path,
+                n_layers=n_layers,
+                context=ctx,
+                n_batch=self.request.n_batch,
+                gpu_index=self.request.gpu_index,
+                mmproj_path=None,
+                tracker=tracker,
+                embedding=True,
+                pooling=pooling,
+                ubatch_size=ubatch_size,
+            )
 
-        if profile.get("success"):
-            profile["n_gpu_layers"] = n_layers
-            vram = profile.get("vram_mb", "N/A")
-            ram = profile.get("ram_mb", "N/A")
-            self.emit_log(f"  ✅ {ctx}: VRAM={vram}MB, RAM={ram}MB")
-            results = {str(ctx): profile}
-        else:
-            error = profile.get("error", "unknown")
-            self.emit_log(f"  ❌ {ctx}: {error}")
-            results = {str(ctx): {"error": error}}
+            if profile.get("success"):
+                profile["n_gpu_layers"] = n_layers
+                vram = profile.get("vram_mb", "N/A")
+                ram = profile.get("ram_mb", "N/A")
+                self.emit_log(f"  ✅ {ctx}: VRAM={vram}MB, RAM={ram}MB")
+                results[str(ctx)] = profile
+            else:
+                error = profile.get("error", "unknown")
+                self.emit_log(f"  ❌ {ctx}: {error}")
+                results[str(ctx)] = {"error": error}
 
         task_default = loader_config.get("embedding_task_default")
         if task_default is None:

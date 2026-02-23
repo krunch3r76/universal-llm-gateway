@@ -45,7 +45,7 @@ options:
     - qwen
     - gemma_2_9b
     - llama_3_1_8b
-    - phi
+    - ministral_3_8b
 
   veto_pool:
     - qwen
@@ -57,7 +57,9 @@ options:
   originator_link1: gemma_2_9b
   originator_link2: llama_3_1_8b
 
+  question_classify_model: qwen
   decompose_model: gemma_2_9b
+  domain_classify_model: gemma_2_9b
 
   contextualize_pool:
     - gemma_2_9b
@@ -96,7 +98,7 @@ steps:
   # Classify the question and emit a structural contract (type, required_items, ordering) for synthesis.
   - name: analyze_question
     type: consensus_analyze_v5_0
-    model_ref: qwen
+    model_ref: optionsNs.question_classify_model
     prompt_ref: consensus.v6.1.analyze_question
     handler_inputs:
       text: sourceNs.text
@@ -200,12 +202,12 @@ steps:
       rejected_claims: synergize.json.rejected_claims
       authority_verdicts: synergize.json.authority_verdicts
     # embedding_model: embedding
+    embedding_model: octen_embedding_4b
     # embedding_model: bge_large
     # embedding_model: gte_large
     # embedding_model: octen_embedding_06b
-    embedding_model: octen_embedding_4b
     # embedding_model: octen_embedding_8b
-    similarity_threshold: 0.95    # 1.0 = merge only (no dedup); 0.88 = dedup enabled
+    similarity_threshold: 0.93    # 1.0 = merge only (no dedup); 0.88 = dedup enabled
     timeout_seconds: 60
 
   # Remove universal-negative claims that poison synthesis when contradicted by positive facts.

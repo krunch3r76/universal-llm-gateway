@@ -60,9 +60,25 @@ def get_pipeline_required_models(
     for step in pipeline.steps:
         # 1. Direct model_ref on step
         if step.model_ref:
-            _add_model_from_ref(
-                required, step.model_ref, resolve_model_ref, pipeline.id, step.id
-            )
+            # optionsNs.<key> — resolve via pipeline options before registry lookup
+            if step.model_ref.startswith("optionsNs."):
+                option_key = step.model_ref[len("optionsNs."):]
+                resolved_ref = pipeline.options.get(option_key)
+                if resolved_ref and isinstance(resolved_ref, str):
+                    _add_model_from_ref(
+                        required, resolved_ref, resolve_model_ref, pipeline.id, step.id
+                    )
+                else:
+                    logger.warning(
+                        "Pipeline %s step %s: optionsNs.%s not found in options",
+                        pipeline.id,
+                        step.id,
+                        option_key,
+                    )
+            else:
+                _add_model_from_ref(
+                    required, step.model_ref, resolve_model_ref, pipeline.id, step.id
+                )
 
         # 2. Map steps with model_ref in map_inputs
         if step.is_map_step:

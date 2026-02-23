@@ -154,7 +154,7 @@ def build_initial_telemetry_payload(
         "loaded_models": loaded_models,
         "busy_models": busy_models,
         "loading_models": [],  # Start empty, updated by lifecycle events
-        "available_models": all_models,  # Full list for routing
+        "available_models": list(model_resources.keys()),  # Measured catalog only
         "activated_models": activated_models,  # Filtered list for /v1/models
         "activated_contexts": activated_contexts,  # Activation rules
         "model_resources": model_resources,  # Resource requirements

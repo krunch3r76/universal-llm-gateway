@@ -249,7 +249,7 @@ models:
   #   #          (vs 0.95+ needed at 768-dim); still lightweight enough for pipeline use
 
   octen_embedding_4b:
-    model: octen-embedding-4b-q4-k-m-40960   # TODO: confirm GGUF model ID on gateway
+    model: octen-embedding-4b-q4-k-m-2048-cpu   # TODO: confirm GGUF model ID on gateway
   #   system_prompt: ""
   #   # 4B | 2560-dim | 32K context | healthcare + code + legal domain expertise
   #   # NOT recommended for dedup — oversized for single-sentence claim comparison
