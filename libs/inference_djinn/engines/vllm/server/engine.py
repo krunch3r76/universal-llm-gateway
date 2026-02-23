@@ -79,7 +79,8 @@ class VLLMServerEngine(BaseEngine):
         extra_cli_args = {k: v for k, v in kwargs.items() if k not in _internal_keys}
         if is_embedding:
             extra_cli_args["runner"] = "pooling"
-            enable_auto_tool_choice = False
+        # ∀ embedding models: tool choice is structurally inapplicable.
+        resolved_auto_tool_choice = enable_auto_tool_choice and not is_embedding
         if dropped:
             logger.debug(
                 "🔧 [VLLMServerEngine] Stripped gateway-internal keys: %s",
@@ -96,7 +97,7 @@ class VLLMServerEngine(BaseEngine):
             host=host,
             port=port,
             socket_path=socket_path,
-            enable_auto_tool_choice=enable_auto_tool_choice,
+            enable_auto_tool_choice=resolved_auto_tool_choice,
             tool_call_parser=parser,
             max_model_len=max_model_len,
             gpu_memory_utilization=gpu_memory_utilization,
@@ -283,17 +284,9 @@ class VLLMServerEngine(BaseEngine):
 
     @override
     def is_loaded(self) -> bool:
-        """True if server process exists and is not definitively stopped.
-
-        UNHEALTHY (transient health-check failure) still counts as loaded —
-        the vLLM process is alive and can serve tokenize/generate requests.
-        Only STOPPED or STOPPING mean the subprocess is gone.
-        """
+        """True only when the server is RUNNING and healthy."""
         if self._crashed:
             return False
         if not self.server_manager:
             return False
-        return self.server_manager.status not in (
-            ServerStatus.STOPPED,
-            ServerStatus.STOPPING,
-        )
+        return self.server_manager.status == ServerStatus.RUNNING

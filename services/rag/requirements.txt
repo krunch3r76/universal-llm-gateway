@@ -1,0 +1,3 @@
+chromadb
+pypdf
+# fastapi, uvicorn, httpx already in ~/.venvs/universal

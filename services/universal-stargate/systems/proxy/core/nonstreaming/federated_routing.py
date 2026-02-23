@@ -409,6 +409,9 @@ async def _route_to_federated_gateway(
                 "has_gateway_capacity",
                 "has_enough_vram",
                 "has_enough_ram",
+                # circuit_breaker: temporary (OPEN→HALF_OPEN after recovery_timeout).
+                # Model IS available; gateway is isolated. Retryable — not permanent.
+                "circuit_breaker",
             }
             has_capacity_failure = any(
                 any(f.constraint in capacity_constraints for f in c.constraints_failed)

@@ -32,12 +32,15 @@ logger = get_logger(__name__)
 # Capacity constraints that indicate temporary unavailability (retryable).
 # Distinguished from permanent failures (is_healthy, has_model_available)
 # to allow sticky guard to only block on transient conditions.
+# circuit_breaker: temporary (OPEN→HALF_OPEN after recovery_timeout); model IS
+# available but gateway is isolated. Treat as transient, not permanent failure.
 _CAPACITY_CONSTRAINTS: frozenset[str] = frozenset(
     {
         "has_enough_vram",
         "has_enough_ram",
         "compute_type_capacity",
         "has_gateway_capacity",
+        "circuit_breaker",
     }
 )
 

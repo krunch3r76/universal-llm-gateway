@@ -153,6 +153,22 @@ class NativeGGUFEngine(BaseEngine):
         if "n_batch" in kwargs:
             batch_size = kwargs.pop("n_batch")
 
+        # Extract KV cache clearing config from warmup settings.
+        # Invariant: ∀ warmup config absent ⟹ default to False (rely on llama-server default behavior)
+        warmup_dict: dict[str, Any] = kwargs.pop("warmup", {})
+        self._clear_kv_streaming: bool = warmup_dict.get("streaming", {}).get(
+            "clear_kv_before", False
+        )
+        self._clear_kv_non_streaming: bool = warmup_dict.get("non_streaming", {}).get(
+            "clear_kv_before", False
+        )
+        if self._clear_kv_streaming or self._clear_kv_non_streaming:
+            logger.info(
+                f"[NativeGGUFEngine] KV cache clear enabled — "
+                f"streaming={self._clear_kv_streaming}, "
+                f"non_streaming={self._clear_kv_non_streaming}"
+            )
+
         # DEBUG: Log parallel_slots value received
         logger.info(
             f"[NativeGGUFEngine] Initializing with parallel_slots={parallel_slots}, "
@@ -305,6 +321,8 @@ class NativeGGUFEngine(BaseEngine):
 
         # Build params (exclude metadata and routing fields)
         params = self._get_generation_params(data)
+        if self._clear_kv_non_streaming:
+            params["cache_prompt"] = False
         params["stream"] = False
 
         # Validate response_format schema if present
@@ -374,6 +392,8 @@ class NativeGGUFEngine(BaseEngine):
         prompt = data.get("prompt")
 
         params = self._get_generation_params(data)
+        if self._clear_kv_streaming:
+            params["cache_prompt"] = False
         params["stream"] = True
 
         # Validate response_format schema if present
