@@ -175,67 +175,25 @@ class RequestForwarder:
                         raise HTTPException(
                             status_code=499, detail="Client disconnected"
                         )
+                except HTTPException:
+                    raise
                 except Exception as e:
                     logger.debug(f"Could not check client disconnection: {e}")
 
-            # Create background task to monitor disconnection during inference
-            monitor_task = None
-            if request and context:
-                monitor_task = asyncio.create_task(
-                    _monitor_client_disconnection(
-                        request=request,
-                        context=context,
-                        gateway_url=gateway_url,
-                        http_client=http_client,
-                        model_name=model_name,
-                    )
-                )
-
-            try:
-                response = await http_client.request(
-                    method=method,
-                    url=url,
-                    headers=clean_headers,
-                    content=content,
-                    params=params,
-                    timeout=request_timeout,
-                )
-            except (httpx.TimeoutException, asyncio.CancelledError) as e:
-                # Send cancellation to Gateway before propagating error
-                # This ensures Worker stops inference instead of running to completion
-                if model_name and context:
-                    cancel_url = f"{gateway_url}/v1/management/models/{model_name}/cancel-request"
-                    reason = (
-                        "client_timeout"
-                        if isinstance(e, httpx.TimeoutException)
-                        else "client_cancelled"
-                    )
-                    try:
-                        logger.info(
-                            f"🛑 Sending cancellation for {context.request_id[:8]} to gateway "
-                            f"(reason: {reason})"
-                        )
-                        await http_client.post(
-                            cancel_url,
-                            json={"stream_id": context.request_id, "reason": reason},
-                            timeout=5.0,
-                        )
-                        logger.info(
-                            f"✅ Cancellation sent for {context.request_id[:8]} after {reason}"
-                        )
-                    except Exception as cancel_error:
-                        logger.warning(
-                            f"⚠️ Failed to send cancellation for {context.request_id[:8]}: {cancel_error}"
-                        )
-                raise
-            finally:
-                # Cancel monitoring task if still running
-                if monitor_task and not monitor_task.done():
-                    monitor_task.cancel()
-                    try:
-                        await monitor_task
-                    except asyncio.CancelledError:
-                        pass
+            response = await _forward_with_disconnect_race(
+                http_client=http_client,
+                method=method,
+                url=url,
+                headers=clean_headers,
+                content=content,
+                params=params,
+                timeout=request_timeout,
+                request=request,
+                request_id=request_id,
+                model_name=model_name,
+                gateway_url=gateway_url,
+                context=context,
+            )
 
             # Validate response matches request (check model in response if available)
             response_content = response.content
@@ -327,97 +285,103 @@ class RequestForwarder:
             )
 
 
-async def _monitor_client_disconnection(
-    request,
-    context: ForwardContext,
-    gateway_url: str,
+async def _poll_disconnect(request) -> None:
+    """Resolve when the upstream client closes its connection."""
+    while not await request.is_disconnected():
+        await asyncio.sleep(0.5)
+
+
+async def _forward_with_disconnect_race(
     http_client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    headers: dict,
+    content: bytes | None,
+    params: dict | None,
+    timeout: float,
+    request,
+    request_id: str | None,
     model_name: str | None,
-    expected_duration_hint: float | None = None,
-) -> None:
+    gateway_url: str,
+    context: "ForwardContext | None",
+) -> httpx.Response:
+    """Forward HTTP request, cancelling the outgoing connection on client disconnect.
+
+    ∀ client_disconnect during forwarding:
+      outgoing HTTP task cancelled → next-hop TCP connection closed →
+      next-hop detects disconnect → cancel propagates down chain without
+      out-of-band API calls.
+
+    ∀ httpx.TimeoutException (no upstream client):
+      best-effort cancel-request sent to next hop (Gateway endpoint only;
+      no-ops silently when next hop is another Stargate).
     """
-    Monitor client disconnection during gateway request.
+    http_task = asyncio.create_task(
+        http_client.request(
+            method=method,
+            url=url,
+            headers=headers,
+            content=content,
+            params=params,
+            timeout=timeout,
+        )
+    )
 
-    ⚠️ FRAMEWORK LIMITATION: FastAPI/Starlette does not provide an event-based
-    mechanism for detecting client disconnection during request handling.
+    if request is None:
+        return await http_task
 
-    The only available API is request.is_disconnected() which must be polled.
-    This is documented and accepted as a framework limitation.
-
-    OPTIMIZATIONS APPLIED:
-    1. Adaptive check interval (0.5-2s based on expected duration)
-    2. Initial grace period (2s - skip first checks to reduce overhead)
-    3. Task cancelled when request completes normally
-
-    ALTERNATIVE CONSIDERED:
-    - Using Request.receive() with asyncio.wait() - still requires polling
-    - WebSocket upgrade - changes client contract
-    - Keep-alive mechanism - adds protocol complexity
-
-    DECISION: Keep polling with optimizations, document as accepted limitation.
-
-    Args:
-        request: FastAPI Request object
-        context: Forward context with request_id
-        gateway_url: Gateway base URL
-        http_client: HTTP client for cancellation API call
-        model_name: Model ID for cancellation endpoint
-        expected_duration_hint: Optional hint for adaptive interval selection
-    """
-    request_id = context.request_id if context else "unknown"
-
-    # Adaptive interval based on expected duration
-    # Short requests (<10s): less frequent checks (reduce overhead)
-    # Long requests (>=10s): more frequent checks (more responsive)
-    if expected_duration_hint and expected_duration_hint < 10.0:
-        check_interval = 2.0
-    else:
-        check_interval = 0.5
-
-    # Initial grace period: skip first 2 seconds (overhead not worth it)
-    initial_grace_period = 2.0
+    disconnect_task = asyncio.create_task(_poll_disconnect(request))
 
     try:
-        await asyncio.sleep(initial_grace_period)
-
-        while True:
-            await asyncio.sleep(check_interval)
-
+        done, pending = await asyncio.wait(
+            {http_task, disconnect_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
             try:
-                if await request.is_disconnected():
-                    logger.info(
-                        f"🔌 Client disconnected during inference - "
-                        f"cancelling request {request_id[:8]} on model {model_name}"
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        if disconnect_task in done:
+            # Cancelling http_task already closed the outgoing TCP connection;
+            # the next hop will detect this via its own is_disconnected() poll.
+            logger.info(
+                f"🔌 Client disconnected - cancelled upstream for "
+                f"{(request_id or '')[:8]} (model: {model_name})"
+            )
+            raise HTTPException(status_code=499, detail="Client disconnected")
+
+        exc = http_task.exception()
+        if exc is not None:
+            if isinstance(exc, httpx.TimeoutException) and model_name and context:
+                cancel_url = (
+                    f"{gateway_url}/v1/management/models/{model_name}/cancel-request"
+                )
+                try:
+                    await http_client.post(
+                        cancel_url,
+                        json={
+                            "stream_id": context.request_id,
+                            "reason": "client_timeout",
+                        },
+                        timeout=5.0,
                     )
+                except Exception as cancel_err:
+                    logger.warning(
+                        f"⚠️ Cancel after timeout failed for "
+                        f"{(request_id or '')[:8]}: {cancel_err}"
+                    )
+            raise exc
 
-                    # Call gateway cancellation API
-                    if model_name:
-                        cancel_url = f"{gateway_url}/v1/management/models/{model_name}/cancel-request"
-                        try:
-                            cancel_response = await http_client.post(
-                                cancel_url,
-                                json={
-                                    "stream_id": request_id,
-                                    "reason": "client_disconnected",
-                                },
-                                timeout=5.0,
-                            )
-                            logger.info(
-                                f"✅ Cancellation request sent for {request_id[:8]}: "
-                                f"status={cancel_response.status_code}"
-                            )
-                        except Exception as cancel_error:
-                            logger.warning(
-                                f"⚠️ Failed to send cancellation request: {cancel_error}"
-                            )
-
-                    # Exit monitoring loop
-                    return
-
-            except Exception as check_error:
-                logger.debug(f"Error checking disconnection: {check_error}")
+        return http_task.result()
 
     except asyncio.CancelledError:
-        # Request completed normally, monitoring no longer needed
-        logger.debug(f"Disconnection monitoring stopped for {request_id[:8]}")
+        if not http_task.done():
+            http_task.cancel()
+            try:
+                await http_task
+            except (asyncio.CancelledError, Exception):
+                pass
         raise

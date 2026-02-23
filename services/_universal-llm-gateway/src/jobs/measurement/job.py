@@ -342,6 +342,7 @@ class MeasurementJob(Job):
                 tracker,
                 self.emit_log,
                 loader_config=loader_config,
+                device_index=self.request.gpu_index,
             )
             results: dict[str, dict[str, Any]] = {str(ctx): profile}
         else:
