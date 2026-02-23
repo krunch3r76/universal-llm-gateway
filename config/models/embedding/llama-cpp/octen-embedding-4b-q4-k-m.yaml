@@ -1,0 +1,21 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Octen-Embedding-4B-Q4_K_M
+  format: gguf
+  arch: qwen3
+  quant: Q4_K_M
+  parameters_m: 4624
+  training_context_length: 40960
+  supports_chat_history: true
+  input_schema: messages
+loader:
+  embedding: true
+  embedding_task_default: search_document
+download:
+  huggingface:
+    repo: nicoghost124/Octen-Embedding-4B-GGUF
+    verified: true
+    file: Octen-Embedding-4B-Q4_K_M.gguf
+  size_bytes: 2496703904
+  sha256: a1f276c6dac1d55b12ca4c5b55df7ab33bbdea0e402d0b339b19d9b624f1ac80

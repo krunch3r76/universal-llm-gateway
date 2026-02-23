@@ -39,6 +39,7 @@ async def _route_to_federated_gateway(
     compute_type_tracker=None,
     routing_key_tracker=None,
     admission_queue=None,
+    circuit_breaker=None,
 ) -> tuple[str | None, str | None]:
     """
     Router-only mode: Select and load model on federated gateway.
@@ -53,6 +54,7 @@ async def _route_to_federated_gateway(
         routing_config: Full Stargate config dict for loading routing policy
         compute_type_tracker: MasterRequestTracker for compute-type limits
         routing_key_tracker: MasterRequestTracker for eviction protection
+        circuit_breaker: FederationCircuitBreaker for availability checks
 
     Returns:
         Tuple of (gateway_name, reservation_id) if selected, (None, None) otherwise
@@ -179,10 +181,17 @@ async def _route_to_federated_gateway(
     from systems.routing.selection.decision.config import load_routing_policy
 
     policy = load_routing_policy(routing_config or {})
+
+    # Create availability callback for circuit breaker
+    is_gateway_available_fn = None
+    if circuit_breaker:
+        is_gateway_available_fn = circuit_breaker.is_request_allowed_sync
+
     decision_engine = DecisionEngine(
         policy=policy,
         event_bus=event_bus,
         routing_key_tracker=routing_key_tracker,
+        is_gateway_available_fn=is_gateway_available_fn,
         # Admission control: CapacityLedger in systems/routing/capacity/
     )
 
@@ -218,13 +227,50 @@ async def _route_to_federated_gateway(
     is_cold_load = (
         selected_gateway is not None and model_id not in selected_gateway.loaded_models
     )
+
+    # STICKY INVARIANT: ∀ sticky model_id, ∃ healthy gateway G with model
+    # loaded|loading ⟹ route to G, ¬cold_load elsewhere.
+    # Prevents duplicate loads that waste VRAM and may trigger unnecessary evictions.
+    if context.model_sticky and is_cold_load and selected_gateway:
+        already_warm = next(
+            (
+                g
+                for g in gateways_for_routing
+                if g.name != selected_gateway.name
+                and (model_id in g.loaded_models or model_id in g.loading_models)
+            ),
+            None,
+        )
+        if already_warm:
+            warm_state = (
+                "loaded" if model_id in already_warm.loaded_models else "loading"
+            )
+            logger.info(
+                f"📍 Sticky guard: {model_id} already {warm_state} on "
+                f"{already_warm.name}, redirecting from cold-load on "
+                f"{selected_gateway.name}"
+            )
+            selected_gateway = already_warm
+            is_cold_load = model_id not in selected_gateway.loaded_models
+            stability_tracker.update_binding(model_id, selected_gateway.name)
+
+    # Track whether admission_queue.acquire() succeeded so the outer except
+    # can release the reserved slot if anything fails before context.selected_gateway
+    # is set (e.g. eviction failure, load failure). Without this, the in-flight
+    # count leaks permanently — executor._release_capacity_on_pre_forward_failure
+    # returns early when context.federated_gateway is None.
+    admission_acquired = False
+
     if selected_gateway and admission_queue and not is_cold_load:
-        # Determine allowed gateways for admission
+        # Sticky: honour the engine's exact selection.
+        # Opening the set to all warm gateways lets frozenset hash-iteration
+        # order silently override the engine's choice, spreading the model
+        # across multiple gateways and making the stability binding stale.
+        # ∀ sticky: allowed ⊆ {selected_gateway} so admission cannot reassign.
+        # Non-sticky: allow any warm gateway for load balancing.
         if context.model_sticky:
-            # Sticky: only allow the selected gateway
             allowed_gateway_ids = frozenset({selected_gateway.name})
         else:
-            # Non-sticky: allow any gateway that has the model
             allowed_gateway_ids = frozenset(
                 g.name for g in gateways_for_routing if model_id in g.loaded_models
             )
@@ -244,6 +290,7 @@ async def _route_to_federated_gateway(
                 allowed_gateway_ids=allowed_gateway_ids,
                 timeout_s=timeout_s,
             )
+            admission_acquired = True
 
             # If assigned to a different gateway than selected, re-select
             if assigned_gateway_id != selected_gateway.name:
@@ -262,9 +309,11 @@ async def _route_to_federated_gateway(
                 f"gateway={selected_gateway.name} timeout_s={timeout_s} "
                 f"allowed_gateways={sorted(allowed_gateway_ids)}"
             )
+            stability_tracker.clear_binding(model_id)
             raise_gateway_capacity_error(selected_gateway.name)
         except Exception as e:
             logger.error(f"❌ Admission queue acquire failed: {e}")
+            stability_tracker.clear_binding(model_id)
             raise_gateway_capacity_error(selected_gateway.name)
 
     # Emit orchestrator decision event
@@ -536,5 +585,13 @@ async def _route_to_federated_gateway(
         ):
             await federated_manager.clear_model_loading(
                 optimistic_mark_gateway_id, optimistic_mark_model_id
+            )
+        # ∀ failure after acquire(): release slot.
+        # executor._release_capacity_on_pre_forward_failure returns early when
+        # fed_gateway is None (context.selected_gateway not yet set), leaking
+        # the in-flight count → queue starvation → deadlock.
+        if admission_acquired and admission_queue:
+            await admission_queue.release_reserved(
+                context.request_id, model_id.routing_key
             )
         raise

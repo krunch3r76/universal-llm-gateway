@@ -1,7 +1,7 @@
 """
 Event-driven capacity waiter.
 
-Wakes on capacity hints (MODEL_EXECUTION_COMPLETED or MODEL_CAPACITY_FREED).
+Wakes on capacity hints (MODEL_EXECUTION_COMPLETED/FAILED or MODEL_CAPACITY_FREED).
 Invariant: ∀ capacity events are captured (no missed signals)
 Pattern: Epoch counter + asyncio.Condition (not Event.clear())
 """
@@ -23,7 +23,8 @@ class CapacityWaiter:
     """
     Wait for capacity events without race conditions.
 
-    Subscribes to both MODEL_EXECUTION_COMPLETED and MODEL_CAPACITY_FREED.
+    Subscribes to MODEL_EXECUTION_COMPLETED, MODEL_EXECUTION_FAILED,
+    and MODEL_CAPACITY_FREED.
     Uses epoch counter to ensure no signals are missed between
     checking and waiting.
 
@@ -47,8 +48,9 @@ class CapacityWaiter:
         """
         Subscribe to capacity events (lazy, loop rebinding).
 
-        Subscribes to both:
+        Subscribes to:
         - MODEL_EXECUTION_COMPLETED: Request finished, gateway has capacity
+        - MODEL_EXECUTION_FAILED: Request failed, gateway has capacity
         - MODEL_CAPACITY_FREED: Gateway reported idle/unloaded, capacity available
         """
         # Update loop reference if changed (handles lifecycle with different loops)
@@ -62,21 +64,22 @@ class CapacityWaiter:
         from src.scheduling.events import (
             MODEL_CAPACITY_FREED,
             MODEL_EXECUTION_COMPLETED,
+            MODEL_EXECUTION_FAILED,
         )
 
         def on_capacity_event(_event) -> None:
             """Increment epoch and notify all waiters (thread-safe)."""
             if self._loop is None or self._loop.is_closed():
                 return
-            # Use call_soon_threadsafe for safety when called from any context
             self._loop.call_soon_threadsafe(self._schedule_notify)
 
-        # Subscribe to both signals
         self._event_bus.subscribe_async(MODEL_EXECUTION_COMPLETED, on_capacity_event)
+        self._event_bus.subscribe_async(MODEL_EXECUTION_FAILED, on_capacity_event)
         self._event_bus.subscribe_async(MODEL_CAPACITY_FREED, on_capacity_event)
         self._subscribed = True
         logger.debug(
-            "CapacityWaiter subscribed to model.execution.completed and model.capacity.freed"
+            "CapacityWaiter subscribed to model.execution.completed, "
+            "model.execution.failed, and model.capacity.freed"
         )
 
     def _schedule_notify(self) -> None:

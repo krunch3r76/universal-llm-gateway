@@ -71,6 +71,7 @@ class GGUFTokenCounter:
         messages_or_prompt: MessageList | str,
         use_cpu: bool = True,  # Kept for API compatibility, but ignored
         context_length: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> TokenCountResult:
         """
         Count tokens for messages or prompt, including image token estimates.

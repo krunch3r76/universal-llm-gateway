@@ -99,3 +99,5 @@ services/universal-stargate/docs/
 libs/universal_transport/tmp/
 services/universal-stargate/systems/graphics/references/
 docker/docs/
+
+tasks/

@@ -27,9 +27,9 @@ if _libs_path.exists() and str(_libs_path) not in sys.path:
 
 from universal_logging import get_logger  # noqa: E402
 
-# Note: Environment loading is now handled by wrapper script (start-gateway.sh)
-# which sources config/env/gateway.env and config/env/gateway.env.local from project root before
-# starting this Python service manager. All config is read from os.environ.
+# Note: Environment loading is handled by wrapper script (start-gateway.sh)
+# which sources .env.local from project root before starting this Python service manager.
+# All config is read from os.environ.
 
 
 # Thread configuration validation (canonical version in core.config_loader)
@@ -73,8 +73,8 @@ class GatewayConfig:
     Gateway configuration with validation and defaults.
 
     Configuration is loaded from environment variables only.
-    The wrapper script (start-gateway.sh) sources config/env/gateway.env and config/env/gateway.env.local
-    from the project root before starting this service manager.
+    The wrapper script (start-gateway.sh) sources .env.local from the project root
+    before starting this service manager.
     """
 
     # Core service configuration
@@ -135,7 +135,7 @@ class GatewayConfig:
         Load configuration from environment variables.
 
         Environment variables are loaded by wrapper script (start-gateway.sh)
-        which sources config/env/gateway.env and config/env/gateway.env.local from project root.
+        which sources .env.local from the project root.
 
         Args:
             environment: Environment name (default, debug, release)

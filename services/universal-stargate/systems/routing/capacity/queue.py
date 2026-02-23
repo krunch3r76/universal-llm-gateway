@@ -2,7 +2,7 @@
 Per-model admission queue — FIFO slot assignment.
 
 Serializes request admission for a model across all gateways.
-Event-driven wake via MODEL_EXECUTION_COMPLETED.
+Event-driven wake via MODEL_EXECUTION_COMPLETED/FAILED.
 
 INVARIANT: ∀ dispatched request: ledger.try_reserve() = True
 INVARIANT: FIFO ordering preserved (deque)
@@ -37,7 +37,7 @@ class AdmissionQueue:
     Per-model FIFO admission queue with event-driven dispatch.
 
     Queues requests when no capacity available, wakes on
-    MODEL_EXECUTION_COMPLETED/MODEL_CAPACITY_FREED events.
+    MODEL_EXECUTION_COMPLETED/FAILED and MODEL_CAPACITY_FREED events.
     """
 
     def __init__(
@@ -70,6 +70,7 @@ class AdmissionQueue:
         from src.scheduling.events import (
             MODEL_CAPACITY_FREED,
             MODEL_EXECUTION_COMPLETED,
+            MODEL_EXECUTION_FAILED,
         )
 
         async def on_capacity_event(event) -> None:
@@ -81,11 +82,12 @@ class AdmissionQueue:
                 self._loop.call_soon_threadsafe(self._schedule_dispatch, model_id)
 
         self._event_bus.subscribe_async(MODEL_EXECUTION_COMPLETED, on_capacity_event)
+        self._event_bus.subscribe_async(MODEL_EXECUTION_FAILED, on_capacity_event)
         self._event_bus.subscribe_async(MODEL_CAPACITY_FREED, on_capacity_event)
         self._subscribed = True
         logger.debug(
-            "AdmissionQueue subscribed to model.execution.completed and "
-            "model.capacity.freed"
+            "AdmissionQueue subscribed to model.execution.completed, "
+            "model.execution.failed, and model.capacity.freed"
         )
 
     def _schedule_dispatch(self, model_id: str) -> None:
@@ -197,7 +199,7 @@ class AdmissionQueue:
 
     def cancel(self, request_id: str) -> bool:
         """
-        Remove request from queue. Idempotent.
+        Remove request from queue and release any ledger reservation. Idempotent.
 
         Args:
             request_id: Request to cancel
@@ -211,11 +213,36 @@ class AdmissionQueue:
                     del queue[i]
                     if not waiter.future.done():
                         waiter.future.cancel()
+                    # Defensive: release ledger reservation in case waiter
+                    # was dispatched between _dispatch and this cancel.
+                    # Idempotent — returns False if no reservation exists.
+                    self._ledger.release(request_id)
                     logger.debug(f"Cancelled: {request_id} from {model_id} queue")
                     if not queue:
                         del self._queues[model_id]
                     return True
         return False
+
+    async def release_reserved(self, request_id: str, model_id: str) -> None:
+        """Release an admitted (in-flight) slot and dispatch any waiting requests.
+
+        Used when a request fails after admission (try_reserve succeeded) but
+        before model.execution.completed fires — e.g. load failure in
+        federated_routing before context.selected_gateway is set.
+
+        Without this, the in-flight count stays elevated permanently and
+        waiting requests never get dispatched — queue starvation / deadlock.
+
+        ∀ call: idempotent — ledger.release() returns False if no reservation.
+        """
+        released = self._ledger.release(request_id)
+        if released:
+            logger.debug(
+                f"Released reserved slot (pre-execution): {request_id}/{model_id}"
+            )
+            await self._dispatch(model_id)
+        else:
+            logger.debug(f"release_reserved: no reservation found for {request_id}")
 
     def get_snapshot(self) -> dict[str, Any]:
         """Return diagnostic snapshot of queue state."""

@@ -90,13 +90,28 @@ class CapacityLedger:
         logger.info(f"Removed capacity: {gateway_id}/{model_id}")
 
     def try_reserve(self, request_id: str, gateway_id: str, model_id: str) -> bool:
-        """Reserve one slot. Returns True if available. Idempotent."""
+        """Reserve one slot. Returns True if available. Idempotent.
+
+        If the request already holds a reservation on a DIFFERENT slot (stale
+        from a previous routing attempt that leaked), the old reservation is
+        released and the new one is attempted. This prevents permanent deadlock
+        where a leaked reservation pins a request_id to a gateway it will never
+        reach again.
+        """
         slot = CapacitySlot(gateway_id=gateway_id, model_id=model_id)
         if request_id in self._reservations:
             if self._reservations[request_id] == slot:
                 return True
-            logger.error(f"Request {request_id} already on different slot")
-            return False
+            old_slot = self._reservations[request_id]
+            self.release(request_id)
+            logger.warning(
+                "Swapped stale reservation for %s: %s/%s → %s/%s",
+                request_id,
+                old_slot.gateway_id,
+                old_slot.model_id,
+                gateway_id,
+                model_id,
+            )
         capacity = self._capacity.get(slot, 0)
         in_flight = self._in_flight.get(slot, 0)
         if in_flight >= capacity:

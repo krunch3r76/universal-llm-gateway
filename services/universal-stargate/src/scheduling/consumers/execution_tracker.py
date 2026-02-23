@@ -1,8 +1,9 @@
 """
 Model execution lifecycle tracker.
 
-Subscribes to model.execution.started and model.execution.completed events
-to track which models have active execution requests on each gateway.
+Subscribes to model.execution.started, model.execution.completed, and
+model.execution.failed events to track which models have active execution
+requests on each gateway.
 
 Current implementation: Set-based (1 request at a time, llama.cpp)
 Future: Counter-based (N concurrent requests, vLLM batching)
@@ -13,7 +14,11 @@ from collections import defaultdict
 from universal_event_bus import Event, EventBus
 from universal_logging import get_logger
 
-from ..events import MODEL_EXECUTION_COMPLETED, MODEL_EXECUTION_STARTED
+from ..events import (
+    MODEL_EXECUTION_COMPLETED,
+    MODEL_EXECUTION_FAILED,
+    MODEL_EXECUTION_STARTED,
+)
 
 logger = get_logger(__name__)
 
@@ -22,7 +27,7 @@ class ModelExecutionTracker:
     """
     Track model execution lifecycle across gateways.
 
-    Aggregates execution started/completed events to determine which
+    Aggregates execution started/completed/failed events to determine which
     models are currently processing requests.
 
     Current: Set-based tracking (binary busy state)
@@ -40,6 +45,9 @@ class ModelExecutionTracker:
         )
         self.event_bus.subscribe_async(
             MODEL_EXECUTION_COMPLETED, self._handle_execution_completed
+        )
+        self.event_bus.subscribe_async(
+            MODEL_EXECUTION_FAILED, self._handle_execution_completed
         )
         logger.info("✅ ModelExecutionTracker started")
 

@@ -241,6 +241,7 @@ class ExLlamaV3Engine(BaseEngine):
         messages_or_prompt: list[dict[str, Any]] | str,
         use_cpu: bool = True,
         context_length: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ):
         """
         Count tokens for chat messages or prompt string using ExLlamaV3 tokenizer.

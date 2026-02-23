@@ -17,19 +17,26 @@ VISUAL_SCHEMA_TO_PATH = {
     "vllm": "visual/vllm",
 }
 
+# ∀ embedding models (loader.embedding=True): separate API, no KV cache
+EMBEDDING_SCHEMA_TO_PATH = {
+    "llama-cpp": "embedding/llama-cpp",
+    "vllm": "embedding/vllm",
+}
+
 
 def determine_model_path(model_id: str, model_entry: dict[str, Any]) -> str:
     """
     Determine domain/engine path for model.
 
-    ∀ model: metadata.is_vision_model=True ⟹ visual/{engine}
-    ∀ model: metadata.is_vision_model=False ⟹ {domain}/{engine}
+    ∀ model: is_vision ⟹ visual/{engine}
+           | embedding ⟹ embedding/{engine}
+           | else ⟹ {domain}/{engine}
 
     Returns:
-        Relative path like "visual/llama-cpp" or "text_llm/vllm"
+        Relative path like "visual/llama-cpp" or "embedding/vllm" or "text_llm/vllm"
 
     Raises:
-        ValueError: If schema missing, unknown, or visual schema unsupported
+        ValueError: If schema missing, unknown, or domain schema unsupported
     """
     schema = model_entry.get("schema")
     if not schema:
@@ -42,6 +49,16 @@ def determine_model_path(model_id: str, model_entry: dict[str, Any]) -> str:
             raise ValueError(
                 f"Model '{model_id}' is a vision model but schema '{schema}' "
                 f"has no visual path. Supported: {list(VISUAL_SCHEMA_TO_PATH.keys())}"
+            )
+        return path
+
+    is_embedding = model_entry.get("loader", {}).get("embedding") is True
+    if is_embedding:
+        path = EMBEDDING_SCHEMA_TO_PATH.get(schema)
+        if not path:
+            raise ValueError(
+                f"Model '{model_id}' is an embedding model but schema '{schema}' "
+                f"has no embedding path. Supported: {list(EMBEDDING_SCHEMA_TO_PATH.keys())}"
             )
         return path
 

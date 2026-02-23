@@ -81,6 +81,7 @@ class RPCHelpers:
         prompt = command.get("prompt", None)
         context_length = command.get("context_length", None)
         use_cpu = command.get("use_cpu")
+        tools = command.get("tools")
 
         # Validate input
         if messages is None and prompt is None:
@@ -113,7 +114,7 @@ class RPCHelpers:
 
         try:
             token_count = await self._count_tokens_with_tokenizer(
-                message_or_prompt, use_cpu, context_length
+                message_or_prompt, use_cpu, context_length, tools=tools
             )
 
             # Return spec-compliant response per §2.1
@@ -201,19 +202,19 @@ class RPCHelpers:
         message_or_prompt: list[dict[str, str]] | str,
         use_cpu: bool,
         context_length: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> int:
         """Count tokens using inference_djinn engine."""
-        # Remove import - truncation now automatic
 
-        # Ensure model is loaded and engine is healthy before counting tokens
         if not self.engine or not self.engine.is_loaded():
             raise RuntimeError("Model must be loaded before counting tokens")
 
         try:
-            # Use inference_djinn engine's token counting method
-            # The engine should handle both messages and prompt
             result = await self.engine.count_tokens_for_messages(
-                message_or_prompt, context_length=context_length, use_cpu=use_cpu
+                message_or_prompt,
+                context_length=context_length,
+                use_cpu=use_cpu,
+                tools=tools,
             )
 
             # Log TokenCountResult for debugging

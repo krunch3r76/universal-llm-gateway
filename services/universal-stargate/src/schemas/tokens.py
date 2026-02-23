@@ -6,7 +6,7 @@
 - See: docs/pydantic-passthrough-rules.md
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -40,11 +40,17 @@ ContentPart = Annotated[ContentPartText | ContentPartImage, Field(discriminator=
 class Message(BaseModel):
     """Chat message with support for text-only and multi-modal content"""
 
-    role: Literal["system", "user", "assistant"] = Field(
+    model_config = ConfigDict(extra="allow")
+
+    role: Literal["system", "user", "assistant", "tool"] = Field(
         ..., description="Message role"
     )
-    content: str | list[ContentPart] = Field(
-        ..., description="Message content (string for text-only, list for multi-modal)"
+    content: str | list[ContentPart] | None = Field(
+        None,
+        description=(
+            "Message content: string for text-only, list for multi-modal,"
+            " null for assistant messages with tool_calls"
+        ),
     )
 
 
@@ -93,10 +99,15 @@ class TokenCountRequest(BaseModel):
 
     messages: list[Message] | None = Field(
         None,
-        description="List of messages to count tokens for (supports multi-modal content)",
+        description=(
+            "List of messages to count tokens for (supports multi-modal content)"
+        ),
     )
     prompt: str | None = Field(None, description="Prompt string to count tokens for")
     model_name: str = Field(..., description="Model name to use for tokenization")
+    tools: list[dict[str, Any]] | None = Field(
+        None, description="Tool definitions for accurate token counting"
+    )
 
     @model_validator(mode="after")
     def validate_messages_or_prompt(self):
@@ -155,7 +166,7 @@ class TokenMetrics(BaseModel):
                 "max_tokens_adjusted": 500,
                 "context_limit": 4096,
                 "max_tokens_absolute": 4071,
-                "safety_buffer": 50,
+                "safety_buffer": 128,
             }
         }
     )

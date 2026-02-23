@@ -59,7 +59,7 @@ class TokenManager:
         token_config = self.config.get_token_management_config()
 
         self.gateway_url = gateway_url
-        self.completion_safety_buffer = token_config.get("safety_buffer", 50)
+        self.completion_safety_buffer = token_config.get("safety_buffer", 128)
         self.conservative_allocation_ratio = token_config.get(
             "conservative_allocation_ratio", 0.95
         )
@@ -256,6 +256,7 @@ class TokenManager:
         gateway_instance: Optional["GatewayInstance"] = None,
         *,
         sticky: bool = True,
+        tools: list[dict[str, Any]] | None = None,
     ) -> tuple[TokenMetrics | None, int | None]:
         """
         Calculate input tokens and subsequent generation space with conservative allocation.
@@ -279,6 +280,8 @@ class TokenManager:
             middleware_actions: List to track middleware actions and decisions for logging.
             user_explicitly_specified_max_tokens: Whether user explicitly set max_tokens.
             content_type: Type of content - "messages" for chat format, "prompt" for raw text.
+            tools: Tool definitions from the client request. Forwarded to the
+                tokenizer so chat-template expansion accounts for their token cost.
 
         Returns:
             Tuple of (TokenMetrics, final_max_tokens):
@@ -339,10 +342,14 @@ class TokenManager:
                 messages=messages,
                 prompt=None,
                 model_name=model_name,
+                tools=tools,
             )
         else:
             token_count_request = TokenCountRequest(
-                messages=None, prompt=str(content), model_name=model_name
+                messages=None,
+                prompt=str(content),
+                model_name=model_name,
+                tools=tools,
             )
 
         # (c) Try primary token count

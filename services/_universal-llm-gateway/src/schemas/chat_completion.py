@@ -19,9 +19,12 @@ class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     role: str = Field(..., description="Message role: system, user, or assistant")
-    content: str | list[dict[str, Any]] = Field(
-        ...,
-        description="Message content: string for text-only, or list of parts for multimodal (text/image_url)",
+    content: str | list[dict[str, Any]] | None = Field(
+        None,
+        description=(
+            "Message content: string for text-only, list of parts"
+            " for multimodal, null for tool_calls assistant messages"
+        ),
     )
 
 
@@ -29,9 +32,11 @@ class ChatCompletionRequest(BaseModel):
     """
     Request schema for chat completion endpoint.
 
-    VALIDATION: FastAPI automatically validates all fields using these Pydantic constraints:
-    - Only negative number exclusions are enforced (e.g., ge=0 for non-negative values)
-    - No upper bound constraints - client parameters are passed through to engines
+    VALIDATION: FastAPI automatically validates all fields using
+    these Pydantic constraints:
+    - Only negative number exclusions are enforced
+      (e.g., ge=0 for non-negative values)
+    - No upper bound constraints — client parameters pass through
     - Invalid requests get 422 error responses with detailed field-level error messages
     - Only valid requests reach the endpoint handler with guaranteed data integrity
     """
@@ -44,13 +49,17 @@ class ChatCompletionRequest(BaseModel):
     # No graceful degradation - client must provide correct format for the model
     messages: list[ChatMessage] | None = Field(
         None,
-        description="List of conversation messages (for chat models with input_schema='messages')",
+        description=(
+            "List of conversation messages"
+            " (for chat models with input_schema='messages')"
+        ),
     )
     prompt: str | None = Field(
         None, description="Single prompt string (for models with input_schema='prompt')"
     )
 
-    # VALIDATED CONSTRAINTS: Only negative number exclusions are enforced by FastAPI/Pydantic
+    # VALIDATED CONSTRAINTS: Only negative number exclusions
+    # are enforced by FastAPI/Pydantic
     max_tokens: int | None = Field(
         None, description="Maximum number of tokens to generate", ge=0
     )
@@ -102,8 +111,7 @@ class ChatCompletionRequest(BaseModel):
         if self.messages and self.prompt:
             raise ValueError("Cannot provide both 'messages' and 'prompt' fields")
 
-    class Config:
-        extra = "allow"  # Allow unknown fields to pass through to engines
+    model_config = ConfigDict(extra="allow")
 
 
 class ChatCompletionChoice(BaseModel):

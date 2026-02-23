@@ -42,12 +42,12 @@ federation:
 routing:
   affinity:
     - match: "hermes3-llama-3.1-70b-uncensored-16384-hybrid"
-      stargate: "edge-jupiter-gateway"
+      node: "jupiter"
       strength: "hard"
       evict_if_needed: true
     
     - match: "hermes3-*"
-      stargate: "edge-jupiter-gateway"
+      node: "jupiter"
       strength: "soft"
       bonus: 50
 

@@ -249,8 +249,18 @@ class TopologyPanel(Widget):
         self._append_line("localhost", await svc.stop_gateway())
         await asyncio.sleep(1)
         self._append_line("localhost", await svc.start_gateway())
-        await asyncio.sleep(2)
-        self._append_line("localhost", await svc.start_stargate())
+        await asyncio.sleep(0.5)
+        result = await svc.start_stargate()
+        self._append_line("localhost", result)
+        if result.startswith("Stargate failed") or result.startswith(
+            "Script not found"
+        ):
+            self._set_node_status("localhost", "✗ stargate failed")
+            self._append_line(
+                "localhost",
+                "⚠ Stargate did not restart — events file NOT truncated.",
+            )
+            return
         self._set_node_status("localhost", "● running")
 
     async def _deploy_remotes_parallel(self, *, build: bool, scope: str) -> None:

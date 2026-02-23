@@ -32,14 +32,17 @@ class CapacityReleaseConsumer:
         self._event_bus = event_bus
 
     def start(self) -> None:
-        """Subscribe to MODEL_EXECUTION_COMPLETED events."""
+        """Subscribe to MODEL_EXECUTION_COMPLETED and MODEL_EXECUTION_FAILED events."""
         if not self._event_bus:
             logger.warning("No event_bus, capacity release consumer not started")
             return
-        from src.scheduling.events import MODEL_EXECUTION_COMPLETED
+        from src.scheduling.events import MODEL_EXECUTION_COMPLETED, MODEL_EXECUTION_FAILED
 
         self._event_bus.subscribe_async(
             MODEL_EXECUTION_COMPLETED, self._on_execution_completed
+        )
+        self._event_bus.subscribe_async(
+            MODEL_EXECUTION_FAILED, self._on_execution_completed
         )
         logger.info("CapacityReleaseConsumer started")
 

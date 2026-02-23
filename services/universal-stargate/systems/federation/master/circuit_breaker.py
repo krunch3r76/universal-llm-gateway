@@ -177,3 +177,27 @@ class FederationCircuitBreaker:
                 self._circuits[gateway_id] = CircuitStats()
                 self._half_open_requests.pop(gateway_id, None)
                 logger.info(f"🔄 Circuit reset for {gateway_id}")
+
+    def is_request_allowed_sync(self, gateway_id: str) -> bool:
+        """
+        Check if request is allowed (synchronous, read-only).
+
+        Used by router for filtering candidates.
+        Note: Accesses shared state without lock (acceptable for routing hint).
+        """
+        stats = self._circuits.get(gateway_id)
+        if not stats:
+            return True
+
+        state = self._evaluate_state(stats)
+
+        if state == CircuitState.OPEN:
+            return False
+
+        if state == CircuitState.HALF_OPEN:
+            # Best-effort check without lock
+            half_open_count = self._half_open_requests.get(gateway_id, 0)
+            if half_open_count >= self._half_open_max:
+                return False
+
+        return True

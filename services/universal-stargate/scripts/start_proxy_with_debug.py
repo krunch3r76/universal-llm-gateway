@@ -7,7 +7,9 @@ with the Universal Stargate proxy using the updated architecture.
 """
 
 import asyncio
+import os
 import sys
+import time
 from pathlib import Path
 
 # Add project root to path
@@ -49,7 +51,9 @@ async def main():
     )
 
     # Publish some test events - they will be automatically broadcasted to debug clients
-    await event_bus.publish_async(SystemStarted())
+    await event_bus.publish_async(
+        SystemStarted(pid=os.getpid(), role="master", started_at=time.time())
+    )
     await event_bus.publish_async(
         GatewayStateChanged(
             url="http://localhost:8000",

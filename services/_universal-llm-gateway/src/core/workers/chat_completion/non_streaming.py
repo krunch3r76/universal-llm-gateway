@@ -2,7 +2,7 @@
 
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
@@ -212,11 +212,12 @@ class NonStreamingChatCompletion:
         message_or_prompt: list | str,
         use_cpu: bool,
         context_length: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> dict:
         """Count tokens using worker process."""
         try:
             logger.info(f"🔍 Token counting for {model_id} (use_cpu: {use_cpu})")
-            command = {
+            command: dict[str, Any] = {
                 "command_type": "count_tokens",
                 "context_length": context_length,
                 "use_cpu": use_cpu,
@@ -225,6 +226,8 @@ class NonStreamingChatCompletion:
                 command["messages"] = message_or_prompt
             else:
                 command["prompt"] = message_or_prompt
+            if tools:
+                command["tools"] = tools
 
             supervisor = self._controller._process_state.get_supervisor(model_id)
             if not supervisor:

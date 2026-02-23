@@ -22,6 +22,9 @@ logger = get_logger(__name__)
 
 _METADATA_STRIP_KEYS = frozenset({"activated_gpu_contexts", "activated_cpu_contexts"})
 
+# loader fields preserved in static entries (routing discriminants, not operational)
+_LOADER_STATIC_KEYS = frozenset({"embedding", "embedding_task_default"})
+
 
 def get_static_models_dir() -> Path:
     """Get static catalog models directory (config/models/)."""
@@ -49,7 +52,8 @@ def strip_measurement_data(entry: dict[str, Any]) -> dict[str, Any]:
     """
     Produce static entry from full operational entry.
 
-    Strips: loader, devices, activated_*_contexts from metadata.
+    Strips: devices, operational loader keys, activated_*_contexts from metadata.
+    Preserves: loader routing fields (embedding, embedding_task_default).
     Adds catalog_schema: 3 as first key.
     """
     metadata = {
@@ -60,6 +64,13 @@ def strip_measurement_data(entry: dict[str, Any]) -> dict[str, Any]:
     static: dict[str, Any] = {"catalog_schema": 3}
     static["schema"] = entry["schema"]
     static["metadata"] = metadata
+
+    loader_static = {
+        k: v for k, v in entry.get("loader", {}).items() if k in _LOADER_STATIC_KEYS
+    }
+    if loader_static:
+        static["loader"] = loader_static
+
     if "download" in entry:
         static["download"] = entry["download"]
     return static
@@ -74,6 +85,22 @@ def _ensure_catalog_schema(entry: dict[str, Any]) -> dict[str, Any]:
         if k != "catalog_schema":
             result[k] = v
     return result
+
+
+def _remove_stale_model_files(root: Path, model_id: str, canonical: Path) -> list[Path]:
+    """Remove all `{model_id}.yaml` files under `root` except `canonical`.
+
+    ∀ stale ∈ root/**/{model_id}.yaml where stale ≠ canonical: deleted.
+
+    Returns list of removed paths (for logging).
+    """
+    filename = f"{model_id}.yaml"
+    removed: list[Path] = []
+    for stale in root.rglob(filename):
+        if stale != canonical:
+            stale.unlink()
+            removed.append(stale)
+    return removed
 
 
 def write_local_catalog_entry(
@@ -111,6 +138,9 @@ def write_local_catalog_entry(
         raise FileExistsError(f"Model '{model_id}' already exists at {file_path}")
 
     write_model_file(file_path, local_entry)
+    stale = _remove_stale_model_files(local_dir, model_id, file_path)
+    for p in stale:
+        logger.warning(f"Removed stale local catalog entry: {p}")
     logger.info(f"{operation.title()} local catalog entry: {file_path}")
     return file_path, operation
 
@@ -142,7 +172,7 @@ def write_static_catalog_entry(
         raise ValueError(f"Entry for '{model_id}' missing required 'schema' field")
 
     static_entry = strip_measurement_data(entry)
-    domain_engine = determine_model_path(model_id, entry)
+    domain_engine = determine_model_path(model_id, static_entry)
     models_dir = get_static_models_dir()
     file_path = models_dir / domain_engine / f"{model_id}.yaml"
 
@@ -152,5 +182,8 @@ def write_static_catalog_entry(
         raise FileExistsError(f"Model '{model_id}' already exists at {file_path}")
 
     write_model_file(file_path, static_entry)
+    stale = _remove_stale_model_files(models_dir, model_id, file_path)
+    for p in stale:
+        logger.warning(f"Removed stale static catalog entry: {p}")
     logger.info(f"{operation.title()} static catalog entry: {file_path}")
     return file_path, operation

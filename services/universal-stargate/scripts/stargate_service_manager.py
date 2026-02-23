@@ -26,9 +26,9 @@ _libs_path = Path(_PROJECT_ROOT) / "libs"
 if _libs_path.exists() and str(_libs_path) not in sys.path:
     sys.path.insert(0, str(_libs_path))
 
-# Note: Environment loading is now handled by wrapper script (start-stargate.sh)
-# which sources config/env/stargate.env and config/env/stargate.env.local from project root before
-# starting this Python service manager. All config is read from os.environ.
+# Note: Environment loading is handled by wrapper script (start-stargate.sh)
+# which sources .env.local from project root before starting this Python service manager.
+# All config is read from os.environ.
 
 # CRITICAL: Set LOG_DIR and SERVICE_NAME before universal_logging import
 # This prevents universal_logging from auto-initializing with wrong directory/filename
@@ -55,8 +55,8 @@ class StargateConfig:
     Stargate configuration with validation and defaults.
 
     Configuration is loaded from environment variables only.
-    The wrapper script (start-stargate.sh) sources config/env/stargate.env and config/env/stargate.env.local
-    from the project root before starting this service manager.
+    The wrapper script (start-stargate.sh) sources .env.local from the project root
+    before starting this service manager.
     """
 
     # Core service configuration
@@ -89,7 +89,7 @@ class StargateConfig:
         Load configuration from environment variables.
 
         Environment variables are loaded by wrapper script (start-stargate.sh)
-        which sources config/env/stargate.env and config/env/stargate.env.local from project root.
+        which sources .env.local from the project root.
 
         Args:
             environment: Environment name (default, debug, release)

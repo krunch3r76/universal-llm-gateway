@@ -37,7 +37,7 @@ Usage (New UML Message Structure):
     # EventBus automatically adds:
     # - timestamp: ISO 8601 string
     # - id: global counter
-    
+
     # Or use await publish_async() if you need confirmation:
     # await event_bus.publish_async(Event(...))  # Waits for delivery
 """
@@ -97,6 +97,9 @@ from .filtering import EventFilter, FilteredEventBus
 from .persistence import EventStore, EventStoreSubscriber
 from .persistence_async import AsyncEventStore, AsyncEventStoreSubscriber
 from .resource_monitoring import AsyncResourceMonitor, InferenceResourceSnapshot
+
+# Import measurement event signal and factory
+from .measurement import MEASUREMENT_EMBEDDING_DETECTED, MeasurementEmbeddingDetected
 
 # Import LLM-specific event signal constants
 from .types import (
@@ -175,4 +178,7 @@ __all__ = [
     "GATEWAY_SHUTDOWN",
     # Configuration Event Signals
     "CATALOG_RELOADED",
+    # Measurement Event Signals
+    "MEASUREMENT_EMBEDDING_DETECTED",
+    "MeasurementEmbeddingDetected",
 ]

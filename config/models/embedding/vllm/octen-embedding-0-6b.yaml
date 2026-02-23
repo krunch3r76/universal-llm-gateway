@@ -1,0 +1,19 @@
+catalog_schema: 3
+schema: vllm
+metadata:
+  name: Octen-Embedding-0.6B
+  format: hf
+  arch: qwen3
+  parameters_m: 448
+  training_context_length: 32768
+  supports_chat_history: false
+  input_schema: prompt
+loader:
+  embedding: true
+  embedding_task_default: search_document
+download:
+  huggingface:
+    repo: Octen/Octen-Embedding-0.6B
+    verified: true
+  size_bytes: 1203010121
+  sha256: 5880e3ba048376161fb1e38062137c2d815bfcc08229bf1d8de013bf58eed1fe

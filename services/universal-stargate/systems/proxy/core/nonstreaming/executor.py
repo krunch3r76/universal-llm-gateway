@@ -180,6 +180,7 @@ class RequestExecutor:
             compute_type_tracker=request_tracker,
             routing_key_tracker=request_tracker,
             admission_queue=admission_queue,
+            circuit_breaker=self._federation_circuit_breaker,
         )
 
     def _release_routing_key_on_error(self, request_id: str) -> None:
@@ -205,6 +206,56 @@ class RequestExecutor:
                 "(failed between load and forward)",
                 request_id[:8],
             )
+
+    async def _release_capacity_on_pre_forward_failure(
+        self, context: "RequestContext", error: str = "Unknown pre-forward error"
+    ) -> None:
+        """Release capacity reservation when request fails before forwarding.
+
+        Admission (step 1) may have reserved a slot via try_reserve().
+        _execute_federated_request covers all its own terminal paths with
+        emit_execution_completed/failed. This method covers the gap when the
+        request fails BETWEEN admission and entering the forwarding code
+        (e.g. token management error in step 3).
+
+        Idempotent — CapacityReleaseConsumer.release() returns False on
+        second call. Safe to call even if forwarding already emitted.
+        """
+        fed_gateway = context.federated_gateway
+        if fed_gateway is None:
+            return
+        from systems.proxy.core.lifecycle import emit_execution_failed
+
+        await emit_execution_failed(
+            event_bus=self.event_bus,
+            url=fed_gateway.remote_stargate_url,
+            model_id=context.selected_model.routing_key,
+            request_id=context.request_id,
+            gateway_id=fed_gateway.gateway_id,
+            error=error,
+        )
+
+    async def _emit_token_counting_failed(
+        self,
+        context: "RequestContext",
+        gateway_id: str,
+        error: str,
+    ) -> None:
+        """Emit token.counting.failed event for observability."""
+        import asyncio
+
+        from src.scheduling.events import TokenCountingFailed
+
+        asyncio.create_task(
+            self.event_bus.publish_async_nowait(
+                TokenCountingFailed(
+                    request_id=context.request_id,
+                    model_id=context.selected_model.routing_key,
+                    gateway_id=gateway_id,
+                    error=error,
+                )
+            )
+        )
 
     async def _execute_normal_mode(self, context: RequestContext) -> Response:
         """
@@ -240,25 +291,37 @@ class RequestExecutor:
                 ),
             )
 
+        entered_step4 = False
         try:
             # Step 3: Apply token management via federation forwarder
             from .token_management import apply_federated_token_management
 
-            await apply_federated_token_management(
-                context,
-                self._token_allocation_policy,
-                context.federated_gateway,
-                self._federation_forwarder,
-            )
+            try:
+                await apply_federated_token_management(
+                    context,
+                    self._token_allocation_policy,
+                    context.federated_gateway,
+                    self._federation_forwarder,
+                )
+            except Exception as e:
+                if fed_gateway and self.event_bus:
+                    await self._emit_token_counting_failed(
+                        context, fed_gateway.gateway_id, str(e)
+                    )
+                raise
 
             # Step 4: Execute federated request
+            entered_step4 = True
             return await self._execute_federated_request(context)
 
-        except BaseException:
-            # Release routing key tracked by load orchestrator (step 1) when
-            # the request fails before MasterRequestTracker.forward() completes.
-            # Idempotent: safe if forward()'s finally already released it.
+        except BaseException as exc:
             self._release_routing_key_on_error(context.request_id)
+            # Step 4 emits on all its own terminal paths; only emit here
+            # if we never entered step 4 (e.g. step 3 token management failed).
+            if not entered_step4:
+                await self._release_capacity_on_pre_forward_failure(
+                    context, str(exc)
+                )
             raise
 
     async def _get_model_configuration_for_monitoring(
@@ -332,7 +395,7 @@ class RequestExecutor:
                 fed_gateway.gateway_id
             ):
                 raise HTTPException(
-                    status_code=503,
+                    status_code=502,
                     detail=error_envelope(
                         code=ErrorCode.RESOURCE_UNAVAILABLE,
                         message=(
@@ -917,15 +980,16 @@ class RequestExecutor:
             await write_response_snapshot(
                 upstream_payload, context.request_id, stage="response-from-gateway"
             )
-            # Emit execution completed for slot tracking (error path)
-            from systems.proxy.core.lifecycle import emit_execution_completed
+            # Emit execution failed for slot tracking (error path)
+            from systems.proxy.core.lifecycle import emit_execution_failed
 
-            await emit_execution_completed(
+            await emit_execution_failed(
                 event_bus=self.event_bus,
                 url=fed_gateway.remote_stargate_url,
                 model_id=context.selected_model.routing_key,
                 request_id=context.request_id,
                 gateway_id=fed_gateway.gateway_id,
+                error=f"Upstream {upstream_status_code}",
             )
 
             detail = error_envelope(
@@ -952,15 +1016,16 @@ class RequestExecutor:
             )
         except httpx.TimeoutException:
             logger.error(f"Federated request timeout for {fed_gateway.gateway_id}")
-            # Emit execution completed for slot tracking (timeout path)
-            from systems.proxy.core.lifecycle import emit_execution_completed
+            # Emit execution failed for slot tracking (timeout path)
+            from systems.proxy.core.lifecycle import emit_execution_failed
 
-            await emit_execution_completed(
+            await emit_execution_failed(
                 event_bus=self.event_bus,
                 url=fed_gateway.remote_stargate_url,
                 model_id=context.selected_model.routing_key,
                 request_id=context.request_id,
                 gateway_id=fed_gateway.gateway_id,
+                error="Gateway timeout",
             )
             raise HTTPException(
                 status_code=504,
@@ -974,15 +1039,16 @@ class RequestExecutor:
             )
         except Exception as e:
             logger.error(f"Federated request error: {e}")
-            # Emit execution completed for slot tracking (generic error path)
-            from systems.proxy.core.lifecycle import emit_execution_completed
+            # Emit execution failed for slot tracking (generic error path)
+            from systems.proxy.core.lifecycle import emit_execution_failed
 
-            await emit_execution_completed(
+            await emit_execution_failed(
                 event_bus=self.event_bus,
                 url=fed_gateway.remote_stargate_url,
                 model_id=context.selected_model.routing_key,
                 request_id=context.request_id,
                 gateway_id=fed_gateway.gateway_id,
+                error=str(e),
             )
             raise HTTPException(
                 status_code=502,
@@ -1079,16 +1145,17 @@ class RequestExecutor:
                 gateway_id=fed_gateway.gateway_id,
             )
             return result
-        except Exception:
+        except Exception as e:
             self._release_routing_key_on_error(resolved_request_id)
-            from systems.proxy.core.lifecycle import emit_execution_completed
+            from systems.proxy.core.lifecycle import emit_execution_failed
 
-            await emit_execution_completed(
+            await emit_execution_failed(
                 event_bus=self.event_bus,
                 url=fed_gateway.remote_stargate_url if fed_gateway else "unknown",
                 model_id=context.selected_model.routing_key,
                 request_id=resolved_request_id,
                 gateway_id=fed_gateway.gateway_id if fed_gateway else "unknown",
+                error=str(e),
             )
             raise
 

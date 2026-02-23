@@ -9,7 +9,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-DOMAINS = ("text_llm", "audio", "translation", "graphics", "visual")
+DOMAINS = ("text_llm", "audio", "translation", "graphics", "visual", "embedding")
 
 
 @dataclass(slots=True, kw_only=True)
@@ -36,6 +36,7 @@ class ModelInfo:
     has_cpu_profiles: bool = False
     has_hybrid_profiles: bool = False
     is_vision_model: bool = False
+    is_embedding: bool = False
     source_path: Path | None = None
     # True when this entry came from the local catalog (has full operational data)
     is_local: bool = False
@@ -134,6 +135,7 @@ class CatalogState:
         download = data.get("download", {})
         hf = download.get("huggingface", {})
         devices = data.get("devices", {})
+        loader = data.get("loader", {})
 
         return ModelInfo(
             model_id=model_id,
@@ -156,6 +158,7 @@ class CatalogState:
             has_cpu_profiles=bool(devices.get("cpu", {}).get("profiles")),
             has_hybrid_profiles=bool(devices.get("hybrid", {}).get("profiles")),
             is_vision_model=bool(metadata.get("is_vision_model")),
+            is_embedding=loader.get("embedding") is True,
             source_path=path,
             is_local=is_local,
         )

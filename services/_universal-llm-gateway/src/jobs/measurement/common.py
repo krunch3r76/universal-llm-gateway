@@ -1,8 +1,8 @@
 """
 Common utilities for measurement execution.
 
-Provides system memory info, subprocess setup, and tracking
-for both CPU and GPU measurement modes.
+Provides environment helpers, subprocess hardening, process-tree VRAM/RAM
+measurement, and shared health-polling helpers used by both GGUF and vLLM probes.
 """
 
 import asyncio
@@ -11,35 +11,16 @@ import ctypes.util
 import os
 import signal
 import sys
-from typing import Any, Protocol, cast
+from pathlib import Path
 
+import httpx
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-# Default headroom configuration
-DEFAULT_RAM_HEADROOM_MIN_MB = 4096
-DEFAULT_RAM_HEADROOM_MAX_MB = 16384
-DEFAULT_RAM_HEADROOM_PCT = 0.10  # 10% of total RAM, capped by MAX_MB
-
 # Measurement subprocess hardening
 DEFAULT_SUBPROC_NICE = 19  # 0..19 (higher = lower priority)
 DEFAULT_SUBPROC_OOM_SCORE_ADJ = 500  # 0..1000 (higher = more killable)
-
-
-class _VirtualMemoryLike(Protocol):
-    total: int
-    available: int
-
-
-class _SwapMemoryLike(Protocol):
-    total: int
-    used: int
-
-
-class _PsutilModuleLike(Protocol):
-    def virtual_memory(self) -> _VirtualMemoryLike: ...
-    def swap_memory(self) -> _SwapMemoryLike: ...
 
 
 def env_int(name: str) -> int | None:
@@ -62,146 +43,6 @@ def env_float(name: str) -> float | None:
         return float(v.strip())
     except Exception:
         return None
-
-
-def maybe_psutil() -> _PsutilModuleLike | None:
-    """Optionally load psutil module for memory info."""
-    try:
-        import psutil  # type: ignore
-
-        return cast(_PsutilModuleLike, cast(Any, psutil))
-    except Exception:
-        return None
-
-
-def compute_ram_headroom_bytes(psutil_mod: _PsutilModuleLike | None) -> int | None:
-    """
-    Compute RAM headroom to keep the host responsive during measurement probes.
-
-    Override with:
-      - MEASUREMENT_RAM_HEADROOM_MB
-      - MEASUREMENT_RAM_HEADROOM_PCT (default 0.10)
-      - MEASUREMENT_RAM_HEADROOM_MIN_MB / _MAX_MB
-    """
-    override_mb = env_int("MEASUREMENT_RAM_HEADROOM_MB")
-    if override_mb is not None and override_mb > 0:
-        return override_mb * 1024 * 1024
-
-    if not psutil_mod:
-        return DEFAULT_RAM_HEADROOM_MIN_MB * 1024 * 1024
-
-    total = psutil_mod.virtual_memory().total
-    pct = env_float("MEASUREMENT_RAM_HEADROOM_PCT")
-    if pct is None or pct <= 0:
-        pct = DEFAULT_RAM_HEADROOM_PCT
-
-    min_mb = env_int("MEASUREMENT_RAM_HEADROOM_MIN_MB") or DEFAULT_RAM_HEADROOM_MIN_MB
-    max_mb = env_int("MEASUREMENT_RAM_HEADROOM_MAX_MB") or DEFAULT_RAM_HEADROOM_MAX_MB
-    min_mb = max(0, min_mb)
-    max_mb = max(min_mb, max_mb)
-
-    computed_mb = int((total / (1024 * 1024)) * pct)
-    headroom_mb = max(min_mb, min(max_mb, computed_mb))
-    return headroom_mb * 1024 * 1024
-
-
-def get_system_memory_info() -> dict[str, Any]:
-    """
-    Get system memory info with smart headroom recommendations.
-
-    Returns dict with:
-        - total_ram_mb, available_ram_mb
-        - total_swap_mb, available_swap_mb
-        - recommended_headroom_mb
-        - current_headroom_mb
-        - safe_measurement_limit_mb
-        - warnings: list of warning messages
-    """
-    psutil_mod = maybe_psutil()
-    warnings: list[str] = []
-
-    if not psutil_mod:
-        warnings.append("psutil not available; cannot determine system memory")
-        return {
-            "total_ram_mb": None,
-            "available_ram_mb": None,
-            "total_swap_mb": None,
-            "available_swap_mb": None,
-            "recommended_headroom_mb": DEFAULT_RAM_HEADROOM_MIN_MB,
-            "current_headroom_mb": DEFAULT_RAM_HEADROOM_MIN_MB,
-            "safe_measurement_limit_mb": None,
-            "warnings": warnings,
-        }
-
-    vm = psutil_mod.virtual_memory()
-    swap = psutil_mod.swap_memory()
-
-    total_ram_mb = int(vm.total / (1024 * 1024))
-    available_ram_mb = int(vm.available / (1024 * 1024))
-    total_swap_mb = int(swap.total / (1024 * 1024))
-    available_swap_mb = int((swap.total - swap.used) / (1024 * 1024))
-
-    # Compute recommended headroom
-    base_headroom_mb = max(
-        DEFAULT_RAM_HEADROOM_MIN_MB,
-        min(DEFAULT_RAM_HEADROOM_MAX_MB, int(total_ram_mb * 0.10)),
-    )
-
-    # If swap is less than 25% of RAM, increase headroom
-    if total_swap_mb < (total_ram_mb * 0.25):
-        swap_penalty_mb = int(total_ram_mb * 0.05)
-        recommended_headroom_mb = min(
-            DEFAULT_RAM_HEADROOM_MAX_MB, base_headroom_mb + swap_penalty_mb
-        )
-        warnings.append(
-            f"Low/no swap detected ({total_swap_mb}MB); "
-            f"increased headroom recommendation to {recommended_headroom_mb}MB"
-        )
-    else:
-        recommended_headroom_mb = base_headroom_mb
-
-    # Get current configured headroom
-    current_headroom_bytes = compute_ram_headroom_bytes(psutil_mod)
-    current_headroom_mb = (
-        int(current_headroom_bytes / (1024 * 1024)) if current_headroom_bytes else 0
-    )
-
-    # Safe limit for measurement probes
-    safe_limit_mb = max(0, available_ram_mb - recommended_headroom_mb)
-
-    # Warnings
-    if available_ram_mb < recommended_headroom_mb:
-        warnings.append(
-            f"CRITICAL: Available RAM ({available_ram_mb}MB) < "
-            f"recommended headroom ({recommended_headroom_mb}MB)"
-        )
-        warnings.append("Measurement may cause system instability or freeze SSH")
-
-    if available_ram_mb < recommended_headroom_mb * 2:
-        warnings.append(
-            f"WARNING: Low available RAM ({available_ram_mb}MB). "
-            "Consider unloading other models or reducing context sizes."
-        )
-
-    if total_swap_mb == 0:
-        warnings.append(
-            "No swap configured; out-of-memory will cause immediate process kills"
-        )
-    elif total_swap_mb > 0 and available_swap_mb < 2048:
-        warnings.append(
-            f"Low available swap ({available_swap_mb}MB); avoid swap thrashing"
-        )
-
-    return {
-        "total_ram_mb": total_ram_mb,
-        "available_ram_mb": available_ram_mb,
-        "total_swap_mb": total_swap_mb,
-        "available_swap_mb": available_swap_mb,
-        "recommended_headroom_mb": recommended_headroom_mb,
-        "current_headroom_mb": current_headroom_mb,
-        "safe_measurement_limit_mb": safe_limit_mb,
-        "warnings": warnings,
-    }
 
 
 def setup_measurement_subprocess(
@@ -260,6 +101,222 @@ def _setup_death_signal() -> None:
         logger.warning(f"Failed to create new process group: {e}")
 
 
+def _get_descendant_pids(pid: int) -> list[int]:
+    """Return list of descendant PIDs (children, grandchildren, etc.) via /proc."""
+    descendants: list[int] = []
+    try:
+        import psutil
+
+        proc = psutil.Process(pid)
+        for child in proc.children(recursive=True):
+            descendants.append(child.pid)
+        return descendants
+    except Exception:
+        pass
+    # /proc fallback: walk /proc/*/stat for ppid chains
+    try:
+        children_map: dict[int, list[int]] = {}
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                stat_line = (entry / "stat").read_text()
+                parts = stat_line.split(")")
+                if len(parts) < 2:
+                    continue
+                fields = parts[-1].split()
+                ppid = int(fields[1])  # field index 1 after closing paren
+                child_pid = int(entry.name)
+                children_map.setdefault(ppid, []).append(child_pid)
+            except Exception:
+                continue
+        stack = children_map.get(pid, [])
+        while stack:
+            child = stack.pop()
+            descendants.append(child)
+            stack.extend(children_map.get(child, []))
+    except Exception:
+        pass
+    return descendants
+
+
+def measure_process_vram_mb(pid: int, device_index: int = 0) -> int | None:
+    """Per-process VRAM via pynvml.nvmlDeviceGetComputeRunningProcesses().
+
+    Sums VRAM for pid and all descendants (vLLM V1 forks EngineCore).
+    Returns None if pynvml unavailable or process not found on GPU.
+    """
+    try:
+        import pynvml  # type: ignore[import-untyped]
+    except ImportError:
+        logger.warning("pynvml not available; cannot measure per-process VRAM")
+        return None
+
+    target_pids = {pid, *_get_descendant_pids(pid)}
+    try:
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+        processes = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
+        total_bytes = sum(p.usedGpuMemory for p in processes if p.pid in target_pids)
+        pynvml.nvmlShutdown()
+        if total_bytes == 0:
+            return None
+        return int(total_bytes // (1024 * 1024))
+    except Exception as e:
+        logger.warning("pynvml measurement failed: %s", e)
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:
+            pass
+        return None
+
+
+def get_total_vram_bytes(device_index: int = 0) -> int | None:
+    """Query total GPU VRAM in bytes via pynvml.
+
+    Returns None if pynvml is unavailable or query fails.
+    """
+    try:
+        import pynvml  # type: ignore[import-untyped]
+    except ImportError:
+        logger.warning("pynvml not available; cannot query total VRAM")
+        return None
+    try:
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        total = mem_info.total
+        pynvml.nvmlShutdown()
+        return total
+    except Exception as e:
+        logger.warning("pynvml total VRAM query failed: %s", e)
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:
+            pass
+        return None
+
+
+def measure_process_tree_rss_mb(pid: int) -> int:
+    """Sum RSS of process + descendants via /proc/{pid}/status.
+
+    Falls back to psutil Process.children(recursive=True) if available.
+    """
+    target_pids = [pid, *_get_descendant_pids(pid)]
+    total_rss_kb = 0
+    for target in target_pids:
+        try:
+            with open(f"/proc/{target}/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        total_rss_kb += int(line.split()[1])
+                        break
+        except Exception:
+            continue
+    if total_rss_kb > 0:
+        return total_rss_kb // 1024
+    # psutil fallback
+    try:
+        import psutil  # type: ignore[import-untyped]
+
+        proc = psutil.Process(pid)
+        total = proc.memory_info().rss
+        for child in proc.children(recursive=True):
+            try:
+                total += child.memory_info().rss
+            except Exception:
+                continue
+        return int(total // (1024 * 1024))
+    except Exception as e:
+        logger.warning("Failed to measure RSS for pid %d: %s", pid, e)
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# Shared subprocess health-polling helpers (used by both GGUF and vLLM probes)
+# ---------------------------------------------------------------------------
+
+
+async def _capture_process_error(
+    proc: asyncio.subprocess.Process,
+    *,
+    process_name: str,
+) -> str:
+    """Read stderr from a dead process and format error message."""
+    stderr_text = ""
+    if proc.stderr:
+        try:
+            raw = await proc.stderr.read()
+            stderr_text = raw.decode(errors="replace").strip()
+        except Exception:
+            pass
+    exit_code = proc.returncode if proc.returncode is not None else "unknown"
+    msg = f"{process_name} died with exit code {exit_code}"
+    if stderr_text:
+        # Truncate to last 2000 chars to avoid huge error messages
+        if len(stderr_text) > 2000:
+            stderr_text = "..." + stderr_text[-2000:]
+        msg += f"\nstderr: {stderr_text}"
+    return msg
+
+
+async def poll_health(
+    socket_path: str,
+    proc: asyncio.subprocess.Process,
+    timeout_sec: int,
+    *,
+    poll_interval: float,
+    process_name: str,
+) -> str | None:
+    """Poll GET /health until 200. Returns error string or None on success."""
+    transport = httpx.AsyncHTTPTransport(uds=socket_path)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://localhost", timeout=10.0
+    ) as client:
+        elapsed = 0.0
+        while elapsed < timeout_sec:
+            if proc.returncode is not None:
+                return await _capture_process_error(proc, process_name=process_name)
+            try:
+                os.kill(proc.pid, 0)
+            except OSError:
+                return await _capture_process_error(proc, process_name=process_name)
+
+            try:
+                response = await client.get("/health")
+                if response.status_code == 200:
+                    return None
+            except (httpx.RequestError, httpx.HTTPStatusError):
+                pass
+
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+    return f"timeout after {timeout_sec}s waiting for /health"
+
+
+async def kill_measurement_process(
+    proc: asyncio.subprocess.Process,
+    *,
+    sigterm_timeout: float,
+) -> None:
+    """SIGTERM → wait sigterm_timeout → SIGKILL."""
+    try:
+        if proc.pid:
+            os.killpg(proc.pid, signal.SIGTERM)
+    except OSError:
+        return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=sigterm_timeout)
+    except TimeoutError:
+        try:
+            if proc.pid:
+                os.killpg(proc.pid, signal.SIGKILL)
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except Exception:
+            pass
+
+
 class SubprocessTracker:
     """
     Track measurement subprocesses for cancellation on job cancel.
@@ -282,24 +339,21 @@ class SubprocessTracker:
         procs = list(self._procs)
         self._procs.clear()
         logger.info(
-            f"SubprocessTracker.kill_all() called with {len(procs)} tracked processes"
+            "SubprocessTracker.kill_all() called with %d tracked processes", len(procs)
         )
         for proc in procs:
             try:
                 if proc.pid:
-                    logger.info(f"Killing process group {proc.pid} with SIGKILL")
+                    logger.info("Killing process group %s with SIGKILL", proc.pid)
                     os.killpg(proc.pid, signal.SIGKILL)
-                    logger.info(
-                        f"Successfully sent SIGKILL to process group {proc.pid}"
-                    )
             except Exception as e:
-                logger.warning(f"Failed to kill process group {proc.pid}: {e}")
+                logger.warning("Failed to kill process group %s: %s", proc.pid, e)
             try:
                 _ = await asyncio.wait_for(proc.wait(), timeout=5)
-                logger.info(f"Process {proc.pid} terminated")
+                logger.info("Process %s terminated", proc.pid)
             except TimeoutError:
                 logger.warning(
-                    f"Process {proc.pid} did not terminate within 5s timeout"
+                    "Process %s did not terminate within 5s timeout", proc.pid
                 )
             except Exception as e:
-                logger.warning(f"Error waiting for process {proc.pid}: {e}")
+                logger.warning("Error waiting for process %s: %s", proc.pid, e)

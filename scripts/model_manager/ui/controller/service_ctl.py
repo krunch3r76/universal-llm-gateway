@@ -343,7 +343,7 @@ class ServiceController:
                     f"PID {recorded_pid} is alive but port {port} is closed — "
                     "not Stargate. Stale PID file removed."
                 )
-            return self._kill_stargate_pid(recorded_pid, pid_file)
+            return await self._kill_and_wait(recorded_pid, pid_file)
 
         # PID dead or no valid file — clean up and try to find the real listener.
         pid_file.unlink(missing_ok=True)
@@ -358,15 +358,19 @@ class ServiceController:
                 f"Port {port} is open but the listener could not be identified.\n"
                 "Run: ss -tlnp 'sport = :9999'"
             )
-        return self._kill_stargate_pid(listener, None)
+        return await self._kill_and_wait(listener, None)
 
-    def _kill_stargate_pid(self, pid: int, pid_file: Path | None) -> str:
-        """Send SIGTERM to pid; remove pid_file if provided."""
+    async def _kill_and_wait(
+        self,
+        pid: int,
+        pid_file: Path | None,
+        *,
+        sigterm_timeout: float = 8.0,
+        sigkill_timeout: float = 4.0,
+    ) -> str:
+        """Send SIGTERM, poll for death, escalate to SIGKILL if needed."""
         try:
             os.kill(pid, signal.SIGTERM)
-            if pid_file is not None:
-                pid_file.unlink(missing_ok=True)
-            return f"Sent SIGTERM to Stargate (PID {pid})."
         except ProcessLookupError:
             if pid_file is not None:
                 pid_file.unlink(missing_ok=True)
@@ -374,6 +378,37 @@ class ServiceController:
         except PermissionError as e:
             logger.error("Cannot kill Stargate PID %d: %s", pid, e)
             return f"Cannot stop Stargate (PID {pid}): {e}"
+
+        if pid_file is not None:
+            pid_file.unlink(missing_ok=True)
+
+        alive = self._service_state._pid_alive
+        t0 = asyncio.get_running_loop().time()
+
+        while asyncio.get_running_loop().time() - t0 < sigterm_timeout:
+            await asyncio.sleep(0.3)
+            if not alive(pid):
+                elapsed = asyncio.get_running_loop().time() - t0
+                return f"Stargate stopped (PID {pid}, {elapsed:.1f}s)."
+
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            elapsed = asyncio.get_running_loop().time() - t0
+            return f"Stargate stopped (PID {pid}, {elapsed:.1f}s)."
+
+        t1 = asyncio.get_running_loop().time()
+        while asyncio.get_running_loop().time() - t1 < sigkill_timeout:
+            await asyncio.sleep(0.3)
+            if not alive(pid):
+                elapsed = asyncio.get_running_loop().time() - t0
+                return f"Stargate SIGKILL'd after {elapsed:.1f}s (PID {pid})."
+
+        elapsed = asyncio.get_running_loop().time() - t0
+        return (
+            f"Stargate may still be running "
+            f"(could not confirm death, PID {pid}, {elapsed:.1f}s)."
+        )
 
     @staticmethod
     def _write_pid_file(pid: int) -> None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
@@ -70,6 +71,7 @@ class DecisionEngine:
         event_bus: Any = None,
         emit_traces: bool | None = None,
         routing_key_tracker: RoutingKeyTracker | None = None,
+        is_gateway_available_fn: Callable[[str], bool] | None = None,
     ):
         self._policy = policy
         self._event_bus = event_bus
@@ -78,6 +80,7 @@ class DecisionEngine:
             emit_traces if emit_traces is not None else policy.emit_decision_traces
         )
         self._routing_key_tracker = routing_key_tracker
+        self._is_gateway_available_fn = is_gateway_available_fn
 
     def select(
         self,
@@ -158,6 +161,7 @@ class DecisionEngine:
                 requirements_lookup,
                 sticky=is_sticky,
                 routing_key_tracker=self._routing_key_tracker,
+                is_gateway_available_fn=self._is_gateway_available_fn,
             )
 
             # Calculate utility for feasible gateways
@@ -448,6 +452,13 @@ class DecisionEngine:
 def create_decision_engine(
     policy: RoutingPolicy,
     event_bus: Any = None,
+    routing_key_tracker: RoutingKeyTracker | None = None,
+    is_gateway_available_fn: Callable[[str], bool] | None = None,
 ) -> DecisionEngine:
     """Factory function for decision engine."""
-    return DecisionEngine(policy, event_bus=event_bus)
+    return DecisionEngine(
+        policy,
+        event_bus=event_bus,
+        routing_key_tracker=routing_key_tracker,
+        is_gateway_available_fn=is_gateway_available_fn,
+    )

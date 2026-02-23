@@ -8,26 +8,11 @@ and clean control flow.
 import argparse
 import sys
 
-import yaml
-
-from .api_client import push_profile_to_api
-from .caching import cache_whole_profile, load_cached_profile
-from .profiles import (
-    BaseProfile,
-    merge_profiles,
-)
-from .profile_builder import (
-    build_subprofile_cpu_only,
-    build_subprofile_gpu_only,
-    build_subprofile_hybrid,
-)
+from .profiles import BaseProfile
 from .utils import (
-    clear_legacy_cache,
-    determine_contexts,
     extract_metadata,
     extract_params_from_filename,
     extract_quant_from_filename,
-    find_model_file,
     normalize_family,
     sanitize_model_id,
 )
@@ -187,136 +172,13 @@ Examples:
     return parser
 
 
-def main():
-    """Main entry point with control flow orchestration."""
-    parser = create_parser()
-    args = parser.parse_args()
-
-    try:
-        # Validate argument combinations
-        if args.cpu_only and args.gpu_only:
-            raise ValueError("Cannot use both --cpu-only and --gpu-only")
-
-        # Find model file
-        model_path = find_model_file(args.model_path)
-        if model_path is None:
-            raise FileNotFoundError(f"Model file not found: {args.model_path}")
-
-        print(f"Model: {model_path}", file=sys.stderr)
-
-        # Handle --use-cached path
-        if args.use_cached:
-            print("Loading cached configuration...", file=sys.stderr)
-            whole_profile = load_cached_profile(model_path)
-            if whole_profile is None:
-                print("Error: No cached configuration found", file=sys.stderr)
-                sys.exit(1)
-        else:
-            # Clear legacy cache on first fresh generation
-            clear_legacy_cache()
-
-            # Build BaseProfile from metadata
-            print("Extracting GGUF metadata...", file=sys.stderr)
-            base_profile = build_base_profile_from_metadata(model_path, args.owned_by)
-
-            # Determine contexts
-            contexts = determine_contexts(
-                base_profile.training_context_length, args.contexts
-            )
-            print(f"Testing contexts: {contexts}", file=sys.stderr)
-
-            # Build SubProfile based on mode
-            cache_config = True
-            try:
-                if args.cpu_only:
-                    sub_profile = build_subprofile_cpu_only(model_path, contexts)
-                elif args.gpu_only:
-                    sub_profile = build_subprofile_gpu_only(
-                        model_path, contexts, args.gpu_index
-                    )
-                else:
-                    # Hybrid mode (default)
-                    sub_profile = build_subprofile_hybrid(
-                        model_path,
-                        contexts,
-                        args.n_gpu_layers,
-                        args.safe_margin,
-                        args.gpu_index,
-                    )
-            except RuntimeError as e:
-                # Context too large for GPU - don't cache
-                print(f"⚠️  {e}", file=sys.stderr)
-                cache_config = False
-                raise
-
-            # Merge to create WholeProfile
-            base_loader = {
-                "n_batch": 512,
-                "f16_kv": True,
-                "use_mmap": False,
-                "use_mlock": True,
-                "verbose": False,
-            }
-            whole_profile = merge_profiles(base_profile, sub_profile, base_loader)
-
-            # Cache the profile only if generation succeeded
-            if cache_config:
-                cache_whole_profile(model_path, whole_profile)
-
-        # Validate that the profile has usable measurements before proceeding
-        if not whole_profile.has_valid_measurements():
-            failed_contexts = whole_profile.get_failed_contexts()
-            if failed_contexts:
-                raise RuntimeError(
-                    f"All GPU layer testing failed for contexts: {failed_contexts}. "
-                    f"No valid configuration can be generated. "
-                    f"Try smaller contexts with --contexts or use --cpu-only mode."
-                )
-            else:
-                raise RuntimeError(
-                    "Configuration generation failed: no valid measurements found. "
-                    "Check GPU availability and context sizes."
-                )
-
-        # Handle --push
-        if args.push:
-            model_key = args.model_key or whole_profile.info.get(
-                "openai_api_fields", {}
-            ).get("id")
-            if not model_key:
-                print("Error: No model key specified", file=sys.stderr)
-                sys.exit(1)
-
-            success = push_profile_to_api(
-                whole_profile, model_key, args.api_url, args.api_token
-            )
-            if not success:
-                sys.exit(1)
-
-        # Output YAML
-        output_dict = whole_profile.to_dict()
-        output_yaml = yaml.dump(
-            output_dict, default_flow_style=False, sort_keys=False, indent=2
-        )
-
-        if args.output:
-            with open(args.output, "w") as f:
-                f.write(output_yaml)
-            print(f"Configuration written to: {args.output}", file=sys.stderr)
-        else:
-            print(output_yaml)
-
-        print("Configuration generation complete!", file=sys.stderr)
-
-    except KeyboardInterrupt:
-        print("\nInterrupted by user", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        import traceback
-
-        traceback.print_exc(file=sys.stderr)
-        sys.exit(1)
+def main() -> None:
+    """Main entry point — deprecated, measurement moved to TUI."""
+    print(
+        "Standalone CLI measurement removed. Use './manage' TUI → Measure instead.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 if __name__ == "__main__":

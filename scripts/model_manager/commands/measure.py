@@ -6,6 +6,7 @@ import sys
 from typing import Any
 
 import requests
+from inference_djinn.catalog.embedding import infer_embedding_loader
 from universal_logging import get_logger
 
 from ..config import Config
@@ -644,38 +645,6 @@ def _update_catalog_after_measurement(
         return False
 
 
-_EMBEDDING_ARCHITECTURES = frozenset({"nomic-bert", "bert", "jina-bert-v2"})
-
-_NOMIC_TASK_PREFIXES: dict[str, str] = {
-    "search_document": "search_document: ",
-    "search_query": "search_query: ",
-    "clustering": "clustering: ",
-    "classification": "classification: ",
-}
-
-
-def _infer_embedding_loader(loader: dict[str, Any], metadata: dict[str, Any]) -> None:
-    """Set embedding-specific loader fields from metadata when applicable.
-
-    Detection: explicit loader.embedding flag OR known embedding architecture.
-    Uses setdefault to preserve any existing values from the catalog entry.
-    """
-    arch = metadata.get("arch", "")
-    is_embedding = loader.get("embedding") is True or arch in _EMBEDDING_ARCHITECTURES
-
-    if not is_embedding:
-        return
-
-    loader.setdefault("embedding", True)
-
-    training_ctx = metadata.get("training_context_length")
-    loader.setdefault("n_ctx", training_ctx or 2048)
-
-    loader.setdefault("embedding_task_default", "search_document")
-    if "nomic" in arch:
-        loader.setdefault("embedding_task_prefixes", dict(_NOMIC_TASK_PREFIXES))
-
-
 def _build_updated_catalog_entry(
     catalog_entry: dict[str, Any],
     result: dict[str, Any],
@@ -737,7 +706,7 @@ def _build_updated_catalog_entry(
             "n_batch": 512,
         }.items():
             loader.setdefault(k, v)
-        _infer_embedding_loader(loader, metadata)
+        infer_embedding_loader(loader, metadata, model_id)
     elif model_format in ("hf", "awq", "gptq"):
         for k, v in {
             "trust_remote_code": False,
@@ -745,6 +714,7 @@ def _build_updated_catalog_entry(
             "disable_log_stats": True,
         }.items():
             loader.setdefault(k, v)
+        infer_embedding_loader(loader, metadata, model_id)
 
     # Persist required vLLM loader params for AWQ/GPTQ/HF models.
     # enforce_eager skips CUDA graph capture (2-5 min for 32B+) — correct default

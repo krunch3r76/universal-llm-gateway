@@ -97,6 +97,21 @@ Payload: {
 }
 """
 
+TOKEN_COUNTING_FAILED = "token.counting.failed"
+"""
+Federated token counting failed — gateway unreachable or returned error.
+
+Distinct from request.token.counted: signals an infrastructure-level failure
+(e.g. gateway :9998 down behind a relay) rather than a counting result.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
+    "error": str
+}
+"""
+
 # ========================================
 # Routing Decision Event Signals
 # ========================================
@@ -245,6 +260,21 @@ Payload: {
     "model_id": str,    # Model that completed execution
     "request_id": str,  # Request identifier (for slot tracking)
     "gateway_id": str,  # Gateway identifier (for slot tracking)
+}
+"""
+
+MODEL_EXECUTION_FAILED = "model.execution.failed"
+"""
+Model execution request failed (per-request lifecycle event).
+
+**Slot release**: GatewayTracker subscribes to auto-release reserved slots.
+
+Payload: {
+    "url": str,         # Gateway URL
+    "model_id": str,    # Model that failed execution
+    "request_id": str,  # Request identifier (for slot tracking)
+    "gateway_id": str,  # Gateway identifier (for slot tracking)
+    "error": str,       # Error message
 }
 """
 
@@ -569,8 +599,14 @@ Payload: {
 
 SYSTEM_STARTED = "system.started"
 """
-System started
-Payload: {} (empty)
+System session started.
+
+Payload: {
+    "pid": int,              # OS process ID — cross-check against lsof/ps
+    "role": str,             # "master" | "edge" | "relay"
+    "started_at": float,     # Unix epoch (time.time()) at startup
+    "version": str | None,   # Package version string, if available
+}
 """
 
 SYSTEM_SHUTDOWN = "system.shutdown"
@@ -757,6 +793,39 @@ def TokenCountCompleted(
             "input_tokens": input_tokens,
             "context_limit": context_limit,
             "allocated_max_tokens": allocated_max_tokens,
+            "error": error,
+        },
+    )
+
+
+@event_factory
+def TokenCountingFailed(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    error: str,
+) -> Event:
+    """
+    Create TOKEN_COUNTING_FAILED event.
+
+    Emitted when federated token counting fails due to an infrastructure
+    issue (gateway unreachable, edge container down, etc.).
+
+    Args:
+        request_id: Proxy request ID
+        model_id: Model being requested
+        gateway_id: Gateway that failed token counting
+        error: Error description
+
+    Returns:
+        Event with TokenCountingFailed signal
+    """
+    return Event(
+        signal=TOKEN_COUNTING_FAILED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
             "error": error,
         },
     )
@@ -1087,6 +1156,39 @@ def ModelExecutionCompleted(
             "model_id": model_id,
             "request_id": request_id,
             "gateway_id": gateway_id,
+        },
+    )
+
+
+@event_factory
+def ModelExecutionFailed(
+    url: str,
+    model_id: str,
+    request_id: str,
+    gateway_id: str,
+    error: str,
+) -> Event:
+    """
+    Create model.execution.failed event (request-scoped slot release).
+
+    Args:
+        url: Gateway URL
+        model_id: Model that failed execution
+        request_id: Request identifier (REQUIRED for slot tracking)
+        gateway_id: Gateway identifier (REQUIRED for slot tracking)
+        error: Error message
+
+    Returns:
+        Event with ModelExecutionFailed signal
+    """
+    return Event(
+        signal=MODEL_EXECUTION_FAILED,
+        payload={
+            "url": url,
+            "model_id": model_id,
+            "request_id": request_id,
+            "gateway_id": gateway_id,
+            "error": error,
         },
     )
 
@@ -1722,14 +1824,36 @@ def PipelineStepDomainVerificationCompleted(  # noqa: N802
 
 # System Events
 @event_factory
-def SystemStarted() -> Event:
+def SystemStarted(
+    pid: int,
+    role: str,
+    started_at: float,
+    version: str | None = None,
+) -> Event:
     """
     Create SYSTEM_STARTED event.
+
+    ∀ stargate session: exactly one system.started emitted at startup.
+    pid + started_at together identify the session uniquely in a non-truncated log.
+
+    Args:
+        pid: OS process ID (os.getpid())
+        role: "master" | "edge" | "relay"
+        started_at: Unix epoch at startup (time.time())
+        version: Package version string
 
     Returns:
         Event with SystemStarted signal
     """
-    return Event(signal=SYSTEM_STARTED, payload={})
+    return Event(
+        signal=SYSTEM_STARTED,
+        payload={
+            "pid": pid,
+            "role": role,
+            "started_at": started_at,
+            "version": version,
+        },
+    )
 
 
 @event_factory

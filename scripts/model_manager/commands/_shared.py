@@ -9,7 +9,16 @@ import yaml
 from ..config import Config
 
 # Domain directories for catalog discovery (mirrors gateway logic)
-ALLOWED_DOMAINS = frozenset({"text_llm", "audio", "translation", "visual", "graphics"})
+ALLOWED_DOMAINS = frozenset(
+    {
+        "text_llm",
+        "audio",
+        "translation",
+        "visual",
+        "graphics",
+        "embedding",
+    }
+)
 
 
 def discover_catalog_models(catalog_dir: Path) -> dict[str, Any]:
@@ -104,7 +113,9 @@ def discover_catalog_models(catalog_dir: Path) -> dict[str, Any]:
     }
 
 
-def load_catalog_yaml(args, config: Config) -> tuple[dict[str, Any] | None, Path | None]:
+def load_catalog_yaml(
+    args, config: Config
+) -> tuple[dict[str, Any] | None, Path | None]:
     """
     Load catalog from domain-based directory structure.
 

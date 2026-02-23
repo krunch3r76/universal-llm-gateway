@@ -11,6 +11,7 @@ Provides tooling for:
 """
 
 from .discovery import DiscoveredModel, ModelDiscovery, ModelFormat
+from .embedding import infer_embedding_loader, is_embedding_model
 from .extractor import CatalogMetadata, MetadataExtractor
 from .generator import CatalogEntryGenerator
 from .local_config import (
@@ -46,6 +47,9 @@ __all__ = [
     "SourceTracer",
     "HFSource",
     "CatalogEntryGenerator",
+    # Embedding detection
+    "infer_embedding_loader",
+    "is_embedding_model",
     # Schema versioning
     "ConfigType",
     "CURRENT_SCHEMA_VERSIONS",

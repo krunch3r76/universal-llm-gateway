@@ -302,12 +302,34 @@ class RemoteIntegration:
         """
         Handle Edge disconnection.
 
+        Clears stale model state from the HTTP polling telemetry cache and
+        forwards synthetic MODEL_UNLOADED events to the Master so it removes
+        the models from routing.
+
         Telemetry forwarding will resume automatically on reconnection
         (callback persists across connection cycles).
         """
         logger.warning(
             "⚠️ Disconnected from Edge Stargate - telemetry forwarding paused"
         )
+
+        from .api.telemetry import handle_edge_disconnected
+
+        previously_loaded = handle_edge_disconnected()
+
+        edge_id = (
+            self._config.local_edge.stargate_id if self._config.local_edge else None
+        )
+        for model_id in previously_loaded:
+            logger.info(
+                f"Forwarding synthetic MODEL_UNLOADED for {model_id} "
+                f"(edge disconnected)"
+            )
+            await self._forward_edge_telemetry(
+                peer_id=edge_id or "unknown",
+                msg_type="telemetry.model.unloaded",
+                data={"model_id": model_id},
+            )
 
     def _mount_remote_routes(self, app: FastAPI, gateway_manager: Any | None) -> None:
         """Mount all Remote API routes."""

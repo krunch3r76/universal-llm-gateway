@@ -12,16 +12,16 @@ from typing import Any
 from universal_logging import get_logger
 
 from .common import SubprocessTracker
-
-# Re-export for backward compatibility (callers import from execution.py)
-from .common import (
-    get_system_memory_info as get_system_memory_info,  # noqa: F401, PLC0414
-)
 from .cpu import measure_cpu_context
 from .gguf_reader import extract_block_count
 from .gpu import (
     measure_gpu_context,
     measure_hybrid_context,
+)
+
+# Re-export for backward compatibility (callers import from execution.py)
+from .memory_info import (
+    get_system_memory_info as get_system_memory_info,  # noqa: F401, PLC0414
 )
 from .timing import (
     TimingTracker,
@@ -159,8 +159,10 @@ async def measure_cpu_contexts(
     model_path: Path,
     contexts: list[int],
     n_batch: int,
+    gpu_index: int,
     mmproj_path: str | None,
     emit_log: Callable[[str], None],
+    tracker: SubprocessTracker,
     validate_timing: bool = True,
 ) -> dict[str, dict[str, Any]]:
     """
@@ -170,8 +172,10 @@ async def measure_cpu_contexts(
         model_path: Path to model file
         contexts: List of context lengths to measure (descending order)
         n_batch: Batch size
+        gpu_index: GPU device index (passed through; no VRAM at n_gpu_layers=0)
         mmproj_path: Optional multimodal projector path
         emit_log: Logging callback
+        tracker: SubprocessTracker for measurement processes
         validate_timing: Enable timing monotonicity validation
 
     Returns:
@@ -184,7 +188,9 @@ async def measure_cpu_contexts(
         emit_log(f"Measuring CPU context {ctx}...")
         emit_log("  → Loading model in CPU-only mode (n_gpu_layers=0)...")
         try:
-            profile = await measure_cpu_context(model_path, ctx, n_batch, mmproj_path)
+            profile = await measure_cpu_context(
+                model_path, ctx, n_batch, gpu_index, mmproj_path, tracker
+            )
             if profile.get("success"):
                 # Validate timing (shared logic with GPU)
                 profile = validate_and_log_timing(

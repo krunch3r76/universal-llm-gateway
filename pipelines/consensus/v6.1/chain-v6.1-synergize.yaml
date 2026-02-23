@@ -199,13 +199,13 @@ steps:
       verified_facts: synergize.json.verified_facts
       rejected_claims: synergize.json.rejected_claims
       authority_verdicts: synergize.json.authority_verdicts
-    embedding_model: embedding
+    # embedding_model: embedding
     # embedding_model: bge_large
     # embedding_model: gte_large
     # embedding_model: octen_embedding_06b
-    # embedding_model: octen_embedding_4b
+    embedding_model: octen_embedding_4b
     # embedding_model: octen_embedding_8b
-    similarity_threshold: 1.0    # 1.0 = merge only (no dedup); 0.88 = dedup enabled
+    similarity_threshold: 0.95    # 1.0 = merge only (no dedup); 0.88 = dedup enabled
     timeout_seconds: 60
 
   # Remove universal-negative claims that poison synthesis when contradicted by positive facts.

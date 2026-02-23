@@ -6,9 +6,9 @@
 - See: docs/pydantic-passthrough-rules.md
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ImageURL(BaseModel):
@@ -40,11 +40,17 @@ ContentPart = Annotated[ContentPartText | ContentPartImage, Field(discriminator=
 class Message(BaseModel):
     """Chat message with support for text-only and multi-modal content"""
 
-    role: Literal["system", "user", "assistant"] = Field(
+    model_config = ConfigDict(extra="allow")
+
+    role: Literal["system", "user", "assistant", "tool"] = Field(
         ..., description="Message role"
     )
-    content: str | list[ContentPart] = Field(
-        ..., description="Message content (string for text-only, list for multi-modal)"
+    content: str | list[ContentPart] | None = Field(
+        None,
+        description=(
+            "Message content: string for text-only, list for multi-modal,"
+            " null for assistant messages with tool_calls"
+        ),
     )
 
 
@@ -59,6 +65,9 @@ class TokenCountRequest(BaseModel):
     requested_context_length: int | None = Field(
         None, description="Requested context length for the model (optional)"
     )
+    tools: list[dict[str, Any]] | None = Field(
+        None, description="Tool definitions for accurate token counting"
+    )
 
     @model_validator(mode="after")
     def validate_exactly_one_input(self) -> "TokenCountRequest":
@@ -71,8 +80,8 @@ class TokenCountRequest(BaseModel):
             )
         return self
 
-    model_config = {
-        "json_schema_extra": {
+    model_config = ConfigDict(
+        json_schema_extra={
             "examples": [
                 {
                     "description": "Text-only messages",
@@ -116,7 +125,7 @@ class TokenCountRequest(BaseModel):
                 },
             ]
         }
-    }
+    )
 
 
 class TokenCountResponse(BaseModel):
@@ -137,8 +146,8 @@ class TokenCountResponse(BaseModel):
         ..., description="Whether token counting is available for this model"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "token_count": 25,
                 "context_limit": 4096,
@@ -146,6 +155,7 @@ class TokenCountResponse(BaseModel):
                 "token_counting_enabled": True,
             }
         }
+    )
 
 
 class TokenCountError(BaseModel):
@@ -157,14 +167,15 @@ class TokenCountError(BaseModel):
         False, description="Whether token counting is available"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "error": "Tokenization failed",
                 "details": "Model not loaded or tokenizer unavailable",
                 "token_counting_enabled": False,
             }
         }
+    )
 
 
 class TokenMetrics(BaseModel):
@@ -184,8 +195,8 @@ class TokenMetrics(BaseModel):
         ..., description="Whether token counting was available"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "input_tokens": 25,
                 "max_tokens_requested": 1000,
@@ -196,3 +207,4 @@ class TokenMetrics(BaseModel):
                 "token_counting_enabled": True,
             }
         }
+    )

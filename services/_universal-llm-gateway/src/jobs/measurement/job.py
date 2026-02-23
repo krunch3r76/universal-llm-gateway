@@ -14,7 +14,10 @@ from typing import TYPE_CHECKING, Any, Literal, override
 
 from universal_logging import get_logger
 
+from ...core.events import get_event_bus
+from ...core.events.measurement import MeasurementEmbeddingDetected
 from ..context_detection import (
+    get_embedding_step_down_contexts,
     get_step_down_contexts,
     get_training_context,
     resolve_model_path,
@@ -27,11 +30,12 @@ from .execution import (
     measure_cpu_contexts,
     measure_gpu_with_stepdown,
 )
+from .gpu import run_layer_test
 from .helpers import (
     check_measurement_resources,
     update_catalog_with_results,
 )
-from .vllm import measure_vllm_contexts
+from .vllm import find_min_gpu_utilization, measure_vllm_contexts
 
 if TYPE_CHECKING:
     from ...core.gateway_config import GatewayConfig
@@ -123,7 +127,8 @@ class MeasurementJob(Job):
             )
             if mem_info.get("safe_measurement_limit_mb", 0) > 0:
                 self.emit_log(
-                    f"  Safe probe limit: ~{mem_info['safe_measurement_limit_mb']}MB per subprocess"
+                    f"  Safe probe limit: ~{mem_info['safe_measurement_limit_mb']}MB"
+                    " per subprocess"
                 )
 
         # Show warnings if any
@@ -156,8 +161,15 @@ class MeasurementJob(Job):
             entry = _lookup_catalog_entry(self.request.model_id)
             schema = (entry or {}).get("schema")
             loader_updates: dict[str, Any] | None = None
+            is_embedding = (entry or {}).get("loader", {}).get("embedding") is True
             if schema == "vllm":
-                results, loader_updates = await self._measure_vllm(model_path, tracker)
+                results, loader_updates = await self._measure_vllm(
+                    model_path, tracker, entry
+                )
+            elif schema == "llama-cpp" and is_embedding:
+                results, loader_updates = await self._measure_gguf_embedding(
+                    model_path, tracker, entry
+                )
             elif self.request.mode == "gpu":
                 results = await measure_gpu_with_stepdown(
                     model_path,
@@ -176,8 +188,10 @@ class MeasurementJob(Job):
                     model_path,
                     contexts,
                     self.request.n_batch,
+                    self.request.gpu_index,
                     self.request.mmproj_path,
                     self.emit_log,
+                    tracker,
                 )
             else:
                 results = await measure_auto_mode(
@@ -251,7 +265,7 @@ class MeasurementJob(Job):
 
             # Check if model exists in catalog
             try:
-                from ..core.catalog import get_catalog_loader
+                from ...core.catalog import get_catalog_loader
 
                 loader = get_catalog_loader()
                 model = loader.get_model(model_id)
@@ -280,7 +294,10 @@ class MeasurementJob(Job):
             raise RuntimeError(error_msg)
 
     async def _measure_vllm(
-        self, model_path: Path, tracker: SubprocessTracker
+        self,
+        model_path: Path,
+        tracker: SubprocessTracker,
+        entry: dict[str, Any] | None,
     ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
         """Run vLLM-specific measurement (GPU only, no hybrid).
 
@@ -292,7 +309,6 @@ class MeasurementJob(Job):
 
         self.emit_log("  Engine: vLLM (GPU-only, no hybrid)")
 
-        entry = _lookup_catalog_entry(self.request.model_id)
         model_format = (entry or {}).get("metadata", {}).get("format")
         loader_config = (entry or {}).get("loader", {})
 
@@ -302,19 +318,140 @@ class MeasurementJob(Job):
         self.emit_log(f"  Quantization: {quantization or 'none'}")
         self.emit_log(f"  GPU memory utilization: {gpu_mem_util}")
 
-        results = await measure_vllm_contexts(
-            model_path,
-            self.request.contexts or [32768, 16384, 8192, 4096],
-            quantization,
-            gpu_mem_util,
-            self.emit_log,
-            tracker,
-        )
+        is_embedding = (entry or {}).get("loader", {}).get("embedding") is True
+        if is_embedding:
+            ctx = self.request.training_context_length
+            if not ctx:
+                raise RuntimeError(
+                    f"Embedding model '{self.request.model_id}' has no "
+                    "training_context_length; cannot determine single probe size."
+                )
+            self.emit_log(
+                f"  Embedding model: finding minimum gpu_memory_utilization "
+                f"at context {ctx}"
+            )
+            await get_event_bus().publish_async_nowait(
+                MeasurementEmbeddingDetected(
+                    model_id=self.request.model_id, context_length=ctx
+                )
+            )
+            gpu_mem_util, profile = await find_min_gpu_utilization(
+                model_path,
+                ctx,
+                quantization,
+                tracker,
+                self.emit_log,
+                loader_config=loader_config,
+            )
+            results: dict[str, dict[str, Any]] = {str(ctx): profile}
+        else:
+            contexts_to_measure = self.request.contexts or [32768, 16384, 8192, 4096]
+            results = await measure_vllm_contexts(
+                model_path,
+                contexts_to_measure,
+                quantization,
+                gpu_mem_util,
+                self.emit_log,
+                tracker,
+                loader_config=loader_config,
+            )
 
-        loader_updates = {
+        loader_updates: dict[str, Any] = {
             "gpu_memory_utilization": gpu_mem_util,
+            # Default for local catalog entries: disables CUDA graph capture,
+            # which avoids long warm-up delays on first inference.
             "enforce_eager": True,
         }
+        if is_embedding:
+            loader_updates["embedding"] = True
+            task_default = loader_config.get("embedding_task_default")
+            if task_default is None:
+                logger.error(
+                    "Embedding model '%s' missing loader.embedding_task_default; "
+                    "falling back to 'search_document'",
+                    self.request.model_id,
+                )
+                task_default = "search_document"
+            loader_updates["embedding_task_default"] = task_default
+        return results, loader_updates
+
+    async def _measure_gguf_embedding(
+        self,
+        model_path: Path,
+        tracker: SubprocessTracker,
+        entry: dict[str, Any] | None,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+        """Single-probe GGUF embedding measurement.
+
+        ∀ llama-cpp embedding model: VRAM is constant (no KV cache).
+        One probe at training_context_length suffices.
+        """
+        loader_config = (entry or {}).get("loader", {})
+
+        ctx = self.request.training_context_length
+        if not ctx:
+            raise RuntimeError(
+                f"Embedding model '{self.request.model_id}' has no "
+                "training_context_length; cannot determine single probe size."
+            )
+
+        n_layers = 0 if self.request.mode == "cpu" else -1
+        mode_label = "CPU" if self.request.mode == "cpu" else "GPU"
+
+        self.emit_log(
+            f"  Engine: llama-cpp (embedding {mode_label}, "
+            f"single probe at context {ctx})"
+        )
+        await get_event_bus().publish_async_nowait(
+            MeasurementEmbeddingDetected(
+                model_id=self.request.model_id, context_length=ctx
+            )
+        )
+
+        pooling = loader_config.get("pooling")
+        ubatch_size = loader_config.get("ubatch_size")
+
+        profile = await run_layer_test(
+            model_path,
+            n_layers=n_layers,
+            context=ctx,
+            n_batch=self.request.n_batch,
+            gpu_index=self.request.gpu_index,
+            mmproj_path=None,
+            tracker=tracker,
+            embedding=True,
+            pooling=pooling,
+            ubatch_size=ubatch_size,
+        )
+
+        if profile.get("success"):
+            profile["n_gpu_layers"] = n_layers
+            vram = profile.get("vram_mb", "N/A")
+            ram = profile.get("ram_mb", "N/A")
+            self.emit_log(f"  ✅ {ctx}: VRAM={vram}MB, RAM={ram}MB")
+            results = {str(ctx): profile}
+        else:
+            error = profile.get("error", "unknown")
+            self.emit_log(f"  ❌ {ctx}: {error}")
+            results = {str(ctx): {"error": error}}
+
+        task_default = loader_config.get("embedding_task_default")
+        if task_default is None:
+            logger.error(
+                "Embedding model '%s' missing loader.embedding_task_default; "
+                "falling back to 'search_document'",
+                self.request.model_id,
+            )
+            task_default = "search_document"
+
+        loader_updates: dict[str, Any] = {
+            "embedding": True,
+            "embedding_task_default": task_default,
+        }
+        if pooling is not None:
+            loader_updates["pooling"] = pooling
+        if ubatch_size is not None:
+            loader_updates["ubatch_size"] = ubatch_size
         return results, loader_updates
 
     async def _resolve_model_path(self) -> Path | None:

@@ -62,9 +62,24 @@ class VLLMServerEngine(BaseEngine):
         # Gateway-internal keys that are not vLLM CLI flags.
         # Strip here so extra_cli_args contains only vLLM-addressable fields.
         # ∀ key ∈ _internal_keys: not forwarded to vllm serve subprocess.
-        _internal_keys = frozenset({"warmup"})
+        self._event_bus = kwargs.pop("event_bus", None)
+
+        _internal_keys = frozenset(
+            {
+                "warmup",
+                "trust_remote_code",
+                "embedding",
+                "embedding_task_default",
+                "embedding_task_prefixes",
+                "n_ctx",
+            }
+        )
+        is_embedding = kwargs.get("embedding") is True
         dropped = {k: v for k, v in kwargs.items() if k in _internal_keys}
         extra_cli_args = {k: v for k, v in kwargs.items() if k not in _internal_keys}
+        if is_embedding:
+            extra_cli_args["runner"] = "pooling"
+            enable_auto_tool_choice = False
         if dropped:
             logger.debug(
                 "🔧 [VLLMServerEngine] Stripped gateway-internal keys: %s",
@@ -108,6 +123,7 @@ class VLLMServerEngine(BaseEngine):
                 base_url=self.server_manager.base_url,
                 timeout=self._timeout,
                 socket_path=self.config.socket_path,
+                event_bus=self._event_bus,
             )
             self.loaded = True
             logger.info("✅ [VLLMServerEngine] Engine loaded successfully")
@@ -156,11 +172,13 @@ class VLLMServerEngine(BaseEngine):
         if messages:
             result = await self.client.chat_completions(
                 messages=messages,
+                model=self.config.model_path,
                 **params,
             )
         elif prompt:
             result = await self.client.completions(
                 prompt=prompt,
+                model=self.config.model_path,
                 **params,
             )
         else:
@@ -185,11 +203,13 @@ class VLLMServerEngine(BaseEngine):
         if messages:
             stream = self.client.chat_completions_stream(
                 messages=messages,
+                model=self.config.model_path,
                 **params,
             )
         elif prompt:
             stream = self.client.completions_stream(
                 prompt=prompt,
+                model=self.config.model_path,
                 **params,
             )
         else:
@@ -207,8 +227,15 @@ class VLLMServerEngine(BaseEngine):
         messages_or_prompt: list[dict[str, Any]] | str,
         use_cpu: bool = True,
         context_length: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> TokenCountResult:
-        """Count tokens via vLLM server /tokenize endpoint."""
+        """Count tokens via vLLM server /tokenize endpoint.
+
+        For chat messages, uses the messages format with add_generation_prompt=True
+        so the chat template is applied — matching the actual token count at inference.
+        For raw prompts, uses the prompt format.
+        Tools are included so the template expansion accounts for their token cost.
+        """
         if not self.client:
             return TokenCountResult(
                 tokens=0,
@@ -223,18 +250,20 @@ class VLLMServerEngine(BaseEngine):
                 success=False,
                 error="Engine process crashed",
             )
-        if isinstance(messages_or_prompt, str):
-            text = messages_or_prompt
-        else:
-            text = " ".join(
-                msg.get("content", "")
-                for msg in messages_or_prompt
-                if isinstance(msg.get("content"), str)
-            )
         try:
-            tokens = await self.client.tokenize(text, model=self.config.model_path)
+            if isinstance(messages_or_prompt, list):
+                count = await self.client.tokenize_messages(
+                    messages_or_prompt,
+                    model=self.config.model_path,
+                    tools=tools,
+                )
+            else:
+                tokens = await self.client.tokenize(
+                    messages_or_prompt, model=self.config.model_path
+                )
+                count = len(tokens)
             return TokenCountResult(
-                tokens=len(tokens),
+                tokens=count,
                 method="native_tokenizer",
                 success=True,
             )
@@ -254,9 +283,17 @@ class VLLMServerEngine(BaseEngine):
 
     @override
     def is_loaded(self) -> bool:
-        """True if server is running and not crashed."""
+        """True if server process exists and is not definitively stopped.
+
+        UNHEALTHY (transient health-check failure) still counts as loaded —
+        the vLLM process is alive and can serve tokenize/generate requests.
+        Only STOPPED or STOPPING mean the subprocess is gone.
+        """
         if self._crashed:
             return False
         if not self.server_manager:
             return False
-        return self.server_manager.status == ServerStatus.RUNNING
+        return self.server_manager.status not in (
+            ServerStatus.STOPPED,
+            ServerStatus.STOPPING,
+        )

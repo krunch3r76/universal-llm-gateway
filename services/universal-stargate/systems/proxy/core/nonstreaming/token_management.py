@@ -7,7 +7,6 @@ Handles token counting, context limit validation, and max_tokens computation.
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
 from universal_logging import get_logger
 
 from ..errors import TokenErrorBuilder
@@ -111,9 +110,12 @@ async def apply_token_management(
         )
     )
 
+    tools = context.original_request.get("tools")
+    tools_count = len(tools) if tools else 0
+
     logger.info(
         f"🔍 TOKEN COUNTING CONTENT: type={token_counting_content_type}, "
-        f"content={token_counting_content}"  # Automatic truncation
+        f"tools={tools_count}, content={token_counting_content}"
     )
     if token_counting_content is None:
         logger.info("⚠️ NO CONTENT FOR TOKEN COUNTING - skipping")
@@ -133,6 +135,7 @@ async def apply_token_management(
         token_counting_content_type,
         gateway_instance=context.selected_gateway_instance,
         sticky=context.model_sticky,
+        tools=tools,
     )
 
     # THREE DISTINCT ERROR SCENARIOS:
@@ -216,24 +219,11 @@ def _get_content_for_token_counting(
     return messages, "messages"
 
 
-async def forward_token_request_to_gateway(
-    endpoint: str,
-    model_id: str,
-    messages: list[dict],
-) -> dict[str, Any]:
-    """Forward token count request to local Gateway via HTTP."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            endpoint, json={"model": model_id, "messages": messages}
-        )
-        response.raise_for_status()
-        return response.json()
-
-
 def _build_token_payload(
     model_id: str,
     content: list[dict[str, Any]] | str,
     content_type: str,
+    tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Build token count request payload.
@@ -242,15 +232,19 @@ def _build_token_payload(
         model_id: Model to use for tokenization
         content: Either messages (list[dict]) or prompt (str)
         content_type: "messages" or "prompt" - determines payload key
+        tools: Tool definitions — included so chat-template expansion
+            accounts for their token cost.
 
     Returns:
-        Payload dict with model and content
+        Payload dict with model, content, and optionally tools
     """
     payload: dict[str, Any] = {"model": model_id}
     if content_type == "prompt":
         payload["prompt"] = content
     else:
         payload["messages"] = content
+    if tools:
+        payload["tools"] = tools
     return payload
 
 
@@ -387,14 +381,19 @@ async def apply_federated_token_management(
         logger.info("⚠️ NO CONTENT FOR TOKEN COUNTING - skipping federated")
         return
 
+    tools = context.original_request.get("tools")
+    tools_count = len(tools) if tools else 0
+
     logger.info(
         f"🔍 FEDERATED TOKEN COUNTING: gateway={federated_gateway.gateway_id} "
-        f"type={token_counting_content_type}"
+        f"type={token_counting_content_type}, tools={tools_count}"
     )
 
-    # Build token payload
     token_payload = _build_token_payload(
-        str(context.selected_model), token_counting_content, token_counting_content_type
+        str(context.selected_model),
+        token_counting_content,
+        token_counting_content_type,
+        tools=tools,
     )
 
     # Count tokens via Remote Stargate API with federation auth

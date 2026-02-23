@@ -20,6 +20,27 @@ from .config import VLLMServerConfig
 logger = get_logger(__name__)
 
 
+def build_vllm_command(config: VLLMServerConfig) -> list[str]:
+    """Build vllm serve command, resolving the vllm binary.
+
+    Tries shutil.which("vllm") first, falls back to
+    python -m vllm.entrypoints.cli.main (the full CLI that supports
+    all subcommands and flags like --task for embedding models).
+    """
+    args = config.to_cli_args()  # ["vllm", "serve", model, ...]
+    vllm_path = shutil.which("vllm")
+    if vllm_path:
+        args[0] = vllm_path
+        return args
+    py = shutil.which("python3") or shutil.which("python")
+    if py:
+        # Use the CLI entrypoint which supports "serve" subcommand and all
+        # flags (--task, --enable-auto-tool-choice, etc.). args[1:] keeps
+        # ["serve", model, ...] intact.
+        return [py, "-m", "vllm.entrypoints.cli.main", *args[1:]]
+    return args
+
+
 class ServerStatus(StrEnum):
     """Server lifecycle status."""
 
@@ -73,27 +94,7 @@ class VLLMServerManager:
 
     def _build_cmd(self) -> list[str]:
         """Build command list from config CLI args, resolving the vllm binary."""
-        args = self.config.to_cli_args()  # ["vllm", "serve", model, ...]
-        vllm_path = shutil.which("vllm")
-        if vllm_path:
-            args[0] = vllm_path
-            return args
-        py = shutil.which("python3") or shutil.which("python")
-        if py:
-            # api_server.py has no "serve" subcommand: positional arg maps to
-            # model_tag (display name), not model (what to load). Pass --model
-            # explicitly so vLLM loads the correct path.
-            model_path = args[2]
-            remaining = args[3:]
-            return [
-                py,
-                "-m",
-                "vllm.entrypoints.openai.api_server",
-                "--model",
-                model_path,
-                *remaining,
-            ]
-        return args
+        return build_vllm_command(self.config)
 
     async def start(self, startup_timeout: float = 600.0) -> None:
         """

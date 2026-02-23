@@ -253,6 +253,7 @@ class FluxEngine(BaseEngine):
         messages_or_prompt: list[dict[str, Any]] | str,
         use_cpu: bool = True,
         context_length: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ):
         """
         Not applicable for image generation models.

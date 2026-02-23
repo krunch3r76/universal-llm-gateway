@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
@@ -173,7 +175,23 @@ async def emit_system_started_event(proxy: StargateProxy) -> None:
     if not proxy.event_bus:
         return
     try:
-        await proxy.event_bus.publish_async(SystemStarted())
-        logger.info("📢 Published SYSTEM_STARTED event")
+        role = "edge" if proxy.gateway_manager is not None else "master"
+        try:
+            from importlib.metadata import version as pkg_version
+
+            _version: str | None = pkg_version("universal-stargate")
+        except Exception:
+            _version = None
+        await proxy.event_bus.publish_async(
+            SystemStarted(
+                pid=os.getpid(),
+                role=role,
+                started_at=time.time(),
+                version=_version,
+            )
+        )
+        logger.info(
+            "📢 Published SYSTEM_STARTED event (pid=%d, role=%s)", os.getpid(), role
+        )
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.debug("Failed to emit SYSTEM_STARTED event: %s", exc)

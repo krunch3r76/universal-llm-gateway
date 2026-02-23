@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from universal_logging import get_logger
 
 from src.core.model_registry import ModelRegistry
+from src.core.workers import WorkerController
 from src.routers.dependencies import get_model_registry, get_worker_controller
 from src.schemas.tokens import TokenCountRequest, TokenCountResponse
 
@@ -16,8 +17,8 @@ logger = get_logger(__name__)
 async def count_tokens(
     request: TokenCountRequest,
     model_registry: ModelRegistry = Depends(get_model_registry),
-    worker_controller=Depends(get_worker_controller),
-):
+    worker_controller: WorkerController = Depends(get_worker_controller),
+) -> TokenCountResponse | JSONResponse:
     """
     Count tokens in messages or prompt using IPC-based worker processes.
 
@@ -132,8 +133,9 @@ async def count_tokens(
         except Exception as e:
             # If model is already loaded, proceed with token counting
             if tracker_info and tracker_info.status.value == "loaded":
-                logger.info(
-                    f"Model {model_id} already loaded, proceeding with token counting (error: {e})"
+                logger.warning(
+                    f"Model {model_id} already loaded despite load error, "
+                    f"proceeding: {e}"
                 )
             else:
                 raise
@@ -142,18 +144,22 @@ async def count_tokens(
         try:
             # Convert messages to dict format if needed
             if request.messages:
+                # exclude_unset=True ensures content=None (default for tool_calls
+                # assistant messages) is not serialized, matching OpenAI wire format
                 message_or_prompt = [
                     msg.model_dump(exclude_unset=True) for msg in request.messages
                 ]
             else:
                 message_or_prompt = request.prompt
 
-            # Use the model manager's count_tokens method (IPC-based)
+            tools = [t.copy() for t in request.tools] if request.tools else None
+
             result = await worker_controller.count_tokens(
                 model_id,
                 message_or_prompt,
-                use_cpu=False,  # Always False - kept for API compatibility
+                use_cpu=False,
                 context_length=context_length,
+                tools=tools,
             )
 
             # Extract token count from the result
@@ -163,8 +169,8 @@ async def count_tokens(
                 token_count = result
 
             # Log the result for debugging
-            logger.info(f"🔍 Token counting result for {model_id}: {result}")
-            logger.info(f"🔍 Extracted token count: {token_count}")
+            logger.debug(f"Token counting result for {model_id}: {result}")
+            logger.debug(f"Extracted token count: {token_count}")
 
             # Calculate available tokens for generation using effective
             # per-slot context (accounts for KV cache split across slots)

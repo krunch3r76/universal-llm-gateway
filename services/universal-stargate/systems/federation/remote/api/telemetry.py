@@ -308,6 +308,46 @@ def ingest_edge_telemetry(msg_type: str, data: dict[str, Any]) -> None:
     tracker.update(_edge_state)
 
 
+def handle_edge_disconnected() -> list[str]:
+    """
+    Clear model state when Edge WebSocket disconnects (Relay topology).
+
+    When the Edge container stops, no MODEL_UNLOADED events are generated.
+    This function clears stale model data so the Master sees accurate state
+    on subsequent telemetry polls.
+
+    Returns:
+        List of model IDs that were previously loaded (for synthetic
+        MODEL_UNLOADED forwarding to Master via WebSocket).
+    """
+    global _edge_state
+
+    if tracker is None:
+        return []
+
+    previously_loaded: list[str] = list(_edge_state.get("loaded_models", []))
+
+    if (
+        not previously_loaded
+        and not _edge_state.get("busy_models")
+        and not _edge_state.get("available_models")
+    ):
+        return []
+
+    _edge_state["loaded_models"] = []
+    _edge_state["busy_models"] = []
+    _edge_state["available_models"] = []
+
+    tracker.update(_edge_state)
+
+    logger.warning(
+        "Edge disconnected: cleared model state from telemetry cache "
+        f"(previously loaded: {len(previously_loaded)} models)"
+    )
+
+    return previously_loaded
+
+
 def _build_snapshot_response(
     tracker: TelemetryStateTracker, gateway_id: str
 ) -> dict[str, Any]:

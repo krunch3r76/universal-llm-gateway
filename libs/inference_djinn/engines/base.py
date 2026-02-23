@@ -101,6 +101,7 @@ class BaseEngine(ABC):
         messages_or_prompt: list[dict[str, Any]] | str,
         use_cpu: bool = True,
         context_length: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> TokenCountResult:
         """
         Count tokens for chat messages or prompt string.
@@ -113,6 +114,7 @@ class BaseEngine(ABC):
             messages_or_prompt: Either formatted prompt or message list
             use_cpu: If True, use CPU-based token counting. May be ignored by GPU-only engines.
             context_length: Context length for validation
+            tools: Tool definitions to include in token count (chat-template expansion).
 
         Returns:
             TokenCountResult with count, method, and success status

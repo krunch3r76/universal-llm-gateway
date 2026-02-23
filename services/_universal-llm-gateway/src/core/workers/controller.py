@@ -278,12 +278,13 @@ class WorkerController:
     async def count_tokens(
         self,
         model_id: str,
-        message_or_prompt,
+        message_or_prompt: list | str,
         use_cpu: bool,
         context_length: int | None = None,
-    ):
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict:
         return await self._chat_non_streaming.count_tokens(
-            model_id, message_or_prompt, use_cpu, context_length
+            model_id, message_or_prompt, use_cpu, context_length, tools=tools
         )
 
     async def inference_stream(

@@ -9,6 +9,9 @@ metadata:
   training_context_length: 2048
   supports_chat_history: false
   input_schema: prompt
+loader:
+  embedding: true
+  embedding_task_default: search_document
 download:
   huggingface:
     repo: nomic-ai/nomic-embed-text-v1.5-GGUF

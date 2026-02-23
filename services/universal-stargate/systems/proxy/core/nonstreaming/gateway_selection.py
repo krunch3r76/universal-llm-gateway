@@ -30,11 +30,10 @@ async def select_gateway_and_load_model(
     compute_type_tracker=None,
     routing_key_tracker=None,
     admission_queue=None,
+    circuit_breaker=None,
 ) -> tuple[str | None, str | None]:
     """
     Ensure gateway is selected and model is loaded before request execution.
-
-    Post-unification: All gateways are federated.
 
     For federated gateways:
         - Sets context.selected_gateway (Gateway with FederatedGateway ref)
@@ -55,6 +54,7 @@ async def select_gateway_and_load_model(
         federated_load_orchestrator: Orchestrator for loading models on remote
         compute_type_tracker: MasterRequestTracker for capacity reservation
         routing_key_tracker: MasterRequestTracker for routing key eviction protection
+        circuit_breaker: Optional FederationCircuitBreaker for availability checks
 
     Returns:
         Tuple of (gateway_name, reservation_id) if selected, (None, None) otherwise
@@ -93,6 +93,7 @@ async def select_gateway_and_load_model(
             compute_type_tracker=compute_type_tracker,
             routing_key_tracker=routing_key_tracker,
             admission_queue=admission_queue,
+            circuit_breaker=circuit_breaker,
         )
 
     if not context.selected_gateway_instance:

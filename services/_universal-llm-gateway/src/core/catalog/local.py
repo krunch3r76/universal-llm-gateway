@@ -14,7 +14,9 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-ALLOWED_DOMAINS = frozenset({"text_llm", "audio", "translation", "visual", "graphics"})
+ALLOWED_DOMAINS = frozenset({
+    "text_llm", "audio", "translation", "visual", "graphics", "embedding",
+})
 
 
 def get_local_catalog_dir() -> Path | None:

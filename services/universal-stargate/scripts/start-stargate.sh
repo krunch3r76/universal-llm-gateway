@@ -98,27 +98,14 @@ if [[ ! -x "$PYTHON_SCRIPT" ]]; then
     chmod +x "$PYTHON_SCRIPT"
 fi
 
-# Load environment files from project root
-# Script is at services/universal-stargate/scripts/, so go up 3 levels
+# Load environment from project root .env.local (canonical location)
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-ENV_FILE="$PROJECT_ROOT/config/env/stargate.env"
-ENV_LOCAL_FILE="$PROJECT_ROOT/config/env/stargate.env.local"
+ENV_LOCAL="$PROJECT_ROOT/.env.local"
 
-# Load base environment file
-if [[ -f "$ENV_FILE" ]]; then
-    echo "Loading environment from: $ENV_FILE"
+if [[ -f "$ENV_LOCAL" ]]; then
+    echo "Loading environment from: $ENV_LOCAL"
     set -a
-    source "$ENV_FILE"
-    set +a
-else
-    echo "Warning: Base environment file not found: $ENV_FILE"
-fi
-
-# Load local overrides
-if [[ -f "$ENV_LOCAL_FILE" ]]; then
-    echo "Loading local overrides from: $ENV_LOCAL_FILE"
-    set -a
-    source "$ENV_LOCAL_FILE"
+    source "$ENV_LOCAL"
     set +a
 fi
 

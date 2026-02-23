@@ -185,7 +185,6 @@ def create_timing_anomaly_error(
     }
 
 
-
 def validate_and_log_timing(
     profile: dict[str, Any],
     ctx: int,

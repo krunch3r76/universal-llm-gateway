@@ -19,14 +19,20 @@ class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     role: str = Field(..., description="Message role: system, user, or assistant")
-    content: str | list[dict[str, Any]] = Field(
-        ...,
-        description="Message content: string for text-only, or list of parts for multimodal (text/image_url)",
+    content: str | list[dict[str, Any]] | None = Field(
+        None,
+        description=(
+            "Message content: string for text-only, list of parts"
+            " for multimodal, null for tool_calls assistant messages"
+        ),
     )
 
 
 class ChatCompletionRequest(BaseModel):
-    """Request schema for chat completion endpoint - simplified to avoid default value issues"""
+    """Request schema for chat completion endpoint.
+
+    Simplified to avoid default value issues.
+    """
 
     model_config = ConfigDict(
         extra="allow",  # Allow additional fields not defined in schema
@@ -44,13 +50,19 @@ class ChatCompletionRequest(BaseModel):
     )
     prompt: str | list[ChatMessage] | None = Field(
         None,
-        description="Single prompt string or messages array (for instruction models via degradation)",
+        description=(
+            "Single prompt string or messages array"
+            " (for instruction models via degradation)"
+        ),
     )
 
     # Token counting bypass for time-critical requests
     skip_token_counting: bool | None = Field(
         None,
-        description="Skip token counting for time-critical requests (client responsible for max_tokens)",
+        description=(
+            "Skip token counting for time-critical requests"
+            " (client responsible for max_tokens)"
+        ),
     )
 
     # Let the engine handle all generation parameters - no defaults applied here

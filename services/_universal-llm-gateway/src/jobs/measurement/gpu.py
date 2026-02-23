@@ -2,22 +2,20 @@
 GPU and hybrid measurement execution.
 
 Handles full GPU offload, partial GPU offload (hybrid), and binary search
-for optimal layer count. Uses subprocess isolation for memory safety.
-
-VRAM is measured host-side via Stargate federation (Edge → Master pynvml).
-The subprocess loads the model in --hold mode; Gateway takes a VRAM delta
-via Stargate before and after load, then signals the subprocess to continue.
+for optimal layer count. Spawns llama-server directly — identical code path
+to runtime NativeGGUFEngine via ServerConfig.to_cli_args().
 """
 
 import asyncio
-import json
 import os
 import signal
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+from inference_djinn.engines.gguf.native.binary import find_llama_server
+from inference_djinn.engines.gguf.native.config import ServerConfig
 from universal_logging import get_logger
 
 from .common import (
@@ -25,59 +23,37 @@ from .common import (
     DEFAULT_SUBPROC_OOM_SCORE_ADJ,
     SubprocessTracker,
     env_int,
-    maybe_psutil,
+    kill_measurement_process,
+    measure_process_tree_rss_mb,
+    measure_process_vram_mb,
+    poll_health,
     setup_measurement_subprocess,
 )
 from .gguf_reader import extract_block_count
+from .memory_info import maybe_psutil
 
 logger = get_logger(__name__)
 
-STARGATE_VRAM_ENDPOINT = "/api/v1/federation/measurement/vram"
 
+def _select_visible_gpu_device(gpu_index: int) -> str:
+    """Resolve gpu_index through any existing CUDA_VISIBLE_DEVICES mask.
 
-def _resolve_test_script() -> Path:
-    """Locate llama_server_measurement.py."""
-    root = Path(__file__).resolve()
-    project_root = root.parents[5]
-    return (
-        project_root
-        / "libs"
-        / "inference_djinn"
-        / "scripts"
-        / "tests"
-        / "gguf"
-        / "llama_server_measurement.py"
-    )
-
-
-def _stargate_socket_path() -> str | None:
-    """Get Edge Stargate Unix socket from env."""
-    return os.environ.get("STARGATE_UNIX_SOCKET") or os.environ.get(
-        "STARGATE_SOCKET_PATH"
-    )
-
-
-async def _request_vram_snapshot(device_index: int = 0) -> int | None:
-    """Request host-side VRAM snapshot via Edge Stargate → Master.
-
-    Returns total per-process VRAM in MB, or None if unavailable.
+    Maps gpu_index=0 to the first visible device (not necessarily cuda:0).
     """
-    socket_path = _stargate_socket_path()
-    if not socket_path:
-        logger.warning("No STARGATE_UNIX_SOCKET — cannot measure VRAM via federation")
-        return None
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if not cuda_visible:
+        return str(gpu_index)
 
-    import httpx
+    tokens = [t.strip() for t in cuda_visible.split(",") if t.strip()]
+    if not tokens:
+        return str(gpu_index)
 
-    transport = httpx.AsyncHTTPTransport(uds=socket_path)
-    async with httpx.AsyncClient(transport=transport, timeout=15.0) as client:
-        resp = await client.post(
-            f"http://localhost{STARGATE_VRAM_ENDPOINT}",
-            json={"device_index": device_index},
+    if gpu_index < 0 or gpu_index >= len(tokens):
+        raise ValueError(
+            f"gpu_index {gpu_index} out of range for "
+            f"CUDA_VISIBLE_DEVICES={cuda_visible!r}"
         )
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("total_mb")
+    return tokens[gpu_index]
 
 
 def _compute_adaptive_timeout(
@@ -145,58 +121,59 @@ async def run_layer_test(
     mmproj_path: str | None,
     tracker: SubprocessTracker,
     timeout_sec: int = 300,
+    embedding: bool = False,
+    pooling: str | None = None,
+    ubatch_size: int | None = None,
 ) -> dict[str, Any]:
-    """Run llama_server_measurement with host-side VRAM via Stargate.
+    """Spawn llama-server, wait for health, measure VRAM/RAM, kill.
 
-    Flow: take VRAM baseline → spawn --hold subprocess → wait READY →
-    take VRAM snapshot → compute delta → close stdin → read JSON result.
-    Falls back to in-container measurement if Stargate is unreachable.
+    Uses ServerConfig.to_cli_args() for identical CLI to runtime
+    NativeGGUFEngine, and per-process pynvml for VRAM measurement.
     """
-    script = _resolve_test_script()
-    if not script.exists():
-        return {"success": False, "error": f"Test script not found: {script}"}
+    socket_path = f"/tmp/measurement-{uuid4().hex[:8]}.sock"
+    config = ServerConfig(
+        model_path=str(model_path),
+        socket_path=socket_path,
+        ctx_size=context,
+        n_gpu_layers=n_layers,
+        batch_size=n_batch,
+        parallel_slots=1,
+        continuous_batching=False,
+        flash_attn=True,
+        mlock=True,
+        mmproj_path=mmproj_path,
+        verbose=False,
+        embedding=embedding,
+        pooling=pooling,
+        ubatch_size=ubatch_size,
+    )
+
+    args = config.to_cli_args()
+    args[0] = find_llama_server()
+
+    env = os.environ.copy()
+    if n_layers == 0:
+        # CPU-only: hide all GPUs to prevent CUDA context initialization
+        env["CUDA_VISIBLE_DEVICES"] = ""
+        env["HIP_VISIBLE_DEVICES"] = ""
+    else:
+        env["CUDA_VISIBLE_DEVICES"] = _select_visible_gpu_device(gpu_index)
 
     adaptive_timeout = _compute_adaptive_timeout(model_path, n_layers, timeout_sec)
-
-    # VRAM baseline (host-side via federation)
-    vram_baseline: int | None = None
-    use_hold_mode = False
-    try:
-        vram_baseline = await _request_vram_snapshot(gpu_index)
-        use_hold_mode = vram_baseline is not None
-    except Exception as e:
-        logger.warning(f"VRAM baseline via Stargate failed, falling back: {e}")
-
-    cmd = [
-        sys.executable,
-        str(script),
-        "--model",
-        str(model_path),
-        "--layers",
-        str(n_layers),
-        "--ctx",
-        str(context),
-        "--batch",
-        str(n_batch),
-        "--gpu-index",
-        str(gpu_index),
-        "--mode",
-        "gpu",
-    ]
-    if mmproj_path:
-        cmd.extend(["--mmproj", mmproj_path])
-    if use_hold_mode:
-        cmd.append("--hold")
 
     nice_value = env_int("MEASUREMENT_SUBPROC_NICE") or DEFAULT_SUBPROC_NICE
     oom_adj = (
         env_int("MEASUREMENT_SUBPROC_OOM_SCORE_ADJ") or DEFAULT_SUBPROC_OOM_SCORE_ADJ
     )
 
+    socket_file = Path(socket_path)
+    if socket_file.exists():
+        socket_file.unlink()
+
     proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        env=os.environ.copy(),
-        stdin=asyncio.subprocess.PIPE if use_hold_mode else asyncio.subprocess.DEVNULL,
+        *args,
+        env=env,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         preexec_fn=lambda: setup_measurement_subprocess(
@@ -207,28 +184,33 @@ async def run_layer_test(
     )
     tracker.add(proc)
     logger.info(
-        f"Started subprocess PID {proc.pid}: "
-        f"nice={nice_value}, oom_adj={oom_adj}, timeout={adaptive_timeout}s, "
-        f"hold={use_hold_mode}"
+        "Started llama-server measurement PID %s: layers=%d, ctx=%d, "
+        "nice=%d, oom_adj=%d, timeout=%ds",
+        proc.pid,
+        n_layers,
+        context,
+        nice_value,
+        oom_adj,
+        adaptive_timeout,
     )
 
     monitor_task = await _start_memory_monitor(model_path, proc)
 
     try:
-        if use_hold_mode:
-            data = await _run_hold_mode(
-                proc, gpu_index, vram_baseline, adaptive_timeout
-            )
-        else:
-            data = await _run_legacy_mode(proc, adaptive_timeout)
-    except TimeoutError:
-        logger.warning(f"Probe timeout after {adaptive_timeout}s, killing subprocess")
-        try:
-            if proc.pid:
-                os.killpg(proc.pid, signal.SIGKILL)
-        except Exception:
-            pass
-        return {"success": False, "error": f"timeout after {adaptive_timeout}s"}
+        error = await poll_health(
+            socket_path,
+            proc,
+            adaptive_timeout,
+            poll_interval=1.0,
+            process_name="llama-server",
+        )
+        if error:
+            return {"success": False, "error": error}
+
+        vram_mb = measure_process_vram_mb(proc.pid, device_index=gpu_index) or 0
+        ram_mb = measure_process_tree_rss_mb(proc.pid)
+
+        return {"success": True, "vram_mb": vram_mb, "ram_mb": ram_mb}
     finally:
         if monitor_task:
             monitor_task.cancel()
@@ -237,88 +219,12 @@ async def run_layer_test(
             except asyncio.CancelledError:
                 pass
         tracker.discard(proc)
-
-    return data
-
-
-async def _run_hold_mode(
-    proc: asyncio.subprocess.Process,
-    gpu_index: int,
-    vram_baseline: int | None,
-    timeout: int,
-) -> dict[str, Any]:
-    """Hold-mode flow: wait READY, measure VRAM delta, release."""
-    assert proc.stdout is not None
-    assert proc.stdin is not None
-
-    ready_line = await asyncio.wait_for(proc.stdout.readline(), timeout=timeout)
-    if not ready_line.strip().startswith(b"READY"):
-        stderr = await proc.stderr.read() if proc.stderr else b""
-        return {
-            "success": False,
-            "error": f"Expected READY, got: {ready_line.decode().strip()}",
-            "stderr": stderr.decode().strip(),
-        }
-
-    # Take host-side VRAM snapshot after model load
-    vram_mb: int | None = None
-    try:
-        vram_after = await _request_vram_snapshot(gpu_index)
-        if vram_after is not None and vram_baseline is not None:
-            vram_mb = max(0, vram_after - vram_baseline)
-            logger.info(f"VRAM delta: {vram_after} - {vram_baseline} = {vram_mb} MB")
-    except Exception as e:
-        logger.error(f"VRAM snapshot after load failed: {e}")
-
-    # Release subprocess: close stdin → triggers warmup + RAM measurement
-    proc.stdin.close()
-
-    stdout_rest, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    if proc.returncode != 0:
-        return {
-            "success": False,
-            "error": f"exit {proc.returncode}",
-            "stderr": stderr.decode().strip(),
-        }
-
-    output = stdout_rest.decode().strip()
-    return _parse_output(output, stderr.decode().strip(), vram_mb)
-
-
-async def _run_legacy_mode(
-    proc: asyncio.subprocess.Process, timeout: int
-) -> dict[str, Any]:
-    """Legacy flow (no Stargate): run to completion, use in-container VRAM."""
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-
-    if proc.returncode != 0:
-        return {
-            "success": False,
-            "error": f"exit {proc.returncode}",
-            "stderr": stderr.decode().strip(),
-        }
-
-    output = stdout.decode().strip()
-    return _parse_output(output, stderr.decode().strip(), vram_override=None)
-
-
-def _parse_output(
-    output: str, stderr: str, vram_override: int | None
-) -> dict[str, Any]:
-    """Parse JSON from subprocess stdout, optionally override vram_mb."""
-    if not output:
-        return {"success": False, "error": "no output"}
-
-    try:
-        data = json.loads(output)
-    except Exception as e:
-        return {"success": False, "error": f"invalid json: {e}", "stderr": stderr}
-
-    if vram_override is not None:
-        data["vram_mb"] = vram_override
-
-    data["stderr"] = stderr
-    return data
+        await kill_measurement_process(proc, sigterm_timeout=5.0)
+        if socket_file.exists():
+            try:
+                socket_file.unlink()
+            except OSError:
+                pass
 
 
 async def measure_gpu_context(

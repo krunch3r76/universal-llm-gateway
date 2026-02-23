@@ -7,10 +7,14 @@ V3 Static Schema:
     - catalog_schema: 3
     - schema: Engine reference (llama-cpp, vllm, etc.)
     - metadata: Model info (format, family, etc.) - NO engine field
+    - loader: Routing discriminants only (embedding models only)
     - download: HuggingFace source info
 
-Generated entries contain NO loader or devices sections.
-Those are written to the local catalog (~/.gateway/catalog/) after measurement.
+Embedding models include a loader section with routing discriminants
+(loader.embedding=True, embedding_task_default). All other models are
+metadata-only (no loader section).
+Operational loader/devices sections are written to the local catalog
+(~/.gateway/catalog/) after measurement.
 
 Usage:
     from inference_djinn.catalog.generator import generate_catalog_entry
@@ -25,6 +29,7 @@ from typing import Any
 from universal_logging import get_logger
 
 from .discovery import DiscoveredModel, ModelDiscovery, ModelFormat
+from .embedding import infer_embedding_loader
 from .extractor import CatalogMetadata, MetadataExtractor
 from .tracer import HFSource, SourceTracer
 
@@ -191,7 +196,12 @@ class CatalogEntryGenerator:
         metadata: CatalogMetadata,
         hf_source: HFSource | None,
     ) -> dict[str, Any]:
-        """Build static catalog entry in V3 format (metadata-only, no loader/devices)."""
+        """Build static catalog entry in V3 format.
+
+        Embedding models get a loader section with routing discriminants
+        (loader.embedding, embedding_task_default). All other models remain
+        metadata-only (no loader section).
+        """
         meta = metadata.to_catalog_metadata()
 
         # V3: engine derived from schema, not stored in metadata
@@ -203,6 +213,12 @@ class CatalogEntryGenerator:
             "metadata": meta,
             "download": self._build_download(model, hf_source),
         }
+
+        # Routing discriminants for embedding models (preserved in static entries)
+        loader: dict[str, Any] = {}
+        infer_embedding_loader(loader, meta, model.model_id)
+        if loader:
+            entry["loader"] = loader
 
         return entry
 

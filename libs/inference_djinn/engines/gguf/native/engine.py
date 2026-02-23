@@ -439,6 +439,7 @@ class NativeGGUFEngine(BaseEngine):
         messages_or_prompt: list[dict[str, Any]] | str,
         use_cpu: bool = True,
         context_length: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> TokenCountResult:
         """Count tokens using llama-server /tokenize endpoint."""
         if not self.client:

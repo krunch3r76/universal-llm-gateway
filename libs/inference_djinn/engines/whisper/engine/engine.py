@@ -238,7 +238,9 @@ class WhisperEngine(BaseEngine):
         # Close all streaming sessions
         if self._streaming_service is not None:
             for session_id in self._streaming_service.get_session_ids():
-                pending_results = await self._streaming_service.close_session(session_id)
+                pending_results = await self._streaming_service.close_session(
+                    session_id
+                )
                 if pending_results:
                     logger.warning(
                         f"⚠️ Session {session_id} had {len(pending_results)} pending "
@@ -357,6 +359,7 @@ class WhisperEngine(BaseEngine):
         messages_or_prompt: list[dict[str, Any]] | str,
         use_cpu: bool = True,
         context_length: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ):
         """Not applicable for audio models."""
         raise NotImplementedError("Token counting not applicable for audio models")

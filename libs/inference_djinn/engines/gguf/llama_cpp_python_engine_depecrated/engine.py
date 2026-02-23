@@ -458,10 +458,11 @@ class GGUFEngine(BaseEngine):
         messages_or_prompt: list[dict[str, Any]] | str,
         use_cpu: bool = True,
         context_length: int | None = None,  # For API compatibility
+        tools: list[dict[str, Any]] | None = None,
     ) -> TokenCountResult:
         """Delegate to token counter for token counting."""
         return await self._token_counter.count_tokens_for_messages(
-            messages_or_prompt, use_cpu, context_length
+            messages_or_prompt, use_cpu, context_length, tools=tools
         )
 
     @property
@@ -574,7 +575,9 @@ class GGUFEngine(BaseEngine):
             try:
                 result = self.llama_model.create_embedding(texts_to_embed)
                 # Validate result shape
-                if isinstance(result.get("data"), list) and len(result["data"]) == len(texts_to_embed):
+                if isinstance(result.get("data"), list) and len(result["data"]) == len(
+                    texts_to_embed
+                ):
                     return result
                 # Shape mismatch - fall through to per-text
                 logger.warning(
@@ -582,7 +585,9 @@ class GGUFEngine(BaseEngine):
                     f"got {len(result.get('data', []))}. Falling back to per-text."
                 )
             except Exception as e:
-                logger.warning(f"Batch embedding failed: {e}. Falling back to per-text.")
+                logger.warning(
+                    f"Batch embedding failed: {e}. Falling back to per-text."
+                )
 
         # Per-text embedding (fallback or single input)
         return self._create_embedding_per_text(texts_to_embed)
@@ -635,11 +640,13 @@ class GGUFEngine(BaseEngine):
 
             # Extract embedding data
             data_item = result["data"][0]
-            all_data.append({
-                "object": "embedding",
-                "embedding": data_item["embedding"],
-                "index": idx,
-            })
+            all_data.append(
+                {
+                    "object": "embedding",
+                    "embedding": data_item["embedding"],
+                    "index": idx,
+                }
+            )
 
             # Accumulate tokens
             usage = result.get("usage", {})

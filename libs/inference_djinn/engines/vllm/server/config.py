@@ -143,15 +143,25 @@ class VLLMServerConfig:
     def to_subprocess_env(self) -> dict[str, str]:
         """Build subprocess environment for vllm serve.
 
-        Enforces offline mode so vLLM never attempts network access.
-        The Edge container runs with network_mode: none; all model files
-        are already on disk.
+        Enforces offline mode so vLLM never attempts network access
+        (Edge container runs with network_mode: none).
+
+        Sets RTX 5090 / Blackwell (SM_120) optimizations to match the
+        measurement script (vllm_memory_test.py), ensuring identical
+        attention backend and allocator behaviour at runtime.
         """
         env = dict(os.environ)
+        # Offline: prevent HuggingFace / vLLM network access
         env["HF_HUB_OFFLINE"] = "1"
         env["TRANSFORMERS_OFFLINE"] = "1"
         env["VLLM_NO_USAGE_STATS"] = "1"
         env["HF_HUB_DISABLE_TELEMETRY"] = "1"
+        # RTX 5090 / SM_120: Flash Attention 2 (not Triton) for compatibility
+        env["VLLM_ATTENTION_BACKEND"] = "FLASH_ATTN"
+        env["VLLM_FLASH_ATTN_VERSION"] = "2"
+        env["VLLM_USE_TRITON_FLASH_ATTN"] = "0"
+        # Reduce CUDA memory fragmentation
+        env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         return env
 
     def to_cli_args(self) -> list[str]:
