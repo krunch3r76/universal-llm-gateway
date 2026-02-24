@@ -14,13 +14,13 @@ _CHUNK_CHARS_CODE = _CHUNK_TOKENS_CODE * _TOKEN_ESTIMATE
 
 _CODE_EXTENSIONS = {".py", ".js", ".ts", ".go", ".rs", ".sh", ".yaml", ".toml"}
 
-_HEADER_RE = re.compile(r"^#{1,3} .+", re.MULTILINE)
+_HEADER_RE: re.Pattern[str] = re.compile(r"^#{1,3} .+", re.MULTILINE)
 
 
 @dataclass(slots=True, kw_only=True)
 class Chunk:
     text: str
-    metadata: dict[str, str]
+    metadata: dict[str, str | int]
 
 
 def _split_paragraphs(text: str, max_chars: int) -> list[str]:
@@ -47,6 +47,12 @@ def _split_paragraphs(text: str, max_chars: int) -> list[str]:
     return chunks
 
 
+def _annotate_chunk_indices(chunks: list[Chunk]) -> list[Chunk]:
+    for index, chunk in enumerate(chunks):
+        chunk.metadata["chunk_index"] = index
+    return chunks
+
+
 def chunk_markdown(path: str, content: str) -> list[Chunk]:
     """Split markdown by headers, then paragraph-split within each section."""
     chunks: list[Chunk] = []
@@ -67,7 +73,7 @@ def chunk_markdown(path: str, content: str) -> list[Chunk]:
                 Chunk(text=text, metadata={"source": source, "heading": heading})
             )
 
-    return chunks
+    return _annotate_chunk_indices(chunks)
 
 
 def chunk_pdf(path: str, content: bytes) -> list[Chunk]:
@@ -85,7 +91,7 @@ def chunk_pdf(path: str, content: bytes) -> list[Chunk]:
                 Chunk(text=text, metadata={"source": source, "page": str(page_num)})
             )
 
-    return chunks
+    return _annotate_chunk_indices(chunks)
 
 
 def chunk_code(path: str, content: str) -> list[Chunk]:
@@ -120,7 +126,7 @@ def chunk_code(path: str, content: str) -> list[Chunk]:
             )
         )
 
-    return chunks
+    return _annotate_chunk_indices(chunks)
 
 
 def chunk_file(path: Path) -> list[Chunk]:

@@ -22,9 +22,48 @@ from .selection_errors import (
 )
 
 if TYPE_CHECKING:
+    from model_id import ModelId
+
+    from systems.federation.common.types import FederatedGateway
+
     from .context import RequestContext
 
 logger = get_logger(__name__)
+
+
+async def _emit_routing_resource_gap_event(
+    event_bus: Any,
+    request_id: str,
+    model_id: "ModelId",
+    federated_gateways: list["FederatedGateway"],
+) -> None:
+    """
+    Emit routing.resource.data.missing if model is in catalog but has no resource data.
+
+    When model_id is in a gateway's available_models but not in its model_resources,
+    routing fails with missing_gateway_resource_data — not because the model is
+    absent, but because resource data wasn't populated yet (startup gap).
+
+    This event distinguishes that case from genuine MODEL_NOT_FOUND.
+    """
+    from src.scheduling.events import RoutingResourceDataMissing
+
+    gap_gateway_ids = [
+        fg.gateway_id
+        for fg in federated_gateways
+        if model_id in fg.available_models and model_id not in fg.model_resources
+    ]
+    if gap_gateway_ids:
+        try:
+            await event_bus.publish_async_nowait(
+                RoutingResourceDataMissing(
+                    request_id=request_id,
+                    model_id=str(model_id),
+                    gateway_ids=gap_gateway_ids,
+                )
+            )
+        except Exception as exc:
+            logger.debug(f"Failed to emit routing resource gap event: {exc}")
 
 
 async def _route_to_federated_gateway(
@@ -495,6 +534,14 @@ async def _route_to_federated_gateway(
                 raise_capacity_error(str(model_id), capacity_details)
 
         # Model doesn't exist anywhere or non-sticky - structured error
+        # Distinguish: model in catalog but missing resource data vs truly absent
+        if event_bus:
+            await _emit_routing_resource_gap_event(
+                event_bus=event_bus,
+                request_id=context.request_id,
+                model_id=model_id,
+                federated_gateways=federated_gateways,
+            )
         raise_model_unavailable_error(str(model_id))
 
     logger.info(

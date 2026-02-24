@@ -58,16 +58,18 @@ class EdgeFederationServer:
     INVARIANT: Edge never initiates outbound federation connections.
     """
 
-    def __init__(self, config: FederationConfig, gateway_manager: Any):
+    def __init__(self, config: FederationConfig, gateway_manager: Any, event_bus: Any):
         """
         Initialize Edge Federation Server.
 
         Args:
             config: Federation configuration (mode=EDGE)
             gateway_manager: Gateway manager for local Gateway access
+            event_bus: Event bus for emitting federation lifecycle signals
         """
         self._config = config
         self._gateway_manager = gateway_manager
+        self._event_bus: Any = event_bus
 
         # Build allowed peers lookup for O(1) auth
         self._allowed_peers: dict[str, str] = {}  # stargate_id → api_key
@@ -95,6 +97,7 @@ class EdgeFederationServer:
 
         # Periodic heartbeat task (for preventing telemetry staleness)
         self._heartbeat_task: asyncio.Task[None] | None = None
+
 
         # Pending measurement requests awaiting response from Master
         self._pending_requests: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -445,11 +448,28 @@ class EdgeFederationServer:
 
         model_count = len(payload["available_models"])
         resource_count = len(payload.get("model_resources", {}))
+        all_models_count = len(
+            list(ws_client.get_models()) if hasattr(ws_client, "get_models") else []
+        )
         vram = payload["available_vram_mb"]
         ram = payload["available_ram_mb"]
         logger.info(
-            f"📊 Initial telemetry cached: {model_count} models "
-            f"({resource_count} with resources), VRAM: {vram}MB, RAM: {ram}MB"
+            f"📊 Initial telemetry cached: {model_count} routable models "
+            f"({all_models_count} in catalog, {resource_count} with resources), "
+            f"VRAM: {vram}MB, RAM: {ram}MB"
+        )
+
+        from src.scheduling.events import FederationSnapshotSent
+
+        asyncio.create_task(
+            self._event_bus.publish_async_nowait(
+                FederationSnapshotSent(
+                    gateway_id=self._source.gateway_id,
+                    all_models_count=all_models_count,
+                    available_models_count=model_count,
+                )
+            ),
+            name="emit-federation-snapshot-sent",
         )
 
         # Broadcast GATEWAY_SNAPSHOT to already-connected peers

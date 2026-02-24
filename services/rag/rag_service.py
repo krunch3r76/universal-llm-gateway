@@ -8,10 +8,25 @@ from pathlib import Path
 
 import chromadb
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
 from services.rag.chunkers import Chunk, chunk_file
-from services.rag.embeddings import embed_chunks, embed_query
+from services.rag.config import load_config
+from services.rag.embeddings import embed_chunks, embed_query, wait_until_healthy
+from services.rag.events import RagShutdown, RagStarted
+from services.rag.models import (
+    DECAY_LAMBDA,
+    ClearResponse,
+    IndexDirectoryRequest,
+    IndexDirectoryResponse,
+    IndexRequest,
+    IndexResult,
+    SearchRequest,
+    SearchResponse,
+    SourceResponse,
+    StatsResponse,
+)
+from services.rag.watcher_manager import WatcherManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +37,9 @@ app = FastAPI(title="RAG Service")
 
 _chroma: chromadb.PersistentClient | None = None
 _collection: chromadb.Collection | None = None
+_watcher_manager: WatcherManager | None = None
+_event_bus: EventBus | None = None
+_broadcaster: MinimalEventDebugBroadcaster | None = None
 
 
 def _get_collection() -> chromadb.Collection:
@@ -29,9 +47,13 @@ def _get_collection() -> chromadb.Collection:
     return _collection
 
 
+def get_event_bus() -> EventBus | None:
+    return _event_bus
+
+
 @app.on_event("startup")
-def _startup() -> None:
-    global _chroma, _collection
+async def _startup() -> None:
+    global _chroma, _collection, _watcher_manager, _event_bus, _broadcaster
     store_path = Path.home() / ".rag" / "store"
     store_path.mkdir(parents=True, exist_ok=True)
     _chroma = chromadb.PersistentClient(path=str(store_path))
@@ -39,63 +61,44 @@ def _startup() -> None:
         name=COLLECTION_NAME,
         metadata={"hnsw:space": "cosine"},
     )
+    _event_bus = EventBus()
+    _broadcaster = MinimalEventDebugBroadcaster(
+        persistence_config={
+            "enabled": True,
+            "directory": "/tmp/rag-events",
+            "max_file_size_mb": 10,
+            "max_files": 2,
+            "flush_interval_seconds": 1.0,
+        },
+    )
+    _event_bus.set_debug_broadcaster(_broadcaster)
+    await _broadcaster.start_debug_server()
+    await _event_bus.publish_async(RagStarted())
+    config = load_config()
+    if config.watch_directories:
+        _watcher_manager = WatcherManager(index_fn=_index_file, event_bus=_event_bus)
+        try:
+            await wait_until_healthy()
+        except TimeoutError:
+            logger.error(
+                "Embedding endpoint not healthy after timeout; "
+                "initial watcher sweep will be skipped for files requiring embedding"
+            )
+        await _watcher_manager.start(config)
 
 
-# ---------------------------------------------------------------------------
-# Request / response models
-# ---------------------------------------------------------------------------
-
-
-DECAY_LAMBDA = 0.01  # half-life ≈ 69 days
-
-
-class SearchRequest(BaseModel):
-    query: str
-    top_k: int = 5
-    recency_weight: float = 0.0
-    max_distance: float | None = None  # None = return all (backward compat)
-
-
-class SearchResponse(BaseModel):
-    chunks: list[str]
-    metadata: list[dict[str, str]]
-    distances: list[float]
-
-
-class IndexRequest(BaseModel):
-    path: str
-
-
-class IndexResponse(BaseModel):
-    indexed: int
-    skipped: int
-    file: str
-
-
-class IndexDirectoryRequest(BaseModel):
-    path: str
-    extensions: list[str] | None = None
-
-
-class IndexDirectoryResponse(BaseModel):
-    indexed: int
-    skipped: int
-    files: int
-
-
-class StatsResponse(BaseModel):
-    count: int
-    collection: str
-
-
-class ClearResponse(BaseModel):
-    deleted: int
-    collection: str
-
-
-class SourceResponse(BaseModel):
-    chunks: list[str]
-    metadata: list[dict[str, str]]
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    global _watcher_manager, _event_bus, _broadcaster
+    if _event_bus is not None:
+        await _event_bus.publish_async(RagShutdown())
+    if _broadcaster is not None:
+        await _broadcaster.stop_debug_server()
+        _broadcaster = None
+    _event_bus = None
+    if _watcher_manager is not None:
+        await _watcher_manager.stop()
+        _watcher_manager = None
 
 
 # ---------------------------------------------------------------------------
@@ -107,47 +110,60 @@ def _file_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-async def _index_file(file_path: Path) -> tuple[int, int]:
-    """Index a single file. Returns (indexed, skipped)."""
+def _all_ids_match_prefix(ids: list[str], prefix: str) -> bool:
+    return bool(ids) and all(id_.startswith(f"{prefix}-") for id_ in ids)
+
+
+async def _index_file(file_path: Path) -> IndexResult:
+    """Index a file, cleaning up stale chunks when content changed."""
+    source = str(file_path)
     raw = file_path.read_bytes()
     prefix = _file_hash(raw)[:16]
 
+    collection = _get_collection()
+    existing = collection.get(where={"source": source}, include=[])
+    existing_ids: list[str] = existing.get("ids", [])
+
+    if _all_ids_match_prefix(existing_ids, prefix):
+        return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
+
+    if existing_ids:
+        collection.delete(ids=existing_ids)
+
     chunks: list[Chunk] = chunk_file(file_path)
     if not chunks:
-        return 0, 0
+        logger.info(
+            "Index complete: file=%s deleted=%d indexed=0", source, len(existing_ids)
+        )
+        return IndexResult(
+            deleted=len(existing_ids), indexed=0, unchanged=False, file=source
+        )
 
-    collection = _get_collection()
-
-    ids = [f"{prefix}-{i}" for i in range(len(chunks))]
     texts = [c.text for c in chunks]
     metadatas = [c.metadata for c in chunks]
-
-    # Check which IDs already exist (idempotency)
-    existing = collection.get(ids=ids, include=[])
-    existing_ids: set[str] = set(existing["ids"])
-
-    new_indices = [i for i, id_ in enumerate(ids) if id_ not in existing_ids]
-    if not new_indices:
-        return 0, len(chunks)
-
-    new_texts = [texts[i] for i in new_indices]
-    new_ids = [ids[i] for i in new_indices]
-    new_metadatas = [metadatas[i] for i in new_indices]
+    ids = [f"{prefix}-{i}" for i in range(len(chunks))]
 
     now = datetime.now(UTC).isoformat()
-    for m in new_metadatas:
+    for m in metadatas:
         m["indexed_at"] = now
 
-    embeddings = await embed_chunks(new_texts)
-
+    embeddings = await embed_chunks(texts)
     collection.upsert(
-        ids=new_ids,
-        embeddings=embeddings,
-        documents=new_texts,
-        metadatas=new_metadatas,
+        ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
     )
 
-    return len(new_indices), len(chunks) - len(new_indices)
+    logger.info(
+        "Index complete: file=%s deleted=%d indexed=%d",
+        source,
+        len(existing_ids),
+        len(chunks),
+    )
+    return IndexResult(
+        deleted=len(existing_ids),
+        indexed=len(chunks),
+        unchanged=False,
+        file=source,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +173,7 @@ async def _index_file(file_path: Path) -> tuple[int, int]:
 
 def _apply_recency(
     distances: list[float],
-    metadatas: list[dict],
+    metadatas: list[dict[str, str | int | float | bool]],
     recency_weight: float,
 ) -> list[float]:
     """Re-score distances with optional recency decay.
@@ -175,7 +191,7 @@ def _apply_recency(
     result: list[float] = []
     for dist, meta in zip(distances, metadatas, strict=True):
         indexed_at_str = meta.get("indexed_at")
-        if not indexed_at_str:
+        if not isinstance(indexed_at_str, str):
             result.append(dist)
             continue
         indexed_at = datetime.fromisoformat(indexed_at_str)
@@ -203,7 +219,9 @@ async def search(request: SearchRequest) -> SearchResponse:
     )
 
     chunks: list[str] = results["documents"][0] if results["documents"] else []
-    metadatas: list[dict] = results["metadatas"][0] if results["metadatas"] else []
+    metadatas: list[dict[str, str | int | float | bool]] = (
+        results["metadatas"][0] if results["metadatas"] else []
+    )
     distances: list[float] = results["distances"][0] if results["distances"] else []
 
     # max_distance filters on raw cosine distances (scale-independent of recency)
@@ -233,31 +251,36 @@ async def search(request: SearchRequest) -> SearchResponse:
     return SearchResponse(chunks=chunks, metadata=metadatas, distances=distances)
 
 
-@app.post("/index", response_model=IndexResponse)
-async def index_file(request: IndexRequest) -> IndexResponse:
-    file_path = Path(request.path)
+def _validate_file(path: str) -> Path:
+    file_path = Path(path)
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {request.path}")
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
     if not file_path.is_file():
-        raise HTTPException(status_code=400, detail=f"Not a file: {request.path}")
+        raise HTTPException(status_code=400, detail=f"Not a file: {path}")
+    return file_path
 
-    indexed, skipped = await _index_file(file_path)
-    return IndexResponse(indexed=indexed, skipped=skipped, file=str(file_path))
+
+def _validate_directory(path: str) -> Path:
+    dir_path = Path(path)
+    if not dir_path.exists():
+        raise HTTPException(status_code=404, detail=f"Directory not found: {path}")
+    if not dir_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+    return dir_path
+
+
+@app.post("/index", response_model=IndexResult)
+async def index_file(request: IndexRequest) -> IndexResult:
+    return await _index_file(_validate_file(request.path))
 
 
 @app.post("/index_directory", response_model=IndexDirectoryResponse)
 async def index_directory(request: IndexDirectoryRequest) -> IndexDirectoryResponse:
-    dir_path = Path(request.path)
-    if not dir_path.exists():
-        raise HTTPException(
-            status_code=404, detail=f"Directory not found: {request.path}"
-        )
-    if not dir_path.is_dir():
-        raise HTTPException(status_code=400, detail=f"Not a directory: {request.path}")
-
+    dir_path = _validate_directory(request.path)
     extensions = set(request.extensions or DEFAULT_EXTENSIONS)
     total_indexed = 0
-    total_skipped = 0
+    total_deleted = 0
+    total_unchanged = 0
     file_count = 0
 
     for root, _dirs, files in dir_path.walk():
@@ -266,16 +289,85 @@ async def index_directory(request: IndexDirectoryRequest) -> IndexDirectoryRespo
             if file_path.suffix.lower() not in extensions:
                 continue
             try:
-                indexed, skipped = await _index_file(file_path)
-                total_indexed += indexed
-                total_skipped += skipped
+                result = await _index_file(file_path)
+                total_indexed += result.indexed
+                total_deleted += result.deleted
+                if result.unchanged:
+                    total_unchanged += 1
                 file_count += 1
             except Exception as e:
                 logger.warning("Skipping %s: %s", file_path, e)
 
     return IndexDirectoryResponse(
         indexed=total_indexed,
-        skipped=total_skipped,
+        deleted=total_deleted,
+        unchanged=total_unchanged,
+        files=file_count,
+    )
+
+
+@app.post("/reindex", response_model=IndexResult)
+async def reindex_file(request: IndexRequest) -> IndexResult:
+    return await _index_file(_validate_file(request.path))
+
+
+@app.post("/reindex_directory", response_model=IndexDirectoryResponse)
+async def reindex_directory(request: IndexDirectoryRequest) -> IndexDirectoryResponse:
+    """Reindex a directory and remove chunks for deleted source files."""
+    dir_path = _validate_directory(request.path)
+    extensions = set(request.extensions or DEFAULT_EXTENSIONS)
+    total_indexed = 0
+    total_deleted = 0
+    total_unchanged = 0
+    file_count = 0
+    walked_sources: set[str] = set()
+
+    for root, _dirs, files in dir_path.walk():
+        for name in files:
+            file_path = root / name
+            if file_path.suffix.lower() not in extensions:
+                continue
+            walked_sources.add(str(file_path.resolve()))
+            try:
+                result = await _index_file(file_path)
+                total_indexed += result.indexed
+                total_deleted += result.deleted
+                if result.unchanged:
+                    total_unchanged += 1
+                file_count += 1
+            except Exception as e:
+                logger.warning("Skipping %s: %s", file_path, e)
+
+    collection = _get_collection()
+    all_meta = collection.get(include=["metadatas"])
+    metadata_rows = all_meta.get("metadatas") or []
+    dir_prefix = f"{dir_path.resolve()}/"
+
+    removed_sources = {
+        str(source)
+        for row in metadata_rows
+        if isinstance(row, dict)
+        for source in [row.get("source")]
+        if isinstance(source, str)
+        and source.startswith(dir_prefix)
+        and source not in walked_sources
+        and not Path(source).exists()
+    }
+
+    for source in removed_sources:
+        stale = collection.get(where={"source": source}, include=[])
+        stale_ids: list[str] = stale.get("ids", [])
+        if stale_ids:
+            collection.delete(ids=stale_ids)
+            total_deleted += len(stale_ids)
+            logger.info(
+                "Removed stale chunks: source=%s deleted=%d", source, len(stale_ids)
+            )
+
+    return IndexDirectoryResponse(
+        indexed=total_indexed,
+        deleted=total_deleted,
+        unchanged=total_unchanged,
         files=file_count,
     )
 
@@ -290,18 +382,28 @@ def get_source(path: str) -> SourceResponse:
     )
     if not results["documents"]:
         raise HTTPException(status_code=404, detail=f"No chunks indexed for: {path}")
+    documents = results.get("documents") or []
+    metadatas = results.get("metadatas") or []
     pairs = sorted(
-        zip(results["documents"], results["metadatas"]),
-        key=lambda p: p[1].get("chunk_index", 0),
+        zip(documents, metadatas, strict=False),
+        key=lambda pair: pair[1].get("chunk_index", 0),
     )
-    docs, metas = zip(*pairs) if pairs else ([], [])
-    return SourceResponse(chunks=list(docs), metadata=list(metas))
+    docs = [pair[0] for pair in pairs]
+    metas = [pair[1] for pair in pairs]
+    return SourceResponse(chunks=docs, metadata=metas)
 
 
 @app.get("/stats", response_model=StatsResponse)
 def stats() -> StatsResponse:
     collection = _get_collection()
     return StatsResponse(count=collection.count(), collection=COLLECTION_NAME)
+
+
+@app.get("/watch/status")
+def watch_status() -> list[dict[str, str | int | bool]]:
+    if _watcher_manager is None:
+        return []
+    return _watcher_manager.get_status()
 
 
 @app.post("/clear", response_model=ClearResponse)

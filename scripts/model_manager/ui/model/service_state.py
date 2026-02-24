@@ -1,4 +1,6 @@
-"""Service state - tracks Gateway and Stargate process/container health."""
+"""Service state - tracks Gateway, Stargate, RAG, and sidecar health."""
+
+from __future__ import annotations
 
 import logging
 import re
@@ -105,6 +107,55 @@ class ServiceState:
             status=ServiceStatus.STOPPED,
             port=self.STARGATE_PORT,
         )
+
+    def check_sidecar(self) -> ServiceInfo:
+        """Check pipeline-tools sidecar container status."""
+        from ..controller.sidecar_ctl import SIDECAR_NAME
+
+        info = self._check_named_container(SIDECAR_NAME, service_name="Sidecar")
+        if info:
+            return info
+        return ServiceInfo(
+            name="Sidecar",
+            status=ServiceStatus.STOPPED,
+        )
+
+    def _check_named_container(
+        self, name: str, *, service_name: str = "Gateway"
+    ) -> ServiceInfo | None:
+        """Check a container by exact name. Returns None if not found."""
+        if not shutil.which("docker"):
+            return None
+        try:
+            result = subprocess.run(
+                [
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{.Name}}\t{{.State.Status}}",
+                    name,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                parts = result.stdout.strip().split("\t", 1)
+                if len(parts) == 2:
+                    cname = parts[0].lstrip("/")
+                    cstatus = parts[1]
+                    running = cstatus == "running"
+                    return ServiceInfo(
+                        name=service_name,
+                        status=ServiceStatus.RUNNING
+                        if running
+                        else ServiceStatus.UNHEALTHY,
+                        container_name=cname,
+                        detail=cstatus,
+                    )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.warning("Docker check failed for %s: %s", name, e)
+        return None
 
     def _check_container(self, name: str) -> ServiceInfo | None:
         if not shutil.which("docker"):

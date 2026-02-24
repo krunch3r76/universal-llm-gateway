@@ -333,6 +333,18 @@ class VLLMServerManager:
         """
         self.process = None
         self.status = ServerStatus.STARTING
+
+        # ∀ restart: stale socket from the killed process must be removed
+        # before spawning; vLLM's sock.bind() raises EADDRINUSE otherwise.
+        if self.config.socket_path:
+            stale = Path(self.config.socket_path)
+            if stale.exists():
+                stale.unlink()
+                logger.info(
+                    "🧹 [vllm-server] Removed stale socket before restart: %s",
+                    self.config.socket_path,
+                )
+
         cmd = self._build_cmd()
         env = self.config.to_subprocess_env()
         self.process = subprocess.Popen(
@@ -369,7 +381,8 @@ class VLLMServerManager:
 
         if self.process:
             try:
-                # SIGTERM to the process group so EngineCore also gets the signal.
+                # SIGTERM to the process group so EngineCore and APIServer
+                # workers also receive the signal.
                 try:
                     pgid = os.getpgid(self.process.pid)
                     os.killpg(pgid, signal.SIGTERM)
@@ -385,9 +398,14 @@ class VLLMServerManager:
                     logger.warning(
                         "⚠️ [vllm-server] Graceful shutdown timed out, killing process group"
                     )
-                    self._kill_process_group()
-                    await asyncio.to_thread(self.process.wait)
-                    logger.info("✅ [vllm-server] Server killed")
+                # Always SIGKILL the process group after the leader exits.
+                # vLLM's multiprocessing workers (EngineCore, APIServer_*)
+                # stay in the same group and may survive SIGTERM. Waiting only
+                # for self.process (the leader) is not sufficient — workers
+                # hold GPU memory and will leak it if left running.
+                self._kill_process_group()
+                await asyncio.to_thread(self.process.wait)
+                logger.info("✅ [vllm-server] Process group killed")
             except Exception as e:
                 logger.error(f"❌ [vllm-server] Error stopping server: {e}")
 

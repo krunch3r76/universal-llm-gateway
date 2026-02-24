@@ -53,11 +53,9 @@ class InitDataCache:
 
     async def refresh(self) -> None:
         """Refresh cached INIT data asynchronously."""
-        # Build new cache data (all I/O happens here)
         loop = asyncio.get_running_loop()
         catalog_summary = await loop.run_in_executor(None, self._get_catalog_summary)
 
-        # Build complete new cache
         model_ids = self._get_all_model_ids()
         new_cache = {
             "version": __version__,
@@ -66,9 +64,44 @@ class InitDataCache:
             "catalog": catalog_summary,
         }
 
-        # Atomic swap (dict assignment is atomic in Python)
         self._cached_data = new_cache
         logger.debug(f"INIT cache refreshed with {len(model_ids)} model(s)")
+
+        # Emit resource gap event if model_resources doesn't cover all models
+        resource_ids = set(catalog_summary.get("model_resources", {}).keys())
+        all_ids_set = set(model_ids)
+        missing = all_ids_set - resource_ids
+        if missing:
+            await self._emit_resource_gap(
+                all_models_count=len(all_ids_set),
+                resource_models_count=len(resource_ids),
+                gap_cause="resource_tracker_incomplete",
+                sample_missing=sorted(missing)[:5],
+            )
+
+    async def _emit_resource_gap(
+        self,
+        all_models_count: int,
+        resource_models_count: int,
+        gap_cause: str,
+        sample_missing: list[str],
+    ) -> None:
+        """Emit resource gap event when model_resources doesn't cover catalog."""
+        try:
+            from src.core.events import get_event_bus
+            from src.core.events.types import GatewaySnapshotResourceGap
+
+            event_bus = get_event_bus()
+            await event_bus.publish_async_nowait(
+                GatewaySnapshotResourceGap(
+                    all_models_count=all_models_count,
+                    resource_models_count=resource_models_count,
+                    gap_cause=gap_cause,
+                    sample_missing=sample_missing,
+                )
+            )
+        except Exception as exc:
+            logger.debug(f"Failed to emit resource gap event: {exc}")
 
     async def _handle_catalog_reload(self, event: Event) -> None:
         """
@@ -117,6 +150,12 @@ class InitDataCache:
         """
         if self._cached_data is None:
             logger.warning("INIT cache not initialized, using empty data")
+            await self._emit_resource_gap(
+                all_models_count=0,
+                resource_models_count=0,
+                gap_cause="init_cache_not_ready",
+                sample_missing=[],
+            )
             return self._get_fallback_data()
 
         # Merge cached static data with fresh runtime state

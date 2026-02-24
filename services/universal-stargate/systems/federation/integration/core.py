@@ -170,7 +170,7 @@ class FederationIntegration:
             )
 
             if gateway_manager is not None and can_federate:
-                self._edge_server = EdgeFederationServer(self._config, gateway_manager)
+                self._edge_server = EdgeFederationServer(self._config, gateway_manager, self._event_bus)
 
                 # Mount WebSocket endpoint for telemetry
                 app.include_router(create_edge_federation_router(self._edge_server))

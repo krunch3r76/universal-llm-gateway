@@ -264,7 +264,7 @@ function categorizeStep(stepId) {
   if (stepId.includes('answer') || stepId.includes('reseed')) return 'answer';
   if (stepId.includes('verify') || stepId.includes('tiebreaker')) return 'verify';
   if (stepId.includes('enrich')) return 'enrich';
-  if (stepId.includes('post_process')) return 'synthesize';
+  if (stepId.includes('synth') || stepId.includes('post_process')) return 'synthesize';
   if (stepId.includes('output_gate')) return 'gate';
   return 'other';
 }

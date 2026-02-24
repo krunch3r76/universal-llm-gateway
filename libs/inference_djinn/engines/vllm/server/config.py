@@ -86,7 +86,7 @@ class VLLMServerConfig:
     host: str = "127.0.0.1"
     port: int = 8000
     socket_path: str | None = None
-    api_server_count: int = 2
+    api_server_count: int = 1
 
     # Tool calling
     enable_auto_tool_choice: bool = True

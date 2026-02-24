@@ -9,6 +9,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
+from textual.timer import Timer
 from textual.widgets import Button, Footer, Header, Select, Static
 
 from ...controller.operation_log import tee_with_summary
@@ -26,6 +27,9 @@ class ServicesScreen(Screen):
     BINDINGS = [
         Binding("escape", "pop_screen", "Back", priority=True),
     ]
+
+    _poll_timer: Timer | None = None
+    _POLL_INTERVAL = 5.0
 
     def action_pop_screen(self) -> None:
         self.app.pop_screen()
@@ -79,6 +83,7 @@ class ServicesScreen(Screen):
             yield Static("  Gateway:  checking...", id="svc-gw")
             yield Static("  Stargate: checking...", id="svc-sg")
             yield Static("  RAG:      checking...", id="svc-rag")
+            yield Static("  Sidecar:  checking...", id="svc-sidecar")
 
         with Vertical(id="build-options"):
             yield Select(
@@ -100,6 +105,10 @@ class ServicesScreen(Screen):
             )
             yield Button("Start RAG", id="btn-start-rag", variant="success")
             yield Button("Stop RAG", id="btn-stop-rag", variant="error", disabled=True)
+            yield Button("Start Sidecar", id="btn-start-sidecar", variant="success")
+            yield Button(
+                "Stop Sidecar", id="btn-stop-sidecar", variant="error", disabled=True
+            )
             yield Button("Restart Local", id="btn-restart-local", variant="warning")
 
         yield LogStream(id="svc-log")
@@ -112,6 +121,16 @@ class ServicesScreen(Screen):
     def on_mount(self) -> None:
         self._refresh_status()
         self._update_build_flags()
+        self._poll_timer = self.set_interval(self._POLL_INTERVAL, self._refresh_status)
+
+    def on_screen_suspend(self) -> None:
+        if self._poll_timer is not None:
+            self._poll_timer.pause()
+
+    def on_screen_resume(self) -> None:
+        self._refresh_status()
+        if self._poll_timer is not None:
+            self._poll_timer.resume()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "build-scope":
@@ -151,6 +170,13 @@ class ServicesScreen(Screen):
                     self.run_worker(self._start_rag(), exclusive=True)
                 else:
                     self.run_worker(self._stop_rag(), exclusive=True)
+            case "btn-start-sidecar" | "btn-stop-sidecar":
+                self.query_one("#btn-start-sidecar", Button).disabled = True
+                self.query_one("#btn-stop-sidecar", Button).disabled = True
+                if event.button.id == "btn-start-sidecar":
+                    self.run_worker(self._start_sidecar(), exclusive=True)
+                else:
+                    self.run_worker(self._stop_sidecar(), exclusive=True)
             case "btn-restart-local":
                 self.run_worker(self._restart_local(), exclusive=True)
             case "btn-refresh":
@@ -163,6 +189,7 @@ class ServicesScreen(Screen):
         build = svc.check_image()
         services = svc.service_state.check_all()
         gw, sg, rag = services[0], services[1], services[2]
+        sidecar = svc.service_state.check_sidecar()
 
         config_text = f"  ({build.config.summary()})" if build.config.cpu else ""
         self.query_one("#img-detail", Static).update(
@@ -176,16 +203,22 @@ class ServicesScreen(Screen):
         self.query_one("#svc-rag", Static).update(
             f"  RAG:      {rag.status} {rag.detail}"
         )
+        self.query_one("#svc-sidecar", Static).update(
+            f"  Sidecar:  {sidecar.status} {sidecar.detail}"
+        )
 
         gw_exists = gw.status.value != "stopped"
         sg_up = sg.status.value == "running"
         rag_up = rag.status.value == "running"
+        sidecar_up = sidecar.status.value == "running"
         self.query_one("#btn-start-gw", Button).disabled = gw_exists
         self.query_one("#btn-stop-gw", Button).disabled = not gw_exists
         self.query_one("#btn-start-sg", Button).disabled = sg_up
         self.query_one("#btn-stop-sg", Button).disabled = not sg_up
         self.query_one("#btn-start-rag", Button).disabled = rag_up
         self.query_one("#btn-stop-rag", Button).disabled = not rag_up
+        self.query_one("#btn-start-sidecar", Button).disabled = sidecar_up
+        self.query_one("#btn-stop-sidecar", Button).disabled = not sidecar_up
 
     def _update_build_flags(self) -> None:
         scope_sel = self.query_one("#build-scope", Select)
@@ -261,11 +294,15 @@ class ServicesScreen(Screen):
         svc = self.app.service_controller  # type: ignore[attr-defined]
         result = await svc.start_stargate()
         self.query_one("#svc-log", LogStream).write_line(result)
+        sidecar_result = await svc.sidecar.start()
+        self.query_one("#svc-log", LogStream).write_line(sidecar_result)
         await asyncio.sleep(2)
         self._refresh_status()
 
     async def _stop_stargate(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
+        sidecar_result = await svc.sidecar.stop()
+        self.query_one("#svc-log", LogStream).write_line(sidecar_result)
         result = await svc.stop_stargate()
         self.query_one("#svc-log", LogStream).write_line(result)
         await asyncio.sleep(2)
@@ -283,4 +320,18 @@ class ServicesScreen(Screen):
         result = await svc.stop_rag()
         self.query_one("#svc-log", LogStream).write_line(result)
         await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _start_sidecar(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.sidecar.start()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(1)
+        self._refresh_status()
+
+    async def _stop_sidecar(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.sidecar.stop()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(1)
         self._refresh_status()

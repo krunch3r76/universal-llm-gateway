@@ -1,4 +1,6 @@
-"""Service controller - build, start, stop Gateway, Stargate, and RAG."""
+"""Service controller - build, start, stop Gateway, Stargate, RAG, and sidecar."""
+
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -19,6 +21,7 @@ from .service_config import (
     ensure_stargate_config,
     load_env_file,
 )
+from .sidecar_ctl import SidecarController
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,7 @@ class ServiceController:
         self._root = workspace_root
         self._build_state = BuildState()
         self._service_state = ServiceState(workspace_root)
+        self._sidecar = SidecarController(workspace_root)
         self._build_process: asyncio.subprocess.Process | None = None
 
     @property
@@ -315,6 +319,10 @@ class ServiceController:
                 "Run: ss -tlnp 'sport = :8100'"
             )
         return await self._kill_and_wait(listener, None, service_name="RAG")
+
+    @property
+    def sidecar(self) -> SidecarController:
+        return self._sidecar
 
     async def stop_stargate(self) -> str:
         """Stop Stargate regardless of whether the PID file is current.

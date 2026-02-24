@@ -3,6 +3,7 @@
 import json
 import logging
 import sys
+import time
 import urllib.request
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
@@ -73,7 +74,7 @@ class Diagnostic:
 
 def _node_icon(status: str) -> str:
     match status:
-        case "running":
+        case "running" | "connected":
             return "●"
         case "unreachable":
             return "◌"
@@ -203,6 +204,54 @@ def _hostname_from_url(url: str) -> str:
         return "unknown"
 
 
+_EVENTS_FILE = Path("/tmp/stargate-events/current.jsonl")
+# A relay broadcasting telemetry within this window is considered connected.
+_TELEMETRY_RECENCY_S = 30.0
+
+
+def probe_connected_relays(events_file: Path = _EVENTS_FILE) -> set[str]:
+    """Return remote_ids that sent federation.telemetry.received recently.
+
+    Scans the tail of the master's events file for recent telemetry signals.
+    A relay present here is live even when it has zero models loaded — the
+    model-source probe alone cannot distinguish "connected, no models" from
+    "unreachable".
+    """
+    if not events_file.exists():
+        return set()
+    connected: set[str] = set()
+    cutoff = time.time() - _TELEMETRY_RECENCY_S
+    try:
+        # Read from near the end; telemetry arrives every ~5 s so 4 KB is ample.
+        with events_file.open("rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - 4096))
+            tail = fh.read().decode(errors="replace")
+        for line in tail.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("signal") != "federation.telemetry.received":
+                continue
+            ts_str: str = event.get("timestamp", "")
+            try:
+                ts = datetime.fromisoformat(ts_str).timestamp()
+            except (ValueError, TypeError):
+                continue
+            if ts >= cutoff:
+                remote_id = event.get("payload", {}).get("remote_id", "")
+                if remote_id:
+                    connected.add(remote_id)
+    except OSError as e:
+        logger.warning("Could not read events file %s: %s", events_file, e)
+    return connected
+
+
 def probe_federation_sources(master_port: int) -> dict[str, int]:
     """Query local master for federated model sources.
 
@@ -238,6 +287,7 @@ def _build_remotes(
     remote_cfgs: list[dict[str, object]] = fed.get("remotes") or []  # type: ignore[assignment]
 
     sources = probe_federation_sources(master_port) if master_running else {}
+    connected_relays = probe_connected_relays() if master_running else set()
 
     remotes: list[RemoteInfo] = []
     for rc in remote_cfgs:
@@ -247,7 +297,7 @@ def _build_remotes(
         node_env_path = _NODES_DIR / f"{hostname}.env"
 
         model_count = sources.get(sid)
-        if model_count is not None:
+        if model_count is not None or sid in connected_relays:
             status = "running"
         elif not master_running:
             status = "configured"

@@ -18,28 +18,43 @@ def discover_handler_packages(root_dir: Path) -> list[Path]:
     - If root_dir is a file: use parent directory as search root
     - rglob for handlers directories under search root
     - Check parent of search root for shared handlers (enables variant → shared discovery)
+    - Check grandparent for sibling-domain handlers (finds generic handlers in other
+      domains, e.g. pipelines/tools/handlers/ when validating pipelines/rag/project_journal_v2/)
 
-    Loading order: shared handlers first (enables variant override).
+    Loading order: sibling-domain (generic) first, then shared, then variant.
 
     Example for {domain}/{variant}/pipeline.yaml:
     - search_root = {domain}/{variant}/
     - rglob finds {domain}/{variant}/handlers/
     - parent check finds {domain}/handlers/ (shared)
+    - grandparent scan finds {search_path_root}/*/handlers/ (generic handlers in
+      sibling domains, e.g. tools/handlers/ with register_generic_handler_class)
     """
     handler_dirs = []
 
     # Determine search root (parent directory if given a file)
     search_root = root_dir if root_dir.is_dir() else root_dir.parent
 
-    # Direct discovery under search_root
-    for handlers_dir in search_root.rglob("handlers"):
-        if not handlers_dir.is_dir():
-            continue
-        init_file = handlers_dir / "__init__.py"
-        if init_file.exists():
-            handler_dirs.append(handlers_dir)
+    # Check for sibling-domain handlers at grandparent level.
+    # For pipelines/rag/project_journal_v2/ → grandparent = pipelines/
+    # Scans pipelines/*/handlers/ to discover generic handlers (e.g. tools/handlers/).
+    grandparent = search_root.parent.parent
+    if grandparent.is_dir():
+        for sibling_domain in sorted(grandparent.iterdir()):
+            if not sibling_domain.is_dir() or sibling_domain.name.startswith("."):
+                continue
+            # Skip the domain we're already scanning (handled below via rglob)
+            if sibling_domain == search_root.parent:
+                continue
+            sibling_handlers = sibling_domain / "handlers"
+            if (
+                sibling_handlers.is_dir()
+                and (sibling_handlers / "__init__.py").exists()
+                and sibling_handlers not in handler_dirs
+            ):
+                handler_dirs.append(sibling_handlers)
 
-    # Check for shared handlers in parent domain directory
+    # Check for shared handlers in parent domain directory.
     # Variant structure: {domain}/{variant}/ needs {domain}/handlers/
     parent_handlers = search_root.parent / "handlers"
     if (
@@ -47,7 +62,15 @@ def discover_handler_packages(root_dir: Path) -> list[Path]:
         and (parent_handlers / "__init__.py").exists()
         and parent_handlers not in handler_dirs
     ):
-        handler_dirs.insert(0, parent_handlers)  # Shared first, then variant
+        handler_dirs.append(parent_handlers)  # Shared before variant
+
+    # Direct discovery under search_root
+    for handlers_dir in sorted(search_root.rglob("handlers")):
+        if not handlers_dir.is_dir():
+            continue
+        init_file = handlers_dir / "__init__.py"
+        if init_file.exists() and handlers_dir not in handler_dirs:
+            handler_dirs.append(handlers_dir)
 
     return handler_dirs
 
@@ -88,22 +111,29 @@ def validate_handler_package(handler_dir: Path) -> tuple[bool, list[str], set[st
         )
         return (False, errors, set())
 
-    # Extract registered step types from register_handlers() body
-    # Look for calls like: router.register_domain_handler_class("domain", "step_type", Class)
+    # Extract registered step types from register_handlers() body.
+    # Handles two registration forms:
+    #   router.register_domain_handler_class("domain", "step_type", Class)  → arg index 1
+    #   router.register_generic_handler_class("step_type", Class)           → arg index 0
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "register_handlers":
             for stmt in ast.walk(node):
                 if isinstance(stmt, ast.Call):
                     func = stmt.func
-                    # Check for router.register_domain_handler_class(...)
+                    if not isinstance(func, ast.Attribute):
+                        continue
                     if (
-                        isinstance(func, ast.Attribute)
-                        and func.attr == "register_domain_handler_class"
+                        func.attr == "register_domain_handler_class"
                         and len(stmt.args) >= 2
                     ):
-                        # Second argument is step_type
                         if isinstance(stmt.args[1], ast.Constant):
                             step_types.add(stmt.args[1].value)
+                    elif (
+                        func.attr == "register_generic_handler_class"
+                        and len(stmt.args) >= 1
+                    ):
+                        if isinstance(stmt.args[0], ast.Constant):
+                            step_types.add(stmt.args[0].value)
 
     return (True, errors, step_types)
 

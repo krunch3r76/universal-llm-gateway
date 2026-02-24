@@ -1,0 +1,6 @@
+FROM python:3.12-alpine
+RUN apk add --no-cache git curl jq openssh-client && \
+    adduser -D -u 1000 appuser
+USER appuser
+WORKDIR /workspace
+CMD ["sleep", "infinity"]

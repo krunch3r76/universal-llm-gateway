@@ -15,12 +15,10 @@ steps:
     top_k: 5
     recency_weight: 0.0
     distance_threshold: 1.0
-    depends_on: []
 
   - name: complete
     type: generate
     model_ref: qwen3_32b
-    prompt_ref: rag.v1.answer_with_context
-    depends_on: [search]
+    prompt_ref: rag.project_journal_v1.answer_with_context
     handler_inputs:
       rag_context: "search.raw"

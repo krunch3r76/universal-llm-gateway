@@ -450,6 +450,41 @@ Payload: {
 }
 """
 
+ROUTING_RESOURCE_DATA_MISSING = "routing.resource.data.missing"
+"""
+Model is in gateway catalog (available_models) but missing from model_details.
+
+Emitted when routing fails with missing_gateway_resource_data constraint.
+Distinguishes startup resource-gap from genuine MODEL_NOT_FOUND.
+
+Diagnostic query:
+    jq 'select(.signal == "routing.resource.data.missing")'
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_ids": list[str]  # gateways that have model in catalog but no resource data
+}
+"""
+
+FEDERATION_SNAPSHOT_SENT = "federation.snapshot.sent"
+"""
+Edge Stargate sent GATEWAY_SNAPSHOT to Master.
+
+Payload documents all_models vs available_models gap — the difference
+between what /v1/models shows and what Master can actually route.
+
+Diagnostic query:
+    jq 'select(.signal == "federation.snapshot.sent" and .payload.gap_count > 0)'
+
+Payload: {
+    "gateway_id": str,
+    "all_models_count": int,     # from ws_client.get_models()
+    "available_models_count": int, # models WITH resource data (routable)
+    "gap_count": int,            # all_models_count - available_models_count
+}
+"""
+
 REQUEST_REMOVED = "request.removed"
 """
 Request removed from queue (e.g., client disconnect)
@@ -1530,6 +1565,76 @@ def RequestCapacityTimeout(
     return Event(
         signal=REQUEST_CAPACITY_TIMEOUT,
         payload=payload,
+    )
+
+
+@event_factory
+def RoutingResourceDataMissing(
+    request_id: str,
+    model_id: str,
+    gateway_ids: list[str],
+) -> Event:
+    """
+    Create ROUTING_RESOURCE_DATA_MISSING event.
+
+    Emitted when model is in gateway available_models (catalog) but
+    absent from model_details (no resource data). This causes T0_INFEASIBLE
+    via missing_gateway_resource_data constraint — routing fails despite
+    model appearing in /v1/models.
+
+    Distinguishes startup resource gap from genuine MODEL_NOT_FOUND.
+
+    Args:
+        request_id: Request that failed routing
+        model_id: Model that has catalog entry but no resource data
+        gateway_ids: Gateways that have model in catalog but no resource data
+
+    Returns:
+        Event with RoutingResourceDataMissing signal
+    """
+    return Event(
+        signal=ROUTING_RESOURCE_DATA_MISSING,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_ids": gateway_ids,
+        },
+    )
+
+
+@event_factory
+def FederationSnapshotSent(
+    gateway_id: str,
+    all_models_count: int,
+    available_models_count: int,
+) -> Event:
+    """
+    Create FEDERATION_SNAPSHOT_SENT event.
+
+    Emitted by Edge Stargate when it broadcasts GATEWAY_SNAPSHOT to Master.
+    Documents the gap between all models (visible in /v1/models) and
+    routable models (those with resource data in model_details).
+
+    A non-zero gap_count means some models will route as MODEL_NOT_FOUND
+    despite appearing in /v1/models — see gateway.snapshot.resource.gap
+    in the Edge Gateway events for root cause.
+
+    Args:
+        gateway_id: Gateway identifier
+        all_models_count: Total models from ws_client.get_models()
+        available_models_count: Models with resource data (routable by Master)
+
+    Returns:
+        Event with FederationSnapshotSent signal
+    """
+    return Event(
+        signal=FEDERATION_SNAPSHOT_SENT,
+        payload={
+            "gateway_id": gateway_id,
+            "all_models_count": all_models_count,
+            "available_models_count": available_models_count,
+            "gap_count": all_models_count - available_models_count,
+        },
     )
 
 

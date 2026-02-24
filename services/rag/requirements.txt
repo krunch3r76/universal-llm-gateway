@@ -1,3 +1,5 @@
 chromadb
 pypdf
+pyyaml
+watchfiles
 # fastapi, uvicorn, httpx already in ~/.venvs/universal

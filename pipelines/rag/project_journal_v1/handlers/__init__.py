@@ -15,5 +15,5 @@ if TYPE_CHECKING:
 
 
 def register_handlers(router: DomainRouter) -> None:
-    """Register all rag/v1 handlers."""
+    """Register all rag/project_journal_v1 handlers."""
     router.register_domain_handler_class("rag", "rag_search_v1", RagSearchHandler)

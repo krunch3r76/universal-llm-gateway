@@ -236,7 +236,7 @@ def _categorize_step(step_id: str) -> str:
         return "verify"
     if "enrich" in step_id:
         return "enrich"
-    if "post_process" in step_id:
+    if "synth" in step_id or "post_process" in step_id:
         return "synthesize"
     if "output_gate" in step_id:
         return "gate"
