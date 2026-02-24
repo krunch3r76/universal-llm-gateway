@@ -11,6 +11,7 @@ The new dataclass events power the JSONL-based pipeline viewer.
 Checkpoint events remain unchanged (not migrated).
 """
 
+from .assess_loop import AssessLoopCompleted, AssessLoopIterationCompleted, AssessLoopStarted
 from .base import PipelineEvent
 from .checkpoint import CheckpointFailed, CheckpointLoaded, CheckpointSaved
 from .inference import ModelInvocation
@@ -50,6 +51,10 @@ __all__ = [
     # Base
     "PipelineEvent",
     "EventRecorder",
+    # Assess loop
+    "AssessLoopStarted",
+    "AssessLoopIterationCompleted",
+    "AssessLoopCompleted",
     # Lifecycle (new dataclass events for JSONL recorder)
     "PipelineStarted",
     "PipelineCompleted",

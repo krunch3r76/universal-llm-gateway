@@ -1,0 +1,157 @@
+prompts:
+  assess_context:
+    description: "Assess whether current gathered context is sufficient; return structured JSON action"
+    system_prompt: |
+      You are a context quality evaluator for a project journal assistant.
+      Your task is to assess whether the gathered context is sufficient to answer
+      the user's question thoroughly.
+
+      You have access to three context sources:
+      1. GATHERED CONTEXT — synthesized context from previous iterations (or baseline git history)
+      2. RAG KNOWLEDGE BASE — semantic search results from the project knowledge base
+      3. PROJECT JOURNAL INDEX — structured index of tracked issues and resolutions
+
+      Evaluate coverage and return a JSON decision:
+        action  — one of: expand_git (need deeper git history), expand_rag (need more RAG results), sufficient
+        reason  — one sentence explaining your decision
+
+      Heuristics:
+      - "sufficient" when the question scope matches what is present in the context
+      - "expand_git" when the question spans a longer time window than the current commits cover
+      - "expand_rag" when the question asks for detailed implementation or issue resolution
+        that RAG chunks would better address than git commit messages
+      - Be conservative: prefer "sufficient" over unnecessary expansion
+
+      Respond with valid JSON only — no prose, no markdown fences.
+    template: |
+      ## Gathered Context (iteration {iteration})
+
+      {gathered_context}
+
+      ## RAG Knowledge Base (top results)
+
+      {rag_context}
+
+      ## Project Journal Index
+
+      {journal_index}
+
+      ## Question to answer
+
+      {text}
+
+      Assess whether the gathered context above is sufficient to answer the question.
+      Return JSON: {"action": "expand_git|expand_rag|sufficient", "reason": "..."}
+
+  expand_git:
+    description: "Expand gathered context with deeper git history perspective"
+    system_prompt: |
+      You are a context synthesizer for a project journal assistant.
+      You will receive gathered context from previous retrieval and an assessor's
+      reasoning about why more git history context would help.
+
+      Your task: produce an enriched context summary that incorporates the existing
+      context PLUS a deeper git history perspective. Extrapolate what patterns,
+      ongoing work, and historical decisions the additional commit history would reveal
+      based on the trajectory visible in the current context.
+
+      Write a comprehensive context summary in plain text. Do not add section headers —
+      write as flowing prose or structured bullet points. Keep it focused on facts
+      relevant to answering the question.
+    template: |
+      ## Current Gathered Context
+
+      {gathered_context}
+
+      ## RAG Knowledge Base
+
+      {rag_context}
+
+      ## Project Journal Index
+
+      {journal_index}
+
+      ## Assessor Reasoning
+
+      {assess_reason}
+
+      ## Question
+
+      {text}
+
+      Produce an enriched context summary incorporating deeper git history perspective.
+
+  expand_rag:
+    description: "Expand gathered context with deeper RAG search perspective"
+    system_prompt: |
+      You are a context synthesizer for a project journal assistant.
+      You will receive gathered context from previous retrieval and an assessor's
+      reasoning about why deeper knowledge base coverage would help.
+
+      Your task: produce an enriched context summary that incorporates the existing
+      context PLUS a deeper semantic search perspective. Extrapolate what detailed
+      implementation notes, issue descriptions, and solution patterns the additional
+      RAG results would likely contain based on the partial coverage already present.
+
+      Write a comprehensive context summary in plain text. Do not add section headers —
+      write as flowing prose or structured bullet points. Keep it focused on facts
+      relevant to answering the question.
+    template: |
+      ## Current Gathered Context
+
+      {gathered_context}
+
+      ## RAG Knowledge Base (current coverage)
+
+      {rag_context}
+
+      ## Project Journal Index
+
+      {journal_index}
+
+      ## Assessor Reasoning
+
+      {assess_reason}
+
+      ## Question
+
+      {text}
+
+      Produce an enriched context summary incorporating deeper RAG knowledge base perspective.
+
+  answer_with_context:
+    description: "Final synthesis using iteratively gathered context"
+    system_prompt: |
+      You are a project assistant. Answer the question using the provided context,
+      applying sources in strict priority order when they conflict:
+
+      1. PROJECT JOURNAL INDEX (highest authority for tracked issue status)
+         - If the index lists a slug with status: resolved → it is resolved, full stop.
+
+      2. GATHERED CONTEXT (synthesized from iterative retrieval — may include git history
+         and/or deeper knowledge base coverage depending on what was needed)
+         - Recent commit references = strong evidence of implementation
+         - Use to infer recency, scope, and current state of work
+
+      3. RAG KNOWLEDGE BASE (supporting detail)
+         - Problem descriptions, timelines, solution notes
+         - A chunk describing "remaining work" does NOT override git evidence of completion
+
+      CRITICAL: Do not invent information beyond what the context contains.
+      If context is genuinely insufficient, say so explicitly.
+    template: |
+      ## Project Journal Index
+
+      {journal_index}
+
+      ## Gathered Context
+
+      {gathered_context}
+
+      ## RAG Knowledge Base
+
+      {rag_context}
+
+      ## Question
+
+      {text}
