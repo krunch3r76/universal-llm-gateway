@@ -92,7 +92,7 @@ steps:
     exclude_self: true
     prompt_ref_verify: consensus.v6.1.verify_specific
     prompt_ref_verify_batch: consensus.v6.1.verify_batch_specific
-    timeout_seconds: 360
+    timeout_seconds: 570
 
   # Apply voting policy, resolve compound parents, merge authority verdicts → verified_facts / rejected_claims.
   - name: filter_threshold

@@ -11,6 +11,7 @@ from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope, get_http_status, is_retryable
 
 from src.scheduling.events import (
+    RequestCapacityTimeout,
     RequestCompleted,
     RequestFailed,
     RequestProcessing,
@@ -142,11 +143,15 @@ def _retry_timeout_exception(
         "elapsed_s": round(elapsed, 2),
     }
     if is_capacity:
+        message = (
+            f"No capacity for model {model_id} after {retry_count} retries "
+            f"over {round(elapsed, 1)}s (budget {effective_timeout}s)"
+        )
         return HTTPException(
             status_code=get_http_status(ErrorCode.CAPACITY_TIMEOUT),
             detail=error_envelope(
                 code=ErrorCode.CAPACITY_TIMEOUT,
-                message=f"Capacity timeout for model {model_id}",
+                message=message,
                 source="master",
                 retryable=False,
                 data=data,
@@ -373,6 +378,20 @@ async def process_chat_completion(
                 elapsed = time.monotonic() - retry_started
                 remaining = effective_timeout - elapsed
                 if remaining <= 0:
+                    if is_capacity and proxy.event_bus:
+                        try:
+                            await proxy.event_bus.publish_async_nowait(
+                                RequestCapacityTimeout(
+                                    request_id=context.request_id,
+                                    model_id=model_id,
+                                    timeout_seconds=effective_timeout,
+                                    retry_count=retry_count,
+                                    elapsed_s=round(elapsed, 2),
+                                    pipeline_step_id=context.pipeline_step_id,
+                                )
+                            )
+                        except Exception:
+                            pass
                     raise _retry_timeout_exception(
                         is_capacity=is_capacity,
                         model_id=model_id,

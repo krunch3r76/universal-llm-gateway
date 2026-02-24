@@ -436,6 +436,20 @@ Payload: {
 }
 """
 
+REQUEST_CAPACITY_TIMEOUT = "request.capacity.timeout"
+"""
+Capacity timeout — all retries exhausted waiting for model capacity.
+Emitted before request.failed for immediate filtering.
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "timeout_seconds": float,
+    "retry_count": int,
+    "elapsed_s": float,
+    "pipeline_step_id": Optional[str]
+}
+"""
+
 REQUEST_REMOVED = "request.removed"
 """
 Request removed from queue (e.g., client disconnect)
@@ -1474,6 +1488,48 @@ def RequestTimeout(
             "model_id": model_id,
             "timeout_seconds": timeout_seconds,
         },
+    )
+
+
+@event_factory
+def RequestCapacityTimeout(
+    request_id: str,
+    model_id: str,
+    timeout_seconds: float,
+    retry_count: int,
+    elapsed_s: float,
+    pipeline_step_id: str | None = None,
+) -> Event:
+    """
+    Create REQUEST_CAPACITY_TIMEOUT event.
+
+    Emitted when all capacity retries are exhausted for a model.
+    Distinct from request.failed — enables direct jq filtering:
+        jq 'select(.signal == "request.capacity.timeout")'
+
+    Args:
+        request_id: Proxy request ID
+        model_id: Model that had no capacity
+        timeout_seconds: Total retry budget (seconds)
+        retry_count: Number of retries attempted
+        elapsed_s: Actual wall time spent retrying
+        pipeline_step_id: Pipeline step (if request originated from pipeline)
+
+    Returns:
+        Event with RequestCapacityTimeout signal
+    """
+    payload: dict[str, object] = {
+        "request_id": request_id,
+        "model_id": model_id,
+        "timeout_seconds": timeout_seconds,
+        "retry_count": retry_count,
+        "elapsed_s": elapsed_s,
+    }
+    if pipeline_step_id:
+        payload["pipeline_step_id"] = pipeline_step_id
+    return Event(
+        signal=REQUEST_CAPACITY_TIMEOUT,
+        payload=payload,
     )
 
 

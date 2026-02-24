@@ -145,7 +145,7 @@ steps:
       question: analyze_question.json.cleaned_question
       question_type: analyze_question.json.question_type
       originator: optionsNs.originator_link0
-    timeout_seconds: 600
+    timeout_seconds: 900
 
   # Decompose, classify, and cross-verify gemma_2_9b's answer → verified_facts + authority_verdicts.
   - name: verify_link1
@@ -156,7 +156,7 @@ steps:
       question: analyze_question.json.cleaned_question
       question_type: analyze_question.json.question_type
       originator: optionsNs.originator_link1
-    timeout_seconds: 600
+    timeout_seconds: 900
 
   # Decompose, classify, and cross-verify llama_3_1_8b's answer → verified_facts + authority_verdicts.
   - name: verify_link2
@@ -167,7 +167,7 @@ steps:
       question: analyze_question.json.cleaned_question
       question_type: analyze_question.json.question_type
       originator: optionsNs.originator_link2
-    timeout_seconds: 600
+    timeout_seconds: 900
 
   # Synergize: merge 3 verified fact sets + optional embedding dedup.
   #

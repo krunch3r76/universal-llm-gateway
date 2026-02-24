@@ -6,7 +6,7 @@ Error codes are stable identifiers for programmatic handling.
 Categories:
 - Capacity: retryable=True, status=503
 - Connectivity: retryable=True, status=503
-- Timeout: retryable=True, status=504
+- Timeout: retryable=True, status=504 (CAPACITY_TIMEOUT: 503)
 - Client: retryable=False, status=4xx
 - Internal: retryable=False, status=5xx
 """
@@ -60,7 +60,7 @@ ERROR_METADATA: dict[ErrorCode, tuple[bool, int]] = {
     ErrorCode.RESOURCE_UNAVAILABLE: (True, 503),
     ErrorCode.GATEWAY_DISCONNECTED: (True, 503),
     ErrorCode.EDGE_UNREACHABLE: (True, 503),
-    ErrorCode.CAPACITY_TIMEOUT: (True, 504),
+    ErrorCode.CAPACITY_TIMEOUT: (True, 503),
     ErrorCode.INFERENCE_TIMEOUT: (True, 504),
     ErrorCode.LOAD_TIMEOUT: (True, 504),
     ErrorCode.REQUEST_TIMEOUT: (True, 504),
