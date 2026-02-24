@@ -9,6 +9,7 @@ import os
 from collections.abc import AsyncGenerator
 from typing import Any, override
 
+from universal_event_bus import Event, event_factory
 from universal_logging import get_logger
 
 from inference_djinn.engines.base import BaseEngine
@@ -19,6 +20,25 @@ from .config import VLLMServerConfig, detect_tool_call_parser
 from .manager import ServerStatus, VLLMServerManager
 
 logger = get_logger(__name__)
+
+
+@event_factory
+def vllm_server_crash_detected(
+    model_id: str,
+    error_message: str,
+    socket_path: str | None,
+    process_pid: int | None,
+) -> Event:
+    """Create worker crash event for vLLM server-managed models."""
+    return Event(
+        signal="worker.crash.detected",
+        payload={
+            "model_id": model_id,
+            "error_message": error_message,
+            "socket_path": socket_path,
+            "process_pid": process_pid,
+        },
+    )
 
 
 class VLLMServerEngine(BaseEngine):
@@ -33,6 +53,7 @@ class VLLMServerEngine(BaseEngine):
         self,
         model_path: str,
         *,
+        api_server_count: int = 2,
         socket_dir: str = "/tmp/vllm-server",
         use_unix_socket: bool = True,
         host: str = "127.0.0.1",
@@ -97,6 +118,7 @@ class VLLMServerEngine(BaseEngine):
             host=host,
             port=port,
             socket_path=socket_path,
+            api_server_count=api_server_count,
             enable_auto_tool_choice=resolved_auto_tool_choice,
             tool_call_parser=parser,
             max_model_len=max_model_len,
@@ -117,7 +139,32 @@ class VLLMServerEngine(BaseEngine):
         """Start vllm serve and wait for health."""
         logger.info("🚀 [VLLMServerEngine] Loading engine...")
         self._crashed = False
-        self.server_manager = VLLMServerManager(self.config)
+
+        async def _handle_server_crashed() -> None:
+            self._crashed = True
+            self.loaded = False
+            logger.error("🚨 [VLLMServerEngine] vLLM server crashed, emitting event")
+            if self._event_bus:
+                event = vllm_server_crash_detected(
+                    model_id=self.config.model_path,
+                    error_message="vLLM server process crashed or froze",
+                    socket_path=self.config.socket_path,
+                    process_pid=self.server_manager.process.pid
+                    if self.server_manager and self.server_manager.process
+                    else None,
+                )
+                await self._event_bus.publish_async_nowait(event)
+
+        async def _handle_server_recovered() -> None:
+            self._crashed = False
+            self.loaded = True
+            logger.info("✅ [VLLMServerEngine] vLLM server recovered")
+
+        self.server_manager = VLLMServerManager(
+            self.config,
+            on_server_crashed=_handle_server_crashed,
+            on_server_recovered=_handle_server_recovered,
+        )
         try:
             await self.server_manager.start(startup_timeout=self.startup_timeout)
             self.client = OpenAIServerClient(
@@ -288,5 +335,8 @@ class VLLMServerEngine(BaseEngine):
         if self._crashed:
             return False
         if not self.server_manager:
+            return False
+        if self.server_manager.status == ServerStatus.STOPPED:
+            self._crashed = True
             return False
         return self.server_manager.status == ServerStatus.RUNNING

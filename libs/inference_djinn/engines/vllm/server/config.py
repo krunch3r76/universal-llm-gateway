@@ -86,6 +86,7 @@ class VLLMServerConfig:
     host: str = "127.0.0.1"
     port: int = 8000
     socket_path: str | None = None
+    api_server_count: int = 2
 
     # Tool calling
     enable_auto_tool_choice: bool = True
@@ -123,6 +124,8 @@ class VLLMServerConfig:
             )
         if not self.socket_path and self.port <= 0:
             raise ValueError("When using TCP, port must be positive")
+        if self.api_server_count <= 0:
+            raise ValueError("api_server_count must be positive")
         if (
             self.tool_call_parser is not None
             and self.tool_call_parser not in _VALID_PARSERS
@@ -197,6 +200,8 @@ class VLLMServerConfig:
 
         if self.tensor_parallel_size != 1:
             args.extend(["--tensor-parallel-size", str(self.tensor_parallel_size)])
+        if self.api_server_count > 1:
+            args.extend(["--api-server-count", str(self.api_server_count)])
 
         if self.disable_log_requests:
             args.append("--disable-log-requests")

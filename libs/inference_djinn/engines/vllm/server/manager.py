@@ -10,11 +10,13 @@ import shutil
 import signal
 import subprocess
 import time
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 import httpx
+from process_ipc.utils import setup_parent_death_signal
 from universal_logging import get_logger
 
 from .config import VLLMServerConfig
@@ -63,8 +65,17 @@ class VLLMServerManager:
     - Graceful shutdown
     """
 
-    def __init__(self, config: VLLMServerConfig) -> None:
+    def __init__(
+        self,
+        config: VLLMServerConfig,
+        *,
+        on_server_crashed: Callable[[], Awaitable[None]] | None = None,
+        on_server_recovered: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self.config = config
+        self._on_server_crashed = on_server_crashed
+        self._on_server_recovered = on_server_recovered
+        self._startup_timeout = 600.0
         self.process: subprocess.Popen | None = None
         self.status = ServerStatus.STOPPED
         self._health_task: asyncio.Task | None = None
@@ -114,6 +125,7 @@ class VLLMServerManager:
 
         logger.info("🚀 [vllm-server] Starting server...")
         self.config.validate()
+        self._startup_timeout = startup_timeout
 
         cmd = self._build_cmd()
         logger.info(f"🚀 [vllm-server] Command: {' '.join(cmd)}")
@@ -140,6 +152,7 @@ class VLLMServerManager:
                 text=True,
                 env=env,
                 start_new_session=True,
+                preexec_fn=setup_parent_death_signal,
             )
             logger.info(f"🚀 [vllm-server] Process started (PID: {self.process.pid})")
         except Exception as e:
@@ -230,10 +243,10 @@ class VLLMServerManager:
         #   hung (frozen event loop), killed, and status set to STOPPED so the
         #   engine lifecycle can restart it.
         """
-        # 30 × 10s = 300s before treating an unresponsive-but-alive process as hung.
-        # Covers worst-case legitimate inference latency (large context, slow decode)
-        # while still recovering from a frozen asyncio event loop.
-        hung_threshold = 30
+        # 6 × 10s = 60s before treating an unresponsive-but-alive process as hung.
+        # 60s aligns with VLLM_ENGINE_ITERATION_TIMEOUT_S default and with
+        # VLLM_SLEEP_WHEN_IDLE=0 there is no idle->active wake-up delay.
+        hung_threshold = 6
         consecutive_unreachable = 0
 
         logger.info("🔍 [vllm-server] Starting health monitoring")
@@ -262,8 +275,22 @@ class VLLMServerManager:
                             consecutive_unreachable * 10,
                         )
                         self._kill_process_group()
-                        self.status = ServerStatus.STOPPED
-                        break
+                        self.process = None
+                        if self._on_server_crashed:
+                            await self._on_server_crashed()
+                        try:
+                            await self._restart_server()
+                            if self._on_server_recovered:
+                                await self._on_server_recovered()
+                            consecutive_unreachable = 0
+                            continue
+                        except Exception as restart_error:
+                            logger.error(
+                                "❌ [vllm-server] Auto-restart failed: %s",
+                                restart_error,
+                            )
+                            self.status = ServerStatus.STOPPED
+                            break
                     logger.debug(
                         "🔍 [vllm-server] /health unreachable (process alive, "
                         "may be sleeping; %d/%d): %s",
@@ -277,10 +304,52 @@ class VLLMServerManager:
                     self.process.communicate(timeout=1.0)
                 except subprocess.TimeoutExpired:
                     pass
-                self.status = ServerStatus.STOPPED
-                break
+                self._kill_process_group()
+                self.process = None
+                if self._on_server_crashed:
+                    await self._on_server_crashed()
+                try:
+                    await self._restart_server()
+                    if self._on_server_recovered:
+                        await self._on_server_recovered()
+                    consecutive_unreachable = 0
+                    continue
+                except Exception as restart_error:
+                    logger.error(
+                        "❌ [vllm-server] Auto-restart failed: %s",
+                        restart_error,
+                    )
+                    self.status = ServerStatus.STOPPED
+                    break
             await asyncio.sleep(10.0)
         logger.info("🔍 [vllm-server] Health monitoring stopped")
+
+    async def _restart_server(self) -> None:
+        """Respawn vLLM server process after crash.
+
+        Raises:
+            RuntimeError: If respawn fails
+            TimeoutError: If server doesn't become healthy
+        """
+        self.process = None
+        self.status = ServerStatus.STARTING
+        cmd = self._build_cmd()
+        env = self.config.to_subprocess_env()
+        self.process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            start_new_session=True,
+            preexec_fn=setup_parent_death_signal,
+        )
+        logger.info(
+            "🔄 [vllm-server] Respawned process (PID: %d), waiting for health...",
+            self.process.pid,
+        )
+        await self._wait_for_health(self._startup_timeout)
+        self.status = ServerStatus.RUNNING
 
     async def stop(self, timeout: float = 30.0) -> None:
         """Stop vllm serve process and clean up UDS if used."""
