@@ -35,7 +35,7 @@ from .helpers import (
     check_measurement_resources,
     update_catalog_with_results,
 )
-from .vllm import find_min_gpu_utilization, measure_vllm_contexts
+from .vllm import compute_chat_gpu_utilization, find_min_gpu_utilization, measure_vllm_contexts
 
 if TYPE_CHECKING:
     from ...core.gateway_config import GatewayConfig
@@ -313,10 +313,29 @@ class MeasurementJob(Job):
         loader_config = (entry or {}).get("loader", {})
 
         quantization = model_format if model_format in ("awq", "gptq") else None
-        gpu_mem_util = loader_config.get("gpu_memory_utilization", 0.9)
 
         self.emit_log(f"  Quantization: {quantization or 'none'}")
-        self.emit_log(f"  GPU memory utilization: {gpu_mem_util}")
+
+        if "gpu_memory_utilization" in loader_config:
+            gpu_mem_util = loader_config["gpu_memory_utilization"]
+            self.emit_log(f"  GPU memory utilization: {gpu_mem_util} (catalog)")
+        else:
+            try:
+                gpu_mem_util = compute_chat_gpu_utilization(
+                    model_path, device_index=self.request.gpu_index
+                )
+                self.emit_log(
+                    f"  GPU memory utilization: {gpu_mem_util} (model weights + 4 GB KV headroom + 1 GB overhead)"
+                )
+            except RuntimeError:
+                logger.error(
+                    "Cannot query VRAM for '%s'; falling back to gpu_memory_utilization=0.9",
+                    self.request.model_id,
+                )
+                gpu_mem_util = 0.9
+                self.emit_log(
+                    "  GPU memory utilization: 0.9 (fallback — pynvml unavailable)"
+                )
 
         is_embedding = (entry or {}).get("loader", {}).get("embedding") is True
         if is_embedding:

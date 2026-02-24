@@ -2,6 +2,7 @@
 let currentExecution = null;
 let selectedStepIdx = null;
 let pollTimer = null;
+let pinnedExecId = null;  // set on first manual selection; blocks auto-select
 
 // -- API ------------------------------------------------------------------
 async function fetchJSON(url) {
@@ -52,6 +53,10 @@ function renderExecList(executions) {
       </div>
     `;
   }).join('');
+
+  if (pinnedExecId) {
+    document.querySelector(`.exec-card[data-exec="${pinnedExecId}"]`)?.classList.add('active');
+  }
 }
 
 async function loadExecution(el) {
@@ -62,6 +67,7 @@ async function loadExecution(el) {
   const pid = el.dataset.pipeline;
   const eid = el.dataset.exec;
   const isLive = el.dataset.live === 'true';
+  pinnedExecId = eid;
 
   if (isLive) {
     connectStream(pid, eid);
@@ -93,8 +99,21 @@ function setLiveIndicator(active) {
 // -- Summary Banner -------------------------------------------------------
 function renderSummaryBanner(summary) {
   const el = document.getElementById('summary-banner');
-  const dur = (summary.total_latency_ms / 1000).toFixed(1);
+  const wallDur = summary.wall_clock_ms != null ? (summary.wall_clock_ms / 1000).toFixed(1) : null;
+  const sumDur = summary.summed_latency_ms > 0 ? (summary.summed_latency_ms / 1000).toFixed(1) : null;
   const tokK = (summary.total_tokens / 1000).toFixed(0);
+
+  const showSummed = sumDur !== null && wallDur !== null && sumDur !== wallDur;
+  const timeStat = wallDur !== null
+    ? `<div class="stat">
+        <span class="stat-value amber">${wallDur}s</span>
+        <span class="stat-col-labels">
+          <span class="stat-label">Wall Time</span>
+          ${showSummed ? `<span class="stat-sub" title="Sum of individual step durations (exceeds wall time when steps run concurrently)">Σ ${sumDur}s model</span>` : ''}
+        </span>
+      </div>`
+    : '';
+
   el.innerHTML = `
     <div class="stat"><span class="stat-value blue">${summary.models_used.length}</span><span class="stat-label">Models</span></div>
     <div class="stat-divider"></div>
@@ -108,7 +127,7 @@ function renderSummaryBanner(summary) {
     <div class="stat-divider"></div>
     <div class="stat"><span class="stat-value">${tokK}K</span><span class="stat-label">Tokens</span></div>
     <div class="stat-divider"></div>
-    <div class="stat"><span class="stat-value amber">${dur}s</span><span class="stat-label">Total Time</span></div>
+    ${timeStat}
   `;
   el.classList.add('visible');
 }
@@ -321,6 +340,7 @@ function startExecListPolling() {
 
 function autoSelectLive(executions) {
   if (liveSource) return;
+  if (pinnedExecId) return;
   const live = executions.find(e => e.is_live);
   if (!live) return;
   const card = document.querySelector(`.exec-card[data-exec="${live.execution_id}"]`);

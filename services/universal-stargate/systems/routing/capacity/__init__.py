@@ -2,11 +2,9 @@
 Per-model admission control for Master Stargate.
 
 Tracks concurrency capacity per (gateway_id, model_id) and provides
-event-driven slot reservation/release for request admission.
+event-driven slot reservation via self-releasing CapacityToken.
 """
 
-from .consumer import CapacityReleaseConsumer
-from .ledger import CapacityLedger
-from .queue import AdmissionQueue
+from .pool import CapacityPool, CapacityToken
 
-__all__ = ["CapacityLedger", "AdmissionQueue", "CapacityReleaseConsumer"]
+__all__ = ["CapacityPool", "CapacityToken"]

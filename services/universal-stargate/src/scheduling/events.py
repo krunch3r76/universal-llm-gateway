@@ -467,6 +467,24 @@ Payload: {
 }
 """
 
+ROUTING_MODEL_INFEASIBLE = "routing.model.infeasible"
+"""
+Model exists in gateway catalogs but every candidate gateway is infeasible.
+
+Emitted when routing returns NO_FEASIBLE_GATEWAY (503, retryable).
+Carries per-gateway constraint details for diagnosis.
+
+Diagnostic query:
+    jq 'select(.signal == "routing.model.infeasible")'
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_constraints": list[dict]  # per-gateway constraint failures
+    "excluded_gateway_ids": list[str]  # gateways excluded by retry logic
+}
+"""
+
 FEDERATION_SNAPSHOT_SENT = "federation.snapshot.sent"
 """
 Edge Stargate sent GATEWAY_SNAPSHOT to Master.
@@ -1598,6 +1616,40 @@ def RoutingResourceDataMissing(
             "request_id": request_id,
             "model_id": model_id,
             "gateway_ids": gateway_ids,
+        },
+    )
+
+
+@event_factory
+def RoutingModelInfeasible(
+    request_id: str,
+    model_id: str,
+    gateway_constraints: list[dict[str, Any]],
+    excluded_gateway_ids: list[str],
+) -> Event:
+    """
+    Create ROUTING_MODEL_INFEASIBLE event.
+
+    Model exists in at least one gateway catalog but every candidate is
+    infeasible (capacity, circuit breaker, resource constraints, etc.).
+    Accompanies NO_FEASIBLE_GATEWAY (503) error response.
+
+    Args:
+        request_id: Request that failed routing
+        model_id: Model that exists but cannot be served
+        gateway_constraints: Per-gateway constraint failures
+        excluded_gateway_ids: Gateways excluded by retry logic
+
+    Returns:
+        Event with RoutingModelInfeasible signal
+    """
+    return Event(
+        signal=ROUTING_MODEL_INFEASIBLE,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_constraints": gateway_constraints,
+            "excluded_gateway_ids": excluded_gateway_ids,
         },
     )
 

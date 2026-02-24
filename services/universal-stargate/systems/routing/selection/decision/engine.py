@@ -3,7 +3,7 @@ Decision engine - unified routing decision with full observability.
 
 Produces (selected_gateway, decision_trace) tuples.
 
-Admission control: CapacityLedger in systems/routing/capacity/
+Admission control: CapacityPool in systems/routing/capacity/
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ class DecisionEngine:
            - Hard affinity: restrict to affinity gateway(s)
            - Soft affinity: prefer T1, only choose T2 if margin exceeded
 
-        Admission control: CapacityLedger in systems/routing/capacity/
+        Admission control: CapacityPool in systems/routing/capacity/
 
         Args:
             gateways: Available gateways to consider

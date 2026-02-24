@@ -72,10 +72,13 @@ class TelemetryApplicator:
                 "ram_free_mb": state.get("ram_free_mb", 0),
             }
         elif response.update_type == "delta":
-            state = response.data.get("state", {})
+            changes = response.data.get("changes", {})
+            loaded_models = changes.get("loaded_models", [])
+            if isinstance(loaded_models, list):
+                model_count = len(loaded_models)
             resource_summary = {
-                "vram_free_mb": state.get("vram_free_mb", 0),
-                "ram_free_mb": state.get("ram_free_mb", 0),
+                "vram_free_mb": changes.get("vram_free_mb", 0),
+                "ram_free_mb": changes.get("ram_free_mb", 0),
             }
 
         asyncio.create_task(

@@ -83,6 +83,9 @@ class RequestContext:
         # Gateways to exclude from routing (accumulated across retries)
         self.excluded_gateway_ids: set[str] = set()
 
+        # Capacity token acquired during routing, released after execution
+        self.capacity_token: Any | None = None
+
     @property
     def is_federated(self) -> bool:
         """

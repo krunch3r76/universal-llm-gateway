@@ -145,29 +145,13 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
     else:
         logger.info("Router-only mode: Skipping gateway initialization")
 
-    # Initialize admission control components BEFORE federation
-    # Admission control: CapacityLedger in systems/routing/capacity/
-    from systems.routing.capacity import (
-        AdmissionQueue,
-        CapacityLedger,
-        CapacityReleaseConsumer,
-    )
+    # Initialize capacity pool BEFORE federation
+    from systems.routing.capacity.pool import CapacityPool
 
-    capacity_ledger = CapacityLedger()
-    admission_queue = AdmissionQueue(ledger=capacity_ledger, event_bus=proxy.event_bus)
+    capacity_pool = CapacityPool(event_bus=proxy.event_bus)
+    logger.info("✅ CapacityPool initialized")
 
-    # Start capacity release consumer (subscribes to MODEL_EXECUTION_COMPLETED)
-    capacity_consumer = CapacityReleaseConsumer(
-        ledger=capacity_ledger,
-        queue=admission_queue,
-        event_bus=proxy.event_bus,
-    )
-    capacity_consumer.start()
-    logger.info("✅ Admission control components initialized")
-
-    # Store on proxy for access
-    proxy.capacity_ledger = capacity_ledger
-    proxy.admission_queue = admission_queue
+    proxy.capacity_pool = capacity_pool
 
     # Initialize federation BEFORE request components
     # CRITICAL: RequestExecutor needs federation_forwarder for token counting
@@ -201,19 +185,18 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
         )
         logger.info("✅ Federation integration initialized")
 
-        # Admission control: CapacityLedger must be wired to FederatedGatewayManager
-        # in ALL Master modes (including router-only). Otherwise, AdmissionQueue
-        # will never admit and requests will time out as MODEL_NOT_FOUND.
+        # Wire CapacityPool to FederatedGatewayManager for telemetry-driven
+        # capacity updates. Required in ALL Master modes (including router-only).
         if (
             proxy.federation_integration
             and proxy.federation_integration.federated_manager
-            and hasattr(proxy, "capacity_ledger")
-            and proxy.capacity_ledger
+            and hasattr(proxy, "capacity_pool")
+            and proxy.capacity_pool
         ):
-            proxy.federation_integration.federated_manager.set_capacity_ledger(
-                proxy.capacity_ledger
+            proxy.federation_integration.federated_manager.set_capacity_pool(
+                proxy.capacity_pool
             )
-            logger.info("✅ Capacity ledger wired to federated gateway manager")
+            logger.info("✅ CapacityPool wired to federated gateway manager")
 
         # Determine if this is Relay mode (Remote with local_edge, no local Gateway)
         is_relay_mode = (

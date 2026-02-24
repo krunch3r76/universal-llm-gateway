@@ -43,7 +43,7 @@ def evaluate_feasibility(
 
     Returns (tier, constraint_failures, eviction_plan).
 
-    Admission control: CapacityLedger in systems/routing/capacity/
+    Admission control: CapacityPool in systems/routing/capacity/
 
     Invariant: tier == T0 ⟹ len(constraint_failures) > 0
     Invariant: tier == T2 ⟹ eviction_plan is not None

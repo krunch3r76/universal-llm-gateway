@@ -30,7 +30,7 @@ from ...common.types import (
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
 
-    from systems.routing.capacity.ledger import CapacityLedger
+    from systems.routing.capacity.pool import CapacityPool
 
 logger = get_logger(__name__)
 
@@ -58,11 +58,11 @@ class FederatedGatewayManager(Sequential):
     def __init__(
         self,
         event_bus: "EventBus",
-        capacity_ledger: "CapacityLedger | None" = None,
+        capacity_pool: "CapacityPool | None" = None,
     ):
         super().__init__()
         self._event_bus = event_bus
-        self._capacity_ledger = capacity_ledger
+        self._capacity_pool = capacity_pool
 
         # Gateway state by gateway_id
         self._gateways: dict[str, FederatedGateway] = {}
@@ -97,20 +97,20 @@ class FederatedGatewayManager(Sequential):
         await self._stop_executor()
         logger.info("FederatedGatewayManager stopped")
 
-    def set_capacity_ledger(self, capacity_ledger: "CapacityLedger") -> None:
+    def set_capacity_pool(self, capacity_pool: "CapacityPool") -> None:
         """
-        Wire capacity ledger for admission control.
+        Wire capacity pool for admission control.
 
         Args:
-            capacity_ledger: CapacityLedger instance for tracking concurrency slots
+            capacity_pool: CapacityPool instance for tracking concurrency slots
         """
-        self._capacity_ledger = capacity_ledger
+        self._capacity_pool = capacity_pool
         seeded_slots = 0
         seeded_gateways = 0
 
         # Backfill: wiring may happen after initial GATEWAY_SNAPSHOT due to
         # router-only Master startup ordering. Seed from currently known gateways.
-        if self._capacity_ledger:
+        if self._capacity_pool:
             for gw in self._gateways.values():
                 if not gw.model_resources:
                     continue
@@ -129,7 +129,7 @@ class FederatedGatewayManager(Sequential):
                         )
                         max_concurrent = 1
 
-                    self._capacity_ledger.set_capacity(
+                    self._capacity_pool.set_capacity(
                         gateway_id=gw.gateway_id,
                         model_id=model_id.routing_key,
                         max_concurrent=max_concurrent,
@@ -137,7 +137,7 @@ class FederatedGatewayManager(Sequential):
                     seeded_slots += 1
 
         logger.info(
-            "✅ Capacity ledger wired to FederatedGatewayManager "
+            "✅ Capacity pool wired to FederatedGatewayManager "
             "(seeded %d model slots across %d gateways)",
             seeded_slots,
             seeded_gateways,
@@ -836,8 +836,8 @@ class FederatedGatewayManager(Sequential):
         gw.active_requests = state.get("active_requests", 0)
         gw.model_resources = state.get("model_resources", {})
 
-        # Seed capacity ledger from model_resources (admission control)
-        if self._capacity_ledger and gw.model_resources:
+        # Seed capacity pool from model_resources (admission control)
+        if self._capacity_pool and gw.model_resources:
             for model_id, res in gw.model_resources.items():
                 max_concurrent_raw = res.get("max_concurrent_requests", 1)
                 try:
@@ -850,13 +850,13 @@ class FederatedGatewayManager(Sequential):
                         model_id.routing_key,
                     )
                     max_concurrent = 1
-                self._capacity_ledger.set_capacity(
+                self._capacity_pool.set_capacity(
                     gateway_id=gw.gateway_id,
                     model_id=model_id.routing_key,
                     max_concurrent=max_concurrent,
                 )
             logger.debug(
-                f"📊 Capacity ledger updated from GATEWAY_SNAPSHOT: "
+                f"📊 Capacity pool updated from GATEWAY_SNAPSHOT: "
                 f"{len(gw.model_resources)} models on {gw.gateway_id}"
             )
 
@@ -988,7 +988,7 @@ class FederatedGatewayManager(Sequential):
         # Restore capacity in ledger (symmetric with remove_model in unload handler).
         # model_resources persists across unload/reload cycles (populated from initial
         # snapshot only), so max_concurrent_requests is always available here.
-        if self._capacity_ledger and isinstance(model_id, ModelId):
+        if self._capacity_pool and isinstance(model_id, ModelId):
             res = gw.model_resources.get(model_id)
             if res is not None:
                 max_concurrent_raw = res.get("max_concurrent_requests", 1)
@@ -1002,18 +1002,18 @@ class FederatedGatewayManager(Sequential):
                         model_id.routing_key,
                     )
                     max_concurrent = 1
-                self._capacity_ledger.set_capacity(
+                self._capacity_pool.set_capacity(
                     gateway_id=gw.gateway_id,
                     model_id=model_id.routing_key,
                     max_concurrent=max_concurrent,
                 )
                 logger.debug(
-                    f"📊 Capacity ledger: restored {gw.gateway_id}/{model_id} "
+                    f"📊 Capacity pool: restored {gw.gateway_id}/{model_id} "
                     f"max_concurrent={max_concurrent}"
                 )
             else:
                 logger.warning(
-                    f"📊 Capacity ledger: no model_resources for {model_id} on "
+                    f"📊 Capacity pool: no model_resources for {model_id} on "
                     f"{gw.gateway_id}, capacity not restored"
                 )
 
@@ -1040,10 +1040,10 @@ class FederatedGatewayManager(Sequential):
         gw.loading_models = gw.loading_models - {model_id}
 
         # Remove capacity from ledger (admission control)
-        if self._capacity_ledger:
-            self._capacity_ledger.remove_model(gw.gateway_id, model_id.routing_key)
+        if self._capacity_pool:
+            self._capacity_pool.remove_model(gw.gateway_id, model_id.routing_key)
             logger.debug(
-                f"📊 Capacity ledger: removed model {model_id} from {gw.gateway_id}"
+                f"📊 Capacity pool: removed model {model_id} from {gw.gateway_id}"
             )
 
         # Emit MODEL_UNLOADED event to EventBus (unified with local path)
@@ -1109,9 +1109,9 @@ class FederatedGatewayManager(Sequential):
             gw = self._gateways[gateway_id]
             if gw.remote_stargate_id == remote_stargate_id:
                 # Remove capacity from ledger (admission control)
-                if self._capacity_ledger:
-                    self._capacity_ledger.remove_gateway(gateway_id)
-                    logger.debug(f"📊 Capacity ledger: removed gateway {gateway_id}")
+                if self._capacity_pool:
+                    self._capacity_pool.remove_gateway(gateway_id)
+                    logger.debug(f"📊 Capacity pool: removed gateway {gateway_id}")
                 self.clear_load_failures(gateway_id)
                 del self._gateways[gateway_id]
                 removed.append(gateway_id)

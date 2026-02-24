@@ -1,7 +1,7 @@
 """
 Gateway tracking — eviction protection, observability, and lifecycle facade.
 
-Admission control: CapacityLedger in systems/routing/capacity/
+Admission control: CapacityPool in systems/routing/capacity/
 
 Provides:
     - GatewayTracker: Combined status + in-flight tracking facade

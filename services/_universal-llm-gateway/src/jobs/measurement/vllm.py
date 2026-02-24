@@ -234,12 +234,19 @@ async def measure_vllm_contexts(
 
 
 # ---------------------------------------------------------------------------
-# Embedding model: minimum gpu_memory_utilization search
+# gpu_memory_utilization heuristics
 # ---------------------------------------------------------------------------
 
 _UTIL_STEP = 0.05
 _UTIL_OVERHEAD_FRACTION = 0.08
 _UTIL_MAX_PROBES = 10
+
+# Chat model KV cache headroom: ~2 concurrent requests at 8K context for 30B+ models.
+# Per-token KV cost ≈ 2 × layers × kv_heads × head_dim × fp16 = ~256KB for 32B.
+# 8192 tokens × 256KB × 2 requests ≈ 4 GB.
+_KV_HEADROOM_BYTES: int = 4 * 1024**3
+# CUDA context initialisation + vLLM worker/engine internals.
+_CHAT_SYSTEM_OVERHEAD_BYTES: int = 1 * 1024**3
 
 
 def _model_dir_size_bytes(model_path: Path) -> int:
@@ -261,6 +268,43 @@ def _compute_initial_utilization(
     initial = weight_fraction + _UTIL_OVERHEAD_FRACTION
     rounded = math.ceil(initial / _UTIL_STEP) * _UTIL_STEP
     return max(0.10, min(0.90, round(rounded, 2)))
+
+
+def compute_chat_gpu_utilization(
+    model_path: Path,
+    device_index: int = 0,
+) -> float:
+    """Compute gpu_memory_utilization for a chat/text vLLM model.
+
+    Reserves model weights + _KV_HEADROOM_BYTES + _CHAT_SYSTEM_OVERHEAD_BYTES,
+    rounded up to the nearest _UTIL_STEP.  This yields a tight but viable
+    allocation: on a 24 GB GPU with a 19 GB model it saturates to 0.90;
+    on a 48 GB GPU the same model resolves to 0.50, leaving half for KV cache.
+
+    The caller should use an explicit catalog value instead when present so
+    that hand-tuned overrides are never silently discarded.
+
+    Raises:
+        RuntimeError: if total VRAM cannot be queried via pynvml.
+    """
+    total_vram = get_total_vram_bytes(device_index)
+    if total_vram is None:
+        raise RuntimeError("Cannot query total VRAM via pynvml")
+
+    model_bytes = _model_dir_size_bytes(model_path)
+    needed = model_bytes + _KV_HEADROOM_BYTES + _CHAT_SYSTEM_OVERHEAD_BYTES
+    fraction = needed / total_vram
+    rounded = math.ceil(fraction / _UTIL_STEP) * _UTIL_STEP
+    utilization = max(0.15, min(0.90, round(rounded, 2)))
+
+    logger.debug(
+        "Chat GPU utilization: model=%.1fGB VRAM=%.1fGB needed=%.1fGB → %.2f",
+        model_bytes / 1024**3,
+        total_vram / 1024**3,
+        needed / 1024**3,
+        utilization,
+    )
+    return utilization
 
 
 async def find_min_gpu_utilization(

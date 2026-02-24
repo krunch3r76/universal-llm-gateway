@@ -18,6 +18,7 @@ from .selection_errors import (
     raise_gateway_capacity_error,
     raise_load_failed_error,
     raise_model_unavailable_error,
+    raise_no_feasible_gateway_error,
     raise_no_gateways_error,
 )
 
@@ -66,6 +67,67 @@ async def _emit_routing_resource_gap_event(
             logger.debug(f"Failed to emit routing resource gap event: {exc}")
 
 
+def _build_constraint_summary(
+    trace: Any | None,
+    federated_gateways: list["FederatedGateway"],
+    context: "RequestContext",
+) -> dict[str, Any]:
+    """Build per-gateway constraint failure summary for error envelope."""
+    summary: dict[str, Any] = {}
+    if context.excluded_gateway_ids:
+        summary["excluded_gateways"] = list(context.excluded_gateway_ids)
+    if trace and trace.candidates:
+        summary["gateway_failures"] = [
+            {
+                "gateway": c.gateway.name,
+                "constraints": [
+                    {"constraint": f.constraint, "reason": f.reason}
+                    for f in c.constraints_failed
+                ],
+            }
+            for c in trace.candidates
+            if c.constraints_failed
+        ]
+    return summary
+
+
+async def _emit_routing_model_infeasible_event(
+    event_bus: Any,
+    request_id: str,
+    model_id: "ModelId",
+    trace: Any | None,
+    excluded_gateway_ids: list[str],
+) -> None:
+    """Emit routing.model.infeasible when model exists but all gateways are infeasible."""
+    from src.scheduling.events import RoutingModelInfeasible
+
+    gateway_constraints: list[dict[str, Any]] = []
+    if trace and trace.candidates:
+        gateway_constraints = [
+            {
+                "gateway": c.gateway.name,
+                "constraints": [
+                    {"constraint": f.constraint, "reason": f.reason}
+                    for f in c.constraints_failed
+                ],
+            }
+            for c in trace.candidates
+            if c.constraints_failed
+        ]
+
+    try:
+        await event_bus.publish_async_nowait(
+            RoutingModelInfeasible(
+                request_id=request_id,
+                model_id=str(model_id),
+                gateway_constraints=gateway_constraints,
+                excluded_gateway_ids=excluded_gateway_ids,
+            )
+        )
+    except Exception as exc:
+        logger.debug(f"Failed to emit routing model infeasible event: {exc}")
+
+
 async def _route_to_federated_gateway(
     context: "RequestContext",
     federated_manager,
@@ -77,7 +139,7 @@ async def _route_to_federated_gateway(
     stability_tracker=None,
     compute_type_tracker=None,
     routing_key_tracker=None,
-    admission_queue=None,
+    capacity_pool=None,
     circuit_breaker=None,
 ) -> tuple[str | None, str | None]:
     """
@@ -93,6 +155,7 @@ async def _route_to_federated_gateway(
         routing_config: Full Stargate config dict for loading routing policy
         compute_type_tracker: MasterRequestTracker for compute-type limits
         routing_key_tracker: MasterRequestTracker for eviction protection
+        capacity_pool: CapacityPool for admission control
         circuit_breaker: FederationCircuitBreaker for availability checks
 
     Returns:
@@ -231,7 +294,7 @@ async def _route_to_federated_gateway(
         event_bus=event_bus,
         routing_key_tracker=routing_key_tracker,
         is_gateway_available_fn=is_gateway_available_fn,
-        # Admission control: CapacityLedger in systems/routing/capacity/
+        # Admission control: CapacityPool in systems/routing/capacity/
     )
 
     # Use DecisionEngine to select gateway
@@ -293,18 +356,8 @@ async def _route_to_federated_gateway(
             is_cold_load = model_id not in selected_gateway.loaded_models
             stability_tracker.update_binding(model_id, selected_gateway.name)
 
-    # Track whether admission_queue.acquire() succeeded so the outer except
-    # can release the reserved slot if anything fails before context.selected_gateway
-    # is set (e.g. eviction failure, load failure). Without this, the in-flight
-    # count leaks permanently — executor._release_capacity_on_pre_forward_failure
-    # returns early when context.federated_gateway is None.
-    admission_acquired = False
-
-    if selected_gateway and admission_queue and not is_cold_load:
+    if selected_gateway and capacity_pool and not is_cold_load:
         # Sticky: honour the engine's exact selection.
-        # Opening the set to all warm gateways lets frozenset hash-iteration
-        # order silently override the engine's choice, spreading the model
-        # across multiple gateways and making the stability binding stale.
         # ∀ sticky: allowed ⊆ {selected_gateway} so admission cannot reassign.
         # Non-sticky: allow any warm gateway for load balancing.
         if context.model_sticky:
@@ -314,8 +367,6 @@ async def _route_to_federated_gateway(
                 g.name for g in gateways_for_routing if model_id in g.loaded_models
             )
 
-        # Acquire slot (may await if all gateways at capacity)
-        # Timeout from config or default 30s
         timeout_s = (
             routing_config.get("admission", {}).get("timeout_s", 30.0)
             if routing_config
@@ -323,24 +374,24 @@ async def _route_to_federated_gateway(
         )
 
         try:
-            assigned_gateway_id = await admission_queue.acquire(
+            token = await capacity_pool.acquire_token(
                 request_id=context.request_id,
                 model_id=model_id.routing_key,
                 allowed_gateway_ids=allowed_gateway_ids,
                 timeout_s=timeout_s,
             )
-            admission_acquired = True
+            context.capacity_token = token
 
             # If assigned to a different gateway than selected, re-select
-            if assigned_gateway_id != selected_gateway.name:
+            if token.gateway_id != selected_gateway.name:
                 original_gateway_name = selected_gateway.name
                 selected_gateway = next(
-                    (g for g in gateways_for_routing if g.name == assigned_gateway_id),
+                    (g for g in gateways_for_routing if g.name == token.gateway_id),
                     selected_gateway,
                 )
                 logger.info(
                     f"📊 Admission control reassigned {model_id} from "
-                    f"{original_gateway_name} → {assigned_gateway_id}"
+                    f"{original_gateway_name} → {token.gateway_id}"
                 )
         except TimeoutError:
             logger.warning(
@@ -533,8 +584,11 @@ async def _route_to_federated_gateway(
                 )
                 raise_capacity_error(str(model_id), capacity_details)
 
-        # Model doesn't exist anywhere or non-sticky - structured error
-        # Distinguish: model in catalog but missing resource data vs truly absent
+        # Distinguish: model in catalog but infeasible vs truly absent
+        model_in_any_catalog = any(
+            model_id in fg.available_models for fg in federated_gateways
+        )
+
         if event_bus:
             await _emit_routing_resource_gap_event(
                 event_bus=event_bus,
@@ -542,6 +596,25 @@ async def _route_to_federated_gateway(
                 model_id=model_id,
                 federated_gateways=federated_gateways,
             )
+
+        if model_in_any_catalog:
+            # Model known but temporarily unroutable — retryable 503
+            constraint_summary = _build_constraint_summary(
+                trace,
+                federated_gateways,
+                context,
+            )
+            if event_bus:
+                await _emit_routing_model_infeasible_event(
+                    event_bus=event_bus,
+                    request_id=context.request_id,
+                    model_id=model_id,
+                    trace=trace,
+                    excluded_gateway_ids=list(context.excluded_gateway_ids),
+                )
+            raise_no_feasible_gateway_error(str(model_id), constraint_summary)
+
+        # Genuinely absent from all gateway catalogs
         raise_model_unavailable_error(str(model_id))
 
     logger.info(
@@ -636,12 +709,9 @@ async def _route_to_federated_gateway(
             await federated_manager.clear_model_loading(
                 optimistic_mark_gateway_id, optimistic_mark_model_id
             )
-        # ∀ failure after acquire(): release slot.
-        # executor._release_capacity_on_pre_forward_failure returns early when
-        # fed_gateway is None (context.selected_gateway not yet set), leaking
-        # the in-flight count → queue starvation → deadlock.
-        if admission_acquired and admission_queue:
-            await admission_queue.release_reserved(
-                context.request_id, model_id.routing_key
-            )
+        # Release capacity token on pre-forward failure (eviction, load, etc.)
+        # Token release is idempotent — safe even if already released.
+        if context.capacity_token:
+            await context.capacity_token.release()
+            context.capacity_token = None
         raise

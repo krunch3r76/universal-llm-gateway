@@ -7,7 +7,7 @@ Design:
     - Handles variant suffixes (-hybrid, -cpu, context lengths) correctly
     - Eviction filtering compares routing_keys, avoiding mismatch bugs
 
-Admission control: CapacityLedger in systems/routing/capacity/
+Admission control: CapacityPool in systems/routing/capacity/
 Counters here are for observability, diagnostics, and soft assertions only.
 """
 

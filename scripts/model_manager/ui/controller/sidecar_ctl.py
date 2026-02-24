@@ -23,7 +23,8 @@ class SidecarController:
         --cap-drop ALL, --security-opt no-new-privileges,
         --pids-limit 64, --memory 256m, --cpus 1.0
 
-    INV: workspace mount path = workspace_root (never hardcoded)
+    INV: workspace mounted at same path as host (workspace_root → workspace_root:ro),
+         so pipeline workdir values are identical between host and container.
     """
 
     def __init__(self, workspace_root: Path) -> None:
@@ -58,7 +59,7 @@ class SidecarController:
             "--tmpfs",
             "/tmp",
             "-v",
-            f"{self._root}:/workspace:ro",
+            f"{self._root}:{self._root}:ro",
             SIDECAR_IMAGE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,

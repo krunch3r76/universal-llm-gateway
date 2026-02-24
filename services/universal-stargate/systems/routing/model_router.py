@@ -81,7 +81,7 @@ class ModelRouter:
         federated_manager: Any = None,
         local_stargate_id: str | None = None,
         compute_type_tracker: Any = None,
-        admission_queue: Any = None,
+        capacity_pool: Any = None,
     ):
         """
         Initialize the ModelRouter with routing policy and federation dependencies.
@@ -159,8 +159,8 @@ class ModelRouter:
         # Request tracker for compute-type limits (Master mode only)
         self._compute_type_tracker = compute_type_tracker
 
-        # Admission queue for capacity gating (Master mode only)
-        self._admission_queue = admission_queue
+        # Capacity pool for admission control (Master mode only)
+        self._capacity_pool = capacity_pool
 
         # Fail-fast: federation manager requires stargate_id
         if federated_manager is not None and not local_stargate_id:
@@ -185,7 +185,7 @@ class ModelRouter:
             self._routing_policy,
             event_bus=event_bus,
             routing_key_tracker=compute_type_tracker,
-            # Admission control: CapacityLedger in systems/routing/capacity/
+            # Admission control: CapacityPool in systems/routing/capacity/
         )
 
         # Routing statistics
@@ -485,45 +485,39 @@ class ModelRouter:
             return None
 
         # 6a. Admission control: acquire slot before proceeding
-        # Admission control: CapacityLedger in systems/routing/capacity/
-        if self._admission_queue:
-            # Determine allowed gateways for admission
+        # Admission control: CapacityPool in systems/routing/capacity/
+        if self._capacity_pool:
             is_sticky = request.get("sticky") if isinstance(request, dict) else False
             if is_sticky:
-                # Sticky: only allow the selected gateway
                 allowed_gateway_ids = frozenset({selected.name})
             else:
-                # Non-sticky: allow any gateway that has the model
                 allowed_gateway_ids = frozenset(
                     g.name for g in gateways
                     if parsed in g.loaded_models
                 )
 
-            # Acquire slot (may await if all gateways at capacity)
-            timeout_s = 30.0  # Default timeout
+            timeout_s = 30.0
 
             try:
-                assigned_gateway_id = await self._admission_queue.acquire(
+                token = await self._capacity_pool.acquire_token(
                     request_id=request_id or "unknown",
                     model_id=parsed.routing_key,
                     allowed_gateway_ids=allowed_gateway_ids,
                     timeout_s=timeout_s,
                 )
 
-                # If assigned to a different gateway than selected, re-select
-                if assigned_gateway_id != selected.name:
+                if token.gateway_id != selected.name:
                     original_gateway_name = selected.name
                     selected = next(
-                        (g for g in gateways if g.name == assigned_gateway_id),
+                        (g for g in gateways if g.name == token.gateway_id),
                         selected,
                     )
                     logger.info(
                         f"📊 Admission control reassigned {model_id} from "
-                        f"{original_gateway_name} → {assigned_gateway_id}"
+                        f"{original_gateway_name} → {token.gateway_id}"
                     )
             except Exception as e:
-                logger.error(f"❌ Admission queue acquire failed: {e}")
-                # Failed to acquire slot - return None to queue
+                logger.error(f"❌ Capacity pool acquire failed: {e}")
                 return None
 
         # 7. Execute eviction (federated)

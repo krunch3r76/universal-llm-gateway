@@ -29,7 +29,7 @@ async def select_gateway_and_load_model(
     stability_tracker=None,
     compute_type_tracker=None,
     routing_key_tracker=None,
-    admission_queue=None,
+    capacity_pool=None,
     circuit_breaker=None,
 ) -> tuple[str | None, str | None]:
     """
@@ -92,7 +92,7 @@ async def select_gateway_and_load_model(
             stability_tracker=stability_tracker,
             compute_type_tracker=compute_type_tracker,
             routing_key_tracker=routing_key_tracker,
-            admission_queue=admission_queue,
+            capacity_pool=capacity_pool,
             circuit_breaker=circuit_breaker,
         )
 

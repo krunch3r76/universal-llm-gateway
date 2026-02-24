@@ -3,15 +3,15 @@ schema: vllm
 metadata:
   name: Qwen3-32B-AWQ
   format: awq
-  family: qwen
-  arch: qwen
-  quant: awq-4bit
+  arch: qwen3
+  quant: AWQ-4bit
+  parameters_m: 24266
   training_context_length: 40960
   supports_chat_history: true
   input_schema: messages
 download:
   huggingface:
     repo: Qwen/Qwen3-32B-AWQ
-    file: null
+    verified: true
   size_bytes: 19336904398
   sha256: 46faff349f1dd18ffe76993edd3d9fd32941d042331dc590525409bbe3d37edf

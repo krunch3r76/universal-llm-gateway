@@ -111,6 +111,14 @@ def wrap_streaming_response_for_tracking(
             except Exception as e:
                 logger.error("Failed to emit execution completed: %s", e)
 
+            # Release capacity token (idempotent — safe if already released)
+            if context.capacity_token:
+                try:
+                    await context.capacity_token.release()
+                    context.capacity_token = None
+                except Exception as e:
+                    logger.error("Failed to release capacity token: %s", e)
+
     return StreamingResponse(
         release_on_close(),
         status_code=response.status_code,

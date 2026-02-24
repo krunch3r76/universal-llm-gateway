@@ -82,9 +82,9 @@ token_defaults:
   verify: 777
   verify_decompose: 1776
   verify_batch: 2048
-  verify_individual: 256
+  verify_individual: 512
   verify_classify: 512
-  verify_contextualize: 4096
+  verify_contextualize: 2048
   verify_math_decompose: 1024
   verify_decompose_compound: 1024
   verify_domain: 512

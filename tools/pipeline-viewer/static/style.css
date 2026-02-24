@@ -98,6 +98,8 @@ header .subtitle { color: var(--text-dim); font-size: 13px; letter-spacing: 0.2p
 .stat-value.red { color: var(--red); }
 .stat-value.amber { color: var(--amber); }
 .stat-value.blue { color: var(--blue); }
+.stat-col-labels { display: flex; flex-direction: column; gap: 2px; }
+.stat-sub { font-size: 10px; color: var(--text-dim); opacity: 0.65; font-family: var(--mono); letter-spacing: 0; }
 .stat-divider {
   width: 1px; height: 28px; align-self: center;
   background: linear-gradient(180deg, transparent, var(--border), transparent);

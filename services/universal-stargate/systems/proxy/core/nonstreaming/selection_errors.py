@@ -73,15 +73,32 @@ def raise_capacity_error(
 
 
 def raise_model_unavailable_error(model_id: str) -> None:
-    """Raise error when model not available on any gateway."""
+    """Raise error when model genuinely absent from all gateway catalogs."""
     raise HTTPException(
         status_code=get_http_status(ErrorCode.MODEL_NOT_FOUND),
         detail=error_envelope(
             code=ErrorCode.MODEL_NOT_FOUND,
-            message=f"No federated gateway available for model {model_id}",
+            message=f"Model {model_id} not found in any gateway catalog",
             source="master",
             retryable=False,
             data={"model_id": str(model_id)},
+        ),
+    )
+
+
+def raise_no_feasible_gateway_error(
+    model_id: str,
+    constraint_summary: dict[str, Any],
+) -> None:
+    """Raise error when model exists in catalogs but all gateways are infeasible."""
+    raise HTTPException(
+        status_code=get_http_status(ErrorCode.NO_FEASIBLE_GATEWAY),
+        detail=error_envelope(
+            code=ErrorCode.NO_FEASIBLE_GATEWAY,
+            message=f"Model {model_id} exists but no gateway can serve it now",
+            source="master",
+            retryable=True,
+            data={"model_id": str(model_id), **constraint_summary},
         ),
     )
 

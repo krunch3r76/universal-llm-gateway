@@ -102,7 +102,7 @@ class RequestExecutor:
         stability_tracker=None,
         transformation_engine=None,
         federation_integration=None,
-        admission_queue=None,
+        capacity_pool=None,
     ):
         self.gateway_url = gateway_url
         self.monitor = monitor
@@ -123,7 +123,7 @@ class RequestExecutor:
         self._stability_tracker = stability_tracker
         self._transformation_engine = transformation_engine
         self._federation_integration = federation_integration
-        self._admission_queue = admission_queue
+        self._capacity_pool = capacity_pool
 
     async def execute_request(self, context: RequestContext) -> Response:
         """
@@ -145,7 +145,7 @@ class RequestExecutor:
                 context.selected_model
             )
 
-            return await execute_bypass_mode(
+            response = await execute_bypass_mode(
                 context=context,
                 gateway_url=self.gateway_url,
                 monitor=self.monitor,
@@ -153,8 +153,11 @@ class RequestExecutor:
                 forward_streaming_request_func=self.forward_streaming_request,
                 model_metadata=model_metadata,
             )
+            await self._release_capacity_token(context)
+            return response
         except BaseException:
             self._release_routing_key_on_error(context.request_id)
+            await self._release_capacity_token(context)
             raise
 
     async def _select_gateway_and_load_model(self, context: RequestContext) -> None:
@@ -165,8 +168,6 @@ class RequestExecutor:
         request_tracker = None
         if self._federation_integration is not None:
             request_tracker = self._federation_integration.request_tracker
-
-        admission_queue = self._admission_queue
 
         gateway_name, _ = await select_gateway_and_load_model(
             context=context,
@@ -179,7 +180,7 @@ class RequestExecutor:
             stability_tracker=self._stability_tracker,
             compute_type_tracker=request_tracker,
             routing_key_tracker=request_tracker,
-            admission_queue=admission_queue,
+            capacity_pool=self._capacity_pool,
             circuit_breaker=self._federation_circuit_breaker,
         )
 
@@ -207,33 +208,11 @@ class RequestExecutor:
                 request_id[:8],
             )
 
-    async def _release_capacity_on_pre_forward_failure(
-        self, context: "RequestContext", error: str = "Unknown pre-forward error"
-    ) -> None:
-        """Release capacity reservation when request fails before forwarding.
-
-        Admission (step 1) may have reserved a slot via try_reserve().
-        _execute_federated_request covers all its own terminal paths with
-        emit_execution_completed/failed. This method covers the gap when the
-        request fails BETWEEN admission and entering the forwarding code
-        (e.g. token management error in step 3).
-
-        Idempotent — CapacityReleaseConsumer.release() returns False on
-        second call. Safe to call even if forwarding already emitted.
-        """
-        fed_gateway = context.federated_gateway
-        if fed_gateway is None:
-            return
-        from systems.proxy.core.lifecycle import emit_execution_failed
-
-        await emit_execution_failed(
-            event_bus=self.event_bus,
-            url=fed_gateway.remote_stargate_url,
-            model_id=context.selected_model.routing_key,
-            request_id=context.request_id,
-            gateway_id=fed_gateway.gateway_id,
-            error=error,
-        )
+    async def _release_capacity_token(self, context: "RequestContext") -> None:
+        """Release capacity token if held. Idempotent."""
+        if context.capacity_token:
+            await context.capacity_token.release()
+            context.capacity_token = None
 
     async def _emit_token_counting_failed(
         self,
@@ -291,7 +270,6 @@ class RequestExecutor:
                 ),
             )
 
-        entered_step4 = False
         try:
             # Step 3: Apply token management via federation forwarder
             from .token_management import apply_federated_token_management
@@ -311,17 +289,18 @@ class RequestExecutor:
                 raise
 
             # Step 4: Execute federated request
-            entered_step4 = True
-            return await self._execute_federated_request(context)
+            response = await self._execute_federated_request(context)
 
-        except BaseException as exc:
+            # Non-streaming: release token now (response fully built)
+            # Streaming: token released in stream generator's finally block
+            if not context.client_wants_streaming:
+                await self._release_capacity_token(context)
+
+            return response
+
+        except BaseException:
             self._release_routing_key_on_error(context.request_id)
-            # Step 4 emits on all its own terminal paths; only emit here
-            # if we never entered step 4 (e.g. step 3 token management failed).
-            if not entered_step4:
-                await self._release_capacity_on_pre_forward_failure(
-                    context, str(exc)
-                )
+            await self._release_capacity_token(context)
             raise
 
     async def _get_model_configuration_for_monitoring(
@@ -838,6 +817,8 @@ class RequestExecutor:
                     f"(received={received_count}, yielded={yielded_count})",
                     extra={"request_id": request_id},
                 )
+            finally:
+                await self._release_capacity_token(context)
 
         return TrackedStreamingResponse(
             stream_generator_with_cleanup(),
@@ -1144,6 +1125,7 @@ class RequestExecutor:
                 request_id=resolved_request_id,
                 gateway_id=fed_gateway.gateway_id,
             )
+            await self._release_capacity_token(context)
             return result
         except Exception as e:
             self._release_routing_key_on_error(resolved_request_id)
@@ -1157,6 +1139,7 @@ class RequestExecutor:
                 gateway_id=fed_gateway.gateway_id if fed_gateway else "unknown",
                 error=str(e),
             )
+            await self._release_capacity_token(context)
             raise
 
     async def _forward_embedding_request(

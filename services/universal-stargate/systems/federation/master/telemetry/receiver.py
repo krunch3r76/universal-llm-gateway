@@ -94,8 +94,11 @@ class MasterTelemetryReceiver:
                     "available_ram_mb": data.get("available_ram_mb", 0),
                 }
 
-            # RESOURCE_UPDATE: resources only
+            # RESOURCE_UPDATE: resources + loaded model count
             elif msg_type == FederationMessageType.RESOURCE_UPDATE.value:
+                loaded_models = data.get("loaded_models", [])
+                if isinstance(loaded_models, list):
+                    model_count = len(loaded_models)
                 resource_summary = {
                     "available_vram_mb": data.get("available_vram_mb", 0),
                     "available_ram_mb": data.get("available_ram_mb", 0),
