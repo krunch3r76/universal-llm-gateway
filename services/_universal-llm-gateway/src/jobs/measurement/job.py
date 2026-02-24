@@ -35,7 +35,7 @@ from .helpers import (
     check_measurement_resources,
     update_catalog_with_results,
 )
-from .vllm import compute_chat_gpu_utilization, find_min_gpu_utilization, measure_vllm_contexts
+from .vllm import find_min_gpu_utilization
 
 if TYPE_CHECKING:
     from ...core.gateway_config import GatewayConfig
@@ -316,27 +316,6 @@ class MeasurementJob(Job):
 
         self.emit_log(f"  Quantization: {quantization or 'none'}")
 
-        if "gpu_memory_utilization" in loader_config:
-            gpu_mem_util = loader_config["gpu_memory_utilization"]
-            self.emit_log(f"  GPU memory utilization: {gpu_mem_util} (catalog)")
-        else:
-            try:
-                gpu_mem_util = compute_chat_gpu_utilization(
-                    model_path, device_index=self.request.gpu_index
-                )
-                self.emit_log(
-                    f"  GPU memory utilization: {gpu_mem_util} (model weights + 4 GB KV headroom + 1 GB overhead)"
-                )
-            except RuntimeError:
-                logger.error(
-                    "Cannot query VRAM for '%s'; falling back to gpu_memory_utilization=0.9",
-                    self.request.model_id,
-                )
-                gpu_mem_util = 0.9
-                self.emit_log(
-                    "  GPU memory utilization: 0.9 (fallback — pynvml unavailable)"
-                )
-
         is_embedding = (entry or {}).get("loader", {}).get("embedding") is True
         if is_embedding:
             ctx = self.request.training_context_length
@@ -362,19 +341,43 @@ class MeasurementJob(Job):
                 self.emit_log,
                 loader_config=loader_config,
                 device_index=self.request.gpu_index,
+                is_embedding=True,
             )
             results: dict[str, dict[str, Any]] = {str(ctx): profile}
         else:
             contexts_to_measure = self.request.contexts or [32768, 16384, 8192, 4096]
-            results = await measure_vllm_contexts(
-                model_path,
-                contexts_to_measure,
-                quantization,
-                gpu_mem_util,
-                self.emit_log,
-                tracker,
-                loader_config=loader_config,
+            # Each context is probed independently for its minimum utilization.
+            # Larger contexts need more KV cache → higher util; smaller ones
+            # land lower, giving accurate per-context VRAM readings.
+            # The largest context's found util is written to the catalog for
+            # runtime use (serves all context sizes, so needs the highest floor).
+            self.emit_log(
+                "  Chat model: probing each context for minimum "
+                "gpu_memory_utilization"
             )
+            results: dict[str, dict[str, Any]] = {}
+            gpu_mem_util = 0.95  # fallback; overwritten by first (largest) context
+            for ctx in contexts_to_measure:
+                self.emit_log(f"  Context {ctx}:")
+                try:
+                    util, profile = await find_min_gpu_utilization(
+                        model_path,
+                        ctx,
+                        quantization,
+                        tracker,
+                        self.emit_log,
+                        loader_config=loader_config,
+                        device_index=self.request.gpu_index,
+                        util_cap=0.95,
+                    )
+                    profile["gpu_memory_utilization"] = util
+                    results[str(ctx)] = profile
+                    if not results or ctx == contexts_to_measure[0]:
+                        # Largest context sets the runtime catalog value.
+                        gpu_mem_util = util
+                except RuntimeError as e:
+                    self.emit_log(f"  ❌ {ctx}: {e}")
+                    results[str(ctx)] = {"error": str(e)}
 
         loader_updates: dict[str, Any] = {
             "gpu_memory_utilization": gpu_mem_util,

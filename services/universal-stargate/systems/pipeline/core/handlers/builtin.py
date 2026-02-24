@@ -489,6 +489,42 @@ class BaseHandler(AbstractStepHandler):
             )
             raise
 
+    def _report_progress(
+        self,
+        step: StepConfig,
+        context: PipelineContext,
+        *,
+        items_total: int,
+        items_completed: int,
+        models_total: int = 0,
+        models_completed: int = 0,
+    ) -> None:
+        """Emit an in-flight progress event for long-running steps."""
+        progress_by_step = getattr(context, "_step_progress_by_step", {})
+        progress_by_step[step.name] = {
+            "items_total": items_total,
+            "items_completed": items_completed,
+            "models_total": models_total,
+            "models_completed": models_completed,
+        }
+        setattr(context, "_step_progress_by_step", progress_by_step)
+
+        recorder = context.recorder
+        if not recorder:
+            return
+
+        from ..events.lifecycle import StepProgress
+
+        recorder.emit(
+            StepProgress(
+                step_name=step.name,
+                items_total=items_total,
+                items_completed=items_completed,
+                models_total=models_total,
+                models_completed=models_completed,
+            )
+        )
+
     async def _call_model(
         self,
         model_id: str,
@@ -669,6 +705,28 @@ class BaseHandler(AbstractStepHandler):
             from ..dag import ResponseTruncatedError
 
             effective_max_tokens = request_body.get("max_tokens")
+            truncation_ms = (_time.monotonic() - call_start) * 1000
+            if recorder:
+                recorder.emit(
+                    ModelInvocation(
+                        step_name=step.name,
+                        model_id=resolved_model_id,
+                        call_label=call_label,
+                        system_prompt=system_prompt,
+                        user_prompt=prompt,
+                        request_body=request_body,
+                        response_text=content,
+                        error=(
+                            "response_truncated: "
+                            f"{completion_tokens} tokens, max={effective_max_tokens}"
+                        ),
+                        latency_ms=truncation_ms,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        success=False,
+                        metadata=metadata,
+                    )
+                )
             raise ResponseTruncatedError(
                 step_id=step.id,
                 completion_tokens=completion_tokens,

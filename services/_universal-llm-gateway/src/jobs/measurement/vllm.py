@@ -186,67 +186,21 @@ async def run_vllm_probe(
                 pass
 
 
-async def measure_vllm_contexts(
-    model_path: Path,
-    contexts: list[int],
-    quantization: str | None,
-    gpu_memory_utilization: float,
-    emit_log: Callable[[str], None],
-    tracker: SubprocessTracker,
-    loader_config: dict[str, Any] | None = None,
-) -> dict[str, dict[str, Any]]:
-    """Measure vLLM GPU profiles, stepping down contexts until one fits.
-
-    vLLM only supports full GPU (no CPU/hybrid). Each context spawns a fresh
-    vllm serve process that loads the model with max_model_len=context and
-    reports VRAM/RAM usage. Catalog loader fields are forwarded so measurement
-    uses the same parameters as the runtime engine.
-    """
-    results: dict[str, dict[str, Any]] = {}
-
-    for ctx in contexts:
-        emit_log(f"Measuring vLLM context {ctx} (max_model_len={ctx})...")
-        emit_log(
-            f"  → Loading with gpu_memory_utilization={gpu_memory_utilization}, "
-            f"quantization={quantization or 'auto-detect'}"
-        )
-
-        profile = await run_vllm_probe(
-            model_path,
-            ctx,
-            quantization,
-            gpu_memory_utilization,
-            tracker,
-            loader_config=loader_config,
-        )
-
-        if profile.get("success"):
-            vram = profile.get("vram_mb", "N/A")
-            ram = profile.get("ram_mb", "N/A")
-            emit_log(f"  ✅ {ctx}: VRAM={vram}MB, RAM={ram}MB")
-            results[str(ctx)] = profile
-        else:
-            error = profile.get("error", "unknown")
-            emit_log(f"  ❌ {ctx}: {error}")
-            results[str(ctx)] = {"error": error}
-
-    return results
-
 
 # ---------------------------------------------------------------------------
 # gpu_memory_utilization heuristics
 # ---------------------------------------------------------------------------
 
 _UTIL_STEP = 0.05
-_UTIL_OVERHEAD_FRACTION = 0.08
 _UTIL_MAX_PROBES = 10
 
-# Chat model KV cache headroom: ~2 concurrent requests at 8K context for 30B+ models.
-# Per-token KV cost ≈ 2 × layers × kv_heads × head_dim × fp16 = ~256KB for 32B.
-# 8192 tokens × 256KB × 2 requests ≈ 4 GB.
-_KV_HEADROOM_BYTES: int = 4 * 1024**3
 # CUDA context initialisation + vLLM worker/engine internals.
 _CHAT_SYSTEM_OVERHEAD_BYTES: int = 1 * 1024**3
+# Conservative upper bound on KV cost per token across common architectures.
+# Per-token KV ≈ 2 × layers × kv_heads × head_dim × fp16.
+# 32B-class models ≈ 256 KB/token; smaller models are lower.
+# Using 256 KB here is intentionally generous so we never start too low.
+_KV_BYTES_PER_TOKEN: int = 256 * 1024
 
 
 def _model_dir_size_bytes(model_path: Path) -> int:
@@ -257,54 +211,21 @@ def _model_dir_size_bytes(model_path: Path) -> int:
 def _compute_initial_utilization(
     model_path: Path,
     total_vram_bytes: int,
+    max_model_len: int = 0,
 ) -> float:
-    """Compute starting gpu_memory_utilization from model size vs GPU VRAM.
+    """Compute starting gpu_memory_utilization for a probe at max_model_len.
 
-    weight_fraction = model_dir_size / total_vram, then add overhead
-    for CUDA context and vLLM internals, rounded up to nearest 0.05.
+    Floor = model weights + system overhead + estimated KV for max_model_len,
+    rounded up to the nearest _UTIL_STEP.  Passing max_model_len=0 (default,
+    used for embeddings) omits the KV term so embeddings start as low as
+    possible.
     """
     model_bytes = _model_dir_size_bytes(model_path)
-    weight_fraction = model_bytes / total_vram_bytes
-    initial = weight_fraction + _UTIL_OVERHEAD_FRACTION
-    rounded = math.ceil(initial / _UTIL_STEP) * _UTIL_STEP
-    return max(0.10, min(0.90, round(rounded, 2)))
-
-
-def compute_chat_gpu_utilization(
-    model_path: Path,
-    device_index: int = 0,
-) -> float:
-    """Compute gpu_memory_utilization for a chat/text vLLM model.
-
-    Reserves model weights + _KV_HEADROOM_BYTES + _CHAT_SYSTEM_OVERHEAD_BYTES,
-    rounded up to the nearest _UTIL_STEP.  This yields a tight but viable
-    allocation: on a 24 GB GPU with a 19 GB model it saturates to 0.90;
-    on a 48 GB GPU the same model resolves to 0.50, leaving half for KV cache.
-
-    The caller should use an explicit catalog value instead when present so
-    that hand-tuned overrides are never silently discarded.
-
-    Raises:
-        RuntimeError: if total VRAM cannot be queried via pynvml.
-    """
-    total_vram = get_total_vram_bytes(device_index)
-    if total_vram is None:
-        raise RuntimeError("Cannot query total VRAM via pynvml")
-
-    model_bytes = _model_dir_size_bytes(model_path)
-    needed = model_bytes + _KV_HEADROOM_BYTES + _CHAT_SYSTEM_OVERHEAD_BYTES
-    fraction = needed / total_vram
+    kv_bytes = _KV_BYTES_PER_TOKEN * max_model_len
+    needed = model_bytes + _CHAT_SYSTEM_OVERHEAD_BYTES + kv_bytes
+    fraction = needed / total_vram_bytes
     rounded = math.ceil(fraction / _UTIL_STEP) * _UTIL_STEP
-    utilization = max(0.15, min(0.90, round(rounded, 2)))
-
-    logger.debug(
-        "Chat GPU utilization: model=%.1fGB VRAM=%.1fGB needed=%.1fGB → %.2f",
-        model_bytes / 1024**3,
-        total_vram / 1024**3,
-        needed / 1024**3,
-        utilization,
-    )
-    return utilization
+    return max(0.10, min(0.95, round(rounded, 2)))
 
 
 async def find_min_gpu_utilization(
@@ -315,20 +236,24 @@ async def find_min_gpu_utilization(
     emit_log: Callable[[str], None],
     loader_config: dict[str, Any] | None = None,
     device_index: int = 0,
+    util_cap: float = 0.95,
+    is_embedding: bool = False,
 ) -> tuple[float, dict[str, Any]]:
-    """Find minimum gpu_memory_utilization for a vLLM embedding model.
+    """Find minimum gpu_memory_utilization that loads the model at max_model_len.
 
-    Computes model-weight fraction of total VRAM, adds overhead, then
-    probes upward in 0.05 steps until vLLM loads successfully.
+    Starting utilization = model weights + system overhead + estimated KV for
+    max_model_len (omitted when is_embedding=True — embeddings have no KV cache).
+    Probes upward in _UTIL_STEP increments until vLLM loads successfully.
 
     Returns (utilization, profile_dict).
-    Raises RuntimeError if no utilization up to 0.90 succeeds.
+    Raises RuntimeError if no utilization up to util_cap succeeds.
     """
     total_vram = get_total_vram_bytes(device_index)
     if total_vram is None:
         raise RuntimeError("Cannot query total VRAM via pynvml")
 
-    initial = _compute_initial_utilization(model_path, total_vram)
+    kv_len = 0 if is_embedding else max_model_len
+    initial = _compute_initial_utilization(model_path, total_vram, kv_len)
     total_vram_gb = total_vram / (1024**3)
     model_gb = _model_dir_size_bytes(model_path) / (1024**3)
     weight_pct = model_gb / total_vram_gb * 100
@@ -340,7 +265,7 @@ async def find_min_gpu_utilization(
 
     util = initial
     for attempt in range(_UTIL_MAX_PROBES):
-        if util > 0.90:
+        if util > util_cap:
             break
         pool_gb = total_vram_gb * util
         emit_log(
@@ -364,5 +289,6 @@ async def find_min_gpu_utilization(
         util = round(util + _UTIL_STEP, 2)
 
     raise RuntimeError(
-        f"Model failed to load at gpu_memory_utilization up to {min(util, 0.90):.2f}"
+        f"Model failed to load at gpu_memory_utilization up to"
+        f" {min(util, util_cap):.2f}"
     )

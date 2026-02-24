@@ -1,16 +1,17 @@
 """
 Shell step handler — executes commands inside the pipeline-tools sidecar.
 
-Uses `docker exec --timeout` (Docker 27+) so the kill happens inside the
-container, preventing orphaned processes.
+Timeout is enforced via asyncio.wait_for; on expiry the docker exec process
+is killed (SIGKILL). Container-side orphans are bounded by --pids-limit 64.
 
 Security: the sidecar runs with --network none, --read-only, --cap-drop ALL,
 --user 1000:1000, --pids-limit 64. Commands cannot escape the sandbox.
 
 Invariants:
 - ∀ execute(): command comes from static YAML domain field (never templated with runtime data)
-- ∀ non-zero exit: returns StepOutput with exit_code in json (does not raise)
-- ∀ timeout: raises TimeoutError after docker exec --timeout kills the process
+- ∀ infrastructure failure (container missing, daemon down): raises RuntimeError
+- ∀ non-zero exit from command: returns StepOutput with stderr appended to raw
+- ∀ timeout: raises TimeoutError after asyncio.wait_for kills the docker exec process
 """
 
 from __future__ import annotations
@@ -28,6 +29,13 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _SIDECAR_NAME = "pipeline-tools"
+
+_INFRA_ERROR_MARKERS = (
+    "No such container",
+    "Error response from daemon",
+    "Cannot connect to the Docker daemon",
+    "Is the docker daemon running",
+)
 
 
 class ShellHandler(AbstractStepHandler):
@@ -57,8 +65,6 @@ class ShellHandler(AbstractStepHandler):
         proc = await asyncio.create_subprocess_exec(
             "docker",
             "exec",
-            "--timeout",
-            str(timeout),
             "--workdir",
             workdir,
             _SIDECAR_NAME,
@@ -84,10 +90,15 @@ class ShellHandler(AbstractStepHandler):
         stderr = stderr_bytes.decode(errors="replace") if stderr_bytes else ""
         rc = proc.returncode or 0
 
-        # Exit code 137 = SIGKILL (from docker exec --timeout)
         if rc == 137:
             raise TimeoutError(
                 f"Step '{step.id}': command killed after {timeout}s timeout"
+            )
+
+        if rc != 0 and _is_infra_error(stderr):
+            raise RuntimeError(
+                f"Step '{step.id}': sidecar infrastructure error "
+                f"(exit_code={rc}): {stderr.strip()[:300]}"
             )
 
         if rc != 0:
@@ -98,8 +109,16 @@ class ShellHandler(AbstractStepHandler):
                 stderr[:200],
             )
 
+        raw = stdout
+        if rc != 0 and not stdout.strip():
+            raw = (
+                f"[shell exit_code={rc}]\n{stderr}"
+                if stderr
+                else f"[shell exit_code={rc}]"
+            )
+
         return StepOutput(
-            raw=stdout,
+            raw=raw,
             json={"exit_code": rc, "stderr": stderr},
         )
 
@@ -109,3 +128,8 @@ class ShellHandler(AbstractStepHandler):
         if not step.get_domain_field("command"):
             errors.append(f"Step '{step.id}' missing required 'command' field")
         return errors
+
+
+def _is_infra_error(stderr: str) -> bool:
+    """Detect docker daemon / container-missing errors vs command failures."""
+    return any(marker in stderr for marker in _INFRA_ERROR_MARKERS)

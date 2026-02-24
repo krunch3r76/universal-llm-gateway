@@ -67,10 +67,29 @@ debug_events:
     flush_interval_seconds: 1.0
 """
 
-_GATEWAY_SEED_FILES: dict[str, str] = {
+# Fallback content when service config files are unavailable
+_GATEWAY_SEED_FALLBACK: dict[str, str] = {
     "profiles.yaml": "profiles: {}\n",
     "model_transformations.yaml": "transformations: {}\n",
 }
+
+# ∀ file ∈ _GATEWAY_SEED_FALLBACK: if content == fallback, file was never populated
+_SERVICE_CONFIG_DIR = Path(__file__).parents[4] / "services/universal-stargate/config"
+
+
+def _gateway_seed_content(name: str) -> str:
+    """Return seed content for a ~/.gateway config file.
+
+    Reads from services/universal-stargate/config/ when available so that
+    profiles and transformations ship with working defaults. Falls back to
+    the empty-placeholder string if the source file is missing.
+    """
+    source = _SERVICE_CONFIG_DIR / name
+    if source.exists():
+        return source.read_text()
+    fallback = _GATEWAY_SEED_FALLBACK.get(name, "")
+    logger.warning("Service config not found: %s — using empty fallback", source)
+    return fallback
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -120,11 +139,15 @@ def ensure_stargate_config() -> Path:
         config_path.write_text(_STARGATE_CONFIG_TEMPLATE)
         logger.info("Generated stargate config: %s", config_path)
 
-    for name, content in _GATEWAY_SEED_FILES.items():
+    for name, fallback in _GATEWAY_SEED_FALLBACK.items():
         path = GATEWAY_DIR / name
-        if not path.exists():
+        existing = path.read_text() if path.exists() else None
+        if existing is None or existing == fallback:
+            # Create or reseed: file absent OR previously seeded with empty placeholder
+            content = _gateway_seed_content(name)
             path.write_text(content)
-            logger.info("Generated %s", path)
+            action = "Reseeded" if existing == fallback else "Generated"
+            logger.info("%s %s", action, path)
 
     return config_path
 

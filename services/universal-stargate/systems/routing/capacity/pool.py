@@ -13,8 +13,8 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -152,6 +152,13 @@ class CapacityPool:
         """Available slots = capacity - in_flight. Returns 0 if unknown."""
         slot = _Slot(gateway_id=gateway_id, model_id=model_id)
         return max(0, self._capacity.get(slot, 0) - self._in_flight.get(slot, 0))
+
+    def get_slot_info(self, gateway_id: str, model_id: str) -> tuple[int, int, int]:
+        """Return (available, in_flight, capacity) for diagnostics."""
+        slot = _Slot(gateway_id=gateway_id, model_id=model_id)
+        capacity = self._capacity.get(slot, 0)
+        in_flight = self._in_flight.get(slot, 0)
+        return max(0, capacity - in_flight), in_flight, capacity
 
     def get_available_gateways(self, model_id: str) -> list[tuple[str, int]]:
         """Return [(gateway_id, available)] for available > 0, sorted desc."""

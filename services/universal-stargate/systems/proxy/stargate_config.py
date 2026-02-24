@@ -392,3 +392,38 @@ class StargateConfig:
             "persistence": persistence,
             "socket_path": socket_path,
         }
+
+    def get_pipeline_event_config(self) -> dict[str, Any]:
+        """
+        Get dedicated pipeline event persistence configuration.
+
+        Environment variables override YAML config:
+          - PIPELINE_EVENT_PERSIST: Enable/disable dedicated pipeline event persistence
+
+        Returns:
+            dict with keys:
+                - enabled: bool
+                - directory: str
+                - max_file_size_mb: int
+                - max_files: int
+                - flush_interval_seconds: float
+                - signal_filter: str
+        """
+        config = self.config.get("pipeline_events", {})
+        persist_config = config.get("persistence", {})
+
+        env_enabled = os.getenv("PIPELINE_EVENT_PERSIST")
+        enabled = (
+            env_enabled.lower() in ("true", "1")
+            if env_enabled is not None
+            else persist_config.get("enabled", True)
+        )
+
+        return {
+            "enabled": enabled,
+            "directory": persist_config.get("directory", "/tmp/pipeline-events"),
+            "max_file_size_mb": persist_config.get("max_file_size_mb", 10),
+            "max_files": persist_config.get("max_files", 2),
+            "flush_interval_seconds": persist_config.get("flush_interval_seconds", 0.5),
+            "signal_filter": "pipeline.",
+        }

@@ -98,7 +98,9 @@ async def _emit_routing_model_infeasible_event(
     trace: Any | None,
     excluded_gateway_ids: list[str],
 ) -> None:
-    """Emit routing.model.infeasible when model exists but all gateways are infeasible."""
+    """
+    Emit routing.model.infeasible when model exists but all gateways are infeasible.
+    """
     from src.scheduling.events import RoutingModelInfeasible
 
     gateway_constraints: list[dict[str, Any]] = []
@@ -330,6 +332,32 @@ async def _route_to_federated_gateway(
         selected_gateway is not None and model_id not in selected_gateway.loaded_models
     )
 
+    # Detect busy_models / CapacityPool divergence for observability.
+    if event_bus and capacity_pool and selected_gateway and not is_cold_load:
+        pool_available, pool_in_flight, pool_capacity = capacity_pool.get_slot_info(
+            selected_gateway.name,
+            model_id.routing_key,
+        )
+        is_busy_per_telemetry = model_id in selected_gateway.busy_models
+        if is_busy_per_telemetry and pool_available > 0:
+            import asyncio
+
+            from src.scheduling.events import RoutingCapacityDivergence
+
+            asyncio.create_task(
+                event_bus.publish_async_nowait(
+                    RoutingCapacityDivergence(
+                        request_id=context.request_id,
+                        model_id=str(model_id),
+                        gateway_id=selected_gateway.name,
+                        busy_models_state="busy",
+                        capacity_pool_available=pool_available,
+                        capacity_pool_in_flight=pool_in_flight,
+                        capacity_pool_max=pool_capacity,
+                    )
+                )
+            )
+
     # STICKY INVARIANT: ∀ sticky model_id, ∃ healthy gateway G with model
     # loaded|loading ⟹ route to G, ¬cold_load elsewhere.
     # Prevents duplicate loads that waste VRAM and may trigger unnecessary evictions.
@@ -496,7 +524,6 @@ async def _route_to_federated_gateway(
             # at capacity (e.g., loading models consuming resources)
             capacity_constraints = {
                 "compute_type_capacity",
-                "has_gateway_capacity",
                 "has_enough_vram",
                 "has_enough_ram",
                 # circuit_breaker: temporary (OPEN→HALF_OPEN after recovery_timeout).

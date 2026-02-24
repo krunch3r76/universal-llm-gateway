@@ -137,18 +137,51 @@ class StepTimeoutError(PipelineError):
 
     step_name: str
     timeout_seconds: float
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    model_call_count: int = 0
+    items_total: int | None = None
+    items_completed: int | None = None
 
     def __str__(self) -> str:
-        return (
+        message = (
             f"[Step '{self.step_name}'] "
             f"Exceeded total timeout of {self.timeout_seconds}s"
         )
+        has_progress = (
+            self.prompt_tokens > 0
+            or self.completion_tokens > 0
+            or self.model_call_count > 0
+            or self.items_total is not None
+            or self.items_completed is not None
+        )
+        if not has_progress:
+            return message
+
+        progress_parts: list[str] = []
+        if self.items_total is not None and self.items_completed is not None:
+            progress_parts.append(
+                f"{self.items_completed}/{self.items_total} claims verified"
+            )
+        elif self.items_total is not None:
+            progress_parts.append(f"{self.items_total} claims tracked")
+
+        progress_parts.append(f"{self.model_call_count} model calls attempted")
+        progress_parts.append(
+            f"{self.prompt_tokens + self.completion_tokens} tokens used"
+        )
+        return f"{message}\n  Progress: {', '.join(progress_parts)}"
 
     def to_dict(self) -> dict:
         return {
             "error_type": "StepTimeoutError",
             "step_name": self.step_name,
             "timeout_seconds": self.timeout_seconds,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "model_call_count": self.model_call_count,
+            "items_total": self.items_total,
+            "items_completed": self.items_completed,
         }
 
 

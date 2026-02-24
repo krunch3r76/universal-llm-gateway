@@ -82,6 +82,19 @@ class StepFailed(PipelineEvent):
     duration_ms: float = 0.0
     traceback: str | None = None
     model_calls: list[dict[str, Any]] | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    model_call_count: int = 0
+
+
+@dataclass(slots=True, kw_only=True)
+class StepProgress(PipelineEvent):
+    """Emitted during long-running chunked steps to report progress."""
+
+    items_total: int = 0
+    items_completed: int = 0
+    models_total: int = 0
+    models_completed: int = 0
 
 
 @dataclass(slots=True, kw_only=True)
@@ -89,6 +102,15 @@ class StepSkipped(PipelineEvent):
     """Emitted when step is skipped due to condition evaluation."""
 
     reason: str = ""
+
+
+@dataclass(slots=True, kw_only=True)
+class StepConditionEvaluated(PipelineEvent):
+    """Emitted when a step's condition expression is evaluated."""
+
+    condition: str = ""
+    result: bool = False
+    available_outputs: list[str] = field(default_factory=list)
 
 
 # --- Data capture (replaces execution summary writer) ---

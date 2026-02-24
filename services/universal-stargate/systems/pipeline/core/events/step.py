@@ -46,20 +46,28 @@ def StepCompleted(  # noqa: N802
     prompt_tokens: int,
     completion_tokens: int,
     model_call_count: int,
+    exit_code: int | None = None,
 ) -> Event:
-    """Emitted when step completes successfully."""
+    """Emitted when step completes successfully.
+
+    Optional exit_code: populated for shell_v1 steps (non-None even on rc=0).
+    Enables event consumers to detect non-zero shell exits that produced output.
+    """
+    payload: dict = {
+        "pipeline_id": pipeline_id,
+        "execution_id": execution_id,
+        "step_name": step_name,
+        "duration_seconds": duration_seconds,
+        "output_length": output_length,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "model_call_count": model_call_count,
+    }
+    if exit_code is not None:
+        payload["exit_code"] = exit_code
     return Event(
         signal="pipeline.step.completed",
-        payload={
-            "pipeline_id": pipeline_id,
-            "execution_id": execution_id,
-            "step_name": step_name,
-            "duration_seconds": duration_seconds,
-            "output_length": output_length,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "model_call_count": model_call_count,
-        },
+        payload=payload,
     )
 
 
@@ -70,6 +78,9 @@ def StepFailed(  # noqa: N802
     step_name: str,
     duration_seconds: float | None,
     error: str,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    model_call_count: int = 0,
 ) -> Event:
     """
     Emitted when step execution fails.
@@ -80,6 +91,9 @@ def StepFailed(  # noqa: N802
         step_name: Step identifier
         duration_seconds: Time until failure (None if failed before execution)
         error: Error message
+        prompt_tokens: Prompt tokens consumed before failure
+        completion_tokens: Completion tokens consumed before failure
+        model_call_count: Total model calls attempted before failure
     """
     return Event(
         signal="pipeline.step.failed",
@@ -89,6 +103,9 @@ def StepFailed(  # noqa: N802
             "step_name": step_name,
             "duration_seconds": duration_seconds,
             "error": error,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "model_call_count": model_call_count,
         },
     )
 
@@ -116,5 +133,28 @@ def StepSkipped(  # noqa: N802
             "execution_id": execution_id,
             "step_name": step_name,
             "reason": reason,
+        },
+    )
+
+
+@event_factory
+def StepConditionEvaluated(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    condition: str,
+    result: bool,
+    available_outputs: list[str],
+) -> Event:
+    """Emitted when a step's condition expression is evaluated."""
+    return Event(
+        signal="pipeline.step.condition.evaluated",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "condition": condition,
+            "result": result,
+            "available_outputs": available_outputs,
         },
     )

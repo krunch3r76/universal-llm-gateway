@@ -93,6 +93,8 @@ async def verify_claims(
     """
     gen_params = step.generation_parameters or {}
     gen_params.setdefault("repeat_penalty", 1.15)
+    model_total = len(verify_model_ids)
+    model_completed = 0
     eligible_by_model = group_by_eligible_models(
         candidates,
         models=verify_model_ids,
@@ -116,6 +118,20 @@ async def verify_claims(
             gen_params=gen_params,
             exec_config=exec_config,
             prompt_ref_verify_batch=prompt_ref_verify_batch,
+        )
+        nonlocal model_completed
+        model_completed += 1
+        items_total = len(candidates)
+        items_completed = (
+            int((items_total * model_completed) / model_total) if model_total else 0
+        )
+        handler._report_progress(
+            step,
+            context,
+            items_total=items_total,
+            items_completed=items_completed,
+            models_total=model_total,
+            models_completed=model_completed,
         )
         return (model_id, results, timing)
 

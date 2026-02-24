@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .coalesce import CoalesceHandler
 from .rag_source import RagSourceHandler
 from .shell import ShellHandler
 
@@ -21,3 +22,4 @@ def register_handlers(router: DomainRouter) -> None:
     """Register all tool handlers as generic (available to any pipeline domain)."""
     router.register_generic_handler_class("shell_v1", ShellHandler)
     router.register_generic_handler_class("rag_source_v1", RagSourceHandler)
+    router.register_generic_handler_class("coalesce_v1", CoalesceHandler)

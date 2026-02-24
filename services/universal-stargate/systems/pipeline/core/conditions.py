@@ -16,6 +16,7 @@ Security model:
 
 from __future__ import annotations
 
+import ast
 from typing import Any
 
 from universal_logging import get_logger
@@ -176,6 +177,35 @@ def get_condition_evaluator() -> ConditionEvaluator:
     if _condition_evaluator is None:
         _condition_evaluator = ConditionEvaluator()
     return _condition_evaluator
+
+
+def extract_condition_deps(condition: str) -> set[str]:
+    """
+    Extract referenced step names from a condition expression.
+
+    Uses Python AST parsing to collect `Name` references and excludes safe
+    builtins plus `options` (which is pipeline options context, not a step).
+    """
+    if not condition or not condition.strip():
+        return set()
+
+    try:
+        parsed = ast.parse(condition, mode="eval")
+    except SyntaxError as exc:
+        logger.warning(
+            "Condition dependency extraction failed (syntax error): "
+            f"'{condition}' - {exc}"
+        )
+        return set()
+
+    excluded_names = set(ConditionEvaluator.SAFE_BUILTINS) | {"options"}
+    deps: set[str] = set()
+
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Name) and node.id not in excluded_names:
+            deps.add(node.id)
+
+    return deps
 
 
 def evaluate_condition(

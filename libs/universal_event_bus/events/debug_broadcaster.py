@@ -43,11 +43,14 @@ class FileEventWriter:
     def __init__(
         self,
         directory: str,
+        *,
+        signal_filter: str | None = None,
         max_file_size_mb: int = 50,
         max_files: int = 3,
         flush_interval_seconds: float = 1.0,
     ):
         self.directory = Path(directory)
+        self._signal_filter = signal_filter
         self.max_file_size_bytes = max_file_size_mb * 1024 * 1024
         self.max_files = max_files
         self.flush_interval = flush_interval_seconds
@@ -111,6 +114,10 @@ class FileEventWriter:
     async def write_event(self, event: dict[str, Any]) -> None:
         """Queue an event for writing (non-blocking)."""
         if not self._running or not self._queue:
+            return
+        if self._signal_filter and not event.get("signal", "").startswith(
+            self._signal_filter
+        ):
             return
 
         json_line = json.dumps(event) + "\n"
@@ -223,6 +230,7 @@ class MinimalEventDebugBroadcaster:
         socket_path: str | None = None,
         *,
         persistence_config: dict[str, Any] | None = None,
+        pipeline_persistence_config: dict[str, Any] | None = None,
     ):
         self.socket_path = socket_path
         self.debug_clients: list[DebugClient] = []
@@ -234,10 +242,25 @@ class MinimalEventDebugBroadcaster:
         if persistence_config and persistence_config.get("enabled"):
             self._file_writer = FileEventWriter(
                 directory=persistence_config["directory"],
+                signal_filter=persistence_config.get("signal_filter"),
                 max_file_size_mb=persistence_config.get("max_file_size_mb", 50),
                 max_files=persistence_config.get("max_files", 3),
                 flush_interval_seconds=persistence_config.get(
                     "flush_interval_seconds", 1.0
+                ),
+            )
+
+        self._pipeline_file_writer: FileEventWriter | None = None
+        if pipeline_persistence_config and pipeline_persistence_config.get("enabled"):
+            self._pipeline_file_writer = FileEventWriter(
+                directory=pipeline_persistence_config["directory"],
+                signal_filter=pipeline_persistence_config.get("signal_filter"),
+                max_file_size_mb=pipeline_persistence_config.get(
+                    "max_file_size_mb", 10
+                ),
+                max_files=pipeline_persistence_config.get("max_files", 2),
+                flush_interval_seconds=pipeline_persistence_config.get(
+                    "flush_interval_seconds", 0.5
                 ),
             )
 
@@ -260,6 +283,8 @@ class MinimalEventDebugBroadcaster:
         # Start file writer (independent of socket)
         if self._file_writer:
             await self._file_writer.start()
+        if self._pipeline_file_writer:
+            await self._pipeline_file_writer.start()
 
     async def _handle_client_connection(self, reader, writer):
         """Handle new debug client connection"""
@@ -307,6 +332,8 @@ class MinimalEventDebugBroadcaster:
         # Write to file FIRST (always, if enabled) - primary use case
         if self._file_writer:
             await self._file_writer.write_event(debug_event)
+        if self._pipeline_file_writer:
+            await self._pipeline_file_writer.write_event(debug_event)
 
         # Broadcast to socket clients (skip if no clients - secondary)
         if self.debug_clients:
@@ -375,6 +402,8 @@ class MinimalEventDebugBroadcaster:
         # Stop file writer FIRST (capture final events)
         if self._file_writer:
             await self._file_writer.stop()
+        if self._pipeline_file_writer:
+            await self._pipeline_file_writer.stop()
 
         # Stop socket server
         if self.server_socket:

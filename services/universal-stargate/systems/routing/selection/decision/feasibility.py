@@ -114,29 +114,20 @@ def evaluate_feasibility(
         logger.info(f"✅ Model {placement.model_id} found in {gateway.name} catalog")
 
     # Check 3: Model already loaded (fast path)
-    # ∀ loaded model: busy ⟹ T0 (capacity) — token counting is the first step of
-    # inference and returns 503 while the model is executing another request.
+    # Admission control handled by CapacityPool (master-local, count-based).
+    # busy_models is a telemetry hint used for scoring and eviction protection
+    # but NOT as a hard gate — it can go stale when the Gateway→Edge WebSocket
+    # drops, causing permanent routing lockup (no expiry, no reconciliation).
     if _is_model_loaded(gateway, placement):
         if placement.model_id in gateway.busy_models:
             logger.info(
-                f"⏳ Model {placement.model_id} loaded but busy on {gateway.name} "
-                f"(active_requests={gateway.active_requests}) — T0 (capacity)"
+                f"📊 Model {placement.model_id} loaded (busy per telemetry) on "
+                f"{gateway.name} — T1 (CapacityPool handles admission)"
             )
-            failures.append(
-                ConstraintFailure(
-                    constraint="has_gateway_capacity",
-                    reason=f"Model {placement.model_id} is busy on {gateway.name}",
-                    details={
-                        "busy": True,
-                        "active_requests": gateway.active_requests,
-                    },
-                )
+        else:
+            logger.info(
+                f"✅ Model {placement.model_id} loaded and idle on {gateway.name}"
             )
-            return FeasibilityTier.T0_INFEASIBLE, tuple(failures), None
-        logger.info(
-            f"✅ Model {placement.model_id} loaded and idle on {gateway.name} "
-            f"(active_requests={gateway.active_requests})"
-        )
         return FeasibilityTier.T1_FEASIBLE_NOW, (), None
 
     # Check 4: Sufficient resources without eviction

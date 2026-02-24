@@ -705,13 +705,16 @@ class StepConfig(BaseModel):
     @property
     def computed_depends_on(self) -> list[str]:
         """
-        Derive dependencies from handler_inputs, map_over, and config step references.
+        Derive dependencies from handler_inputs, map_over, config step references,
+        and condition expressions.
 
         Dependency sources:
         1. handler_inputs: step.field bindings (e.g., "decompose_link.*.json.claims")
         2. map_over: collection bindings (e.g., "answer_all.*")
         3. config.*_step: string values where key ends with "_step"
            (e.g., config.claims_step: decompose_link)
+        4. condition: step name references in condition expressions
+           (e.g., "assess_context.json.get('need_more_history', False) == True")
 
            YAML structure:
              config:
@@ -753,6 +756,12 @@ class StepConfig(BaseModel):
                     for config_key, config_val in val.items():
                         if config_key.endswith("_step") and isinstance(config_val, str):
                             deps.add(config_val)
+
+        # Dependencies from condition step references
+        if self.condition:
+            from .conditions import extract_condition_deps
+
+            deps |= extract_condition_deps(self.condition)
 
         return list(deps)
 

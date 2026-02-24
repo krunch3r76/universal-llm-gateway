@@ -148,16 +148,24 @@ class StargateProxy:
 
         # Persistence takes priority (agent debugging)
         persistence_config = debug_config.get("persistence", {})
+        pipeline_persistence_config = self.config.get_pipeline_event_config()
         socket_path = debug_config.get("socket_path")
 
         # Create broadcaster if socket or persistence enabled
-        if socket_path or persistence_config.get("enabled"):
+        if (
+            socket_path
+            or persistence_config.get("enabled")
+            or pipeline_persistence_config.get("enabled")
+        ):
             from universal_event_bus import MinimalEventDebugBroadcaster
 
             self._debug_broadcaster = MinimalEventDebugBroadcaster(
                 socket_path=socket_path,
                 persistence_config=persistence_config
                 if persistence_config.get("enabled")
+                else None,
+                pipeline_persistence_config=pipeline_persistence_config
+                if pipeline_persistence_config.get("enabled")
                 else None,
             )
             if socket_path:
@@ -166,6 +174,11 @@ class StargateProxy:
                 logger.info(
                     "Debug event persistence enabled: %s",
                     persistence_config["directory"],
+                )
+            if pipeline_persistence_config.get("enabled"):
+                logger.info(
+                    "Pipeline event persistence enabled: %s",
+                    pipeline_persistence_config["directory"],
                 )
 
         self.event_bus = EventBus(debug_broadcaster=self._debug_broadcaster)

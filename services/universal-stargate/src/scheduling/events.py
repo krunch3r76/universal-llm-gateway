@@ -485,6 +485,24 @@ Payload: {
 }
 """
 
+ROUTING_CAPACITY_DIVERGENCE = "routing.capacity.divergence"
+"""
+Telemetry busy_models disagrees with master-local CapacityPool.
+
+Emitted when telemetry marks a model as busy while CapacityPool reports
+available slots on the selected gateway/model.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
+    "busy_models_state": str,         # "busy" | "idle"
+    "capacity_pool_available": int,
+    "capacity_pool_in_flight": int,
+    "capacity_pool_max": int,
+}
+"""
+
 FEDERATION_SNAPSHOT_SENT = "federation.snapshot.sent"
 """
 Edge Stargate sent GATEWAY_SNAPSHOT to Master.
@@ -1650,6 +1668,49 @@ def RoutingModelInfeasible(
             "model_id": model_id,
             "gateway_constraints": gateway_constraints,
             "excluded_gateway_ids": excluded_gateway_ids,
+        },
+    )
+
+
+@event_factory
+def RoutingCapacityDivergence(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    busy_models_state: str,
+    capacity_pool_available: int,
+    capacity_pool_in_flight: int,
+    capacity_pool_max: int,
+) -> Event:
+    """
+    Create ROUTING_CAPACITY_DIVERGENCE event.
+
+    Emitted when telemetry-derived busy_models and CapacityPool slot state disagree.
+    Primary purpose is stale telemetry observability; routing correctness still
+    relies on CapacityPool admission.
+
+    Args:
+        request_id: Request that triggered divergence detection
+        model_id: Divergent model
+        gateway_id: Gateway with divergent state
+        busy_models_state: Telemetry busy/idle claim
+        capacity_pool_available: Available slots from CapacityPool
+        capacity_pool_in_flight: Current in-flight requests in CapacityPool
+        capacity_pool_max: Max concurrent slots in CapacityPool
+
+    Returns:
+        Event with RoutingCapacityDivergence signal
+    """
+    return Event(
+        signal=ROUTING_CAPACITY_DIVERGENCE,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "busy_models_state": busy_models_state,
+            "capacity_pool_available": capacity_pool_available,
+            "capacity_pool_in_flight": capacity_pool_in_flight,
+            "capacity_pool_max": capacity_pool_max,
         },
     )
 

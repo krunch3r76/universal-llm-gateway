@@ -20,6 +20,7 @@ from ..dag import PipelineExecutionError, StepState
 # New observability events (for JSONL recorder)
 from ..events.lifecycle import (
     StepCompleted,
+    StepConditionEvaluated,
     StepFailed,
     StepInputsCaptured,
     StepOutputCaptured,
@@ -32,6 +33,9 @@ from ..events.step import (
     StepCompleted as BusStepCompleted,
 )
 from ..events.step import (
+    StepConditionEvaluated as BusStepConditionEvaluated,
+)
+from ..events.step import (
     StepFailed as BusStepFailed,
 )
 from ..events.step import (
@@ -40,6 +44,7 @@ from ..events.step import (
 from ..events.step import (
     StepStarted as BusStepStarted,
 )
+from .errors import StepTimeoutError
 from .proxy_client import ProxyClient
 
 if TYPE_CHECKING:
@@ -307,9 +312,38 @@ class DAGExecutor:
 
         steps_to_launch = []
         for node in ready_steps:
-            # Check condition
-            if not await self._should_execute_step(node.step):
-                logger.info(f"Step '{node.step.id}' skipped (condition not met)")
+            should_execute, condition_expr = await self._should_execute_step(node.step)
+            pipeline_id, execution_id = self._get_event_context()
+            if condition_expr is not None:
+                available_outputs = list(self.context.outputs.keys())
+                recorder = self.context.recorder
+                if recorder:
+                    recorder.emit(
+                        StepConditionEvaluated(
+                            step_name=node.step.name,
+                            condition=condition_expr,
+                            result=should_execute,
+                            available_outputs=available_outputs,
+                        )
+                    )
+                self._publish_event(
+                    BusStepConditionEvaluated(
+                        pipeline_id=pipeline_id,
+                        execution_id=execution_id,
+                        step_name=node.step.name,
+                        condition=condition_expr,
+                        result=should_execute,
+                        available_outputs=available_outputs,
+                    )
+                )
+
+            if not should_execute:
+                logger.info(
+                    "Step '%s' skipped (condition not met: %s)",
+                    node.step.id,
+                    condition_expr,
+                )
+                reason = f"condition not met: {condition_expr}"
 
                 # Emit step skipped (recorder + bus)
                 recorder = self.context.recorder
@@ -317,16 +351,15 @@ class DAGExecutor:
                     recorder.emit(
                         StepSkipped(
                             step_name=node.step.name,
-                            reason="condition not met",
+                            reason=reason,
                         )
                     )
-                pipeline_id, execution_id = self._get_event_context()
                 self._publish_event(
                     BusStepSkipped(
                         pipeline_id=pipeline_id,
                         execution_id=execution_id,
                         step_name=node.step.name,
-                        reason="condition not met",
+                        reason=reason,
                     )
                 )
 
@@ -405,17 +438,20 @@ class DAGExecutor:
                     _ = remaining_task.cancel()
                 raise PipelineExecutionError(f"Step '{step_id}' failed: {e}") from e
 
-    async def _should_execute_step(self, step: StepConfig) -> bool:
+    async def _should_execute_step(self, step: StepConfig) -> tuple[bool, str | None]:
         """Check if step should execute based on condition."""
         if not step.condition:
-            return True
+            return True, None
 
         from ..conditions import evaluate_condition
 
-        return evaluate_condition(
-            condition=step.condition,
-            outputs=self.context.outputs,
-            options=self.context.options,
+        return (
+            evaluate_condition(
+                condition=step.condition,
+                outputs=self.context.outputs,
+                options=self.context.options,
+            ),
+            step.condition,
         )
 
     async def _execute_step(self, node: StepNode) -> None:
@@ -512,6 +548,10 @@ class DAGExecutor:
 
         node.output = output
         node.state = StepState.COMPLETED
+        progress_by_step = getattr(self.context, "_step_progress_by_step", {})
+        if node.step.name in progress_by_step:
+            progress_by_step.pop(node.step.name, None)
+            setattr(self.context, "_step_progress_by_step", progress_by_step)
         # For map steps, the collection is already stored in context.outputs
         # by _execute_map_step. Don't overwrite it with the wrapper StepOutput
         if not node.step.is_map_step:
@@ -551,6 +591,9 @@ class DAGExecutor:
             )
         pipeline_id, execution_id = self._get_event_context()
         output_length = len(output.text) if hasattr(output, "text") else 0
+        exit_code: int | None = None
+        if output.json and isinstance(output.json.get("exit_code"), int):
+            exit_code = output.json["exit_code"]
         self._publish_event(
             BusStepCompleted(
                 pipeline_id=pipeline_id,
@@ -561,6 +604,7 @@ class DAGExecutor:
                 prompt_tokens=output.prompt_tokens,
                 completion_tokens=output.completion_tokens,
                 model_call_count=getattr(output, "model_call_count", 0),
+                exit_code=exit_code,
             )
         )
 
@@ -568,10 +612,19 @@ class DAGExecutor:
         self, node: StepNode, error: Exception, duration: float
     ) -> None:
         """Record step failure."""
-        failed_calls = self.context.drain_step_calls()
-        if failed_calls:
+        all_calls = self.context.drain_step_calls()
+        successful_calls = [
+            call for call in all_calls if getattr(call, "success", True) is True
+        ]
+        total_prompt = sum(
+            getattr(call, "prompt_tokens", 0) for call in successful_calls
+        )
+        total_completion = sum(
+            getattr(call, "completion_tokens", 0) for call in successful_calls
+        )
+        if all_calls:
             self._log_step_model_calls(
-                node.step.name, failed_calls, duration, success=False
+                node.step.name, all_calls, duration, success=False
             )
 
         node.state = StepState.FAILED
@@ -579,15 +632,33 @@ class DAGExecutor:
 
         pipeline_id, execution_id = self._get_event_context()
         call_contexts = None
-        if failed_calls:
+        if all_calls:
             call_contexts = [
                 {
                     "request_id": getattr(c, "snapshot_request_id", None),
                     "request_body": getattr(c, "request_body", {}),
                     "response_content": getattr(c, "content", None),
+                    "model": (
+                        getattr(c, "request_body", {}).get("model")
+                        if isinstance(getattr(c, "request_body", None), dict)
+                        else None
+                    ),
+                    "prompt_tokens": getattr(c, "prompt_tokens", 0),
+                    "completion_tokens": getattr(c, "completion_tokens", 0),
+                    "success": getattr(c, "success", True),
                 }
-                for c in failed_calls
+                for c in all_calls
             ]
+        progress_by_step = getattr(self.context, "_step_progress_by_step", {})
+        step_progress = progress_by_step.pop(node.step.name, None)
+        setattr(self.context, "_step_progress_by_step", progress_by_step)
+        if isinstance(error, StepTimeoutError):
+            error.prompt_tokens = total_prompt
+            error.completion_tokens = total_completion
+            error.model_call_count = len(all_calls)
+            if isinstance(step_progress, dict):
+                error.items_total = step_progress.get("items_total")
+                error.items_completed = step_progress.get("items_completed")
         try:
             from ...pipeline_failure_debug import write_failure_debug
 
@@ -613,6 +684,9 @@ class DAGExecutor:
                     duration_ms=duration * 1000,
                     traceback="".join(tb_mod.format_exception(error)),
                     model_calls=call_contexts,
+                    prompt_tokens=total_prompt,
+                    completion_tokens=total_completion,
+                    model_call_count=len(all_calls),
                 )
             )
         self._publish_event(
@@ -622,6 +696,9 @@ class DAGExecutor:
                 step_name=node.step.name,
                 duration_seconds=duration,
                 error=str(error),
+                prompt_tokens=total_prompt,
+                completion_tokens=total_completion,
+                model_call_count=len(all_calls),
             )
         )
 
