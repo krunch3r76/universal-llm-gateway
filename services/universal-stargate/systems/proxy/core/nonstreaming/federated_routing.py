@@ -225,16 +225,29 @@ async def _route_to_federated_gateway(
 
     gateways_for_routing = federated_gateways_to_routing_candidates(federated_gateways)
 
-    # Exclude gateways that failed on previous retry (keep all if none remain)
+    # Exclude gateways that failed on previous retry.
+    # Guard: only apply if remaining gateways can serve the model.
+    # ∀ single-gateway sticky models: excluding the only gateway degenerates
+    # into unbounded routing failures (the model is in the excluded gateway's
+    # catalog but absent from all remaining gateways' catalogs).
     if context.excluded_gateway_ids:
         kept = [
             g
             for g in gateways_for_routing
             if g.name not in context.excluded_gateway_ids
         ]
-        if kept:
+        has_model_alternative = any(
+            model_id in g.available_models or model_id in g.loaded_models for g in kept
+        )
+        if kept and has_model_alternative:
             logger.info("🚫 Routing: excluded %s", context.excluded_gateway_ids)
             gateways_for_routing = kept
+        else:
+            logger.warning(
+                "🚫 Exclusion of %s skipped: no remaining gateway has %s in catalog",
+                context.excluded_gateway_ids,
+                model_id,
+            )
 
     # Exclude gateways with persistent load failures for this model+context
     load_failed_ids = [

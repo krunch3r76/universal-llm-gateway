@@ -45,13 +45,13 @@ options:
     - qwen
     - gemma_2_9b
     - llama_3_1_8b
-    - ministral_3_8b
+    - phi
 
   veto_pool:
     - qwen
     - gemma_2_9b
     - llama_3_1_8b
-    - ministral_3_8b
+    - phi
 
   originator_link0: qwen
   originator_link1: gemma_2_9b

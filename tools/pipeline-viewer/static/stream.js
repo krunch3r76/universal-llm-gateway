@@ -5,11 +5,9 @@
 
 let liveSource = null;
 let liveEvents = [];
-let liveStartTime = null;
 
 function connectStream(pipelineId, execId) {
   liveEvents = [];
-  liveStartTime = Date.now();
   currentExecution = null;
   selectedStepIdx = null;
 
@@ -53,7 +51,6 @@ function disconnectStream() {
     liveSource.close();
     liveSource = null;
   }
-  liveStartTime = null;
 }
 
 function renderLiveUpdate() {
@@ -100,7 +97,8 @@ function aggregateClientSide(events) {
   inferVerifierPool(steps);
 
   const completed = events.find(e => e.event_type === 'pipeline_completed');
-  const wallClockMs = completed?.duration_ms ?? (liveStartTime ? Date.now() - liveStartTime : null);
+  const lastEvent = events[events.length - 1];
+  const wallClockMs = completed?.duration_ms ?? lastEvent?.timestamp_ms ?? null;
 
   return {
     pipeline_id: first.pipeline_id || '',
