@@ -110,14 +110,16 @@ class NonStreamingChatCompletion:
                 resource_tracker.set_model_inference_state(model_id, "token_counting")
                 try:
                     resource_tracker.set_model_inference_state(model_id, "generating")
+                    inference_start = time.perf_counter()
                     response = await self.inference(
                         model_id, messages, parameters, correlation_id
                     )
+                    inference_ms = (time.perf_counter() - inference_start) * 1000
                 except Exception as e:
                     self._handle_transport_error(str(e), model_id, "inference")
                     raise
 
-            return self._format_response(response, model_id)
+            return self._format_response(response, model_id, inference_ms=inference_ms)
         except Exception as e:
             logger.error(
                 f"❌ Generation failed for {model_id}: {type(e).__name__}: {e}",
@@ -141,7 +143,12 @@ class NonStreamingChatCompletion:
             pass
         return {}
 
-    def _format_response(self, response: dict, model_id: str) -> dict:
+    def _format_response(
+        self,
+        response: dict,
+        model_id: str,
+        inference_ms: float | None = None,
+    ) -> dict:
         """Format worker response for API layer."""
         content, finish_reason = "", "stop"
         tool_calls = None
@@ -173,6 +180,10 @@ class NonStreamingChatCompletion:
         # timings.predicted_ms = actual generation time (excludes queue wait).
         if "timings" in response:
             result["timings"] = response["timings"]
+        elif inference_ms is not None:
+            # vLLM doesn't report timings; approximate predicted_ms from
+            # full inference round-trip (includes prefill, unlike llama.cpp).
+            result["timings"] = {"predicted_ms": inference_ms}
         return result
 
     async def _capture_peak_usage(

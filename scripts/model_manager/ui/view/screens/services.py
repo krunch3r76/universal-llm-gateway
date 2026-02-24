@@ -78,6 +78,7 @@ class ServicesScreen(Screen):
             yield Static("[b]Services[/b]", markup=True)
             yield Static("  Gateway:  checking...", id="svc-gw")
             yield Static("  Stargate: checking...", id="svc-sg")
+            yield Static("  RAG:      checking...", id="svc-rag")
 
         with Vertical(id="build-options"):
             yield Select(
@@ -97,6 +98,8 @@ class ServicesScreen(Screen):
             yield Button(
                 "Stop Stargate", id="btn-stop-sg", variant="error", disabled=True
             )
+            yield Button("Start RAG", id="btn-start-rag", variant="success")
+            yield Button("Stop RAG", id="btn-stop-rag", variant="error", disabled=True)
             yield Button("Restart Local", id="btn-restart-local", variant="warning")
 
         yield LogStream(id="svc-log")
@@ -141,6 +144,13 @@ class ServicesScreen(Screen):
                     self.run_worker(self._start_stargate(), exclusive=True)
                 else:
                     self.run_worker(self._stop_stargate(), exclusive=True)
+            case "btn-start-rag" | "btn-stop-rag":
+                self.query_one("#btn-start-rag", Button).disabled = True
+                self.query_one("#btn-stop-rag", Button).disabled = True
+                if event.button.id == "btn-start-rag":
+                    self.run_worker(self._start_rag(), exclusive=True)
+                else:
+                    self.run_worker(self._stop_rag(), exclusive=True)
             case "btn-restart-local":
                 self.run_worker(self._restart_local(), exclusive=True)
             case "btn-refresh":
@@ -152,7 +162,7 @@ class ServicesScreen(Screen):
         svc = self.app.service_controller  # type: ignore[attr-defined]
         build = svc.check_image()
         services = svc.service_state.check_all()
-        gw, sg = services[0], services[1]
+        gw, sg, rag = services[0], services[1], services[2]
 
         config_text = f"  ({build.config.summary()})" if build.config.cpu else ""
         self.query_one("#img-detail", Static).update(
@@ -163,13 +173,19 @@ class ServicesScreen(Screen):
         )
         self.query_one("#svc-gw", Static).update(f"  Gateway:  {gw.status} {gw.detail}")
         self.query_one("#svc-sg", Static).update(f"  Stargate: {sg.status} {sg.detail}")
+        self.query_one("#svc-rag", Static).update(
+            f"  RAG:      {rag.status} {rag.detail}"
+        )
 
         gw_exists = gw.status.value != "stopped"
         sg_up = sg.status.value == "running"
+        rag_up = rag.status.value == "running"
         self.query_one("#btn-start-gw", Button).disabled = gw_exists
         self.query_one("#btn-stop-gw", Button).disabled = not gw_exists
         self.query_one("#btn-start-sg", Button).disabled = sg_up
         self.query_one("#btn-stop-sg", Button).disabled = not sg_up
+        self.query_one("#btn-start-rag", Button).disabled = rag_up
+        self.query_one("#btn-stop-rag", Button).disabled = not rag_up
 
     def _update_build_flags(self) -> None:
         scope_sel = self.query_one("#build-scope", Select)
@@ -251,6 +267,20 @@ class ServicesScreen(Screen):
     async def _stop_stargate(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
         result = await svc.stop_stargate()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _start_rag(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.start_rag()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _stop_rag(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.stop_rag()
         self.query_one("#svc-log", LogStream).write_line(result)
         await asyncio.sleep(2)
         self._refresh_status()

@@ -32,7 +32,7 @@ class ServiceInfo:
 
 class ServiceState:
     """
-    Checks health of Gateway (container) and Stargate (host process).
+    Checks health of Gateway (container), Stargate (host process), and RAG service.
 
     All methods are synchronous for simplicity; the TUI runs them
     via run_in_executor or Worker threads.
@@ -40,13 +40,40 @@ class ServiceState:
 
     GATEWAY_PORT = 9998
     STARGATE_PORT = 9999
+    RAG_PORT = 8100
     STARGATE_PID_FILE = Path.home() / ".gateway" / "stargate.pid"
+    RAG_PID_FILE = Path.home() / ".gateway" / "rag.pid"
 
     def __init__(self, workspace_root: Path) -> None:
         self._workspace_root = workspace_root
 
     def check_all(self) -> list[ServiceInfo]:
-        return [self.check_gateway(), self.check_stargate()]
+        return [self.check_gateway(), self.check_stargate(), self.check_rag()]
+
+    def check_rag(self) -> ServiceInfo:
+        pid = self._read_pid(self.RAG_PID_FILE)
+        if pid and self._pid_alive(pid):
+            healthy = self._port_open(self.RAG_PORT)
+            return ServiceInfo(
+                name="RAG",
+                status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
+                port=self.RAG_PORT,
+                pid=pid,
+                health_url=f"http://localhost:{self.RAG_PORT}/stats",
+                detail=f"PID {pid}" + ("" if healthy else ", port not responding"),
+            )
+        if self._port_open(self.RAG_PORT):
+            return ServiceInfo(
+                name="RAG",
+                status=ServiceStatus.RUNNING,
+                port=self.RAG_PORT,
+                detail="Port open (no PID file)",
+            )
+        return ServiceInfo(
+            name="RAG",
+            status=ServiceStatus.STOPPED,
+            port=self.RAG_PORT,
+        )
 
     def check_gateway(self) -> ServiceInfo:
         container = self._check_container("edge-localhost")

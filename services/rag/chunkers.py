@@ -127,7 +127,7 @@ def chunk_file(path: Path) -> list[Chunk]:
     """Dispatch to the correct chunker based on file extension."""
     suffix = path.suffix.lower()
 
-    if suffix in {".md", ".txt"}:
+    if suffix in {".md", ".mdc", ".txt"}:
         return chunk_markdown(str(path), path.read_text(errors="replace"))
 
     if suffix == ".pdf":

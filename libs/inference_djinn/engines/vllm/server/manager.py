@@ -5,7 +5,9 @@ Handles vllm serve process spawning, health monitoring, and graceful shutdown.
 """
 
 import asyncio
+import os
 import shutil
+import signal
 import subprocess
 import time
 from enum import StrEnum
@@ -127,12 +129,17 @@ class VLLMServerManager:
         self.status = ServerStatus.STARTING
         env = self.config.to_subprocess_env()
         try:
+            # start_new_session=True places the vLLM HTTP server and all its
+            # children (EngineCore, resource tracker, etc.) in a dedicated
+            # process group. This lets us kill the full tree via os.killpg
+            # without affecting the parent worker process.
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 env=env,
+                start_new_session=True,
             )
             logger.info(f"🚀 [vllm-server] Process started (PID: {self.process.pid})")
         except Exception as e:
@@ -166,6 +173,35 @@ class VLLMServerManager:
                 await asyncio.sleep(2.0)
         raise TimeoutError(f"Server failed to become healthy within {timeout}s")
 
+    def _kill_process_group(self) -> None:
+        """Kill the vLLM process group (HTTP server + EngineCore + all children).
+
+        # ∀ process in group: receives SIGKILL immediately.
+        # Falls back to self.process.kill() if the pgid cannot be resolved
+        # (e.g. process already exited before this call).
+        """
+        if not self.process:
+            return
+        try:
+            pgid = os.getpgid(self.process.pid)
+            os.killpg(pgid, signal.SIGKILL)
+            logger.info(
+                "🔪 [vllm-server] Killed process group %d (HTTP server + EngineCore)",
+                pgid,
+            )
+        except ProcessLookupError:
+            # Process already gone — nothing to kill.
+            pass
+        except OSError as e:
+            logger.warning(
+                "⚠️ [vllm-server] killpg failed (%s), falling back to process.kill()",
+                e,
+            )
+            try:
+                self.process.kill()
+            except OSError:
+                pass
+
     def _check_process_alive(self) -> None:
         """Raise RuntimeError if the server process has exited."""
         if self.process and self.process.poll() is not None:
@@ -183,18 +219,58 @@ class VLLMServerManager:
             raise RuntimeError(error_msg)
 
     async def _monitor_health(self) -> None:
-        """Background health check every 10s."""
+        """Background health check every 10s.
+
+        # status = STOPPED  ⟺ process exited (or forcibly killed as hung)
+        # status = UNHEALTHY ⟺ server reachable but returns non-200
+        # httpx.RequestError with process alive → server not responding;
+        #   ∀ VLLM_SLEEP_WHEN_IDLE: /health may time out while compute is suspended
+        #   without the process being dead — do not change status transiently.
+        #   ∀ consecutive_unreachable ≥ _HUNG_THRESHOLD: process is treated as
+        #   hung (frozen event loop), killed, and status set to STOPPED so the
+        #   engine lifecycle can restart it.
+        """
+        # 30 × 10s = 300s before treating an unresponsive-but-alive process as hung.
+        # Covers worst-case legitimate inference latency (large context, slow decode)
+        # while still recovering from a frozen asyncio event loop.
+        hung_threshold = 30
+        consecutive_unreachable = 0
+
         logger.info("🔍 [vllm-server] Starting health monitoring")
         while not self._shutdown_event.is_set():
             try:
                 async with self._create_async_client(timeout=5.0) as client:
                     response = await client.get("/health")
+                    consecutive_unreachable = 0
                     if response.status_code != 200:
-                        self.status = ServerStatus.UNHEALTHY
+                        if self.status != ServerStatus.UNHEALTHY:
+                            logger.warning(
+                                "⚠️ [vllm-server] Marking UNHEALTHY: /health returned %d",
+                                response.status_code,
+                            )
+                            self.status = ServerStatus.UNHEALTHY
                     elif self.status == ServerStatus.UNHEALTHY:
+                        logger.info("✅ [vllm-server] Health recovered")
                         self.status = ServerStatus.RUNNING
-            except httpx.RequestError:
-                self.status = ServerStatus.UNHEALTHY
+            except httpx.RequestError as e:
+                if self.process and self.process.poll() is None:
+                    consecutive_unreachable += 1
+                    if consecutive_unreachable >= hung_threshold:
+                        logger.error(
+                            "❌ [vllm-server] Unresponsive for %ds with process alive "
+                            "— event loop likely frozen, killing process group",
+                            consecutive_unreachable * 10,
+                        )
+                        self._kill_process_group()
+                        self.status = ServerStatus.STOPPED
+                        break
+                    logger.debug(
+                        "🔍 [vllm-server] /health unreachable (process alive, "
+                        "may be sleeping; %d/%d): %s",
+                        consecutive_unreachable,
+                        hung_threshold,
+                        e,
+                    )
 
             if self.process and self.process.poll() is not None:
                 try:
@@ -224,7 +300,12 @@ class VLLMServerManager:
 
         if self.process:
             try:
-                self.process.terminate()
+                # SIGTERM to the process group so EngineCore also gets the signal.
+                try:
+                    pgid = os.getpgid(self.process.pid)
+                    os.killpg(pgid, signal.SIGTERM)
+                except OSError:
+                    self.process.terminate()
                 try:
                     await asyncio.wait_for(
                         asyncio.to_thread(self.process.wait),
@@ -233,9 +314,9 @@ class VLLMServerManager:
                     logger.info("✅ [vllm-server] Server stopped gracefully")
                 except TimeoutError:
                     logger.warning(
-                        "⚠️ [vllm-server] Graceful shutdown timed out, killing"
+                        "⚠️ [vllm-server] Graceful shutdown timed out, killing process group"
                     )
-                    self.process.kill()
+                    self._kill_process_group()
                     await asyncio.to_thread(self.process.wait)
                     logger.info("✅ [vllm-server] Server killed")
             except Exception as e:

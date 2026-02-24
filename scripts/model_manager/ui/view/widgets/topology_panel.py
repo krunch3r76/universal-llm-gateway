@@ -246,10 +246,12 @@ class TopologyPanel(Widget):
 
         self._append_line("localhost", "Restarting local services...")
         self._append_line("localhost", await svc.stop_stargate())
+        self._append_line("localhost", await svc.stop_rag())
         self._append_line("localhost", await svc.stop_gateway())
         await asyncio.sleep(1)
         self._append_line("localhost", await svc.start_gateway())
         await asyncio.sleep(0.5)
+        self._append_line("localhost", await svc.start_rag())
         result = await svc.start_stargate()
         self._append_line("localhost", result)
         if result.startswith("Stargate failed") or result.startswith(

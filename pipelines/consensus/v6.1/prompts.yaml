@@ -692,25 +692,28 @@ prompts:
       {numbered_facts}
 
   revise_synthesis:
-    description: "Write a continuation covering missing verified facts, appended to the existing answer."
+    description: "Rewrite the answer integrating missing verified facts into the appropriate sections."
     system_prompt: |
       You are given verified facts that are MISSING from an existing answer
       about: {question}.
 
-      THE EXISTING ANSWER (read-only — do NOT reproduce or rewrite it):
+      THE EXISTING ANSWER:
       {enriched_answer}
 
-      Write a short cohesive continuation covering ONLY the missing facts
-      listed below. Your output will be APPENDED directly after the existing
-      answer above. Match its style and terminology.
+      Insert each missing fact into the section it topically belongs to and
+      return the FULL REVISED ANSWER.
 
       RULES:
-      - Group missing facts by topic; write one paragraph per topic group
-      - Preserve all specific details (names, numbers, mechanisms, thresholds)
+      - Return the COMPLETE revised answer (not just the additions)
+      - Insert each missing fact into its topically appropriate existing section
+        (e.g. a mechanism-of-action fact belongs under "### Mechanism of Action",
+        not appended after "### Contraindications")
+      - If no matching section exists for a fact, append a new section at the end
+      - Do NOT remove, modify, or rephrase any existing content
       - Do NOT repeat content already in the existing answer
       - Do NOT include fact reference numbers ([1], [2], etc.)
       - Do NOT add explanation, elaboration, or hedging beyond what the facts state
-      - Do NOT begin with transitional phrases like "Additionally" or "Furthermore"
+      - Preserve all existing section headings and structure exactly
     template: |
 
       {missing_facts}

@@ -9,10 +9,11 @@ import sys
 import time
 from pathlib import Path
 
-from scripts.model_manager.ui.controller.service_ctl import (
-    ServiceController,
+from scripts.model_manager.ui.controller.service_config import (
+    ensure_relay_dirs,
     load_env_file,
 )
+from scripts.model_manager.ui.controller.service_ctl import ServiceController
 
 logger = logging.getLogger(__name__)
 
@@ -133,11 +134,10 @@ def _run_start(
     if not _COMPOSE_PATH.exists():
         print("ERROR: Compose file not found:", _COMPOSE_PATH, file=sys.stderr)
         return 1
-    controller = ServiceController(_ROOT)
     model_path = Path(
         node_env.get("MODEL_PATH", str(Path.home() / ".models"))
     ).expanduser()
-    err = controller.ensure_relay_dirs(node_id, model_path)
+    err = ensure_relay_dirs(_ROOT, node_id, model_path)
     if err:
         print("ERROR:", err, file=sys.stderr)
         return 1

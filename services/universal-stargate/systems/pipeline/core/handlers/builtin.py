@@ -642,7 +642,7 @@ class BaseHandler(AbstractStepHandler):
         # Extract actual inference duration from llama.cpp timings.
         # predicted_ms = generation time only (excludes queue wait + prompt eval).
         # queue_wait = latency_ms - inference_ms gives the scheduling delay.
-        timings = response.get("timings", {})
+        timings = response.get("timings") or {}
         inference_ms = float(timings.get("predicted_ms", 0.0))
 
         # Extract content and finish_reason with validation

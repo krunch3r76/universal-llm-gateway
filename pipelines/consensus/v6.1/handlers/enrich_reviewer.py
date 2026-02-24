@@ -286,7 +286,8 @@ class EnrichReviewerHandler(BaseHandler):
             safe=True,
         )
         gen_params = step.generation_parameters or {}
-        append_budget = max(256, 60 * len(missing_indices))
+        # Budget covers the full revised answer, not just an appended continuation.
+        revision_budget = max(2048, 200 * len(missing_indices))
         re_enrich_result = await self._call_model(
             model_id,
             rendered_re_enrich.user_prompt,
@@ -295,14 +296,15 @@ class EnrichReviewerHandler(BaseHandler):
             system_prompt=rendered_re_enrich.system_prompt,
             temperature=gen_params.get("temperature", 0.3),
             max_tokens=self._resolve_max_tokens(
-                step, context, handler_default=append_budget
+                step, context, handler_default=revision_budget
             ),
         )
-        # Append-only: preserve the original answer exactly, concatenate the
-        # model-formatted sentences for the missing facts. A rewrite would let
-        # the 7B model silently drop content it fails to reproduce.
-        additions = re_enrich_result.content.strip()
-        final_answer = enriched_answer.rstrip() + "\n\n" + additions
+        # Section-aware integration: model returns the full revised answer with
+        # missing facts inserted into their appropriate sections (e.g. a
+        # mechanism-of-action fact goes under "### Mechanism of Action", not
+        # appended after "### Contraindications"). The subsequent check_synthesis
+        # round catches anything the model failed to include.
+        final_answer = re_enrich_result.content.strip()
         pt += re_enrich_result.prompt_tokens or 0
         ct += re_enrich_result.completion_tokens or 0
         return (final_answer, len(missing_indices), pt, ct)
