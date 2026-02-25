@@ -535,11 +535,11 @@ prompts:
       - "Outside of context A, X does not hold any significance"
 
       NOT universal negatives (do NOT return their indices):
-      - "42 is not a prime number" — specific falsifiable claim about one property
-      - "42 is not divisible by 5" — specific falsifiable arithmetic claim
+      - "44 is not a prime number" — specific falsifiable claim about one property
+      - "44 is not divisible by 5" — specific falsifiable arithmetic claim
       - "X is a relatively ordinary integer" — subjective but not claiming total absence
-      - "42 is an even number" — positive factual claim
-      - "42 does not appear in the Fibonacci sequence" — specific falsifiable claim
+      - "44 is an even number" — positive factual claim
+      - "43 does not appear in the Fibonacci sequence" — specific falsifiable claim
 
       The key distinction: a universal negative claims TOTAL ABSENCE of significance
       or properties across a whole domain. A specific negative denies ONE particular
@@ -755,11 +755,11 @@ prompts:
         (e.g. "TCP", "quantum mechanics", "natural selection",
          "the French Revolution", "TCP's flow control mechanism")
       - PREFER THE QUESTION'S PRIMARY SUBJECT as the topic. Most claims
-        from an answer about "Metformin" should have topic "Metformin",
-        not sub-topics like "cells" or "glucose absorption". Use the same
-        topic for claims about properties, mechanisms, or effects of the
-        primary subject. Only use a different topic when a claim genuinely
-        belongs to a separate domain (e.g. a comparison entity).
+        from an answer about a specific subject should share that subject
+        as their topic, not sub-topics like incidental mechanisms or side
+        entities. Use the same topic for claims about properties, mechanisms,
+        or effects of the primary subject. Only use a different topic when a
+        claim genuinely belongs to a separate domain (e.g. a comparison entity).
       - Claims are grouped by topic for batch verification — consistent
         topics allow claims to collate under a single heading
       - Do NOT include framing words like "In the context of" or "Regarding"
@@ -771,7 +771,7 @@ prompts:
       - If a claim is already self-standing and names the primary subject
         explicitly, return an empty string for its context field
       - Resolve pronoun ambiguity by naming the subject in the topic
-        (e.g. "TCP" when the claim says "It uses a three-way handshake")
+        (e.g. use the question's primary subject when the claim says "It ...")
 
       Return a JSON object with a "claims" array containing exactly
       {claim_count} entries, one per input claim in order.

@@ -32,7 +32,7 @@ def evaluate_feasibility(
     requirements_lookup: Callable[[ModelId], tuple[int, int]],
     sticky: bool = True,
     routing_key_tracker: RoutingKeyTracker | None = None,
-    is_gateway_available_fn: Callable[[str], bool] | None = None,
+    is_gateway_available_fn: Callable[[str, str], bool] | None = None,
 ) -> tuple[
     FeasibilityTier,
     tuple[ConstraintFailure, ...],
@@ -73,13 +73,13 @@ def evaluate_feasibility(
 
     # Check 0: Circuit Breaker (Prioritize before health check)
     if is_gateway_available_fn:
-        if not is_gateway_available_fn(gateway.name):
+        if not is_gateway_available_fn(gateway.name, str(placement.model_id)):
             logger.warning(f"❌ Circuit OPEN for {gateway.name} - marking INFEASIBLE")
             failures.append(
                 ConstraintFailure(
                     constraint="circuit_breaker",
                     reason=f"Circuit OPEN for {gateway.name}",
-                    details={"circuit_open": True},
+                    details={"circuit_open": True, "model_id": str(placement.model_id)},
                 )
             )
             return FeasibilityTier.T0_INFEASIBLE, tuple(failures), None

@@ -64,6 +64,14 @@ steps:
     type: consensus_combine_passages_v6_1
     model_ref: qwen
     prompt_ref: consensus.v6.1.combine_passages
+    # synthesis_chunk_size: facts sent per model call. Qwen (and <=10B models generally)
+    # cannot reliably track >~40 facts simultaneously while also formatting structured
+    # output from 3 long passages. At 75 facts the model drops claims, fabricates
+    # connections, or produces a shallow summary. 25 keeps the working set tractable;
+    # the revise_synthesis calls on chunks 2+ operate without the passage scaffolding,
+    # further reducing context pressure. review_synthesis catches any residual gaps.
+    synthesis_chunk_size: 25
+    prompt_ref_re_enrich: consensus.v6.1.revise_synthesis
     handler_inputs:
       passage_0: strip_0.raw
       passage_1: strip_1.raw

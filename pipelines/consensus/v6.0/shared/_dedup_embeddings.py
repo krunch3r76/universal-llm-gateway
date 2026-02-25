@@ -21,6 +21,14 @@ from universal_logging import get_logger
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
 
+# Routing-transient errors: 404 = no gateway available yet (model unloaded, eviction
+# blocked by concurrent load); 503 = gateway at capacity. Both resolve within seconds
+# once verify load clears.
+_RETRYABLE_STATUS_CODES = frozenset({404, 503})
+_RETRY_ATTEMPTS = 6
+_RETRY_BASE_DELAY_S = 3.0
+_RETRY_MAX_DELAY_S = 15.0
+
 logger = get_logger(__name__)
 
 
@@ -121,68 +129,92 @@ async def get_embeddings(
             )
         )
 
-    try:
-        response = await proxy_client.embeddings(
-            model=resolved_model,
-            texts=statements,
-            execution_id=execution_id,
-            step_id=step_id,
-        )
+    last_error: ProxyClientError | None = (
+        None  # tracks last retryable error for log context
+    )
+    for attempt in range(_RETRY_ATTEMPTS):
+        if attempt > 0:
+            delay = min(_RETRY_BASE_DELAY_S * (2 ** (attempt - 1)), _RETRY_MAX_DELAY_S)
+            logger.warning(
+                f"Embedding retry {attempt}/{_RETRY_ATTEMPTS - 1} for {resolved_model} "
+                f"(status={last_error.status_code if last_error else '?'}, "
+                f"may_be_circuit={'capacity' in str(last_error) if last_error else False}) "
+                f"after {delay:.1f}s"
+            )
+            await asyncio.sleep(delay)
 
-        embeddings = np.array([d["embedding"] for d in response["data"]])
-        normalized = _normalize_embeddings(embeddings)
-
-        if event_bus:
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            embedding_dim = embeddings.shape[1] if embeddings.ndim > 1 else 0
-
-            asyncio.create_task(
-                event_bus.publish_async_nowait(
-                    PipelineStepEmbeddingCompleted(
-                        execution_id=execution_id,
-                        step_id=step_id,
-                        model_id=resolved_model,
-                        input_count=input_count,
-                        duration_ms=duration_ms,
-                        embedding_dim=embedding_dim,
-                    )
-                )
+        try:
+            response = await proxy_client.embeddings(
+                model=resolved_model,
+                texts=statements,
+                execution_id=execution_id,
+                step_id=step_id,
             )
 
-        return normalized
+            embeddings = np.array([d["embedding"] for d in response["data"]])
+            normalized = _normalize_embeddings(embeddings)
 
-    except ProxyClientError as e:
-        if event_bus:
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            asyncio.create_task(
-                event_bus.publish_async_nowait(
-                    PipelineStepEmbeddingFailed(
-                        execution_id=execution_id,
-                        step_id=step_id,
-                        model_id=resolved_model,
-                        input_count=input_count,
-                        duration_ms=duration_ms,
-                        error=str(e),
-                        status_code=e.status_code,
+            if event_bus:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                embedding_dim = embeddings.shape[1] if embeddings.ndim > 1 else 0
+
+                asyncio.create_task(
+                    event_bus.publish_async_nowait(
+                        PipelineStepEmbeddingCompleted(
+                            execution_id=execution_id,
+                            step_id=step_id,
+                            model_id=resolved_model,
+                            input_count=input_count,
+                            duration_ms=duration_ms,
+                            embedding_dim=embedding_dim,
+                        )
                     )
                 )
-            )
-        raise
 
-    except Exception as e:
-        if event_bus:
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            asyncio.create_task(
-                event_bus.publish_async_nowait(
-                    PipelineStepEmbeddingFailed(
-                        execution_id=execution_id,
-                        step_id=step_id,
-                        model_id=resolved_model,
-                        input_count=input_count,
-                        duration_ms=duration_ms,
-                        error=str(e),
-                        status_code=None,
+            return normalized
+
+        except ProxyClientError as e:
+            if (
+                e.status_code in _RETRYABLE_STATUS_CODES
+                and attempt < _RETRY_ATTEMPTS - 1
+            ):
+                last_error = e
+                continue
+
+            if event_bus:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                asyncio.create_task(
+                    event_bus.publish_async_nowait(
+                        PipelineStepEmbeddingFailed(
+                            execution_id=execution_id,
+                            step_id=step_id,
+                            model_id=resolved_model,
+                            input_count=input_count,
+                            duration_ms=duration_ms,
+                            error=str(e),
+                            status_code=e.status_code,
+                        )
                     )
                 )
-            )
-        raise
+            raise
+
+        except Exception as e:
+            if event_bus:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                asyncio.create_task(
+                    event_bus.publish_async_nowait(
+                        PipelineStepEmbeddingFailed(
+                            execution_id=execution_id,
+                            step_id=step_id,
+                            model_id=resolved_model,
+                            input_count=input_count,
+                            duration_ms=duration_ms,
+                            error=str(e),
+                            status_code=None,
+                        )
+                    )
+                )
+            raise
+
+    # ∀ attempt: returns, raises, or continues — loop body never falls through
+    raise AssertionError("unreachable: retry loop exited without return or raise")

@@ -45,13 +45,13 @@ options:
     - qwen
     - gemma_2_9b
     - llama_3_1_8b
-    - phi
+    - phi4
 
   veto_pool:
     - qwen
     - gemma_2_9b
     - llama_3_1_8b
-    - phi
+    - phi4
 
   originator_link0: qwen
   originator_link1: gemma_2_9b
@@ -62,7 +62,7 @@ options:
   domain_classify_model: gemma_2_9b
 
   contextualize_pool:
-    - gemma_2_9b
+    - phi
     - qwen
 
   # Chunk sizes — number of claims processed per model call.
@@ -84,7 +84,7 @@ token_defaults:
   verify_batch: 2048
   verify_individual: 512
   verify_classify: 512
-  verify_contextualize: 2048
+  verify_contextualize: 2560
   verify_math_decompose: 1024
   verify_decompose_compound: 1024
   verify_domain: 512

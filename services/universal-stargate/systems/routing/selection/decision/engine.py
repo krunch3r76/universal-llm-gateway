@@ -74,7 +74,7 @@ class DecisionEngine:
         event_bus: Any = None,
         emit_traces: bool | None = None,
         routing_key_tracker: RoutingKeyTracker | None = None,
-        is_gateway_available_fn: Callable[[str], bool] | None = None,
+        is_gateway_available_fn: Callable[[str, str], bool] | None = None,
     ):
         self._policy = policy
         self._event_bus = event_bus
@@ -456,7 +456,7 @@ def create_decision_engine(
     policy: RoutingPolicy,
     event_bus: Any = None,
     routing_key_tracker: RoutingKeyTracker | None = None,
-    is_gateway_available_fn: Callable[[str], bool] | None = None,
+    is_gateway_available_fn: Callable[[str, str], bool] | None = None,
 ) -> DecisionEngine:
     """Factory function for decision engine."""
     return DecisionEngine(

@@ -10,13 +10,6 @@ import asyncio
 import time
 from typing import TYPE_CHECKING
 
-# Routing-transient errors: 404 = no gateway available yet (model unloaded, eviction
-# blocked by concurrent load); 503 = gateway at capacity. Both resolve within seconds
-# once verify load clears.
-_RETRYABLE_STATUS_CODES = frozenset({404, 503})
-_RETRY_ATTEMPTS = 4
-_RETRY_BASE_DELAY_S = 2.0
-
 import numpy as np
 from src.scheduling.events import (
     PipelineStepEmbeddingCompleted,
@@ -27,6 +20,14 @@ from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
+
+# Routing-transient errors: 404 = no gateway available yet (model unloaded, eviction
+# blocked by concurrent load); 503 = gateway at capacity. Both resolve within seconds
+# once verify load clears.
+_RETRYABLE_STATUS_CODES = frozenset({404, 503})
+_RETRY_ATTEMPTS = 6
+_RETRY_BASE_DELAY_S = 3.0
+_RETRY_MAX_DELAY_S = 15.0
 
 logger = get_logger(__name__)
 
@@ -128,13 +129,16 @@ async def get_embeddings(
             )
         )
 
-    last_error: ProxyClientError | None = None  # tracks last retryable error for log context
+    last_error: ProxyClientError | None = (
+        None  # tracks last retryable error for log context
+    )
     for attempt in range(_RETRY_ATTEMPTS):
         if attempt > 0:
-            delay = _RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
+            delay = min(_RETRY_BASE_DELAY_S * (2 ** (attempt - 1)), _RETRY_MAX_DELAY_S)
             logger.warning(
                 f"Embedding retry {attempt}/{_RETRY_ATTEMPTS - 1} for {resolved_model} "
-                f"(status={last_error.status_code if last_error else '?'}) "
+                f"(status={last_error.status_code if last_error else '?'}, "
+                f"may_be_circuit={'capacity' in str(last_error) if last_error else False}) "
                 f"after {delay:.1f}s"
             )
             await asyncio.sleep(delay)
@@ -169,7 +173,10 @@ async def get_embeddings(
             return normalized
 
         except ProxyClientError as e:
-            if e.status_code in _RETRYABLE_STATUS_CODES and attempt < _RETRY_ATTEMPTS - 1:
+            if (
+                e.status_code in _RETRYABLE_STATUS_CODES
+                and attempt < _RETRY_ATTEMPTS - 1
+            ):
                 last_error = e
                 continue
 

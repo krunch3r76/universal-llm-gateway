@@ -83,7 +83,7 @@ models:
     # USE FOR: Answer generation, verification (balanced quality/speed)
 
   gemma3_12b:
-    model: gemma-3-12b-it-q4-k-m-16384
+    model: gemma-3-12b-it-q4-k-m-32768
     system_prompt: ""
     # execution:
       # chunk_size: 1           # Statements per batch (default: 10)

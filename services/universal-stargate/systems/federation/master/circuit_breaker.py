@@ -58,18 +58,58 @@ class FederationCircuitBreaker:
         failure_threshold: int = 5,
         recovery_timeout_seconds: float = 30.0,
         half_open_max_requests: int = 3,
+        gateway_failure_model_threshold: int = 3,
     ):
         self._failure_threshold = failure_threshold
         self._recovery_timeout = recovery_timeout_seconds
         self._half_open_max = half_open_max_requests
+        self._gateway_failure_model_threshold = gateway_failure_model_threshold
 
-        self._circuits: dict[str, CircuitStats] = {}
-        self._half_open_requests: dict[str, int] = {}
+        self._circuits: dict[tuple[str, str], CircuitStats] = {}
+        self._half_open_requests: dict[tuple[str, str], int] = {}
+        self._gateway_wide_open: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
-    def get_state(self, gateway_id: str) -> CircuitState:
-        """Get current circuit state for gateway."""
-        stats = self._circuits.get(gateway_id)
+    def _pair_key(self, gateway_id: str, model_id: str) -> tuple[str, str]:
+        return (gateway_id, model_id)
+
+    def _is_gateway_wide_open(self, gateway_id: str) -> bool:
+        opened_at = self._gateway_wide_open.get(gateway_id)
+        if opened_at is None:
+            return False
+        time_in_open = time.time() - opened_at
+        return time_in_open < self._recovery_timeout
+
+    def _count_open_models(self, gateway_id: str) -> int:
+        return sum(
+            1
+            for (gw_id, _), stats in self._circuits.items()
+            if gw_id == gateway_id and self._evaluate_state(stats) == CircuitState.OPEN
+        )
+
+    def _update_gateway_wide_state(self, gateway_id: str) -> None:
+        open_model_count = self._count_open_models(gateway_id)
+        if open_model_count >= self._gateway_failure_model_threshold:
+            if not self._is_gateway_wide_open(gateway_id):
+                self._gateway_wide_open[gateway_id] = time.time()
+                logger.warning(
+                    "🔴 Gateway-wide circuit OPEN for %s after %d models failed",
+                    gateway_id,
+                    open_model_count,
+                )
+            return
+
+        if gateway_id in self._gateway_wide_open:
+            self._gateway_wide_open.pop(gateway_id, None)
+            logger.info(
+                "🟢 Gateway-wide circuit CLOSED for %s (open models: %d)",
+                gateway_id,
+                open_model_count,
+            )
+
+    def get_state(self, gateway_id: str, model_id: str) -> CircuitState:
+        """Get current circuit state for a gateway/model pair."""
+        stats = self._circuits.get(self._pair_key(gateway_id, model_id))
         if not stats:
             return CircuitState.CLOSED
         return self._evaluate_state(stats)
@@ -82,7 +122,7 @@ class FederationCircuitBreaker:
                 return CircuitState.HALF_OPEN
         return stats.state
 
-    async def should_allow_request(self, gateway_id: str) -> bool:
+    async def should_allow_request(self, gateway_id: str, model_id: str) -> bool:
         """
         Check if request should be allowed to gateway.
 
@@ -90,7 +130,14 @@ class FederationCircuitBreaker:
             True if request should proceed, False if circuit is open
         """
         async with self._lock:
-            stats = self._circuits.get(gateway_id)
+            if self._is_gateway_wide_open(gateway_id):
+                logger.warning(
+                    f"🔴 Gateway-wide circuit OPEN for {gateway_id} - rejecting request"
+                )
+                return False
+
+            pair_key = self._pair_key(gateway_id, model_id)
+            stats = self._circuits.get(pair_key)
             if not stats:
                 return True
 
@@ -100,26 +147,31 @@ class FederationCircuitBreaker:
                 return True
 
             if state == CircuitState.OPEN:
-                logger.warning(f"🔴 Circuit OPEN for {gateway_id} - rejecting request")
+                logger.warning(
+                    f"🔴 Circuit OPEN for {gateway_id}/{model_id} - rejecting request"
+                )
                 return False
 
             # HALF_OPEN - allow limited requests
-            half_open_count = self._half_open_requests.get(gateway_id, 0)
+            half_open_count = self._half_open_requests.get(pair_key, 0)
             if half_open_count >= self._half_open_max:
-                logger.debug(f"🟡 Circuit HALF_OPEN limit reached for {gateway_id}")
+                logger.debug(
+                    f"🟡 Circuit HALF_OPEN limit reached for {gateway_id}/{model_id}"
+                )
                 return False
 
-            self._half_open_requests[gateway_id] = half_open_count + 1
+            self._half_open_requests[pair_key] = half_open_count + 1
             logger.info(
-                f"🟡 Circuit HALF_OPEN for {gateway_id} - allowing test request "
-                f"({half_open_count + 1}/{self._half_open_max})"
+                f"🟡 Circuit HALF_OPEN for {gateway_id}/{model_id} "
+                f"- allowing test request ({half_open_count + 1}/{self._half_open_max})"
             )
             return True
 
-    async def record_success(self, gateway_id: str) -> None:
-        """Record successful request to gateway."""
+    async def record_success(self, gateway_id: str, model_id: str) -> None:
+        """Record successful request to gateway/model pair."""
         async with self._lock:
-            stats = self._circuits.setdefault(gateway_id, CircuitStats())
+            pair_key = self._pair_key(gateway_id, model_id)
+            stats = self._circuits.setdefault(pair_key, CircuitStats())
             stats.success_count += 1
             stats.last_success_time = time.time()
 
@@ -129,13 +181,25 @@ class FederationCircuitBreaker:
                 stats.state = CircuitState.CLOSED
                 stats.state_changed_at = time.time()
                 stats.failure_count = 0
-                self._half_open_requests.pop(gateway_id, None)
-                logger.info(f"🟢 Circuit CLOSED for {gateway_id} - recovery successful")
+                self._half_open_requests.pop(pair_key, None)
+                logger.info(
+                    f"🟢 Circuit CLOSED for {gateway_id}/{model_id} "
+                    "- recovery successful"
+                )
 
-    async def record_failure(self, gateway_id: str, error: str | None = None) -> None:
-        """Record failed request to gateway."""
+            self._update_gateway_wide_state(gateway_id)
+
+    async def record_failure(
+        self,
+        gateway_id: str,
+        model_id: str,
+        *,
+        error: str | None = None,
+    ) -> None:
+        """Record failed request to gateway/model pair."""
         async with self._lock:
-            stats = self._circuits.setdefault(gateway_id, CircuitStats())
+            pair_key = self._pair_key(gateway_id, model_id)
+            stats = self._circuits.setdefault(pair_key, CircuitStats())
             stats.failure_count += 1
             stats.last_failure_time = time.time()
 
@@ -144,48 +208,82 @@ class FederationCircuitBreaker:
             if state == CircuitState.HALF_OPEN:
                 stats.state = CircuitState.OPEN
                 stats.state_changed_at = time.time()
-                self._half_open_requests.pop(gateway_id, None)
+                self._half_open_requests.pop(pair_key, None)
                 logger.warning(
-                    f"🔴 Circuit reopened for {gateway_id} - recovery failed: {error}"
+                    f"🔴 Circuit reopened for {gateway_id}/{model_id} "
+                    f"- recovery failed: {error}"
                 )
             elif state == CircuitState.CLOSED:
                 if stats.failure_count >= self._failure_threshold:
                     stats.state = CircuitState.OPEN
                     stats.state_changed_at = time.time()
                     logger.warning(
-                        f"🔴 Circuit OPEN for {gateway_id} after "
+                        f"🔴 Circuit OPEN for {gateway_id}/{model_id} after "
                         f"{stats.failure_count} failures"
                     )
+            self._update_gateway_wide_state(gateway_id)
 
-    def get_all_states(self) -> dict[str, dict[str, Any]]:
+    def get_all_states(self) -> dict[str, Any]:
         """Get all circuit states for health reporting."""
-        return {
-            gw_id: {
+        per_model: dict[str, dict[str, Any]] = {}
+        for (gateway_id, model_id), stats in self._circuits.items():
+            gateway_states = per_model.setdefault(gateway_id, {})
+            gateway_states[model_id] = {
                 "state": self._evaluate_state(stats).value,
                 "failure_count": stats.failure_count,
                 "success_count": stats.success_count,
                 "last_failure": stats.last_failure_time,
                 "last_success": stats.last_success_time,
             }
-            for gw_id, stats in self._circuits.items()
+
+        return {
+            "per_model": per_model,
+            "gateway_wide": {
+                gateway_id: {
+                    "state": (
+                        CircuitState.OPEN.value
+                        if self._is_gateway_wide_open(gateway_id)
+                        else CircuitState.CLOSED.value
+                    ),
+                    "opened_at": opened_at,
+                }
+                for gateway_id, opened_at in self._gateway_wide_open.items()
+            },
         }
 
-    async def reset(self, gateway_id: str) -> None:
-        """Reset circuit for gateway (manual intervention)."""
+    async def reset(self, gateway_id: str, model_id: str | None = None) -> None:
+        """Reset circuit for gateway/model pair or entire gateway."""
         async with self._lock:
-            if gateway_id in self._circuits:
-                self._circuits[gateway_id] = CircuitStats()
-                self._half_open_requests.pop(gateway_id, None)
-                logger.info(f"🔄 Circuit reset for {gateway_id}")
+            if model_id is None:
+                keys_to_reset = [
+                    pair_key for pair_key in self._circuits if pair_key[0] == gateway_id
+                ]
+                for pair_key in keys_to_reset:
+                    self._circuits[pair_key] = CircuitStats()
+                    self._half_open_requests.pop(pair_key, None)
+                self._gateway_wide_open.pop(gateway_id, None)
+                logger.info(f"🔄 Circuit reset for gateway {gateway_id}")
+                return
 
-    def is_request_allowed_sync(self, gateway_id: str) -> bool:
+            pair_key = self._pair_key(gateway_id, model_id)
+            if pair_key in self._circuits:
+                self._circuits[pair_key] = CircuitStats()
+                self._half_open_requests.pop(pair_key, None)
+                self._update_gateway_wide_state(gateway_id)
+                logger.info(f"🔄 Circuit reset for {gateway_id}/{model_id}")
+
+    def is_request_allowed_sync(self, gateway_id: str, model_id: str) -> bool:
         """
         Check if request is allowed (synchronous, read-only).
 
         Used by router for filtering candidates.
         Note: Accesses shared state without lock (acceptable for routing hint).
         """
-        stats = self._circuits.get(gateway_id)
+        if self._is_gateway_wide_open(gateway_id):
+            return False
+
+        pair_key = self._pair_key(gateway_id, model_id)
+        stats = self._circuits.get(pair_key)
         if not stats:
             return True
 
@@ -196,7 +294,7 @@ class FederationCircuitBreaker:
 
         if state == CircuitState.HALF_OPEN:
             # Best-effort check without lock
-            half_open_count = self._half_open_requests.get(gateway_id, 0)
+            half_open_count = self._half_open_requests.get(pair_key, 0)
             if half_open_count >= self._half_open_max:
                 return False
 

@@ -371,7 +371,8 @@ class RequestExecutor:
         # Check circuit breaker (if available)
         if self._federation_circuit_breaker:
             if not await self._federation_circuit_breaker.should_allow_request(
-                fed_gateway.gateway_id
+                fed_gateway.gateway_id,
+                str(context.selected_model),
             ):
                 raise HTTPException(
                     status_code=502,
@@ -502,7 +503,8 @@ class RequestExecutor:
 
             if self._federation_circuit_breaker:
                 await self._federation_circuit_breaker.record_success(
-                    fed_gateway.gateway_id
+                    fed_gateway.gateway_id,
+                    str(context.selected_model),
                 )
 
             return response
@@ -510,13 +512,17 @@ class RequestExecutor:
         except HTTPException as e:
             if self._federation_circuit_breaker and e.status_code >= 500:
                 await self._federation_circuit_breaker.record_failure(
-                    fed_gateway.gateway_id, str(e.detail)
+                    fed_gateway.gateway_id,
+                    str(context.selected_model),
+                    error=str(e.detail),
                 )
             raise
         except Exception as e:
             if self._federation_circuit_breaker:
                 await self._federation_circuit_breaker.record_failure(
-                    fed_gateway.gateway_id, str(e)
+                    fed_gateway.gateway_id,
+                    str(context.selected_model),
+                    error=str(e),
                 )
             raise
 
