@@ -1,0 +1,258 @@
+# Consensus v7 — Standalone versioned consensus pipeline
+#
+# This variant is functionally aligned with the prior consensus flow while using
+# isolated v7 step types and prompt namespace.
+#
+# Flow:
+#   CLASSIFY:
+#     analyze_question
+#
+#   ANSWER:
+#     answer_all (parallel across 3 models)
+#
+#   VERIFY + MERGE:
+#     verify_link0 (sub-pipeline: decompose→classify→atomicity→       ┐
+#                   contextualize→domain_verify→verify_general→filter) ├── PARALLEL
+#     verify_link1 (sub-pipeline)                                      │
+#     verify_link2 (sub-pipeline)                                      ┘
+#       → synergize (embed dedup, no LLM)
+#         → filter_negatives
+#           → veto_pass (sub-pipeline: veto_verify → veto_threshold)
+#
+#   SYNTHESIZE (sub-pipeline):
+#     synthesize (strip → combine → coverage_audit)
+
+schema_version: 6
+id: consensus-chain-v7
+version: "7"
+type: consensus
+description: "Consensus pipeline v7 with standalone versioned handlers and prompt namespace"
+
+options:
+  save_execution_summary: true
+  summary_format: detailed
+  include_step_stats: true
+  timeout_seconds: 1800
+
+  answer_models:
+    qwen: qwen
+    gemma_2_9b: gemma_2_9b
+    llama_3_1_8b: llama_3_1_8b
+
+  verifier_pool:
+    - qwen
+    - gemma_2_9b
+    - llama_3_1_8b
+    - phi4
+
+  veto_pool:
+    - qwen
+    - gemma_2_9b
+    - llama_3_1_8b
+    - phi4
+
+  originator_link0: qwen
+  originator_link1: gemma_2_9b
+  originator_link2: llama_3_1_8b
+
+  question_classify_model: qwen
+  decompose_model: gemma_2_9b
+  domain_classify_model: gemma_2_9b
+
+  contextualize_pool:
+    - phi4
+    - qwen
+
+  # Chunk sizes — number of claims processed per model call.
+  # Each option overrides the step default; omit to use the step default.
+  # Effective size is always min(option, model execution.chunk_size).
+  classify_chunk_size:      16  # classify_domain step
+  atomicity_chunk_size:     16  # atomicity_gate step
+  contextualize_chunk_size: 16  # contextualize step
+  verify_chunk_size:         1  # verify_general step
+  #   veto_chunk_size:           4  # veto_verify step
+  default_chunk_size: 1
+
+token_defaults:
+  analyze: 1024
+  classify: 256
+  answer: 4096
+  verify: 777
+  verify_decompose: 1776
+  verify_batch: 2048
+  verify_individual: 512
+  verify_classify: 512
+  verify_contextualize: 2560
+  verify_math_decompose: 1024
+  verify_decompose_compound: 1024
+  verify_domain: 512
+  constrained_multiplier: 0.5
+
+steps:
+  # ==========================================================================
+  # CLASSIFY
+  # ==========================================================================
+
+  # Classify the question and emit a structural contract (type, required_items, ordering) for synthesis.
+  - name: analyze_question
+    type: consensus_analyze_v7
+    model_ref: optionsNs.question_classify_model
+    prompt_ref: consensus.v7.analyze_question
+    handler_inputs:
+      text: sourceNs.text
+    handler_outputs:
+      contract: analyze_question.json
+    generation_parameters:
+      temperature: 0.0
+      response_format:
+        type: json_object
+    timeout_seconds: 60
+
+  # ==========================================================================
+  # ANSWER (parallel across models)
+  # ==========================================================================
+
+  # Generate candidate answers in parallel, one per model in the answer pool.
+  - name: answer_all
+    type: consensus_answer_v7
+    model_ref: qwen
+    map_over:
+      model: optionsNs.answer_models
+    map_inputs:
+      model_ref: mapNs.iteration.value
+    prompt_ref: consensus.v7.answer
+    handler_inputs:
+      text: sourceNs.text
+      question: analyze_question.json.cleaned_question
+    handler_outputs:
+      answers: answer_all.*.raw
+    generation_parameters:
+      temperature: 0.7
+    timeout_seconds: 180
+
+  # ==========================================================================
+  # VERIFY + MERGE (sub-pipeline verify + synergize)
+  # ==========================================================================
+
+  # Decompose, classify, and cross-verify qwen's answer → verified_facts + authority_verdicts.
+  - name: verify_link0
+    type: sub_pipeline
+    pipeline_ref: verify/verify.yaml
+    handler_inputs:
+      answer: answer_all.qwen.raw
+      question: analyze_question.json.cleaned_question
+      question_type: analyze_question.json.question_type
+      originator: optionsNs.originator_link0
+    timeout_seconds: 900
+
+  # Decompose, classify, and cross-verify gemma_2_9b's answer → verified_facts + authority_verdicts.
+  - name: verify_link1
+    type: sub_pipeline
+    pipeline_ref: verify/verify.yaml
+    handler_inputs:
+      answer: answer_all.gemma_2_9b.raw
+      question: analyze_question.json.cleaned_question
+      question_type: analyze_question.json.question_type
+      originator: optionsNs.originator_link1
+    timeout_seconds: 900
+
+  # Decompose, classify, and cross-verify llama_3_1_8b's answer → verified_facts + authority_verdicts.
+  - name: verify_link2
+    type: sub_pipeline
+    pipeline_ref: verify/verify.yaml
+    handler_inputs:
+      answer: answer_all.llama_3_1_8b.raw
+      question: analyze_question.json.cleaned_question
+      question_type: analyze_question.json.question_type
+      originator: optionsNs.originator_link2
+    timeout_seconds: 900
+
+  # Synergize: merge 3 verified fact sets + optional embedding dedup.
+  #
+  # Dedup currently disabled (threshold 1.0 = merge only, no clustering).
+  # The 141M nomic-embed model lacks discriminative power for topically
+  # dense claims (mean pairwise sim 0.824 on metformin). At 0.88,
+  # 42 verified facts collapsed to 15 — merging mechanistically distinct
+  # claims that share the same topic.
+  #
+  # Embedding model options (uncomment in models.yaml + set threshold):
+  #   embedding            (nomic-embed-text-v1.5, 141M, 768-dim)   — threshold 0.95+
+  #   bge_large            (bge-large-en-v1.5, 335M, 1024-dim)      — threshold 0.90
+  #   gte_large            (gte-large-en-v1.5, 434M, 1024-dim)      — threshold 0.90
+  #   octen_embedding_06b  (Octen-Embedding-0.6B, 0.6B, 1024-dim)   — threshold 0.90
+  #   octen_embedding_4b   (Octen-Embedding-4B, 4B, 2560-dim)       — threshold 0.88
+  #   octen_embedding_8b   (Octen-Embedding-8B, 7.6B, 4096-dim)     — threshold 0.88
+  - name: synergize
+    type: consensus_synergize_v7
+    handler_inputs:
+      verified_facts_0: verify_link0.json.verified_facts
+      verified_facts_1: verify_link1.json.verified_facts
+      verified_facts_2: verify_link2.json.verified_facts
+      rejected_claims_0: verify_link0.json.rejected_claims
+      rejected_claims_1: verify_link1.json.rejected_claims
+      rejected_claims_2: verify_link2.json.rejected_claims
+      authority_verdicts_0: verify_link0.json.authority_verdicts
+      authority_verdicts_1: verify_link1.json.authority_verdicts
+      authority_verdicts_2: verify_link2.json.authority_verdicts
+      question: analyze_question.json.cleaned_question
+    handler_outputs:
+      verified_facts: synergize.json.verified_facts
+      rejected_claims: synergize.json.rejected_claims
+      authority_verdicts: synergize.json.authority_verdicts
+    # embedding_model: embedding
+    # embedding_model: octen_embedding_4b  # mean sim 0.993 on metformin — entire pool collapses
+    embedding_model: bge_large
+    # embedding_model: gte_large
+    # embedding_model: octen_embedding_06b
+    # embedding_model: octen_embedding_8b
+    # embedding_model: embedding
+    similarity_threshold: 0.9     # 1.0 = merge only (no dedup); lower = dedup enabled
+    timeout_seconds: 60
+
+  # Remove universal-negative claims that poison synthesis when contradicted by positive facts.
+  - name: filter_negatives
+    type: consensus_filter_negatives_v7
+    model_ref: qwen
+    prompt_ref: consensus.v7.filter_negatives
+    handler_inputs:
+      verified_facts: synergize.json.verified_facts
+      authority_verdicts: synergize.json.authority_verdicts
+      question: analyze_question.json.cleaned_question
+    handler_outputs:
+      verified_facts: filter_negatives.json.verified_facts
+      authority_verdicts: filter_negatives.json.authority_verdicts
+    generation_parameters:
+      temperature: 0.0
+      response_format:
+        type: json_object
+    timeout_seconds: 60
+
+  # Second-opinion veto check on authority-accepted claims; unanimous rejection overrides authority.
+  - name: veto_pass
+    type: sub_pipeline
+    pipeline_ref: veto/veto.yaml
+    handler_inputs:
+      verified_facts: filter_negatives.json.verified_facts
+      rejected_claims: synergize.json.rejected_claims
+      authority_verdicts: filter_negatives.json.authority_verdicts
+      question: analyze_question.json.cleaned_question
+    timeout_seconds: 180
+
+  # ==========================================================================
+  # SYNTHESIZE (sub-pipeline)
+  # ==========================================================================
+
+  # Strip rejected claims from each answer, combine, then audit coverage.
+  - name: synthesize
+    type: sub_pipeline
+    pipeline_ref: synthesize/synthesize.yaml
+    handler_inputs:
+      answer_0: answer_all.qwen.raw
+      answer_1: answer_all.gemma_2_9b.raw
+      answer_2: answer_all.llama_3_1_8b.raw
+      verified_facts: veto_pass.json.verified_facts
+      rejected_claims: veto_pass.json.rejected_claims
+      question: analyze_question.json.cleaned_question
+    timeout_seconds: 900
+
+output: synthesize

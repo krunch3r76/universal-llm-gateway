@@ -6,7 +6,7 @@ import logging
 import httpx
 
 GATEWAY_URL = "http://localhost:9999"
-EMBED_MODEL = "nomic-embed-text-v1-5-q8-0-2048-cpu"
+EMBED_MODEL = "bge-m3-q8-0-8192-cpu"
 
 _client = httpx.AsyncClient(timeout=60.0)
 logger = logging.getLogger(__name__)

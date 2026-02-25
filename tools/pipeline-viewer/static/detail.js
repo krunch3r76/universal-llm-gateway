@@ -76,7 +76,11 @@ function buildTabs(step) {
   }
 
   if (step.iterations) {
-    tabs.push({ id: 'iterations', label: `Answers (${step.iterations.length})`, html: renderIterations(step) });
+    const isAssessLoop = step.iterations.some(it => it.action !== undefined);
+    const label = isAssessLoop
+      ? `Iterations (${step.iterations.length})`
+      : `Answers (${step.iterations.length})`;
+    tabs.push({ id: 'iterations', label, html: renderIterations(step) });
   }
 
   if (step.request_body || step.system_prompt || step.user_prompt) {
@@ -624,7 +628,30 @@ function renderTiebreaker(step) {
 
 function renderIterations(step) {
   return `<div class="iteration-cards">
-    ${step.iterations.map((it, i) => `
+    ${step.iterations.map((it, i) =>
+      it.action !== undefined ? renderAssessIteration(it) : renderMapIteration(it)
+    ).join('')}
+  </div>`;
+}
+
+function renderAssessIteration(it) {
+  const totalMs = (it.assess_latency_ms || 0) + (it.action_latency_ms || 0);
+  const termBadge = it.is_terminal ? ' <span class="terminal-badge">terminal</span>' : '';
+  const modelStr = it.model ? escHtml(shortModel(it.model)) + ' · ' : '';
+  return `
+      <div class="iteration-card${it.is_terminal ? ' terminal' : ''}">
+        <div class="iteration-header" onclick="toggleIteration(this)">
+          <span class="action-badge">${escHtml(it.action)}</span>${termBadge}
+          <span class="iter-meta">${modelStr}${(totalMs/1000).toFixed(1)}s</span>
+        </div>
+        <div class="iteration-body">
+          <div class="output-block">${escHtml(it.reason || 'No reason given')}</div>
+        </div>
+      </div>`;
+}
+
+function renderMapIteration(it) {
+  return `
       <div class="iteration-card">
         <div class="iteration-header" onclick="toggleIteration(this)">
           <span class="model-name">${escHtml(shortModel(it.model))}</span>
@@ -633,9 +660,7 @@ function renderIterations(step) {
         <div class="iteration-body">
           <div class="output-block">${escHtml(it.output || 'No output')}</div>
         </div>
-      </div>
-    `).join('')}
-  </div>`;
+      </div>`;
 }
 
 function toggleIteration(header) {

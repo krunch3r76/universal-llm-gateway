@@ -154,6 +154,20 @@ function applyEvent(sd, ev) {
             rejected: jd.rejected_claims.length,
           };
         }
+        if (jd.history && Array.isArray(jd.history) && !sd.iterations) {
+          sd.iterations = jd.history.map((h, i) => ({
+            index: h.iteration ?? i,
+            action: h.action || '',
+            reason: h.reason || '',
+            is_terminal: !!h.is_terminal,
+            model: h.model || '',
+            assess_latency_ms: h.assess_latency_ms || 0,
+            action_latency_ms: h.action_latency_ms || 0,
+            latency_ms: (h.assess_latency_ms || 0) + (h.action_latency_ms || 0),
+            prompt_tokens: h.prompt_tokens || 0,
+            completion_tokens: h.completion_tokens || 0,
+          }));
+        }
       }
       break;
     case 'step_completed':
@@ -240,6 +254,38 @@ function applyEvent(sd, ev) {
         decompose_latency_ms: ev.decompose_latency_ms || 0,
         details: ev.details || [],
       };
+      break;
+    case 'assess_loop_started':
+      if (!sd.json_data) sd.json_data = {};
+      sd.json_data.assess_loop = {
+        max_iterations: ev.max_iterations || 0,
+        terminal_action: ev.terminal_action || '',
+        action_names: ev.action_names || null,
+      };
+      break;
+    case 'assess_loop_iteration_completed': {
+      if (!sd.iterations) sd.iterations = [];
+      const aMs = ev.assess_latency_ms || 0;
+      const actMs = ev.action_latency_ms || 0;
+      sd.iterations.push({
+        index: ev.iteration || 0,
+        action: ev.action || '',
+        reason: ev.reason || '',
+        is_terminal: !!ev.is_terminal,
+        model: ev.action_model_id || '',
+        assess_latency_ms: aMs,
+        action_latency_ms: actMs,
+        latency_ms: aMs + actMs,
+        prompt_tokens: ev.iteration_prompt_tokens || 0,
+        completion_tokens: ev.iteration_completion_tokens || 0,
+      });
+      break;
+    }
+    case 'assess_loop_completed':
+      if (!sd.json_data) sd.json_data = {};
+      sd.json_data.exit_reason = ev.exit_reason || '';
+      sd.json_data.iterations_used = ev.iterations_used || 0;
+      sd.json_data.total_model_calls = ev.total_model_calls || 0;
       break;
     case 'tiebreaker_triggered':
       if (!sd.json_data) sd.json_data = {};

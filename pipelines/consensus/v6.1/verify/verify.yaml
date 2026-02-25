@@ -58,7 +58,6 @@ steps:
     chunk_size: 16
     handler_inputs:
       claims: atomicity_gate.json.claims
-      answer: inputs.answer
       question: inputs.question
     prompt_ref_contextualize: consensus.v6.1.contextualize
     timeout_seconds: 180

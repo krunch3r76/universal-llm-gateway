@@ -2,8 +2,10 @@
 
 Takes atomic claims from atomicity_gate and uses an LLM to produce a
 bare topic string for each claim (e.g. "TCP", "quantum mechanics").
-The topic is stored in ``context_prefix``; ``original_text`` is a copy
-of ``text``.  The ``text`` field is NOT modified.
+The topic is derived from the question alone — claims are already fully
+self-contained after decompose + atomicity_gate, so the full answer is
+not needed.  The topic is stored in ``context_prefix``; ``original_text``
+is a copy of ``text``.  The ``text`` field is NOT modified.
 
 At verification time, formatters use ``context_prefix`` and
 ``original_text`` to present claims with XML structural separation,
@@ -95,9 +97,6 @@ class ContextualizeHandler(BaseHandler):
         claims: list[dict[str, Any]] = self._resolve_input(
             resolver, step, "claims", step.handler_inputs
         )
-        answer: str = str(
-            self._resolve_input(resolver, step, "answer", step.handler_inputs) or ""
-        )
         question: str = str(
             self._resolve_input(resolver, step, "question", step.handler_inputs) or ""
         )
@@ -159,7 +158,6 @@ class ContextualizeHandler(BaseHandler):
                 prompt_ref,
                 {
                     "cleaned_question": question,
-                    "answer_text": answer,
                     "claim_count": len(chunk_claims),
                     "numbered_claims": numbered,
                 },

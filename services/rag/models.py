@@ -10,6 +10,7 @@ class SearchRequest(BaseModel):
     top_k: int = 5
     recency_weight: float = 0.0
     max_distance: float | None = None  # None = return all (backward compat)
+    source_prefixes: list[str] | None = None
 
 
 class SearchResponse(BaseModel):

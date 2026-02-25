@@ -130,6 +130,44 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
                 }
             )
 
+        case "assess_loop_started":
+            if sd.get("json_data") is None:
+                sd["json_data"] = {}
+            sd["json_data"]["assess_loop"] = {
+                "max_iterations": ev.get("max_iterations", 0),
+                "terminal_action": ev.get("terminal_action", ""),
+                "action_names": ev.get("action_names"),
+            }
+
+        case "assess_loop_iteration_completed":
+            if sd["iterations"] is None:
+                sd["iterations"] = []
+            iter_prompt = ev.get("iteration_prompt_tokens", 0)
+            iter_completion = ev.get("iteration_completion_tokens", 0)
+            assess_ms = ev.get("assess_latency_ms", 0)
+            action_ms = ev.get("action_latency_ms", 0)
+            sd["iterations"].append(
+                {
+                    "index": ev.get("iteration", 0),
+                    "action": ev.get("action", ""),
+                    "reason": ev.get("reason", ""),
+                    "is_terminal": ev.get("is_terminal", False),
+                    "model": ev.get("action_model_id", ""),
+                    "assess_latency_ms": assess_ms,
+                    "action_latency_ms": action_ms,
+                    "latency_ms": assess_ms + action_ms,
+                    "prompt_tokens": iter_prompt,
+                    "completion_tokens": iter_completion,
+                }
+            )
+
+        case "assess_loop_completed":
+            if sd.get("json_data") is None:
+                sd["json_data"] = {}
+            sd["json_data"]["exit_reason"] = ev.get("exit_reason", "")
+            sd["json_data"]["iterations_used"] = ev.get("iterations_used", 0)
+            sd["json_data"]["total_model_calls"] = ev.get("total_model_calls", 0)
+
         case "model_verdict_cast":
             pass
 
@@ -224,7 +262,30 @@ def _auto_enrich_from_json(sd: dict[str, Any], jd: dict[str, Any]) -> None:
             ],
         }
 
-    # 2. Auto-compute stats from verified_facts + rejected_claims
+    # 2. Assess loop: history → sd["iterations"] (non-streaming path)
+    if (
+        "history" in jd
+        and isinstance(jd["history"], list)
+        and sd.get("iterations") is None
+    ):
+        sd["iterations"] = [
+            {
+                "index": h.get("iteration", i),
+                "action": h.get("action", ""),
+                "reason": h.get("reason", ""),
+                "is_terminal": h.get("is_terminal", False),
+                "model": h.get("model", ""),
+                "assess_latency_ms": h.get("assess_latency_ms", 0),
+                "action_latency_ms": h.get("action_latency_ms", 0),
+                "latency_ms": h.get("assess_latency_ms", 0)
+                + h.get("action_latency_ms", 0),
+                "prompt_tokens": h.get("prompt_tokens", 0),
+                "completion_tokens": h.get("completion_tokens", 0),
+            }
+            for i, h in enumerate(jd["history"])
+        ]
+
+    # 3. Auto-compute stats from verified_facts + rejected_claims
     if "verified_facts" in jd and "rejected_claims" in jd:
         if not jd.get("stats"):
             n_accepted = len(jd["verified_facts"])

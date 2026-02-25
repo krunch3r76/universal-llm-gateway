@@ -1,0 +1,21 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: snowflake-arctic-embed-l.Q8_0
+  format: gguf
+  arch: bert
+  quant: Q8_0
+  parameters_m: 503
+  training_context_length: 512
+  supports_chat_history: false
+  input_schema: prompt
+loader:
+  embedding: true
+  embedding_task_default: search_document
+download:
+  huggingface:
+    repo: mradermacher/snowflake-arctic-embed-l-GGUF
+    verified: true
+    file: snowflake-arctic-embed-l.Q8_0.gguf
+  size_bytes: 358114304
+  sha256: 2f72a54fbc8e45c77f28444bf8c4d07ed94430a138b2f9f3fb4f8797cf79b18f

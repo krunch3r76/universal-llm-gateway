@@ -33,6 +33,7 @@ class RagSearchHandler(AbstractStepHandler):
         top_k: int          — number of results to retrieve (default 5)
         recency_weight: float — recency decay weight 0.0–1.0 (default 0.0)
         distance_threshold: float — max_distance filter (default 1.0)
+        source_prefixes: list[str] — optional source path prefixes for filtering
     """
 
     step_type: str = "rag_search_v1"
@@ -47,6 +48,7 @@ class RagSearchHandler(AbstractStepHandler):
         top_k: int = step.get_domain_field("top_k", 5)
         recency_weight: float = step.get_domain_field("recency_weight", 0.0)
         distance_threshold: float = step.get_domain_field("distance_threshold", 1.0)
+        source_prefixes: list[str] | None = step.get_domain_field("source_prefixes")
         endpoint: str | None = step.get_domain_field("endpoint")
 
         if not endpoint:
@@ -60,6 +62,7 @@ class RagSearchHandler(AbstractStepHandler):
                     "top_k": top_k,
                     "recency_weight": recency_weight,
                     "max_distance": distance_threshold,
+                    "source_prefixes": source_prefixes,
                 },
             )
             response.raise_for_status()
@@ -75,7 +78,9 @@ class RagSearchHandler(AbstractStepHandler):
             for chunk, meta in zip(chunks, metadata, strict=True):
                 source = meta.get("source", "unknown")
                 indexed_at = meta.get("indexed_at", "unknown")
-                sections.append(f"[Source: {source} | Indexed: {indexed_at}]\n{chunk}")
+                sections.append(
+                    f"[Source: {source} | Last changed: {indexed_at}]\n{chunk}"
+                )
             context_text = "\n\n---\n\n".join(sections)
 
         logger.debug(

@@ -1,0 +1,22 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: bge-m3-Q8_0
+  format: gguf
+  arch: bert
+  quant: Q8_0
+  parameters_m: 503
+  training_context_length: 8192
+  supports_chat_history: false
+  input_schema: prompt
+loader:
+  embedding: true
+  embedding_task_default: search_document
+  n_batch: 8192
+download:
+  huggingface:
+    repo: gpustack/bge-m3-GGUF
+    verified: true
+    file: bge-m3-Q8_0.gguf
+  size_bytes: 634553760
+  sha256: 950f4a8e5e19477a6d3c26d2f162233c20002c601f75e4b002e3239997821167

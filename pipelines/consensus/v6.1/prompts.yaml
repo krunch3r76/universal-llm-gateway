@@ -144,6 +144,22 @@ prompts:
       - Each claim must mention all relevant entities explicitly
       - Test: cover the preceding text — does the claim still make sense alone?
 
+      MECHANISM CLAUSES — EXTRACT AS SEPARATE CLAIMS (CRITICAL):
+      When a sentence contains a mechanism clause ("by VERB-ing ENTITY",
+      "through ENTITY", "via ENTITY"), the mechanism is a separately
+      verifiable assertion and MUST become its own claim. Do NOT let it
+      dissolve into pronoun resolution for the clause that follows.
+        Input: "X decreases Y by inhibiting enzyme E, which converts A into B."
+        → [{"text": "X decreases Y"},
+           {"text": "X inhibits enzyme E"},
+           {"text": "Enzyme E converts A into B"}]
+        WRONG — the mechanism claim evaporates:
+        ❌ [{"text": "X decreases Y"},
+            {"text": "Enzyme E converts A into B"}]
+      The mechanism subject is the sentence subject (X), not the entity named
+      in the clause. "X inhibits E" must be produced explicitly even when the
+      next clause correctly resolves "this enzyme" to E.
+
       SET MEMBERSHIP ENUMERATIONS:
       When a sentence lists items belonging to a set ("the factors are A, B, C",
       "the members include X, Y, Z"), extract each item as an individual
@@ -445,6 +461,12 @@ prompts:
 
       ALSO mark FALSE if the claim:
       - Contains speculation markers: "likely", "perhaps", "probably", "based on", "suggests"
+      - Uses load-bearing possibility/conditionality modals: "can", "may", "might", or "could"
+        where the modal is essential to accuracy — i.e., removing it would make the claim
+        overstated or false (e.g., "X can contraindicate Y" — without "can", the claim would
+        be false; the modal signals a conditional relationship, not an established fact)
+        EXCEPTION: modals expressing an inherent capability or mechanism are fine
+        (e.g., "TCP can retransmit packets" asserts a definite capability, not conditionality)
       - Makes inferences not directly stated in source material
       - Presents educated guesses as facts
 
@@ -492,6 +514,12 @@ prompts:
 
       ALSO mark FALSE if the claim:
       - Contains speculation markers: "likely", "perhaps", "probably", "based on", "suggests"
+      - Uses load-bearing possibility/conditionality modals: "can", "may", "might", or "could"
+        where the modal is essential to accuracy — i.e., removing it would make the claim
+        overstated or false (e.g., "X can contraindicate Y" — without "can", the claim would
+        be false; the modal signals a conditional relationship, not an established fact)
+        EXCEPTION: modals expressing an inherent capability or mechanism are fine
+        (e.g., "TCP can retransmit packets" asserts a definite capability, not conditionality)
       - Makes inferences not directly stated in source material
       - Presents educated guesses as facts
 
@@ -647,6 +675,9 @@ prompts:
         a causal or explanatory link unless it is explicitly stated in a fact
       - Do NOT copy unverified claims from the reference passages
       - Do NOT include fact reference numbers (like [1], [2]) in your answer
+      - PRESERVE EPISTEMIC STRENGTH: if a fact uses "can", "may", "might", or "could"
+        to express a conditional or context-dependent relationship, you MUST preserve
+        that modal — do NOT harden "X can Y" into "X Ys" or "X is Y"
       - Boring correctness over eloquence
       - No meta commentary, no "In conclusion", no filler
     template: |
@@ -745,9 +776,6 @@ prompts:
       the claim refers to without seeing the original answer.
 
       QUESTION: {cleaned_question}
-
-      ORIGINAL ANSWER (the claims were extracted from this):
-      {answer_text}
 
       RULES:
       - Output a BARE TOPIC string — just the subject noun phrase, not a

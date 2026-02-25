@@ -158,6 +158,7 @@ class AssessLoopHandler(BaseHandler):
                         assess_ms,
                         assess_r.prompt_tokens,
                         assess_r.completion_tokens,
+                        state=state,
                     )
                     state.exit_reason = "json_parse_failure"
                     break
@@ -183,6 +184,7 @@ class AssessLoopHandler(BaseHandler):
                         assess_ms,
                         assess_r.prompt_tokens,
                         assess_r.completion_tokens,
+                        state=state,
                     )
                     break
 
@@ -206,6 +208,7 @@ class AssessLoopHandler(BaseHandler):
                         assess_ms,
                         assess_r.prompt_tokens,
                         assess_r.completion_tokens,
+                        state=state,
                     )
                     state.exit_reason = "unknown_action"
                     break
@@ -250,6 +253,16 @@ class AssessLoopHandler(BaseHandler):
                     assess_ms,
                     assess_r.prompt_tokens + action_r.prompt_tokens,
                     assess_r.completion_tokens + action_r.completion_tokens,
+                    state=state,
+                )
+
+                self._report_progress(
+                    step,
+                    context,
+                    items_total=cfg.max_iterations,
+                    items_completed=iteration + 1,
+                    models_total=cfg.max_iterations * 2,
+                    models_completed=state.model_call_count,
                 )
 
         except ProxyClientError:
@@ -286,9 +299,11 @@ class AssessLoopHandler(BaseHandler):
         return StepOutput(
             raw=artifact,
             json={
-                "iterations": state.iterations_used,
+                "iterations_used": state.iterations_used,
+                "exit_reason": state.exit_reason,
                 "terminal_action_reached": state.terminal_action_reached,
                 "last_assessment": state.last_decision,
+                "history": state.history,
             },
             prompt_tokens=state.total_prompt_tokens,
             completion_tokens=state.total_completion_tokens,

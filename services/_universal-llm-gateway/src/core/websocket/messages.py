@@ -140,6 +140,7 @@ def create_resource_update_message(
     total_vram_mb: int | None = None,
     total_ram_mb: int | None = None,
     loaded_models: list[str] | None = None,
+    model_vram: dict[str, int] | None = None,
 ) -> WebSocketMessage:
     """Create RESOURCE_UPDATE event message."""
     data: dict[str, Any] = {
@@ -152,6 +153,8 @@ def create_resource_update_message(
         data["total_ram_mb"] = total_ram_mb
     if loaded_models is not None:
         data["loaded_models"] = loaded_models
+    if model_vram is not None:
+        data["model_vram"] = model_vram
     return WebSocketMessage(type=MessageType.RESOURCE_UPDATE, data=data)
 
 

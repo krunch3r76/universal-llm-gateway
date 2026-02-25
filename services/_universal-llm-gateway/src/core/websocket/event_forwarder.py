@@ -226,6 +226,7 @@ class WebSocketEventForwarder:
                 total_vram_mb=payload.get("total_vram_mb"),
                 total_ram_mb=payload.get("total_ram_mb"),
                 loaded_models=payload.get("loaded_models"),
+                model_vram=payload.get("model_vram"),
             )
 
         elif event.signal == CATALOG_RELOADED:

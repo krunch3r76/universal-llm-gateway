@@ -128,6 +128,7 @@ async def get_system_resources(tracker: ResourceTracker) -> SystemResourceInfo:
     catalog_used_ram = 0
     loaded_models_list = []
     loaded_model_ids = []  # For telemetry event payload
+    model_vram: dict[str, int] = {}  # Per-model actual VRAM for eviction planning
     for model_id, info in tracker._models.items():
         if info.status in [ModelStatus.LOADED, ModelStatus.BUSY]:
             catalog_used_vram += info.vram_usage_mb
@@ -136,6 +137,8 @@ async def get_system_resources(tracker: ResourceTracker) -> SystemResourceInfo:
                 f"{model_id}(status={info.status.value}, vram={info.vram_usage_mb}MB)"
             )
             loaded_model_ids.append(model_id)
+            if info.vram_usage_mb > 0:
+                model_vram[model_id] = info.vram_usage_mb
 
     # Use conservative estimate: max of catalog vs hardware
     conservative_used_vram = max(catalog_used_vram, hardware_used_vram)
@@ -180,6 +183,7 @@ async def get_system_resources(tracker: ResourceTracker) -> SystemResourceInfo:
                     total_ram_mb=system_info.total_ram_mb,
                     available_ram_mb=system_info.available_ram_mb,
                     loaded_models=loaded_model_ids,
+                    model_vram=model_vram or None,
                 )
             )
         except Exception as e:

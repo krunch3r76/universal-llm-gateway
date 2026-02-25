@@ -7,7 +7,7 @@ loop utility functions, keeping the handler free of repetitive boilerplate.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from systems.pipeline.core.events.assess_loop import AssessLoopIterationCompleted
@@ -94,6 +94,7 @@ class LoopState:
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
     model_call_count: int = 0
+    history: list[dict[str, Any]] = field(default_factory=list)
 
     def add_tokens(self, prompt: int, completion: int) -> None:
         self.total_prompt_tokens += prompt
@@ -134,8 +135,10 @@ def emit_iteration_completed(
     assess_latency_ms: float,
     iter_pt: int,
     iter_ct: int,
+    *,
+    state: LoopState | None = None,
 ) -> None:
-    """Emit AssessLoopIterationCompleted if recorder is present."""
+    """Emit AssessLoopIterationCompleted and optionally track history."""
     if recorder:
         recorder.emit(
             AssessLoopIterationCompleted(
@@ -151,4 +154,18 @@ def emit_iteration_completed(
                 iteration_prompt_tokens=iter_pt,
                 iteration_completion_tokens=iter_ct,
             )
+        )
+    if state is not None:
+        state.history.append(
+            {
+                "iteration": iteration,
+                "action": action,
+                "reason": reason,
+                "is_terminal": is_terminal,
+                "model": action_model_id or "",
+                "assess_latency_ms": round(assess_latency_ms, 1),
+                "action_latency_ms": round(action_latency_ms, 1),
+                "prompt_tokens": iter_pt,
+                "completion_tokens": iter_ct,
+            }
         )

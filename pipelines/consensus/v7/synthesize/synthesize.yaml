@@ -1,0 +1,138 @@
+# Synthesize sub-pipeline: strip (parallel) → combine → review_synthesis → coverage_audit
+#
+# Each original answer is stripped of rejected claims, then the 3 stripped
+# passages are merged into one answer (facts-primary). Coverage audit checks
+# the result.
+#
+# Inputs (bound by parent pipeline):
+#   answer_0, answer_1, answer_2  - Original answers from the 3 models
+#   verified_facts                - Final verified facts after veto
+#   rejected_claims              - Final rejected claims after veto
+#   question                     - Cleaned question text
+
+id: consensus-synthesize-v7
+type: consensus
+version: "7"
+
+inputs:
+  - answer_0
+  - answer_1
+  - answer_2
+  - verified_facts
+  - rejected_claims
+  - question
+
+steps:
+  - name: strip_0
+    type: consensus_strip_rejected_v7
+    model_ref: qwen
+    prompt_ref: consensus.v7.strip_rejected
+    handler_inputs:
+      original_answer: inputs.answer_0
+      rejected_claims: inputs.rejected_claims
+      question: inputs.question
+    generation_parameters:
+      temperature: 0.2
+    timeout_seconds: 300
+
+  - name: strip_1
+    type: consensus_strip_rejected_v7
+    model_ref: qwen
+    prompt_ref: consensus.v7.strip_rejected
+    handler_inputs:
+      original_answer: inputs.answer_1
+      rejected_claims: inputs.rejected_claims
+      question: inputs.question
+    generation_parameters:
+      temperature: 0.2
+    timeout_seconds: 300
+
+  - name: strip_2
+    type: consensus_strip_rejected_v7
+    model_ref: qwen
+    prompt_ref: consensus.v7.strip_rejected
+    handler_inputs:
+      original_answer: inputs.answer_2
+      rejected_claims: inputs.rejected_claims
+      question: inputs.question
+    generation_parameters:
+      temperature: 0.2
+    timeout_seconds: 300
+
+  - name: combine
+    type: consensus_combine_passages_v7
+    model_ref: qwen
+    prompt_ref: consensus.v7.combine_passages
+    # synthesis_chunk_size: facts sent per model call. Qwen (and <=10B models generally)
+    # cannot reliably track >~40 facts simultaneously while also formatting structured
+    # output from 3 long passages. At 75 facts the model drops claims, fabricates
+    # connections, or produces a shallow summary. 25 keeps the working set tractable;
+    # the revise_synthesis calls on chunks 2+ operate without the passage scaffolding,
+    # further reducing context pressure.
+    synthesis_chunk_size: 15
+    prompt_ref_re_enrich: consensus.v7.revise_synthesis_chunk
+    handler_inputs:
+      passage_0: strip_0.raw
+      passage_1: strip_1.raw
+      passage_2: strip_2.raw
+      verified_facts: inputs.verified_facts
+      question: inputs.question
+    generation_parameters:
+      temperature: 0.3
+    timeout_seconds: 600
+
+  # Iterative assess→act loop: checks coverage gaps AND redundant prose.
+  # Uses assess_loop_v1 (generic handler) — no custom handler code.
+  - name: review_synthesis
+    type: assess_loop_v1
+    model_ref: qwen
+    prompt_ref: consensus.v7.assess_synthesis
+    handler_inputs:
+      artifact: combine.raw
+      verified_facts: inputs.verified_facts
+      question: inputs.question
+    artifact_key: artifact
+    assess_schema:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [revise, restructure, accept]
+          description: "What to do next"
+        missing_facts:
+          type: array
+          items:
+            type: string
+          description: "Verified facts not adequately represented in the answer"
+        repetitive_sections:
+          type: array
+          items:
+            type: string
+          description: "Descriptions of redundant prose found in the answer"
+        reason:
+          type: string
+          description: "Brief explanation of the decision"
+      required: [action, reason]
+    terminal_action: accept
+    max_iterations: 3
+    actions:
+      revise:
+        prompt_ref: consensus.v7.revise_synthesis
+      restructure:
+        prompt_ref: consensus.v7.restructure_synthesis
+    generation_parameters:
+      temperature: 0.1
+      max_tokens: 512
+    timeout_seconds: 600
+
+  - name: coverage_audit
+    type: consensus_coverage_audit_v7
+    enabled: true
+    handler_inputs:
+      final_answer: review_synthesis.raw
+      verified_facts: inputs.verified_facts
+    embedding_model: embedding
+    coverage_threshold: 0.70
+    timeout_seconds: 60
+
+output: coverage_audit

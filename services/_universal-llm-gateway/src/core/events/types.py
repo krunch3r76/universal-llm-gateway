@@ -620,6 +620,7 @@ def SystemResourcesUpdated(
     total_ram_mb: int,
     available_ram_mb: int,
     loaded_models: list[str] | None = None,
+    model_vram: dict[str, int] | None = None,
 ) -> Event:
     """
     Create SYSTEM_RESOURCES_UPDATED event.
@@ -630,6 +631,9 @@ def SystemResourcesUpdated(
         total_ram_mb: Total RAM available in megabytes
         available_ram_mb: Currently available RAM in megabytes
         loaded_models: List of currently loaded model IDs (for WebSocket forwarding)
+        model_vram: Per-model actual VRAM consumption in MB (model_id → vram_mb).
+            Populated from resource tracker measurements; used by Stargate eviction
+            planner to replace stale load-time snapshots with current real values.
 
     Returns:
         Event with SystemResourcesUpdated signal
@@ -642,6 +646,8 @@ def SystemResourcesUpdated(
     }
     if loaded_models is not None:
         payload["loaded_models"] = loaded_models
+    if model_vram is not None:
+        payload["model_vram"] = model_vram
     return Event(
         signal=SYSTEM_RESOURCES_UPDATED,
         payload=payload,

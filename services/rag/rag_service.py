@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -114,6 +115,14 @@ def _all_ids_match_prefix(ids: list[str], prefix: str) -> bool:
     return bool(ids) and all(id_.startswith(f"{prefix}-") for id_ in ids)
 
 
+def _build_source_prefix_filter(prefixes: list[str]):
+    """Build ChromaDB where-clause for source path prefix filtering."""
+    clauses = [{"source": {"$regex": f"^{re.escape(prefix)}"}} for prefix in prefixes]
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$or": clauses}
+
+
 async def _index_file(file_path: Path) -> IndexResult:
     """Index a file, cleaning up stale chunks when content changed."""
     source = str(file_path)
@@ -121,11 +130,19 @@ async def _index_file(file_path: Path) -> IndexResult:
     prefix = _file_hash(raw)[:16]
 
     collection = _get_collection()
-    existing = collection.get(where={"source": source}, include=[])
+    existing = collection.get(where={"source": source}, include=["metadatas"])
     existing_ids: list[str] = existing.get("ids", [])
 
     if _all_ids_match_prefix(existing_ids, prefix):
         return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
+
+    existing_timestamps: dict[str, str] = {}
+    for meta in existing.get("metadatas") or []:
+        if isinstance(meta, dict):
+            chunk_hash = meta.get("chunk_hash")
+            indexed_at = meta.get("indexed_at")
+            if isinstance(chunk_hash, str) and isinstance(indexed_at, str):
+                existing_timestamps[chunk_hash] = indexed_at
 
     if existing_ids:
         collection.delete(ids=existing_ids)
@@ -144,8 +161,10 @@ async def _index_file(file_path: Path) -> IndexResult:
     ids = [f"{prefix}-{i}" for i in range(len(chunks))]
 
     now = datetime.now(UTC).isoformat()
-    for m in metadatas:
-        m["indexed_at"] = now
+    for metadata, chunk in zip(metadatas, chunks, strict=True):
+        chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()[:16]
+        metadata["chunk_hash"] = chunk_hash
+        metadata["indexed_at"] = existing_timestamps.get(chunk_hash, now)
 
     embeddings = await embed_chunks(texts)
     collection.upsert(
@@ -211,11 +230,17 @@ def _apply_recency(
 async def search(request: SearchRequest) -> SearchResponse:
     collection = _get_collection()
     query_embedding = await embed_query(request.query)
+    where = (
+        _build_source_prefix_filter(request.source_prefixes)
+        if request.source_prefixes
+        else None
+    )
 
     results = collection.query(
         query_embeddings=[query_embedding],
         n_results=request.top_k,
         include=["documents", "metadatas", "distances"],
+        where=where,  # pyright: ignore[reportArgumentType]
     )
 
     chunks: list[str] = results["documents"][0] if results["documents"] else []

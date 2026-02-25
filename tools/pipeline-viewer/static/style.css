@@ -324,6 +324,23 @@ header .subtitle { color: var(--text-dim); font-size: 13px; letter-spacing: 0.2p
 .iteration-body { padding: 12px 14px; display: none; }
 .iteration-body.expanded { display: block; }
 
+/* Assess loop iteration badges */
+.iteration-header .action-badge {
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+  padding: 2px 8px; border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+.iteration-card.terminal { border-color: color-mix(in srgb, var(--ok) 40%, var(--border)); }
+.iteration-card.terminal .action-badge {
+  background: color-mix(in srgb, var(--ok) 15%, transparent);
+  color: var(--ok);
+}
+.terminal-badge {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  color: var(--ok); margin-left: 6px;
+}
+
 /* -- Stats grid ---------------------------------------------------------- */
 .stats-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

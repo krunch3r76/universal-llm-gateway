@@ -52,10 +52,21 @@ class ResourceUpdateHandler(SyncMessageHandler):
         )
 
     def _sync_loaded_models(self, data: dict[str, Any], ctx: HandlerContext) -> None:
-        """Sync loaded_models if provided (Gateway is authoritative)."""
+        """Sync loaded_models and per-model VRAM if provided (Gateway authoritative)."""
         if "loaded_models" in data:
             ctx.loaded_models.clear()
             ctx.loaded_models.update(data["loaded_models"])
+
+        model_vram: dict[str, int] | None = data.get("model_vram")
+        if model_vram:
+            for model_id, vram_mb in model_vram.items():
+                if model_id in ctx.model_details:
+                    ctx.model_details[model_id]["vram_usage"] = vram_mb
+                else:
+                    ctx.model_details[model_id] = {
+                        "vram_usage": vram_mb,
+                        "ram_usage": 0,
+                    }
 
     def _log_resource_state(self, ctx: HandlerContext) -> None:
         """Log current resource state after update."""

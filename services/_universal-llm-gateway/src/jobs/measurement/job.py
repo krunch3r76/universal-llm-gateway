@@ -352,8 +352,7 @@ class MeasurementJob(Job):
             # The largest context's found util is written to the catalog for
             # runtime use (serves all context sizes, so needs the highest floor).
             self.emit_log(
-                "  Chat model: probing each context for minimum "
-                "gpu_memory_utilization"
+                "  Chat model: probing each context for minimum gpu_memory_utilization"
             )
             results: dict[str, dict[str, Any]] = {}
             gpu_mem_util = 0.95  # fallback; overwritten by first (largest) context
@@ -419,13 +418,16 @@ class MeasurementJob(Job):
                 "training_context_length; cannot determine contexts to probe."
             )
 
+        # ∀ embedding model: physical batch must equal context window so the
+        # single-pass forward pass never rejects inputs within the context limit.
+        n_batch = training_ctx
+
         contexts = self.request.contexts or get_embedding_contexts(training_ctx)
         n_layers = 0 if self.request.mode == "cpu" else -1
         mode_label = "CPU" if self.request.mode == "cpu" else "GPU"
 
         self.emit_log(
-            f"  Engine: llama-cpp (embedding {mode_label}, "
-            f"contexts: {contexts})"
+            f"  Engine: llama-cpp (embedding {mode_label}, contexts: {contexts})"
         )
         await get_event_bus().publish_async_nowait(
             MeasurementEmbeddingDetected(
@@ -443,7 +445,7 @@ class MeasurementJob(Job):
                 model_path,
                 n_layers=n_layers,
                 context=ctx,
-                n_batch=self.request.n_batch,
+                n_batch=n_batch,
                 gpu_index=self.request.gpu_index,
                 mmproj_path=None,
                 tracker=tracker,
@@ -475,6 +477,7 @@ class MeasurementJob(Job):
         loader_updates: dict[str, Any] = {
             "embedding": True,
             "embedding_task_default": task_default,
+            "n_batch": n_batch,
         }
         if pooling is not None:
             loader_updates["pooling"] = pooling
