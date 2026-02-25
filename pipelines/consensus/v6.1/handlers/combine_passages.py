@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_MIN_COMBINE_TOKENS = 4096
+_MIN_COMBINE_TOKENS = 8192
 _TOKENS_PER_FACT = 80
 
 

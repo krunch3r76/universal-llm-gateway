@@ -503,6 +503,22 @@ Payload: {
 }
 """
 
+ROUTING_CAPACITY_PRESEEDED = "routing.capacity.preseeded"
+"""
+CapacityPool pre-seeded for a cold-load model from catalog model_details.
+
+Emitted when a request triggers a cold load and CapacityPool is seeded with
+expected capacity BEFORE the model finishes loading.  This closes the
+cold-load bypass that previously let unlimited requests flood the gateway.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
+    "expected_capacity": int,
+}
+"""
+
 FEDERATION_SNAPSHOT_SENT = "federation.snapshot.sent"
 """
 Edge Stargate sent GATEWAY_SNAPSHOT to Master.
@@ -1711,6 +1727,39 @@ def RoutingCapacityDivergence(
             "capacity_pool_available": capacity_pool_available,
             "capacity_pool_in_flight": capacity_pool_in_flight,
             "capacity_pool_max": capacity_pool_max,
+        },
+    )
+
+
+@event_factory
+def RoutingCapacityPreseeded(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    expected_capacity: int,
+) -> Event:
+    """
+    Create ROUTING_CAPACITY_PRESEEDED event.
+
+    Emitted when a cold-load request pre-seeds CapacityPool with expected
+    capacity from catalog model_details, closing the cold-load bypass.
+
+    Args:
+        request_id: Request that triggered the pre-seed
+        model_id: Model being cold-loaded
+        gateway_id: Target gateway
+        expected_capacity: Slots pre-seeded from max_concurrent_requests
+
+    Returns:
+        Event with RoutingCapacityPreseeded signal
+    """
+    return Event(
+        signal=ROUTING_CAPACITY_PRESEEDED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "expected_capacity": expected_capacity,
         },
     )
 

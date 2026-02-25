@@ -42,6 +42,7 @@ class CapacityToken:
     gateway_id: str
     model_id: str
     request_id: str
+    queued: bool = False
     acquired_at: float = field(default_factory=time.monotonic)
     _released: bool = field(default=False, repr=False)
     _pool: CapacityPool | None = field(default=None, repr=False)
@@ -192,8 +193,10 @@ class CapacityPool:
         """
         self._ensure_subscribed()
         gateway_id = self._try_immediate(request_id, model_id, allowed_gateway_ids)
+        queued = False
 
         if gateway_id is None:
+            queued = True
             gateway_id = await self._wait_for_slot(
                 request_id,
                 model_id,
@@ -205,6 +208,7 @@ class CapacityPool:
             gateway_id=gateway_id,
             model_id=model_id,
             request_id=request_id,
+            queued=queued,
             _pool=self,
         )
 

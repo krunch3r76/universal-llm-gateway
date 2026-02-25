@@ -338,12 +338,41 @@ async def _route_to_federated_gateway(
 
     # Admission control: acquire slot before proceeding
     # CRITICAL: This must happen AFTER select() and BEFORE any await
-    # SKIP for cold loads: model not loaded → ledger has no capacity registered
-    # → acquire() would block until MODEL_EXECUTION_COMPLETED (never fires)
-    # → deadlock. Load must happen first; capacity appears via telemetry.
     is_cold_load = (
         selected_gateway is not None and model_id not in selected_gateway.loaded_models
     )
+
+    # Pre-seed CapacityPool for cold loads so admission gates the burst that
+    # hits the gateway once the model finishes loading.  model_details contains
+    # max_concurrent_requests for ALL catalog models (including unloaded ones),
+    # populated from model_resources via the collector.
+    if is_cold_load and capacity_pool and selected_gateway:
+        details = selected_gateway.model_details.get(model_id, {})
+        expected_capacity = int(details.get("max_concurrent_requests", 1))
+        capacity_pool.set_capacity(
+            selected_gateway.name,
+            model_id.routing_key,
+            expected_capacity,
+        )
+        logger.info(
+            f"📊 Cold-load capacity pre-seed: {selected_gateway.name}/"
+            f"{model_id.routing_key} → {expected_capacity} slots"
+        )
+        if event_bus:
+            import asyncio
+
+            from src.scheduling.events import RoutingCapacityPreseeded
+
+            asyncio.create_task(
+                event_bus.publish_async_nowait(
+                    RoutingCapacityPreseeded(
+                        request_id=context.request_id,
+                        model_id=str(model_id),
+                        gateway_id=selected_gateway.name,
+                        expected_capacity=expected_capacity,
+                    )
+                )
+            )
 
     # Detect busy_models / CapacityPool divergence for observability.
     if event_bus and capacity_pool and selected_gateway and not is_cold_load:
@@ -397,21 +426,28 @@ async def _route_to_federated_gateway(
             is_cold_load = model_id not in selected_gateway.loaded_models
             stability_tracker.update_binding(model_id, selected_gateway.name)
 
-    if selected_gateway and capacity_pool and not is_cold_load:
+    if selected_gateway and capacity_pool:
         # Sticky: honour the engine's exact selection.
         # ∀ sticky: allowed ⊆ {selected_gateway} so admission cannot reassign.
-        # Non-sticky: allow any warm gateway for load balancing.
-        if context.model_sticky:
+        # Non-sticky warm: allow any warm gateway for load balancing.
+        # Cold load: restrict to selected gateway (it's the load target).
+        if context.model_sticky or is_cold_load:
             allowed_gateway_ids = frozenset({selected_gateway.name})
         else:
             allowed_gateway_ids = frozenset(
                 g.name for g in gateways_for_routing if model_id in g.loaded_models
             )
 
+        # Default: no timeout — wait indefinitely for a slot.
+        # ∀ sticky models with all slots occupied: the outer pipeline step timeout
+        # governs the deadline; a short admission timeout causes requests to lose
+        # their FIFO queue position, re-enter from scratch, and spin for the full
+        # step budget without making progress.
+        # Explicit admission.timeout_s in config enables early fail-fast behaviour.
         timeout_s = (
-            routing_config.get("admission", {}).get("timeout_s", 30.0)
+            routing_config.get("admission", {}).get("timeout_s", None)
             if routing_config
-            else 30.0
+            else None
         )
 
         try:
@@ -440,7 +476,9 @@ async def _route_to_federated_gateway(
                 f"gateway={selected_gateway.name} timeout_s={timeout_s} "
                 f"allowed_gateways={sorted(allowed_gateway_ids)}"
             )
-            stability_tracker.clear_binding(model_id)
+            # Do NOT clear_binding here — the gateway is correct; it is temporarily
+            # at capacity. Clearing causes the STICKY GUARD to fire on the next retry
+            # (engine picks a different gateway, guard blocks it) producing a spin loop.
             raise_gateway_capacity_error(selected_gateway.name)
         except Exception as e:
             logger.error(f"❌ Admission queue acquire failed: {e}")
@@ -723,6 +761,9 @@ async def _route_to_federated_gateway(
                     context.selected_gateway.ref, "remote_stargate_url", "unknown"
                 )
 
+                was_queued = (
+                    context.capacity_token is not None and context.capacity_token.queued
+                )
                 await event_bus.publish_async_nowait(
                     RequestRouted(
                         request_id=context.request_id,
@@ -731,7 +772,7 @@ async def _route_to_federated_gateway(
                         gateway_name=context.selected_gateway.name,
                         timestamp=time.time(),
                         routing_time_ms=routing_time_ms,
-                        immediate_route=True,
+                        immediate_route=not was_queued,
                     )
                 )
             except Exception as e:
