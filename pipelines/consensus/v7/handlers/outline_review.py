@@ -12,6 +12,7 @@ or budget exhausted.
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import TYPE_CHECKING, Any, cast, override
 
@@ -80,6 +81,58 @@ def _deduplicate_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]
     return deduped
 
 
+def _filter_phantom_overlaps(
+    decision: dict[str, Any],
+    outline: dict[str, Any],
+) -> dict[str, Any]:
+    """Remove overlap claims that name an index not actually duplicated.
+
+    ∀ issue ∈ issues: starts_with("Overlap:") ∧ claimed_index ∉ duplicated_indices
+      ⟹ phantom ⟹ remove.
+    If no real issues remain → override action to 'accept'.
+
+    Models sometimes hallucinate index overlap (e.g. confusing 30 and 31 which
+    are adjacent in the JSON array). Programmatic verification prevents phantom
+    claims from triggering unnecessary revision cycles.
+    """
+    if decision.get("action") != "revise":
+        return decision
+
+    index_section_count: dict[int, int] = {}
+    for section in outline.get("sections", []):
+        for idx in section.get("fact_indices", []):
+            if isinstance(idx, int) and idx > 0:
+                index_section_count[idx] = index_section_count.get(idx, 0) + 1
+    duplicated: set[int] = {idx for idx, n in index_section_count.items() if n > 1}
+
+    filtered: list[str] = []
+    phantom_count = 0
+    for issue in decision.get("issues", []):
+        if issue.lower().startswith("overlap:"):
+            m = re.search(r"\b(\d+)\b", issue)
+            if m and int(m.group(1)) not in duplicated:
+                phantom_count += 1
+                logger.info(
+                    "Phantom overlap claim filtered: index %d not duplicated. Issue: %s",
+                    int(m.group(1)),
+                    issue,
+                )
+                continue
+        filtered.append(issue)
+
+    if phantom_count == 0:
+        return decision
+
+    if not filtered:
+        logger.info(
+            "All %d overlap claims were phantom — overriding assessor to 'accept'",
+            phantom_count,
+        )
+        return {**decision, "action": "accept", "issues": []}
+
+    return {**decision, "issues": filtered}
+
+
 def _format_numbered_facts(facts: list[str]) -> str:
     return "\n".join(f"[{i}] {fact}" for i, fact in enumerate(facts, 1))
 
@@ -91,6 +144,33 @@ def _format_missing_facts(missing: list[int], facts: list[str]) -> str:
         if 1 <= idx <= len(facts):
             lines.append(f"[{idx}] {facts[idx - 1]}")
     return "\n".join(lines)
+
+
+def _restore_missing_indices(
+    outline: dict[str, Any], total_facts: int
+) -> dict[str, Any]:
+    """Re-insert any indices dropped by the quality reviser.
+
+    Appends missing indices to the last section. Deduplication has already
+    run before the quality loop, so the expected set is the full 1..total_facts
+    range. The reviser may drop low-salience indices when restructuring;
+    this ensures the outline remains complete for the synthesizer.
+    """
+    sections = outline.get("sections", [])
+    if not sections:
+        return outline
+    assigned = _collect_assigned(sections)
+    missing = sorted(set(range(1, total_facts + 1)) - assigned)
+    if not missing:
+        return outline
+    last = sections[-1]
+    last["fact_indices"] = list(last.get("fact_indices") or []) + missing
+    logger.info(
+        "Quality reviser dropped %d indices — restored to last section: %s",
+        len(missing),
+        missing,
+    )
+    return {**outline, "sections": sections}
 
 
 class OutlineReviewHandler(BaseHandler):
@@ -239,16 +319,43 @@ class OutlineReviewHandler(BaseHandler):
                 )
                 break
 
+            # Remove overlap claims the model hallucinated (index not actually duplicated).
+            assess_outline = _parse_outline(outline_raw)
+            if assess_outline:
+                decision = _filter_phantom_overlaps(decision, assess_outline)
+
+            # After the first revision, accept if no structural overlap issues remain.
+            # Grouping/ordering are aesthetic; further iterations oscillate without converging.
             if decision.get("action") == "accept":
                 quality_iters_used = i + 1
                 break
 
+            if i > 0:
+                has_overlap = any(
+                    iss.lower().startswith("overlap:") for iss in decision.get("issues", [])
+                )
+                if not has_overlap:
+                    logger.info(
+                        "Outline quality iter %d: no structural overlap after %d revision(s) — accepting (soft issues deferred)",
+                        i,
+                        i,
+                    )
+                    quality_iters_used = i + 1
+                    break
+
             quality_iters_used = i + 1
+            issues = decision.get("issues", [])
+            assess_issues = (
+                "\n".join(f"- {issue}" for issue in issues)
+                if issues
+                else "(none)"
+            )
             revise_rendered = self._render_prompt(
                 cfg.quality_revise_ref,
                 {
                     "artifact": outline_raw,
                     "assess_reason": decision.get("reason", ""),
+                    "assess_issues": assess_issues,
                     "assess_target": decision.get("target", ""),
                     "verified_facts": _format_numbered_facts(fact_texts),
                     "question": question,
@@ -271,6 +378,16 @@ class OutlineReviewHandler(BaseHandler):
             total_ct += revise_result.completion_tokens
             call_count += 1
             outline_raw = revise_result.content.strip()
+
+            # Deduplicate then restore after each quality revision.
+            # Deduplication first: the reviser may introduce new duplicates while
+            # restructuring; duplicates corrupt synthesis and re-trigger overlap
+            # claims in the next assess cycle.
+            revised_parsed = _parse_outline(outline_raw)
+            if revised_parsed and total_facts > 0:
+                revised_parsed["sections"] = _deduplicate_sections(revised_parsed["sections"])
+                revised_parsed = _restore_missing_indices(revised_parsed, total_facts)
+                outline_raw = json.dumps(revised_parsed)
 
         # ── Final metrics ───────────────────────────────────────────────
         final_assigned = 0

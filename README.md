@@ -1,18 +1,20 @@
 # Universal LLM Gateway
 
-An OpenAI-compatible inference stack where nothing leaves your hardware. Models run unprivileged inside network-isolated containers (network_mode: "none"): no exfiltration, no phoning home, no cloud dependency.
+An OpenAI-compatible inference stack where nothing leaves your hardware. Models run unprivileged inside network-isolated containers (`network_mode: "none"`): no exfiltration, no phoning home, no cloud dependency.
 
 ## What it solves
 
 - **Contain untrusted models**: execution runs unprivileged with zero network access
 - **One API across many GPU nodes**: route to local + remote machines via federation
 - **Multi-model workflows**: pipelines are "virtual models" behind a single `model` name
+- **Secure tool-like capabilities**: pipelines perform actions (search, shell, verification) on behalf of models — models never get direct system access
+- **Optional cloud routing**: a separate, opt-in cloud proxy service isolates all outbound internet access to a single process — if it's not running, outbound traffic is impossible by construction
 
 ## Status: Alpha (v0.1.0)
 
-Production-used on single-GPU deployments. Under active development.
+Production-used on single-GPU and multi-node federated deployments. Under active development.
 
-## Capabilities (implemented)
+## Capabilities
 
 | Capability | Endpoint | Notes |
 |---|---|---|
@@ -20,20 +22,22 @@ Production-used on single-GPU deployments. Under active development.
 | Embeddings | `POST /v1/embeddings` | |
 | Images (Flux.2) | `POST /v1/images/generations` | Under active development |
 | Audio transcription (Whisper) | `POST /v1/audio/transcriptions` | Under active development |
-| Model list | `GET /v1/models` | |
+| Model list | `GET /v1/models` | Includes local, federated, cloud, and pipeline models |
 | Health | `GET /health` | |
 
 All endpoints are served by Stargate on `:9999`.
 
 ### Roadmap
-- [x] **Simplified onboarding process** — `./manage` bootstraps environment and launches TUI ([demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4))
+- [x] **Simplified onboarding** — `./manage` bootstraps environment and launches TUI ([demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4))
+- [x] **RAG service** — ChromaDB-backed semantic search with file watching and recency scoring
+- [x] **Pipeline pseudo-tooling** — prompt-driven tool calling: any model becomes tool-capable without native function-calling support, and adversarial tool invocations are structurally prevented because models produce structured JSON decisions that the engine maps to pre-defined operations — models never call tools directly
+- [x] **Consensus pipeline (v7)** — multi-model answer generation with decomposition, domain-specific verification, veto, and structured synthesis
+- [x] **Pipeline event observability** — dedicated `/tmp/pipeline-events/` stream with per-step metrics (tokens, duration, call count)
+- [ ] **Cloud proxy stabilization** — OpenRouter integration (functional, under active development)
 - [ ] Multi-GPU / tensor parallelism (vLLM)
 - [ ] Native VPS deployment tooling (one-command setup)
-- [ ] Pipeline system stabilization (v6 schema)
 - [ ] Simplified model onboarding (CLI wizard or web UI)
-- [ ] Flux image generation testing and stabilization
 - [ ] Codebase refactoring and modularization
-- [ ] Contributor documentation and development guides
 
 Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup.
 
@@ -43,10 +47,14 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup.
 
 ```
 Client → Master Stargate:9999 (host, router-only)
-         ↓ Unix socket (local) or HTTPS (remote)
-         Edge container (network_mode: "none")
-         ├─ Edge Stargate (federation endpoint)
-         └─ Gateway + Worker (inference)
+         ├─ Unix socket (local) → Edge container (network_mode: "none")
+         │                         ├─ Edge Stargate (federation endpoint)
+         │                         └─ Gateway + Worker (inference)
+         ├─ TCP (remote) → Relay Stargate → Edge container → Gateway
+         └─ loopback (optional) → Cloud Proxy:8200 → OpenRouter/Anthropic/etc (HTTPS)
+
+Pipeline-tools sidecar (network_mode: "none", read-only) ← shell execution for pipeline steps
+RAG Service:8100 (host) ← semantic search for pipeline handlers
 ```
 
 For remote GPU nodes, a **Relay Stargate** on the remote host bridges the Master to the network-isolated Edge container on that host.
@@ -60,20 +68,23 @@ For remote GPU nodes, a **Relay Stargate** on the remote host bridges the Master
 | **Edge Stargate** (container, no network) | Federation endpoint inside the container, Unix socket bridge |
 | **Gateway** (container-internal) | Inference engine, worker lifecycle, model loading |
 | **Worker** | LLM engine process (llama.cpp, vLLM, Whisper, Flux) |
+| **Pipeline-tools sidecar** (container, no network) | Hardened Alpine container for shell execution in pipeline steps |
+| **RAG Service** (host, port 8100) | Semantic search, file indexing, ChromaDB vector store |
+| **Cloud Proxy** (host, port 8200) | Optional cloud API relay (OpenRouter, Anthropic, OpenAI) |
 
 ### Key Design Decisions
 
 - **Network isolation**: Edge containers run with `network_mode: "none"` — zero network access. All communication via Unix sockets.
 - **Non-root execution**: Containers run as unprivileged users — no root escalation surface.
-- **Privilege separation**: Each Edge runs isolated with minimal capabilities — models cannot affect other models or the host system.
+- **Privilege separation**: Each Edge runs with minimal capabilities — models are isolated from the host system. Multiple models may share an Edge container but are isolated from all other hosts and the underlying OS.
 - **Router-only Master**: Masters have no local Gateway. They orchestrate via Edge and Relay stargates.
-- **HTTP-authoritative control plane**: Model load completion is determined by the HTTP response from the load endpoint. Telemetry is for monitoring, not authoritative completion.
-- **WebSocket telemetry**: Real-time state synchronization from Edge/Relay stargates to Master.
+- **Structural privacy**: Outbound internet access exists only in the optional cloud proxy. Every other component is local-only or network-isolated. No data leaves the network unless the cloud proxy is explicitly started.
+- **Container-per-concern security tiers**: Inference runs in `network_mode: none` edge containers. Tool execution runs in a capability-dropped, read-only sidecar. Cloud access runs in a domain-whitelisted proxy. Each concern gets the minimum privilege it needs — enforced by container policy, not application code.
 
 ### Request Flow
 
 1. Client sends request to Master Stargate
-2. DecisionEngine selects an Edge (T0/T1/T2 feasibility scoring)
+2. DecisionEngine selects an Edge (T0/T1/T2 feasibility scoring) or cloud backend
 3. Master loads model on the Edge if needed (via Unix socket or relay)
 4. Master forwards inference request through the same path
 5. Response streams back: Worker → Gateway → Edge → (relay) → Master → Client
@@ -114,17 +125,87 @@ Virtual models that orchestrate multiple real models behind a single `model` nam
 ```bash
 curl -X POST http://localhost:9999/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "es-en-colloquial", "messages": [{"role": "user", "content": "Hola, ¿cómo andas?"}]}'
+  -d '{"model": "consensus-chain-v7", "messages": [{"role": "user", "content": "How does mRNA translation work?"}]}'
 ```
 
 **Key features:**
-- Directed acyclic graph (DAG) execution with automatic parallelization
+- Graph execution with automatic parallelization, loops, and conditional branching
 - Explicit object-flow (`stepName.json.field` bindings) — no hidden state
 - Automatic dependency resolution from `handler_inputs`
 - Built-in retry, timeout, checkpointing, and map/reduce
 - OpenAI-compatible — pipelines are just model IDs
 
+### Secure Tooling: The Sidecar Model
+
+Pipelines provide tool-like capabilities without giving models direct system access. Instead of models calling tools, **pipeline handlers** execute actions server-side based on structured model output. The model never directly touches the filesystem, network, or any external service — the pipeline engine mediates every action.
+
+Shell commands run inside a **pipeline-tools sidecar** — a hardened Alpine container that enforces isolation by construction:
+
+```
+Pipeline Step (YAML)  →  Handler  →  docker exec pipeline-tools sh -c "..."
+                                      ├── --network none
+                                      ├── --read-only (workspace mounted ro)
+                                      ├── --cap-drop ALL --security-opt no-new-privileges
+                                      ├── --user 1000:1000 (non-root)
+                                      └── --pids-limit 64, --memory 256m
+```
+
+Commands come from static YAML definitions, not from model output — the model produces structured JSON decisions (e.g., `{"action": "expand_git", "reason": "..."}`), and the engine maps these to pre-defined operations.
+
+| Handler | Action | Isolation |
+|---|---|---|
+| `shell_v1` | Execute commands in the pipeline-tools sidecar | `network_mode: none`, read-only, capability-dropped |
+| `rag_search_v1` | Semantic search against the RAG service | Host-only (loopback to `:8100`) |
+| `rag_source_v1` | Fetch full file content from indexed corpus | Host-only (loopback to `:8100`) |
+| `assess_loop_v1` | Iterative model-driven decision loop | Engine dispatches actions per JSON decisions |
+
+**Tooling by policy (under construction):** The sidecar establishes a container-per-concern security tier. Today, the sidecar is `network_mode: none` with a static command set. The planned evolution introduces per-pipeline tool whitelists and network policy tiers — a sidecar that needs HTTP access to an approved API runs with outbound traffic restricted to declared domains (the same pattern used by the cloud proxy), while sidecars that only need filesystem access stay fully network-isolated. The pipeline YAML declares what a step needs; the container policy enforces it.
+
+### Shipped Pipelines
+
+| Pipeline | Purpose |
+|---|---|
+| **Consensus v7** | Multi-model answer generation with decomposition, domain-specific verification, veto gates, and structured synthesis |
+| **RAG Journal v3.5** | Iterative context gathering via assess loop — baseline RAG search, git log, journal index, then model-driven expansion |
+
 See [Pipeline System README](services/universal-stargate/systems/pipeline/README.md) for architecture and schema reference.
+
+## RAG Service
+
+A ChromaDB-backed semantic search service that indexes local files and serves retrieval queries for pipelines and agents.
+
+- **Indexing**: Markdown, code, PDF, and plain text — chunked by structure (headers, paragraphs, code blocks)
+- **Search**: Cosine similarity with optional recency decay scoring
+- **File watching**: Automatic reindexing via inotify with periodic reconciliation
+- **Embeddings**: Uses a local embedding model (`bge-m3`) via the Gateway — no external calls
+
+Config: `~/.rag/config.yaml`. Store: `~/.rag/store/` (ChromaDB persistent data).
+
+## Cloud Proxy (Experimental)
+
+> **Under active development.** Functional for text and vision models via OpenRouter.
+
+The cloud proxy is a **separate, optional service** that routes requests to cloud API providers (OpenRouter, Anthropic, OpenAI, Google, etc.). It is the **only component in the system with outbound internet access**, making cloud integration a structural security decision rather than a configuration flag.
+
+**Security model:**
+- **Isolation by construction**: if the cloud proxy isn't running, no component can make outbound requests — the system is local-only by default
+- **Credential containment**: API keys live exclusively in the cloud proxy process; Stargate and edge containers never see them
+- **Network boundary**: the proxy communicates with Stargate over loopback only; outbound connections are restricted to declared provider domains
+- **Uniform routing**: cloud models appear in `/v1/models` alongside local models and use the same routing infrastructure — no separate API surface
+
+```yaml
+# ~/.gateway/cloud-proxy.yaml
+providers:
+  - provider: openrouter
+    api_key_env: OPENROUTER_API_KEY
+    max_concurrent: 20
+    allow_prefixes:
+      - "anthropic/"
+      - "openai/"
+      - "google/"
+```
+
+Cloud models use provider IDs directly (e.g., `anthropic/claude-sonnet-4-20250514`). In pipeline configs, they're just another model alias — the pipeline system doesn't know or care where inference runs.
 
 ## Federation
 
@@ -137,7 +218,9 @@ universal-llm-gateway/
 ├── manage                            # Entry point — bootstraps venv, launches TUI
 ├── services/
 │   ├── _universal-llm-gateway/       # Gateway service (container-internal)
-│   └── universal-stargate/           # Stargate service (port 9999)
+│   ├── universal-stargate/           # Stargate service (port 9999)
+│   ├── rag/                          # RAG service (port 8100)
+│   └── universal_cloud_proxy/        # Cloud proxy service (port 8200)
 ├── libs/
 │   ├── inference_djinn/              # LLM engines (llama.cpp, vLLM, Whisper, Flux)
 │   ├── model_id/                     # ModelId type-safe identifiers
@@ -154,7 +237,10 @@ universal-llm-gateway/
 ├── config/                           # Model catalog, templates, stargate configs
 ├── docker/                           # Dockerfiles, Compose configs, build scripts
 ├── pipelines/                        # Shipped pipeline definitions
-└── tools/                            # Developer utilities (pipeline viewer)
+│   ├── consensus/                    # Multi-model consensus (v6.0, v6.1, v7)
+│   ├── rag/                          # RAG-backed context pipelines
+│   └── tools/                        # Pseudo-tool handlers (shell, RAG, assess loop)
+└── tools/                            # Developer utilities (pipeline viewer, test infra)
 ```
 
 ## License

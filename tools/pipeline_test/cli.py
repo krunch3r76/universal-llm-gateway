@@ -401,9 +401,9 @@ def _add_consult_parser(sub: Any) -> None:
     )
     p.add_argument("--timeout", type=float, default=300.0, help="Request timeout (s)")
     p.add_argument(
-        "--rag",
+        "--no-rag",
         action="store_true",
-        help="Augment consultation with RAG research findings",
+        help="Disable RAG augmentation (on by default)",
     )
     p.add_argument(
         "--rag-url",
@@ -468,7 +468,7 @@ def _cmd_consult(args: argparse.Namespace) -> None:
     rag_findings: list[str] | None = None
     output_limit: int | None = None
 
-    if args.rag:
+    if not args.no_rag:
         budget = budget_svc.compute_budget(
             ctx_len,
             fixed_chars,

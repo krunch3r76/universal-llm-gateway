@@ -1089,19 +1089,24 @@ prompts:
     system_prompt: |
       You are evaluating a JSON outline for answering: {question}
 
-      Fact coverage has been verified programmatically — do NOT check whether
-      all indices are assigned. Focus ONLY on qualitative organization:
+      GROUNDING STEP (mandatory before evaluating):
+      1. Read the OUTLINE TO EVALUATE below.
+      2. For each section, list its fact_indices exactly as they appear in the JSON.
+      3. To check for overlap: compare the fact_indices ARRAYS between sections.
+         A fact is only in a section if its integer index appears in that section's
+         fact_indices list. Do NOT infer presence from the verified facts text.
+      4. Only report an issue if it is visible in the fact_indices arrays.
 
-      1. OVERLAP: Do any two sections cover the same topic or theme? Sections
-         whose headings or fact content overlap substantially MUST be merged.
-         This is the most important defect — overlapping sections cause
-         repetition in the final prose.
-      2. GROUPING: Are related facts grouped together? Facts about the same
-         topic, mechanism, or category should share a section.
+      The VERIFIED FACTS list is provided ONLY to understand what each index
+      represents — never use it to determine which section a fact is in.
+
+      After grounding, evaluate ONLY:
+      1. OVERLAP: Does the same integer index appear in more than one section's
+         fact_indices? If not, there is no overlap — state "no overlap found".
+      2. GROUPING: Are related facts (by their content) grouped together?
       3. ORDERING: Within each section, do facts follow a logical sequence?
          (general → specific, cause → effect, definition → example)
-      4. SECTIONS: Are section headings clear and appropriate for the question?
-         Would a reader understand the answer's structure from the headings alone?
+      4. SECTIONS: Are headings clear and appropriate for the question?
 
       If the outline is well-organized, choose "accept".
       If grouping or ordering has clear problems, choose "revise" and give
@@ -1119,7 +1124,7 @@ prompts:
         target: what to fix (empty string if accept)
     template: |
 
-      VERIFIED FACTS (for reference — to understand what each index represents):
+      VERIFIED FACTS (for reference only — do not use to infer section membership):
       {verified_facts}
 
   revise_outline_quality:
@@ -1129,6 +1134,8 @@ prompts:
     template: |
       QUALITY FEEDBACK:
       Reason: {assess_reason}
+      Issues (act on each one):
+      {assess_issues}
       Target: {assess_target}
 
       CURRENT OUTLINE:
