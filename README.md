@@ -174,13 +174,15 @@ See [Pipeline System README](services/universal-stargate/systems/pipeline/README
 
 ## RAG Service
 
-A ChromaDB-backed semantic search service that indexes local files and serves retrieval queries for pipelines and agents.
+A **single-pass dense retrieval** RAG service — one ChromaDB collection, one embedding model, cosine similarity over HNSW. No query rewriting, no reranking, no hybrid sparse+dense search. This is the "Naive RAG" pattern in the standard taxonomy: embed the query, retrieve top-k nearest chunks, inject into the generation prompt. Simple, fast, and sufficient for scoped corpora where the query vocabulary closely matches the document vocabulary.
 
-- **Indexing**: Markdown, code, PDF, and plain text — chunked by structure (headers, paragraphs, code blocks)
-- **Search**: Cosine similarity with optional recency decay scoring; recency is driven by `published_date` (PDFs, takes priority) or `indexed_at` timestamp
+A planned query-rewriting pipeline (HyDE, step-back prompting, complexity-based routing) will evolve it toward an "Advanced RAG" pattern.
+
+- **Indexing**: Markdown, code, PDF (native via `pymupdf4llm`), and plain text — chunked by structure (headers, paragraphs, code blocks). PDF content-hashing (`pdf_hash`) for cross-file deduplication.
+- **Search**: Cosine similarity with optional recency decay scoring; recency is driven by `published_date` (preferred for research papers) or `indexed_at` timestamp
 - **Corpus scoping**: `source_prefixes` parameter restricts results to chunks under given path prefixes — multiple logical corpora in a single collection
 - **File watching**: Automatic reindexing via inotify with periodic reconciliation
-- **Embeddings**: Uses a local embedding model (`bge-m3`) via the Gateway — no external calls
+- **Embeddings**: Uses a local embedding model (`bge-m3`) via the Gateway — no external API calls
 
 Config: `~/.rag/config.yaml`. Store: `~/.rag/store/` (ChromaDB persistent data).
 
