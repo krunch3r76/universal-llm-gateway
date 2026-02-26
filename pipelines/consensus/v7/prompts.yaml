@@ -1260,16 +1260,13 @@ prompts:
          Label each candidate as one of:
          - RESTATEMENT (same proposition, same specificity)
          - ELABORATION (adds mechanism/cause/rationale/example)
+         - CAUSE-EFFECT (B describes the direct outcome or consequence of A)
          - SPECIALIZATION (adds narrower technical detail)
          - COORDINATE (same topic, different predicate)
          Deletion allowed ONLY for RESTATEMENT.
+         Never label CAUSE-EFFECT as RESTATEMENT.
 
-      4) Safeguards:
-         - Outcome vs mechanism = NOT redundant.
-         - Different contraindication conditions = NOT redundant.
-         - Definition vs severity = NOT redundant.
-
-      5) Final check:
+      4) Final check:
          Every whole-sentence deletion in target must satisfy D ⊆ K.
          If not, remove it or reduce to overlapping clause only.
 
@@ -1307,108 +1304,64 @@ prompts:
       You are reviewing a synthesized answer for GLOBAL REDUNDANCY only.
       The answer may have section headings (### ...).
 
-      SCOPE: identify repeated ideas spanning paragraph boundaries —
-      whether intra-section (two paragraphs under the same heading) or
-      cross-section. The local reviewer handles sentence pairs; your job
-      is everything above that level.
+      IDENTICAL SENTENCE GUARD (check this FIRST)
+      Before listing any pair in repeated_items: confirm `kept` and
+      `deleted` are DIFFERENT sentences from DIFFERENT locations in the
+      text. If they are the same sentence, the second occurrence does not
+      exist — do NOT include the pair. Only one copy is present.
 
-      SAME SUBJECT ≠ SAME CLAIM (CRITICAL):
-      Two sentences that name the same subject are NOT duplicates unless
-      they assert the SAME predicate — the same mechanism, property, or
-      relationship. Different facts about the same entity are independent
-      and MUST both survive.
-        DUPLICATE: "reduces hepatic glucose production" vs "inhibits
-          gluconeogenesis" → same mechanism, different words → delete one
-        NOT duplicate: "reduces hepatic glucose production" vs "improves
-          insulin sensitivity in skeletal muscle" → different mechanisms
-        NOT duplicate: "is contraindicated in renal impairment" vs
-          "is cleared by the kidneys" → contraindication vs pharmacokinetics
-      When in doubt, keep both — false deletions destroy verified content.
+      PREDICATE-EQUIVALENCE CHECK
+      For any two candidate sentences to be duplicates, write a *single*
+      predicate that both sentences state. The predicate must be a concise
+      clause of ≤12 words. If the predicate would require more than 12
+      words, the "overlap" is too narrow — the pair is NOT a duplicate,
+      drop it.
 
-      PREDICATE EQUIVALENCE TEST (MANDATORY for every proposed pair):
-      Before flagging any pair as redundant, complete this sentence:
-        "Both sentences assert: [one specific shared predicate]."
-      If you cannot fill in a SINGLE PREDICATE that both sentences
-      state — not just a shared subject or topic — they are NOT
-      duplicates. Drop the pair from your list.
+      SPECIFICITY GUARD
+      Before flagging any sentence as deleted, check BOTH:
+      1. CITATION CHECK: Does the deleted sentence contain any [Fact N]
+         citation NOT present in the kept sentence? If yes → unique
+         knowledge, NOT a duplicate — keep it.
+      2. ENTITY CHECK: Does the deleted sentence name specific entities,
+         values, mechanisms, or conditions absent from the kept sentence?
+         If yes → unique knowledge, NOT a duplicate — keep it.
+      A sentence only qualifies for deletion if it passes BOTH checks
+      (no unique citations AND no unique named content).
 
-      PASS — same predicate, different words:
-        A: "reduces the liver's production of glucose"
-        B: "inhibits hepatic gluconeogenesis"
-        ✅ "Both assert: metformin reduces liver glucose output"
+      CLOSING SUMMARY SENTENCE
+      A sentence at the end of a section that re-enumerates items already
+      described in detail above is a duplicate. Delete the summary; keep
+      the detailed sentences. Look for collective subjects: "Collectively",
+      "Together", "Overall", "These actions", "These mechanisms".
 
-      FAIL — same subject, different predicates:
-        A: "improves insulin sensitivity in peripheral tissues"
-        B: "is primarily used to treat type 2 diabetes"
-        ❌ Cannot complete — insulin sensitivity mechanism ≠
-           clinical indication. Drop this pair.
+      LONG-RANGE RESTATEMENT
+      A sentence that repeats the same predicate as an earlier sentence
+      without adding new named entities, values, or conditions is a
+      duplicate. Keep the earlier, more specific version.
 
-      FAIL — same topic, different conditions:
-        A: "contraindicated in liver disease and heart failure"
-        B: "patients with lactic acidosis should be monitored"
-        ❌ Cannot complete — listing contraindication conditions ≠
-           monitoring guidance for a different condition.
+      SECTION PRESERVATION
+      Never delete an entire section. Flag only specific duplicate
+      sentences. When a sentence duplicates content in another section,
+      delete only the less specific or less cited version.
 
-      SECTION PRESERVATION (HIGHEST PRIORITY):
-      You MUST NEVER flag an entire section for deletion. This is the
-      single most important rule. Each ### section was created from a
-      distinct group of verified facts. Even when one sentence overlaps
-      with another section, the remaining sentences contain unique,
-      independently verified content that exists NOWHERE else.
+      EMPTY SECTION GUARD
+      Before returning, count sentences remaining per section after
+      deletions. If ANY section would have zero sentences remaining,
+      change action to "accept" — no exceptions.
 
-      CORRECT: "Delete the sentence 'X increases glucose uptake in
-        muscles [8, 9]' from Effects section — same claim appears in
-        Mechanism section as 'increase in glucose uptake [35, 39]'"
-      WRONG: "Delete ### Effects on Insulin Sensitivity section"
-        — this destroys unique facts [2, 3] about insulin sensitivity
-        that appear ONLY in that section
-
-      When cross-section overlap exists, flag the SPECIFIC SENTENCE
-      that duplicates content in another section. Keep the version
-      with more specific or better-cited content.
-
-      EMPTY SECTION GUARD (ABSOLUTE):
-      Before returning, count how many sentences each section would
-      retain after your proposed deletions. If ANY section would have
-      zero sentences remaining, you MUST change your action to
-      "accept" — no exceptions. Emptying a section destroys unique
-      verified facts that exist nowhere else in the answer.
-
-      DELETION DIRECTION (for cross-section duplicates):
-      When the same claim appears in a SMALL section (≤3 sentences)
-      and a LARGE section (≥4 sentences), you MUST delete from the
-      LARGE section. The small section needs every sentence.
-      This overrides "keep the more specific version."
+      DELETION DIRECTION (cross-section duplicates)
+      When the same claim appears in a SMALL section (≤3 sentences) and
+      a LARGE section (≥4 sentences), delete from the LARGE section.
       Count sentences in each section BEFORE deciding direction.
 
-      Check for:
-      1. INTRA-SECTION PARAGRAPH DUPLICATION: two paragraphs under the
-         same heading convey the same information in similar or different
-         words. Delete the less precise paragraph entirely.
-      2. CROSS-SECTION DUPLICATION: the same claim appears in two sections
-         using different wording. Both sentences must assert the same
-         predicate — not merely share the same subject.
-      3. LONG-RANGE RESTATEMENT: a later paragraph repeats an earlier idea
-         without adding new information.
-      4. DUPLICATE CATEGORICAL CLUSTERS: a category of claims (risks,
-         prerequisites, examples, properties) restated in multiple places
-         without adding new information each time.
-      5. CLOSING SUMMARY SENTENCE: a sentence at the end of a section that
-         re-enumerates items already described in detail above (e.g., "The
-         primary X include A, B, and C" when A, B, C were already individually
-         enumerated). Delete the summary sentence; keep the detailed sentences.
-
       For each redundancy found:
-      - Quote BOTH instances (the kept one and the deleted one)
+      - Quote BOTH instances (kept and deleted) verbatim from the answer
       - State which to KEEP and which to DELETE
-      - Prefer keeping the sentence that is more specific and better cited
+      - Prefer keeping the more specific and better-cited version
 
-      LIMIT: Report at most 5 redundancies per review.
-
-      ACCEPT THRESHOLD: Accept if sections are mostly distinct and only
-      minor thematic overlap remains. Sections that discuss the same
-      subject from different angles (mechanism vs contraindications vs
-      pharmacokinetics) are NOT redundant.
+      ACCEPT THRESHOLD: Accept if sections are mostly distinct. Sections
+      discussing the same subject from different angles (mechanism vs
+      contraindications vs uses) are NOT redundant.
 
       ANSWER TO REVIEW:
       {artifact}
@@ -1417,18 +1370,25 @@ prompts:
       For each entry you plan to include in repeated_items:
       1. Search for the first 6 words of `deleted` verbatim in the
          ANSWER TO REVIEW above.
-      2. If you cannot find those exact words in the text, you are
-         paraphrasing — re-read the answer and copy the actual sentence.
+      2. If you cannot find those exact words, you are paraphrasing —
+         re-read the answer and copy the actual sentence.
       3. `kept` and `deleted` must both be copy-pasted from the text
          above, not rewritten or reconstructed from memory.
+      4. After copy-pasting, confirm `kept` ≠ `deleted` (the two must
+         be different sentences from different locations in the text).
+         If they are identical, you found only ONE occurrence — this
+         sentence does NOT appear twice. Do NOT include it.
 
       VALIDATION (do this LAST, before returning):
-      Review each entry in repeated_items. If the shared_predicate
-      is vague (e.g. "both about metformin", "both discuss lactic
-      acidosis") or names a topic rather than a specific assertion,
-      the pair is NOT a valid duplicate — remove it from your list.
-      If removing invalid pairs leaves an empty list, change action
-      to "accept".
+      Review each entry in repeated_items. Remove the entry if ANY of:
+      - `kept` and `deleted` are identical text (single occurrence —
+        not a duplicate)
+      - The shared_predicate exceeds 12 words (too narrow overlap —
+        not a genuine semantic duplicate)
+      - The shared_predicate names a topic rather than a specific
+        assertion (vague predicate — not a valid duplicate)
+      If removing invalid pairs leaves an empty list, change action to
+      "accept".
 
       Return JSON:
         action: "revise" or "accept"
@@ -1462,12 +1422,24 @@ prompts:
       mentions one section. Count sections before editing; the output
       MUST contain the same set of ### headings in the same order.
 
+      CITATION GATE (MANDATORY — check this FIRST before any deletion):
+      For each sentence the feedback asks you to delete:
+      1. List every [Fact N] citation in that sentence.
+      2. For each [Fact N], search every OTHER sentence in the answer
+         for the same [Fact N].
+      3. If ANY [Fact N] from the target sentence does not appear in
+         any other sentence → the sentence carries unique knowledge.
+         DO NOT delete it. Skip to the next target.
+      Only proceed to delete a sentence if ALL its citations appear
+      elsewhere in the answer.
+
       UNIQUE CONTENT PROTECTION (CRITICAL):
-      Before deleting any sentence, verify it has a semantic equivalent
-      elsewhere in the answer. If the sentence states a fact that appears
-      NOWHERE else (no other sentence asserts the same mechanism, property,
-      or relationship), KEEP it regardless of what the feedback says —
-      the assessor likely confused topical proximity with duplication.
+      After passing the CITATION GATE, verify the sentence has a
+      semantic equivalent elsewhere in the answer. If the sentence
+      states a fact that appears NOWHERE else (no other sentence
+      asserts the same mechanism, property, or relationship), KEEP it
+      regardless of what the feedback says — the assessor likely
+      confused topical proximity with duplication.
 
       Rules:
       - Follow the REDUNDANCY FEEDBACK — but apply the unique-content

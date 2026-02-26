@@ -1,14 +1,22 @@
-"""Ingest prompt-engineering PDFs into markdown files for RAG indexing."""
+"""Ingest prompt-engineering PDFs into a RAG-watched corpus directory.
+
+PDFs are copied into the corpus directory (the canonical source of truth).
+RAG handles PDF-to-markdown conversion internally via pymupdf4llm.
+Duplicate detection uses SHA-256 of PDF bytes — both locally (same hash
+already in corpus) and server-side (pdf_hash in ChromaDB metadata).
+"""
 
 from __future__ import annotations
 
+import hashlib
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 
-DEFAULT_OUTPUT_DIR = Path("docs/research/prompting")
+DEFAULT_CORPUS_DIR = Path("docs/research/prompting")
 DEFAULT_RAG_URL = "http://localhost:8100"
 DEFAULT_RAG_TIMEOUT = 30.0
 
@@ -16,51 +24,49 @@ DEFAULT_RAG_TIMEOUT = 30.0
 @dataclass(slots=True, kw_only=True)
 class IngestRecord:
     source_pdf: Path
-    output_md: Path
-    converted: bool
+    archived_to: Path | None = None
+    skipped_duplicate: bool = False
+    duplicate_of: Path | None = None
     error: str | None = None
-
-
-type MarkdownResult = str | list[dict[str, object]]
-type MarkdownConverter = Callable[[str], MarkdownResult]
 
 
 def ingest_pdfs(
     *,
     sources: list[str],
-    output_dir: Path = DEFAULT_OUTPUT_DIR,
+    corpus_dir: Path = DEFAULT_CORPUS_DIR,
     recursive: bool = True,
 ) -> list[IngestRecord]:
-    """Convert all discovered PDFs to markdown in output_dir."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    pdf_files = discover_pdf_files(sources=sources, default_dir=output_dir, recursive=recursive)
-    markdown_converter = _load_converter()
+    """Copy discovered PDFs into corpus_dir, skipping local hash duplicates."""
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_hashes = _scan_corpus_hashes(corpus_dir)
+    pdf_files = discover_pdf_files(
+        sources=sources,
+        default_dir=corpus_dir,
+        recursive=recursive,
+    )
 
     records: list[IngestRecord] = []
-    used_paths: set[Path] = set(output_dir.glob("*.md"))
     for pdf_path in pdf_files:
-        output_path = _build_output_path(pdf_path=pdf_path, output_dir=output_dir, used_paths=used_paths)
-        used_paths.add(output_path)
+        pdf_hash = _hash_file(pdf_path)
+
+        if pdf_hash in existing_hashes:
+            records.append(
+                IngestRecord(
+                    source_pdf=pdf_path,
+                    skipped_duplicate=True,
+                    duplicate_of=existing_hashes[pdf_hash],
+                )
+            )
+            continue
+
         try:
-            markdown_raw = markdown_converter(str(pdf_path))
-            markdown = _normalize_markdown(markdown_raw)
-            output_path.write_text(markdown, encoding="utf-8")
-            records.append(
-                IngestRecord(
-                    source_pdf=pdf_path,
-                    output_md=output_path,
-                    converted=True,
-                )
-            )
+            dest = _copy_to_corpus(pdf_path, corpus_dir)
+            existing_hashes[pdf_hash] = dest
+            records.append(IngestRecord(source_pdf=pdf_path, archived_to=dest))
         except Exception as exc:  # noqa: BLE001
-            records.append(
-                IngestRecord(
-                    source_pdf=pdf_path,
-                    output_md=output_path,
-                    converted=False,
-                    error=str(exc),
-                )
-            )
+            records.append(IngestRecord(source_pdf=pdf_path, error=str(exc)))
+
     return records
 
 
@@ -95,18 +101,21 @@ def discover_pdf_files(
     return pdf_paths
 
 
-def index_markdown_directory(
+def index_corpus_directory(
     *,
     directory: Path,
     rag_url: str = DEFAULT_RAG_URL,
     timeout: float = DEFAULT_RAG_TIMEOUT,
+    metadata_overrides: dict[str, str | int | float | bool] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Ask RAG to index markdown files in a directory."""
+    """Ask RAG to index PDF files in a directory."""
     url = f"{rag_url.rstrip('/')}/index_directory"
     body: dict[str, Any] = {
         "path": str(directory.expanduser().resolve()),
-        "extensions": [".md"],
+        "extensions": [".pdf"],
     }
+    if metadata_overrides:
+        body["metadata_overrides"] = metadata_overrides
     try:
         with httpx.Client(timeout=timeout) as client:
             response = client.post(url, json=body)
@@ -141,39 +150,31 @@ def rag_watch_status(
     return watches, None
 
 
-def _load_converter() -> MarkdownConverter:
-    """Load pymupdf4llm converter with actionable install guidance."""
-    try:
-        import pymupdf4llm
-    except ImportError as exc:
-        raise RuntimeError(
-            "Missing PDF extraction dependencies. "
-            "Install with: pip install pymupdf4llm pymupdf-layout"
-        ) from exc
-    return pymupdf4llm.to_markdown
+def _hash_file(path: Path) -> str:
+    """SHA-256 hex digest of file contents."""
+    hasher = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
-def _normalize_markdown(markdown: MarkdownResult) -> str:
-    """Normalize pymupdf4llm output into markdown text."""
-    if isinstance(markdown, str):
-        return markdown
-    return "\n\n".join(str(item) for item in markdown)
+def _scan_corpus_hashes(corpus_dir: Path) -> dict[str, Path]:
+    """Map content hash → path for all PDFs already in the corpus directory."""
+    hashes: dict[str, Path] = {}
+    for pdf_path in corpus_dir.glob("*.pdf"):
+        hashes[_hash_file(pdf_path)] = pdf_path
+    return hashes
 
 
-def _build_output_path(pdf_path: Path, output_dir: Path, used_paths: set[Path]) -> Path:
-    """Map source PDF to a unique markdown file in output_dir."""
-    base = output_dir / f"{pdf_path.stem}.md"
-    if base not in used_paths:
-        return base
-
-    suffix = pdf_path.parent.name.replace(" ", "-")
-    if suffix:
-        candidate = output_dir / f"{pdf_path.stem}-{suffix}.md"
-        if candidate not in used_paths:
-            return candidate
-
-    for index in range(2, 1000):
-        candidate = output_dir / f"{pdf_path.stem}-{index}.md"
-        if candidate not in used_paths:
-            return candidate
-    raise RuntimeError(f"Could not find output name for {pdf_path}")
+def _copy_to_corpus(pdf_path: Path, corpus_dir: Path) -> Path:
+    """Copy PDF into corpus directory with collision avoidance."""
+    dest = corpus_dir / pdf_path.name
+    if dest.exists() and _hash_file(dest) == _hash_file(pdf_path):
+        return dest
+    counter = 2
+    while dest.exists():
+        dest = corpus_dir / f"{pdf_path.stem}-{counter}{pdf_path.suffix}"
+        counter += 1
+    shutil.copy2(pdf_path, dest)
+    return dest

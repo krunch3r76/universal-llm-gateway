@@ -2,8 +2,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import pypdf
-
 _TOKEN_ESTIMATE = 4  # chars per token approximation
 
 _CHUNK_TOKENS_LARGE = 512
@@ -20,7 +18,7 @@ _HEADER_RE: re.Pattern[str] = re.compile(r"^#{1,3} .+", re.MULTILINE)
 @dataclass(slots=True, kw_only=True)
 class Chunk:
     text: str
-    metadata: dict[str, str | int]
+    metadata: dict[str, str | int | float | bool]
 
 
 def _split_paragraphs(text: str, max_chars: int) -> list[str]:
@@ -76,22 +74,21 @@ def chunk_markdown(path: str, content: str) -> list[Chunk]:
     return _annotate_chunk_indices(chunks)
 
 
-def chunk_pdf(path: str, content: bytes) -> list[Chunk]:
-    """Extract pages from PDF and paragraph-split each page."""
-    import io
+def chunk_pdf(path: str) -> list[Chunk]:
+    """Convert PDF to markdown via pymupdf4llm, then chunk as markdown."""
+    try:
+        import pymupdf4llm
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing PDF extraction dependency. "
+            "Install with: pip install pymupdf4llm pymupdf-layout"
+        ) from exc
 
-    chunks: list[Chunk] = []
-    source = str(path)
+    markdown_text = pymupdf4llm.to_markdown(path)
+    if isinstance(markdown_text, list):
+        markdown_text = "\n\n".join(str(item) for item in markdown_text)
 
-    reader = pypdf.PdfReader(io.BytesIO(content))
-    for page_num, page in enumerate(reader.pages, start=1):
-        page_text = page.extract_text() or ""
-        for text in _split_paragraphs(page_text, _CHUNK_CHARS_LARGE):
-            chunks.append(
-                Chunk(text=text, metadata={"source": source, "page": str(page_num)})
-            )
-
-    return _annotate_chunk_indices(chunks)
+    return chunk_markdown(path, markdown_text)
 
 
 def chunk_code(path: str, content: str) -> list[Chunk]:
@@ -137,7 +134,7 @@ def chunk_file(path: Path) -> list[Chunk]:
         return chunk_markdown(str(path), path.read_text(errors="replace"))
 
     if suffix == ".pdf":
-        return chunk_pdf(str(path), path.read_bytes())
+        return chunk_pdf(str(path))
 
     if suffix in _CODE_EXTENSIONS:
         return chunk_code(str(path), path.read_text(errors="replace"))

@@ -139,12 +139,15 @@ class ModelBusyHandler(SyncMessageHandler):
     """
 
     def handle(self, data: dict[str, Any], ctx: HandlerContext) -> None:
+        import time
+
         model_id = data.get("model_id")
         if not model_id:
             logger.debug("MODEL_BUSY missing model_id")
             return
 
         ctx.busy_models.add(model_id)
+        ctx.busy_since[model_id] = time.monotonic()
         logger.debug(f"Model busy on Gateway: {model_id}")
 
         # Fire callback for federation telemetry

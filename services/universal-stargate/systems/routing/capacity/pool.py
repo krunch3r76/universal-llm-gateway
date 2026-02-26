@@ -6,6 +6,8 @@ Replaces CapacityLedger + AdmissionQueue + CapacityReleaseConsumer.
 INVARIANT: ∀ acquire() ⟹ release() via CapacityToken.__aexit__
 INVARIANT: ∀ slot: in_flight[slot] ≥ 0
 INVARIANT: token release is idempotent (guard prevents double-release)
+INVARIANT: ∀ dispatch-admitted waiter cancelled before token creation ⟹
+           in_flight decremented and next waiter dispatched (no leaked slots)
 """
 
 from __future__ import annotations
@@ -286,7 +288,15 @@ class CapacityPool:
             logger.info(f"Admitted: {request_id} → {gateway_id}/{model_id}")
             return gateway_id
         except (TimeoutError, asyncio.CancelledError):
-            self._cancel_waiter(request_id)
+            # Race condition guard: _dispatch may have already admitted us
+            # (popped from queue, incremented in_flight, set future result)
+            # before our task was cancelled.  Without this, in_flight leaks
+            # permanently — the slot is never released and all subsequent
+            # requests to this model/gateway are blocked forever.
+            if future.done() and not future.cancelled():
+                self._recover_leaked_slot(request_id, future.result(), model_id)
+            else:
+                self._cancel_waiter(request_id)
             raise
 
     def _cancel_waiter(self, request_id: str) -> None:
@@ -300,6 +310,67 @@ class CapacityPool:
                     if not queue:
                         del self._queues[model_id]
                     return
+
+    def _recover_leaked_slot(
+        self, request_id: str, gateway_id: str, model_id: str
+    ) -> None:
+        """
+        Release a slot that was reserved by _dispatch but never claimed as a token.
+
+        Called when CancelledError/TimeoutError interrupts _wait_for_slot AFTER
+        the future was resolved (dispatch already incremented in_flight).
+        Without this recovery, in_flight is permanently stuck and the slot
+        is blocked for all future requests.
+        """
+        slot = _Slot(gateway_id=gateway_id, model_id=model_id)
+        in_flight = self._in_flight.get(slot, 0)
+        if in_flight <= 0:
+            logger.error(
+                f"Leaked slot recovery: {request_id} on {gateway_id}/{model_id} "
+                f"but in_flight already 0 — possible double-recovery"
+            )
+            return
+        self._in_flight[slot] = in_flight - 1
+        logger.warning(
+            f"Recovered leaked slot: {request_id} on {gateway_id}/{model_id} "
+            f"(admitted by dispatch, cancelled before token creation, "
+            f"in_flight: {in_flight} → {in_flight - 1})"
+        )
+        self._emit_slot_leak_recovered(request_id, gateway_id, model_id)
+        # Wake next waiter in a new task — cannot await during cancellation
+        try:
+            asyncio.get_running_loop().call_soon(
+                lambda: asyncio.create_task(
+                    self._dispatch(model_id),
+                    name=f"capacity-recover-dispatch-{model_id}",
+                )
+            )
+        except RuntimeError:
+            pass
+
+    def _emit_slot_leak_recovered(
+        self, request_id: str, gateway_id: str, model_id: str
+    ) -> None:
+        """Emit event when a leaked capacity slot is recovered."""
+        if not self._event_bus:
+            return
+        try:
+            from universal_event_bus import Event
+
+            event = Event(
+                signal="capacity.slot.leak.recovered",
+                payload={
+                    "request_id": request_id,
+                    "gateway_id": gateway_id,
+                    "model_id": model_id,
+                    "snapshot": self.get_snapshot(),
+                },
+            )
+            asyncio.get_running_loop().call_soon(
+                lambda: asyncio.create_task(self._event_bus.publish_async_nowait(event))
+            )
+        except Exception:
+            pass
 
     # ── Release ──
 
@@ -321,7 +392,13 @@ class CapacityPool:
         await self._dispatch(token.model_id)
 
     async def _dispatch(self, model_id: str) -> None:
-        """Dispatch waiters from head of model queue."""
+        """Dispatch waiters from head of model queue.
+
+        Handles cancelled waiters: Task.cancel() cancels the underlying future,
+        so we must skip them before reserving a slot via _try_immediate.
+        Also guards against the narrow race where cancellation occurs between
+        _try_immediate and set_result.
+        """
         queue = self._queues.get(model_id)
         if not queue:
             return
@@ -329,6 +406,13 @@ class CapacityPool:
         dispatched = 0
         while queue:
             waiter = queue[0]
+
+            # Task.cancel() propagates to the future — skip cancelled waiters
+            # to avoid incrementing in_flight for a slot nobody will claim.
+            if waiter.future.done():
+                queue.popleft()
+                continue
+
             gw_id = self._try_immediate(
                 waiter.request_id,
                 model_id,
@@ -337,9 +421,20 @@ class CapacityPool:
             if gw_id is None:
                 break
             queue.popleft()
+
+            # Guard: cancellation may have arrived between _try_immediate
+            # (which incremented in_flight) and here.
             if not waiter.future.done():
                 waiter.future.set_result(gw_id)
-            dispatched += 1
+                dispatched += 1
+            else:
+                slot = _Slot(gateway_id=gw_id, model_id=model_id)
+                self._in_flight[slot] = max(0, self._in_flight.get(slot, 0) - 1)
+                logger.warning(
+                    f"Cancelled between admit and set_result: "
+                    f"{waiter.request_id} on {gw_id}/{model_id} "
+                    f"— released slot"
+                )
 
         if dispatched > 0:
             logger.info(

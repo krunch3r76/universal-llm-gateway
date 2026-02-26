@@ -54,15 +54,22 @@ async def wait_until_healthy(
             await asyncio.sleep(min(interval_s, remaining))
 
 
+_EMBED_BATCH_SIZE = 64
+
+
 async def embed_chunks(texts: list[str]) -> list[list[float]]:
-    """Embed raw texts for indexing. Gateway catalog adds search_document: prefix automatically."""
-    response = await _client.post(
-        f"{GATEWAY_URL}/v1/embeddings",
-        json={"model": EMBED_MODEL, "input": texts},
-    )
-    response.raise_for_status()
-    data = response.json()
-    return [item["embedding"] for item in data["data"]]
+    """Embed raw texts for indexing, batching to avoid overloading the endpoint."""
+    all_embeddings: list[list[float]] = []
+    for start in range(0, len(texts), _EMBED_BATCH_SIZE):
+        batch = texts[start : start + _EMBED_BATCH_SIZE]
+        response = await _client.post(
+            f"{GATEWAY_URL}/v1/embeddings",
+            json={"model": EMBED_MODEL, "input": batch},
+        )
+        response.raise_for_status()
+        data = response.json()
+        all_embeddings.extend(item["embedding"] for item in data["data"])
+    return all_embeddings
 
 
 async def embed_query(text: str) -> list[float]:

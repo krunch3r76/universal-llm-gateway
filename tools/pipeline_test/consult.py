@@ -19,11 +19,12 @@ DEFAULT_STARGATE_URL = "http://localhost:9999"
 DEFAULT_RAG_URL = "http://localhost:8100"
 DEFAULT_RAG_TOP_K = 5
 DEFAULT_RAG_TIMEOUT = 10.0
+DEFAULT_RAG_RECENCY_WEIGHT = 0.2
 DEFAULT_RAG_CORPUS_DIR = Path("docs/research/prompting")
 
 DEFAULT_CONSULTANTS: list[str] = [
     "qwen3-32b-awq-32768",
-    "deepseek-r1-distill-qwen-14b-q8-0-32768",
+    "gpt-oss-20b-mxfp4-65536",
 ]
 
 _SYSTEM_PROMPT = """\
@@ -176,6 +177,7 @@ def fetch_rag_findings(
     top_k: int = DEFAULT_RAG_TOP_K,
     timeout: float = DEFAULT_RAG_TIMEOUT,
     source_prefixes: list[str] | None = None,
+    recency_weight: float = DEFAULT_RAG_RECENCY_WEIGHT,
 ) -> tuple[list[str], str | None]:
     """Search RAG for relevant prompt-engineering chunks.
 
@@ -183,7 +185,7 @@ def fetch_rag_findings(
     continue without RAG context.
     """
     url = f"{rag_url.rstrip('/')}/search"
-    body: dict[str, object] = {"query": problem, "top_k": top_k}
+    body: dict[str, object] = {"query": problem, "top_k": top_k, "recency_weight": recency_weight}
     if source_prefixes:
         body["source_prefixes"] = source_prefixes
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
-
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -120,13 +119,58 @@ def _matches_source_prefix(source: str, prefixes: list[str]) -> bool:
     return any(source.startswith(prefix) for prefix in prefixes)
 
 
-async def _index_file(file_path: Path) -> IndexResult:
+def _check_pdf_duplicate(
+    collection: chromadb.Collection,
+    pdf_hash: str,
+    source: str,
+) -> IndexResult | None:
+    """Return IndexResult if pdf_hash already exists under a different source path."""
+    try:
+        existing = collection.get(
+            where={"pdf_hash": pdf_hash},
+            include=["metadatas"],
+            limit=1,
+        )
+    except Exception:
+        return None
+    for meta in existing.get("metadatas") or []:
+        if isinstance(meta, dict):
+            existing_source = meta.get("source")
+            if isinstance(existing_source, str) and existing_source != source:
+                logger.info(
+                    "PDF duplicate detected: %s is duplicate of %s",
+                    source,
+                    existing_source,
+                )
+                return IndexResult(
+                    deleted=0,
+                    indexed=0,
+                    unchanged=True,
+                    file=source,
+                    duplicate=True,
+                    duplicate_of=existing_source,
+                )
+    return None
+
+
+async def _index_file(
+    file_path: Path,
+    metadata_overrides: dict[str, str | int | float | bool] | None = None,
+) -> IndexResult:
     """Index a file, cleaning up stale chunks when content changed."""
     source = str(file_path)
     raw = file_path.read_bytes()
-    prefix = _file_hash(raw)[:16]
+    content_hash = _file_hash(raw)
+    prefix = content_hash[:16]
 
     collection = _get_collection()
+
+    # PDF cross-file dedup: same content under a different filename → skip
+    if file_path.suffix.lower() == ".pdf":
+        dup_result = _check_pdf_duplicate(collection, content_hash, source)
+        if dup_result is not None:
+            return dup_result
+
     existing = collection.get(where={"source": source}, include=["metadatas"])
     existing_ids: list[str] = existing.get("ids", [])
 
@@ -163,6 +207,14 @@ async def _index_file(file_path: Path) -> IndexResult:
         metadata["chunk_hash"] = chunk_hash
         metadata["indexed_at"] = existing_timestamps.get(chunk_hash, now)
 
+    if file_path.suffix.lower() == ".pdf":
+        for metadata in metadatas:
+            metadata["pdf_hash"] = content_hash
+
+    if metadata_overrides:
+        for metadata in metadatas:
+            metadata.update(metadata_overrides)
+
     embeddings = await embed_chunks(texts)
     collection.upsert(
         ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
@@ -198,7 +250,8 @@ def _apply_recency(
     Lower is better. Recency bonus subtracts from distance to boost recent items.
 
     INV: recency_weight = 0.0 ⟹ distances unchanged
-    INV: ∀ chunk without indexed_at: recency_bonus = 0.0 (no penalty, no boost)
+    INV: ∀ chunk without date metadata: recency_bonus = 0.0 (no penalty, no boost)
+    INV: published_date takes priority over indexed_at when present
     """
     if recency_weight <= 0.0:
         return distances
@@ -206,12 +259,16 @@ def _apply_recency(
     now = datetime.now(UTC)
     result: list[float] = []
     for dist, meta in zip(distances, metadatas, strict=True):
-        indexed_at_str = meta.get("indexed_at")
-        if not isinstance(indexed_at_str, str):
+        date_str = meta.get("published_date") or meta.get("indexed_at")
+        if not isinstance(date_str, str):
             result.append(dist)
             continue
-        indexed_at = datetime.fromisoformat(indexed_at_str)
-        days_old = max((now - indexed_at).total_seconds() / 86400, 0.0)
+        try:
+            doc_date = datetime.fromisoformat(date_str)
+        except ValueError:
+            result.append(dist)
+            continue
+        days_old = max((now - doc_date).total_seconds() / 86400, 0.0)
         recency_score = math.exp(-DECAY_LAMBDA * days_old)
         adjusted = dist * (1 - recency_weight) - recency_weight * recency_score
         result.append(adjusted)
@@ -248,7 +305,9 @@ async def search(request: SearchRequest) -> SearchResponse:
         filtered = [
             (chunk, meta, dist)
             for chunk, meta, dist in zip(chunks, metadatas, distances, strict=True)
-            if _matches_source_prefix(str(meta.get("source", "")), request.source_prefixes)
+            if _matches_source_prefix(
+                str(meta.get("source", "")), request.source_prefixes
+            )
         ]
         chunks = [x[0] for x in filtered][: request.top_k]
         metadatas = [x[1] for x in filtered][: request.top_k]
@@ -301,7 +360,10 @@ def _validate_directory(path: str) -> Path:
 
 @app.post("/index", response_model=IndexResult)
 async def index_file(request: IndexRequest) -> IndexResult:
-    return await _index_file(_validate_file(request.path))
+    return await _index_file(
+        _validate_file(request.path),
+        metadata_overrides=request.metadata_overrides,
+    )
 
 
 @app.post("/index_directory", response_model=IndexDirectoryResponse)
@@ -311,6 +373,7 @@ async def index_directory(request: IndexDirectoryRequest) -> IndexDirectoryRespo
     total_indexed = 0
     total_deleted = 0
     total_unchanged = 0
+    total_duplicates = 0
     file_count = 0
 
     for root, _dirs, files in dir_path.walk():
@@ -319,10 +382,15 @@ async def index_directory(request: IndexDirectoryRequest) -> IndexDirectoryRespo
             if file_path.suffix.lower() not in extensions:
                 continue
             try:
-                result = await _index_file(file_path)
+                result = await _index_file(
+                    file_path,
+                    metadata_overrides=request.metadata_overrides,
+                )
                 total_indexed += result.indexed
                 total_deleted += result.deleted
-                if result.unchanged:
+                if result.duplicate:
+                    total_duplicates += 1
+                elif result.unchanged:
                     total_unchanged += 1
                 file_count += 1
             except Exception as e:
@@ -333,12 +401,16 @@ async def index_directory(request: IndexDirectoryRequest) -> IndexDirectoryRespo
         deleted=total_deleted,
         unchanged=total_unchanged,
         files=file_count,
+        duplicates=total_duplicates,
     )
 
 
 @app.post("/reindex", response_model=IndexResult)
 async def reindex_file(request: IndexRequest) -> IndexResult:
-    return await _index_file(_validate_file(request.path))
+    return await _index_file(
+        _validate_file(request.path),
+        metadata_overrides=request.metadata_overrides,
+    )
 
 
 @app.post("/reindex_directory", response_model=IndexDirectoryResponse)
@@ -349,6 +421,7 @@ async def reindex_directory(request: IndexDirectoryRequest) -> IndexDirectoryRes
     total_indexed = 0
     total_deleted = 0
     total_unchanged = 0
+    total_duplicates = 0
     file_count = 0
     walked_sources: set[str] = set()
 
@@ -359,10 +432,15 @@ async def reindex_directory(request: IndexDirectoryRequest) -> IndexDirectoryRes
                 continue
             walked_sources.add(str(file_path.resolve()))
             try:
-                result = await _index_file(file_path)
+                result = await _index_file(
+                    file_path,
+                    metadata_overrides=request.metadata_overrides,
+                )
                 total_indexed += result.indexed
                 total_deleted += result.deleted
-                if result.unchanged:
+                if result.duplicate:
+                    total_duplicates += 1
+                elif result.unchanged:
                     total_unchanged += 1
                 file_count += 1
             except Exception as e:
@@ -399,6 +477,7 @@ async def reindex_directory(request: IndexDirectoryRequest) -> IndexDirectoryRes
         deleted=total_deleted,
         unchanged=total_unchanged,
         files=file_count,
+        duplicates=total_duplicates,
     )
 
 

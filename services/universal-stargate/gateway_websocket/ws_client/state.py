@@ -22,12 +22,15 @@ class GatewayState:
     Invariant: ∀ state field, ∃! update path (via handlers or _process_init)
     """
 
+    BUSY_MODEL_TTL_SECONDS: float = 600.0  # 10 min — auto-clear stale busy state
+
     def __init__(self) -> None:
         # Cached state from INIT + updates
         self._init_data: InitData | None = None
         self._models: set[str] = set()
         self._loaded_models: set[str] = set()
         self._busy_models: set[str] = set()
+        self._busy_since: dict[str, float] = {}  # model_id → monotonic timestamp
         self._loading_models: set[str] = set()
         self._resources: ResourcesData = ResourcesData()
         self._catalog: dict[str, Any] = {}
@@ -65,7 +68,11 @@ class GatewayState:
         self._resources = ResourcesData.from_dict(self._init_data.resources)
 
         # Reset event-driven state from INIT snapshot
+        import time as _time
+
         self._busy_models = set(self._resources.busy_models)
+        now = _time.monotonic()
+        self._busy_since = {m: now for m in self._busy_models}
         self._loading_models = set()  # Clear loading state on reconnect
         self._model_last_inference = {}  # Clear inference cache on reconnect
         self._model_details = {}  # Clear model details on reconnect
@@ -158,7 +165,10 @@ class GatewayState:
         Get current set of busy models from real-time WebSocket state.
 
         Event-driven: automatically updated on MODEL_BUSY/MODEL_IDLE events.
+        Self-healing: auto-clears models busy longer than BUSY_MODEL_TTL_SECONDS
+        to prevent permanent routing lockup from lost MODEL_IDLE messages.
         """
+        self._expire_stale_busy_models()
         return frozenset(self._busy_models)
 
     def get_loading_models(self) -> frozenset[str]:
@@ -235,8 +245,31 @@ class GatewayState:
 
     @property
     def busy_models(self) -> set[str]:
-        """Mutable reference for handlers."""
+        """Mutable reference for handlers. Handlers must also update _busy_since."""
         return self._busy_models
+
+    @property
+    def busy_since(self) -> dict[str, float]:
+        """Mutable reference for busy timestamp tracking."""
+        return self._busy_since
+
+    def _expire_stale_busy_models(self) -> None:
+        """Auto-clear busy models that exceeded the TTL without a MODEL_BUSY refresh."""
+        import time as _time
+
+        now = _time.monotonic()
+        stale = [
+            m
+            for m in self._busy_models
+            if now - self._busy_since.get(m, 0) > self.BUSY_MODEL_TTL_SECONDS
+        ]
+        for model_id in stale:
+            self._busy_models.discard(model_id)
+            self._busy_since.pop(model_id, None)
+            logger.warning(
+                f"Auto-cleared stale busy state for {model_id} "
+                f"(no MODEL_IDLE received within {self.BUSY_MODEL_TTL_SECONDS:.0f}s)"
+            )
 
     @property
     def loading_models(self) -> set[str]:

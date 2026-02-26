@@ -21,6 +21,7 @@ class SearchResponse(BaseModel):
 
 class IndexRequest(BaseModel):
     path: str
+    metadata_overrides: dict[str, str | int | float | bool] | None = None
 
 
 class IndexResult(BaseModel):
@@ -28,11 +29,14 @@ class IndexResult(BaseModel):
     deleted: int
     unchanged: bool
     file: str
+    duplicate: bool = False
+    duplicate_of: str | None = None
 
 
 class IndexDirectoryRequest(BaseModel):
     path: str
     extensions: list[str] | None = None
+    metadata_overrides: dict[str, str | int | float | bool] | None = None
 
 
 class IndexDirectoryResponse(BaseModel):
@@ -40,6 +44,7 @@ class IndexDirectoryResponse(BaseModel):
     deleted: int
     unchanged: int
     files: int
+    duplicates: int = 0
 
 
 class StatsResponse(BaseModel):

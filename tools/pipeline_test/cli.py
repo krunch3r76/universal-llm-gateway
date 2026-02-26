@@ -11,7 +11,8 @@ Subcommands:
     replay      Re-execute a model call against running Stargate
     compare     Diff original vs replay output
     consult     Query consultant models for prompt improvements
-    ingest-papers  Convert PDFs to markdown for RAG research corpus
+    ask         Free-form question to local models with RAG context
+    ingest-papers  Copy PDFs into RAG corpus directory for indexing
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from . import ask as ask_svc
 from . import compare as compare_svc
 from . import consult as consult_svc
 from . import format as format_svc
@@ -46,6 +48,7 @@ def main(argv: list[str] | None = None) -> None:
     _add_replay_parser(sub)
     _add_compare_parser(sub)
     _add_consult_parser(sub)
+    _add_ask_parser(sub)
     _add_ingest_papers_parser(sub)
 
     args = parser.parse_args(argv)
@@ -429,6 +432,16 @@ def _add_consult_parser(sub: Any) -> None:
         default=[],
         help="Repeatable RAG source prefix override",
     )
+    p.add_argument(
+        "--rag-recency",
+        type=float,
+        default=consult_svc.DEFAULT_RAG_RECENCY_WEIGHT,
+        metavar="WEIGHT",
+        help=(
+            "Recency weight for RAG search [0.0–1.0]; "
+            f"0 disables (default: {consult_svc.DEFAULT_RAG_RECENCY_WEIGHT})"
+        ),
+    )
     p.set_defaults(func=_cmd_consult)
 
 
@@ -445,7 +458,10 @@ def _cmd_consult(args: argparse.Namespace) -> None:
     rag_findings: list[str] | None = None
     if args.rag:
         source_prefixes = (
-            [str(Path(prefix).expanduser().resolve()) for prefix in args.rag_source_prefix]
+            [
+                str(Path(prefix).expanduser().resolve())
+                for prefix in args.rag_source_prefix
+            ]
             if args.rag_source_prefix
             else [str(Path(args.rag_corpus).expanduser().resolve())]
         )
@@ -455,6 +471,7 @@ def _cmd_consult(args: argparse.Namespace) -> None:
             top_k=args.rag_top_k,
             timeout=args.rag_timeout,
             source_prefixes=source_prefixes,
+            recency_weight=args.rag_recency,
         )
         if rag_error:
             print(f"  RAG: unavailable ({rag_error})")
@@ -490,6 +507,138 @@ def _cmd_consult(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# ask
+# ---------------------------------------------------------------------------
+
+
+def _add_ask_parser(sub: Any) -> None:
+    p = sub.add_parser(
+        "ask",
+        help="Ask local models a question with optional RAG research context",
+    )
+    p.add_argument(
+        "--question",
+        "-q",
+        required=True,
+        help="Free-form question to ask",
+    )
+    p.add_argument(
+        "--models",
+        nargs="+",
+        metavar="MODEL",
+        help=(f"Model IDs (default: {', '.join(ask_svc.DEFAULT_ASK_MODELS)})"),
+    )
+    p.add_argument(
+        "--url",
+        default=ask_svc.DEFAULT_STARGATE_URL,
+        help="Stargate URL",
+    )
+    p.add_argument("--timeout", type=float, default=300.0, help="Request timeout (s)")
+    p.add_argument(
+        "--no-rag",
+        action="store_true",
+        help="Disable RAG augmentation (on by default)",
+    )
+    p.add_argument(
+        "--rag-url",
+        default=consult_svc.DEFAULT_RAG_URL,
+        help="RAG service URL",
+    )
+    p.add_argument(
+        "--rag-top-k",
+        type=int,
+        default=consult_svc.DEFAULT_RAG_TOP_K,
+        help="Maximum RAG chunks to inject",
+    )
+    p.add_argument(
+        "--rag-timeout",
+        type=float,
+        default=consult_svc.DEFAULT_RAG_TIMEOUT,
+        help="RAG request timeout (s)",
+    )
+    p.add_argument(
+        "--rag-corpus",
+        default=str(consult_svc.DEFAULT_RAG_CORPUS_DIR),
+        help="Default source prefix for RAG lookup",
+    )
+    p.add_argument(
+        "--rag-source-prefix",
+        action="append",
+        default=[],
+        help="Repeatable RAG source prefix override",
+    )
+    p.add_argument(
+        "--rag-recency",
+        type=float,
+        default=consult_svc.DEFAULT_RAG_RECENCY_WEIGHT,
+        metavar="WEIGHT",
+        help=(
+            "Recency weight for RAG search [0.0-1.0]; "
+            f"0 disables (default: {consult_svc.DEFAULT_RAG_RECENCY_WEIGHT})"
+        ),
+    )
+    p.set_defaults(func=_cmd_ask)
+
+
+def _cmd_ask(args: argparse.Namespace) -> None:
+    target_models = args.models or ask_svc.DEFAULT_ASK_MODELS
+    print(f"Question: {args.question}")
+    print(f"  Models: {', '.join(target_models)}")
+
+    rag_findings: list[str] | None = None
+    if not args.no_rag:
+        source_prefixes = (
+            [
+                str(Path(prefix).expanduser().resolve())
+                for prefix in args.rag_source_prefix
+            ]
+            if args.rag_source_prefix
+            else [str(Path(args.rag_corpus).expanduser().resolve())]
+        )
+        rag_findings, rag_error = consult_svc.fetch_rag_findings(
+            args.question,
+            rag_url=args.rag_url,
+            top_k=args.rag_top_k,
+            timeout=args.rag_timeout,
+            source_prefixes=source_prefixes,
+            recency_weight=args.rag_recency,
+        )
+        if rag_error:
+            print(f"  RAG: unavailable ({rag_error})")
+        elif rag_findings:
+            sources = ", ".join(source_prefixes)
+            print(f"  RAG: injected {len(rag_findings)} finding(s) from {sources}")
+        else:
+            print("  RAG: no matching findings")
+    else:
+        print("  RAG: disabled")
+
+    print()
+
+    results = ask_svc.ask_models(
+        args.question,
+        models=args.models,
+        rag_findings=rag_findings,
+        stargate_url=args.url,
+        timeout=args.timeout,
+    )
+
+    for result in results:
+        print("=" * 72)
+        print(f"MODEL: {result.model_id}")
+        if result.error:
+            print(f"[ERROR] {result.error}")
+        else:
+            print(
+                f"Tokens: {result.prompt_tokens}+{result.completion_tokens} | "
+                f"Latency: {result.latency_ms:.0f}ms"
+            )
+            print("=" * 72)
+            print(result.response_text)
+        print()
+
+
+# ---------------------------------------------------------------------------
 # ingest-papers
 # ---------------------------------------------------------------------------
 
@@ -497,17 +646,17 @@ def _cmd_consult(args: argparse.Namespace) -> None:
 def _add_ingest_papers_parser(sub: Any) -> None:
     p = sub.add_parser(
         "ingest-papers",
-        help="Convert prompt-engineering PDFs to markdown for RAG",
+        help="Copy prompt-engineering PDFs into RAG corpus directory",
     )
     p.add_argument(
         "sources",
         nargs="*",
-        help="PDF files or directories (default: output dir)",
+        help="PDF files or directories (default: corpus dir)",
     )
     p.add_argument(
-        "--output-dir",
-        default=str(ingest_svc.DEFAULT_OUTPUT_DIR),
-        help="Markdown output directory",
+        "--corpus-dir",
+        default=str(ingest_svc.DEFAULT_CORPUS_DIR),
+        help="Corpus directory for PDF storage",
     )
     p.add_argument(
         "--non-recursive",
@@ -518,6 +667,11 @@ def _add_ingest_papers_parser(sub: Any) -> None:
         "--no-index",
         action="store_true",
         help="Skip immediate RAG /index_directory call",
+    )
+    p.add_argument(
+        "--published",
+        metavar="YYYY-MM-DD",
+        help="Publication date to inject as metadata (e.g. 2023-07-06)",
     )
     p.add_argument(
         "--rag-url",
@@ -534,26 +688,35 @@ def _add_ingest_papers_parser(sub: Any) -> None:
 
 
 def _cmd_ingest_papers(args: argparse.Namespace) -> None:
-    output_dir = Path(args.output_dir).expanduser().resolve()
+    corpus_dir = Path(args.corpus_dir).expanduser().resolve()
     records = ingest_svc.ingest_pdfs(
         sources=args.sources,
-        output_dir=output_dir,
+        corpus_dir=corpus_dir,
         recursive=not args.non_recursive,
     )
     if not records:
         print("No PDFs found to ingest.")
         return
 
-    converted = [record for record in records if record.converted]
-    failed = [record for record in records if not record.converted]
-    print(f"Ingested {len(converted)}/{len(records)} PDF(s) into {output_dir}")
-    for record in converted:
-        print(f"  [OK] {record.source_pdf} -> {record.output_md}")
+    copied = [
+        r for r in records if r.archived_to is not None and not r.skipped_duplicate
+    ]
+    duplicates = [r for r in records if r.skipped_duplicate]
+    failed = [r for r in records if r.error]
+    print(f"Ingested {len(copied)}/{len(records)} PDF(s) into {corpus_dir}")
+    for record in copied:
+        print(f"  [OK] {record.source_pdf.name} -> {record.archived_to}")
+    for record in duplicates:
+        print(f"  [DUP] {record.source_pdf.name} (duplicate of {record.duplicate_of})")
     for record in failed:
-        print(f"  [ERR] {record.source_pdf} ({record.error})")
+        print(f"  [ERR] {record.source_pdf.name} ({record.error})")
 
     if args.no_index:
         return
+
+    metadata_overrides: dict[str, str | int | float | bool] | None = None
+    if args.published:
+        metadata_overrides = {"published_date": f"{args.published}T00:00:00+00:00"}
 
     status, status_error = ingest_svc.rag_watch_status(
         rag_url=args.rag_url,
@@ -563,18 +726,22 @@ def _cmd_ingest_papers(args: argparse.Namespace) -> None:
         print(f"RAG watch status unavailable: {status_error}")
     elif status is not None:
         watched_paths = [str(item.get("watch_path", "")) for item in status]
-        if str(output_dir) not in watched_paths:
-            print("RAG watcher does not include output directory. Add it to ~/.rag/config.yaml watch_directories.")
+        if str(corpus_dir) not in watched_paths:
+            print(
+                "RAG watcher does not include corpus directory. "
+                "Add it to ~/.rag/config.yaml watch_directories."
+            )
 
-    index_result, index_error = ingest_svc.index_markdown_directory(
-        directory=output_dir,
+    index_result, index_error = ingest_svc.index_corpus_directory(
+        directory=corpus_dir,
         rag_url=args.rag_url,
         timeout=args.rag_timeout,
+        metadata_overrides=metadata_overrides,
     )
     if index_error:
         print(f"RAG index skipped: {index_error}")
         return
-    print(f"RAG indexed markdown: {index_result}")
+    print(f"RAG indexed PDFs: {index_result}")
 
 
 # ---------------------------------------------------------------------------

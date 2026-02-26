@@ -30,6 +30,7 @@ class ModelIdleHandler(SyncMessageHandler):
             return
 
         ctx.busy_models.discard(model_id)
+        ctx.busy_since.pop(model_id, None)
 
         timestamp = data.get("last_inference_time")
         if not isinstance(timestamp, int | float):

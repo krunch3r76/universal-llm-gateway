@@ -38,6 +38,7 @@ class HandlerContext:
     catalog: dict[str, Any]
     model_last_inference: dict[str, float] = field(default_factory=dict)
     model_details: dict[str, dict[str, Any]] = field(default_factory=dict)
+    busy_since: dict[str, float] = field(default_factory=dict)
 
     # Resources state (read-only, updated via reservation-aware setter)
     _resources: ResourcesData = field(default_factory=ResourcesData)
