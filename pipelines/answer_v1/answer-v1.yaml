@@ -1,0 +1,29 @@
+schema_version: 6
+id: rag-query-rewrite
+version: "1.0"
+type: answer_v1
+description: >
+  RAG-augmented generation pipeline. Delegates query rewriting + retrieval to
+  rag-context (pipeline-as-service), then generates a grounded answer from the
+  assembled context using phi4.
+output: answer
+
+options:
+  timeout_seconds: 120
+
+steps:
+  - name: get_context
+    type: generate
+    model_ref: rag_context
+    prompt_ref: answer_v1.passthrough
+    timeout_seconds: 60
+
+  - name: answer
+    type: generate
+    depends_on: [get_context]
+    model_ref: phi4
+    prompt_ref: answer_v1.answer
+    handler_inputs:
+      rag_context: "get_context.raw"
+    generation_parameters:
+      temperature: 0.3

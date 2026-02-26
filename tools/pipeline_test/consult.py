@@ -21,6 +21,8 @@ DEFAULT_RAG_TOP_K = 5
 DEFAULT_RAG_TIMEOUT = 10.0
 DEFAULT_RAG_RECENCY_WEIGHT = 0.2
 DEFAULT_RAG_CORPUS_DIR = Path("docs/research/prompting")
+DEFAULT_RAG_PIPELINE_ID = "rag-context"
+DEFAULT_RAG_PIPELINE_TIMEOUT = 30.0
 
 DEFAULT_CONSULTANTS: list[str] = [
     "qwen3-32b-awq-32768",
@@ -270,6 +272,44 @@ def fetch_rag_findings(
         findings.append(f"{header}\n{chunk}")
 
     return findings, None
+
+
+def fetch_rag_via_pipeline(
+    query: str,
+    *,
+    pipeline_id: str = DEFAULT_RAG_PIPELINE_ID,
+    stargate_url: str = DEFAULT_STARGATE_URL,
+    timeout: float = DEFAULT_RAG_PIPELINE_TIMEOUT,
+) -> tuple[list[str], str | None]:
+    """Use an intelligent RAG pipeline for context retrieval.
+
+    Calls a retrieval pipeline (default: ``rag-context``) which rewrites the
+    query into embedding-optimized sub-queries, executes parallel RAG searches,
+    and returns assembled context via RRF merge — as a single formatted block.
+
+    Returns the same ``(findings, error)`` shape as ``fetch_rag_findings`` so
+    callers can treat both paths identically.
+
+    Invariant: ∀ non-empty response: len(findings) == 1 (assembled context block)
+    """
+    url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
+    body: dict[str, Any] = {
+        "model": pipeline_id,
+        "messages": [{"role": "user", "content": query}],
+        "stream": False,
+    }
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(url, json=body)
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        return [], str(exc)
+
+    data = resp.json()
+    content: str = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    if not content.strip():
+        return [], f"Pipeline '{pipeline_id}' returned empty context"
+    return [content], None
 
 
 def _select_call(step: StepSnapshot, call_label: str | None) -> ModelCall:

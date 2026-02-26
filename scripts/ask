@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Query any Stargate model/pipeline from the command line.
+# Default: rag-query-rewrite (RAG-augmented Q&A with query rewriting + RRF retrieval)
+#
+# Usage:
+#   ask "What does research say about RRF k parameter tuning?"
+#   ask -m phi-4-q4-k-m-16384 "Explain transformer attention"
+#   ask -m rag-query-rewrite "How does HyDE compare to query rewriting?"
+#   echo "question" | ask
+#   ask -r                          # raw JSON response
+
+set -euo pipefail
+
+STARGATE_URL="${STARGATE_URL:-http://localhost:9999}"
+MODEL="rag-query-rewrite"
+RAW=false
+
+usage() {
+    cat <<'EOF'
+Usage: ask [-m MODEL] [-u URL] [-r] [QUESTION]
+
+  -m MODEL   Model or pipeline ID (default: rag-query-rewrite)
+  -u URL     Stargate URL (default: http://localhost:9999)
+  -r         Print raw JSON response
+  -h         Show this help
+
+Question can be passed as argument or piped via stdin.
+EOF
+    exit 0
+}
+
+while getopts "m:u:rh" opt; do
+    case "$opt" in
+        m) MODEL="$OPTARG" ;;
+        u) STARGATE_URL="$OPTARG" ;;
+        r) RAW=true ;;
+        h) usage ;;
+        *) usage ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+if [ $# -gt 0 ]; then
+    QUESTION="$*"
+elif [ ! -t 0 ]; then
+    QUESTION="$(cat)"
+else
+    echo "Error: no question provided" >&2
+    usage
+fi
+
+BODY=$(jq -nc --arg model "$MODEL" --arg q "$QUESTION" '{
+    model: $model,
+    messages: [{role: "user", content: $q}],
+    stream: false
+}')
+
+RESPONSE=$(curl -sf --max-time 180 \
+    "${STARGATE_URL}/v1/chat/completions" \
+    -H 'Content-Type: application/json' \
+    -d "$BODY") || {
+    echo "Error: request failed (is Stargate running on ${STARGATE_URL}?)" >&2
+    exit 1
+}
+
+if [ "$RAW" = true ]; then
+    echo "$RESPONSE" | jq .
+else
+    echo "$RESPONSE" | jq -r '.choices[0].message.content // "No response content"'
+fi

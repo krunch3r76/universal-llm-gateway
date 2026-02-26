@@ -162,7 +162,7 @@ steps:
       verified_facts: inputs.verified_facts
       question: inputs.question
     # Phase 1: programmatic coverage check + LLM reviser
-    coverage_threshold: 0.90
+    coverage_threshold: 1.0
     max_coverage_iterations: 6
     coverage_prompt_ref: consensus.v7.coverage_revise_outline
     coverage_pool:
@@ -194,17 +194,17 @@ steps:
     timeout_seconds: 600
 
   - name: synthesize_from_outline
-    type: consensus_single_call_v7
+    type: consensus_section_synthesize_v7
     model_ref: phi4
-    prompt_ref: consensus.v7.synthesize_from_outline
+    prompt_ref: consensus.v7.synthesize_from_section
     handler_inputs:
       outline: review_outline.raw
       verified_facts: inputs.verified_facts
       question: inputs.question
     generation_parameters:
-      temperature: 0.3
+      temperature: 0.1
       max_tokens: *max_tokens_synth
-    timeout_seconds: 300
+    timeout_seconds: 600
 
   - name: review_redundancy
     type: assess_loop_v1

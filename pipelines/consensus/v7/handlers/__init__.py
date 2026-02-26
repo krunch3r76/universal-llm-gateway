@@ -14,6 +14,7 @@ from .coverage_review import CoverageReviewHandler
 from .filter_negatives import FilterNegativesHandler
 from .organize_facts import OrganizeFactsHandler
 from .outline_review import OutlineReviewHandler
+from .section_synthesize import SectionSynthesizeHandler
 from .single_call import SingleCallHandler
 from .strip_rejected import StripRejectedHandler
 from .synergize import SynergizeHandler
@@ -49,6 +50,9 @@ def register_handlers(router) -> None:
     )
     router.register_domain_handler_class(
         "consensus", "consensus_outline_review_v7", OutlineReviewHandler
+    )
+    router.register_domain_handler_class(
+        "consensus", "consensus_section_synthesize_v7", SectionSynthesizeHandler
     )
     router.register_domain_handler_class(
         "consensus", "consensus_single_call_v7", SingleCallHandler

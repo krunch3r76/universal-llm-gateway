@@ -1,5 +1,5 @@
 models:
   phi4:
     model: phi-4-q4-k-m-16384
-  qwen3_32b:
-    model: qwen3-32b-awq-32768
+  rag_context:
+    model: rag-context

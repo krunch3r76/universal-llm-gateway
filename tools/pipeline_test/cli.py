@@ -376,7 +376,7 @@ def _add_consult_parser(sub: Any) -> None:
         help="Query other models for prompt improvement suggestions",
     )
     source = p.add_mutually_exclusive_group(required=True)
-    source.add_argument("fixture", nargs="?", help="Path to fixture JSON")
+    source.add_argument("fixture", nargs="?", default=None, help="Path to fixture JSON")
     source.add_argument(
         "--latest",
         metavar="PIPELINE_ID",
@@ -400,21 +400,34 @@ def _add_consult_parser(sub: Any) -> None:
         help="Stargate URL",
     )
     p.add_argument("--timeout", type=float, default=300.0, help="Request timeout (s)")
-    p.add_argument(
+    rag_mode_c = p.add_mutually_exclusive_group()
+    rag_mode_c.add_argument(
         "--no-rag",
         action="store_true",
-        help="Disable RAG augmentation (on by default)",
+        help="Disable RAG augmentation entirely",
+    )
+    rag_mode_c.add_argument(
+        "--rag-pipeline",
+        metavar="PIPELINE_ID",
+        nargs="?",
+        const=consult_svc.DEFAULT_RAG_PIPELINE_ID,
+        default=consult_svc.DEFAULT_RAG_PIPELINE_ID,
+        help=(
+            "RAG pipeline for intelligent query rewriting + RRF retrieval "
+            f"(default: {consult_svc.DEFAULT_RAG_PIPELINE_ID}). "
+            "Use --no-rag to disable all retrieval."
+        ),
     )
     p.add_argument(
         "--rag-url",
         default=consult_svc.DEFAULT_RAG_URL,
-        help="RAG service URL",
+        help="RAG service URL (direct search path only)",
     )
     p.add_argument(
         "--rag-top-k",
         type=int,
         default=budget_svc.MAX_RAG_TOP_K,
-        help="RAG chunk cap (actual count adapts to context budget)",
+        help="RAG chunk cap (direct search path only, adapts to context budget)",
     )
     p.add_argument(
         "--rag-timeout",
@@ -425,13 +438,13 @@ def _add_consult_parser(sub: Any) -> None:
     p.add_argument(
         "--rag-corpus",
         default=str(consult_svc.DEFAULT_RAG_CORPUS_DIR),
-        help="Default source prefix for RAG lookup",
+        help="Default source prefix for RAG lookup (direct search path only)",
     )
     p.add_argument(
         "--rag-source-prefix",
         action="append",
         default=[],
-        help="Repeatable RAG source prefix override",
+        help="Repeatable RAG source prefix override (direct search path only)",
     )
     p.add_argument(
         "--rag-recency",
@@ -468,7 +481,33 @@ def _cmd_consult(args: argparse.Namespace) -> None:
     rag_findings: list[str] | None = None
     output_limit: int | None = None
 
-    if not args.no_rag:
+    if args.no_rag:
+        print(f"  Budget: {ctx_len}tok context (no RAG)")
+        print()
+    elif args.rag_pipeline:
+        output_limit = budget_svc.compute_budget(
+            ctx_len,
+            fixed_chars,
+            output_chars,
+            top_k_cap=0,
+        ).output_limit_chars
+        print(
+            f"  Budget: {ctx_len}tok context (RAG via pipeline '{args.rag_pipeline}')"
+        )
+        print()
+        rag_findings, rag_error = consult_svc.fetch_rag_via_pipeline(
+            args.problem,
+            pipeline_id=args.rag_pipeline,
+            stargate_url=args.url,
+            timeout=consult_svc.DEFAULT_RAG_PIPELINE_TIMEOUT,
+        )
+        if rag_error:
+            print(f"  RAG pipeline '{args.rag_pipeline}': unavailable ({rag_error})")
+        elif rag_findings:
+            print(f"  RAG pipeline '{args.rag_pipeline}': assembled context injected")
+        else:
+            print(f"  RAG pipeline '{args.rag_pipeline}': no context returned")
+    else:
         budget = budget_svc.compute_budget(
             ctx_len,
             fixed_chars,
@@ -506,9 +545,6 @@ def _cmd_consult(args: argparse.Namespace) -> None:
             print(f"  RAG: injected {len(rag_findings)} finding(s) from {sources}")
         else:
             print("  RAG: no matching findings")
-    else:
-        print(f"  Budget: {ctx_len}tok context (no RAG)")
-        print()
 
     results = consult_svc.consult_step(
         step=step,
@@ -564,21 +600,34 @@ def _add_ask_parser(sub: Any) -> None:
         help="Stargate URL",
     )
     p.add_argument("--timeout", type=float, default=300.0, help="Request timeout (s)")
-    p.add_argument(
+    rag_mode = p.add_mutually_exclusive_group()
+    rag_mode.add_argument(
         "--no-rag",
         action="store_true",
-        help="Disable RAG augmentation (on by default)",
+        help="Disable RAG augmentation entirely",
+    )
+    rag_mode.add_argument(
+        "--rag-pipeline",
+        metavar="PIPELINE_ID",
+        nargs="?",
+        const=consult_svc.DEFAULT_RAG_PIPELINE_ID,
+        default=consult_svc.DEFAULT_RAG_PIPELINE_ID,
+        help=(
+            "RAG pipeline for intelligent query rewriting + RRF retrieval "
+            f"(default: {consult_svc.DEFAULT_RAG_PIPELINE_ID}). "
+            "Use --no-rag to disable all retrieval."
+        ),
     )
     p.add_argument(
         "--rag-url",
         default=consult_svc.DEFAULT_RAG_URL,
-        help="RAG service URL",
+        help="RAG service URL (direct search path only)",
     )
     p.add_argument(
         "--rag-top-k",
         type=int,
         default=budget_svc.MAX_RAG_TOP_K,
-        help="RAG chunk cap (actual count adapts to context budget)",
+        help="RAG chunk cap (direct search path only, adapts to context budget)",
     )
     p.add_argument(
         "--rag-timeout",
@@ -589,13 +638,13 @@ def _add_ask_parser(sub: Any) -> None:
     p.add_argument(
         "--rag-corpus",
         default=str(consult_svc.DEFAULT_RAG_CORPUS_DIR),
-        help="Default source prefix for RAG lookup",
+        help="Default source prefix for RAG lookup (direct search path only)",
     )
     p.add_argument(
         "--rag-source-prefix",
         action="append",
         default=[],
-        help="Repeatable RAG source prefix override",
+        help="Repeatable RAG source prefix override (direct search path only)",
     )
     p.add_argument(
         "--rag-recency",
@@ -616,7 +665,22 @@ def _cmd_ask(args: argparse.Namespace) -> None:
     print(f"  Models: {', '.join(target_models)}")
 
     rag_findings: list[str] | None = None
-    if not args.no_rag:
+    if args.no_rag:
+        print("  RAG: disabled")
+    elif args.rag_pipeline:
+        rag_findings, rag_error = consult_svc.fetch_rag_via_pipeline(
+            args.question,
+            pipeline_id=args.rag_pipeline,
+            stargate_url=args.url,
+            timeout=consult_svc.DEFAULT_RAG_PIPELINE_TIMEOUT,
+        )
+        if rag_error:
+            print(f"  RAG pipeline '{args.rag_pipeline}': unavailable ({rag_error})")
+        elif rag_findings:
+            print(f"  RAG pipeline '{args.rag_pipeline}': assembled context injected")
+        else:
+            print(f"  RAG pipeline '{args.rag_pipeline}': no context returned")
+    else:
         ctx_len = budget_svc.resolve_min_context_length(
             target_models,
             stargate_url=args.url,
@@ -653,8 +717,6 @@ def _cmd_ask(args: argparse.Namespace) -> None:
             print(f"  RAG: injected {len(rag_findings)} finding(s) from {sources}")
         else:
             print("  RAG: no matching findings")
-    else:
-        print("  RAG: disabled")
 
     print()
 

@@ -1,7 +1,7 @@
 schema_version: 6
 id: journal-agent-iterative
 version: "1.0"
-type: rag
+type: project_journal
 description: "Iterative journal agent: baseline gather → assess loop (expand until sufficient) → synthesis"
 output: synthesize
 
@@ -11,11 +11,8 @@ options:
 steps:
   # --- Baseline gather (parallel) ---
   - name: rag_search
-    type: rag_search_v1
-    endpoint: "http://localhost:8100/search"
-    top_k: 5
-    recency_weight: 0.3
-    distance_threshold: 1.0
+    type: pipeline_call_v1
+    pipeline_id: "rag-context"
 
   - name: journal_index
     type: rag_source_v1
@@ -28,18 +25,10 @@ steps:
     workdir: "/mnt/torus/projects/universal-llm-gateway"
 
   # --- Iterative context expansion ---
-  #
-  # Replaces Phase 3's single-shot assess→conditional→coalesce with an
-  # iterative loop: the model evaluates what it has, requests more context
-  # if needed, and the engine fulfills inline. Runs inside a single handler
-  # step — no SKIPPED steps, no coalesce needed.
-  #
-  # artifact_key=gathered_context: the handler_input named "gathered_context"
-  # is the mutable artifact being refined each iteration.
   - name: gather_context
     type: assess_loop_v1
     model_ref: qwen3_32b
-    prompt_ref: rag.project_journal_v3.5.assess_context
+    prompt_ref: project_journal.v3.5.assess_context
     handler_inputs:
       gathered_context: "git_recent.raw"
       rag_context: "rag_search.raw"
@@ -60,9 +49,9 @@ steps:
     max_iterations: 3
     actions:
       expand_git:
-        prompt_ref: rag.project_journal_v3.5.expand_git
+        prompt_ref: project_journal.v3.5.expand_git
       expand_rag:
-        prompt_ref: rag.project_journal_v3.5.expand_rag
+        prompt_ref: project_journal.v3.5.expand_rag
     generation_parameters:
       temperature: 0.1
       max_tokens: 256
@@ -71,7 +60,7 @@ steps:
   - name: synthesize
     type: generate
     model_ref: qwen3_32b
-    prompt_ref: rag.project_journal_v3.5.answer_with_context
+    prompt_ref: project_journal.v3.5.answer_with_context
     handler_inputs:
       gathered_context: "gather_context.raw"
       journal_index: "journal_index.raw"

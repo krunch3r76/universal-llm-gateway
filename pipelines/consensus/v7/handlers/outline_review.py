@@ -85,15 +85,10 @@ def _filter_phantom_overlaps(
     decision: dict[str, Any],
     outline: dict[str, Any],
 ) -> dict[str, Any]:
-    """Remove overlap claims that name an index not actually duplicated.
+    """Remove overlap claims for indices not actually duplicated across sections.
 
-    ∀ issue ∈ issues: starts_with("Overlap:") ∧ claimed_index ∉ duplicated_indices
-      ⟹ phantom ⟹ remove.
-    If no real issues remain → override action to 'accept'.
-
-    Models sometimes hallucinate index overlap (e.g. confusing 30 and 31 which
-    are adjacent in the JSON array). Programmatic verification prevents phantom
-    claims from triggering unnecessary revision cycles.
+    Models hallucinate overlap (e.g. confusing adjacent indices 30/31).
+    If all claimed overlaps are phantom → override action to 'accept'.
     """
     if decision.get("action") != "revise":
         return decision
@@ -146,16 +141,15 @@ def _format_missing_facts(missing: list[int], facts: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _restore_missing_indices(
-    outline: dict[str, Any], total_facts: int
-) -> dict[str, Any]:
-    """Re-insert any indices dropped by the quality reviser.
+_STOPWORDS = frozenset("a an the is in with of to and or not are be has have for its it this that at by as was were also may been due".split())
 
-    Appends missing indices to the last section. Deduplication has already
-    run before the quality loop, so the expected set is the full 1..total_facts
-    range. The reviser may drop low-salience indices when restructuring;
-    this ensures the outline remains complete for the synthesizer.
-    """
+
+def _restore_missing_indices(
+    outline: dict[str, Any],
+    total_facts: int,
+    fact_texts: list[str] | None = None,
+) -> dict[str, Any]:
+    """Re-insert dropped indices, placing each near its closest keyword neighbour."""
     sections = outline.get("sections", [])
     if not sections:
         return outline
@@ -164,12 +158,20 @@ def _restore_missing_indices(
     if not missing:
         return outline
     last = sections[-1]
-    last["fact_indices"] = list(last.get("fact_indices") or []) + missing
-    logger.info(
-        "Quality reviser dropped %d indices — restored to last section: %s",
-        len(missing),
-        missing,
-    )
+    indices: list[int] = list(last.get("fact_indices") or [])
+    for m_idx in missing:
+        best_pos = len(indices)
+        if fact_texts and 1 <= m_idx <= len(fact_texts):
+            m_words = set(fact_texts[m_idx - 1].lower().split()) - _STOPWORDS
+            best_score = 0
+            for pos, ei in enumerate(indices):
+                if 1 <= ei <= len(fact_texts):
+                    score = len(m_words & (set(fact_texts[ei - 1].lower().split()) - _STOPWORDS))
+                    if score > best_score:
+                        best_score, best_pos = score, pos + 1
+        indices.insert(best_pos, m_idx)
+    last["fact_indices"] = indices
+    logger.info("Quality reviser dropped %d indices — restored (smart-positioned): %s", len(missing), missing)
     return {**outline, "sections": sections}
 
 
@@ -386,7 +388,7 @@ class OutlineReviewHandler(BaseHandler):
             revised_parsed = _parse_outline(outline_raw)
             if revised_parsed and total_facts > 0:
                 revised_parsed["sections"] = _deduplicate_sections(revised_parsed["sections"])
-                revised_parsed = _restore_missing_indices(revised_parsed, total_facts)
+                revised_parsed = _restore_missing_indices(revised_parsed, total_facts, fact_texts)
                 outline_raw = json.dumps(revised_parsed)
 
         # ── Final metrics ───────────────────────────────────────────────

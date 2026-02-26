@@ -975,13 +975,53 @@ prompts:
       natural reading flow.
 
       Rules:
-      - Every fact index MUST appear in exactly one section
+      - Every fact index MUST appear in exactly one section. If a fact
+        could logically belong to multiple sections, place it only in the
+        most specific section and omit it from ALL broader/parent sections.
+
+        EXAMPLE: If fact 26 ("contraindicated in renal impairment") goes
+        into "Contraindications: Renal", do NOT also include index 26 in
+        "Contraindications". A parent section contains ONLY facts that do
+        not fit into any of its sub-sections — it is the residual.
+
+        After building all sections, scan every index across every section.
+        If any index appears more than once, remove it from the broader
+        (parent) section and keep it only in the most specific sub-section.
+        Do NOT duplicate any fact index.
       - Order facts within each section for logical flow
         (general → specific, cause → effect, mechanism → consequence)
-      - Choose section headings that match the question's natural structure
-      - 2-5 sections typically suffice
+      - Produce 4-10 sections for complex topics (sub-sections count toward
+        this total)
+      - HARD LIMIT: no section may contain more than 15 fact indices.
+        If a section already has 15 indices and there are additional facts
+        that belong to the same topic, you MUST split the section into
+        sub-sections before adding more. Each sub-section must contain
+        ≤15 indices. Never leave topically related facts unassigned just
+        because the parent section is full — split and assign them all.
+        Use distinct sub-topic headings (e.g., "Mechanism: Hepatic Glucose
+        Production", "Mechanism: Insulin Sensitivity", "Mechanism:
+        Mitochondrial Function").
+      - Section ordering convention (follow this sequence):
+        1. Mechanism / How it works
+        2. Clinical Uses
+        3. Contraindications by type (renal, hepatic, cardiac, pregnancy…)
+        4. Side effects by organ system (GI, allergic, …)
+        5. Precautions / Warnings (surgical holds, monitoring requirements,
+           hypoglycaemia risk, drug interactions)
+        6. Monitoring and Follow-up (if distinct from precautions)
+      - When organizing restriction/warning facts, create separate sections by type:
+        * Absolute contraindications (renal, hepatic, cardiac) → "{Type} Contraindications"
+        * Temporary holds / procedural requirements → "{Context} Precautions"
+          (NOT "Contraindications" — these are holds, not absolute bans)
+        * Pregnancy/breastfeeding caution → "Pregnancy and Breastfeeding Cautions"
+      - Do NOT merge all contraindications into one section
       - Do NOT invent facts — only reference indices from the list
       - Do NOT leave any fact index unassigned
+      - VERIFICATION (before returning): Count the verified facts in the
+        input. Count the total fact indices across all sections in your
+        draft. These two totals MUST be equal and every index must appear
+        exactly once. If they differ, find the missing indices and insert
+        each into the most appropriate section before returning.
 
       Return valid JSON only, no preamble:
       {{"sections": [{{"heading": "Section Title", "fact_indices": [1, 5, 3, 12]}}]}}
@@ -1051,6 +1091,7 @@ prompts:
         above and insert each index into the section where it topically fits
       - If the critic flags grouping or ordering issues, reorganize accordingly
       - Do NOT remove any existing indices — only add or move
+      - After moving indices, remove any section whose fact_indices array is empty
       - Return the COMPLETE revised outline as valid JSON
       - Format: {{"sections": [{{"heading": "...", "fact_indices": [...]}}]}}
 
@@ -1183,20 +1224,22 @@ prompts:
         Severe renal impairment is a primary contraindication [Fact 12].
 
       MERGE EQUIVALENT FACTS (CRITICAL):
-      Many facts express the same claim in different words.
-      When facts in a section describe the same mechanism, property, or
-      relationship, write ONE sentence citing ALL their indices.
+      Many facts express the same claim in different words — medical and
+      scientific domains have pervasive synonym variation (clinical vs.
+      colloquial terms, Latin vs. English, generic vs. specific). When two
+      or more facts in a section refer to the same condition, organ, mechanism,
+      or risk using different vocabulary, they are ONE item: write a single
+      sentence or bullet citing ALL their indices.
         Example: [Fact 1] "reduces glucose production" and
         [Fact 13] "inhibits gluconeogenesis" → ONE sentence [Fact 1, 13].
+      The same condition stated in different phrasings is ONE item — do not
+      repeat it even if a later fact restates it with slightly different words.
       Do NOT write separate sentences for semantically equivalent facts.
 
       CITATION LIMIT:
-      Cite at most 4 fact indices per sentence. If more than 4 facts express
-      the same claim, pick the 4 most specific indices. Write additional
-      equivalent facts as a separate sentence if needed.
-      Do NOT generate sequential ranges of fact numbers — each cited index
-      must be deliberately chosen because that specific fact supports the
-      sentence.
+      Cite at most 6 fact indices per sentence or bullet. Do NOT generate
+      sequential ranges of fact numbers — each cited index must be
+      deliberately chosen because that specific fact supports the sentence.
 
       SENTENCE VARIETY (CRITICAL):
       Do NOT start 3+ consecutive sentences with the same subject.
@@ -1221,8 +1264,18 @@ prompts:
 
       FORMATTING:
       - Prose paragraphs for explanations, mechanisms, narrative flow
-      - Bullet lists for enumerations, contraindications, side effects,
-        named lists of items
+      - Sections covering contraindications, side effects, or warnings MUST
+        use a bullet list — one bullet per distinct condition, never prose.
+        Correct example:
+          ### Contraindications of Drug X
+          - **Severe renal impairment** (eGFR < 30 mL/min) [Fact 3, 7, 11]
+          - **Pregnancy and breastfeeding** [Fact 4, 5]
+          - **Severe hepatic disease** [Fact 6]
+          - **History of lactic acidosis** [Fact 8]
+        Wrong — do NOT write: "Drug X is contraindicated in patients with
+        severe renal impairment. It is also contraindicated during
+        pregnancy. Additionally, those with liver disease should avoid it."
+      - Bullet lists for other enumerations and named lists of items
       - **Bold** key terms, entity names, and important values on first mention
       - Smooth transitions within sections
 
@@ -1242,14 +1295,82 @@ prompts:
       VERIFIED FACTS:
       {verified_facts}
 
+  synthesize_from_section:
+    description: "Write one section of a longer answer from only the facts assigned to that section."
+    system_prompt: |
+      You write one section of a longer answer from a pre-approved set of verified
+      facts. Write only the content for the section heading given.
+
+      About: {question}
+
+      STEP 1 — CLASSIFY, THEN WRITE (MANDATORY):
+      Before producing any output, decide the format for this section:
+
+      A. PROSE (mechanism, clinical use, narrative explanation):
+         - Group facts that assert the same claim in different words into one
+           group. Synonym variation counts: "suppresses hepatic glucose
+           production" and "inhibits gluconeogenesis in the liver" are ONE claim.
+         - Write at most ONE sentence per group. If 15 facts form 8 distinct
+           claims, write 8 sentences — not 15.
+
+      B. BULLETS (distinct enumerable items — individual symptoms, individual
+         contraindications, individual drugs, individual organ-level risks):
+         - Do NOT merge distinct items even if they share a category.
+           Nausea and vomiting are different symptoms — each gets its own bullet.
+           Renal impairment and hepatic failure are different conditions — each
+           gets its own bullet.
+         - Identify ALL general or summary facts in the list: these are facts
+           that describe the category as a whole or enumerate the same items
+           you are about to bullet (e.g. "can cause nausea, vomiting, diarrhea").
+           Cite ALL of them in the single introductory sentence — do NOT place
+           them as bullets or as a closing sentence.
+         - Write ONE introductory sentence citing all general/summary facts.
+           If no general fact exists, skip the intro entirely.
+         - Write ONE bullet per distinct item, each with its citation.
+         - After the final bullet — STOP. Write nothing after the bullets.
+
+      Use BULLETS when the section heading contains: Contraindication, Side
+      Effect, Warning, Precaution, Risk, Reaction, Consideration, Allerg, Hypo.
+      Use PROSE for all other sections.
+
+      STEP 2 — CITE EVERY FACT:
+      Every sentence or bullet MUST end with inline citations for every fact in the group.
+        [Fact N]      — single fact
+        [Fact N, M]   — group of facts merged into one sentence
+      Cite at most 6 indices per sentence. No sentence may appear without a citation.
+      If no facts are provided, do not produce any sentences or bullets.
+
+      STEP 3 — SENTENCE VARIETY:
+      Do NOT start 3+ consecutive sentences with the same subject.
+
+      FORMATTING:
+      - Write exactly one ### heading matching the section name given
+      - Format (prose vs. bullets) determined by Step 1 above
+      - **Bold** key terms on first mention
+
+      CONSTRAINTS:
+      - Include ALL facts provided — do not skip any
+      - Do NOT add information beyond what the facts state
+      - If the verified facts list is empty, output nothing for this section
+      - Do NOT create bullets for items not present in the provided facts
+      - Do NOT generate more bullets than there are provided facts
+      - No preamble, no closing summary — output the section only
+    template: |
+      SECTION: {section_heading}
+
+      VERIFIED FACTS FOR THIS SECTION:
+      {section_facts}
+
   critique_redundancy:
-    description: "Identify local repetition (within-sentence and consecutive restatement) in a synthesized answer."
+    description: "Identify local repetition (within-sentence, consecutive, and near-paragraph restatement) in a synthesized answer."
     system_prompt: |
       You are reviewing a synthesized answer for LOCAL REDUNDANCY only.
       The answer may have section headings (### ...).
 
-      SCOPE: Only (a) two clauses in one sentence, or (b) two consecutive
-      sentences in the same section. Never compare across sections.
+      SCOPE: Only within the same section (### heading): (a) two clauses in
+      one sentence, or (b) any two sentences in the same section that assert
+      the same medical condition or claim (regardless of distance).
+      Never compare sentences across different sections (### headings).
 
       Rules:
       1. Both `kept` and `deleted` must be VERBATIM sentences or clauses
@@ -1259,8 +1380,11 @@ prompts:
       3. `shared_predicate` must be a complete clause of ≤10 words stating
          what both assert. If you cannot write one under 10 words, drop the pair.
       4. CITATION GATE: If `deleted` contains any [Fact N] citation that does
-         not appear in `kept`, drop the pair — the deleted span carries unique
-         knowledge not present in the kept span.
+         not appear in `kept`, drop the pair — UNLESS both spans assert the
+         same condition or claim using equivalent wording (synonymous
+         terminology for the same concept counts). When the core claim is
+         identical, different fact numbers are duplicate sources, not unique
+         knowledge — proceed with deletion.
       5. If either span has no [Fact N] citations, drop the pair.
       6. Label each pair as one of: RESTATEMENT (same proposition, same
          specificity), ELABORATION, CAUSE-EFFECT, SPECIALIZATION, or COORDINATE.
@@ -1268,6 +1392,12 @@ prompts:
          (B is the direct outcome of A) as RESTATEMENT.
       7. If no valid RESTATEMENT pairs remain, return action: "accept".
       8. Max 5 pairs.
+
+      EXAMPLE — valid cross-paragraph RESTATEMENT (cite gate waived):
+        Sentence A (kept): "X is contraindicated in condition Y [Fact 3]."
+        Sentence B (delete): "X should not be used in condition Y [Fact 17]."
+        → shared_predicate: "contraindicated in condition Y"
+        → Fact 17 ≠ Fact 3 but both assert the same condition: gate waived.
 
       For each deletion in `target`, quote the first 8+ words of the sentence
       or clause verbatim so the reviser can locate it unambiguously.

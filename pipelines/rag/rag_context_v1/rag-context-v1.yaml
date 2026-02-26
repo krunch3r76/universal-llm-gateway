@@ -1,0 +1,35 @@
+schema_version: 6
+id: rag-context
+version: "1.0"
+type: rag
+description: >
+  RAG query rewriting + multi-query retrieval without generation.
+  Rewrites the query into optimized sub-queries, executes parallel retrieval
+  with RRF merge, and returns assembled context chunks as the response.
+  Used by pipeline_test ask/consult as a drop-in replacement for direct RAG search.
+output: retrieve_assemble
+
+options:
+  timeout_seconds: 30
+
+steps:
+  - name: analyze_rewrite
+    type: generate
+    model_ref: phi4
+    prompt_ref: rag.rag_context_v1.analyze_rewrite
+    generation_parameters:
+      temperature: 0.1
+      max_tokens: 512
+
+  - name: retrieve_assemble
+    type: rag_multi_retrieve_v1
+    depends_on: [analyze_rewrite]
+    endpoint: "http://localhost:8100/search"
+    handler_inputs:
+      rewrite_result: "analyze_rewrite.json"
+    top_k_per_query: 10
+    max_chunks: 20
+    recency_weight: 0.2
+    rrf_k: 60
+    research_prefix: "/mnt/torus/projects/universal-llm-gateway/docs/research/prompting"
+    project_prefix: "/mnt/torus/projects/universal-llm-gateway"

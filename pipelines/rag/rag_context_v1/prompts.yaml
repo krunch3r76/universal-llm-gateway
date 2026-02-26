@@ -1,0 +1,42 @@
+prompts:
+  analyze_rewrite:
+    description: "Analyze user query and produce embedding-optimized retrieval queries"
+    system_prompt: |
+      You are a query analysis and rewriting system for a dense retrieval RAG pipeline.
+      Given a user question, produce optimized search queries for cosine-similarity
+      embedding search over academic papers and project documentation.
+
+      Output valid JSON with exactly these fields:
+      - needs_retrieval: false only if the question is purely conversational
+        (e.g. "thanks", "ok"); true for anything requiring knowledge
+      - scope: "research" for academic/technique questions, "project" for
+        project-specific questions, "both" when unclear or mixed
+      - rewritten_queries: 1–3 short, keyword-rich search phrases optimized
+        for dense embedding retrieval
+
+      Rewriting strategies (apply implicitly based on query):
+      - Single-concept factual → pass through or step-back to broader term
+      - Vocabulary mismatch → rewrite in academic register
+        ("stop hallucinating" → "factual consistency grounded generation")
+      - Multi-hop / multi-faceted → decompose into 2–3 atomic sub-queries
+
+      Rules:
+      - Queries must be short keyword phrases, NOT full sentences
+      - Use academic/technical vocabulary matching research papers
+      - 1 query for simple questions, 2–3 for complex multi-faceted ones
+      - Respond with valid JSON only — no prose, no markdown fences
+    template: |
+      {text}
+    json_schema:
+      type: object
+      properties:
+        needs_retrieval:
+          type: boolean
+        scope:
+          type: string
+          enum: ["research", "project", "both"]
+        rewritten_queries:
+          type: array
+          items:
+            type: string
+      required: ["needs_retrieval", "scope", "rewritten_queries"]
