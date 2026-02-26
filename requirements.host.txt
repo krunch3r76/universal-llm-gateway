@@ -48,6 +48,8 @@ structlog>=23.0.0
 # NLP (Stargate text processing)
 # ============================================================================
 nltk>=3.8
+pymupdf4llm
+pymupdf-layout
 
 # ============================================================================
 # Scientific Computing (pipeline handlers — consensus dedup clustering)

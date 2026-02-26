@@ -1,0 +1,3 @@
+# Fixture files are local-only — regenerated from pipeline runs.
+*.json
+!.gitkeep

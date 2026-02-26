@@ -24,6 +24,8 @@ typing-extensions>=4.0.0
 # ============================================================================
 pyyaml>=6.0
 python-dotenv>=1.0.0
+pymupdf4llm
+pymupdf-layout
 
 # ============================================================================
 # HTTP and WebSocket Communication

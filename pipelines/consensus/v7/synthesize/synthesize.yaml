@@ -2,7 +2,8 @@
 # organize_facts → review_outline → synthesize_from_outline
 #   → review_redundancy (local)
 #   → review_redundancy_global (cross-section)
-#   → review_flow → review_placement → review_coverage → coverage_audit
+#   → review_flow → review_coverage → coverage_audit
+# review_placement: disabled (hallucinated contradictory move instructions)
 #
 # Verified facts are organized into a logical JSON outline by one model,
 # critiqued/revised by a judge loop, then synthesized into prose.
@@ -155,7 +156,7 @@ steps:
 
   - name: review_outline
     type: consensus_outline_review_v7
-    model_ref: qwen
+    model_ref: phi4
     handler_inputs:
       artifact: organize_facts.raw
       verified_facts: inputs.verified_facts
@@ -194,7 +195,7 @@ steps:
 
   - name: synthesize_from_outline
     type: consensus_single_call_v7
-    model_ref: qwen
+    model_ref: phi4
     prompt_ref: consensus.v7.synthesize_from_outline
     handler_inputs:
       outline: review_outline.raw
@@ -232,7 +233,7 @@ steps:
           type: string
       required: [action, reason]
     terminal_action: accept
-    max_iterations: 3
+    max_iterations: 2
     actions:
       revise:
         prompt_ref: consensus.v7.revise_redundancy
@@ -244,9 +245,9 @@ steps:
 
   - name: review_redundancy_global
     type: assess_loop_v1
-    model_ref: gemma_2_9b
+    model_ref: phi4
     assess_pool:
-      - gemma_2_9b
+      - phi4
     prompt_ref: consensus.v7.critique_redundancy_global
     handler_inputs:
       artifact: review_redundancy.raw
@@ -261,7 +262,15 @@ steps:
         repeated_items:
           type: array
           items:
-            type: string
+            type: object
+            properties:
+              kept:
+                type: string
+              deleted:
+                type: string
+              shared_predicate:
+                type: string
+            required: [kept, deleted, shared_predicate]
         reason:
           type: string
         target:
@@ -314,6 +323,7 @@ steps:
 
   - name: review_placement
     type: assess_loop_v1
+    enabled: false
     model_ref: llama_3_1_8b
     prompt_ref: consensus.v7.assess_placement
     handler_inputs:
@@ -349,15 +359,15 @@ steps:
   - name: review_coverage
     type: consensus_coverage_review_v7
     handler_inputs:
-      artifact: review_placement.raw
+      artifact: review_flow.raw
       verified_facts: inputs.verified_facts
       question: inputs.question
     embedding_model: embedding
-    similarity_threshold: 0.70
+    similarity_threshold: 0.78
     adjudicate_prompt_ref: consensus.v7.adjudicate_coverage
     adjudicate_model_ref: phi4
     insert_prompt_ref: consensus.v7.insert_missing
-    insert_model_ref: qwen
+    insert_model_ref: phi4
     generation_parameters:
       temperature: 0.1
       max_tokens: *max_tokens_synth
@@ -370,7 +380,7 @@ steps:
       final_answer: review_coverage.raw
       verified_facts: inputs.verified_facts
     embedding_model: embedding
-    coverage_threshold: 0.70
+    coverage_threshold: 0.78
     timeout_seconds: 60
 
 output: coverage_audit

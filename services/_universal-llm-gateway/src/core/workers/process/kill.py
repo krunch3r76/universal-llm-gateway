@@ -86,13 +86,28 @@ async def force_kill_process(
                 f"🚀 Fast unload enabled - skipping SIGTERM for {model_id} (PID: {pid})"
             )
 
-        # Force kill with SIGKILL
-        logger.info(f"🔫 Sending SIGKILL to {model_id} (PID: {pid})")
+        # Force kill with SIGKILL — kill entire process tree.
+        # ∀ engines (vLLM EngineCore, etc.) that spawn child subprocesses:
+        # killing only the registered PID orphans children to PID 1, leaving
+        # them alive and holding GPU VRAM. Collect children first, then kill all.
+        logger.info(f"🔫 Sending SIGKILL to {model_id} (PID: {pid}) and its process tree")
         try:
             process = psutil.Process(pid)
+
+            # Snapshot children before killing parent — after parent dies they
+            # may be reparented to PID 1 and become harder to enumerate.
+            try:
+                children = process.children(recursive=True)
+            except psutil.NoSuchProcess:
+                logger.info(f"📤 Process {pid} already terminated before tree collection")
+                return True
+
+            if children:
+                pids = [c.pid for c in children]
+                logger.info(f"🌲 Found {len(children)} child process(es) for {model_id} (PIDs: {pids}) — killing tree")
+
             process.kill()
 
-            # Wait for force kill using configurable timeout
             sigkill_timeout = float(
                 getattr(
                     gateway_config.process_isolation,
@@ -101,14 +116,31 @@ async def force_kill_process(
                 )
             )
             try:
-                process.wait(timeout=sigkill_timeout)
+                _ = process.wait(timeout=sigkill_timeout)
                 logger.info(f"✅ Process {pid} killed with SIGKILL")
-                return True
             except psutil.TimeoutExpired:
                 logger.error(
                     f"❌ Process {pid} didn't respond to SIGKILL after {sigkill_timeout}s"
                 )
                 return False
+            except psutil.NoSuchProcess:
+                logger.info(f"📤 Process {pid} already terminated during SIGKILL")
+
+            # Kill any children that survived or were orphaned during parent kill.
+            for child in children:
+                try:
+                    if child.is_running():
+                        logger.warning(f"🔫 Killing orphaned child PID {child.pid} ({child.name()}) for {model_id}")
+                        child.kill()
+                        _ = child.wait(timeout=sigkill_timeout)
+                except psutil.NoSuchProcess:
+                    pass
+                except psutil.TimeoutExpired:
+                    logger.error(
+                        f"❌ Child PID {child.pid} didn't respond to SIGKILL"
+                    )
+
+            return True
 
         except psutil.NoSuchProcess:
             logger.info(f"📤 Process {pid} already terminated during SIGKILL")

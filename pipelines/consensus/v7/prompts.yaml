@@ -725,12 +725,22 @@ prompts:
       About: {question}
 
       RULES:
-      - Add one sentence per missing fact, placed in the section it belongs to
+      - Add one sentence per missing fact, placed in the existing section
+        where it topically belongs
       - Each added sentence MUST end with its citation: [Fact N]
       - If two missing facts express the same idea, combine into one sentence: [Fact N, Fact M]
       - Do NOT modify, remove, or rephrase any existing content
       - Do NOT add headings, preamble, or explanation
-      - Return the COMPLETE answer with insertions
+      - Do NOT create new ### sections — insert only into existing sections
+      - If a fact is already stated verbatim in the answer, skip it
+
+      RETURN THE COMPLETE ANSWER (CRITICAL):
+      Your output MUST contain EVERY ### section from the input, in
+      the same order, with all existing sentences preserved. Even if
+      a missing fact only needs to be inserted into one section, you
+      MUST still reproduce every other section verbatim. Returning
+      only the modified section is a critical error — the output
+      replaces the entire answer.
     template: |
       CURRENT ANSWER:
       {artifact}
@@ -883,6 +893,8 @@ prompts:
       - PRESERVE all [Fact N] and [Fact N, M] citations exactly
       - Return the COMPLETE revised answer
       - No preamble, no closing summary
+      - HEADING LEVELS: Use ONLY ### headings — exactly as they appear in the
+        input. Do NOT add #### sub-headings or convert any section to a subsection.
 
   assess_placement:
     description: "Placement-only quality gate — section membership and orphan sentence placement."
@@ -1163,6 +1175,14 @@ prompts:
         [Fact 13] "inhibits gluconeogenesis" → ONE sentence [Fact 1, 13].
       Do NOT write separate sentences for semantically equivalent facts.
 
+      CITATION LIMIT:
+      Cite at most 4 fact indices per sentence. If more than 4 facts express
+      the same claim, pick the 4 most specific indices. Write additional
+      equivalent facts as a separate sentence if needed.
+      Do NOT generate sequential ranges of fact numbers — each cited index
+      must be deliberately chosen because that specific fact supports the
+      sentence.
+
       SENTENCE VARIETY (CRITICAL):
       Do NOT start 3+ consecutive sentences with the same subject.
       Vary openings: use pronouns, dependent clauses, or topic phrases.
@@ -1171,6 +1191,18 @@ prompts:
       - Write one ### Section Title heading per outline section
       - Use the outline's section order — do not reorder or merge sections
       - Include ALL facts assigned to each section — do not skip any
+
+      SECTION COMPLETENESS (CRITICAL):
+      You MUST produce exactly one ### heading for EVERY section in the
+      outline, in the same order. If the outline has 3 sections, the output
+      MUST have exactly 3 ### headings. Dropping or skipping a section is
+      a critical error.
+
+      SECTION BOUNDARIES (CRITICAL):
+      For each section, ONLY write about the facts whose indices appear in
+      that section's fact_indices. Do NOT reference or discuss facts assigned
+      to other sections. If a fact feels relevant to multiple sections, it
+      belongs ONLY in the section where the outline placed it.
 
       FORMATTING:
       - Prose paragraphs for explanations, mechanisms, narrative flow
@@ -1205,7 +1237,41 @@ prompts:
       reordering, or restructuring sections — structure is handled
       separately. Only specify what to remove.
 
-      Check for these problems in order of severity:
+      PREREQUISITE — Apply these filters BEFORE flagging any redundancy:
+
+      1. SAME SUBJECT ≠ SAME CLAIM:
+         Two sentences sharing a subject are duplicates ONLY if they
+         assert the SAME predicate. Different predicates about the same
+         entity are independent facts — NEVER flag them.
+           DUPLICATE: "reduces hepatic glucose production" vs "inhibits
+             gluconeogenesis" → identical mechanism, different words
+           NOT DUPLICATE — different predicates, keep both:
+           - "contraindicated in renal impairment" vs "contraindicated
+             in alcoholism"
+           - "reduces glucose production" vs "enhances insulin sensitivity"
+
+      2. ELABORATION ≠ RESTATEMENT:
+         A sentence that explains HOW or WHY a preceding claim holds
+         is elaboration, not redundancy. The specific mechanism or
+         enzyme target is NEW information even when it relates to the
+         same general effect.
+           NOT redundant: "reduces glucose production" followed by
+             "inhibits PEPCK, which is crucial for gluconeogenesis"
+             → second sentence names the enzyme mechanism
+           NOT redundant: "is a contraindication" followed by "metformin
+             can accumulate" → second explains the pharmacokinetic reason
+
+      3. DEFINITION ≠ SEVERITY:
+         A sentence defining what a condition IS (pathophysiology) is
+         not redundant with a sentence about how SEVERE it is.
+           NOT redundant: "lactic acidosis is life-threatening" vs
+             "lactic acidosis is characterized by accumulation of
+             lactic acid" → severity assessment vs biochemical definition
+
+      When in doubt, keep both — false deletions destroy verified content.
+
+      With those prerequisites in mind, check for these problems in order
+      of severity:
 
       0. PARAGRAPH DUPLICATION: Two consecutive paragraphs within the same
          section convey the same information in similar or identical words.
@@ -1231,9 +1297,10 @@ prompts:
       - If within-sentence, quote the full sentence and mark the clause
         to delete
 
-      Be aggressive: if two clauses, sentences, or passages convey the
-      same meaning, one must go. Prefer the more specific or technical
-      version.
+      Be precise: only flag content where the SAME claim is stated twice.
+      Two sentences about the same topic that assert different predicates
+      are NOT redundant — recheck the prerequisite filters above before
+      flagging. Prefer keeping the more specific or technical version.
 
       LIMIT: Report at most 5 redundancies per review — pick the most
       severe. This keeps reviser instructions focused and executable.
@@ -1281,6 +1348,62 @@ prompts:
           "is cleared by the kidneys" → contraindication vs pharmacokinetics
       When in doubt, keep both — false deletions destroy verified content.
 
+      PREDICATE EQUIVALENCE TEST (MANDATORY for every proposed pair):
+      Before flagging any pair as redundant, complete this sentence:
+        "Both sentences assert: [one specific shared predicate]."
+      If you cannot fill in a SINGLE PREDICATE that both sentences
+      state — not just a shared subject or topic — they are NOT
+      duplicates. Drop the pair from your list.
+
+      PASS — same predicate, different words:
+        A: "reduces the liver's production of glucose"
+        B: "inhibits hepatic gluconeogenesis"
+        ✅ "Both assert: metformin reduces liver glucose output"
+
+      FAIL — same subject, different predicates:
+        A: "improves insulin sensitivity in peripheral tissues"
+        B: "is primarily used to treat type 2 diabetes"
+        ❌ Cannot complete — insulin sensitivity mechanism ≠
+           clinical indication. Drop this pair.
+
+      FAIL — same topic, different conditions:
+        A: "contraindicated in liver disease and heart failure"
+        B: "patients with lactic acidosis should be monitored"
+        ❌ Cannot complete — listing contraindication conditions ≠
+           monitoring guidance for a different condition.
+
+      SECTION PRESERVATION (HIGHEST PRIORITY):
+      You MUST NEVER flag an entire section for deletion. This is the
+      single most important rule. Each ### section was created from a
+      distinct group of verified facts. Even when one sentence overlaps
+      with another section, the remaining sentences contain unique,
+      independently verified content that exists NOWHERE else.
+
+      CORRECT: "Delete the sentence 'X increases glucose uptake in
+        muscles [8, 9]' from Effects section — same claim appears in
+        Mechanism section as 'increase in glucose uptake [35, 39]'"
+      WRONG: "Delete ### Effects on Insulin Sensitivity section"
+        — this destroys unique facts [2, 3] about insulin sensitivity
+        that appear ONLY in that section
+
+      When cross-section overlap exists, flag the SPECIFIC SENTENCE
+      that duplicates content in another section. Keep the version
+      with more specific or better-cited content.
+
+      EMPTY SECTION GUARD (ABSOLUTE):
+      Before returning, count how many sentences each section would
+      retain after your proposed deletions. If ANY section would have
+      zero sentences remaining, you MUST change your action to
+      "accept" — no exceptions. Emptying a section destroys unique
+      verified facts that exist nowhere else in the answer.
+
+      DELETION DIRECTION (for cross-section duplicates):
+      When the same claim appears in a SMALL section (≤3 sentences)
+      and a LARGE section (≥4 sentences), you MUST delete from the
+      LARGE section. The small section needs every sentence.
+      This overrides "keep the more specific version."
+      Count sentences in each section BEFORE deciding direction.
+
       Check for:
       1. INTRA-SECTION PARAGRAPH DUPLICATION: two paragraphs under the
          same heading convey the same information in similar or different
@@ -1309,13 +1432,28 @@ prompts:
       ANSWER TO REVIEW:
       {artifact}
 
+      VALIDATION (do this LAST, before returning):
+      Review each entry in repeated_items. If the shared_predicate
+      is vague (e.g. "both about metformin", "both discuss lactic
+      acidosis") or names a topic rather than a specific assertion,
+      the pair is NOT a valid duplicate — remove it from your list.
+      If removing invalid pairs leaves an empty list, change action
+      to "accept".
+
       Return JSON:
         action: "revise" or "accept"
-        repeated_items: array of specific redundancies found (empty if accepting)
+        repeated_items: array of objects, one per redundancy found
+          (empty array if accepting). Each object:
+          - kept: exact sentence to KEEP (quote from the answer)
+          - deleted: exact sentence to DELETE (quote from the answer)
+          - shared_predicate: one phrase completing
+            "Both sentences assert: ___"
         reason: brief explanation
-        target: concrete deletion instructions for the reviser — for each
-          redundancy, state the exact sentence to delete
-          (empty string if accept)
+        target: (MANDATORY when action is "revise") concrete deletion
+          instructions — state the exact sentence to delete for each
+          redundancy. The reviser receives ONLY reason + target, so
+          ALL actionable instructions must be in target.
+          Empty string ONLY when action is "accept".
     template: |
       Question being answered: {question}
 
@@ -1354,6 +1492,16 @@ prompts:
       - Do NOT remove ideas that appear only once
       - Do NOT add new content beyond what is already present
       - Output the revised answer text only — no preamble, no explanation
+
+      CITATION AUDIT (CRITICAL — do this LAST, before returning):
+      1. List every [Fact N] citation in the INPUT answer
+      2. Verify every one appears in your OUTPUT
+      3. If ANY citation is missing: find the deleted sentence that
+         carried it, and either restore that sentence or append its
+         citation to the nearest surviving sentence about the same topic
+      4. If you cannot find a surviving sentence to absorb the citation,
+         KEEP the original sentence — losing a citation is worse than
+         keeping a borderline-redundant sentence
     template: |
       REDUNDANCY FEEDBACK:
       Reason: {assess_reason}
