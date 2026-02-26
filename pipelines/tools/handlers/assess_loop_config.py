@@ -61,6 +61,13 @@ class AssessLoopConfig:
         """Get model_ref for a named action, falling back to step model_ref."""
         return self.actions[action].get("model_ref") or fallback
 
+    def get_action_max_consecutive(self, action: str) -> int | None:
+        """Get optional max_consecutive cap for a named action."""
+        cap = self.actions[action].get("max_consecutive")
+        if cap is None:
+            return None
+        return int(cap)
+
     def get_assess_model_ref(self, iteration: int, step_model_ref: str) -> str:
         """Get model_ref for an assess call, rotating pool round-robin if set."""
         if self.assess_pool:
@@ -79,6 +86,15 @@ class AssessLoopConfig:
                 errors.append(
                     f"Step '{step_id}' action '{action_name}' missing prompt_ref"
                 )
+                continue
+            cap = action_cfg.get("max_consecutive")
+            if cap is None:
+                continue
+            if not isinstance(cap, int) or cap < 1:
+                errors.append(
+                    f"Step '{step_id}' action '{action_name}' has invalid "
+                    "max_consecutive (must be integer >= 1)"
+                )
         return errors
 
 
@@ -94,12 +110,23 @@ class LoopState:
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
     model_call_count: int = 0
+    consecutive_action_count: int = 0
+    consecutive_action_name: str = ""
     history: list[dict[str, Any]] = field(default_factory=list)
 
     def add_tokens(self, prompt: int, completion: int) -> None:
         self.total_prompt_tokens += prompt
         self.total_completion_tokens += completion
         self.model_call_count += 1
+
+    def track_action(self, action: str, cap: int | None = None) -> bool:
+        """Track consecutive repeats and report whether the optional cap is exceeded."""
+        if action == self.consecutive_action_name:
+            self.consecutive_action_count += 1
+        else:
+            self.consecutive_action_name = action
+            self.consecutive_action_count = 1
+        return cap is not None and self.consecutive_action_count > cap
 
 
 def build_assess_ctx(

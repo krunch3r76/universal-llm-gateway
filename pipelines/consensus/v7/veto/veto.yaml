@@ -8,7 +8,6 @@
 
 id: consensus-veto-v7
 type: consensus
-version: "7"
 
 inputs:
   - verified_facts

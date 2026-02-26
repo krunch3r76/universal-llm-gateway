@@ -17,7 +17,7 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
 from .shared._dedup_embeddings import get_embeddings
-from .shared._text_utils import get_statement_text
+from .shared._text_utils import get_statement_text, strip_fact_citations
 
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
@@ -53,17 +53,18 @@ class CoverageAuditHandler(BaseHandler):
         final_answer = str(
             self._resolve_input(resolver, step, "final_answer", hi) or ""
         )
+        clean_answer = strip_fact_citations(final_answer)
 
         enabled = step.get_domain_field("enabled")
         if enabled is not None and not enabled:
-            return StepOutput(raw=final_answer, step_id=step.id)
+            return StepOutput(raw=clean_answer, step_id=step.id)
 
         verified_facts: list[dict[str, Any]] = (
             self._resolve_input(resolver, step, "verified_facts", hi) or []
         )
         if not verified_facts:
-            return StepOutput(raw=final_answer, step_id=step.id)
-        sentences = _split_sentences(final_answer)
+            return StepOutput(raw=clean_answer, step_id=step.id)
+        sentences = _split_sentences(clean_answer)
         if not sentences:
             scores = [0.0] * len(verified_facts)
             uncovered = [
@@ -75,7 +76,7 @@ class CoverageAuditHandler(BaseHandler):
                 len(verified_facts),
             )
             return StepOutput(
-                raw=final_answer,
+                raw=clean_answer,
                 json={"coverage_scores": scores, "uncovered_facts": uncovered},
                 step_id=step.id,
             )
@@ -105,15 +106,63 @@ class CoverageAuditHandler(BaseHandler):
                         "index": i,
                     }
                 )
+        covered_count = len(verified_facts) - len(uncovered_facts)
+        mean_score = (
+            sum(coverage_scores) / len(coverage_scores) if coverage_scores else 0.0
+        )
+        coverage_pct = covered_count / len(verified_facts) * 100 if verified_facts else 0.0
+
         if uncovered_facts:
             logger.warning(
-                "Step '%s': %d facts below coverage threshold %.2f",
+                "Step '%s': %d/%d facts below coverage threshold %.2f (%.1f%% covered)",
                 step.id,
                 len(uncovered_facts),
+                len(verified_facts),
                 threshold,
+                coverage_pct,
             )
+
+        recorder = context.recorder
+        if recorder:
+            from systems.pipeline.core.events.verification import (
+                CoverageAuditCompleted as RecorderCoverageAuditCompleted,
+            )
+
+            recorder.emit(
+                RecorderCoverageAuditCompleted(
+                    step_name=step.id,
+                    total_facts=len(verified_facts),
+                    covered_count=covered_count,
+                    uncovered_count=len(uncovered_facts),
+                    mean_score=round(mean_score, 4),
+                    coverage_pct=round(coverage_pct, 1),
+                    threshold=threshold,
+                )
+            )
+
+        pipeline_id = str(getattr(context, "pipeline_id", "") or "")
+        execution_id = str(getattr(context, "execution_id", "") or "")
+        from systems.pipeline.core.events.step import (
+            CoverageAuditCompleted as BusCoverageAuditCompleted,
+        )
+
+        self._publish_bus_event(
+            context,
+            BusCoverageAuditCompleted(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                step_name=step.id,
+                total_facts=len(verified_facts),
+                covered_count=covered_count,
+                uncovered_count=len(uncovered_facts),
+                mean_score=round(mean_score, 4),
+                coverage_pct=round(coverage_pct, 1),
+                threshold=threshold,
+            ),
+        )
+
         return StepOutput(
-            raw=final_answer,
+            raw=clean_answer,
             json={
                 "coverage_scores": coverage_scores,
                 "uncovered_facts": uncovered_facts,

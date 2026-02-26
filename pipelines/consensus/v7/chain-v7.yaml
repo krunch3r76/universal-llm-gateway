@@ -20,7 +20,7 @@
 #           → veto_pass (sub-pipeline: veto_verify → veto_threshold)
 #
 #   SYNTHESIZE (sub-pipeline):
-#     synthesize (strip → combine → coverage_audit)
+#     synthesize (organize_facts → review_outline → synthesize_from_outline → coverage_audit)
 
 schema_version: 6
 id: consensus-chain-v7
@@ -57,7 +57,7 @@ options:
 
   question_classify_model: qwen
   decompose_model: gemma_2_9b
-  domain_classify_model: gemma_2_9b
+  domain_classify_model: phi4
 
   contextualize_pool:
     - phi4
@@ -66,18 +66,18 @@ options:
   # Chunk sizes — number of claims processed per model call.
   # Each option overrides the step default; omit to use the step default.
   # Effective size is always min(option, model execution.chunk_size).
-  classify_chunk_size:      16  # classify_domain step
+  classify_chunk_size:      6  # classify_domain step
   atomicity_chunk_size:     16  # atomicity_gate step
-  contextualize_chunk_size: 16  # contextualize step
+  contextualize_chunk_size: 6  # contextualize step
   verify_chunk_size:         1  # verify_general step
   #   veto_chunk_size:           4  # veto_verify step
   default_chunk_size: 1
 
 token_defaults:
   analyze: 1024
-  classify: 256
+  classify: 1024
   answer: 4096
-  verify: 777
+  verify: 1024
   verify_decompose: 1776
   verify_batch: 2048
   verify_individual: 512
@@ -171,7 +171,7 @@ steps:
   #
   # Dedup currently disabled (threshold 1.0 = merge only, no clustering).
   # The 141M nomic-embed model lacks discriminative power for topically
-  # dense claims (mean pairwise sim 0.824 on metformin). At 0.88,
+  # dense claims (mean pairwise sim 0.824 on a dense medical query). At 0.88,
   # 42 verified facts collapsed to 15 — merging mechanistically distinct
   # claims that share the same topic.
   #
@@ -200,7 +200,7 @@ steps:
       rejected_claims: synergize.json.rejected_claims
       authority_verdicts: synergize.json.authority_verdicts
     # embedding_model: embedding
-    # embedding_model: octen_embedding_4b  # mean sim 0.993 on metformin — entire pool collapses
+    # embedding_model: octen_embedding_4b  # mean sim 0.993 on dense medical query — entire pool collapses
     embedding_model: bge_large
     # embedding_model: gte_large
     # embedding_model: octen_embedding_06b
@@ -242,7 +242,7 @@ steps:
   # SYNTHESIZE (sub-pipeline)
   # ==========================================================================
 
-  # Strip rejected claims from each answer, combine, then audit coverage.
+  # Build an outline from verified facts, review it, synthesize prose, then audit coverage.
   - name: synthesize
     type: sub_pipeline
     pipeline_ref: synthesize/synthesize.yaml

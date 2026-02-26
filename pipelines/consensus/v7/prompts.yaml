@@ -612,40 +612,37 @@ prompts:
 
       {original_answer}
 
-  audit_combined:
-    description: "Check combined answer for rejected claim contamination and injected content."
+  audit_contamination:
+    description: "Check combined answer for rejected claim contamination."
     system_prompt: |
-      You are auditing a combined answer for two types of errors.
+      You are checking a combined answer for ONE type of error.
 
-      ERROR TYPE 1 — CONTAMINATION (rejected claims that survived):
-      The REJECTED CLAIMS below were independently verified as false.
-      Check whether the answer states or implies any of them, even
-      paraphrased (e.g. "inhibits" for "decreases the activity of").
+      CONTAMINATION: The claims below were independently verified as false.
+      Check whether the answer DIRECTLY STATES any of them.
+
+      MATCHING RULES:
+      - A sentence is contaminated ONLY if it asserts the same core claim
+        as a rejected item — same subject, same predicate, same relationship
+      - Superficial word overlap is NOT contamination. "Metformin reduces
+        glucose" is NOT contaminated by "Metformin reduces appetite" — they
+        share a subject but assert different predicates.
+      - When in doubt, do NOT flag — false positives destroy verified content
 
       REJECTED CLAIMS:
-      {rejected_claims_list}
-
-      ERROR TYPE 2 — INJECTION (content not in verified facts):
-      The VERIFIED FACTS below are the ONLY facts that should appear
-      in the answer. Check whether the answer contains any factual
-      claims not supported by the verified facts list.
-      Ignore: stylistic transitions, topic sentences, and structural
-      phrasing that don't assert new facts.
-
-      VERIFIED FACTS:
-      {verified_facts_list}
+      {rejected_claims}
 
       QUESTION CONTEXT: {question}
 
       Return a JSON object:
       {
-        "contaminated": [list of rejected claim texts found in the answer],
-        "injected": [list of factual claims in the answer not supported by verified facts],
-        "clean": true if both lists are empty, false otherwise
+        "action": "accept" if contaminated is empty, "revise" otherwise,
+        "contaminated": [rejected claim texts found in the answer],
+        "clean": true if contaminated is empty,
+        "target": human-readable description of what to remove (empty string if clean)
       }
     template: |
 
-      {combined_answer}
+      {artifact}
 
   combine_passages:
     description: "Write answer from verified facts, using 3 passages as style scaffold."
@@ -674,15 +671,39 @@ prompts:
       - NEVER FABRICATE CONNECTIONS: if two facts appear adjacent, do NOT invent
         a causal or explanatory link unless it is explicitly stated in a fact
       - Do NOT copy unverified claims from the reference passages
-      - Do NOT include fact reference numbers (like [1], [2]) in your answer
+      FORBIDDEN CLAIMS:
+      The claims below were independently verified as FALSE. You MUST NOT assert,
+      imply, paraphrase, or derive any of them. If a verified fact appears to
+      support a forbidden claim, include the fact verbatim but do NOT draw the
+      forbidden inference.
+      CITATION (MANDATORY):
+      End every factual sentence with a bracketed list of the verified fact
+      indices it draws from. Format: [Fact N] for one fact, [Fact N, M] for
+      multiple facts in the same sentence.
+
+      Examples:
+        The compound inhibits the target enzyme via competitive binding [Fact 2].
+        Severe renal impairment is a primary contraindication [Fact 4, 11].
+
+      Rules:
+      - Every factual sentence MUST have at least one citation
+      - A sentence with NO citation will be treated as unsupported and removed
+      - Every verified fact must be cited at least once across the full answer
+      - Use the index numbers shown in the VERIFIED FACTS list (1-based)
+      - Do NOT cite FORBIDDEN CLAIM indices — they are not part of the fact list
       - PRESERVE EPISTEMIC STRENGTH: if a fact uses "can", "may", "might", or "could"
         to express a conditional or context-dependent relationship, you MUST preserve
         that modal — do NOT harden "X can Y" into "X Ys" or "X is Y"
       - Boring correctness over eloquence
       - No meta commentary, no "In conclusion", no filler
+      - Do NOT add a document title, label, or header before the first section (e.g. no "Verified Output", "Answer:", or similar prefix)
+      - Citations MUST use square brackets: [Fact N] or [Fact N, M] — parentheses (Fact N) are FORBIDDEN
     template: |
       VERIFIED FACTS:
       {numbered_facts}
+
+      FORBIDDEN CLAIMS (verified FALSE — never assert, imply, or derive):
+      {forbidden_claims}
 
       === REFERENCE PASSAGE 1 (style guide only) ===
       {passage_0}
@@ -694,102 +715,652 @@ prompts:
       {passage_2}
 
 
-  revise_synthesis_chunk:
-    description: "Rewrite the answer integrating missing verified facts into the appropriate sections."
+  insert_missing:
+    description: "Insert missing verified facts into the answer."
     system_prompt: |
-      You are given verified facts that are MISSING from an existing answer
-      about: {question}.
+      You are given an answer and a list of verified facts that are NOT yet
+      represented in the answer. Insert each missing fact into the section
+      where it topically belongs.
 
-      THE EXISTING ANSWER:
-      {enriched_answer}
-
-      Insert each missing fact into the section it topically belongs to and
-      return the FULL REVISED ANSWER.
+      About: {question}
 
       RULES:
-      - Return the COMPLETE revised answer (not just the additions)
-      - Insert each missing fact into its topically appropriate existing section
-        (e.g. a mechanism-of-action fact belongs under "### Mechanism of Action",
-        not appended after "### Contraindications")
-      - If no matching section exists for a fact, append a new section at the end
-      - Do NOT remove, modify, or rephrase any existing content
-      - Do NOT repeat content already in the existing answer
-      - Do NOT include fact reference numbers ([1], [2], etc.)
-      - Do NOT add explanation, elaboration, or hedging beyond what the facts state
-      - Preserve all existing section headings and structure exactly
+      - Add one sentence per missing fact, placed in the section it belongs to
+      - Each added sentence MUST end with its citation: [Fact N]
+      - If two missing facts express the same idea, combine into one sentence: [Fact N, Fact M]
+      - Do NOT modify, remove, or rephrase any existing content
+      - Do NOT add headings, preamble, or explanation
+      - Return the COMPLETE answer with insertions
     template: |
+      CURRENT ANSWER:
+      {artifact}
 
-      {missing_facts}
+      MISSING FACTS TO INSERT:
+      {uncited_facts}
+
+  remove_contamination:
+    description: "Remove contaminated claims identified by audit."
+    template: |
+      The audit found the following contaminated claims in the answer:
+
+      CONTAMINATED (rejected claims that survived — must be removed):
+      {assess_target}
+
+      CURRENT ANSWER:
+      {artifact}
+
+      Remove ONLY the specific contaminated sentences listed above.
+      - Delete the sentence(s) that directly assert a contaminated claim
+      - If only a clause within a sentence is contaminated, remove that clause
+        and keep the rest
+      - Do NOT remove sentences that merely share vocabulary with a
+        contaminated claim but assert a different fact
+      - PRESERVE all [Fact N] and [Fact N, M] citations
+      - Do NOT add any new content
+      - Return the COMPLETE revised answer
+      - Output the revised answer text only — no preamble or explanation
 
   assess_synthesis:
-    description: "Assess synthesized answer for coverage gaps and redundant prose."
+    description: "Structural quality gate — paragraph coherence and sentence flow only."
     system_prompt: |
-      You are given a SYNTHESIZED ANSWER and VERIFIED FACTS about: {question}.
+      You are reviewing a SYNTHESIZED ANSWER about: {question}.
 
-      Assess the answer for TWO quality dimensions:
+      Your ONLY job is STRUCTURAL QUALITY. Redundancy and fact coverage
+      are handled by separate steps — do NOT check for duplicates or
+      missing facts.
 
-      1. COVERAGE: Are all verified facts adequately represented?
-         A fact is MISSING if its core information does not appear at all,
-         or is mentioned so vaguely that the specific detail is lost.
+      Check these three things:
 
-      2. REDUNDANCY: Does the answer repeat the same ideas in multiple places?
-         Redundancy means the same concept, claim, or explanation appears in
-         two or more sections with different phrasing but identical substance.
+      1. STRUCTURE: Is the answer organized into coherent paragraphs that
+         group related information? Scattered facts dumped in no logical
+         order is the most important defect to fix.
+      2. FLOW: Do sentences within each paragraph follow a logical sequence?
+         Abrupt topic jumps mid-paragraph indicate poor structure.
+      3. ORPHANS: One-liner sentences that belong in an earlier paragraph
+         but were left stranded at the end.
 
-      Based on your assessment, choose an action:
-      - "revise": There are missing facts to add, redundant sections to remove, or both.
-      - "restructure": The content is factually complete but poorly organized
-        (e.g., related facts scattered across distant sections, or the section
-        structure does not match the question's logical structure).
-      - "accept": The answer is complete, non-redundant, and well-structured.
+      PRESERVE:
+      - All existing ### section headings — do NOT merge or remove sections
+      - All existing [Fact N] citations — do NOT add, remove, or renumber
+
+      ACCEPT THRESHOLD: Accept the answer if paragraphs are coherent and
+      sentences flow logically, even if minor improvements are possible.
+      Only choose "revise" for clear structural defects — not stylistic
+      preferences or minor wording.
 
       SYNTHESIZED ANSWER:
       {artifact}
 
-      Return a JSON object with these fields:
-        action: one of "revise", "restructure", "accept"
-        missing_facts: array of fact texts not adequately represented (empty if none)
-        repetitive_sections: array of descriptions of redundant content (empty if none)
-        reason: brief explanation of your decision
+      Return JSON:
+        action: "revise" or "accept"
+        issues: array of specific issues found (empty if accepting)
+        reason: brief explanation
+        target: what to fix (empty string if accept)
     template: |
-
-      VERIFIED FACTS (JSON array of objects with "text" field, or pre-formatted list):
-      {verified_facts}
+      Question being answered: {question}
 
   revise_synthesis:
-    description: "Revise the answer: add missing facts and remove redundant prose."
+    description: "Fix specific issues identified by quality gate, including reorganization."
     template: |
-      The current answer has the following issues:
+      Fix the following issues in the answer:
       {assess_reason}
       {assess_target}
 
       CURRENT ANSWER:
       {artifact}
 
-      Revise the answer:
-      - INSERT each missing fact into the section it topically belongs to
-      - REMOVE or MERGE redundant passages — keep the more detailed version
-      - Do NOT remove, modify, or rephrase existing non-redundant content
-      - Do NOT add explanation beyond what the verified facts state
-      - Preserve section headings and structure
+      RULES:
+      - Fix the listed issues — you MAY reorder sentences and move them
+        between paragraphs to improve logical grouping and flow
+      - SENTENCE VARIETY: If multiple consecutive sentences start with the
+        same subject, vary the openings without changing the meaning
+      - PRESERVE all ### section headings exactly as they appear — do NOT
+        merge, rename, or remove sections
+      - PRESERVE all [Fact N] and [Fact N, M] citations exactly as they
+        appear — every citation in the input must appear in the output
+      - Do NOT add new factual claims or remove existing ones
+      - Do NOT rephrase sentences beyond what is needed for flow
       - Return the COMPLETE revised answer
+      - No preamble, no closing summary
 
-  restructure_synthesis:
-    description: "Restructure the answer for better organization without changing facts."
+  assess_flow:
+    description: "Flow-only quality gate — sentence sequencing and referential continuity within sections."
+    system_prompt: |
+      You are reviewing a SYNTHESIZED ANSWER about: {question}.
+
+      Your ONLY job is FLOW QUALITY WITHIN EACH SECTION.
+
+      Check only:
+      1. SEQUENCE: do adjacent sentences follow a logical progression?
+      2. REFERENTS: are pronouns and phrases like "this/these" clearly anchored?
+      3. LOCAL ORDER: are cause/effect or definition/detail pairs in a sensible order?
+
+      DO NOT CHECK:
+      - duplicates or redundancy
+      - missing facts or coverage
+      - section placement/orphans across sections
+      - citation correctness beyond preserving existing citations
+
+      PRESERVE:
+      - All existing ### section headings
+      - All existing [Fact N] citations
+
+      ACCEPT THRESHOLD: Accept if flow is understandable and only minor stylistic
+      improvements remain.
+
+      SYNTHESIZED ANSWER:
+      {artifact}
+
+      Return JSON:
+        action: "revise" or "accept"
+        issues: array of specific issues found (empty if accepting)
+        reason: brief explanation
+        target: concrete local flow edits to apply (empty string if accept)
     template: |
-      The current answer is factually complete but poorly organized:
+      Question being answered: {question}
+
+  revise_flow:
+    description: "Apply flow-only edits from assess_flow while preserving structure and citations."
+    template: |
+      Fix the following FLOW issues in the answer:
       {assess_reason}
       {assess_target}
 
       CURRENT ANSWER:
       {artifact}
 
-      Restructure the answer:
-      - Reorganize sections so related facts are grouped together
-      - Merge fragmented sections that cover the same topic
-      - Ensure section headings reflect content accurately
-      - Do NOT add, remove, or change any factual content
-      - Return the COMPLETE restructured answer
+      SECTION PRESERVATION (CRITICAL):
+      You MUST return every ### section heading that exists in the input.
+      Never drop or omit a section. The output MUST contain the same
+      set of ### headings in the same order.
+
+      RULES:
+      - Apply only the requested flow fixes
+      - You MAY reorder sentences within a section
+      - You MAY make minimal connective rephrasing for coherence
+      - Do NOT move sentences between sections
+      - Do NOT add or remove factual claims
+      - PRESERVE all [Fact N] and [Fact N, M] citations exactly
+      - Return the COMPLETE revised answer
+      - No preamble, no closing summary
+
+  assess_placement:
+    description: "Placement-only quality gate — section membership and orphan sentence placement."
+    system_prompt: |
+      You are reviewing a SYNTHESIZED ANSWER about: {question}.
+
+      Your ONLY job is SECTION PLACEMENT QUALITY.
+
+      Check only:
+      1. WRONG SECTION: sentence belongs to a different existing section.
+      2. ORPHANS: sentence is stranded and should be moved to an earlier/later section.
+      3. MIXED CLUSTERS: a section includes sentences whose topic clearly belongs elsewhere.
+      4. TOPIC SCOPE: for each sentence, ask: does its primary assertion
+         belong to the topic named by its section heading? A sentence whose
+         subject matter is categorically distinct from its section heading
+         is misplaced — it belongs in the section whose heading matches its
+         topic. Flag the mismatch and name the correct target section.
+
+      DO NOT CHECK:
+      - sentence-level flow inside a section
+      - redundancy/duplicates
+      - missing facts/coverage
+      - citation correctness beyond preserving existing citations
+
+      PRESERVE:
+      - All existing ### section headings — do NOT merge/rename/remove sections
+      - All existing [Fact N] citations
+
+      ACCEPT THRESHOLD: Accept if only weakly debatable placements remain.
+      Revise only for clear placement defects.
+
+      SYNTHESIZED ANSWER:
+      {artifact}
+
+      Return JSON:
+        action: "revise" or "accept"
+        issues: array of specific issues found (empty if accepting)
+        reason: brief explanation
+        target: explicit move instructions (empty string if accept)
+    template: |
+      Question being answered: {question}
+
+  revise_placement:
+    description: "Apply section placement moves from assess_placement while preserving facts and citations."
+    template: |
+      Fix the following PLACEMENT issues in the answer:
+      {assess_reason}
+      {assess_target}
+
+      CURRENT ANSWER:
+      {artifact}
+
+      RULES:
+      - Apply only the requested placement fixes
+      - You MAY move sentences between existing sections
+      - You MAY reorder sentences after moves for readability
+      - Do NOT add, remove, merge, rename, or reorder section headings
+      - Do NOT add or remove factual claims
+      - PRESERVE all [Fact N] and [Fact N, M] citations exactly
+
+      CONTENT INTEGRITY (CRITICAL):
+      - You MUST NOT create new sentences or new [Fact N] citations
+      - You MUST NOT create new sections that do not exist in the input
+      - Only move existing sentences (with their citations) between
+        existing sections
+      - If the input is missing content you expect, that is outside
+        your scope — work only with what is present
+
+      - Return the COMPLETE revised answer
+      - No preamble, no closing summary
+
+  organize_facts:
+    description: "Organize verified facts into a structured JSON outline for coherent answer synthesis."
+    system_prompt: |
+      You organize verified facts into a coherent outline for answering a question.
+      You receive a question and a numbered list of verified facts.
+      Your task: assign every fact index to a logical section, ordered for
+      natural reading flow.
+
+      Rules:
+      - Every fact index MUST appear in exactly one section
+      - Order facts within each section for logical flow
+        (general → specific, cause → effect, mechanism → consequence)
+      - Choose section headings that match the question's natural structure
+      - 2-5 sections typically suffice
+      - Do NOT invent facts — only reference indices from the list
+      - Do NOT leave any fact index unassigned
+
+      Return valid JSON only, no preamble:
+      {{"sections": [{{"heading": "Section Title", "fact_indices": [1, 5, 3, 12]}}]}}
+    template: |
+      QUESTION: {question}
+
+      VERIFIED FACTS:
+      {verified_facts}
+
+  critique_outline:
+    description: "Evaluate whether the fact outline coherently organizes all facts for the question."
+    system_prompt: |
+      You are evaluating a JSON outline that assigns verified facts to sections
+      for answering: {question}
+
+      STEP 1 — COUNT COVERAGE:
+      Compare the fact indices in the outline against the verified facts list.
+      Identify any MISSING indices (present in verified facts but absent from
+      all sections) and any DUPLICATED indices (appearing in more than one
+      section).
+
+      STEP 2 — EVALUATE (in this order):
+      1. COMPLETENESS: Are ≥90% of fact indices assigned? If so, completeness
+         is acceptable — do NOT revise solely for a small number of missing
+         indices.
+      2. GROUPING: Are related facts grouped together?
+      3. ORDERING: Within each section, logical sequence?
+      4. SECTIONS: Appropriate headings for the question?
+
+      DECISION:
+      - "accept" if ≥90% of indices are assigned AND grouping/ordering are
+        reasonable. Minor imperfections are fine.
+      - "revise" if <90% of indices are assigned, OR grouping is seriously
+        wrong. When revising, you MUST list the exact missing indices in
+        the "target" field so the reviser knows what to add.
+
+      OUTLINE TO EVALUATE:
+      {artifact}
+
+      Return JSON:
+        action: "revise" or "accept"
+        issues: array of specific issues found (empty if accepting)
+        reason: brief explanation
+        target: if revising, list missing indices like "Missing indices: [3, 17, 22] — add to appropriate sections". Empty string if accepting.
+    template: |
+
+      VERIFIED FACTS (for reference — check all indices are assigned):
+      {verified_facts}
+
+  revise_outline:
+    description: "Revise the fact outline based on critic feedback."
+    system_prompt: |
+      You are a JSON outline reviser. Return valid JSON only — no preamble, no explanation.
+    template: |
+      CRITIC FEEDBACK:
+      Reason: {assess_reason}
+      Target: {assess_target}
+
+      CURRENT OUTLINE:
+      {artifact}
+
+      VERIFIED FACTS (for reference — read facts at the missing indices):
+      {verified_facts}
+
+      INSTRUCTIONS:
+      - If the critic lists missing indices, read the corresponding facts
+        above and insert each index into the section where it topically fits
+      - If the critic flags grouping or ordering issues, reorganize accordingly
+      - Do NOT remove any existing indices — only add or move
+      - Return the COMPLETE revised outline as valid JSON
+      - Format: {{"sections": [{{"heading": "...", "fact_indices": [...]}}]}}
+
+  coverage_revise_outline:
+    description: "Insert missing facts into outline using programmatically detected gaps."
+    system_prompt: |
+      You are revising a JSON outline to improve fact coverage.
+      The system has detected exactly which verified facts are missing from the
+      outline. Your job: read each missing fact and insert its index into the
+      most appropriate existing section. If no existing section fits, create a
+      new section with a clear heading.
+
+      Return valid JSON only — no preamble, no explanation.
+    template: |
+      QUESTION: {question}
+
+      CURRENT OUTLINE:
+      {artifact}
+
+      MISSING FACTS ({missing_count} of {total_facts} not yet assigned):
+      {missing_facts}
+
+      ALL VERIFIED FACTS (for context when deciding placement):
+      {verified_facts}
+
+      INSTRUCTIONS:
+      - Insert each missing index into the section where it topically belongs
+      - Read the missing fact text to decide which section fits
+      - If a fact does not fit any existing section, create a new section
+      - Do NOT remove any existing indices — only add
+      - Return the COMPLETE revised outline as valid JSON
+      - Format: {{"sections": [{{"heading": "...", "fact_indices": [...]}}]}}
+
+  critique_outline_quality:
+    description: "Evaluate outline grouping, ordering, and section headings (coverage verified programmatically)."
+    system_prompt: |
+      You are evaluating a JSON outline for answering: {question}
+
+      Fact coverage has been verified programmatically — do NOT check whether
+      all indices are assigned. Focus ONLY on qualitative organization:
+
+      1. OVERLAP: Do any two sections cover the same topic or theme? Sections
+         whose headings or fact content overlap substantially MUST be merged.
+         This is the most important defect — overlapping sections cause
+         repetition in the final prose.
+      2. GROUPING: Are related facts grouped together? Facts about the same
+         topic, mechanism, or category should share a section.
+      3. ORDERING: Within each section, do facts follow a logical sequence?
+         (general → specific, cause → effect, definition → example)
+      4. SECTIONS: Are section headings clear and appropriate for the question?
+         Would a reader understand the answer's structure from the headings alone?
+
+      If the outline is well-organized, choose "accept".
+      If grouping or ordering has clear problems, choose "revise" and give
+      specific, actionable feedback (e.g., "Move facts [5, 8] from
+      Contraindications to Mechanism of Action — they describe how the drug
+      works, not when to avoid it").
+
+      OUTLINE TO EVALUATE:
+      {artifact}
+
+      Return JSON:
+        action: "revise" or "accept"
+        issues: array of specific issues found (empty if accepting)
+        reason: brief explanation
+        target: what to fix (empty string if accept)
+    template: |
+
+      VERIFIED FACTS (for reference — to understand what each index represents):
+      {verified_facts}
+
+  revise_outline_quality:
+    description: "Revise outline grouping and ordering based on quality critique."
+    system_prompt: |
+      You are a JSON outline reviser. Return valid JSON only — no preamble, no explanation.
+    template: |
+      QUALITY FEEDBACK:
+      Reason: {assess_reason}
+      Target: {assess_target}
+
+      CURRENT OUTLINE:
+      {artifact}
+
+      VERIFIED FACTS (for reference):
+      {verified_facts}
+
+      INSTRUCTIONS:
+      - Fix the grouping or ordering issues identified above
+      - You may move indices between sections or reorder within sections
+      - Do NOT remove any indices — all must remain assigned
+      - Return the COMPLETE revised outline as valid JSON
+      - Format: {{"sections": [{{"heading": "...", "fact_indices": [...]}}]}}
+
+  synthesize_from_outline:
+    description: "Write coherent prose from an approved fact outline."
+    system_prompt: |
+      You write a well-organized answer from a pre-approved section outline
+      and verified facts. The outline assigns specific fact indices to
+      sections — follow it exactly.
+
+      About: {question}
+
+      MANDATORY — CITE EVERY FACT:
+      Every sentence that states a fact MUST end with its citation inline.
+      No exceptions. A sentence without a citation will be treated as
+      unsupported and removed.
+
+        [Fact N]       — one fact per sentence
+        [Fact N, M]    — two facts combined into one sentence
+
+      Examples:
+        Metformin inhibits hepatic gluconeogenesis [Fact 3].
+        It suppresses PEPCK and G6Pase, the key enzymes in glucose
+        production [Fact 5, Fact 7].
+        Severe renal impairment is a primary contraindication [Fact 12].
+
+      MERGE EQUIVALENT FACTS (CRITICAL):
+      Many facts express the same claim in different words.
+      When facts in a section describe the same mechanism, property, or
+      relationship, write ONE sentence citing ALL their indices.
+        Example: [Fact 1] "reduces glucose production" and
+        [Fact 13] "inhibits gluconeogenesis" → ONE sentence [Fact 1, 13].
+      Do NOT write separate sentences for semantically equivalent facts.
+
+      SENTENCE VARIETY (CRITICAL):
+      Do NOT start 3+ consecutive sentences with the same subject.
+      Vary openings: use pronouns, dependent clauses, or topic phrases.
+
+      STRUCTURE:
+      - Write one ### Section Title heading per outline section
+      - Use the outline's section order — do not reorder or merge sections
+      - Include ALL facts assigned to each section — do not skip any
+
+      FORMATTING:
+      - Prose paragraphs for explanations, mechanisms, narrative flow
+      - Bullet lists for enumerations, contraindications, side effects,
+        named lists of items
+      - **Bold** key terms, entity names, and important values on first mention
+      - Smooth transitions within sections
+
+      CONSTRAINTS:
+      - Combine closely related facts into flowing sentences where natural
+      - Do NOT add information beyond what the facts state
+      - Do NOT repeat facts across sections
+      - Do NOT repeat the same paragraph or passage within a section
+      - Do NOT include meta-commentary, structural narration, or transition
+        announcements (e.g., "The next section covers...", "Now follows...",
+        "The first paragraph of X section now follows:")
+      - No preamble, no closing summary — output the answer text only
+    template: |
+      APPROVED OUTLINE:
+      {outline}
+
+      VERIFIED FACTS:
+      {verified_facts}
+
+  critique_redundancy:
+    description: "Identify local repetition (within-sentence and consecutive restatement) in a synthesized answer."
+    system_prompt: |
+      You are reviewing a synthesized answer for LOCAL REDUNDANCY only.
+      The answer may have section headings (### ...).
+
+      SCOPE: You identify content to DELETE. Do NOT suggest merging,
+      reordering, or restructuring sections — structure is handled
+      separately. Only specify what to remove.
+
+      Check for these problems in order of severity:
+
+      0. PARAGRAPH DUPLICATION: Two consecutive paragraphs within the same
+         section convey the same information in similar or identical words.
+         Delete the second paragraph entirely — this is the most severe defect.
+      1. WITHIN-SENTENCE DUPLICATION: A single sentence or clause pair says
+         the same thing twice using different words. Example: "reduces the
+         liver's glucose production and inhibits gluconeogenesis" — both
+         clauses mean the same thing. One clause must be deleted.
+      2. CONSECUTIVE RESTATEMENT: A sentence restates the idea from the
+         immediately preceding sentence. Example:
+           "Metformin suppresses hepatic glucose production."
+           "It reduces the amount of glucose the liver releases."
+         These are the same claim — delete one.
+      3. CIRCULAR SENTENCES: A sentence adds no information beyond what the
+         surrounding text already stated.
+
+      IMPORTANT: Do NOT flag cross-section overlap in this step.
+      Cross-section deduplication is handled by a separate reviewer.
+
+      For each redundancy found:
+      - Quote BOTH instances (the kept one and the deleted one)
+      - State which to KEEP and which to DELETE
+      - If within-sentence, quote the full sentence and mark the clause
+        to delete
+
+      Be aggressive: if two clauses, sentences, or passages convey the
+      same meaning, one must go. Prefer the more specific or technical
+      version.
+
+      LIMIT: Report at most 5 redundancies per review — pick the most
+      severe. This keeps reviser instructions focused and executable.
+
+      ACCEPT THRESHOLD: If the only remaining issues are minor phrasing
+      differences that do not confuse a reader, choose "accept". The goal
+      is to eliminate clear repetition — not to polish prose to perfection.
+
+      If the answer is free of meaningful repetition, choose "accept".
+
+      ANSWER TO REVIEW:
+      {artifact}
+
+      Return JSON:
+        action: "revise" or "accept"
+        repeated_items: array of specific redundancies found (empty if accepting)
+        reason: brief explanation
+        target: concrete deletion instructions for the reviser — for each
+          redundancy, state the exact sentence or clause to delete
+          (empty string if accept)
+    template: |
+      Question being answered: {question}
+
+  critique_redundancy_global:
+    description: "Identify cross-section and long-range semantic duplication in a synthesized answer."
+    system_prompt: |
+      You are reviewing a synthesized answer for GLOBAL REDUNDANCY only.
+      The answer may have section headings (### ...).
+
+      SCOPE: identify repeated ideas spanning paragraph boundaries —
+      whether intra-section (two paragraphs under the same heading) or
+      cross-section. The local reviewer handles sentence pairs; your job
+      is everything above that level.
+
+      SAME SUBJECT ≠ SAME CLAIM (CRITICAL):
+      Two sentences that name the same subject are NOT duplicates unless
+      they assert the SAME predicate — the same mechanism, property, or
+      relationship. Different facts about the same entity are independent
+      and MUST both survive.
+        DUPLICATE: "reduces hepatic glucose production" vs "inhibits
+          gluconeogenesis" → same mechanism, different words → delete one
+        NOT duplicate: "reduces hepatic glucose production" vs "improves
+          insulin sensitivity in skeletal muscle" → different mechanisms
+        NOT duplicate: "is contraindicated in renal impairment" vs
+          "is cleared by the kidneys" → contraindication vs pharmacokinetics
+      When in doubt, keep both — false deletions destroy verified content.
+
+      Check for:
+      1. INTRA-SECTION PARAGRAPH DUPLICATION: two paragraphs under the
+         same heading convey the same information in similar or different
+         words. Delete the less precise paragraph entirely.
+      2. CROSS-SECTION DUPLICATION: the same claim appears in two sections
+         using different wording. Both sentences must assert the same
+         predicate — not merely share the same subject.
+      3. LONG-RANGE RESTATEMENT: a later paragraph repeats an earlier idea
+         without adding new information.
+      4. DUPLICATE CATEGORICAL CLUSTERS: a category of claims (risks,
+         prerequisites, examples, properties) restated in multiple places
+         without adding new information each time.
+
+      For each redundancy found:
+      - Quote BOTH instances (the kept one and the deleted one)
+      - State which to KEEP and which to DELETE
+      - Prefer keeping the sentence that is more specific and better cited
+
+      LIMIT: Report at most 5 redundancies per review.
+
+      ACCEPT THRESHOLD: Accept if sections are mostly distinct and only
+      minor thematic overlap remains. Sections that discuss the same
+      subject from different angles (mechanism vs contraindications vs
+      pharmacokinetics) are NOT redundant.
+
+      ANSWER TO REVIEW:
+      {artifact}
+
+      Return JSON:
+        action: "revise" or "accept"
+        repeated_items: array of specific redundancies found (empty if accepting)
+        reason: brief explanation
+        target: concrete deletion instructions for the reviser — for each
+          redundancy, state the exact sentence to delete
+          (empty string if accept)
+    template: |
+      Question being answered: {question}
+
+  revise_redundancy:
+    description: "Remove redundant/repeated content from a synthesized answer."
+    system_prompt: |
+      You are revising a synthesized answer to remove redundancy.
+      A shorter answer is better than a repetitive one.
+
+      SECTION PRESERVATION (CRITICAL):
+      You MUST return every ### section heading that exists in the input.
+      Never drop, merge, or omit a section — even if the feedback only
+      mentions one section. Count sections before editing; the output
+      MUST contain the same set of ### headings in the same order.
+
+      UNIQUE CONTENT PROTECTION (CRITICAL):
+      Before deleting any sentence, verify it has a semantic equivalent
+      elsewhere in the answer. If the sentence states a fact that appears
+      NOWHERE else (no other sentence asserts the same mechanism, property,
+      or relationship), KEEP it regardless of what the feedback says —
+      the assessor likely confused topical proximity with duplication.
+
+      Rules:
+      - Follow the REDUNDANCY FEEDBACK — but apply the unique-content
+        check above before each deletion
+      - When a sentence contains two clauses that say the same thing,
+        delete the weaker clause and keep the more precise one
+      - When consecutive sentences restate the same idea, delete the
+        less informative one entirely
+      - Do NOT merge, reorder, or restructure sections — only delete
+        redundant content within the existing structure
+      - PRESERVE all [Fact N] and [Fact N, M] citations — every citation
+        in the input must appear in the output. When deleting a sentence,
+        absorb its unique citations into a surviving sentence that covers
+        the same topic
+      - Do NOT remove ideas that appear only once
+      - Do NOT add new content beyond what is already present
+      - Output the revised answer text only — no preamble, no explanation
+    template: |
+      REDUNDANCY FEEDBACK:
+      Reason: {assess_reason}
+      Target: {assess_target}
+
+      CURRENT ANSWER:
+      {artifact}
 
   verify_math:
     description: "Mathematical verification with minimal disambiguation context"
@@ -804,6 +1375,43 @@ prompts:
     template: |
       {claim}
 
+
+  # ========================================================================
+  # Hybrid coverage review (embeddings narrow → LLM adjudicates)
+  # ========================================================================
+
+  adjudicate_coverage:
+    description: "Determine which embedding-flagged facts are genuinely uncovered vs semantic duplicates."
+    system_prompt: |
+      You are given a SYNTHESIZED ANSWER and a list of CANDIDATE UNCOVERED
+      FACTS. These facts scored below an embedding similarity threshold,
+      meaning they may not be well-represented in the answer.
+
+      However, many candidates are semantic near-duplicates of content
+      already covered. Your job: determine which candidates represent
+      genuinely MISSING TOPICS — information the answer does NOT discuss
+      at all, even in different words.
+
+      For each candidate:
+      - If the answer already discusses the same topic, mechanism, or
+        relationship (even using different wording), it is COVERED
+      - If the answer says NOTHING about this topic, it is MISSING
+
+      Example: if the answer says "reduces glucose production in the
+      liver" and a candidate says "inhibits hepatic gluconeogenesis",
+      that candidate is COVERED — same mechanism, different words.
+
+      About: {question}
+
+      SYNTHESIZED ANSWER:
+      {artifact}
+
+      Return JSON:
+        {{"missing_indices": [1-based fact indices that are genuinely missing]}}
+      If all candidates are already covered, return {{"missing_indices": []}}
+    template: |
+      CANDIDATE UNCOVERED FACTS:
+      {candidate_facts}
 
   # ========================================================================
   # v7 additions

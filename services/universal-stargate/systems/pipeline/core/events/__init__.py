@@ -11,7 +11,11 @@ The new dataclass events power the JSONL-based pipeline viewer.
 Checkpoint events remain unchanged (not migrated).
 """
 
-from .assess_loop import AssessLoopCompleted, AssessLoopIterationCompleted, AssessLoopStarted
+from .assess_loop import (
+    AssessLoopCompleted,
+    AssessLoopIterationCompleted,
+    AssessLoopStarted,
+)
 from .base import PipelineEvent
 from .checkpoint import CheckpointFailed, CheckpointLoaded, CheckpointSaved
 from .inference import ModelInvocation
@@ -35,11 +39,14 @@ from .verification import (
     ClaimsClassified,
     ClaimsContextualized,
     ClaimsExtracted,
+    CombinePassagesCompleted,
     CompoundClaimsDecomposed,
+    CoverageAuditCompleted,
     DomainVerificationCompleted,
     EnrichReviewCompleted,
     FilterNegativesCompleted,
     ModelVerdictCast,
+    OrganizeFactsCompleted,
     SynergizeCompleted,
     ThresholdApplied,
     TiebreakerTriggered,
@@ -72,6 +79,8 @@ __all__ = [
     # Inference
     "ModelInvocation",
     # Verification
+    "CombinePassagesCompleted",
+    "CoverageAuditCompleted",
     "ClaimsExtracted",
     "ClaimsClassified",
     "ClaimsContextualized",
@@ -80,6 +89,7 @@ __all__ = [
     "EnrichReviewCompleted",
     "FilterNegativesCompleted",
     "ModelVerdictCast",
+    "OrganizeFactsCompleted",
     "TiebreakerTriggered",
     "ThresholdApplied",
     "SynergizeCompleted",

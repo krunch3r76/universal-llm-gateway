@@ -105,7 +105,10 @@ async def run_vllm_probe(
 ) -> dict[str, Any]:
     """Start vllm serve, wait for health, measure VRAM/RAM, kill.
 
-    Returns dict with success, vram_mb, ram_mb, max_model_len, n_gpu_layers=-1.
+    Returns dict with success, vram_mb, ram_mb, max_model_len, and
+    n_gpu_layers=-1 (sentinel used by callers to classify device as "gpu";
+    stripped from catalog entries by _build_updated_catalog_entry since it
+    has no runtime meaning for the vLLM engine).
     Uses identical code path to runtime VLLMServerEngine.
     """
     config = _build_measurement_config(

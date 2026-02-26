@@ -501,8 +501,8 @@ def format_numbered_facts(
 
     When any fact has context_prefix, output is grouped by topic with
     ``CONTEXT: <topic>`` labels and sequential numbers across groups.
-    Topics are case-normalized (title case) so that e.g. "Metformin" and
-    "metformin" merge into one group. Facts without context_prefix appear
+    Topics are case-normalized (title case) so that e.g. "Diabetes" and
+    "diabetes" merge into one group. Facts without context_prefix appear
     in a final ungrouped section. When no facts have context_prefix, output
     is a flat numbered list (backward compatible with v7).
     """

@@ -164,6 +164,56 @@ class DomainVetoCompleted(PipelineEvent):
 
 
 @dataclass(slots=True, kw_only=True)
+class CombinePassagesCompleted(PipelineEvent):
+    """Emitted after verified facts are synthesised into a combined answer.
+
+    Payload:
+        fact_count: Total verified facts sent to combine
+        chunk_count: Number of synthesis chunks (1 = single call, N = chunked)
+        cited_count: Unique fact indices cited at least once in the output
+        uncited_indices: Fact indices with no citation in the output
+        coverage_pct: cited_count / fact_count * 100
+    """
+
+    fact_count: int = 0
+    chunk_count: int = 1
+    cited_count: int = 0
+    uncited_indices: list[int] = field(default_factory=list)
+    coverage_pct: float = 0.0
+
+
+@dataclass(slots=True, kw_only=True)
+class OrganizeFactsCompleted(PipelineEvent):
+    """Emitted after organize_facts generates and validates an outline."""
+
+    total_facts: int = 0
+    sections_created: int = 0
+    facts_assigned: int = 0
+    valid_json: bool = False
+
+
+@dataclass(slots=True, kw_only=True)
+class CoverageAuditCompleted(PipelineEvent):
+    """Emitted after embedding-based fact coverage audit.
+
+    Payload:
+        total_facts: Verified facts checked against the answer
+        covered_count: Facts with best-sentence similarity >= threshold
+        uncovered_count: Facts below the threshold
+        mean_score: Mean of per-fact best-sentence similarity scores
+        coverage_pct: covered_count / total_facts * 100
+        threshold: Similarity threshold used
+    """
+
+    total_facts: int = 0
+    covered_count: int = 0
+    uncovered_count: int = 0
+    mean_score: float = 0.0
+    coverage_pct: float = 0.0
+    threshold: float = 0.0
+
+
+@dataclass(slots=True, kw_only=True)
 class VerificationComplete(PipelineEvent):
     """Final verification result with full claim data and vote matrix.
 

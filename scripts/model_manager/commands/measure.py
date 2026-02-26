@@ -756,25 +756,24 @@ def _build_updated_catalog_entry(
         else:
             device = "hybrid" if schema_name in schemas_with_hybrid else "gpu"
 
-        # Remove internal/status/timing fields before storing
-        clean_profile = {
-            k: v
-            for k, v in profile.items()
-            if k
-            not in [
-                "success",
-                "error",
-                "exceeds_cap",
-                "cap_exceeded_reason",
-                "total_layers",
-                # Measurement-time validation/debugging fields (not part of schema)
-                "offloaded_layers",
-                "stderr",
-                "load_time_sec",
-                "warmup_time_sec",
-                "total_time_sec",
-            ]
+        # Remove internal/status/timing fields before storing.
+        # n_gpu_layers is only meaningful for llama-cpp (controls layer offload);
+        # vLLM probes always emit -1 as a device-classification sentinel — strip it.
+        strip_keys = {
+            "success",
+            "error",
+            "exceeds_cap",
+            "cap_exceeded_reason",
+            "total_layers",
+            "offloaded_layers",
+            "stderr",
+            "load_time_sec",
+            "warmup_time_sec",
+            "total_time_sec",
         }
+        if schema_name not in schemas_with_hybrid:
+            strip_keys.add("n_gpu_layers")
+        clean_profile = {k: v for k, v in profile.items() if k not in strip_keys}
 
         if device == "cpu":
             cpu_profiles[ctx_str] = clean_profile

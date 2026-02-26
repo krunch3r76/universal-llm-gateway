@@ -43,6 +43,26 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _format_text_list(value: Any) -> Any:
+    """Compress a list of dicts with a 'text' field into a numbered plain-text list.
+
+    ∀ value: list[dict] ∧ "text" ∈ value[0] ⟹ "[1] text\n[2] text\n…"
+    ∀ other value: returned unchanged.
+    """
+    if (
+        isinstance(value, list)
+        and value
+        and isinstance(value[0], dict)
+        and "text" in value[0]
+    ):
+        return "\n".join(
+            f"[{i}] {item['text']}"
+            for i, item in enumerate(value, 1)
+            if item.get("text")
+        )
+    return value
+
+
 class AssessLoopHandler(BaseHandler):
     """
     Engine-mediated iterative assess→act loop.
@@ -81,6 +101,17 @@ class AssessLoopHandler(BaseHandler):
                 f"Step '{step.id}': artifact_key '{cfg.artifact_key}' not in "
                 f"handler_inputs. Available: {list(resolved.keys())}"
             )
+
+        # Compress list-of-dict inputs that carry a "text" field into numbered
+        # plain-text lists before they hit the prompt template. Raw JSON reprs
+        # of structured fact objects balloon token usage with fields (statement_id,
+        # source_sentences, claim_type, …) that are irrelevant to assess/act calls.
+        # The artifact is excluded — it is always a plain string from a prior step.
+        resolved = {
+            k: _format_text_list(v) if k != cfg.artifact_key else v
+            for k, v in resolved.items()
+        }
+
         artifact: str = str(resolved[cfg.artifact_key])
         base_ctx: dict[str, Any] = {"text": context.source_text, **resolved}
 
@@ -211,6 +242,37 @@ class AssessLoopHandler(BaseHandler):
                         state=state,
                     )
                     state.exit_reason = "unknown_action"
+                    break
+
+                cap = cfg.get_action_max_consecutive(action)
+                if state.track_action(action, cap):
+                    logger.info(
+                        "Step '%s' iter %d: action '%s' hit max_consecutive=%d; "
+                        "forcing terminal action '%s'",
+                        step.id,
+                        iteration,
+                        action,
+                        cap,
+                        cfg.terminal_action,
+                    )
+                    state.terminal_action_reached = True
+                    state.exit_reason = "max_consecutive"
+                    state.last_action = cfg.terminal_action
+                    emit_iteration_completed(
+                        recorder,
+                        step.name,
+                        iteration,
+                        decision,
+                        cfg.terminal_action,
+                        reason,
+                        True,
+                        None,
+                        0.0,
+                        assess_ms,
+                        assess_r.prompt_tokens,
+                        assess_r.completion_tokens,
+                        state=state,
+                    )
                     break
 
                 action_ctx = {

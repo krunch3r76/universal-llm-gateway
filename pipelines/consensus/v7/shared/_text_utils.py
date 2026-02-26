@@ -9,6 +9,14 @@ Invariant: get_statement_text(stmt) returns non-empty if stmt is valid
 
 from __future__ import annotations
 
+import re
+
+_FACT_CITATION_PATTERN: re.Pattern[str] = re.compile(
+    r"\[(?:Fact\s+)?\d+(?:\s*,\s*(?:Fact\s+)?\d+)*\]"
+)
+_SPACE_BEFORE_PUNCT_PATTERN: re.Pattern[str] = re.compile(r"\s+([.,;:!?])")
+_MULTI_SPACE: re.Pattern[str] = re.compile(r" {2,}")
+
 
 def get_statement_text(stmt: dict, *, prefer_resolved: bool = True) -> str:
     """
@@ -34,3 +42,15 @@ def get_statement_text(stmt: dict, *, prefer_resolved: bool = True) -> str:
         return stmt.get("text", "")
     else:
         return stmt.get("text", "")
+
+
+def strip_fact_citations(text: str) -> str:
+    """Remove all [Fact N] / [Fact N, M] citation tags from text.
+
+    Tags are load-bearing during synthesis (citation filter in combine_passages)
+    but must be absent from final user-facing output.
+    """
+    stripped = _FACT_CITATION_PATTERN.sub("", text)
+    stripped = _SPACE_BEFORE_PUNCT_PATTERN.sub(r"\1", stripped)
+    stripped = _MULTI_SPACE.sub(" ", stripped)
+    return stripped.strip()

@@ -439,7 +439,10 @@ class DAGExecutor:
                 raise PipelineExecutionError(f"Step '{step_id}' failed: {e}") from e
 
     async def _should_execute_step(self, step: StepConfig) -> tuple[bool, str | None]:
-        """Check if step should execute based on condition."""
+        """Check if step should execute based on enabled flag and condition."""
+        if not step.get_domain_field("enabled", True):
+            return False, "enabled: false"
+
         if not step.condition:
             return True, None
 

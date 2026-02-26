@@ -489,6 +489,20 @@ class BaseHandler(AbstractStepHandler):
             )
             raise
 
+    def _publish_bus_event(self, context: PipelineContext, event: Any) -> None:
+        """
+        Fire-and-forget publish to the global event bus (pipeline-events stream).
+
+        Mirrors DAGExecutor._publish_event(). Safe to call from any handler;
+        silently no-ops if the bus is unavailable (e.g., tests, offline runs).
+        """
+        import asyncio
+
+        proxy = getattr(context, "_proxy", None)
+        event_bus = getattr(proxy, "event_bus", None) if proxy else None
+        if event_bus:
+            asyncio.create_task(event_bus.publish_async_nowait(event))
+
     def _report_progress(
         self,
         step: StepConfig,
