@@ -25,6 +25,7 @@ from typing import Any
 from . import ask as ask_svc
 from . import compare as compare_svc
 from . import consult as consult_svc
+from . import context_budget as budget_svc
 from . import format as format_svc
 from . import ingest as ingest_svc
 from . import replay as replay_svc
@@ -412,8 +413,8 @@ def _add_consult_parser(sub: Any) -> None:
     p.add_argument(
         "--rag-top-k",
         type=int,
-        default=consult_svc.DEFAULT_RAG_TOP_K,
-        help="Maximum RAG chunks to inject",
+        default=budget_svc.MAX_RAG_TOP_K,
+        help="RAG chunk cap (actual count adapts to context budget)",
     )
     p.add_argument(
         "--rag-timeout",
@@ -453,10 +454,35 @@ def _cmd_consult(args: argparse.Namespace) -> None:
     print(f"Consulting about: {step.step_name}")
     print(f"  Models: {', '.join(consultant_models)}")
     print(f"  Problem: {args.problem}")
-    print()
+
+    ctx_len = budget_svc.resolve_min_context_length(
+        consultant_models,
+        stargate_url=args.url,
+    )
+    fixed_chars, output_chars = consult_svc.estimate_fixed_chars(
+        step,
+        args.call,
+        args.problem,
+    )
 
     rag_findings: list[str] | None = None
+    output_limit: int | None = None
+
     if args.rag:
+        budget = budget_svc.compute_budget(
+            ctx_len,
+            fixed_chars,
+            output_chars,
+            top_k_cap=args.rag_top_k,
+        )
+        output_limit = budget.output_limit_chars
+        print(
+            f"  Budget: {ctx_len}tok context → "
+            f"output≤{budget.output_limit_chars} chars, "
+            f"RAG≤{budget.adaptive_top_k} chunks"
+        )
+        print()
+
         source_prefixes = (
             [
                 str(Path(prefix).expanduser().resolve())
@@ -468,7 +494,7 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         rag_findings, rag_error = consult_svc.fetch_rag_findings(
             args.problem,
             rag_url=args.rag_url,
-            top_k=args.rag_top_k,
+            top_k=budget.adaptive_top_k,
             timeout=args.rag_timeout,
             source_prefixes=source_prefixes,
             recency_weight=args.rag_recency,
@@ -480,6 +506,9 @@ def _cmd_consult(args: argparse.Namespace) -> None:
             print(f"  RAG: injected {len(rag_findings)} finding(s) from {sources}")
         else:
             print("  RAG: no matching findings")
+    else:
+        print(f"  Budget: {ctx_len}tok context (no RAG)")
+        print()
 
     results = consult_svc.consult_step(
         step=step,
@@ -489,6 +518,7 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         rag_findings=rag_findings,
         stargate_url=args.url,
         timeout=args.timeout,
+        output_limit_chars=output_limit,
     )
 
     for result in results:
@@ -547,8 +577,8 @@ def _add_ask_parser(sub: Any) -> None:
     p.add_argument(
         "--rag-top-k",
         type=int,
-        default=consult_svc.DEFAULT_RAG_TOP_K,
-        help="Maximum RAG chunks to inject",
+        default=budget_svc.MAX_RAG_TOP_K,
+        help="RAG chunk cap (actual count adapts to context budget)",
     )
     p.add_argument(
         "--rag-timeout",
@@ -587,6 +617,19 @@ def _cmd_ask(args: argparse.Namespace) -> None:
 
     rag_findings: list[str] | None = None
     if not args.no_rag:
+        ctx_len = budget_svc.resolve_min_context_length(
+            target_models,
+            stargate_url=args.url,
+        )
+        fixed_chars = ask_svc.estimate_fixed_chars(args.question)
+        budget = budget_svc.compute_budget(
+            ctx_len,
+            fixed_chars,
+            output_chars=0,
+            top_k_cap=args.rag_top_k,
+        )
+        print(f"  Budget: {ctx_len}tok context → RAG≤{budget.adaptive_top_k} chunks")
+
         source_prefixes = (
             [
                 str(Path(prefix).expanduser().resolve())
@@ -598,7 +641,7 @@ def _cmd_ask(args: argparse.Namespace) -> None:
         rag_findings, rag_error = consult_svc.fetch_rag_findings(
             args.question,
             rag_url=args.rag_url,
-            top_k=args.rag_top_k,
+            top_k=budget.adaptive_top_k,
             timeout=args.rag_timeout,
             source_prefixes=source_prefixes,
             recency_weight=args.rag_recency,

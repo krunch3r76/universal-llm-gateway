@@ -34,6 +34,7 @@ from .assess_loop_config import (
     LoopState,
     build_assess_ctx,
     emit_iteration_completed,
+    sanitize_repeated_items_decision,
 )
 
 if TYPE_CHECKING:
@@ -169,6 +170,9 @@ class AssessLoopHandler(BaseHandler):
 
                 try:
                     decision: dict[str, Any] = json.loads(assess_r.content)
+                    decision = sanitize_repeated_items_decision(
+                        decision, cfg.terminal_action, step.id
+                    )
                 except json.JSONDecodeError as exc:
                     logger.warning(
                         "Step '%s' iter %d: JSON parse failure: %s",

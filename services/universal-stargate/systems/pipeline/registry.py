@@ -167,66 +167,37 @@ class PipelineRegistry:
         Reload pipelines with current model availability.
 
         Called when gateway catalog changes (event-driven) OR hot-reload file change.
-        Clears existing pipelines/models/prompts and reloads from disk.
+        Builds new state in a fresh instance, then atomically swaps dict references.
+
+        Invariant: ∀ concurrent readers: see either the complete old state or the
+        complete new state — never an empty/partial dict.  The clear-then-repopulate
+        pattern would expose an empty window between clear() and the first add(), which
+        causes "Pipeline not found" under concurrent requests (race confirmed in prod).
 
         Returns:
             Tuple of (old_count, new_count) for pipeline counts
         """
-        # Clear existing state
         old_pipeline_count = len(self.pipelines)
         old_model_count = len(self.models)
         old_prompt_count = len(self.prompts)
 
-        self.pipelines.clear()
-        self.models.clear()
-        self._root_models.clear()
-        self._domain_models.clear()
-        self.prompts.clear()
-        self._validation_errors = []
+        # Build all new state in a fresh registry — never touches self.* during load
+        fresh = PipelineRegistry(
+            search_paths=self._search_paths,
+            get_gateway_catalogs=self._get_gateway_catalogs,
+            config_defaults=self._config_defaults,
+            config_base_dir=self._config_base_dir,
+        )
+        fresh.load()
 
-        for search_path in self._search_paths:
-            try:
-                expanded = Path(search_path).expanduser()
-
-                if not expanded.is_absolute():
-                    resolved = (self._config_base_dir / expanded).resolve()
-                else:
-                    resolved = expanded.resolve()
-
-                if resolved.exists():
-                    path_name = resolved.name
-                    self._load_root_models(resolved, path_name)
-                    self._load_from_search_path(resolved, path_name)
-            except Exception as e:
-                logger.warning(f"Failed to resolve search path '{search_path}': {e}")
-
-        # Merge root + domain models
-        self._merge_models()
-
-        # Re-validate
-        self._validate_all_pipelines()
-
-        if self._validation_errors:
-            invalid_count = len(
-                set(
-                    err[1 : err.index("]")]
-                    for err in self._validation_errors
-                    if err.startswith("[") and "]" in err
-                )
-            )
-            logger.error(
-                f"❌ Pipeline validation failed during reload for {invalid_count} pipeline(s) "
-                f"with {len(self._validation_errors)} total error(s):"
-            )
-            for error in self._validation_errors:
-                logger.error(f"  • {error}")
-
-            removed_pipelines = self._remove_invalid_pipelines()
-            if removed_pipelines:
-                logger.warning(
-                    f"⚠️  Removed {len(removed_pipelines)} invalid pipeline(s) during reload: "
-                    f"{', '.join(sorted(removed_pipelines))}"
-                )
+        # Atomic swap: reference assignment is GIL-protected (single bytecode op).
+        # Readers see the complete old dict or the complete new dict — never empty.
+        self.pipelines = fresh.pipelines
+        self.models = fresh.models
+        self._root_models = fresh._root_models
+        self._domain_models = fresh._domain_models
+        self.prompts = fresh.prompts
+        self._validation_errors = fresh._validation_errors
 
         new_pipeline_count = len(self.pipelines)
         new_model_count = len(self.models)

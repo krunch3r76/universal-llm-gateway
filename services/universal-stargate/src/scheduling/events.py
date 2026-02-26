@@ -349,6 +349,12 @@ FEDERATION_LOAD_FAILED = "federation.load.failed"
 FEDERATION_ORCHESTRATOR_DECIDED = "federation.orchestrator.decided"
 FEDERATION_ORCHESTRATOR_EVICTED = "federation.orchestrator.evicted"
 
+# Cloud proxy availability (Stargate-side observation of the proxy)
+CLOUD_PROXY_AVAILABLE = "cloud.proxy.available"
+CLOUD_PROXY_UNAVAILABLE = "cloud.proxy.unavailable"
+CLOUD_PROXY_CATALOG_UPDATED = "cloud.proxy.catalog.updated"
+CLOUD_PROXY_CATALOG_FETCH_FAILED = "cloud.proxy.catalog.fetch.failed"
+
 RESOURCE_RESERVED = "resource.reserved"
 """
 Resources reserved for model loading
@@ -2534,4 +2540,51 @@ def FederationModelUnloaded(gateway_id: str, model_id: ModelId | str) -> Event:
             "gateway_id": gateway_id,
             "model_id": model_id,
         },
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cloud Proxy Events (Stargate-side proxy observation at coordination boundary)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@event_factory
+def CloudProxyAvailable(proxy_url: str, model_count: int) -> Event:  # noqa: N802
+    """Proxy became reachable and catalog was fetched."""
+    return Event(
+        signal=CLOUD_PROXY_AVAILABLE,
+        payload={"proxy_url": proxy_url, "model_count": model_count},
+    )
+
+
+@event_factory
+def CloudProxyUnavailable(proxy_url: str, reason: str) -> Event:  # noqa: N802
+    """Proxy health probe failed — no cloud models will be registered."""
+    return Event(
+        signal=CLOUD_PROXY_UNAVAILABLE,
+        payload={"proxy_url": proxy_url, "reason": reason},
+    )
+
+
+@event_factory
+def CloudProxyCatalogUpdated(  # noqa: N802
+    proxy_url: str, model_count: int, gateway_count: int
+) -> Event:
+    """Proxy catalog re-fetched and virtual gateways updated."""
+    return Event(
+        signal=CLOUD_PROXY_CATALOG_UPDATED,
+        payload={
+            "proxy_url": proxy_url,
+            "model_count": model_count,
+            "gateway_count": gateway_count,
+        },
+    )
+
+
+@event_factory
+def CloudProxyCatalogFetchFailed(proxy_url: str, error: str) -> Event:  # noqa: N802
+    """Failed to fetch catalog from cloud proxy."""
+    return Event(
+        signal=CLOUD_PROXY_CATALOG_FETCH_FAILED,
+        payload={"proxy_url": proxy_url, "error": error},
     )

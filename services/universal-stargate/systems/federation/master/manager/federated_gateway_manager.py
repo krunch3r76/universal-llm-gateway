@@ -143,6 +143,65 @@ class FederatedGatewayManager(Sequential):
             seeded_gateways,
         )
 
+    @sequential
+    async def register_cloud_gateway(self, gateway: FederatedGateway) -> None:
+        """Register a config-driven cloud gateway (virtual, no telemetry path).
+
+        Unlike telemetry-driven federated gateways, cloud gateways are
+        registered from the ``CloudProxyCatalogPoller`` at startup and on
+        periodic refresh.  This method:
+        1. Stores the gateway under ``@sequential``
+        2. Seeds the capacity pool from ``model_resources``
+        3. Emits ``FederationGatewayCatalogChanged`` when the catalog changes
+
+        INVARIANT: catalog_change ⟹ FEDERATION_GATEWAY_CATALOG_CHANGED event
+        """
+        old = self._gateways.get(gateway.gateway_id)
+        old_catalog = old.available_models if old else frozenset()
+
+        self._gateways[gateway.gateway_id] = gateway
+
+        if self._capacity_pool and gateway.model_resources:
+            for model_id, res in gateway.model_resources.items():
+                max_concurrent_raw = res.get("max_concurrent_requests", 1)
+                try:
+                    max_concurrent = int(max_concurrent_raw)
+                except (TypeError, ValueError):
+                    logger.error(
+                        "Invalid max_concurrent_requests=%r for %s/%s; defaulting to 1",
+                        max_concurrent_raw,
+                        gateway.gateway_id,
+                        model_id.routing_key,
+                    )
+                    max_concurrent = 1
+                self._capacity_pool.set_capacity(
+                    gateway_id=gateway.gateway_id,
+                    model_id=model_id.routing_key,
+                    max_concurrent=max_concurrent,
+                )
+
+        new_catalog = gateway.available_models
+        if old_catalog != new_catalog and self._event_bus:
+            import asyncio
+
+            from src.scheduling.events import FederationGatewayCatalogChanged
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    FederationGatewayCatalogChanged(
+                        gateway_id=gateway.gateway_id,
+                        old_model_count=len(old_catalog),
+                        new_model_count=len(new_catalog),
+                    )
+                )
+            )
+
+        logger.info(
+            "☁️ Cloud gateway registered: %s (%d models)",
+            gateway.gateway_id,
+            len(new_catalog),
+        )
+
     def register_remote(
         self,
         remote_stargate_id: str,
@@ -210,6 +269,10 @@ class FederatedGatewayManager(Sequential):
             remote_stargate_id=remote_stargate_id,
             remote_stargate_url=getattr(gateway, "remote_stargate_url", ""),
             node_id=getattr(gateway, "node_id", ""),
+            backend_type=getattr(gateway, "backend_type", "federated"),
+            provider_url=getattr(gateway, "provider_url", ""),
+            provider_api_key=getattr(gateway, "provider_api_key", ""),
+            provider_name=getattr(gateway, "provider_name", ""),
             is_http_polling=getattr(gateway, "is_http_polling", False),
             # Preserve resource state
             ram_free_mb=getattr(gateway, "ram_free_mb", 0),

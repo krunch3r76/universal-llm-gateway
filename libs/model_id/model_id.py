@@ -28,6 +28,7 @@ class ModelId:
         - routing_key includes context (different contexts = different models)
         - normalized is consistent for dict keys (strips -hybrid, keeps -cpu)
         - Two ModelIds with same routing_key represent the same loadable variant
+        - Cloud IDs (containing '/') skip suffix parsing entirely
 
     Usage:
         model = ModelId.parse("model-8192-hybrid")
@@ -35,6 +36,10 @@ class ModelId:
         model.context_length # 8192
         model.routing_key    # "model-8192" (for identity/tracking)
         model.normalized     # "model-8192" (for dict keys)
+
+        cloud = ModelId.parse("anthropic/claude-sonnet-4-20250514")
+        cloud.is_cloud       # True
+        cloud.provider       # "anthropic"
 
     For dict keys, always use .normalized:
         supervisors[model.normalized] = supervisor
@@ -54,6 +59,12 @@ class ModelId:
 
     is_hybrid: bool
     """True if model ID ends with -hybrid suffix."""
+
+    backend_type: str | None = None
+    """Backend type: None (local), 'federated', 'cloud_api', 'vps'."""
+
+    provider: str | None = None
+    """Cloud provider name (e.g., 'openrouter'). None for local models."""
 
     @classmethod
     def parse(cls, model_id: str | ModelId) -> ModelId:
@@ -86,6 +97,21 @@ class ModelId:
             raise ValueError("Model ID cannot be empty")
 
         original = model_id_str
+
+        # Cloud model IDs contain '/' (e.g., 'anthropic/claude-sonnet-4-20250514').
+        # Skip all suffix parsing — the ID is opaque and pass-through.
+        if "/" in model_id_str:
+            provider_prefix = model_id_str.split("/", 1)[0]
+            return cls(
+                original=original,
+                base_id=model_id_str,
+                context_length=None,
+                is_cpu=False,
+                is_hybrid=False,
+                backend_type="cloud_api",
+                provider=provider_prefix,
+            )
+
         is_cpu = False
         is_hybrid = False
         context_length: int | None = None
@@ -179,9 +205,15 @@ class ModelId:
         """True if this is a synthetic ID with context length."""
         return self.context_length is not None
 
+    @property
+    def is_cloud(self) -> bool:
+        """True if this model is served by a cloud API provider."""
+        return self.backend_type == "cloud_api"
+
     def matches(self, other: ModelId | str) -> bool:
         """
-        Check if two model identifiers resolve to the same normalized key.
+        Check if two model identifiers resolve to the same normalized key
+        and backend_type.
 
         Examples:
             ModelId.parse("model-8192").matches("model-8192-hybrid")  # True
@@ -189,21 +221,24 @@ class ModelId:
         """
         if isinstance(other, str):
             other = ModelId.parse(other)
-        return self.normalized == other.normalized
+        return (
+            self.normalized == other.normalized
+            and self.backend_type == other.backend_type
+        )
 
     def __eq__(self, other: object) -> bool:
         """
-        Equality comparison using normalized IDs.
+        Equality comparison using normalized IDs and backend_type.
 
         Supports comparison with strings (parses and normalizes):
             ModelId.parse("model-8192") == "model-8192-hybrid"  # True
             ModelId.parse("model-8192") == "model-8192-cpu"     # False
 
-        ModelId to ModelId comparison uses normalized:
+        ModelId to ModelId comparison uses (normalized, backend_type):
             ModelId.parse("model-8192") == ModelId.parse("model-8192-hybrid")  # True
 
         Returns:
-            True if normalized IDs match, False otherwise.
+            True if normalized IDs and backend_type match, False otherwise.
             Returns NotImplemented for non-ModelId, non-string types.
         """
         if isinstance(other, str):
@@ -213,17 +248,23 @@ class ModelId:
                 return False
         if not isinstance(other, ModelId):
             return NotImplemented
-        return self.normalized == other.normalized
+        return (
+            self.normalized == other.normalized
+            and self.backend_type == other.backend_type
+        )
 
     def __hash__(self) -> int:
         """
         Hash based on normalized ID for use in sets/dicts.
 
-        Invariant: Two ModelIds with same normalized ID have same hash.
-        This allows ModelIds to be used as dictionary keys and set elements.
+        Invariant: hash(a) == hash(b) whenever a == b (required by Python).
+        Since ModelId.__eq__ supports string comparisons by normalizing both
+        sides, __hash__ must use only normalized so that:
+            hash(ModelId.parse('x')) == hash('x')  when both normalize to 'x'
 
-        Examples:
-            hash(ModelId.parse("model-8192")) == hash(ModelId.parse("model-8192-hybrid"))  # True
+        Cloud model IDs (e.g., 'anthropic/claude-sonnet-4-20250514') always
+        have different normalized forms than local IDs, so backend_type is not
+        needed for hash-level distinction.
         """
         return hash(self.normalized)
 
@@ -235,6 +276,8 @@ class ModelId:
             context_length=context,
             is_cpu=self.is_cpu,
             is_hybrid=self.is_hybrid,
+            backend_type=self.backend_type,
+            provider=self.provider,
         )
 
     def with_suffix(self, *, cpu: bool = False, hybrid: bool = False) -> ModelId:
@@ -247,6 +290,8 @@ class ModelId:
             context_length=self.context_length,
             is_cpu=cpu,
             is_hybrid=hybrid,
+            backend_type=self.backend_type,
+            provider=self.provider,
         )
 
     def __str__(self) -> str:
@@ -276,6 +321,10 @@ class ModelId:
             parts.append("cpu=True")
         if self.is_hybrid:
             parts.append("hybrid=True")
+        if self.backend_type:
+            parts.append(f"backend={self.backend_type}")
+        if self.provider:
+            parts.append(f"provider={self.provider}")
         return ", ".join(parts) + ")"
 
     # String-like behavior for compatibility

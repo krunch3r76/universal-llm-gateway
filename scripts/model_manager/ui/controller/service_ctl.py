@@ -1,4 +1,4 @@
-"""Service controller - build, start, stop Gateway, Stargate, RAG, and sidecar."""
+"""Service controller - build, start, stop Gateway, Stargate, RAG, Cloud Proxy, and sidecar."""
 
 from __future__ import annotations
 
@@ -16,10 +16,12 @@ from .service_config import (
     NODES_DIR,
     build_service_env,
     ensure_bind_mount_dirs,
+    ensure_cloud_proxy_config,
     ensure_node_env,
     ensure_socket_dir,
     ensure_stargate_config,
     load_env_file,
+    read_cloud_proxy_port,
 )
 from .sidecar_ctl import SidecarController
 
@@ -319,6 +321,86 @@ class ServiceController:
                 "Run: ss -tlnp 'sport = :8100'"
             )
         return await self._kill_and_wait(listener, None, service_name="RAG")
+
+    async def start_cloud_proxy(self) -> str:
+        """Start Cloud Proxy service as host process via uvicorn.
+
+        Ensures ``~/.gateway/cloud-proxy.yaml`` exists (generates a
+        template on first run) and reads the configured port from it.
+        """
+        ensure_cloud_proxy_config()
+        port = read_cloud_proxy_port()
+
+        venv_python = Path.home() / ".venvs" / "universal" / "bin" / "python"
+        python = str(venv_python) if venv_python.exists() else "python3"
+
+        log_dir = Path("/tmp/logs/universal-cloud-proxy")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "cloud-proxy.log"
+
+        env = build_service_env(self._root)
+        libs_path = str(self._root / "libs")
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            f"{libs_path}:{existing_pythonpath}" if existing_pythonpath else libs_path
+        )
+
+        with log_file.open("a") as log_fh:
+            process = await asyncio.create_subprocess_exec(
+                python,
+                "-m",
+                "uvicorn",
+                "services.universal_cloud_proxy.cloud_proxy:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                env=env,
+                cwd=str(self._root),
+                stdout=log_fh,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+            )
+
+        try:
+            exit_code = await asyncio.wait_for(process.wait(), timeout=3.0)
+            tail = log_file.read_text(errors="replace")[-1000:]
+            return f"Cloud Proxy failed (exit {exit_code}).\n{tail}"
+        except TimeoutError:
+            pid_path = GATEWAY_DIR / "cloud-proxy.pid"
+            GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text(str(process.pid) + "\n")
+            return f"Cloud Proxy starting on port {port} (PID {process.pid})."
+
+    async def stop_cloud_proxy(self) -> str:
+        """Stop Cloud Proxy service gracefully."""
+        pid_file = GATEWAY_DIR / "cloud-proxy.pid"
+        port = read_cloud_proxy_port()
+
+        recorded_pid: int | None = None
+        if pid_file.exists():
+            try:
+                recorded_pid = int(pid_file.read_text().strip())
+            except (ValueError, OSError) as e:
+                logger.error("Corrupt Cloud Proxy PID file %s: %s", pid_file, e)
+                pid_file.unlink(missing_ok=True)
+
+        if recorded_pid is not None and self._service_state._pid_alive(recorded_pid):
+            return await self._kill_and_wait(
+                recorded_pid, pid_file, service_name="Cloud Proxy"
+            )
+
+        pid_file.unlink(missing_ok=True)
+        if not self._service_state._port_open(port):
+            return "Cloud Proxy is not running."
+
+        listener = self._service_state._find_listener_pid(port)
+        if listener is None:
+            return (
+                f"Port {port} is open but the listener could not be identified.\n"
+                "Run: ss -tlnp 'sport = :8200'"
+            )
+        return await self._kill_and_wait(listener, None, service_name="Cloud Proxy")
 
     @property
     def sidecar(self) -> SidecarController:

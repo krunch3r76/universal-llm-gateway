@@ -41,9 +41,15 @@ class FederatedRequestForwarder:
       3. Call await forwarder.close() on shutdown
     """
 
-    def __init__(self, config: FederationConfig, event_bus: Any | None = None):
+    def __init__(
+        self,
+        config: FederationConfig,
+        event_bus: Any | None = None,
+        cloud_forwarder: Any | None = None,
+    ):
         self._config = config
         self._event_bus = event_bus
+        self._cloud_forwarder = cloud_forwarder
 
         # HTTP client with connection pooling (TCP)
         self._client = httpx.AsyncClient(
@@ -76,6 +82,8 @@ class FederatedRequestForwarder:
         for client in self._unix_clients.values():
             await client.aclose()
         self._unix_clients.clear()
+        if self._cloud_forwarder:
+            await self._cloud_forwarder.close()
         logger.debug("FederatedRequestForwarder closed")
 
     def _get_client_for_url(self, url: str) -> httpx.AsyncClient:
@@ -165,6 +173,7 @@ class FederatedRequestForwarder:
         Forward non-streaming request to federated gateway.
 
         Routes via the Remote Stargate that owns the gateway.
+        Cloud gateways (backend_type == "cloud_api") are dispatched to CloudProxyClient.
 
         Args:
             gateway: Target federated gateway
@@ -179,6 +188,9 @@ class FederatedRequestForwarder:
         Raises:
             httpx.HTTPStatusError: On 4xx/5xx response
         """
+        if gateway.is_cloud and self._cloud_forwarder:
+            return await self._cloud_forwarder.forward_request(request_body, request_id)
+
         client = self._get_client_for_url(gateway.remote_stargate_url)
 
         # For Unix socket, use path-only endpoint
@@ -239,6 +251,7 @@ class FederatedRequestForwarder:
         Forward streaming request to federated gateway.
 
         Yields NDJSON lines transparently without buffering or parsing.
+        Cloud gateways are dispatched to CloudProxyClient.
 
         INVARIANT: ¬buffer ∧ ¬parse ∧ ¬modify
 
@@ -255,6 +268,13 @@ class FederatedRequestForwarder:
         Raises:
             httpx.HTTPStatusError: On 4xx/5xx response
         """
+        if gateway.is_cloud and self._cloud_forwarder:
+            async for chunk in self._cloud_forwarder.forward_request_stream(
+                request_body, request_id
+            ):
+                yield chunk
+            return
+
         client = self._get_client_for_url(gateway.remote_stargate_url)
 
         # For Unix socket, use path-only endpoint
@@ -554,6 +574,12 @@ class FederatedRequestForwarder:
         Raises:
             HTTPException: On gateway errors (preserves status + message)
         """
+        if gateway.is_cloud and self._cloud_forwarder:
+            req_id = request_id or str(uuid.uuid4())
+            return await self._cloud_forwarder.forward_embedding_request(
+                request_body, req_id
+            )
+
         client = self._get_client_for_url(gateway.remote_stargate_url)
 
         # Use path-only for Unix socket, full URL for HTTP

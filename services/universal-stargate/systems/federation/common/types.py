@@ -96,6 +96,12 @@ class FederatedGateway:
     remote_stargate_url: str
     node_id: str = ""
 
+    # Backend type: "federated" (default), "cloud_api", future: "vps"
+    backend_type: str = "federated"
+    provider_url: str = ""
+    provider_api_key: str = ""
+    provider_name: str = ""
+
     # Resource state (from RESOURCE_UPDATE)
     ram_free_mb: int = 0
     vram_free_mb: int = 0
@@ -134,8 +140,15 @@ class FederatedGateway:
     _last_sequence_number: int = field(default=0, init=False)
 
     @property
+    def is_cloud(self) -> bool:
+        """True if this gateway proxies to a cloud API provider."""
+        return self.backend_type == "cloud_api"
+
+    @property
     def telemetry_age_ms(self) -> int:
         """Age of last RESOURCE_UPDATE in milliseconds (for observability/scoring)."""
+        if self.is_cloud:
+            return 0
         if self.telemetry_timestamp == 0.0:
             return 0
         return int((time.time() - self.telemetry_timestamp) * 1000)
@@ -143,11 +156,15 @@ class FederatedGateway:
     @property
     def heartbeat_age_ms(self) -> int:
         """Age of last heartbeat/signal in milliseconds."""
+        if self.is_cloud:
+            return 0
         return int((time.time() - self.last_heartbeat) * 1000)
 
     @property
     def is_unreachable(self) -> bool:
         """Check if gateway is unreachable (> 60s no signal of any kind)."""
+        if self.is_cloud:
+            return False
         return self.heartbeat_age_ms > 60000
 
 

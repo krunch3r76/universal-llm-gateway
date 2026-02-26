@@ -45,9 +45,11 @@ class MasterIntegration:
         self,
         config: "FederationConfig",
         event_bus: object | None = None,
+        stargate_config: object | None = None,
     ) -> None:
         self._config = config
         self._event_bus = event_bus
+        self._stargate_config = stargate_config
         self._federated_manager: FederatedGatewayManager | None = None
         self._connection_manager: ConnectionManager | None = None
         self._http_pollers: dict[str, HTTPPollingReceiver] = {}
@@ -59,6 +61,9 @@ class MasterIntegration:
         self._local_edge_client: LocalEdgeClient | None = None
         # Set in _setup_master_forwarding_and_orchestration
         self._request_tracker: MasterRequestTracker | None = None
+        # Cloud backend integration
+        self._cloud_registry: object | None = None
+        self._cloud_forwarder: object | None = None
 
     async def setup(
         self,
@@ -91,6 +96,7 @@ class MasterIntegration:
         )
         await self._start_master_initiated_edge_ws_clients()
         await self._start_http_telemetry_poller_if_needed()
+        await self._start_cloud_providers()
         self._setup_master_forwarding_and_orchestration(app)
 
         # Validate tracker was created
@@ -374,6 +380,7 @@ class MasterIntegration:
             federated_manager=self._federated_manager,
             connection_manager=self._connection_manager,
             event_bus=self._event_bus,
+            cloud_forwarder=self._cloud_forwarder,
         )
         self._forwarder = components.forwarder
         self._load_orchestrator = components.load_orchestrator
@@ -392,8 +399,41 @@ class MasterIntegration:
         )
         await self._edge_ws_clients.start()
 
+    async def _start_cloud_providers(self) -> None:
+        """Connect to cloud proxy if configured."""
+        if not self._stargate_config:
+            return
+
+        from systems.cloud.config import parse_cloud_proxy_config
+        from systems.cloud.forwarder import CloudProxyClient
+        from systems.cloud.registry import CloudProxyCatalogPoller
+
+        raw_config = self._stargate_config.get_cloud_proxy_config()
+        proxy_config = parse_cloud_proxy_config(raw_config)
+        if not proxy_config:
+            return
+
+        self._cloud_forwarder = CloudProxyClient(proxy_config.url)
+
+        self._cloud_registry = CloudProxyCatalogPoller(
+            proxy_config=proxy_config,
+            gateway_manager=self._federated_manager,
+            event_bus=self._event_bus,
+        )
+        await self._cloud_registry.startup()
+
+        logger.info("Cloud proxy client initialized: %s", proxy_config.url)
+
     async def shutdown(self) -> None:
-        """Shutdown Master mode components."""
+        """Shutdown Master mode components.
+
+        Cloud proxy client lifecycle owned by FederatedRequestForwarder —
+        closed via forwarder.close() below; not duplicated here.
+        """
+        if self._cloud_registry:
+            await self._cloud_registry.shutdown()
+            self._cloud_registry = None
+
         # Stop local edge client
         if self._local_edge_client:
             await self._local_edge_client.disconnect()

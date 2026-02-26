@@ -124,7 +124,7 @@ steps:
 
   - name: organize_facts
     type: consensus_organize_facts_v7
-    model_ref: qwen
+    model_ref: phi4
     prompt_ref: consensus.v7.organize_facts
     handler_inputs:
       verified_facts: inputs.verified_facts
@@ -226,7 +226,15 @@ steps:
         repeated_items:
           type: array
           items:
-            type: string
+            type: object
+            properties:
+              kept:
+                type: string
+              deleted:
+                type: string
+              shared_predicate:
+                type: string
+            required: [kept, deleted, shared_predicate]
         reason:
           type: string
         target:

@@ -345,6 +345,10 @@ class StargateConfig:
             },
         )
 
+    def get_cloud_proxy_config(self) -> dict[str, Any] | None:
+        """Get cloud_proxy configuration (None if absent)."""
+        return self.config.get("cloud_proxy")
+
     def get_debug_event_config(self) -> dict[str, Any]:
         """
         Get debug event configuration.

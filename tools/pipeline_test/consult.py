@@ -38,6 +38,13 @@ Rules:
 - If the prompt is fine and the issue is model capability, say so
 - Structure your response: Issues Found → Suggested Changes → Rationale"""
 
+_TASK_INSTRUCTIONS = (
+    "## Your Task\n"
+    "1. What specific issues do you see in the output given the problem description?\n"
+    "2. What changes to the system prompt and/or user prompt would fix them?\n"
+    "3. Provide the exact revised prompt text for each change you recommend."
+)
+
 
 def consult_step(
     step: StepSnapshot,
@@ -47,6 +54,7 @@ def consult_step(
     rag_findings: list[str] | None = None,
     stargate_url: str = DEFAULT_STARGATE_URL,
     timeout: float = 300.0,
+    output_limit_chars: int | None = None,
 ) -> list[ConsultResult]:
     """Query consultant models about a pipeline step's prompt quality.
 
@@ -59,6 +67,7 @@ def consult_step(
         call_label=call_label,
         problem=problem,
         rag_findings=rag_findings,
+        output_limit_chars=output_limit_chars,
     )
 
     results: list[ConsultResult] = []
@@ -85,11 +94,33 @@ def consult_step(
     return results
 
 
+def estimate_fixed_chars(
+    step: StepSnapshot,
+    call_label: str | None,
+    problem: str,
+) -> tuple[int, int]:
+    """Return *(fixed_chars, output_chars)* for budget computation.
+
+    *fixed_chars* covers everything except model output and RAG findings.
+    """
+    call = _select_call(step, call_label)
+    fixed = (
+        len(f"## Pipeline Step: {step.step_name} ({step.step_type})")
+        + len(f"## Problem\n{problem}")
+        + len(f"## System Prompt Given to Model\n{call.system_prompt or ''}")
+        + len(f"## User Prompt Given to Model\n{call.user_prompt}")
+        + len(_TASK_INSTRUCTIONS)
+        + 100  # section separators, newlines
+    )
+    return fixed, len(call.response_text)
+
+
 def _build_user_prompt(
     step: StepSnapshot,
     call_label: str | None,
     problem: str,
     rag_findings: list[str] | None = None,
+    output_limit_chars: int | None = None,
 ) -> str:
     """Package step context into a consultation prompt."""
     call = _select_call(step, call_label)
@@ -105,10 +136,11 @@ def _build_user_prompt(
     sections.append(f"## User Prompt Given to Model\n{call.user_prompt}")
 
     output = call.response_text
-    if len(output) > 8000:
+    limit = output_limit_chars if output_limit_chars is not None else len(output)
+    if len(output) > limit:
         output = (
-            output[:8000]
-            + f"\n\n[... truncated, {len(call.response_text)} chars total]"
+            output[:limit]
+            + f"\n\n[... truncated at {limit} of {len(call.response_text)} chars]"
         )
     sections.append(f"## Model Output\n{output}")
 
@@ -121,12 +153,7 @@ def _build_user_prompt(
             )
         )
 
-    sections.append(
-        "## Your Task\n"
-        "1. What specific issues do you see in the output given the problem description?\n"
-        "2. What changes to the system prompt and/or user prompt would fix them?\n"
-        "3. Provide the exact revised prompt text for each change you recommend."
-    )
+    sections.append(_TASK_INSTRUCTIONS)
 
     return "\n\n".join(sections)
 
@@ -185,7 +212,11 @@ def fetch_rag_findings(
     continue without RAG context.
     """
     url = f"{rag_url.rstrip('/')}/search"
-    body: dict[str, object] = {"query": problem, "top_k": top_k, "recency_weight": recency_weight}
+    body: dict[str, object] = {
+        "query": problem,
+        "top_k": top_k,
+        "recency_weight": recency_weight,
+    }
     if source_prefixes:
         body["source_prefixes"] = source_prefixes
 
@@ -214,7 +245,11 @@ def fetch_rag_findings(
     for idx, chunk in enumerate(chunks):
         if not isinstance(chunk, str):
             continue
-        meta = metadata[idx] if idx < len(metadata) and isinstance(metadata[idx], dict) else {}
+        meta = (
+            metadata[idx]
+            if idx < len(metadata) and isinstance(metadata[idx], dict)
+            else {}
+        )
         distance = (
             distances[idx]
             if idx < len(distances) and isinstance(distances[idx], int | float)

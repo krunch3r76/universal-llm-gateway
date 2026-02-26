@@ -83,6 +83,7 @@ class ServicesScreen(Screen):
             yield Static("  Gateway:  checking...", id="svc-gw")
             yield Static("  Stargate: checking...", id="svc-sg")
             yield Static("  RAG:      checking...", id="svc-rag")
+            yield Static("  Cloud Px: checking...", id="svc-cp")
             yield Static("  Sidecar:  checking...", id="svc-sidecar")
 
         with Vertical(id="build-options"):
@@ -105,6 +106,10 @@ class ServicesScreen(Screen):
             )
             yield Button("Start RAG", id="btn-start-rag", variant="success")
             yield Button("Stop RAG", id="btn-stop-rag", variant="error", disabled=True)
+            yield Button("Start Cloud Proxy", id="btn-start-cp", variant="success")
+            yield Button(
+                "Stop Cloud Proxy", id="btn-stop-cp", variant="error", disabled=True
+            )
             yield Button("Start Sidecar", id="btn-start-sidecar", variant="success")
             yield Button(
                 "Stop Sidecar", id="btn-stop-sidecar", variant="error", disabled=True
@@ -170,6 +175,13 @@ class ServicesScreen(Screen):
                     self.run_worker(self._start_rag(), exclusive=True)
                 else:
                     self.run_worker(self._stop_rag(), exclusive=True)
+            case "btn-start-cp" | "btn-stop-cp":
+                self.query_one("#btn-start-cp", Button).disabled = True
+                self.query_one("#btn-stop-cp", Button).disabled = True
+                if event.button.id == "btn-start-cp":
+                    self.run_worker(self._start_cloud_proxy(), exclusive=True)
+                else:
+                    self.run_worker(self._stop_cloud_proxy(), exclusive=True)
             case "btn-start-sidecar" | "btn-stop-sidecar":
                 self.query_one("#btn-start-sidecar", Button).disabled = True
                 self.query_one("#btn-stop-sidecar", Button).disabled = True
@@ -188,7 +200,7 @@ class ServicesScreen(Screen):
         svc = self.app.service_controller  # type: ignore[attr-defined]
         build = svc.check_image()
         services = svc.service_state.check_all()
-        gw, sg, rag = services[0], services[1], services[2]
+        gw, sg, rag, cp = services[0], services[1], services[2], services[3]
         sidecar = svc.service_state.check_sidecar()
 
         config_text = f"  ({build.config.summary()})" if build.config.cpu else ""
@@ -203,6 +215,7 @@ class ServicesScreen(Screen):
         self.query_one("#svc-rag", Static).update(
             f"  RAG:      {rag.status} {rag.detail}"
         )
+        self.query_one("#svc-cp", Static).update(f"  Cloud Px: {cp.status} {cp.detail}")
         self.query_one("#svc-sidecar", Static).update(
             f"  Sidecar:  {sidecar.status} {sidecar.detail}"
         )
@@ -210,6 +223,7 @@ class ServicesScreen(Screen):
         gw_exists = gw.status.value != "stopped"
         sg_up = sg.status.value == "running"
         rag_up = rag.status.value == "running"
+        cp_up = cp.status.value == "running"
         sidecar_up = sidecar.status.value == "running"
         self.query_one("#btn-start-gw", Button).disabled = gw_exists
         self.query_one("#btn-stop-gw", Button).disabled = not gw_exists
@@ -217,6 +231,8 @@ class ServicesScreen(Screen):
         self.query_one("#btn-stop-sg", Button).disabled = not sg_up
         self.query_one("#btn-start-rag", Button).disabled = rag_up
         self.query_one("#btn-stop-rag", Button).disabled = not rag_up
+        self.query_one("#btn-start-cp", Button).disabled = cp_up
+        self.query_one("#btn-stop-cp", Button).disabled = not cp_up
         self.query_one("#btn-start-sidecar", Button).disabled = sidecar_up
         self.query_one("#btn-stop-sidecar", Button).disabled = not sidecar_up
 
@@ -318,6 +334,20 @@ class ServicesScreen(Screen):
     async def _stop_rag(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
         result = await svc.stop_rag()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _start_cloud_proxy(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.start_cloud_proxy()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _stop_cloud_proxy(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.stop_cloud_proxy()
         self.query_one("#svc-log", LogStream).write_line(result)
         await asyncio.sleep(2)
         self._refresh_status()

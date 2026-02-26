@@ -33,6 +33,7 @@ async def init_federation(
     model_manager: Any | None = None,
     event_bus: Any | None = None,
     gateway_manager: Any | None = None,
+    stargate_config: Any | None = None,
 ) -> FederationIntegration:
     """
     Initialize federation for app.
@@ -46,6 +47,7 @@ async def init_federation(
         event_bus: Optional event bus for critical events (required for HTTP polling)
         gateway_manager: Optional gateway manager for Remote mode telemetry endpoint.
                         Required to read gateway state.
+        stargate_config: Optional StargateConfig for cloud provider configuration.
 
     Returns:
         Initialized FederationIntegration instance
@@ -56,6 +58,7 @@ async def init_federation(
         gateway_socket_path=gateway_socket_path,
         model_manager=model_manager,
         gateway_manager=gateway_manager,
+        stargate_config=stargate_config,
     )
     return integration
 

@@ -7,13 +7,19 @@ loop utility functions, keeping the handler free of repetitive boilerplate.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from systems.pipeline.core.events.assess_loop import AssessLoopIterationCompleted
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from systems.pipeline.core.schemas import StepConfig
+
+_logger = get_logger(__name__)
+
+_CITATION_RE = re.compile(r"\[Fact \d+\]")
 
 
 @dataclass(slots=True, kw_only=True)
@@ -127,6 +133,77 @@ class LoopState:
             self.consecutive_action_name = action
             self.consecutive_action_count = 1
         return cap is not None and self.consecutive_action_count > cap
+
+
+def sanitize_repeated_items_decision(
+    decision: dict[str, Any],
+    terminal_action: str,
+    step_id: str,
+) -> dict[str, Any]:
+    """Strip hallucinated and citation-unsafe pairs from a redundancy decision.
+
+    Applied when the assessor returns a `repeated_items` list (redundancy steps).
+    Leaves all other decision shapes unchanged.
+
+    Invariants:
+    - ∀ pair: kept.strip() == deleted.strip() ⟹ stripped (self-referential hallucination)
+    - ∀ pair: ∃ [Fact N] ∈ deleted ∧ [Fact N] ∉ kept ⟹ stripped (unique knowledge)
+    - stripped_all ⟹ action = terminal_action, target = "" (short-circuit reviser)
+    - some_stripped ⟹ target rebuilt from valid pairs only
+    """
+    repeated_items = decision.get("repeated_items")
+    if not isinstance(repeated_items, list) or not repeated_items:
+        return decision
+
+    valid: list[dict[str, Any]] = []
+    n_self_ref = 0
+    n_unique_cite = 0
+
+    for pair in repeated_items:
+        if not isinstance(pair, dict):
+            continue
+        kept = str(pair.get("kept", "")).strip()
+        deleted = str(pair.get("deleted", "")).strip()
+
+        if kept == deleted:
+            n_self_ref += 1
+            continue
+
+        kept_cites = set(_CITATION_RE.findall(kept))
+        deleted_cites = set(_CITATION_RE.findall(deleted))
+        if not deleted_cites.issubset(kept_cites):
+            n_unique_cite += 1
+            continue
+
+        valid.append(pair)
+
+    total_stripped = n_self_ref + n_unique_cite
+    if total_stripped == 0:
+        return decision
+
+    _logger.warning(
+        "Step '%s': stripped %d invalid repeated_items pair(s) "
+        "(self-referential=%d, unique-citation=%d); %d valid pair(s) remain",
+        step_id,
+        total_stripped,
+        n_self_ref,
+        n_unique_cite,
+        len(valid),
+    )
+
+    result = {**decision}
+    if not valid:
+        result["action"] = terminal_action
+        result["repeated_items"] = []
+        result["target"] = ""
+        suffix = " [handler: all proposed pairs invalid — forced accept]"
+        result["reason"] = (decision.get("reason", "") + suffix).strip()
+    else:
+        result["repeated_items"] = valid
+        deletions = "\n".join(f"- {p['deleted']}" for p in valid)
+        result["target"] = f"Delete the following sentences:\n{deletions}"
+
+    return result
 
 
 def build_assess_ctx(

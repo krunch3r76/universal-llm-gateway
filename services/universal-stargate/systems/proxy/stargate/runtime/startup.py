@@ -182,6 +182,7 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
             model_manager=proxy.resource_aware_model_manager if gateway_name else None,
             gateway_manager=proxy.gateway_manager if gateway_name else None,
             event_bus=proxy.event_bus,
+            stargate_config=proxy.config,
         )
         logger.info("✅ Federation integration initialized")
 

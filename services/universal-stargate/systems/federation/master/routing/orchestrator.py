@@ -383,13 +383,23 @@ class MasterRequestTracker:
         """
         Try to cancel, queue for retry on failure.
 
+        Cloud gateways (remote_id starts with ``cloud-``) are stateless
+        HTTP APIs — there is no remote peer to receive a cancel message.
+        We mark the request cancelled locally and return immediately.
+
         Note: Sends request_id to Remote as X-Correlation-ID header
         for wire compatibility.
         """
         tracked.state = RequestState.CANCELLED
 
+        if tracked.remote_id.startswith("cloud-"):
+            logger.debug(
+                "Cloud request %s: cancel is local-only (no remote peer)",
+                tracked.request_id[:8],
+            )
+            return True
+
         try:
-            # Send request_id (Remote receives it as X-Correlation-ID header)
             success = await self._send_cancel(
                 tracked.remote_id,
                 tracked.request_id,
@@ -402,7 +412,6 @@ class MasterRequestTracker:
         except Exception as e:
             logger.warning(f"Cancel failed, queuing for retry: {e}")
 
-            # Queue for retry on reconnect (using request_id)
             remote_id = tracked.remote_id
             if remote_id not in self._pending_cancels:
                 self._pending_cancels[remote_id] = []

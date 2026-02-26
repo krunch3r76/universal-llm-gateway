@@ -44,6 +44,7 @@ def wire_orchestration(
     federated_manager: FederatedGatewayManager,
     connection_manager: ConnectionManager | None,
     event_bus: object | None,
+    cloud_forwarder: object | None = None,
 ) -> OrchestrationComponents:
     """
     Create and connect all orchestration components for Master mode.
@@ -54,11 +55,14 @@ def wire_orchestration(
         federated_manager: Gateway manager for routing decisions
         connection_manager: Connection manager for WS cancel path
         event_bus: Event bus for orchestration events
+        cloud_forwarder: Optional CloudProxyClient for cloud API dispatch
 
     Returns:
         OrchestrationComponents with all wired components
     """
-    forwarder = FederatedRequestForwarder(config, event_bus=event_bus)
+    forwarder = FederatedRequestForwarder(
+        config, event_bus=event_bus, cloud_forwarder=cloud_forwarder
+    )
 
     from .orchestration import (
         FederatedLoadOrchestrator,

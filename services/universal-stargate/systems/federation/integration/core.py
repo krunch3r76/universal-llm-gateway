@@ -114,6 +114,7 @@ class FederationIntegration:
         gateway_socket_path: str | None = None,
         model_manager: Any | None = None,
         gateway_manager: Any | None = None,
+        stargate_config: Any | None = None,
     ) -> None:
         """
         Start federation based on mode.
@@ -125,6 +126,7 @@ class FederationIntegration:
             gateway_socket_path: Optional gateway socket path for Master.
             model_manager: Optional model manager for Remote mode.
             gateway_manager: Optional gateway manager for Remote mode.
+            stargate_config: Optional StargateConfig for cloud providers.
         """
         if self._started:
             return
@@ -139,6 +141,7 @@ class FederationIntegration:
             self._mode_integration = MasterIntegration(
                 self._config,
                 event_bus=self._event_bus,
+                stargate_config=stargate_config,
             )
             self._health_handler = await self._mode_integration.setup(
                 app,
@@ -170,7 +173,9 @@ class FederationIntegration:
             )
 
             if gateway_manager is not None and can_federate:
-                self._edge_server = EdgeFederationServer(self._config, gateway_manager, self._event_bus)
+                self._edge_server = EdgeFederationServer(
+                    self._config, gateway_manager, self._event_bus
+                )
 
                 # Mount WebSocket endpoint for telemetry
                 app.include_router(create_edge_federation_router(self._edge_server))

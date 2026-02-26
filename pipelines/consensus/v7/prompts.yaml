@@ -1140,9 +1140,17 @@ prompts:
       INSTRUCTIONS:
       - Fix the grouping or ordering issues identified above
       - You may move indices between sections or reorder within sections
-      - Do NOT remove any indices — all must remain assigned
+      - Every index present in the CURRENT OUTLINE above MUST appear in your
+        output — none may be removed or omitted
       - Return the COMPLETE revised outline as valid JSON
-      - Format: {{"sections": [{{"heading": "...", "fact_indices": [...]}}]}}
+
+      PRESERVATION CHECK (MANDATORY before outputting):
+      1. Count the total indices in CURRENT OUTLINE above.
+      2. Count the total indices in your revised outline.
+      3. They MUST match. If your count is lower, you have dropped indices —
+         find and restore them before outputting.
+
+      Format: {{"sections": [{{"heading": "...", "fact_indices": [...]}}]}}
 
   synthesize_from_outline:
     description: "Write coherent prose from an approved fact outline."
@@ -1233,68 +1241,34 @@ prompts:
       You are reviewing a synthesized answer for LOCAL REDUNDANCY only.
       The answer may have section headings (### ...).
 
-      SCOPE: You identify content to DELETE. Do NOT suggest merging,
-      reordering, or restructuring sections — structure is handled
-      separately. Only specify what to remove.
+      SCOPE: Only (a) two clauses in one sentence, or (b) two consecutive
+      sentences in the same section. Never compare across sections.
 
-      DECISION PROTOCOL (short, strict, in this exact order):
+      Rules:
+      1. Both `kept` and `deleted` must be VERBATIM sentences or clauses
+         copied from the answer — no paraphrasing or summarizing.
+      2. `kept` and `deleted` must be DIFFERENT and DISTINCT spans.
+         `kept` must not contain `deleted` as a substring.
+      3. `shared_predicate` must be a complete clause of ≤10 words stating
+         what both assert. If you cannot write one under 10 words, drop the pair.
+      4. CITATION GATE: If `deleted` contains any [Fact N] citation that does
+         not appear in `kept`, drop the pair — the deleted span carries unique
+         knowledge not present in the kept span.
+      5. If either span has no [Fact N] citations, drop the pair.
+      6. Label each pair as one of: RESTATEMENT (same proposition, same
+         specificity), ELABORATION, CAUSE-EFFECT, SPECIALIZATION, or COORDINATE.
+         Deletion allowed ONLY for RESTATEMENT. Never label CAUSE-EFFECT
+         (B is the direct outcome of A) as RESTATEMENT.
+      7. If no valid RESTATEMENT pairs remain, return action: "accept".
+      8. Max 5 pairs.
 
-      1) Build candidates:
-         - Only (a) two clauses in one sentence, or
-           (b) two consecutive sentences in the same section.
-         - Never compare across sections.
+      For each deletion in `target`, quote the first 8+ words of the sentence
+      or clause verbatim so the reviser can locate it unambiguously.
 
-      2) CITATION GATE (hard block):
-         For each candidate, extract:
-         K = facts in kept text, D = facts in deleted text.
-         - If D ⊄ K: BLOCK candidate immediately.
-         - Blocked candidates are forbidden in repeated_items and target.
-         - No semantic reasoning is allowed on blocked candidates.
-         - K and D must be numeric fact IDs from [Fact N] citations only.
-           Do not use paraphrases, summaries, or free text.
-         - kept text and deleted text must be DISTINCT spans.
-           kept text must NOT contain deleted text as a substring.
-         - If either span has no [Fact N] citations, set subset_pass=false.
-
-      3) NLP label (only if gate passed):
-         Label each candidate as one of:
-         - RESTATEMENT (same proposition, same specificity)
-         - ELABORATION (adds mechanism/cause/rationale/example)
-         - CAUSE-EFFECT (B describes the direct outcome or consequence of A)
-         - SPECIALIZATION (adds narrower technical detail)
-         - COORDINATE (same topic, different predicate)
-         Deletion allowed ONLY for RESTATEMENT.
-         Never label CAUSE-EFFECT as RESTATEMENT.
-
-      4) Final check:
-         Every whole-sentence deletion in target must satisfy D ⊆ K.
-         If not, remove it or reduce to overlapping clause only.
-
-      Output discipline:
-      - If no non-blocked RESTATEMENT exists, return action="accept".
-      - Max 5 items.
-      - In repeated_items, each item MUST include this one-line audit:
-        "K=[n1,n2,...]; D=[m1,m2,...]; subset_pass=true|false; label=..."
+      Return ONLY the JSON object below — no other text.
 
       ANSWER TO REVIEW:
       {artifact}
-
-      VERBATIM CHECK (MANDATORY — do this before returning):
-      For each deletion in target:
-      1. Find the first 6 words of the sentence or clause to delete
-         in the ANSWER TO REVIEW above.
-      2. If you cannot find those exact words in the text, you are
-         paraphrasing — re-read the answer and copy the actual text.
-      3. The target must quote the first 8+ words of each sentence or
-         clause verbatim so the reviser can locate it unambiguously.
-
-      Return JSON:
-        action: "revise" or "accept"
-        repeated_items: array of specific redundancies found (empty if accepting)
-        reason: brief explanation
-        target: concrete deletion instructions for the reviser — for each
-          redundancy, quote the first 8+ words of the sentence or clause
-          to delete verbatim from the text above. Empty string if accept.
     template: |
       Question being answered: {question}
 
@@ -1304,109 +1278,23 @@ prompts:
       You are reviewing a synthesized answer for GLOBAL REDUNDANCY only.
       The answer may have section headings (### ...).
 
-      IDENTICAL SENTENCE GUARD (check this FIRST)
-      Before listing any pair in repeated_items: confirm `kept` and
-      `deleted` are DIFFERENT sentences from DIFFERENT locations in the
-      text. If they are the same sentence, the second occurrence does not
-      exist — do NOT include the pair. Only one copy is present.
+      Task: find sentences that state the same specific claim as another sentence elsewhere.
 
-      PREDICATE-EQUIVALENCE CHECK
-      For any two candidate sentences to be duplicates, write a *single*
-      predicate that both sentences state. The predicate must be a concise
-      clause of ≤12 words. If the predicate would require more than 12
-      words, the "overlap" is too narrow — the pair is NOT a duplicate,
-      drop it.
+      Rules:
+      1. Both `kept` and `deleted` must be VERBATIM sentences copied from the answer — no paraphrasing.
+      2. `kept` and `deleted` must be DIFFERENT sentences from DIFFERENT locations. If they are the same sentence, it appears only once — discard the pair.
+      3. The `shared_predicate` must be a complete clause of ≤12 words stating what both assert. If you cannot write one under 12 words, the pair is NOT a duplicate — drop it.
+      4. If `deleted` names specific entities, values, or mechanisms absent from `kept`, it is NOT a duplicate — drop it.
+      5. A closing summary sentence that re-enumerates what was already described above ("Collectively", "Together", "Overall", "These actions") IS a duplicate — delete the summary, keep the detailed sentences.
+      6. When the same claim appears in a small section (≤3 sentences) and a large section (≥4 sentences), delete from the large section.
+      7. Never flag an entire section. If any deletion would empty a section, remove that pair. If no pairs remain, output action: "accept".
+      8. Sections discussing the same subject from different angles (mechanism vs contraindications vs uses) are NOT redundant — accept if sections are mostly distinct.
+      9. If no valid duplicate pairs exist, output action: "accept" with empty repeated_items.
 
-      SPECIFICITY GUARD
-      Before flagging any sentence as deleted, check BOTH:
-      1. CITATION CHECK: Does the deleted sentence contain any [Fact N]
-         citation NOT present in the kept sentence? If yes → unique
-         knowledge, NOT a duplicate — keep it.
-      2. ENTITY CHECK: Does the deleted sentence name specific entities,
-         values, mechanisms, or conditions absent from the kept sentence?
-         If yes → unique knowledge, NOT a duplicate — keep it.
-      A sentence only qualifies for deletion if it passes BOTH checks
-      (no unique citations AND no unique named content).
-
-      CLOSING SUMMARY SENTENCE
-      A sentence at the end of a section that re-enumerates items already
-      described in detail above is a duplicate. Delete the summary; keep
-      the detailed sentences. Look for collective subjects: "Collectively",
-      "Together", "Overall", "These actions", "These mechanisms".
-
-      LONG-RANGE RESTATEMENT
-      A sentence that repeats the same predicate as an earlier sentence
-      without adding new named entities, values, or conditions is a
-      duplicate. Keep the earlier, more specific version.
-
-      SECTION PRESERVATION
-      Never delete an entire section. Flag only specific duplicate
-      sentences. When a sentence duplicates content in another section,
-      delete only the less specific or less cited version.
-
-      EMPTY SECTION GUARD
-      Before returning, count sentences remaining per section after
-      deletions. If ANY section would have zero sentences remaining,
-      change action to "accept" — no exceptions.
-
-      DELETION DIRECTION (cross-section duplicates)
-      When the same claim appears in a SMALL section (≤3 sentences) and
-      a LARGE section (≥4 sentences), delete from the LARGE section.
-      Count sentences in each section BEFORE deciding direction.
-
-      For each redundancy found:
-      - Quote BOTH instances (kept and deleted) verbatim from the answer
-      - State which to KEEP and which to DELETE
-      - Prefer keeping the more specific and better-cited version
-
-      ACCEPT THRESHOLD: Accept if sections are mostly distinct. Sections
-      discussing the same subject from different angles (mechanism vs
-      contraindications vs uses) are NOT redundant.
+      Return ONLY the JSON object below — no other text.
 
       ANSWER TO REVIEW:
       {artifact}
-
-      VERBATIM CHECK (MANDATORY — do this before VALIDATION):
-      For each entry you plan to include in repeated_items:
-      1. Search for the first 6 words of `deleted` verbatim in the
-         ANSWER TO REVIEW above.
-      2. If you cannot find those exact words, you are paraphrasing —
-         re-read the answer and copy the actual sentence.
-      3. `kept` and `deleted` must both be copy-pasted from the text
-         above, not rewritten or reconstructed from memory.
-      4. After copy-pasting, confirm `kept` ≠ `deleted` (the two must
-         be different sentences from different locations in the text).
-         If they are identical, you found only ONE occurrence — this
-         sentence does NOT appear twice. Do NOT include it.
-
-      VALIDATION (do this LAST, before returning):
-      Review each entry in repeated_items. Remove the entry if ANY of:
-      - `kept` and `deleted` are identical text (single occurrence —
-        not a duplicate)
-      - The shared_predicate exceeds 12 words (too narrow overlap —
-        not a genuine semantic duplicate)
-      - The shared_predicate names a topic rather than a specific
-        assertion (vague predicate — not a valid duplicate)
-      If removing invalid pairs leaves an empty list, change action to
-      "accept".
-
-      Return JSON:
-        action: "revise" or "accept"
-        repeated_items: array of objects, one per redundancy found
-          (empty array if accepting). Each object:
-          - kept: exact sentence to KEEP — copy-paste verbatim from
-            the answer above, do not paraphrase
-          - deleted: exact sentence to DELETE — copy-paste verbatim
-            from the answer above, do not paraphrase
-          - shared_predicate: one phrase completing
-            "Both sentences assert: ___"
-        reason: brief explanation
-        target: (MANDATORY when action is "revise") concrete deletion
-          instructions — for each sentence to delete, quote its first
-          8+ words verbatim from the text so the reviser can locate it.
-          The reviser receives ONLY reason + target, so ALL actionable
-          instructions must be in target.
-          Empty string ONLY when action is "accept".
     template: |
       Question being answered: {question}
 

@@ -1,4 +1,4 @@
-"""Service state - tracks Gateway, Stargate, RAG, and sidecar health."""
+"""Service state - tracks Gateway, Stargate, RAG, Cloud Proxy, and sidecar health."""
 
 from __future__ import annotations
 
@@ -43,14 +43,21 @@ class ServiceState:
     GATEWAY_PORT = 9998
     STARGATE_PORT = 9999
     RAG_PORT = 8100
+    CLOUD_PROXY_PORT = 8200
     STARGATE_PID_FILE = Path.home() / ".gateway" / "stargate.pid"
     RAG_PID_FILE = Path.home() / ".gateway" / "rag.pid"
+    CLOUD_PROXY_PID_FILE = Path.home() / ".gateway" / "cloud-proxy.pid"
 
     def __init__(self, workspace_root: Path) -> None:
         self._workspace_root = workspace_root
 
     def check_all(self) -> list[ServiceInfo]:
-        return [self.check_gateway(), self.check_stargate(), self.check_rag()]
+        return [
+            self.check_gateway(),
+            self.check_stargate(),
+            self.check_rag(),
+            self.check_cloud_proxy(),
+        ]
 
     def check_rag(self) -> ServiceInfo:
         pid = self._read_pid(self.RAG_PID_FILE)
@@ -75,6 +82,31 @@ class ServiceState:
             name="RAG",
             status=ServiceStatus.STOPPED,
             port=self.RAG_PORT,
+        )
+
+    def check_cloud_proxy(self) -> ServiceInfo:
+        pid = self._read_pid(self.CLOUD_PROXY_PID_FILE)
+        if pid and self._pid_alive(pid):
+            healthy = self._port_open(self.CLOUD_PROXY_PORT)
+            return ServiceInfo(
+                name="Cloud Proxy",
+                status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
+                port=self.CLOUD_PROXY_PORT,
+                pid=pid,
+                health_url=f"http://localhost:{self.CLOUD_PROXY_PORT}/health",
+                detail=f"PID {pid}" + ("" if healthy else ", port not responding"),
+            )
+        if self._port_open(self.CLOUD_PROXY_PORT):
+            return ServiceInfo(
+                name="Cloud Proxy",
+                status=ServiceStatus.RUNNING,
+                port=self.CLOUD_PROXY_PORT,
+                detail="Port open (no PID file)",
+            )
+        return ServiceInfo(
+            name="Cloud Proxy",
+            status=ServiceStatus.STOPPED,
+            port=self.CLOUD_PROXY_PORT,
         )
 
     def check_gateway(self) -> ServiceInfo:

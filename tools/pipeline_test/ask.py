@@ -35,6 +35,11 @@ Rules:
 - Structure complex answers with clear sections"""
 
 
+def estimate_fixed_chars(question: str) -> int:
+    """Return the char count of everything except RAG findings."""
+    return len(_SYSTEM_PROMPT) + len(f"## Question\n{question}") + 50
+
+
 def ask_models(
     question: str,
     *,
