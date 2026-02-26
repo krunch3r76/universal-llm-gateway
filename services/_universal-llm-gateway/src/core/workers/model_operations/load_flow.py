@@ -304,9 +304,7 @@ async def cleanup_failed_worker(
                         f"⚠️ Process {pid} for {model_id} still alive after stop, "
                         f"force killing"
                     )
-                    await controller._lifecycle_manager.force_kill_process(
-                        pid, model_id
-                    )
+                    await controller._lifecycle_manager.kill_pid_tree(pid, model_id)
                     process_killed = True
             except Exception as e:
                 logger.error(f"❌ Force kill failed for {model_id} (PID {pid}): {e}")
@@ -369,6 +367,7 @@ async def handle_load_exception(
 
     # Emit event with failure reason for observability (Recommendation #7)
     from src.core.events.types import ModelLoadFailed
+
     if controller.event_bus:
         await controller.event_bus.publish_async_nowait(
             ModelLoadFailed(

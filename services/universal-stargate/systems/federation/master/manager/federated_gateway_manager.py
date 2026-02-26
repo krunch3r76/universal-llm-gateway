@@ -430,12 +430,19 @@ class FederatedGatewayManager(Sequential):
         Thread-safety: Single-threaded asyncio event loop - no race between
         sync operations within same coroutine execution.
 
+        Race guard: The caller's check (model_id not in snapshot.loaded_models)
+        uses a stale snapshot from select(). An await between select() and this
+        call (e.g. capacity_pool.acquire_token) lets MODEL_LOADED arrive and
+        add the model to loaded_models on the live gateway. Without the guard
+        below, the mark creates an impossible state (loaded ∩ loading ≠ ∅)
+        that permanently blocks eviction.
+
         Args:
             gateway_id: Gateway identifier
             model_id: Model being loaded
 
         Returns:
-            True if marked, False if gateway not found
+            True if marked, False if gateway not found or already loaded
         """
         gw = self._gateways.get(gateway_id)
         if not gw:
@@ -445,7 +452,13 @@ class FederatedGatewayManager(Sequential):
             )
             return False
 
-        # Immediate frozenset update - no await, no queue
+        if model_id in gw.loaded_models:
+            logger.info(
+                f"🔄 OPTIMISTIC MARK skipped: {model_id} already loaded on "
+                f"{gateway_id} (stale snapshot race)"
+            )
+            return False
+
         gw.loading_models = gw.loading_models | {model_id}
         logger.info(
             f"🔄 OPTIMISTIC MARK: {model_id} → {gateway_id} "
@@ -929,6 +942,17 @@ class FederatedGatewayManager(Sequential):
         gw.vram_total_mb = state["vram_total_mb"]
         gw.active_requests = state.get("active_requests", 0)
 
+        # Overlay measured VRAM onto catalog estimates for eviction planner
+        model_vram: dict[ModelId, int] | None = parsed.get("model_vram")
+        if model_vram:
+            for model_id, measured_vram_mb in model_vram.items():
+                if model_id in gw.model_resources:
+                    gw.model_resources[model_id]["vram_usage"] = measured_vram_mb
+            logger.debug(
+                f"📊 Overlaid measured VRAM for {len(model_vram)} models "
+                f"on {gw.gateway_id}"
+            )
+
         logger.debug(
             f"📦 Master: Applied RESOURCE_UPDATE for {gw.gateway_id}: "
             f"vram={gw.vram_free_mb}MB, ram={gw.ram_free_mb}MB"
@@ -1293,6 +1317,23 @@ class FederatedGatewayManager(Sequential):
 
             updated_gateway = replace(gateway, **updates)
             updated_gateway._last_sequence_number = sequence_number
+
+            # Reconcile: loaded ∩ loading must be ∅.
+            # Snapshots set loaded_models without clearing loading_models,
+            # so stale loading marks can survive snapshot application.
+            stale_loading = (
+                updated_gateway.loaded_models & updated_gateway.loading_models
+            )
+            if stale_loading:
+                updated_gateway.loading_models = (
+                    updated_gateway.loading_models - stale_loading
+                )
+                logger.warning(
+                    f"🔄 Reconciled stale loading_models on {gateway_id}: "
+                    f"removed {[str(m) for m in stale_loading]} "
+                    f"(already in loaded_models)"
+                )
+
             self._gateways[gateway_id] = updated_gateway
 
             # Log detailed changes for list fields

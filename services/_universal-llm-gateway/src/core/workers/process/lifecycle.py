@@ -4,6 +4,7 @@ Process lifecycle management for worker processes.
 Handles process startup, shutdown, crash handling, and cleanup operations.
 """
 
+import logging
 import os
 import time
 from collections.abc import Callable
@@ -31,7 +32,6 @@ from ..utils import (
     format_worker_command,
 )
 from .crash_callback import handle_process_crash_callback as _handle_crash_callback
-from .kill import force_kill_process as _force_kill_process
 from .state import ProcessState
 
 logger = get_logger(__name__)
@@ -272,50 +272,62 @@ class ProcessLifecycleManager:
         error_message: str,
     ):
         """Crash callback (event-driven cleanup).
-        
+
         Note: This is a background handler, but uses nowait for consistency.
         """
-        await _handle_crash_callback(
-            process_id, exit_code, error_message, self.state
-        )
+        await _handle_crash_callback(process_id, exit_code, error_message, self.state)
 
-    async def force_kill_process(self, pid: int, model_id: str) -> bool:
-        """
-        Force kill a process by PID with SIGKILL.
+    @staticmethod
+    async def kill_pid_tree(pid: int, model_id: str) -> bool:
+        """Kill a process and its children by PID. Last-resort cleanup."""
+        if psutil is None:
+            logger.warning(
+                f"psutil not available, cannot kill PID tree for {model_id} (PID: {pid})"
+            )
+            return False
 
-        Delegates to kill module for actual termination logic.
-
-        Args:
-            pid: Process ID to kill
-            model_id: Model identifier
-
-        Returns:
-            True if process terminated successfully
-        """
-        return await _force_kill_process(pid, model_id, self.gateway_config)
+        try:
+            proc = psutil.Process(pid)
+            children = proc.children(recursive=True)
+            proc.kill()
+            for child in children:
+                try:
+                    child.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            psutil.wait_procs([proc] + children, timeout=5.0)
+            logger.info(
+                f"✅ Killed PID {pid} + {len(children)} children for {model_id}"
+            )
+            return True
+        except psutil.NoSuchProcess:
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to kill PID {pid} for {model_id}: {e}")
+            return False
 
     async def fallback_process_cleanup(self, model_id: str) -> bool:
         """
         Fallback cleanup for untracked processes using event-driven socket cleanup.
-        
+
         Publishes SocketCleanupRequested event (non-blocking) for processes that
         may have been started outside normal tracking. Used when process exists
         but isn't in our supervisor tracking.
-        
+
         Invariant: event_published ∧ non_blocking ∧ process_terminated
-        
+
         Args:
             model_id: Model identifier for the untracked process
-            
+
         Returns:
             True if cleanup successful, False otherwise
-            
+
         Side Effects:
             - Terminates process if found running
             - Publishes SocketCleanupRequested event (fire-and-forget)
             - Updates state tracking if process was found
-            
-        Note: 
+
+        Note:
             This method does NOT wait for socket cleanup completion.
             Event handler executes asynchronously in background.
         """
@@ -387,7 +399,9 @@ class ProcessLifecycleManager:
                 loop.call_soon(
                     lambda: asyncio.create_task(
                         get_event_bus().publish_async_nowait(
-                            SocketCleanupRequested(model_id=model_id, socket_path=socket_path)
+                            SocketCleanupRequested(
+                                model_id=model_id, socket_path=socket_path
+                            )
                         )
                     )
                 )
@@ -453,22 +467,22 @@ class ProcessLifecycleManager:
     async def cleanup_stale_process(self, model_id: str) -> None:
         """
         Clean up a stale process using event-driven socket cleanup.
-        
+
         Publishes SocketCleanupRequested event (non-blocking) then removes
         supervisor and socket path from state tracking. Socket cleanup happens
         asynchronously via registered event handler.
-        
+
         Invariant: event_published ∧ non_blocking ∧ state_removed
-        
+
         Args:
             model_id: Model identifier for the stale process
-            
+
         Side Effects:
             - Publishes SocketCleanupRequested event (fire-and-forget)
             - Removes supervisor from self.state.supervisors
             - Removes socket path from self.state.socket_paths
-            
-        Note: 
+
+        Note:
             This method does NOT wait for socket cleanup completion.
             Event handler executes asynchronously in background.
         """
@@ -490,7 +504,9 @@ class ProcessLifecycleManager:
                 loop.call_soon(
                     lambda: asyncio.create_task(
                         get_event_bus().publish_async_nowait(
-                            SocketCleanupRequested(model_id=model_id, socket_path=socket_path)
+                            SocketCleanupRequested(
+                                model_id=model_id, socket_path=socket_path
+                            )
                         )
                     )
                 )

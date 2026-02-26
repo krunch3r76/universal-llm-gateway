@@ -706,80 +706,97 @@ class ProcessSupervisor:
         """
         Force cleanup of entire process tree using multiple methods.
 
-        This method provides the most aggressive cleanup possible,
-        using multiple techniques to ensure no orphaned processes remain.
+        Children are snapshotted before any kill so they remain trackable
+        after the parent dies (reparenting to PID 1 would otherwise hide them).
 
         Args:
             timeout: Maximum time to wait for cleanup
 
         Returns:
-            True if cleanup successful, False otherwise
+            True if parent process confirmed dead within timeout, False otherwise
         """
         if not self._worker_pid:
             return True
 
         self._logger.info(f"Force cleanup of process tree for PID {self._worker_pid}")
 
-        success = True
+        # Step 1: Snapshot children BEFORE any kills.
+        # ∀ engines (vLLM EngineCore, llama-cpp-server) that spawn child subprocesses:
+        # once the parent dies, children reparent to PID 1 and become untrackable.
+        children: list[Any] = []
+        try:
+            import psutil
+        except ImportError:
+            psutil = None  # type: ignore[assignment]
+        if psutil is not None:
+            try:
+                parent = psutil.Process(self._worker_pid)
+                children = parent.children(recursive=True)
+                if children:
+                    child_pids = [c.pid for c in children]
+                    self._logger.info(
+                        f"Snapshotted {len(children)} child process(es) before kill "
+                        f"(PIDs: {child_pids})"
+                    )
+            except psutil.NoSuchProcess:
+                pass
 
-        # Method 1: Kill process group if we have PGID
+        # Step 2: Kill process group (reaches children that stayed in group)
         if self._worker_pgid:
             try:
-                # Send SIGKILL to entire process group
                 os.killpg(self._worker_pgid, signal.SIGKILL)
                 self._logger.info(f"Killed process group {self._worker_pgid}")
             except (OSError, ProcessLookupError) as e:
                 self._logger.debug(f"Process group {self._worker_pgid} cleanup: {e}")
 
-        # Method 2: Kill main process
+        # Step 3: Kill main process
         try:
             os.kill(self._worker_pid, signal.SIGKILL)
-            self._logger.info(f"Killed main process {self._worker_pid}")
         except (OSError, ProcessLookupError) as e:
             self._logger.debug(f"Main process {self._worker_pid} cleanup: {e}")
 
-        # Method 3: Find and kill child processes by name pattern
-        try:
-            import psutil
-
-            parent = psutil.Process(self._worker_pid)
-            children = parent.children(recursive=True)
-
-            for child in children:
-                try:
-                    child.kill()
-                    self._logger.debug(f"Killed child process {child.pid}")
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-
-        except (ImportError, psutil.NoSuchProcess):
-            # psutil not available or process already gone
-            pass
-
-        # Method 4: Wait for processes to actually die
+        # Step 4: Wait for parent to die
         start_time = asyncio.get_event_loop().time()
+        parent_dead = False
         while (asyncio.get_event_loop().time() - start_time) < timeout:
             try:
-                # Check if main process still exists
-                os.kill(self._worker_pid, 0)  # Signal 0 just checks existence
+                os.kill(self._worker_pid, 0)
                 await asyncio.sleep(0.1)
             except (OSError, ProcessLookupError):
-                # Process is gone
+                parent_dead = True
                 break
-        else:
-            # Timeout reached, process might still be alive
-            success = False
+
+        if not parent_dead:
             self._logger.warning(
                 f"Process {self._worker_pid} may still be alive after cleanup"
             )
 
-        # Method 5: Cleanup cgroup if it exists (requires permissions)
+        # Step 5: Kill children that survived (escaped process group or reparented)
+        if psutil is not None:
+            for child in children:
+                try:
+                    if child.is_running():
+                        self._logger.warning(
+                            f"Killing surviving child PID {child.pid} "
+                            f"({child.name()}) for worker {self._worker_pid}"
+                        )
+                        child.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            # Step 6: Wait for children
+            if children:
+                try:
+                    psutil.wait_procs(children, timeout=min(timeout, 3.0))
+                except Exception as e:
+                    self._logger.debug(f"wait_procs during cleanup: {e}")
+
+        # Step 7: Cgroup cleanup (unchanged)
         try:
             cgroup_path = Path(
                 f"/sys/fs/cgroup/universal-llm-worker-{self._worker_pid}"
             )
             if cgroup_path.exists():
-                # Kill all processes in cgroup
                 procs_file = cgroup_path / "cgroup.procs"
                 if procs_file.exists():
                     pids = procs_file.read_text().strip().split("\n")
@@ -790,7 +807,6 @@ class ProcessSupervisor:
                             except (ValueError, OSError, ProcessLookupError):
                                 pass
 
-                # Remove cgroup
                 try:
                     cgroup_path.rmdir()
                     self._logger.debug(f"Removed cgroup {cgroup_path}")
@@ -800,7 +816,7 @@ class ProcessSupervisor:
         except Exception as e:
             self._logger.debug(f"Cgroup cleanup failed: {e}")
 
-        return success
+        return parent_dead
 
     def setup_emergency_cleanup_handler(self) -> None:
         """

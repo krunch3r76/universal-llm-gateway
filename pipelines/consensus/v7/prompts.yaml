@@ -1237,90 +1237,67 @@ prompts:
       reordering, or restructuring sections — structure is handled
       separately. Only specify what to remove.
 
-      PREREQUISITE — Apply these filters BEFORE flagging any redundancy:
+      DECISION PROTOCOL (short, strict, in this exact order):
 
-      1. SAME SUBJECT ≠ SAME CLAIM:
-         Two sentences sharing a subject are duplicates ONLY if they
-         assert the SAME predicate. Different predicates about the same
-         entity are independent facts — NEVER flag them.
-           DUPLICATE: "reduces hepatic glucose production" vs "inhibits
-             gluconeogenesis" → identical mechanism, different words
-           NOT DUPLICATE — different predicates, keep both:
-           - "contraindicated in renal impairment" vs "contraindicated
-             in alcoholism"
-           - "reduces glucose production" vs "enhances insulin sensitivity"
+      1) Build candidates:
+         - Only (a) two clauses in one sentence, or
+           (b) two consecutive sentences in the same section.
+         - Never compare across sections.
 
-      2. ELABORATION ≠ RESTATEMENT:
-         A sentence that explains HOW or WHY a preceding claim holds
-         is elaboration, not redundancy. The specific mechanism or
-         enzyme target is NEW information even when it relates to the
-         same general effect.
-           NOT redundant: "reduces glucose production" followed by
-             "inhibits PEPCK, which is crucial for gluconeogenesis"
-             → second sentence names the enzyme mechanism
-           NOT redundant: "is a contraindication" followed by "metformin
-             can accumulate" → second explains the pharmacokinetic reason
+      2) CITATION GATE (hard block):
+         For each candidate, extract:
+         K = facts in kept text, D = facts in deleted text.
+         - If D ⊄ K: BLOCK candidate immediately.
+         - Blocked candidates are forbidden in repeated_items and target.
+         - No semantic reasoning is allowed on blocked candidates.
+         - K and D must be numeric fact IDs from [Fact N] citations only.
+           Do not use paraphrases, summaries, or free text.
+         - kept text and deleted text must be DISTINCT spans.
+           kept text must NOT contain deleted text as a substring.
+         - If either span has no [Fact N] citations, set subset_pass=false.
 
-      3. DEFINITION ≠ SEVERITY:
-         A sentence defining what a condition IS (pathophysiology) is
-         not redundant with a sentence about how SEVERE it is.
-           NOT redundant: "lactic acidosis is life-threatening" vs
-             "lactic acidosis is characterized by accumulation of
-             lactic acid" → severity assessment vs biochemical definition
+      3) NLP label (only if gate passed):
+         Label each candidate as one of:
+         - RESTATEMENT (same proposition, same specificity)
+         - ELABORATION (adds mechanism/cause/rationale/example)
+         - SPECIALIZATION (adds narrower technical detail)
+         - COORDINATE (same topic, different predicate)
+         Deletion allowed ONLY for RESTATEMENT.
 
-      When in doubt, keep both — false deletions destroy verified content.
+      4) Safeguards:
+         - Outcome vs mechanism = NOT redundant.
+         - Different contraindication conditions = NOT redundant.
+         - Definition vs severity = NOT redundant.
 
-      With those prerequisites in mind, check for these problems in order
-      of severity:
+      5) Final check:
+         Every whole-sentence deletion in target must satisfy D ⊆ K.
+         If not, remove it or reduce to overlapping clause only.
 
-      0. PARAGRAPH DUPLICATION: Two consecutive paragraphs within the same
-         section convey the same information in similar or identical words.
-         Delete the second paragraph entirely — this is the most severe defect.
-      1. WITHIN-SENTENCE DUPLICATION: A single sentence or clause pair says
-         the same thing twice using different words. Example: "reduces the
-         liver's glucose production and inhibits gluconeogenesis" — both
-         clauses mean the same thing. One clause must be deleted.
-      2. CONSECUTIVE RESTATEMENT: A sentence restates the idea from the
-         immediately preceding sentence. Example:
-           "Metformin suppresses hepatic glucose production."
-           "It reduces the amount of glucose the liver releases."
-         These are the same claim — delete one.
-      3. CIRCULAR SENTENCES: A sentence adds no information beyond what the
-         surrounding text already stated.
-
-      IMPORTANT: Do NOT flag cross-section overlap in this step.
-      Cross-section deduplication is handled by a separate reviewer.
-
-      For each redundancy found:
-      - Quote BOTH instances (the kept one and the deleted one)
-      - State which to KEEP and which to DELETE
-      - If within-sentence, quote the full sentence and mark the clause
-        to delete
-
-      Be precise: only flag content where the SAME claim is stated twice.
-      Two sentences about the same topic that assert different predicates
-      are NOT redundant — recheck the prerequisite filters above before
-      flagging. Prefer keeping the more specific or technical version.
-
-      LIMIT: Report at most 5 redundancies per review — pick the most
-      severe. This keeps reviser instructions focused and executable.
-
-      ACCEPT THRESHOLD: If the only remaining issues are minor phrasing
-      differences that do not confuse a reader, choose "accept". The goal
-      is to eliminate clear repetition — not to polish prose to perfection.
-
-      If the answer is free of meaningful repetition, choose "accept".
+      Output discipline:
+      - If no non-blocked RESTATEMENT exists, return action="accept".
+      - Max 5 items.
+      - In repeated_items, each item MUST include this one-line audit:
+        "K=[n1,n2,...]; D=[m1,m2,...]; subset_pass=true|false; label=..."
 
       ANSWER TO REVIEW:
       {artifact}
+
+      VERBATIM CHECK (MANDATORY — do this before returning):
+      For each deletion in target:
+      1. Find the first 6 words of the sentence or clause to delete
+         in the ANSWER TO REVIEW above.
+      2. If you cannot find those exact words in the text, you are
+         paraphrasing — re-read the answer and copy the actual text.
+      3. The target must quote the first 8+ words of each sentence or
+         clause verbatim so the reviser can locate it unambiguously.
 
       Return JSON:
         action: "revise" or "accept"
         repeated_items: array of specific redundancies found (empty if accepting)
         reason: brief explanation
         target: concrete deletion instructions for the reviser — for each
-          redundancy, state the exact sentence or clause to delete
-          (empty string if accept)
+          redundancy, quote the first 8+ words of the sentence or clause
+          to delete verbatim from the text above. Empty string if accept.
     template: |
       Question being answered: {question}
 
@@ -1416,6 +1393,10 @@ prompts:
       4. DUPLICATE CATEGORICAL CLUSTERS: a category of claims (risks,
          prerequisites, examples, properties) restated in multiple places
          without adding new information each time.
+      5. CLOSING SUMMARY SENTENCE: a sentence at the end of a section that
+         re-enumerates items already described in detail above (e.g., "The
+         primary X include A, B, and C" when A, B, C were already individually
+         enumerated). Delete the summary sentence; keep the detailed sentences.
 
       For each redundancy found:
       - Quote BOTH instances (the kept one and the deleted one)
@@ -1432,6 +1413,15 @@ prompts:
       ANSWER TO REVIEW:
       {artifact}
 
+      VERBATIM CHECK (MANDATORY — do this before VALIDATION):
+      For each entry you plan to include in repeated_items:
+      1. Search for the first 6 words of `deleted` verbatim in the
+         ANSWER TO REVIEW above.
+      2. If you cannot find those exact words in the text, you are
+         paraphrasing — re-read the answer and copy the actual sentence.
+      3. `kept` and `deleted` must both be copy-pasted from the text
+         above, not rewritten or reconstructed from memory.
+
       VALIDATION (do this LAST, before returning):
       Review each entry in repeated_items. If the shared_predicate
       is vague (e.g. "both about metformin", "both discuss lactic
@@ -1444,15 +1434,18 @@ prompts:
         action: "revise" or "accept"
         repeated_items: array of objects, one per redundancy found
           (empty array if accepting). Each object:
-          - kept: exact sentence to KEEP (quote from the answer)
-          - deleted: exact sentence to DELETE (quote from the answer)
+          - kept: exact sentence to KEEP — copy-paste verbatim from
+            the answer above, do not paraphrase
+          - deleted: exact sentence to DELETE — copy-paste verbatim
+            from the answer above, do not paraphrase
           - shared_predicate: one phrase completing
             "Both sentences assert: ___"
         reason: brief explanation
         target: (MANDATORY when action is "revise") concrete deletion
-          instructions — state the exact sentence to delete for each
-          redundancy. The reviser receives ONLY reason + target, so
-          ALL actionable instructions must be in target.
+          instructions — for each sentence to delete, quote its first
+          8+ words verbatim from the text so the reviser can locate it.
+          The reviser receives ONLY reason + target, so ALL actionable
+          instructions must be in target.
           Empty string ONLY when action is "accept".
     template: |
       Question being answered: {question}
@@ -1479,6 +1472,10 @@ prompts:
       Rules:
       - Follow the REDUNDANCY FEEDBACK — but apply the unique-content
         check above before each deletion
+      - If the Target sentence cannot be found verbatim in the text,
+        find the sentence that best matches the Target's description
+        semantically, then apply the UNIQUE CONTENT PROTECTION test
+        before deleting it
       - When a sentence contains two clauses that say the same thing,
         delete the weaker clause and keep the more precise one
       - When consecutive sentences restate the same idea, delete the

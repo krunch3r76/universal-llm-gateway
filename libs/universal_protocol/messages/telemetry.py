@@ -172,6 +172,7 @@ class ResourceUpdatePayload(TelemetryPayload):
     loaded_models: list[str] | None = None
     busy_models: list[str] | None = None
     max_concurrent_per_worker: int | None = None
+    model_vram: dict[str, int] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to wire format (dict for MessageEnvelope.data)."""
@@ -188,6 +189,8 @@ class ResourceUpdatePayload(TelemetryPayload):
             result["busy_models"] = self.busy_models
         if self.max_concurrent_per_worker is not None:
             result["max_concurrent_per_worker"] = self.max_concurrent_per_worker
+        if self.model_vram is not None:
+            result["model_vram"] = self.model_vram
         return result
 
     @classmethod
@@ -213,6 +216,7 @@ class ResourceUpdatePayload(TelemetryPayload):
             loaded_models=data.get("loaded_models"),
             busy_models=data.get("busy_models"),
             max_concurrent_per_worker=data.get("max_concurrent_per_worker"),
+            model_vram=data.get("model_vram"),
             source=source,
         )
 
@@ -512,6 +516,7 @@ def ResourceUpdate(  # noqa: N802
     loaded_models: list[str] | None = None,
     busy_models: list[str] | None = None,
     max_concurrent_per_worker: int | None = None,
+    model_vram: dict[str, int] | None = None,
     source: TelemetrySource | None = None,
 ) -> ResourceUpdatePayload:
     """
@@ -530,6 +535,7 @@ def ResourceUpdate(  # noqa: N802
         loaded_models=loaded_models,
         busy_models=busy_models,
         max_concurrent_per_worker=max_concurrent_per_worker,
+        model_vram=model_vram,
         # available_models and model_resources intentionally omitted
         source=source,
     )

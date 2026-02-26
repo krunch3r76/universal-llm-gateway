@@ -732,7 +732,7 @@ class WorkerController:
                 import psutil
 
                 if psutil.pid_exists(pid):
-                    await self._lifecycle_manager.force_kill_process(pid, model_id)
+                    await self._lifecycle_manager.kill_pid_tree(pid, model_id)
             except Exception as e:
                 logger.error(f"Force kill failed for {model_id}: {e}")
 

@@ -32,7 +32,7 @@ select = [
     "N",   # pep8-naming
     "UP",  # pyupgrade
 ]
-ignore = []
+ignore = ["E501"]  # line-too-long (match root pyproject)
 
 [tool.ruff.format]
 quote-style = "double"

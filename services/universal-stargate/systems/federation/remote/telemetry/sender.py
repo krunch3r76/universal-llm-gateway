@@ -308,6 +308,7 @@ class RemoteTelemetrySender:
             total_ram_mb=payload.total_ram_mb,
             loaded_models=payload.loaded_models,
             busy_models=payload.busy_models,
+            model_vram=payload.model_vram,
             # available_models/model_resources omitted
             # (static, sent only in initial telemetry)
             source=self._source,

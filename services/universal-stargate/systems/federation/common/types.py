@@ -106,7 +106,7 @@ class FederatedGateway:
     loaded_models: frozenset[ModelId] = field(default_factory=frozenset)
     busy_models: frozenset[ModelId] = field(default_factory=frozenset)
     loading_models: frozenset[ModelId] = field(default_factory=frozenset)
-    # available_models: Measured catalog — models with vram/ram data in ~/.gateway/catalog (routing capability)
+    # available_models: Measured catalog (vram/ram in ~/.gateway/catalog)
     available_models: frozenset[ModelId] = field(default_factory=frozenset)
     # activated_models: Filtered subset for public /v1/models endpoint
     # None = not provided (fallback to available_models), frozenset() = explicitly empty
@@ -228,6 +228,17 @@ def parse_telemetry_payload(_msg_type: str, data: dict[str, Any]) -> dict[str, A
         except Exception as e:
             logger.warning(f"Failed to parse model_resources: {e}")
             parsed["model_resources"] = {}
+
+    # Parse model_vram dict (ModelId keys) — measured VRAM for eviction planning
+    if "model_vram" in parsed and isinstance(parsed["model_vram"], dict):
+        try:
+            parsed["model_vram"] = {
+                ModelId.parse(model_id): vram_mb
+                for model_id, vram_mb in parsed["model_vram"].items()
+            }
+        except Exception as e:
+            logger.warning(f"Failed to parse model_vram: {e}")
+            parsed["model_vram"] = {}
 
     return parsed
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
-import re
+
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -115,12 +115,9 @@ def _all_ids_match_prefix(ids: list[str], prefix: str) -> bool:
     return bool(ids) and all(id_.startswith(f"{prefix}-") for id_ in ids)
 
 
-def _build_source_prefix_filter(prefixes: list[str]):
-    """Build ChromaDB where-clause for source path prefix filtering."""
-    clauses = [{"source": {"$regex": f"^{re.escape(prefix)}"}} for prefix in prefixes]
-    if len(clauses) == 1:
-        return clauses[0]
-    return {"$or": clauses}
+def _matches_source_prefix(source: str, prefixes: list[str]) -> bool:
+    """Check if a chunk's source path starts with any of the given prefixes."""
+    return any(source.startswith(prefix) for prefix in prefixes)
 
 
 async def _index_file(file_path: Path) -> IndexResult:
@@ -230,17 +227,15 @@ def _apply_recency(
 async def search(request: SearchRequest) -> SearchResponse:
     collection = _get_collection()
     query_embedding = await embed_query(request.query)
-    where = (
-        _build_source_prefix_filter(request.source_prefixes)
-        if request.source_prefixes
-        else None
-    )
+
+    # ChromaDB >=1.0 dropped $regex on metadata and $contains is array-only,
+    # so source_prefixes filtering is done in Python after the query.
+    fetch_k = request.top_k * 5 if request.source_prefixes else request.top_k
 
     results = collection.query(
         query_embeddings=[query_embedding],
-        n_results=request.top_k,
+        n_results=fetch_k,
         include=["documents", "metadatas", "distances"],
-        where=where,  # pyright: ignore[reportArgumentType]
     )
 
     chunks: list[str] = results["documents"][0] if results["documents"] else []
@@ -248,6 +243,16 @@ async def search(request: SearchRequest) -> SearchResponse:
         results["metadatas"][0] if results["metadatas"] else []
     )
     distances: list[float] = results["distances"][0] if results["distances"] else []
+
+    if request.source_prefixes:
+        filtered = [
+            (chunk, meta, dist)
+            for chunk, meta, dist in zip(chunks, metadatas, distances, strict=True)
+            if _matches_source_prefix(str(meta.get("source", "")), request.source_prefixes)
+        ]
+        chunks = [x[0] for x in filtered][: request.top_k]
+        metadatas = [x[1] for x in filtered][: request.top_k]
+        distances = [x[2] for x in filtered][: request.top_k]
 
     # max_distance filters on raw cosine distances (scale-independent of recency)
     if request.max_distance is not None:
