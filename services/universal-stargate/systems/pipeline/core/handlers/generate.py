@@ -86,6 +86,7 @@ class GenericGenerateHandler(BaseHandler):
             temperature=resolved["temperature"],
             max_tokens=resolved["max_tokens"],
             json_schema=resolved["json_schema"],
+            model_id_is_resolved=True,
         )
 
         # Build output from result

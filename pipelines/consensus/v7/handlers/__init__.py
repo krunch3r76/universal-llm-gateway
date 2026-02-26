@@ -11,6 +11,7 @@ from .analyze_question import AnalyzeQuestionHandler
 from .answer import ConsensusAnswerHandler
 from .coverage_audit import CoverageAuditHandler
 from .coverage_review import CoverageReviewHandler
+from .dedup_sections import DedupSectionsHandler
 from .filter_negatives import FilterNegativesHandler
 from .organize_facts import OrganizeFactsHandler
 from .outline_review import OutlineReviewHandler
@@ -53,6 +54,9 @@ def register_handlers(router) -> None:
     )
     router.register_domain_handler_class(
         "consensus", "consensus_section_synthesize_v7", SectionSynthesizeHandler
+    )
+    router.register_domain_handler_class(
+        "consensus", "consensus_dedup_sections_v7", DedupSectionsHandler
     )
     router.register_domain_handler_class(
         "consensus", "consensus_single_call_v7", SingleCallHandler

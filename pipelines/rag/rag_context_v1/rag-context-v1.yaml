@@ -32,4 +32,5 @@ steps:
     recency_weight: 0.2
     rrf_k: 60
     research_prefix: "/mnt/torus/projects/universal-llm-gateway/docs/research/prompting"
+    engram_prefix: "/mnt/torus/projects/universal-llm-gateway/docs/engram"
     project_prefix: "/mnt/torus/projects/universal-llm-gateway"

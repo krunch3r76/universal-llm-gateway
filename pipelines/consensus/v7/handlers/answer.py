@@ -96,6 +96,7 @@ class ConsensusAnswerHandler(GenericGenerateHandler):
             temperature=resolved["temperature"],
             max_tokens=resolved["max_tokens"],
             json_schema=resolved["json_schema"],
+            model_id_is_resolved=True,
         )
 
         latency_ms = (time.time() - start_time) * 1000

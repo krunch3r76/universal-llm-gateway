@@ -80,6 +80,13 @@ class PipelineRegistry:
         self.pipelines: dict[str, PipelineSpec] = {}
         self.prompts: dict[str, Any] = {}
         self._validation_errors: list[str] = []
+        # Pipelines deferred due to missing pipeline-as-service dependencies.
+        # Retried once after all domains are loaded (deps may register later).
+        self._deferred_pipelines: list[tuple[Path, str, Path | None]] = []
+        # Pipelines permanently dropped after retry (model deps never resolved).
+        # Each entry: (pipeline_id, sorted missing model IDs).
+        # Exposed via unavailable_pipelines for caller-side event emission.
+        self._permanently_unavailable: list[tuple[str, list[str]]] = []
 
         # Search-path-scoped model storage (isolation: no cross-path fallback)
         # Outer key = search path name (e.g. "pipelines", "pipelines.local")
@@ -106,6 +113,7 @@ class PipelineRegistry:
             PipelineConfigError: If validation errors found
         """
         self._validation_errors = []
+        self._permanently_unavailable: list[tuple[str, list[str]]] = []
 
         for search_path in self._search_paths:
             try:
@@ -123,6 +131,10 @@ class PipelineRegistry:
                 self._load_from_search_path(resolved, path_name)
             except Exception as e:
                 logger.warning(f"Failed to resolve search path '{search_path}': {e}")
+
+        # Retry pipelines deferred due to missing pipeline-as-service deps.
+        # Now that all domains are loaded, their pipeline IDs are in self.pipelines.
+        self._process_deferred_pipelines()
 
         # Merge root + domain models into unified view
         self._merge_models()
@@ -198,6 +210,7 @@ class PipelineRegistry:
         self._domain_models = fresh._domain_models
         self.prompts = fresh.prompts
         self._validation_errors = fresh._validation_errors
+        self._permanently_unavailable = fresh._permanently_unavailable
 
         new_pipeline_count = len(self.pipelines)
         new_model_count = len(self.models)
@@ -252,17 +265,23 @@ class PipelineRegistry:
         if not required:
             return (False, required)  # No model requirements = always load
 
-        gateway_catalogs = self._get_gateway_catalogs()
+        gateway_catalogs = self._get_gateway_catalogs() or []
         available = set().union(*gateway_catalogs) if gateway_catalogs else set()
+
+        # Pipeline IDs are callable virtual models — treat them as available.
+        # Covers pipeline-as-service refs (e.g. rag-context used by rag-answer).
+        pipeline_virtual_ids = set(self.pipelines.keys())
+        augmented_catalogs = [*gateway_catalogs, pipeline_virtual_ids]
 
         should_filter = not are_models_available(
             required,
-            gateway_catalogs=gateway_catalogs,
+            gateway_catalogs=augmented_catalogs,
         )
 
         # Log only when filtering occurs (missing models)
         if should_filter:
-            missing = required - available
+            augmented_available = available | pipeline_virtual_ids
+            missing = required - augmented_available
             logger.info(
                 f"    🚫 Pipeline '{pipeline.id}' filtered - "
                 f"missing models: {sorted(missing)}"
@@ -615,12 +634,28 @@ class PipelineRegistry:
         for bucket in self._domain_models.values():
             self.models.update(bucket)
 
+    def _process_deferred_pipelines(self) -> None:
+        """Retry pipelines deferred due to missing pipeline-as-service dependencies.
+
+        Called once after all domains are loaded. By then, all pipeline IDs are
+        registered in self.pipelines, so pipeline-as-service refs resolve correctly.
+        ∀ deferred pipeline p: retried with defer=False to prevent infinite loops.
+        """
+        if not self._deferred_pipelines:
+            return
+        deferred = self._deferred_pipelines[:]
+        self._deferred_pipelines.clear()
+        logger.info(f"  🔄 Retrying {len(deferred)} deferred pipeline(s)")
+        for path, path_name, domain_dir in deferred:
+            self._load_pipeline(path, path_name, domain_dir=domain_dir, _defer=False)
+
     def _load_pipeline(
         self,
         path: Path,
         path_name: str,
         *,
         domain_dir: Path | None = None,
+        _defer: bool = True,
     ) -> None:
         """Load a single pipeline with availability filtering."""
         try:
@@ -668,18 +703,29 @@ class PipelineRegistry:
             # Filter by model availability
             should_filter, required = self._should_filter_pipeline(pipeline)
             if should_filter:
-                # Calculate actually missing models for accurate logging
                 if self._get_gateway_catalogs is not None:
                     gateway_catalogs = self._get_gateway_catalogs()
                     available = (
                         set().union(*gateway_catalogs) if gateway_catalogs else set()
                     )
+                    available |= set(self.pipelines.keys())
                     missing = required - available
-                    logger.info(
-                        f"    ⏭️  Skipping pipeline '{pipeline.id}' - "
-                        f"missing required models: {sorted(missing)} "
-                        f"(required: {len(required)}, available: {len(available)})"
-                    )
+                    if _defer:
+                        # Defer: a missing dep may be a pipeline not yet registered.
+                        # _process_deferred_pipelines() retries after all domains load.
+                        self._deferred_pipelines.append((path, path_name, domain_dir))
+                        logger.info(
+                            f"    ⏳ Deferred pipeline '{pipeline.id}' - "
+                            f"missing: {sorted(missing)} (will retry after all domains load)"
+                        )
+                    else:
+                        missing_list = sorted(missing)
+                        self._permanently_unavailable.append((pipeline.id, missing_list))
+                        logger.warning(
+                            f"    ⏭️  Skipping pipeline '{pipeline.id}' - "
+                            f"missing required models: {missing_list} "
+                            f"(required: {len(required)}, available: {len(available)})"
+                        )
                 return
 
             self.pipelines[pipeline.id] = pipeline
@@ -857,6 +903,16 @@ class PipelineRegistry:
             template=obj["template"],
             json_schema=obj.get("json_schema"),
         )
+
+    @property
+    def unavailable_pipelines(self) -> list[tuple[str, list[str]]]:
+        """Pipelines permanently dropped after retry.
+
+        Returns list of (pipeline_id, missing_model_ids) for each pipeline that
+        was deferred, retried, and still could not load due to unresolvable deps.
+        Callers (e.g. component_factory) may emit structured events for these.
+        """
+        return list(self._permanently_unavailable)
 
     def is_pipeline(self, model_id: str) -> bool:
         """Check if model_id refers to a pipeline."""

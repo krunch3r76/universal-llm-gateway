@@ -969,59 +969,30 @@ prompts:
   organize_facts:
     description: "Organize verified facts into a structured JSON outline for coherent answer synthesis."
     system_prompt: |
-      You organize verified facts into a coherent outline for answering a question.
-      You receive a question and a numbered list of verified facts.
-      Your task: assign every fact index to a logical section, ordered for
-      natural reading flow.
+      Assign verified facts to a logical JSON outline for answering a question.
 
       Rules:
-      - Every fact index MUST appear in exactly one section. If a fact
-        could logically belong to multiple sections, place it only in the
-        most specific section and omit it from ALL broader/parent sections.
-
-        EXAMPLE: If fact 26 ("contraindicated in renal impairment") goes
-        into "Contraindications: Renal", do NOT also include index 26 in
-        "Contraindications". A parent section contains ONLY facts that do
-        not fit into any of its sub-sections — it is the residual.
-
-        After building all sections, scan every index across every section.
-        If any index appears more than once, remove it from the broader
-        (parent) section and keep it only in the most specific sub-section.
-        Do NOT duplicate any fact index.
-      - Order facts within each section for logical flow
-        (general → specific, cause → effect, mechanism → consequence)
-      - Produce 4-10 sections for complex topics (sub-sections count toward
-        this total)
-      - HARD LIMIT: no section may contain more than 15 fact indices.
-        If a section already has 15 indices and there are additional facts
-        that belong to the same topic, you MUST split the section into
-        sub-sections before adding more. Each sub-section must contain
-        ≤15 indices. Never leave topically related facts unassigned just
-        because the parent section is full — split and assign them all.
-        Use distinct sub-topic headings (e.g., "Mechanism: Hepatic Glucose
-        Production", "Mechanism: Insulin Sensitivity", "Mechanism:
-        Mitochondrial Function").
-      - Section ordering convention (follow this sequence):
-        1. Mechanism / How it works
-        2. Clinical Uses
-        3. Contraindications by type (renal, hepatic, cardiac, pregnancy…)
-        4. Side effects by organ system (GI, allergic, …)
-        5. Precautions / Warnings (surgical holds, monitoring requirements,
-           hypoglycaemia risk, drug interactions)
-        6. Monitoring and Follow-up (if distinct from precautions)
-      - When organizing restriction/warning facts, create separate sections by type:
-        * Absolute contraindications (renal, hepatic, cardiac) → "{Type} Contraindications"
-        * Temporary holds / procedural requirements → "{Context} Precautions"
-          (NOT "Contraindications" — these are holds, not absolute bans)
-        * Pregnancy/breastfeeding caution → "Pregnancy and Breastfeeding Cautions"
-      - Do NOT merge all contraindications into one section
-      - Do NOT invent facts — only reference indices from the list
-      - Do NOT leave any fact index unassigned
-      - VERIFICATION (before returning): Count the verified facts in the
-        input. Count the total fact indices across all sections in your
-        draft. These two totals MUST be equal and every index must appear
-        exactly once. If they differ, find the missing indices and insert
-        each into the most appropriate section before returning.
+      1. Every fact index must appear in exactly one section. If a fact fits
+         multiple sections, place it only in the most specific one.
+      2. Do not duplicate any index. Do not leave any index unassigned.
+      3. If a section would reach 15 indices, split it into sub-sections
+         (each ≤15 indices) with distinct sub-topic headings.
+      4. Order sections: mechanism of action → clinical uses →
+         contraindications → side effects → precautions → monitoring.
+      5. Route contraindication and restriction facts by keyword:
+         * renal / kidney / eGFR → "Contraindications: Renal"
+         * hepatic / liver / cirrhosis / lactic acidosis / alcohol →
+           "Contraindications: Hepatic"
+         * cardiac / heart failure / myocardial infarction / stroke →
+           "Contraindications: Cardiac"
+         * pregnancy / breastfeeding → "Pregnancy Cautions"
+         * everything else → "Contraindications: Other"
+      6. Temporary holds and procedural requirements go to Precautions,
+         not Contraindications.
+      7. Before returning, verify all three:
+         a. No index appears in more than one section.
+         b. Every input index appears in exactly one section.
+         c. Total assigned indices equals total input facts.
 
       Return valid JSON only, no preamble:
       {{"sections": [{{"heading": "Section Title", "fact_indices": [1, 5, 3, 12]}}]}}
@@ -1030,6 +1001,61 @@ prompts:
 
       VERIFIED FACTS:
       {verified_facts}
+
+  assess_outline_gaps:
+    description: "Check a JSON outline for missing facts and oversized sections."
+    system_prompt: |
+      Check a JSON fact outline for two issues:
+      1. MISSING: fact indices that appear in VERIFIED FACTS but in no section.
+      2. OVERSIZED: sections whose fact_indices array has more than 15 elements.
+
+      To find missing indices: collect every integer from every fact_indices array.
+      Compare against the numbers in VERIFIED FACTS ([1] through [N]).
+      Any number absent from all sections is missing.
+
+      Return JSON:
+        action: "accept" if both lists are empty, "revise" otherwise
+        missing_indices: [list of missing numbers, empty if none]
+        overfull_sections: [list of section heading strings with >15 indices, empty if none]
+        reason: brief summary
+        target: "Missing: [N, M, ...] | Oversized: [heading, ...]" — empty string if accept
+    template: |
+      VERIFIED FACTS:
+      {verified_facts}
+
+      OUTLINE TO CHECK:
+      {artifact}
+
+  revise_outline_gaps:
+    description: "Fix a JSON outline by inserting missing facts and splitting oversized sections."
+    system_prompt: |
+      Fix a JSON fact outline. Make ONLY the changes listed in ISSUES — do not
+      reorganize or move any correctly-placed indices.
+
+      For MISSING indices: read the fact text in VERIFIED FACTS and insert the
+      index into the most appropriate section using these keywords:
+      * renal / kidney / eGFR → "Contraindications: Renal"
+      * hepatic / liver / cirrhosis / lactic acidosis / alcohol → "Contraindications: Hepatic"
+      * cardiac / heart failure / myocardial infarction / stroke → "Contraindications: Cardiac"
+      * pregnancy / breastfeeding → section for pregnancy cautions
+      * mechanism / enzyme / transporter / pathway / how it works → mechanism section
+      * clinical use / treatment / first-line / indication → clinical section
+      * everything else → Precautions or the closest matching section
+
+      For OVERSIZED sections (>15 indices): split into sub-sections with distinct
+      headings (e.g. "Mechanism: Glucose Production", "Mechanism: Insulin Sensitivity").
+      Each sub-section must contain ≤15 indices.
+
+      Return the complete corrected JSON outline only — no preamble.
+    template: |
+      ISSUES TO FIX:
+      {assess_target}
+
+      VERIFIED FACTS (for placing missing indices):
+      {verified_facts}
+
+      CURRENT OUTLINE:
+      {artifact}
 
   critique_outline:
     description: "Evaluate whether the fact outline coherently organizes all facts for the question."
@@ -1096,64 +1122,67 @@ prompts:
       - Format: {{"sections": [{{"heading": "...", "fact_indices": [...]}}]}}
 
   coverage_revise_outline:
-    description: "Insert missing facts into outline using programmatically detected gaps."
+    description: "Fix outline coverage (missing facts) and structure (oversized sections) using programmatically detected issues."
     system_prompt: |
-      You are revising a JSON outline to improve fact coverage.
-      The system has detected exactly which verified facts are missing from the
-      outline. Your job: read each missing fact and insert its index into the
-      most appropriate existing section. If no existing section fits, create a
-      new section with a clear heading.
+      You are revising a JSON fact outline. The system has computed exactly
+      what needs fixing — your job is semantic judgment only.
 
-      Return valid JSON only — no preamble, no explanation.
+      Two possible tasks (either or both may apply this iteration):
+
+      TASK A — MISSING FACTS: Insert each missing fact index into the most
+      appropriate existing section based on its content. If no section fits,
+      create a new one with a clear heading.
+
+      TASK B — OVERSIZED SECTIONS: Split any section exceeding
+      {oversized_threshold} indices into 2–3 sub-sections with distinct,
+      descriptive headings (e.g. "Mechanism: Glucose Production",
+      "Mechanism: Insulin Sensitivity"). Every sub-section must have
+      ≤{oversized_threshold} indices. Distribute the original indices across
+      the sub-sections by topic — do NOT drop any index.
+
+      Rules that apply to both tasks:
+      - Do NOT remove any existing index — every index in the input must
+        appear in the output (splitting redistributes, not deletes)
+      - Do NOT move indices from sections that are not being split and have
+        no missing-fact insertions; leave all other sections untouched
+      - Return the COMPLETE revised outline as valid JSON, no preamble
     template: |
       QUESTION: {question}
 
       CURRENT OUTLINE:
       {artifact}
 
-      MISSING FACTS ({missing_count} of {total_facts} not yet assigned):
+      TASK A — MISSING FACTS ({missing_count} of {total_facts} not yet assigned):
       {missing_facts}
 
-      ALL VERIFIED FACTS (for context when deciding placement):
+      TASK B — OVERSIZED SECTIONS (must be split, each to ≤{oversized_threshold} indices):
+      {oversized_sections}
+
+      ALL VERIFIED FACTS (for placement and split decisions):
       {verified_facts}
 
-      INSTRUCTIONS:
-      - Insert each missing index into the section where it topically belongs
-      - Read the missing fact text to decide which section fits
-      - If a fact does not fit any existing section, create a new section
-      - Do NOT remove any existing indices — only add
-      - Return the COMPLETE revised outline as valid JSON
-      - Format: {{"sections": [{{"heading": "...", "fact_indices": [...]}}]}}
+      Return the COMPLETE revised outline as valid JSON.
+      Format: {{"sections": [{{"heading": "...", "fact_indices": [...]}}]}}
 
   critique_outline_quality:
-    description: "Evaluate outline grouping, ordering, and section headings (coverage verified programmatically)."
+    description: "Evaluate outline fact misplacements (coverage and overlap verified programmatically)."
     system_prompt: |
-      You are evaluating a JSON outline for answering: {question}
+      You are checking a JSON outline for misplaced facts. {question}
 
-      GROUNDING STEP (mandatory before evaluating):
-      1. Read the OUTLINE TO EVALUATE below.
-      2. For each section, list its fact_indices exactly as they appear in the JSON.
-      3. To check for overlap: compare the fact_indices ARRAYS between sections.
-         A fact is only in a section if its integer index appears in that section's
-         fact_indices list. Do NOT infer presence from the verified facts text.
-      4. Only report an issue if it is visible in the fact_indices arrays.
+      For each section, look up the content of every fact index in VERIFIED FACTS.
+      Flag ONLY facts whose content clearly belongs in a different section:
+      - heart failure / myocardial infarction / stroke → must be in a Cardiac section
+      - liver disease / hepatic / cirrhosis / metabolic acidosis → must be in a Hepatic section
+      - renal impairment / kidney dysfunction / eGFR → must be in a Renal section
+      - mechanism / how the drug works / enzyme / transporter → must be in Mechanism
+      - pregnancy / breastfeeding → must be in a Pregnancy section
 
-      The VERIFIED FACTS list is provided ONLY to understand what each index
-      represents — never use it to determine which section a fact is in.
+      Do NOT flag ordering, duplicate indices, or section count — those are handled
+      elsewhere. Only flag facts whose content is in the wrong organ-system section.
 
-      After grounding, evaluate ONLY:
-      1. OVERLAP: Does the same integer index appear in more than one section's
-         fact_indices? If not, there is no overlap — state "no overlap found".
-      2. GROUPING: Are related facts (by their content) grouped together?
-      3. ORDERING: Within each section, do facts follow a logical sequence?
-         (general → specific, cause → effect, definition → example)
-      4. SECTIONS: Are headings clear and appropriate for the question?
-
-      If the outline is well-organized, choose "accept".
-      If grouping or ordering has clear problems, choose "revise" and give
-      specific, actionable feedback (e.g., "Move facts [5, 8] from
-      Contraindications to Mechanism of Action — they describe how the drug
-      works, not when to avoid it").
+      Accept if no clear misplacements exist.
+      Revise if misplacements found — give exact index, current section, target
+      section, and one-line reason.
 
       OUTLINE TO EVALUATE:
       {artifact}
@@ -1298,111 +1327,66 @@ prompts:
   synthesize_from_section:
     description: "Write one section of a longer answer from only the facts assigned to that section."
     system_prompt: |
-      You write one section of a longer answer from a pre-approved set of verified
-      facts. Write only the content for the section heading given.
+      You write one section from verified facts only.
 
       About: {question}
 
-      STEP 1 — CLASSIFY, THEN WRITE (MANDATORY):
-      Before producing any output, decide the format for this section:
+      STEP 1 — GROUP: Cluster facts by distinct claim. Synonyms = one
+      cluster: "renal impairment" = "kidney dysfunction", "reduces glucose
+      production" = "inhibits gluconeogenesis", "enhances insulin
+      sensitivity" = "improves sensitivity to insulin" = "increases insulin
+      sensitivity". General/summary facts that span multiple conditions
+      form their own cluster.
 
-      A. PROSE (mechanism, clinical use, narrative explanation):
-         - Group facts that assert the same claim in different words into one
-           group. Synonym variation counts: "suppresses hepatic glucose
-           production" and "inhibits gluconeogenesis in the liver" are ONE claim.
-         - Write at most ONE sentence per group. If 15 facts form 8 distinct
-           claims, write 8 sentences — not 15.
+      STEP 2 — WRITE one sentence or bullet per cluster.
+      If heading contains Contraindication/Side Effect/Warning/Precaution/Risk:
+        BULLETS. Intro sentence citing summary/general facts, then one bullet
+        per distinct condition. Synonym facts merge into one bullet. Stop
+        after last bullet.
+      Otherwise: PROSE paragraphs. Vary sentence openings.
+      Cite ALL indices per cluster: [Fact N, M]. Max 6 per sentence.
 
-      B. BULLETS (distinct enumerable items — individual symptoms, individual
-         contraindications, individual drugs, individual organ-level risks):
-         - Do NOT merge distinct items even if they share a category.
-           Nausea and vomiting are different symptoms — each gets its own bullet.
-           Renal impairment and hepatic failure are different conditions — each
-           gets its own bullet.
-         - Identify ALL general or summary facts in the list: these are facts
-           that describe the category as a whole or enumerate the same items
-           you are about to bullet (e.g. "can cause nausea, vomiting, diarrhea").
-           Cite ALL of them in the single introductory sentence — do NOT place
-           them as bullets or as a closing sentence.
-         - Write ONE introductory sentence citing all general/summary facts.
-           If no general fact exists, skip the intro entirely.
-         - Write ONE bullet per distinct item, each with its citation.
-         - After the final bullet — STOP. Write nothing after the bullets.
+      STEP 3 — CHECK: Every input fact index must appear in a citation.
+      If any missing, add to the nearest relevant sentence or bullet.
 
-      Use BULLETS when the section heading contains: Contraindication, Side
-      Effect, Warning, Precaution, Risk, Reaction, Consideration, Allerg, Hypo.
-      Use PROSE for all other sections.
-
-      STEP 2 — CITE EVERY FACT:
-      Every sentence or bullet MUST end with inline citations for every fact in the group.
-        [Fact N]      — single fact
-        [Fact N, M]   — group of facts merged into one sentence
-      Cite at most 6 indices per sentence. No sentence may appear without a citation.
-      If no facts are provided, do not produce any sentences or bullets.
-
-      STEP 3 — SENTENCE VARIETY:
-      Do NOT start 3+ consecutive sentences with the same subject.
-
-      FORMATTING:
-      - Write exactly one ### heading matching the section name given
-      - Format (prose vs. bullets) determined by Step 1 above
-      - **Bold** key terms on first mention
-
-      CONSTRAINTS:
-      - Include ALL facts provided — do not skip any
-      - Do NOT add information beyond what the facts state
-      - If the verified facts list is empty, output nothing for this section
-      - Do NOT create bullets for items not present in the provided facts
-      - Do NOT generate more bullets than there are provided facts
-      - No preamble, no closing summary — output the section only
+      One ### heading. **Bold** key terms. No preamble, no additions.
+      If no facts, output nothing.
     template: |
       SECTION: {section_heading}
 
       VERIFIED FACTS FOR THIS SECTION:
       {section_facts}
 
-  critique_redundancy:
-    description: "Identify local repetition (within-sentence, consecutive, and near-paragraph restatement) in a synthesized answer."
+      Group synonym facts into one sentence/bullet before writing.
+
+  confirm_same_claim:
+    description: "Binary check: do two sentences assert the same claim?"
     system_prompt: |
-      You are reviewing a synthesized answer for LOCAL REDUNDANCY only.
-      The answer may have section headings (### ...).
+      Do these two sentences assert the same medical claim? Answer "yes" or "no" only.
+    template: |
+      Sentence A: {sentence_a}
+      Sentence B: {sentence_b}
 
-      SCOPE: Only within the same section (### heading): (a) two clauses in
-      one sentence, or (b) any two sentences in the same section that assert
-      the same medical condition or claim (regardless of distance).
-      Never compare sentences across different sections (### headings).
+  critique_redundancy:
+    description: "Identify local repetition (within-section restatement) in a synthesized answer."
+    system_prompt: |
+      Find within-section restatements in a synthesized answer.
 
-      Rules:
-      1. Both `kept` and `deleted` must be VERBATIM sentences or clauses
-         copied from the answer — no paraphrasing or summarizing.
-      2. `kept` and `deleted` must be DIFFERENT and DISTINCT spans.
-         `kept` must not contain `deleted` as a substring.
-      3. `shared_predicate` must be a complete clause of ≤10 words stating
-         what both assert. If you cannot write one under 10 words, drop the pair.
-      4. CITATION GATE: If `deleted` contains any [Fact N] citation that does
-         not appear in `kept`, drop the pair — UNLESS both spans assert the
-         same condition or claim using equivalent wording (synonymous
-         terminology for the same concept counts). When the core claim is
-         identical, different fact numbers are duplicate sources, not unique
-         knowledge — proceed with deletion.
-      5. If either span has no [Fact N] citations, drop the pair.
-      6. Label each pair as one of: RESTATEMENT (same proposition, same
-         specificity), ELABORATION, CAUSE-EFFECT, SPECIALIZATION, or COORDINATE.
-         Deletion allowed ONLY for RESTATEMENT. Never label CAUSE-EFFECT
-         (B is the direct outcome of A) as RESTATEMENT.
-      7. If no valid RESTATEMENT pairs remain, return action: "accept".
-      8. Max 5 pairs.
+      SCOPE: Same ### section only. Never compare across sections.
 
-      EXAMPLE — valid cross-paragraph RESTATEMENT (cite gate waived):
-        Sentence A (kept): "X is contraindicated in condition Y [Fact 3]."
-        Sentence B (delete): "X should not be used in condition Y [Fact 17]."
-        → shared_predicate: "contraindicated in condition Y"
-        → Fact 17 ≠ Fact 3 but both assert the same condition: gate waived.
+      Find pairs of sentences or bullets that assert the same claim in
+      different words. Synonyms count: "renal impairment" = "kidney
+      dysfunction", "liver disease" = "severe liver disease",
+      "contraindicated" = "should avoid" = "should not be used".
 
-      For each deletion in `target`, quote the first 8+ words of the sentence
-      or clause verbatim so the reviser can locate it unambiguously.
+      For each pair:
+        kept: the more informative sentence (verbatim from text)
+        deleted: the redundant sentence (verbatim from text)
+        shared_predicate: what both assert (≤10 words)
 
-      Return ONLY the JSON object below — no other text.
+      Skip cause-effect, elaboration, or specialization relationships.
+      If no restatements found, return action: "accept".
+      Max 5 pairs. Return JSON only — no other text.
 
       ANSWER TO REVIEW:
       {artifact}

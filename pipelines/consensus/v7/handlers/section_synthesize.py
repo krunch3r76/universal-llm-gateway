@@ -104,6 +104,7 @@ class SectionSynthesizeHandler(BaseHandler):
                 {
                     "section_heading": heading,
                     "section_facts": section_facts,
+                    "fact_count": str(len(indices)),
                     "question": question,
                 },
                 context,

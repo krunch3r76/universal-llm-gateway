@@ -359,6 +359,26 @@ def create_catalog_provider(
     return provider
 
 
+async def _emit_pipeline_unavailable_events(proxy: StargateProxy) -> None:
+    """Emit pipeline.registry.unavailable for each permanently-skipped pipeline.
+
+    Called after load() and reload_pipelines() so operators can query the event
+    stream for pipelines that cannot start due to missing model dependencies.
+    ∀ (pipeline_id, missing) ∈ registry.unavailable_pipelines: signal emitted once.
+    """
+    if proxy.event_bus is None or proxy.pipeline_registry is None:
+        return
+
+    from src.scheduling.events import PipelineRegistryUnavailable
+
+    for pipeline_id, missing_models in proxy.pipeline_registry.unavailable_pipelines:
+        event = PipelineRegistryUnavailable(
+            pipeline_id=pipeline_id,
+            missing_models=missing_models,
+        )
+        await proxy.event_bus.publish_async_nowait(event)
+
+
 def _subscribe_pipeline_reload_on_catalog_change(proxy: StargateProxy) -> None:
     """
     Subscribe to federation catalog changes for pipeline reload.
@@ -392,6 +412,8 @@ def _subscribe_pipeline_reload_on_catalog_change(proxy: StargateProxy) -> None:
                     f"🔄 Pipelines reloaded after catalog change from {gateway_id}: "
                     f"{old_count} → {new_count} pipelines"
                 )
+
+            await _emit_pipeline_unavailable_events(proxy)
         except Exception as e:
             logger.error(f"Failed to reload pipelines after catalog change: {e}")
 
@@ -466,6 +488,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
             proxy.gateway_manager.pipeline_registry = proxy.pipeline_registry
 
         proxy.pipeline_registry.load()
+        await _emit_pipeline_unavailable_events(proxy)
 
         # Reload pipelines if local gateway is already connected
         # (handles case where gateway connected before pipeline system initialized)
@@ -478,6 +501,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
                     f"🔄 Pipelines reloaded after initialization: {_old} → {_new} "
                     "(local gateway already connected)"
                 )
+                await _emit_pipeline_unavailable_events(proxy)
         else:
             # Master mode (no local gateway): subscribe to federation catalog
             # changes for pipeline reload. Only Edge has gateway_manager (Stargate

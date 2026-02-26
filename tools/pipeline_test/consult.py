@@ -24,6 +24,36 @@ DEFAULT_RAG_CORPUS_DIR = Path("docs/research/prompting")
 DEFAULT_RAG_PIPELINE_ID = "rag-context"
 DEFAULT_RAG_PIPELINE_TIMEOUT = 30.0
 
+_RAG_DEFAULTS_PATH = Path(__file__).resolve().parent / "rag_defaults.yaml"
+
+
+def default_rag_source_prefixes() -> list[Path]:
+    """Default RAG source paths for ask/consult from config or fallback.
+
+    Reads tools/pipeline_test/rag_defaults.yaml when present; key
+    default_rag_source_prefixes (list of paths). Paths are resolved relative
+    to CWD. If config missing or invalid, returns [DEFAULT_RAG_CORPUS_DIR].
+    """
+    if not _RAG_DEFAULTS_PATH.is_file():
+        return [DEFAULT_RAG_CORPUS_DIR]
+    try:
+        import yaml
+
+        raw = _RAG_DEFAULTS_PATH.read_text()
+        data = yaml.safe_load(raw)
+        if not isinstance(data, dict):
+            return [DEFAULT_RAG_CORPUS_DIR]
+        prefixes = data.get("default_rag_source_prefixes")
+        if not isinstance(prefixes, list) or not prefixes:
+            return [DEFAULT_RAG_CORPUS_DIR]
+        out: list[Path] = []
+        for p in prefixes:
+            if isinstance(p, str) and p.strip():
+                out.append(Path(p.strip()).expanduser().resolve())
+        return out if out else [DEFAULT_RAG_CORPUS_DIR]
+    except Exception:  # noqa: BLE001
+        return [DEFAULT_RAG_CORPUS_DIR]
+
 DEFAULT_CONSULTANTS: list[str] = [
     "qwen3-32b-awq-32768",
     "gpt-oss-20b-mxfp4-65536",
@@ -297,6 +327,7 @@ def fetch_rag_via_pipeline(
         "model": pipeline_id,
         "messages": [{"role": "user", "content": query}],
         "stream": False,
+        "pipeline_options": {"scope_override": "research"},
     }
     try:
         with httpx.Client(timeout=timeout) as client:

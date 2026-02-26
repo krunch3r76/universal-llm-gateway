@@ -141,6 +141,26 @@ def _format_missing_facts(missing: list[int], facts: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _collect_oversized(
+    sections: list[dict[str, Any]],
+    threshold: int,
+) -> list[str]:
+    """Return headings of sections exceeding the per-section index limit.
+
+    ∀ s ∈ sections: len(s.fact_indices) > threshold ⟹ s.heading ∈ result.
+    Sections with missing or non-string heading are labelled "(unnamed section)"
+    so callers can still report them without crashing.
+    """
+    result = []
+    for s in sections:
+        if not isinstance(s.get("fact_indices"), list):
+            continue
+        if len(s["fact_indices"]) > threshold:
+            heading = s.get("heading")
+            result.append(heading if isinstance(heading, str) and heading else "(unnamed section)")
+    return result
+
+
 _STOPWORDS = frozenset("a an the is in with of to and or not are be has have for its it this that at by as was were also may been due".split())
 
 
@@ -204,8 +224,9 @@ class OutlineReviewHandler(BaseHandler):
         total_ct = 0
         call_count = 0
 
-        # ── Phase 1: coverage loop ──────────────────────────────────────
+        # ── Phase 1: coverage + oversized loop ─────────────────────────
         coverage_iters_used = 0
+        coverage_iter_log: list[dict[str, Any]] = []
         for i in range(cfg.max_coverage_iterations):
             parsed = _parse_outline(outline_raw)
             if not parsed or total_facts == 0:
@@ -215,19 +236,35 @@ class OutlineReviewHandler(BaseHandler):
             all_indices = set(range(1, total_facts + 1))
             missing = sorted(all_indices - assigned)
             coverage = len(assigned & all_indices) / total_facts
+            oversized = _collect_oversized(parsed["sections"], cfg.oversized_threshold)
 
             logger.info(
-                "Outline review '%s' coverage iter %d: %d/%d (%.0f%%), %d missing",
+                "Outline review '%s' coverage iter %d: %d/%d (%.0f%%), %d missing, %d oversized",
                 step.id,
                 i,
                 len(assigned & all_indices),
                 total_facts,
                 coverage * 100,
                 len(missing),
+                len(oversized),
             )
 
-            if coverage >= cfg.coverage_threshold:
+            if coverage >= cfg.coverage_threshold and not oversized:
+                coverage_iter_log.append({
+                    "iteration": i,
+                    "missing_count": 0,
+                    "oversized_count": 0,
+                    "exit": "clean",
+                })
                 break
+
+            coverage_iter_log.append({
+                "iteration": i,
+                "missing_count": len(missing),
+                "oversized_count": len(oversized),
+                "oversized_headings": oversized,
+                "exit": "revise",
+            })
 
             coverage_iters_used = i + 1
             revise_model = model_id
@@ -243,6 +280,8 @@ class OutlineReviewHandler(BaseHandler):
                     "artifact": outline_raw,
                     "missing_indices": ", ".join(str(m) for m in missing),
                     "missing_facts": _format_missing_facts(missing, fact_texts),
+                    "oversized_sections": ", ".join(oversized) if oversized else "(none)",
+                    "oversized_threshold": str(cfg.oversized_threshold),
                     "verified_facts": _format_numbered_facts(fact_texts),
                     "question": question,
                     "total_facts": str(total_facts),
@@ -394,12 +433,14 @@ class OutlineReviewHandler(BaseHandler):
         # ── Final metrics ───────────────────────────────────────────────
         final_assigned = 0
         final_missing: list[int] = []
+        final_oversized: list[str] = []
         final_parsed = _parse_outline(outline_raw)
         if final_parsed and total_facts > 0:
             assigned = _collect_assigned(final_parsed["sections"])
             valid = assigned & set(range(1, total_facts + 1))
             final_assigned = len(valid)
             final_missing = sorted(set(range(1, total_facts + 1)) - valid)
+            final_oversized = _collect_oversized(final_parsed["sections"], cfg.oversized_threshold)
 
         latency_ms = (time.time() - start_time) * 1000
         return StepOutput(
@@ -408,10 +449,12 @@ class OutlineReviewHandler(BaseHandler):
                 "total_facts": total_facts,
                 "facts_assigned": final_assigned,
                 "missing_indices": final_missing,
+                "oversized_sections": final_oversized,
                 "coverage_pct": round(final_assigned / total_facts * 100, 1)
                 if total_facts
                 else 0,
                 "coverage_iterations": coverage_iters_used,
+                "coverage_iter_log": coverage_iter_log,
                 "quality_iterations": quality_iters_used,
             },
             step_id=step.id,
@@ -427,6 +470,7 @@ class _ReviewConfig:
 
     __slots__ = (
         "coverage_threshold",
+        "oversized_threshold",
         "max_coverage_iterations",
         "max_quality_iterations",
         "coverage_prompt_ref",
@@ -441,6 +485,7 @@ class _ReviewConfig:
         self,
         *,
         coverage_threshold: float,
+        oversized_threshold: int,
         max_coverage_iterations: int,
         max_quality_iterations: int,
         coverage_prompt_ref: str,
@@ -451,6 +496,7 @@ class _ReviewConfig:
         assess_schema: dict[str, Any] | None,
     ) -> None:
         self.coverage_threshold = coverage_threshold
+        self.oversized_threshold = oversized_threshold
         self.max_coverage_iterations = max_coverage_iterations
         self.max_quality_iterations = max_quality_iterations
         self.coverage_prompt_ref = coverage_prompt_ref
@@ -465,6 +511,7 @@ class _ReviewConfig:
         gdf = step.get_domain_field
         return cls(
             coverage_threshold=gdf("coverage_threshold") or 0.90,
+            oversized_threshold=int(gdf("oversized_threshold") or 15),
             max_coverage_iterations=gdf("max_coverage_iterations") or 6,
             max_quality_iterations=gdf("max_quality_iterations") or 3,
             coverage_prompt_ref=gdf("coverage_prompt_ref") or "",

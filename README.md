@@ -34,7 +34,7 @@ All endpoints are served by Stargate on `:9999`.
 - [x] **Consensus pipeline (v7)** — multi-model answer generation with decomposition, domain-specific verification, veto, and structured synthesis
 - [x] **Pipeline event observability** — dedicated `/tmp/pipeline-events/` stream with per-step metrics (tokens, duration, call count)
 - [ ] **Cloud proxy stabilization** — OpenRouter integration (functional, under active development)
-- [x] **RAG-augmented routing** — `rag-query-rewrite` pipeline rewrites queries into embedding-optimized sub-queries, executes parallel retrieval with RRF merge, and generates grounded answers; callable as a virtual model ID (`model: "rag-query-rewrite"`) or via `./scripts/ask`; `source_prefixes` scopes retrieval to any indexed corpus subset; persona memory and project-scoped assistants are the next layer (see `stargate-persona-memory-model` in backlog)
+- [x] **RAG-augmented routing** — `rag-context` pipeline rewrites queries into embedding-optimized sub-queries, executes parallel retrieval with RRF merge, and returns assembled context chunks; `rag-answer` wraps it with grounded answer generation; both callable as virtual model IDs or via `./scripts/ask`; `source_prefixes` scopes retrieval to any indexed corpus subset; persona memory and project-scoped assistants are the next layer (see `stargate-persona-memory-model` in backlog)
 - [ ] **RAG recency scoring normalization** — current flat additive recency boost will be replaced with bucket-weighted hybrid scoring (cosine + BM25, time-bucketed, min-max normalized per bucket) so highly relevant older chunks can still outrank weakly relevant recent ones
 - [ ] Multi-GPU / tensor parallelism (vLLM)
 - [ ] Native VPS deployment tooling (one-command setup)
@@ -168,7 +168,7 @@ Commands come from static YAML definitions, not from model output — the model 
 | Pipeline | Model ID | Purpose |
 |---|---|---|
 | **Consensus v7** | `consensus-chain-v7` | Multi-model answer generation with decomposition, domain-specific verification, veto gates, and structured synthesis |
-| **RAG Answer v1** | `rag-query-rewrite` | General-purpose RAG Q&A: calls `rag-context` sub-pipeline for retrieval, then generates grounded answer via phi4 |
+| **RAG Answer v1** | `rag-answer` | General-purpose RAG Q&A: calls `rag-context` sub-pipeline for retrieval, then generates grounded answer via phi4 |
 | **RAG Context** | `rag-context` | Reusable retrieval sub-pipeline — query rewriting + RRF retrieval, returns context chunks; callable by any pipeline as a service |
 | **RAG Journal v3.5** | `journal-agent` | Iterative context gathering via assess loop — RAG search, git log, journal index, then model-driven expansion |
 
@@ -178,7 +178,7 @@ See [Pipeline System README](services/universal-stargate/systems/pipeline/README
 
 A **single-pass dense retrieval** RAG service — one ChromaDB collection, one embedding model, cosine similarity over HNSW. At its core this is the "Naive RAG" pattern: embed the query, retrieve top-k nearest chunks, inject into the generation prompt.
 
-The `rag-query-rewrite` pipeline layers "Advanced RAG" on top: a small model (phi4) rewrites the user question into 1–3 embedding-optimized sub-queries (handling vocabulary mismatch, step-back expansion, and multi-hop decomposition), runs them in parallel, merges results via reciprocal rank fusion, then generates a grounded answer from the retrieved context.
+The `rag-context` pipeline layers "Advanced RAG" on top: a small model (phi4) rewrites the user question into 1–3 embedding-optimized sub-queries (handling vocabulary mismatch, step-back expansion, and multi-hop decomposition), runs them in parallel, and merges results via reciprocal rank fusion. `rag-answer` wraps `rag-context` to add grounded answer generation from the retrieved context.
 
 - **Indexing**: Markdown, code, PDF (native via `pymupdf4llm`), and plain text — chunked by structure (headers, paragraphs, code blocks). PDF content-hashing (`pdf_hash`) for cross-file deduplication.
 - **Search**: Cosine similarity with optional recency decay scoring; recency is driven by `published_date` (preferred for research papers) or `indexed_at` timestamp

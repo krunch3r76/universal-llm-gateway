@@ -154,6 +154,50 @@ steps:
           required: [sections]
     timeout_seconds: 300
 
+  - name: validate_outline
+    type: assess_loop_v1
+    enabled: false
+    # Disabled: qwen2-5-7b cannot reliably compute set-difference across
+    # multi-section JSON (reports [31..64] missing when most are assigned).
+    # Missing-fact recovery and oversized-section splitting are handled
+    # programmatically by review_outline below.
+    model_ref: qwen
+    prompt_ref: consensus.v7.assess_outline_gaps
+    handler_inputs:
+      artifact: organize_facts.raw
+      verified_facts: inputs.verified_facts
+      question: inputs.question
+    artifact_key: artifact
+    assess_schema:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [revise, accept]
+        missing_indices:
+          type: array
+          items:
+            type: integer
+        overfull_sections:
+          type: array
+          items:
+            type: string
+        reason:
+          type: string
+        target:
+          type: string
+      required: [action, reason]
+    terminal_action: accept
+    max_iterations: 2
+    actions:
+      revise:
+        prompt_ref: consensus.v7.revise_outline_gaps
+        model_ref: qwen
+    generation_parameters:
+      temperature: 0.1
+      max_tokens: *max_tokens_review
+    timeout_seconds: 300
+
   - name: review_outline
     type: consensus_outline_review_v7
     model_ref: phi4
@@ -161,18 +205,21 @@ steps:
       artifact: organize_facts.raw
       verified_facts: inputs.verified_facts
       question: inputs.question
-    # Phase 1: programmatic coverage check + LLM reviser
+    # Phase 1: programmatic coverage + oversized detection; LLM reviser fixes both.
+    # Python computes missing indices and oversized headings exactly; LLM decides
+    # only WHERE to place missing facts and HOW to split oversized sections.
     coverage_threshold: 1.0
+    oversized_threshold: 15
     max_coverage_iterations: 6
     coverage_prompt_ref: consensus.v7.coverage_revise_outline
     coverage_pool:
       - qwen
-    # Phase 2: LLM quality critique (grouping, ordering, headings)
-    max_quality_iterations: 3
+    # Phase 2: LLM quality critique (misplacement only — single pass)
+    max_quality_iterations: 0
     quality_critique_ref: consensus.v7.critique_outline_quality
     quality_revise_ref: consensus.v7.revise_outline_quality
     quality_pool:
-      - phi4
+      - qwen
     assess_schema:
       type: object
       properties:
@@ -207,49 +254,11 @@ steps:
     timeout_seconds: 600
 
   - name: review_redundancy
-    type: assess_loop_v1
-    model_ref: phi4
-    assess_pool:
-      - phi4
-      - gemma_2_9b
-    prompt_ref: consensus.v7.critique_redundancy
+    type: consensus_dedup_sections_v7
     handler_inputs:
       artifact: synthesize_from_outline.raw
-      question: inputs.question
-    artifact_key: artifact
-    assess_schema:
-      type: object
-      properties:
-        action:
-          type: string
-          enum: [revise, accept]
-        repeated_items:
-          type: array
-          items:
-            type: object
-            properties:
-              kept:
-                type: string
-              deleted:
-                type: string
-              shared_predicate:
-                type: string
-            required: [kept, deleted, shared_predicate]
-        reason:
-          type: string
-        target:
-          type: string
-      required: [action, reason]
-    terminal_action: accept
-    max_iterations: 2
-    actions:
-      revise:
-        prompt_ref: consensus.v7.revise_redundancy
-        model_ref: qwen
-    generation_parameters:
-      temperature: 0.1
-      max_tokens: *max_tokens_synth
-    timeout_seconds: 600
+    overlap_threshold: 0.5
+    timeout_seconds: 30
 
   - name: review_redundancy_global
     type: assess_loop_v1

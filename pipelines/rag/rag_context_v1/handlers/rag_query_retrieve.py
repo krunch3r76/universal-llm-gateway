@@ -94,15 +94,17 @@ def _resolve_source_prefixes(
 ) -> list[str] | None:
     """Map scope label to filesystem source prefixes for RAG filtering."""
     research = step.get_domain_field("research_prefix", "")
+    engram = step.get_domain_field("engram_prefix", "")
     project = step.get_domain_field("project_prefix", "")
 
     match scope:
-        case "research" if research:
-            return [research]
+        case "research":
+            prefixes = [p for p in (research, engram) if p]
+            return prefixes or None
         case "project" if project:
             return [project]
         case "both":
-            prefixes = [p for p in (research, project) if p]
+            prefixes = [p for p in (research, engram, project) if p]
             return prefixes or None
         case _:
             return None
@@ -156,7 +158,8 @@ class RagMultiRetrieveHandler(BaseHandler):
         max_chunks: int             — total chunks after RRF (default 20)
         recency_weight: float       — recency bias 0.0–1.0 (default 0.2)
         rrf_k: int                  — RRF constant (default 60)
-        research_prefix: str        — source prefix for research scope
+        research_prefix: str        — source prefix for research papers
+        engram_prefix: str          — source prefix for engram/insight docs (optional)
         project_prefix: str         — source prefix for project scope
 
     handler_inputs:
@@ -203,7 +206,8 @@ class RagMultiRetrieveHandler(BaseHandler):
                 step.id,
             )
 
-        scope = rewrite_data.get("scope", "both")
+        scope_override: str = context.runtime_options.get("scope_override", "")
+        scope = scope_override if scope_override else rewrite_data.get("scope", "both")
         source_prefixes = _resolve_source_prefixes(step, scope)
         top_k = step.get_domain_field("top_k_per_query", 10)
         max_chunks = step.get_domain_field("max_chunks", 20)

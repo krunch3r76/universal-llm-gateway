@@ -475,6 +475,12 @@ class BaseHandler(AbstractStepHandler):
                 logger.debug(f"Resolved model alias: {model_id} → {resolved}")
             return resolved
         except KeyError:
+            # Pipeline IDs are callable virtual models (pipeline-as-service).
+            # Treat them as full IDs: bypass alias lookup and let routing handle them.
+            if registry.is_pipeline(model_id):
+                logger.debug(f"Model '{model_id}' is a pipeline ID, using as-is")
+                return model_id
+
             # Check if it looks like a full ID (contains version indicators)
             # Full IDs have patterns: name-version-variant-quantization-context
             if self._looks_like_full_model_id(model_id):
@@ -553,6 +559,7 @@ class BaseHandler(AbstractStepHandler):
         disable_json_response: bool = False,
         call_label: str = "",
         metadata: dict[str, Any] | None = None,
+        model_id_is_resolved: bool = False,
     ) -> ModelCallResult:
         """
         Invoke model and return complete result.
@@ -577,6 +584,12 @@ class BaseHandler(AbstractStepHandler):
                 "verify", "classify"). Helps distinguish sub-calls in complex handlers.
             metadata: Optional dict forwarded to ModelInvocation for viewer linkage
                 (e.g., claim_ids for verify_batch).
+            model_id_is_resolved: If True, skip alias resolution — caller has
+                already resolved the ID via registry (e.g. GenericGenerateHandler
+                passes model_config.model directly to avoid a second round-trip).
+                Pipeline-as-service IDs must be pre-resolved by the caller or
+                resolved via _resolve_model_alias first; they are not re-entered
+                here.
 
         Returns:
             ModelCallResult with content, request body, tokens,
@@ -591,8 +604,12 @@ class BaseHandler(AbstractStepHandler):
         from ..events.inference import ModelInvocation
         from ..execution.proxy_client import ProxyClientError
 
-        # AUTO-RESOLVE model alias to full ID
-        resolved_model_id = self._resolve_model_alias(model_id, context)
+        # AUTO-RESOLVE model alias to full ID (unless caller already resolved it)
+        resolved_model_id = (
+            model_id
+            if model_id_is_resolved
+            else self._resolve_model_alias(model_id, context)
+        )
 
         # Build messages
         messages = []
@@ -657,7 +674,7 @@ class BaseHandler(AbstractStepHandler):
             e.add_note(f"Pipeline step: {step.id}")
             e.add_note(f"Execution ID: {context.execution_id}")
             e.add_note(f"Model: {resolved_model_id}")
-            if resolved_model_id != model_id:
+            if not model_id_is_resolved and resolved_model_id != model_id:
                 e.add_note(f"Resolved from alias: {model_id}")
             logger.error(
                 f"Model invocation failed: {e.status_code} {e.detail} "

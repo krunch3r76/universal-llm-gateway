@@ -616,6 +616,23 @@ Payload: {
 """
 
 # ========================================
+# Pipeline Registry Events
+# ========================================
+
+PIPELINE_REGISTRY_UNAVAILABLE = "pipeline.registry.unavailable"
+"""
+Pipeline permanently skipped — required models missing after deferred retry.
+
+Emitted once per unavailable pipeline after each registry load or reload.
+∀ id: model deps unresolvable against current gateway catalogs + registered pipelines.
+
+Payload: {
+    "pipeline_id": str,    # Pipeline that could not be loaded
+    "missing_models": list[str],  # Model IDs that were not found
+}
+"""
+
+# ========================================
 # Pipeline Step Events: Embedding
 # ========================================
 
@@ -2587,4 +2604,25 @@ def CloudProxyCatalogFetchFailed(proxy_url: str, error: str) -> Event:  # noqa: 
     return Event(
         signal=CLOUD_PROXY_CATALOG_FETCH_FAILED,
         payload={"proxy_url": proxy_url, "error": error},
+    )
+
+
+@event_factory
+def PipelineRegistryUnavailable(  # noqa: N802
+    pipeline_id: str,
+    missing_models: list[str],
+) -> Event:
+    """
+    Pipeline permanently skipped after deferred retry — model deps unresolvable.
+
+    Payload:
+        pipeline_id: Pipeline ID that could not be loaded
+        missing_models: Model IDs absent from all gateway catalogs and pipeline registry
+    """
+    return Event(
+        signal=PIPELINE_REGISTRY_UNAVAILABLE,
+        payload={
+            "pipeline_id": pipeline_id,
+            "missing_models": missing_models,
+        },
     )

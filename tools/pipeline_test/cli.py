@@ -33,6 +33,7 @@ from . import snapshot as snapshot_svc
 from .models import ReplayOverrides
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+DEFAULT_REPLAY_DIR = Path("/tmp/replay")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -262,7 +263,14 @@ def _add_replay_parser(sub: Any) -> None:
         "--prompt-ref",
         help="Override prompt name for re-render (e.g., critique_redundancy_global)",
     )
-    p.add_argument("--output", "-o", help="Save result to file")
+    p.add_argument(
+        "--output",
+        "-o",
+        help=(
+            "Save replay result JSON. If relative, saved under "
+            f"{DEFAULT_REPLAY_DIR}."
+        ),
+    )
     p.add_argument(
         "--url", default=replay_svc.DEFAULT_STARGATE_URL, help="Stargate URL"
     )
@@ -314,8 +322,11 @@ def _cmd_replay(args: argparse.Namespace) -> None:
     print(result.response_text)
 
     if args.output:
-        replay_svc.save_replay_result(result, args.output)
-        print(f"\nResult saved: {args.output}")
+        output_path = Path(args.output)
+        if not output_path.is_absolute():
+            output_path = DEFAULT_REPLAY_DIR / output_path
+        replay_svc.save_replay_result(result, output_path)
+        print(f"\nResult saved: {output_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +351,12 @@ def _add_compare_parser(sub: Any) -> None:
 
 def _cmd_compare(args: argparse.Namespace) -> None:
     snap = _load_snapshot(args)
-    replay_result = replay_svc.load_replay_result(args.replay_file)
+    replay_path = Path(args.replay_file)
+    if not replay_path.is_absolute() and not replay_path.exists():
+        candidate = DEFAULT_REPLAY_DIR / replay_path
+        if candidate.exists():
+            replay_path = candidate
+    replay_result = replay_svc.load_replay_result(replay_path)
 
     step = _resolve_step(snap, args.step)
 
@@ -368,6 +384,18 @@ def _cmd_compare(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # consult
 # ---------------------------------------------------------------------------
+
+
+def _resolve_rag_source_prefixes(args: argparse.Namespace) -> list[str]:
+    """Resolve RAG source paths: --rag-source-prefix, else --rag-corpus, else config."""
+    if getattr(args, "rag_source_prefix", None):
+        return [
+            str(Path(prefix).expanduser().resolve())
+            for prefix in args.rag_source_prefix
+        ]
+    if getattr(args, "rag_corpus", None):
+        return [str(Path(args.rag_corpus).expanduser().resolve())]
+    return [str(p) for p in consult_svc.default_rag_source_prefixes()]
 
 
 def _add_consult_parser(sub: Any) -> None:
@@ -437,8 +465,9 @@ def _add_consult_parser(sub: Any) -> None:
     )
     p.add_argument(
         "--rag-corpus",
-        default=str(consult_svc.DEFAULT_RAG_CORPUS_DIR),
-        help="Default source prefix for RAG lookup (direct search path only)",
+        default=None,
+        metavar="PATH",
+        help="Single-path override for RAG sources (direct search only); else rag_defaults.yaml",
     )
     p.add_argument(
         "--rag-source-prefix",
@@ -522,14 +551,7 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         )
         print()
 
-        source_prefixes = (
-            [
-                str(Path(prefix).expanduser().resolve())
-                for prefix in args.rag_source_prefix
-            ]
-            if args.rag_source_prefix
-            else [str(Path(args.rag_corpus).expanduser().resolve())]
-        )
+        source_prefixes = _resolve_rag_source_prefixes(args)
         rag_findings, rag_error = consult_svc.fetch_rag_findings(
             args.problem,
             rag_url=args.rag_url,
@@ -637,8 +659,9 @@ def _add_ask_parser(sub: Any) -> None:
     )
     p.add_argument(
         "--rag-corpus",
-        default=str(consult_svc.DEFAULT_RAG_CORPUS_DIR),
-        help="Default source prefix for RAG lookup (direct search path only)",
+        default=None,
+        metavar="PATH",
+        help="Single-path override for RAG sources (direct search only); else rag_defaults.yaml",
     )
     p.add_argument(
         "--rag-source-prefix",
@@ -694,14 +717,7 @@ def _cmd_ask(args: argparse.Namespace) -> None:
         )
         print(f"  Budget: {ctx_len}tok context → RAG≤{budget.adaptive_top_k} chunks")
 
-        source_prefixes = (
-            [
-                str(Path(prefix).expanduser().resolve())
-                for prefix in args.rag_source_prefix
-            ]
-            if args.rag_source_prefix
-            else [str(Path(args.rag_corpus).expanduser().resolve())]
-        )
+        source_prefixes = _resolve_rag_source_prefixes(args)
         rag_findings, rag_error = consult_svc.fetch_rag_findings(
             args.question,
             rag_url=args.rag_url,

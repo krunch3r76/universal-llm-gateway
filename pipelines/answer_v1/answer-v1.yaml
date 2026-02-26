@@ -1,11 +1,11 @@
 schema_version: 6
-id: rag-query-rewrite
+id: rag-answer
 version: "1.0"
 type: answer_v1
 description: >
-  RAG-augmented generation pipeline. Delegates query rewriting + retrieval to
-  rag-context (pipeline-as-service), then generates a grounded answer from the
-  assembled context using phi4.
+  RAG answer pipeline. Delegates query rewriting + retrieval to rag-context
+  (pipeline-as-service), then generates a grounded answer from the assembled
+  context using phi4.
 output: answer
 
 options:
@@ -21,7 +21,7 @@ steps:
   - name: answer
     type: generate
     depends_on: [get_context]
-    model_ref: phi4
+    model_ref: answer
     prompt_ref: answer_v1.answer
     handler_inputs:
       rag_context: "get_context.raw"
