@@ -34,6 +34,8 @@ All endpoints are served by Stargate on `:9999`.
 - [x] **Consensus pipeline (v7)** — multi-model answer generation with decomposition, domain-specific verification, veto, and structured synthesis
 - [x] **Pipeline event observability** — dedicated `/tmp/pipeline-events/` stream with per-step metrics (tokens, duration, call count)
 - [ ] **Cloud proxy stabilization** — OpenRouter integration (functional, under active development)
+- [ ] **RAG-augmented routing** — prompt-driven query rewriting step selects retrieval parameters (top_k, recency, source scope) before routing to local or cloud models; enables general-purpose knowledge-base chat, project-scoped assistants, and virtual model IDs with persistent persona memory backed by indexed corpora
+- [ ] **RAG recency scoring normalization** — current flat additive recency boost will be replaced with bucket-weighted hybrid scoring (cosine + BM25, time-bucketed, min-max normalized per bucket) so highly relevant older chunks can still outrank weakly relevant recent ones
 - [ ] Multi-GPU / tensor parallelism (vLLM)
 - [ ] Native VPS deployment tooling (one-command setup)
 - [ ] Simplified model onboarding (CLI wizard or web UI)
@@ -175,7 +177,8 @@ See [Pipeline System README](services/universal-stargate/systems/pipeline/README
 A ChromaDB-backed semantic search service that indexes local files and serves retrieval queries for pipelines and agents.
 
 - **Indexing**: Markdown, code, PDF, and plain text — chunked by structure (headers, paragraphs, code blocks)
-- **Search**: Cosine similarity with optional recency decay scoring
+- **Search**: Cosine similarity with optional recency decay scoring; recency is driven by `published_date` (PDFs, takes priority) or `indexed_at` timestamp
+- **Corpus scoping**: `source_prefixes` parameter restricts results to chunks under given path prefixes — multiple logical corpora in a single collection
 - **File watching**: Automatic reindexing via inotify with periodic reconciliation
 - **Embeddings**: Uses a local embedding model (`bge-m3`) via the Gateway — no external calls
 
