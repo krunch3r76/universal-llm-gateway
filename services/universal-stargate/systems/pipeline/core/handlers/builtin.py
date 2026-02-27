@@ -806,8 +806,9 @@ class BaseHandler(AbstractStepHandler):
         return result
 
 
-# Import generate so GenericGenerateHandler is registered and re-exportable.
+# Import generate and pipeline_call so handlers are registered and re-exportable.
 from . import generate as _generate  # noqa: E402, F401
+from . import pipeline_call as _pipeline_call  # noqa: E402, F401
 from .generate import GenericGenerateHandler  # noqa: E402, F401
 
 

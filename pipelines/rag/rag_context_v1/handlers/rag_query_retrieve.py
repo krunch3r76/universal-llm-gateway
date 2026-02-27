@@ -152,12 +152,12 @@ class RagMultiRetrieveHandler(BaseHandler):
     executes parallel RAG searches for each rewritten query,
     merges via reciprocal rank fusion, and returns formatted context.
 
-    Domain fields (from pipeline YAML step config):
+    Options (context.options — YAML options + pipeline_options overrides):
+        rag_top_k_per_query, rag_max_chunks, rag_rrf_k, rag_recency_weight,
+        scope_confidence_threshold, scope_override, rag_source_prefixes (optional).
+
+    Domain fields (from pipeline YAML step config, structural only):
         endpoint: str               — RAG service URL
-        top_k_per_query: int        — chunks per sub-query (default 10)
-        max_chunks: int             — total chunks after RRF (default 20)
-        recency_weight: float       — recency bias 0.0–1.0 (default 0.2)
-        rrf_k: int                  — RRF constant (default 60)
         research_prefix: str        — source prefix for research papers
         engram_prefix: str          — source prefix for engram/insight docs (optional)
         project_prefix: str         — source prefix for project scope
@@ -206,13 +206,39 @@ class RagMultiRetrieveHandler(BaseHandler):
                 step.id,
             )
 
-        scope_override: str = context.runtime_options.get("scope_override", "")
-        scope = scope_override if scope_override else rewrite_data.get("scope", "both")
-        source_prefixes = _resolve_source_prefixes(step, scope)
-        top_k = step.get_domain_field("top_k_per_query", 10)
-        max_chunks = step.get_domain_field("max_chunks", 20)
-        rrf_k = step.get_domain_field("rrf_k", 60)
-        recency_weight: float = step.get_domain_field("recency_weight", 0.2)
+        opts = context.options
+        top_k = int(opts.get("rag_top_k_per_query", 10))
+        max_chunks = int(opts.get("rag_max_chunks", 20))
+        rrf_k = int(opts.get("rag_rrf_k", 35))
+        recency_weight = float(opts.get("rag_recency_weight", 0.2))
+        confidence_threshold = float(opts.get("scope_confidence_threshold", 0.7))
+
+        explicit_prefixes: list[str] | None = opts.get("rag_source_prefixes")
+        if explicit_prefixes:
+            source_prefixes = explicit_prefixes
+            scope = "custom"
+        else:
+            scope_override_val: str = opts.get("scope_override", "")
+            if scope_override_val:
+                scope = scope_override_val
+            else:
+                predicted_scope = rewrite_data.get("scope", "both")
+                scope_confidence = float(rewrite_data.get("scope_confidence", 1.0))
+                scope = (
+                    predicted_scope
+                    if scope_confidence >= confidence_threshold
+                    else "both"
+                )
+                if scope != predicted_scope:
+                    logger.info(
+                        "Step '%s': scope_confidence=%.2f < threshold=%.2f, "
+                        "overriding scope '%s' → 'both'",
+                        step.id,
+                        scope_confidence,
+                        confidence_threshold,
+                        predicted_scope,
+                    )
+            source_prefixes = _resolve_source_prefixes(step, scope)
 
         logger.info(
             "Step '%s': executing %d queries (scope=%s, top_k=%d, rrf_k=%d)",
@@ -266,6 +292,13 @@ class RagMultiRetrieveHandler(BaseHandler):
                 "raw_chunks_total": total_raw,
                 "scope": scope,
                 "rewritten_queries": queries,
+                "effective_params": {
+                    "top_k_per_query": top_k,
+                    "max_chunks": max_chunks,
+                    "rrf_k": rrf_k,
+                    "recency_weight": recency_weight,
+                    "scope_confidence_threshold": confidence_threshold,
+                },
             },
         )
 

@@ -13,14 +13,12 @@ options:
 
 steps:
   - name: get_context
-    type: generate
-    model_ref: rag_context
-    prompt_ref: answer_v1.passthrough
-    timeout_seconds: 60
+    type: pipeline_call_v1
+    pipeline_id: "rag-context"
+    timeout_seconds: 70
 
   - name: answer
     type: generate
-    depends_on: [get_context]
     model_ref: answer
     prompt_ref: answer_v1.answer
     handler_inputs:

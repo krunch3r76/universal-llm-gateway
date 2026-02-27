@@ -1,15 +1,12 @@
 """
 project_journal shared handler registration.
 
-pipeline_call_v1 — calls any pipeline via Stargate chat completions.
-Shared across all project_journal variants.
+pipeline_call_v1 is provided by core builtin; no domain-specific handlers here.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-
-from .pipeline_call import PipelineCallHandler
 
 if TYPE_CHECKING:
     from systems.pipeline.core.domain_router import DomainRouter
@@ -17,6 +14,5 @@ if TYPE_CHECKING:
 
 def register_handlers(router: DomainRouter) -> None:
     """Register all shared project_journal handlers."""
-    router.register_domain_handler_class(
-        "project_journal", "pipeline_call_v1", PipelineCallHandler
-    )
+    # pipeline_call_v1 is registered as core builtin; no domain registration needed
+    pass

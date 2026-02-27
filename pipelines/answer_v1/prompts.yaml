@@ -19,6 +19,15 @@ prompts:
       - If the research doesn't cover the question, say so and provide
         your best guidance
       - Structure complex answers with clear sections
+
+      Example of a well-cited response:
+      Q: How does chain-of-thought improve reasoning?
+      A: Chain-of-thought prompting decomposes complex problems into intermediate
+      steps, improving accuracy on arithmetic and symbolic tasks by 10–30% over
+      standard prompting (Wei et al., 2022 — Source: chain-of-thought.pdf). The
+      technique is most effective with models above 60B parameters; smaller models
+      benefit more from structured decomposition with explicit sub-question
+      formatting.
     template: |
       ## Research Context
 

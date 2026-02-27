@@ -267,8 +267,7 @@ def _add_replay_parser(sub: Any) -> None:
         "--output",
         "-o",
         help=(
-            "Save replay result JSON. If relative, saved under "
-            f"{DEFAULT_REPLAY_DIR}."
+            f"Save replay result JSON. If relative, saved under {DEFAULT_REPLAY_DIR}."
         ),
     )
     p.add_argument(
@@ -455,25 +454,35 @@ def _add_consult_parser(sub: Any) -> None:
         "--rag-top-k",
         type=int,
         default=budget_svc.MAX_RAG_TOP_K,
-        help="RAG chunk cap (direct search path only, adapts to context budget)",
+        help=(
+            "RAG chunk cap; adapts to context budget. "
+            "Direct path: limits top_k. "
+            "Pipeline path: sets rag_max_chunks + rag_top_k_per_query."
+        ),
     )
     p.add_argument(
         "--rag-timeout",
         type=float,
         default=consult_svc.DEFAULT_RAG_TIMEOUT,
-        help="RAG request timeout (s)",
+        help="RAG request timeout in seconds (direct search path only)",
     )
     p.add_argument(
         "--rag-corpus",
         default=None,
         metavar="PATH",
-        help="Single-path override for RAG sources (direct search only); else rag_defaults.yaml",
+        help=(
+            "Single-path override for RAG sources; else rag_defaults.yaml. "
+            "Applies to both direct and pipeline paths."
+        ),
     )
     p.add_argument(
         "--rag-source-prefix",
         action="append",
         default=[],
-        help="Repeatable RAG source prefix override (direct search path only)",
+        help=(
+            "Repeatable RAG source prefix override. "
+            "Applies to both direct and pipeline paths (forwarded as rag_source_prefixes)."
+        ),
     )
     p.add_argument(
         "--rag-recency",
@@ -482,7 +491,8 @@ def _add_consult_parser(sub: Any) -> None:
         metavar="WEIGHT",
         help=(
             "Recency weight for RAG search [0.0–1.0]; "
-            f"0 disables (default: {consult_svc.DEFAULT_RAG_RECENCY_WEIGHT})"
+            f"0 disables (default: {consult_svc.DEFAULT_RAG_RECENCY_WEIGHT}). "
+            "Applies to both direct and pipeline paths."
         ),
     )
     p.set_defaults(func=_cmd_consult)
@@ -514,21 +524,40 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         print(f"  Budget: {ctx_len}tok context (no RAG)")
         print()
     elif args.rag_pipeline:
-        output_limit = budget_svc.compute_budget(
+        budget = budget_svc.compute_budget(
             ctx_len,
             fixed_chars,
             output_chars,
-            top_k_cap=0,
-        ).output_limit_chars
+            top_k_cap=args.rag_top_k,
+        )
+        output_limit = budget.output_limit_chars
+        source_prefixes = _resolve_rag_source_prefixes(args)
+
+        rag_options: dict[str, Any] = {
+            "scope_override": "research",
+            "rag_max_chunks": budget.adaptive_top_k,
+            "rag_top_k_per_query": max(budget.adaptive_top_k, 10),
+            "rag_rrf_k": consult_svc.DEFAULT_RAG_RRF_K,
+            "rag_recency_weight": args.rag_recency,
+            "scope_confidence_threshold": 0.7,
+        }
+        if source_prefixes:
+            rag_options["rag_source_prefixes"] = [str(p) for p in source_prefixes]
+
         print(
-            f"  Budget: {ctx_len}tok context (RAG via pipeline '{args.rag_pipeline}')"
+            f"  Budget: {ctx_len}tok context → "
+            f"output≤{budget.output_limit_chars} chars, "
+            f"RAG≤{budget.adaptive_top_k} chunks "
+            f"(via pipeline '{args.rag_pipeline}')"
         )
         print()
+
         rag_findings, rag_error = consult_svc.fetch_rag_via_pipeline(
             args.problem,
             pipeline_id=args.rag_pipeline,
             stargate_url=args.url,
             timeout=consult_svc.DEFAULT_RAG_PIPELINE_TIMEOUT,
+            pipeline_options=rag_options,
         )
         if rag_error:
             print(f"  RAG pipeline '{args.rag_pipeline}': unavailable ({rag_error})")
@@ -649,25 +678,35 @@ def _add_ask_parser(sub: Any) -> None:
         "--rag-top-k",
         type=int,
         default=budget_svc.MAX_RAG_TOP_K,
-        help="RAG chunk cap (direct search path only, adapts to context budget)",
+        help=(
+            "RAG chunk cap; adapts to context budget. "
+            "Direct path: limits top_k. "
+            "Pipeline path: sets rag_max_chunks + rag_top_k_per_query."
+        ),
     )
     p.add_argument(
         "--rag-timeout",
         type=float,
         default=consult_svc.DEFAULT_RAG_TIMEOUT,
-        help="RAG request timeout (s)",
+        help="RAG request timeout in seconds (direct search path only)",
     )
     p.add_argument(
         "--rag-corpus",
         default=None,
         metavar="PATH",
-        help="Single-path override for RAG sources (direct search only); else rag_defaults.yaml",
+        help=(
+            "Single-path override for RAG sources; else rag_defaults.yaml. "
+            "Applies to both direct and pipeline paths."
+        ),
     )
     p.add_argument(
         "--rag-source-prefix",
         action="append",
         default=[],
-        help="Repeatable RAG source prefix override (direct search path only)",
+        help=(
+            "Repeatable RAG source prefix override. "
+            "Applies to both direct and pipeline paths (forwarded as rag_source_prefixes)."
+        ),
     )
     p.add_argument(
         "--rag-recency",
@@ -676,7 +715,8 @@ def _add_ask_parser(sub: Any) -> None:
         metavar="WEIGHT",
         help=(
             "Recency weight for RAG search [0.0-1.0]; "
-            f"0 disables (default: {consult_svc.DEFAULT_RAG_RECENCY_WEIGHT})"
+            f"0 disables (default: {consult_svc.DEFAULT_RAG_RECENCY_WEIGHT}). "
+            "Applies to both direct and pipeline paths."
         ),
     )
     p.set_defaults(func=_cmd_ask)
@@ -691,11 +731,41 @@ def _cmd_ask(args: argparse.Namespace) -> None:
     if args.no_rag:
         print("  RAG: disabled")
     elif args.rag_pipeline:
+        ctx_len = budget_svc.resolve_min_context_length(
+            target_models,
+            stargate_url=args.url,
+        )
+        fixed_chars = ask_svc.estimate_fixed_chars(args.question)
+        budget = budget_svc.compute_budget(
+            ctx_len,
+            fixed_chars,
+            output_chars=0,
+            top_k_cap=args.rag_top_k,
+        )
+
+        source_prefixes = _resolve_rag_source_prefixes(args)
+        rag_options: dict[str, Any] = {
+            "rag_max_chunks": budget.adaptive_top_k,
+            "rag_top_k_per_query": max(budget.adaptive_top_k, 10),
+            "rag_rrf_k": consult_svc.DEFAULT_RAG_RRF_K,
+            "rag_recency_weight": args.rag_recency,
+            "scope_confidence_threshold": 0.7,
+        }
+        if source_prefixes:
+            rag_options["rag_source_prefixes"] = [str(p) for p in source_prefixes]
+
+        print(
+            f"  Budget: {ctx_len}tok → RAG≤{budget.adaptive_top_k} chunks "
+            f"(via pipeline '{args.rag_pipeline}')"
+        )
+        print()
+
         rag_findings, rag_error = consult_svc.fetch_rag_via_pipeline(
             args.question,
             pipeline_id=args.rag_pipeline,
             stargate_url=args.url,
             timeout=consult_svc.DEFAULT_RAG_PIPELINE_TIMEOUT,
+            pipeline_options=rag_options,
         )
         if rag_error:
             print(f"  RAG pipeline '{args.rag_pipeline}': unavailable ({rag_error})")

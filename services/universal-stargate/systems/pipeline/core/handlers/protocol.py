@@ -58,6 +58,7 @@ class StepOutput:
 
     raw: str
     json: dict[str, Any] | None = None
+    json_parse_error: str | None = None  # Why json is null when json_schema was set
     prompt_tokens: int = 0  # Tokens in prompt (system + user messages)
     completion_tokens: int = 0  # Tokens in model response
     latency_ms: float = 0.0

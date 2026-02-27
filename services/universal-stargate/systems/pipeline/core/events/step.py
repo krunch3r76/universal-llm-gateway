@@ -47,11 +47,13 @@ def StepCompleted(  # noqa: N802
     completion_tokens: int,
     model_call_count: int,
     exit_code: int | None = None,
+    json_output_keys: list[str] | None = None,
 ) -> Event:
     """Emitted when step completes successfully.
 
     Optional exit_code: populated for shell_v1 steps (non-None even on rc=0).
     Enables event consumers to detect non-zero shell exits that produced output.
+    Optional json_output_keys: top-level keys of JSON output (observability).
     """
     payload: dict = {
         "pipeline_id": pipeline_id,
@@ -65,6 +67,8 @@ def StepCompleted(  # noqa: N802
     }
     if exit_code is not None:
         payload["exit_code"] = exit_code
+    if json_output_keys is not None:
+        payload["json_output_keys"] = json_output_keys
     return Event(
         signal="pipeline.step.completed",
         payload=payload,

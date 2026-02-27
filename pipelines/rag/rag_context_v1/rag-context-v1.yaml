@@ -1,6 +1,6 @@
 schema_version: 6
 id: rag-context
-version: "1.0"
+version: "1.1"
 type: rag
 description: >
   RAG query rewriting + multi-query retrieval without generation.
@@ -10,7 +10,16 @@ description: >
 output: retrieve_assemble
 
 options:
-  timeout_seconds: 30
+  timeout_seconds: 60    # §4.2: raised from 30s; GPU contention headroom
+  # --- Retrieval tunables (overridable via pipeline_options) ---
+  rag_top_k_per_query: 10
+  rag_max_chunks: 20
+  rag_rrf_k: 35           # §4.3: k=60 compresses rank diffs to 13% for N≤3 lists;
+                          #        k=35 yields 23% — Cormack/Clarke/Butt 2009 tuned
+                          #        k=60 on TREC Web with 3–5 systems, not 1–3
+  rag_recency_weight: 0.2  # §4.6: linear additive; deeper decay model deferred
+  scope_confidence_threshold: 0.7  # §4.4: CRAG 3-state evaluation — queries below
+                                   #        threshold fall back to scope="both"
 
 steps:
   - name: analyze_rewrite
@@ -18,19 +27,16 @@ steps:
     model_ref: phi4
     prompt_ref: rag.rag_context_v1.analyze_rewrite
     generation_parameters:
-      temperature: 0.1
+      temperature: 0.4   # §4.1: T=0.1→0.4; all 4 sources agree moderate temp
+                         #        improves sub-query diversity 3–8% recall;
+                         #        JSON schema constraint keeps output reliable
       max_tokens: 512
 
   - name: retrieve_assemble
     type: rag_multi_retrieve_v1
-    depends_on: [analyze_rewrite]
     endpoint: "http://localhost:8100/search"
     handler_inputs:
       rewrite_result: "analyze_rewrite.json"
-    top_k_per_query: 10
-    max_chunks: 20
-    recency_weight: 0.2
-    rrf_k: 60
     research_prefix: "/mnt/torus/projects/universal-llm-gateway/docs/research/prompting"
     engram_prefix: "/mnt/torus/projects/universal-llm-gateway/docs/engram"
     project_prefix: "/mnt/torus/projects/universal-llm-gateway"

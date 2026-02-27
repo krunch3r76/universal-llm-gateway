@@ -18,14 +18,18 @@ MODEL="rag-answer"
 RAW=false
 OUT_DIR="${ASK_OUT_DIR:-./tmp/ask}"
 OUT_FILE=""
+SCOPE=""
+SOURCE_PREFIXES=()
 
 usage() {
     cat <<'EOF'
-Usage: ask [-m MODEL] [-u URL] [-r] [-d OUT_DIR] [-o OUT_FILE] [QUESTION]
+Usage: ask [-m MODEL] [-u URL] [-r] [-s SCOPE] [-p PREFIX] [-d OUT_DIR] [-o OUT_FILE] [QUESTION]
 
   -m MODEL   Model or pipeline ID (default: rag-answer)
   -u URL     Stargate URL (default: http://localhost:9999)
   -r         Print raw JSON response
+  -s SCOPE   scope_override: research|project|both
+  -p PREFIX  RAG source prefix path (repeatable)
   -d OUT_DIR Output directory for relative -o paths (default: ./tmp/ask or $ASK_OUT_DIR)
   -o OUT_FILE Save output to file. If relative, saved under OUT_DIR.
   -h         Show this help
@@ -35,11 +39,13 @@ EOF
     exit 0
 }
 
-while getopts "m:u:ro:d:h" opt; do
+while getopts "m:u:rs:p:o:d:h" opt; do
     case "$opt" in
         m) MODEL="$OPTARG" ;;
         u) STARGATE_URL="$OPTARG" ;;
         r) RAW=true ;;
+        s) SCOPE="$OPTARG" ;;
+        p) SOURCE_PREFIXES+=("$OPTARG") ;;
         o) OUT_FILE="$OPTARG" ;;
         d) OUT_DIR="$OPTARG" ;;
         h) usage ;;
@@ -57,11 +63,32 @@ else
     usage
 fi
 
-BODY=$(jq -nc --arg model "$MODEL" --arg q "$QUESTION" '{
-    model: $model,
-    messages: [{role: "user", content: $q}],
-    stream: false
-}')
+# Build pipeline_options only if any RAG tuning flags were set
+PIPELINE_OPTS=""
+if [ -n "$SCOPE" ] || [ ${#SOURCE_PREFIXES[@]} -gt 0 ]; then
+    PIPELINE_OPTS=$(jq -nc \
+        --arg scope "$SCOPE" \
+        --argjson prefixes "$(printf '%s\n' "${SOURCE_PREFIXES[@]}" | jq -R . | jq -sc .)" \
+        '{} +
+         (if $scope != "" then {scope_override: $scope} else {} end) +
+         (if ($prefixes | length) > 0 then {rag_source_prefixes: $prefixes} else {} end)')
+fi
+
+if [ -n "$PIPELINE_OPTS" ]; then
+    BODY=$(jq -nc --arg model "$MODEL" --arg q "$QUESTION" \
+        --argjson opts "$PIPELINE_OPTS" '{
+        model: $model,
+        messages: [{role: "user", content: $q}],
+        stream: false,
+        pipeline_options: $opts
+    }')
+else
+    BODY=$(jq -nc --arg model "$MODEL" --arg q "$QUESTION" '{
+        model: $model,
+        messages: [{role: "user", content: $q}],
+        stream: false
+    }')
+fi
 
 RESPONSE=$(curl -sf --max-time 180 \
     "${STARGATE_URL}/v1/chat/completions" \

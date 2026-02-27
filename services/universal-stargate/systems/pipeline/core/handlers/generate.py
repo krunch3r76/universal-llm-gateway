@@ -434,7 +434,8 @@ class GenericGenerateHandler(BaseHandler):
         """
         from provenance import Provenance, create_provenance
 
-        json_data = None
+        json_data: dict[str, Any] | None = None
+        json_parse_error: str | None = None
         if resolved_config["json_schema"]:
             try:
                 json_data = json.loads(call_result.content)
@@ -449,9 +450,12 @@ class GenericGenerateHandler(BaseHandler):
                     )
 
             except json.JSONDecodeError as e:
+                json_parse_error = str(e)
                 logger.warning(
-                    f"Expected JSON response but parsing failed: {e}. "
-                    f"Raw (first 200 chars): {call_result.content[:200]}..."
+                    "Expected JSON response but parsing failed: %s. "
+                    "Raw (first 200 chars): %s...",
+                    e,
+                    call_result.content[:200],
                 )
 
         # Build output provenance
@@ -473,6 +477,7 @@ class GenericGenerateHandler(BaseHandler):
         return StepOutput(
             raw=call_result.content,
             json=json_data,
+            json_parse_error=json_parse_error,
             model_id=resolved_config["model_id"],
             step_id=step_id,
             provenance=output_provenance,

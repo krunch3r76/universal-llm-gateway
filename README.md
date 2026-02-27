@@ -181,7 +181,7 @@ A **single-pass dense retrieval** RAG service — one ChromaDB collection, one e
 The `rag-context` pipeline layers "Advanced RAG" on top: a small model (phi4) rewrites the user question into 1–3 embedding-optimized sub-queries (handling vocabulary mismatch, step-back expansion, and multi-hop decomposition), runs them in parallel, and merges results via reciprocal rank fusion. `rag-answer` wraps `rag-context` to add grounded answer generation from the retrieved context.
 
 - **Indexing**: Markdown, code, PDF (native via `pymupdf4llm`), and plain text — chunked by structure (headers, paragraphs, code blocks). PDF content-hashing (`pdf_hash`) for cross-file deduplication.
-- **Search**: Cosine similarity with optional recency decay scoring; recency is driven by `published_date` (preferred for research papers) or `indexed_at` timestamp
+- **Search**: Cosine similarity with configurable recency scoring; recency is driven by `published_date` (preferred for research papers) or `indexed_at` timestamp; appropriate recency strategies vary by corpus type and are applied scope-conditionally
 - **Corpus scoping**: `source_prefixes` parameter restricts results to chunks under given path prefixes — multiple logical corpora in a single collection
 - **File watching**: Automatic reindexing via inotify with periodic reconciliation
 - **Embeddings**: Uses a local embedding model (`bge-m3`) via the Gateway — no external API calls

@@ -1,47 +1,52 @@
 """
-pipeline_call_v1 step handler.
+pipeline_call_v1 step handler (core builtin).
 
 Calls another pipeline as a service via Stargate's chat completions endpoint.
-Enables domain pipelines to use retrieval service pipelines (e.g. rag-context)
-as a step without duplicating RAG logic inline.
+Enables any pipeline to use service pipelines (e.g. rag-context) as a step
+without duplicating logic inline.
 
 Domain fields (from pipeline YAML step config):
     pipeline_id: str  — virtual model ID of the pipeline to call (required)
+    pipeline_options: dict — optional static options for the sub-pipeline
     stargate_url: str — Stargate base URL (default: http://localhost:9999)
+
+Forwards rag_* and scope_* keys from context.options so callers can tune
+retrieval via the end-to-end path (e.g. rag-answer → rag-context).
 """
 
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, Any, override
 
 import httpx
-from systems.pipeline.core.handlers.protocol import AbstractStepHandler, StepOutput
 from universal_logging import get_logger
 
+from .protocol import AbstractStepHandler, StepOutput
+from .registry import register_handler
+
 if TYPE_CHECKING:
-    from systems.pipeline.core.handlers.protocol import PipelineContext
-    from systems.pipeline.core.schemas import StepConfig
+    from ..schemas import StepConfig
+    from .protocol import PipelineContext
 
 logger = get_logger(__name__)
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
-DEFAULT_TIMEOUT = 60.0
 
 
+@register_handler
 class PipelineCallHandler(AbstractStepHandler):
     """
     Call a pipeline by its virtual model ID via Stargate.
 
     Sends context.source_text as the user message and returns the
-    pipeline's response as StepOutput.raw. Enables domain pipelines to
-    delegate to service pipelines (e.g. rag-context for retrieval) without
-    owning their logic.
+    pipeline's response as StepOutput.raw. Forwards pipeline_options
+    from step config and rag_* / scope_* from context.options.
 
     Invariants:
     - ∀ execute(): pipeline_id field is required
-    - ∀ response: StepOutput.raw = pipeline response text
-    - ∀ empty response: returns sentinel "No context returned by pipeline"
+    - ∀ response: StepOutput.raw = pipeline response text or error message
+    - ∀ empty/error response: returns meaningful message (§7.2)
     """
 
     step_type: str = "pipeline_call_v1"
@@ -59,25 +64,47 @@ class PipelineCallHandler(AbstractStepHandler):
         stargate_url: str = step.get_domain_field("stargate_url", DEFAULT_STARGATE_URL)
         url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
 
-        body = {
+        step_options: dict[str, Any] = step.get_domain_field("pipeline_options", {})
+        forwarded: dict[str, Any] = {
+            k: v
+            for k, v in context.options.items()
+            if k.startswith("rag_") or k.startswith("scope_")
+        }
+        merged_options = {**step_options, **forwarded}
+
+        body: dict[str, Any] = {
             "model": pipeline_id,
             "messages": [{"role": "user", "content": context.source_text}],
             "stream": False,
         }
+        if merged_options:
+            body["pipeline_options"] = merged_options
+
+        timeout = (step.handler_timeout_seconds or step.timeout_seconds or 60) + 10
 
         start = time.monotonic()
-        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, json=body)
             response.raise_for_status()
         latency_ms = (time.monotonic() - start) * 1000
 
         data = response.json()
         content: str = (
-            data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
         )
 
         if not content.strip():
-            content = f"No context returned by pipeline '{pipeline_id}'"
+            error_detail = data.get("error", {})
+            if isinstance(error_detail, dict) and error_detail.get("message"):
+                content = (
+                    f"Pipeline '{pipeline_id}' returned an error: "
+                    f"{error_detail['message']}"
+                )
+            else:
+                content = (
+                    f"Retrieval unavailable — pipeline '{pipeline_id}' returned "
+                    "empty content. The answer is generated from model knowledge only."
+                )
 
         usage = data.get("usage", {})
 

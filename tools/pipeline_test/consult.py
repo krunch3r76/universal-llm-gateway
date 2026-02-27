@@ -23,6 +23,9 @@ DEFAULT_RAG_RECENCY_WEIGHT = 0.2
 DEFAULT_RAG_CORPUS_DIR = Path("docs/research/prompting")
 DEFAULT_RAG_PIPELINE_ID = "rag-context"
 DEFAULT_RAG_PIPELINE_TIMEOUT = 30.0
+# §4.3: Cormack/Clarke/Butt 2009 — k=60 tuned on TREC Web with 3–5 systems;
+# k=35 better for N≤3 lists
+DEFAULT_RAG_RRF_K = 35
 
 _RAG_DEFAULTS_PATH = Path(__file__).resolve().parent / "rag_defaults.yaml"
 
@@ -53,6 +56,7 @@ def default_rag_source_prefixes() -> list[Path]:
         return out if out else [DEFAULT_RAG_CORPUS_DIR]
     except Exception:  # noqa: BLE001
         return [DEFAULT_RAG_CORPUS_DIR]
+
 
 DEFAULT_CONSULTANTS: list[str] = [
     "qwen3-32b-awq-32768",
@@ -310,6 +314,7 @@ def fetch_rag_via_pipeline(
     pipeline_id: str = DEFAULT_RAG_PIPELINE_ID,
     stargate_url: str = DEFAULT_STARGATE_URL,
     timeout: float = DEFAULT_RAG_PIPELINE_TIMEOUT,
+    pipeline_options: dict[str, Any] | None = None,
 ) -> tuple[list[str], str | None]:
     """Use an intelligent RAG pipeline for context retrieval.
 
@@ -323,11 +328,12 @@ def fetch_rag_via_pipeline(
     Invariant: ∀ non-empty response: len(findings) == 1 (assembled context block)
     """
     url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
+    base_options: dict[str, Any] = pipeline_options or {}
     body: dict[str, Any] = {
         "model": pipeline_id,
         "messages": [{"role": "user", "content": query}],
         "stream": False,
-        "pipeline_options": {"scope_override": "research"},
+        "pipeline_options": base_options,
     }
     try:
         with httpx.Client(timeout=timeout) as client:

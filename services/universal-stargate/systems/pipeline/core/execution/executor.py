@@ -573,6 +573,7 @@ class DAGExecutor:
                     model_id=output.model_id,
                     raw=output.raw,
                     json_data=output.json,
+                    json_parse_error=getattr(output, "json_parse_error", None),
                     prompt_tokens=output.prompt_tokens,
                     completion_tokens=output.completion_tokens,
                     latency_ms=output.latency_ms,
@@ -608,6 +609,7 @@ class DAGExecutor:
                 completion_tokens=output.completion_tokens,
                 model_call_count=getattr(output, "model_call_count", 0),
                 exit_code=exit_code,
+                json_output_keys=(list(output.json.keys()) if output.json else None),
             )
         )
 

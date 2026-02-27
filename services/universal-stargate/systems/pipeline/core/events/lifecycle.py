@@ -129,6 +129,7 @@ class StepOutputCaptured(PipelineEvent):
 
     raw: str = ""
     json_data: dict[str, Any] | None = None
+    json_parse_error: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     latency_ms: float = 0.0

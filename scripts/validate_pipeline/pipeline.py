@@ -224,7 +224,7 @@ def _validate_step_types(
 ) -> list[str]:
     """Validate step.type has registered handler."""
     errors = []
-    builtin_types = {"generate", "map", "loop", "conditional"}
+    builtin_types = {"generate", "map", "loop", "conditional", "pipeline_call_v1"}
     all_known_types = builtin_types | registered_step_types
 
     for step in pipeline.steps:
