@@ -22,7 +22,7 @@ DEFAULT_RAG_TIMEOUT = 10.0
 DEFAULT_RAG_RECENCY_WEIGHT = 0.2
 DEFAULT_RAG_CORPUS_DIR = Path("docs/research/prompting")
 DEFAULT_RAG_PIPELINE_ID = "rag-context"
-DEFAULT_RAG_PIPELINE_TIMEOUT = 30.0
+DEFAULT_RAG_PIPELINE_TIMEOUT = 70.0  # rag-context timeout_seconds: 60; allow margin
 # §4.3: Cormack/Clarke/Butt 2009 — k=60 tuned on TREC Web with 3–5 systems;
 # k=35 better for N≤3 lists
 DEFAULT_RAG_RRF_K = 35
@@ -141,7 +141,8 @@ def estimate_fixed_chars(
     """
     call = _select_call(step, call_label)
     fixed = (
-        len(f"## Pipeline Step: {step.step_name} ({step.step_type})")
+        len(_SYSTEM_PROMPT)
+        + len(f"## Pipeline Step: {step.step_name} ({step.step_type})")
         + len(f"## Problem\n{problem}")
         + len(f"## System Prompt Given to Model\n{call.system_prompt or ''}")
         + len(f"## User Prompt Given to Model\n{call.user_prompt}")

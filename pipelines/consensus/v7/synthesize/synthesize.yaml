@@ -229,7 +229,17 @@ steps:
         issues:
           type: array
           items:
-            type: string
+            type: object
+            properties:
+              fact_index:
+                type: integer
+              current_section:
+                type: string
+              target_section:
+                type: string
+              reason:
+                type: string
+            required: [fact_index, current_section, target_section, reason]
         reason:
           type: string
         target:
@@ -328,7 +338,7 @@ steps:
           type: string
       required: [action, reason]
     terminal_action: accept
-    max_iterations: 1
+    max_iterations: 2
     actions:
       revise:
         prompt_ref: consensus.v7.revise_flow

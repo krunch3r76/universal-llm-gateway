@@ -781,13 +781,14 @@ prompts:
 
       Check these three things:
 
-      1. STRUCTURE: Is the answer organized into coherent paragraphs that
-         group related information? Scattered facts dumped in no logical
-         order is the most important defect to fix.
-      2. FLOW: Do sentences within each paragraph follow a logical sequence?
-         Abrupt topic jumps mid-paragraph indicate poor structure.
-      3. ORPHANS: One-liner sentences that belong in an earlier paragraph
-         but were left stranded at the end.
+      1. TOPICAL COHERENCE: Is each paragraph organized around a single
+         subtopic, grouping semantically related facts together? Scattered
+         facts with no topical clustering is the most important defect.
+      2. DISCOURSE STRUCTURE: Do sentences within each paragraph follow a
+         logical progression? Abrupt topic shifts mid-paragraph indicate
+         poor discourse structure.
+      3. ORPHANS: One-liner sentences that are topically coherent with an
+         earlier paragraph but were left stranded at the end.
 
       PRESERVE:
       - All existing ### section headings — do NOT merge or remove sections
@@ -821,7 +822,7 @@ prompts:
 
       RULES:
       - Fix the listed issues — you MAY reorder sentences and move them
-        between paragraphs to improve logical grouping and flow
+        between paragraphs to improve topical coherence and discourse flow
       - SENTENCE VARIETY: If multiple consecutive sentences start with the
         same subject, vary the openings without changing the meaning
       - PRESERVE all ### section headings exactly as they appear — do NOT
@@ -841,9 +842,11 @@ prompts:
       Your ONLY job is FLOW QUALITY WITHIN EACH SECTION.
 
       Check only:
-      1. SEQUENCE: do adjacent sentences follow a logical progression?
-      2. REFERENTS: are pronouns and phrases like "this/these" clearly anchored?
-      3. LOCAL ORDER: are cause/effect or definition/detail pairs in a sensible order?
+      1. DISCOURSE COHERENCE: do adjacent sentences follow a logical progression?
+      2. ANAPHORA RESOLUTION: are pronouns and phrases like "this/these" clearly
+         anchored to a specific antecedent?
+      3. INFORMATION ORDER: are cause/effect and definition/detail pairs in the
+         expected sequence (cause before effect, definition before detail)?
 
       DO NOT CHECK:
       - duplicates or redundancy
@@ -887,7 +890,7 @@ prompts:
       RULES:
       - Apply only the requested flow fixes
       - You MAY reorder sentences within a section
-      - You MAY make minimal connective rephrasing for coherence
+      - You MAY make minimal connective rephrasing for discourse coherence
       - Do NOT move sentences between sections
       - Do NOT add or remove factual claims
       - PRESERVE all [Fact N] and [Fact N, M] citations exactly
@@ -977,18 +980,16 @@ prompts:
       2. Do not duplicate any index. Do not leave any index unassigned.
       3. If a section would reach 15 indices, split it into sub-sections
          (each ≤15 indices) with distinct sub-topic headings.
-      4. Order sections: mechanism of action → clinical uses →
-         contraindications → side effects → precautions → monitoring.
-      5. Route contraindication and restriction facts by keyword:
-         * renal / kidney / eGFR → "Contraindications: Renal"
-         * hepatic / liver / cirrhosis / lactic acidosis / alcohol →
-           "Contraindications: Hepatic"
-         * cardiac / heart failure / myocardial infarction / stroke →
-           "Contraindications: Cardiac"
-         * pregnancy / breastfeeding → "Pregnancy Cautions"
-         * everything else → "Contraindications: Other"
-      6. Temporary holds and procedural requirements go to Precautions,
-         not Contraindications.
+      4. Order sections from most foundational to most specific:
+         explanatory/definitional topics first, then applications, then
+         constraints/risks, then procedures/monitoring.
+      5. When a broad topic has multiple distinct sub-topics, create
+         sub-sections with descriptive headings that name the sub-topic
+         (e.g. "Constraints: Sub-topic A", "Constraints: Sub-topic B").
+         Route each fact to the sub-section whose heading is the best
+         semantic fit for its content.
+      6. Distinguish absolute restrictions from conditional/procedural
+         guidance — place them in separate sections.
       7. Before returning, verify all three:
          a. No index appears in more than one section.
          b. Every input index appears in exactly one section.
@@ -1135,10 +1136,10 @@ prompts:
 
       TASK B — OVERSIZED SECTIONS: Split any section exceeding
       {oversized_threshold} indices into 2–3 sub-sections with distinct,
-      descriptive headings (e.g. "Mechanism: Glucose Production",
-      "Mechanism: Insulin Sensitivity"). Every sub-section must have
-      ≤{oversized_threshold} indices. Distribute the original indices across
-      the sub-sections by topic — do NOT drop any index.
+      descriptive headings that name the sub-topic (e.g. "Parent Topic:
+      Sub-aspect A", "Parent Topic: Sub-aspect B"). Every sub-section must
+      have ≤{oversized_threshold} indices. Distribute the original indices
+      across the sub-sections by topical fit — do NOT drop any index.
 
       Rules that apply to both tasks:
       - Do NOT remove any existing index — every index in the input must
@@ -1167,29 +1168,35 @@ prompts:
   critique_outline_quality:
     description: "Evaluate outline fact misplacements (coverage and overlap verified programmatically)."
     system_prompt: |
-      You are checking a JSON outline for misplaced facts. {question}
+      You are a misplacement detector for a structured outline. {question}
 
-      For each section, look up the content of every fact index in VERIFIED FACTS.
-      Flag ONLY facts whose content clearly belongs in a different section:
-      - heart failure / myocardial infarction / stroke → must be in a Cardiac section
-      - liver disease / hepatic / cirrhosis / metabolic acidosis → must be in a Hepatic section
-      - renal impairment / kidney dysfunction / eGFR → must be in a Renal section
-      - mechanism / how the drug works / enzyme / transporter → must be in Mechanism
-      - pregnancy / breastfeeding → must be in a Pregnancy section
+      For each fact in each section, look up its content in VERIFIED FACTS.
+      Use the section headings as your only guide.
 
-      Do NOT flag ordering, duplicate indices, or section count — those are handled
-      elsewhere. Only flag facts whose content is in the wrong organ-system section.
+      A fact is misplaced when ALL three hold:
+      1. TOPICAL COHERENCE — the fact's content is not topically coherent with
+         its current section heading (the fact discusses a different subtopic).
+      2. SEMANTIC FIT — a different existing section heading is a clearly better
+         semantic fit for the fact's content.
+      3. OBVIOUS — the mismatch is unambiguous, not a matter of interpretation.
+
+      Do NOT flag facts that are topically neutral — facts whose content describes
+      a general property of the subject that is not specific to any one subtopic
+      (e.g. a basic identity or classification fact applies broadly and belongs
+      wherever it was placed).
+
+      Do NOT flag ordering, duplicate indices, or section count.
+      Do NOT invent target sections that do not exist in the outline.
 
       Accept if no clear misplacements exist.
-      Revise if misplacements found — give exact index, current section, target
-      section, and one-line reason.
+      Revise if misplacements found.
 
       OUTLINE TO EVALUATE:
       {artifact}
 
       Return JSON:
         action: "revise" or "accept"
-        issues: array of specific issues found (empty if accepting)
+        issues: array of objects, each: {fact_index, current_section, target_section, reason}
         reason: brief explanation
         target: what to fix (empty string if accept)
     template: |
@@ -1374,10 +1381,11 @@ prompts:
 
       SCOPE: Same ### section only. Never compare across sections.
 
-      Find pairs of sentences or bullets that assert the same claim in
-      different words. Synonyms count: "renal impairment" = "kidney
-      dysfunction", "liver disease" = "severe liver disease",
-      "contraindicated" = "should avoid" = "should not be used".
+      Find pairs of sentences or bullets that assert the same proposition
+      in different surface forms. Treat synonyms, hyponyms, and
+      paraphrases as equivalent — two sentences restate the same claim
+      if they share the same predicate applied to the same entities,
+      regardless of wording.
 
       For each pair:
         kept: the more informative sentence (verbatim from text)
@@ -1412,7 +1420,12 @@ prompts:
       8. Sections discussing the same subject from different angles (mechanism vs contraindications vs uses) are NOT redundant — accept if sections are mostly distinct.
       9. If no valid duplicate pairs exist, output action: "accept" with empty repeated_items.
 
-      Return ONLY the JSON object below — no other text.
+      Return ONLY a JSON object with this schema — no other text:
+        action: "revise" or "accept"
+        repeated_items: array of objects, each:
+          {kept: verbatim sentence, deleted: verbatim sentence,
+           shared_predicate: ≤12-word clause stating what both assert}
+        reason: brief explanation
 
       ANSWER TO REVIEW:
       {artifact}

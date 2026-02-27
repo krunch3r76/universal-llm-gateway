@@ -33,12 +33,19 @@ def _extract_fact_texts(value: Any) -> list[str]:
 
 def _parse_outline(raw: str) -> dict[str, Any] | None:
     """Parse outline JSON, stripping markdown fences. Returns None on failure."""
+    cleaned = strip_json_fences(raw)
     try:
-        parsed = json.loads(strip_json_fences(raw))
+        parsed = json.loads(cleaned)
         if isinstance(parsed, dict) and isinstance(parsed.get("sections"), list):
             return parsed
     except (json.JSONDecodeError, ValueError):
-        pass
+        # Fallback: accept leading JSON object with trailing explanatory text.
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(cleaned.lstrip())
+            if isinstance(parsed, dict) and isinstance(parsed.get("sections"), list):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
     return None
 
 

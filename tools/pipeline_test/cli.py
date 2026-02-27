@@ -495,6 +495,15 @@ def _add_consult_parser(sub: Any) -> None:
             "Applies to both direct and pipeline paths."
         ),
     )
+    p.add_argument(
+        "--scope",
+        choices=["research", "project", "both"],
+        default="research",
+        help=(
+            "Scope override for RAG pipeline retrieval "
+            "(default: research). Pipeline path only."
+        ),
+    )
     p.set_defaults(func=_cmd_consult)
 
 
@@ -534,13 +543,13 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         source_prefixes = _resolve_rag_source_prefixes(args)
 
         rag_options: dict[str, Any] = {
-            "scope_override": "research",
             "rag_max_chunks": budget.adaptive_top_k,
-            "rag_top_k_per_query": max(budget.adaptive_top_k, 10),
-            "rag_rrf_k": consult_svc.DEFAULT_RAG_RRF_K,
             "rag_recency_weight": args.rag_recency,
-            "scope_confidence_threshold": 0.7,
         }
+        if args.scope:
+            rag_options["scope_override"] = args.scope
+        if budget.adaptive_top_k > 10:
+            rag_options["rag_top_k_per_query"] = budget.adaptive_top_k
         if source_prefixes:
             rag_options["rag_source_prefixes"] = [str(p) for p in source_prefixes]
 
@@ -560,7 +569,22 @@ def _cmd_consult(args: argparse.Namespace) -> None:
             pipeline_options=rag_options,
         )
         if rag_error:
-            print(f"  RAG pipeline '{args.rag_pipeline}': unavailable ({rag_error})")
+            print(f"  RAG pipeline '{args.rag_pipeline}': {rag_error}")
+            print("  Falling back to direct RAG search...")
+            rag_findings, rag_error = consult_svc.fetch_rag_findings(
+                args.problem,
+                rag_url=args.rag_url,
+                top_k=budget.adaptive_top_k,
+                timeout=args.rag_timeout,
+                source_prefixes=source_prefixes,
+                recency_weight=args.rag_recency,
+            )
+            if rag_error:
+                print(f"  Direct RAG fallback: unavailable ({rag_error})")
+            elif rag_findings:
+                print(f"  Direct RAG fallback: injected {len(rag_findings)} finding(s)")
+            else:
+                print("  Direct RAG fallback: no matching findings")
         elif rag_findings:
             print(f"  RAG pipeline '{args.rag_pipeline}': assembled context injected")
         else:
@@ -719,6 +743,15 @@ def _add_ask_parser(sub: Any) -> None:
             "Applies to both direct and pipeline paths."
         ),
     )
+    p.add_argument(
+        "--scope",
+        choices=["research", "project", "both"],
+        default=None,
+        help=(
+            "Scope override for RAG pipeline retrieval "
+            "(default: let pipeline decide). Pipeline path only."
+        ),
+    )
     p.set_defaults(func=_cmd_ask)
 
 
@@ -746,11 +779,12 @@ def _cmd_ask(args: argparse.Namespace) -> None:
         source_prefixes = _resolve_rag_source_prefixes(args)
         rag_options: dict[str, Any] = {
             "rag_max_chunks": budget.adaptive_top_k,
-            "rag_top_k_per_query": max(budget.adaptive_top_k, 10),
-            "rag_rrf_k": consult_svc.DEFAULT_RAG_RRF_K,
             "rag_recency_weight": args.rag_recency,
-            "scope_confidence_threshold": 0.7,
         }
+        if args.scope:
+            rag_options["scope_override"] = args.scope
+        if budget.adaptive_top_k > 10:
+            rag_options["rag_top_k_per_query"] = budget.adaptive_top_k
         if source_prefixes:
             rag_options["rag_source_prefixes"] = [str(p) for p in source_prefixes]
 
@@ -768,7 +802,22 @@ def _cmd_ask(args: argparse.Namespace) -> None:
             pipeline_options=rag_options,
         )
         if rag_error:
-            print(f"  RAG pipeline '{args.rag_pipeline}': unavailable ({rag_error})")
+            print(f"  RAG pipeline '{args.rag_pipeline}': {rag_error}")
+            print("  Falling back to direct RAG search...")
+            rag_findings, rag_error = consult_svc.fetch_rag_findings(
+                args.question,
+                rag_url=args.rag_url,
+                top_k=budget.adaptive_top_k,
+                timeout=args.rag_timeout,
+                source_prefixes=source_prefixes,
+                recency_weight=args.rag_recency,
+            )
+            if rag_error:
+                print(f"  Direct RAG fallback: unavailable ({rag_error})")
+            elif rag_findings:
+                print(f"  Direct RAG fallback: injected {len(rag_findings)} finding(s)")
+            else:
+                print("  Direct RAG fallback: no matching findings")
         elif rag_findings:
             print(f"  RAG pipeline '{args.rag_pipeline}': assembled context injected")
         else:

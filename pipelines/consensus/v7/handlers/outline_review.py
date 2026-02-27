@@ -45,12 +45,20 @@ def _extract_fact_texts(value: Any) -> list[str]:
 
 def _parse_outline(raw: str) -> dict[str, Any] | None:
     """Parse outline JSON, stripping markdown fences. Returns None on failure."""
+    cleaned = strip_json_fences(raw)
     try:
-        parsed = json.loads(strip_json_fences(raw))
+        parsed = json.loads(cleaned)
         if isinstance(parsed, dict) and isinstance(parsed.get("sections"), list):
             return parsed
     except (json.JSONDecodeError, ValueError):
-        pass
+        # Fallback: accept a valid leading JSON object followed by explanatory text.
+        # Some reviser outputs append bullets after the JSON block.
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(cleaned.lstrip())
+            if isinstance(parsed, dict) and isinstance(parsed.get("sections"), list):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
     return None
 
 
@@ -100,10 +108,24 @@ def _filter_phantom_overlaps(
                 index_section_count[idx] = index_section_count.get(idx, 0) + 1
     duplicated: set[int] = {idx for idx, n in index_section_count.items() if n > 1}
 
-    filtered: list[str] = []
+    raw_issues = decision.get("issues", [])
+    issues = raw_issues if isinstance(raw_issues, list) else []
+
+    filtered: list[Any] = []
     phantom_count = 0
-    for issue in decision.get("issues", []):
-        if issue.lower().startswith("overlap:"):
+    for issue in issues:
+        if isinstance(issue, dict):
+            # Structured issue shape from assess_schema object items.
+            idx = issue.get("fact_index")
+            if isinstance(idx, int) and idx > 0 and idx not in duplicated:
+                phantom_count += 1
+                logger.info(
+                    "Phantom overlap claim filtered: index %d not duplicated. Issue: %s",
+                    idx,
+                    issue,
+                )
+                continue
+        elif isinstance(issue, str) and issue.lower().startswith("overlap:"):
             m = re.search(r"\b(\d+)\b", issue)
             if m and int(m.group(1)) not in duplicated:
                 phantom_count += 1
@@ -373,7 +395,13 @@ class OutlineReviewHandler(BaseHandler):
 
             if i > 0:
                 has_overlap = any(
-                    iss.lower().startswith("overlap:") for iss in decision.get("issues", [])
+                    (
+                        isinstance(iss, dict)
+                        and isinstance(iss.get("fact_index"), int)
+                        and iss["fact_index"] > 0
+                    )
+                    or (isinstance(iss, str) and iss.lower().startswith("overlap:"))
+                    for iss in decision.get("issues", [])
                 )
                 if not has_overlap:
                     logger.info(
@@ -436,6 +464,8 @@ class OutlineReviewHandler(BaseHandler):
         final_oversized: list[str] = []
         final_parsed = _parse_outline(outline_raw)
         if final_parsed and total_facts > 0:
+            # Emit canonical JSON only so downstream handlers receive clean outline text.
+            outline_raw = json.dumps(final_parsed)
             assigned = _collect_assigned(final_parsed["sections"])
             valid = assigned & set(range(1, total_facts + 1))
             final_assigned = len(valid)
@@ -513,7 +543,7 @@ class _ReviewConfig:
             coverage_threshold=gdf("coverage_threshold") or 0.90,
             oversized_threshold=int(gdf("oversized_threshold") or 15),
             max_coverage_iterations=gdf("max_coverage_iterations") or 6,
-            max_quality_iterations=gdf("max_quality_iterations") or 3,
+            max_quality_iterations=v if (v := gdf("max_quality_iterations")) is not None else 3,
             coverage_prompt_ref=gdf("coverage_prompt_ref") or "",
             quality_critique_ref=gdf("quality_critique_ref") or "",
             quality_revise_ref=gdf("quality_revise_ref") or "",
