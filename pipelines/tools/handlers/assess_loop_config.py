@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pipeline_assess_registry import PROGRAMMATIC_ASSESS_HANDLERS
 from systems.pipeline.core.events.assess_loop import AssessLoopIterationCompleted
 from universal_logging import get_logger
 
@@ -39,6 +40,7 @@ class AssessLoopConfig:
     artifact_key: str
     temperature: float | None
     assess_max_tokens: int | None
+    assess_handler: str | None
 
     @classmethod
     def from_step(cls, step: StepConfig) -> AssessLoopConfig:
@@ -53,6 +55,7 @@ class AssessLoopConfig:
             artifact_key=step.get_domain_field("artifact_key") or "artifact",
             temperature=step.generation_parameters.get("temperature"),
             assess_max_tokens=step.generation_parameters.get("max_tokens"),
+            assess_handler=step.get_domain_field("assess_handler"),
         )
 
     @property
@@ -101,6 +104,14 @@ class AssessLoopConfig:
                     f"Step '{step_id}' action '{action_name}' has invalid "
                     "max_consecutive (must be integer >= 1)"
                 )
+        if (
+            self.assess_handler is not None
+            and self.assess_handler not in PROGRAMMATIC_ASSESS_HANDLERS
+        ):
+            errors.append(
+                f"Step '{step_id}' assess_handler '{self.assess_handler}' is not registered "
+                "(ensure the handler module is imported before pipeline load)"
+            )
         return errors
 
 

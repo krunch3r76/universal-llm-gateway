@@ -20,6 +20,7 @@ DEFAULT_STARGATE_URL = "http://localhost:9999"
 
 DEFAULT_ASK_MODELS: list[str] = [
     "qwen3-32b-awq-32768",
+    "gpt-oss-20b-mxfp4-65536",
 ]
 
 _SYSTEM_PROMPT = """\

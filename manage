@@ -4,6 +4,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Local environment overrides (canonical location for all entry points)
+if [[ -f "$SCRIPT_DIR/.env.local" ]]; then
+    set -a
+    source "$SCRIPT_DIR/.env.local"
+    set +a
+fi
+
 VENV_DIR="$HOME/.venvs/universal"
 VENV_PYTHON="$VENV_DIR/bin/python"
 PY_VERSION="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
@@ -105,12 +113,7 @@ else
     mkdir -p "$MODEL_DIR"
 fi
 
-# Local environment overrides (canonical location for all entry points)
-if [[ -f "$SCRIPT_DIR/.env.local" ]]; then
-    set -a
-    source "$SCRIPT_DIR/.env.local"
-    set +a
-fi
+
 
 case "${1:-}" in
     relay)

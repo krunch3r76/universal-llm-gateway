@@ -67,17 +67,17 @@ def initialize_profile_manager(config_dir: Path) -> ProfileManager:
     """
     Initialize ProfileManager at startup.
 
+    Profiles are merged from the repo base and config_dir override: the repo
+    config is always loaded as the base; config_dir/profiles.yaml overrides
+    individual entries by name when present.
+
     Args:
-        config_dir: Path to config directory containing profiles.yaml
+        config_dir: Path to config directory (e.g. ~/.gateway)
 
     Returns:
         Configured ProfileManager
-
-    Raises:
-        FileNotFoundError: If profiles.yaml doesn't exist (fail-fast, no fallback)
     """
     config_path = config_dir / "profiles.yaml"
-    # Fail-fast: profiles.yaml is required, no empty fallback
     config_loader = ProfileConfigLoader(config_path)
     manager = ProfileManager(config_loader=config_loader)
     logger.info("ProfileManager initialized")

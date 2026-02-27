@@ -224,7 +224,7 @@ class ServiceController:
         if not script.exists():
             return f"Script not found: {script}"
 
-        config_path = ensure_stargate_config()
+        config_path = ensure_stargate_config() # default to ~/.gateway/stargate.yaml
         env = build_service_env(self._root)
         env["STARGATE_CONFIG"] = str(config_path)
         env["STARGATE_MODE"] = "master"

@@ -30,6 +30,7 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
 from .assess_loop_config import (
+    PROGRAMMATIC_ASSESS_HANDLERS,
     AssessLoopConfig,
     LoopState,
     build_assess_ctx,
@@ -146,57 +147,96 @@ class AssessLoopHandler(BaseHandler):
                 assess_ctx = build_assess_ctx(
                     base_ctx, cfg.artifact_key, artifact, iteration, state.last_decision
                 )
-                assess_model = self._resolve_model_alias(
-                    cfg.get_assess_model_ref(iteration, step.model_ref), context
-                )
-                rendered = self._render_prompt(step.prompt_ref, assess_ctx, context)
-                sys_p = cached_sys or rendered.system_prompt
-                t0 = time.monotonic()
-
-                assess_r = await self._call_model(
-                    assess_model,
-                    rendered.user_prompt,
-                    step,
-                    context,
-                    sys_p,
-                    temperature=cfg.temperature,
-                    max_tokens=cfg.assess_max_tokens,
-                    json_schema=cfg.assess_schema,
-                    call_label=f"assess_{iteration}",
-                )
-                assess_ms = (time.monotonic() - t0) * 1000
                 state.iterations_used = iteration + 1
-                state.add_tokens(assess_r.prompt_tokens, assess_r.completion_tokens)
 
-                try:
-                    decision: dict[str, Any] = json.loads(assess_r.content)
-                    decision = sanitize_repeated_items_decision(
-                        decision, cfg.terminal_action, step.id
+                if cfg.assess_handler is not None:
+                    # Programmatic assess — call registered Python function, no LLM.
+                    handler_fn = PROGRAMMATIC_ASSESS_HANDLERS[cfg.assess_handler]
+                    handler_input = {**resolved, cfg.artifact_key: artifact}
+                    t0 = time.monotonic()
+                    try:
+                        decision: dict[str, Any] = handler_fn(handler_input)
+                    except Exception as exc:
+                        logger.error(
+                            "Step '%s' iter %d: assess_handler '%s' raised: %s",
+                            step.id,
+                            iteration,
+                            cfg.assess_handler,
+                            exc,
+                        )
+                        emit_iteration_completed(
+                            recorder,
+                            step.name,
+                            iteration,
+                            None,
+                            "",
+                            "",
+                            False,
+                            None,
+                            0.0,
+                            (time.monotonic() - t0) * 1000,
+                            0,
+                            0,
+                            state=state,
+                        )
+                        state.exit_reason = "assess_handler_error"
+                        break
+                    assess_ms = (time.monotonic() - t0) * 1000
+                    iter_pt = 0
+                    iter_ct = 0
+                else:
+                    assess_model = self._resolve_model_alias(
+                        cfg.get_assess_model_ref(iteration, step.model_ref), context
                     )
-                except json.JSONDecodeError as exc:
-                    logger.warning(
-                        "Step '%s' iter %d: JSON parse failure: %s",
-                        step.id,
-                        iteration,
-                        exc,
+                    rendered = self._render_prompt(step.prompt_ref, assess_ctx, context)
+                    sys_p = cached_sys or rendered.system_prompt
+                    t0 = time.monotonic()
+
+                    assess_r = await self._call_model(
+                        assess_model,
+                        rendered.user_prompt,
+                        step,
+                        context,
+                        sys_p,
+                        temperature=cfg.temperature,
+                        max_tokens=cfg.assess_max_tokens,
+                        json_schema=cfg.assess_schema,
+                        call_label=f"assess_{iteration}",
                     )
-                    emit_iteration_completed(
-                        recorder,
-                        step.name,
-                        iteration,
-                        None,
-                        "",
-                        "",
-                        False,
-                        None,
-                        0.0,
-                        assess_ms,
-                        assess_r.prompt_tokens,
-                        assess_r.completion_tokens,
-                        state=state,
-                    )
-                    state.exit_reason = "json_parse_failure"
-                    break
+                    assess_ms = (time.monotonic() - t0) * 1000
+                    state.add_tokens(assess_r.prompt_tokens, assess_r.completion_tokens)
+                    iter_pt = assess_r.prompt_tokens
+                    iter_ct = assess_r.completion_tokens
+
+                    try:
+                        decision = json.loads(assess_r.content)
+                        decision = sanitize_repeated_items_decision(
+                            decision, cfg.terminal_action, step.id
+                        )
+                    except json.JSONDecodeError as exc:
+                        logger.warning(
+                            "Step '%s' iter %d: JSON parse failure: %s",
+                            step.id,
+                            iteration,
+                            exc,
+                        )
+                        emit_iteration_completed(
+                            recorder,
+                            step.name,
+                            iteration,
+                            None,
+                            "",
+                            "",
+                            False,
+                            None,
+                            0.0,
+                            assess_ms,
+                            iter_pt,
+                            iter_ct,
+                            state=state,
+                        )
+                        state.exit_reason = "json_parse_failure"
+                        break
 
                 state.last_decision = decision
                 action = decision.get("action", "")
@@ -217,8 +257,8 @@ class AssessLoopHandler(BaseHandler):
                         None,
                         0.0,
                         assess_ms,
-                        assess_r.prompt_tokens,
-                        assess_r.completion_tokens,
+                        iter_pt,
+                        iter_ct,
                         state=state,
                     )
                     break
@@ -241,8 +281,8 @@ class AssessLoopHandler(BaseHandler):
                         None,
                         0.0,
                         assess_ms,
-                        assess_r.prompt_tokens,
-                        assess_r.completion_tokens,
+                        iter_pt,
+                        iter_ct,
                         state=state,
                     )
                     state.exit_reason = "unknown_action"
@@ -273,8 +313,8 @@ class AssessLoopHandler(BaseHandler):
                         None,
                         0.0,
                         assess_ms,
-                        assess_r.prompt_tokens,
-                        assess_r.completion_tokens,
+                        iter_pt,
+                        iter_ct,
                         state=state,
                     )
                     break
@@ -317,8 +357,8 @@ class AssessLoopHandler(BaseHandler):
                     action_model,
                     action_ms,
                     assess_ms,
-                    assess_r.prompt_tokens + action_r.prompt_tokens,
-                    assess_r.completion_tokens + action_r.completion_tokens,
+                    iter_pt + action_r.prompt_tokens,
+                    iter_ct + action_r.completion_tokens,
                     state=state,
                 )
 
@@ -382,7 +422,7 @@ class AssessLoopHandler(BaseHandler):
         errors = []
         if not step.model_ref:
             errors.append(f"Step '{step.id}' missing model_ref")
-        if not step.prompt_ref:
+        if not step.prompt_ref and not step.get_domain_field("assess_handler"):
             errors.append(f"Step '{step.id}' missing prompt_ref")
         if not step.handler_inputs:
             errors.append(f"Step '{step.id}' missing handler_inputs")

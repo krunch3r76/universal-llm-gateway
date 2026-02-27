@@ -16,13 +16,13 @@ set -euo pipefail
 STARGATE_URL="${STARGATE_URL:-http://localhost:9999}"
 MODEL="rag-answer"
 RAW=false
-OUT_DIR="${ASK_OUT_DIR:-./tmp/ask}"
+OUT_DIR="${ASK_OUT_DIR:-./}"
 OUT_FILE=""
 SCOPE=""
 SOURCE_PREFIXES=()
 
 usage() {
-    cat <<'EOF'
+	cat <<'EOF'
 Usage: ask [-m MODEL] [-u URL] [-r] [-s SCOPE] [-p PREFIX] [-d OUT_DIR] [-o OUT_FILE] [QUESTION]
 
   -m MODEL   Model or pipeline ID (default: rag-answer)
@@ -30,60 +30,60 @@ Usage: ask [-m MODEL] [-u URL] [-r] [-s SCOPE] [-p PREFIX] [-d OUT_DIR] [-o OUT_
   -r         Print raw JSON response
   -s SCOPE   scope_override: research|project|both
   -p PREFIX  RAG source prefix path (repeatable)
-  -d OUT_DIR Output directory for relative -o paths (default: ./tmp/ask or $ASK_OUT_DIR)
+  -d OUT_DIR Output directory for relative -o paths (default: $ASK_OUT_DIR or ./)
   -o OUT_FILE Save output to file. If relative, saved under OUT_DIR.
   -h         Show this help
 
 Question can be passed as argument or piped via stdin.
 EOF
-    exit 0
+	exit 0
 }
 
 while getopts "m:u:rs:p:o:d:h" opt; do
-    case "$opt" in
-        m) MODEL="$OPTARG" ;;
-        u) STARGATE_URL="$OPTARG" ;;
-        r) RAW=true ;;
-        s) SCOPE="$OPTARG" ;;
-        p) SOURCE_PREFIXES+=("$OPTARG") ;;
-        o) OUT_FILE="$OPTARG" ;;
-        d) OUT_DIR="$OPTARG" ;;
-        h) usage ;;
-        *) usage ;;
-    esac
+	case "$opt" in
+	m) MODEL="$OPTARG" ;;
+	u) STARGATE_URL="$OPTARG" ;;
+	r) RAW=true ;;
+	s) SCOPE="$OPTARG" ;;
+	p) SOURCE_PREFIXES+=("$OPTARG") ;;
+	o) OUT_FILE="$OPTARG" ;;
+	d) OUT_DIR="$OPTARG" ;;
+	h) usage ;;
+	*) usage ;;
+	esac
 done
 shift $((OPTIND - 1))
 
 if [ $# -gt 0 ]; then
-    QUESTION="$*"
+	QUESTION="$*"
 elif [ ! -t 0 ]; then
-    QUESTION="$(cat)"
+	QUESTION="$(cat)"
 else
-    echo "Error: no question provided" >&2
-    usage
+	echo "Error: no question provided" >&2
+	usage
 fi
 
 # Build pipeline_options only if any RAG tuning flags were set
 PIPELINE_OPTS=""
 if [ -n "$SCOPE" ] || [ ${#SOURCE_PREFIXES[@]} -gt 0 ]; then
-    PIPELINE_OPTS=$(jq -nc \
-        --arg scope "$SCOPE" \
-        --argjson prefixes "$(printf '%s\n' "${SOURCE_PREFIXES[@]}" | jq -R . | jq -sc .)" \
-        '{} +
+	PIPELINE_OPTS=$(jq -nc \
+		--arg scope "$SCOPE" \
+		--argjson prefixes "$(printf '%s\n' "${SOURCE_PREFIXES[@]}" | jq -R . | jq -sc .)" \
+		'{} +
          (if $scope != "" then {scope_override: $scope} else {} end) +
          (if ($prefixes | length) > 0 then {rag_source_prefixes: $prefixes} else {} end)')
 fi
 
 if [ -n "$PIPELINE_OPTS" ]; then
-    BODY=$(jq -nc --arg model "$MODEL" --arg q "$QUESTION" \
-        --argjson opts "$PIPELINE_OPTS" '{
+	BODY=$(jq -nc --arg model "$MODEL" --arg q "$QUESTION" \
+		--argjson opts "$PIPELINE_OPTS" '{
         model: $model,
         messages: [{role: "user", content: $q}],
         stream: false,
         pipeline_options: $opts
     }')
 else
-    BODY=$(jq -nc --arg model "$MODEL" --arg q "$QUESTION" '{
+	BODY=$(jq -nc --arg model "$MODEL" --arg q "$QUESTION" '{
         model: $model,
         messages: [{role: "user", content: $q}],
         stream: false
@@ -91,29 +91,29 @@ else
 fi
 
 RESPONSE=$(curl -sf --max-time 180 \
-    "${STARGATE_URL}/v1/chat/completions" \
-    -H 'Content-Type: application/json' \
-    -d "$BODY") || {
-    echo "Error: request failed (is Stargate running on ${STARGATE_URL}?)" >&2
-    exit 1
+	"${STARGATE_URL}/v1/chat/completions" \
+	-H 'Content-Type: application/json' \
+	-d "$BODY") || {
+	echo "Error: request failed (is Stargate running on ${STARGATE_URL}?)" >&2
+	exit 1
 }
 
 if [ "$RAW" = true ]; then
-    OUTPUT="$(echo "$RESPONSE" | jq .)"
+	OUTPUT="$(echo "$RESPONSE" | jq .)"
 else
-    OUTPUT="$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "No response content"')"
+	OUTPUT="$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "No response content"')"
 fi
 
 printf '%s\n' "$OUTPUT"
 
 if [ -n "$OUT_FILE" ]; then
-    if [[ "$OUT_FILE" = /* ]]; then
-        TARGET="$OUT_FILE"
-        mkdir -p "$(dirname "$TARGET")"
-    else
-        mkdir -p "$OUT_DIR"
-        TARGET="$OUT_DIR/$OUT_FILE"
-    fi
-    printf '%s\n' "$OUTPUT" > "$TARGET"
-    echo "Saved: $TARGET" >&2
+	if [[ "$OUT_FILE" = /* ]]; then
+		TARGET="$OUT_FILE"
+		mkdir -p "$(dirname "$TARGET")"
+	else
+		mkdir -p "$OUT_DIR"
+		TARGET="$OUT_DIR/$OUT_FILE"
+	fi
+	printf '%s\n' "$OUTPUT" >"$TARGET"
+	echo "Saved: $TARGET" >&2
 fi
