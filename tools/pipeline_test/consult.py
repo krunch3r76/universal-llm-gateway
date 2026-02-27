@@ -19,13 +19,11 @@ DEFAULT_STARGATE_URL = "http://localhost:9999"
 DEFAULT_RAG_URL = "http://localhost:8100"
 DEFAULT_RAG_TOP_K = 5
 DEFAULT_RAG_TIMEOUT = 10.0
-DEFAULT_RAG_RECENCY_WEIGHT = 0.2
+DEFAULT_RAG_RECENCY_WEIGHT = 0.1
 DEFAULT_RAG_CORPUS_DIR = Path("docs/research/prompting")
 DEFAULT_RAG_PIPELINE_ID = "rag-context"
 DEFAULT_RAG_PIPELINE_TIMEOUT = 70.0  # rag-context timeout_seconds: 60; allow margin
-# §4.3: Cormack/Clarke/Butt 2009 — k=60 tuned on TREC Web with 3–5 systems;
-# k=35 better for N≤3 lists
-DEFAULT_RAG_RRF_K = 35
+DEFAULT_RAG_RRF_K = 20
 
 _RAG_DEFAULTS_PATH = Path(__file__).resolve().parent / "rag_defaults.yaml"
 

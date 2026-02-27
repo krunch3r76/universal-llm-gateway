@@ -38,5 +38,6 @@ steps:
     handler_inputs:
       rewrite_result: "analyze_rewrite.json"
     research_prefix: "/mnt/torus/projects/universal-llm-gateway/docs/research/prompting"
+    research_rag_design_prefix: "/mnt/torus/projects/universal-llm-gateway/docs/research/rag-systems"
     engram_prefix: "/mnt/torus/projects/universal-llm-gateway/docs/engram"
     project_prefix: "/mnt/torus/projects/universal-llm-gateway"

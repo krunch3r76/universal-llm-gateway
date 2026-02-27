@@ -1,0 +1,34 @@
+# Empirically measured optimal RAG retrieval tunables.
+# Source: docs/engram/rag-tunable-optimization-findings.md
+#
+# Loaded by rag_query_retrieve handler at first use.
+# Keyed by consumer model (the model that reads the retrieved context).
+#
+# Resolution order in the handler:
+#   runtime pipeline_options  >  profile[consumer_model]  >  scope_defaults[scope]  >  YAML defaults
+#
+# Callers pass consumer_model via pipeline_options (or consumer_model_ref
+# on pipeline_call_v1 steps for automatic alias resolution).
+#
+# Measurement scripts can append profiles here; the handler re-reads
+# on next cold start.
+
+profiles:
+  qwen3-32b-awq-32768:
+    rag_max_chunks: 15       # Exp3: peak citation quality at 15; lost-in-middle at 30
+    rag_rrf_k: 20            # Exp1: best unique_sources (8.0 avg) for N≤3 lists
+
+  phi-4-q4-k-m-16384:
+    rag_max_chunks: 12       # Extrapolated: smaller effective attention than qwen3-32b
+    rag_rrf_k: 20            # Exp1: same N≤3 list count; k=20 universally better
+
+scope_defaults:
+  research:
+    rag_recency_weight: 0.1  # Exp4: peaks unique sources (8.0); seminal papers unaffected
+  research_rag_design:
+    rag_recency_weight: 0.1  # Same rationale as research: foundational papers (RRF 2009,
+                             # ColBERT 2022) must not be suppressed by recency
+  project:
+    rag_recency_weight: 0.2  # Exp4: project corpus benefits from modest recency
+  both:
+    rag_recency_weight: 0.1  # Conservative: research papers dominate mixed scope

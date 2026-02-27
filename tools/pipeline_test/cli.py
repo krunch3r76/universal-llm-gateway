@@ -28,6 +28,8 @@ from . import consult as consult_svc
 from . import context_budget as budget_svc
 from . import format as format_svc
 from . import ingest as ingest_svc
+from . import measure as measure_svc
+from . import measure_analysis as measure_analysis_svc
 from . import replay as replay_svc
 from . import snapshot as snapshot_svc
 from .models import ReplayOverrides
@@ -52,6 +54,7 @@ def main(argv: list[str] | None = None) -> None:
     _add_consult_parser(sub)
     _add_ask_parser(sub)
     _add_ingest_papers_parser(sub)
+    _add_measure_profile_parser(sub)
 
     args = parser.parse_args(argv)
     args.func(args)
@@ -487,12 +490,13 @@ def _add_consult_parser(sub: Any) -> None:
     p.add_argument(
         "--rag-recency",
         type=float,
-        default=consult_svc.DEFAULT_RAG_RECENCY_WEIGHT,
+        default=None,
         metavar="WEIGHT",
         help=(
-            "Recency weight for RAG search [0.0–1.0]; "
-            f"0 disables (default: {consult_svc.DEFAULT_RAG_RECENCY_WEIGHT}). "
-            "Applies to both direct and pipeline paths."
+            "Recency weight override for RAG search [0.0–1.0]; "
+            "0 disables. Pipeline path: omit to use scope-conditional "
+            "defaults from retrieval-profiles.yaml. "
+            f"Direct path fallback: {consult_svc.DEFAULT_RAG_RECENCY_WEIGHT}."
         ),
     )
     p.add_argument(
@@ -543,21 +547,20 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         source_prefixes = _resolve_rag_source_prefixes(args)
 
         rag_options: dict[str, Any] = {
-            "rag_max_chunks": budget.adaptive_top_k,
-            "rag_recency_weight": args.rag_recency,
+            "consumer_model": consultant_models[0],
         }
         if args.scope:
             rag_options["scope_override"] = args.scope
-        if budget.adaptive_top_k > 10:
-            rag_options["rag_top_k_per_query"] = budget.adaptive_top_k
         if source_prefixes:
             rag_options["rag_source_prefixes"] = [str(p) for p in source_prefixes]
+        if args.rag_recency is not None:
+            rag_options["rag_recency_weight"] = args.rag_recency
 
         print(
             f"  Budget: {ctx_len}tok context → "
-            f"output≤{budget.output_limit_chars} chars, "
-            f"RAG≤{budget.adaptive_top_k} chunks "
-            f"(via pipeline '{args.rag_pipeline}')"
+            f"output≤{budget.output_limit_chars} chars "
+            f"(via pipeline '{args.rag_pipeline}', "
+            f"consumer: {consultant_models[0]})"
         )
         print()
 
@@ -571,13 +574,18 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         if rag_error:
             print(f"  RAG pipeline '{args.rag_pipeline}': {rag_error}")
             print("  Falling back to direct RAG search...")
+            direct_recency = (
+                args.rag_recency
+                if args.rag_recency is not None
+                else consult_svc.DEFAULT_RAG_RECENCY_WEIGHT
+            )
             rag_findings, rag_error = consult_svc.fetch_rag_findings(
                 args.problem,
                 rag_url=args.rag_url,
                 top_k=budget.adaptive_top_k,
                 timeout=args.rag_timeout,
                 source_prefixes=source_prefixes,
-                recency_weight=args.rag_recency,
+                recency_weight=direct_recency,
             )
             if rag_error:
                 print(f"  Direct RAG fallback: unavailable ({rag_error})")
@@ -605,13 +613,18 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         print()
 
         source_prefixes = _resolve_rag_source_prefixes(args)
+        direct_recency = (
+            args.rag_recency
+            if args.rag_recency is not None
+            else consult_svc.DEFAULT_RAG_RECENCY_WEIGHT
+        )
         rag_findings, rag_error = consult_svc.fetch_rag_findings(
             args.problem,
             rag_url=args.rag_url,
             top_k=budget.adaptive_top_k,
             timeout=args.rag_timeout,
             source_prefixes=source_prefixes,
-            recency_weight=args.rag_recency,
+            recency_weight=direct_recency,
         )
         if rag_error:
             print(f"  RAG: unavailable ({rag_error})")
@@ -735,12 +748,13 @@ def _add_ask_parser(sub: Any) -> None:
     p.add_argument(
         "--rag-recency",
         type=float,
-        default=consult_svc.DEFAULT_RAG_RECENCY_WEIGHT,
+        default=None,
         metavar="WEIGHT",
         help=(
-            "Recency weight for RAG search [0.0-1.0]; "
-            f"0 disables (default: {consult_svc.DEFAULT_RAG_RECENCY_WEIGHT}). "
-            "Applies to both direct and pipeline paths."
+            "Recency weight override for RAG search [0.0–1.0]; "
+            "0 disables. Pipeline path: omit to use scope-conditional "
+            "defaults from retrieval-profiles.yaml. "
+            f"Direct path fallback: {consult_svc.DEFAULT_RAG_RECENCY_WEIGHT}."
         ),
     )
     p.add_argument(
@@ -778,19 +792,19 @@ def _cmd_ask(args: argparse.Namespace) -> None:
 
         source_prefixes = _resolve_rag_source_prefixes(args)
         rag_options: dict[str, Any] = {
-            "rag_max_chunks": budget.adaptive_top_k,
-            "rag_recency_weight": args.rag_recency,
+            "consumer_model": target_models[0],
         }
         if args.scope:
             rag_options["scope_override"] = args.scope
-        if budget.adaptive_top_k > 10:
-            rag_options["rag_top_k_per_query"] = budget.adaptive_top_k
         if source_prefixes:
             rag_options["rag_source_prefixes"] = [str(p) for p in source_prefixes]
+        if args.rag_recency is not None:
+            rag_options["rag_recency_weight"] = args.rag_recency
 
         print(
-            f"  Budget: {ctx_len}tok → RAG≤{budget.adaptive_top_k} chunks "
-            f"(via pipeline '{args.rag_pipeline}')"
+            f"  Budget: {ctx_len}tok → "
+            f"(via pipeline '{args.rag_pipeline}', "
+            f"consumer: {target_models[0]})"
         )
         print()
 
@@ -804,13 +818,18 @@ def _cmd_ask(args: argparse.Namespace) -> None:
         if rag_error:
             print(f"  RAG pipeline '{args.rag_pipeline}': {rag_error}")
             print("  Falling back to direct RAG search...")
+            direct_recency = (
+                args.rag_recency
+                if args.rag_recency is not None
+                else consult_svc.DEFAULT_RAG_RECENCY_WEIGHT
+            )
             rag_findings, rag_error = consult_svc.fetch_rag_findings(
                 args.question,
                 rag_url=args.rag_url,
                 top_k=budget.adaptive_top_k,
                 timeout=args.rag_timeout,
                 source_prefixes=source_prefixes,
-                recency_weight=args.rag_recency,
+                recency_weight=direct_recency,
             )
             if rag_error:
                 print(f"  Direct RAG fallback: unavailable ({rag_error})")
@@ -837,13 +856,18 @@ def _cmd_ask(args: argparse.Namespace) -> None:
         print(f"  Budget: {ctx_len}tok context → RAG≤{budget.adaptive_top_k} chunks")
 
         source_prefixes = _resolve_rag_source_prefixes(args)
+        direct_recency = (
+            args.rag_recency
+            if args.rag_recency is not None
+            else consult_svc.DEFAULT_RAG_RECENCY_WEIGHT
+        )
         rag_findings, rag_error = consult_svc.fetch_rag_findings(
             args.question,
             rag_url=args.rag_url,
             top_k=budget.adaptive_top_k,
             timeout=args.rag_timeout,
             source_prefixes=source_prefixes,
-            recency_weight=args.rag_recency,
+            recency_weight=direct_recency,
         )
         if rag_error:
             print(f"  RAG: unavailable ({rag_error})")
@@ -982,6 +1006,109 @@ def _cmd_ingest_papers(args: argparse.Namespace) -> None:
         print(f"RAG index skipped: {index_error}")
         return
     print(f"RAG indexed PDFs: {index_result}")
+
+
+# ---------------------------------------------------------------------------
+# measure-profile
+# ---------------------------------------------------------------------------
+
+
+def _add_measure_profile_parser(sub: Any) -> None:
+    p = sub.add_parser(
+        "measure-profile",
+        help="Sweep RAG tunables to find optimal values for a consumer model",
+    )
+    p.add_argument(
+        "--model",
+        "-m",
+        required=True,
+        help="Consumer model ID for the resulting retrieval profile",
+    )
+    p.add_argument(
+        "--sweep",
+        nargs="+",
+        choices=["rrf_k", "max_chunks", "recency"],
+        default=["rrf_k", "max_chunks", "recency"],
+        help="Which parameter sweeps to run (default: all three)",
+    )
+    p.add_argument(
+        "--scopes",
+        nargs="+",
+        choices=["research", "project", "both"],
+        default=["research", "project"],
+        help="Scopes for recency sweep (default: research project)",
+    )
+    p.add_argument(
+        "--questions",
+        nargs="+",
+        help=(
+            "Test questions for the sweep "
+            f"(default: {len(measure_svc.DEFAULT_QUESTIONS)} standard queries)"
+        ),
+    )
+    p.add_argument(
+        "--url",
+        default=measure_svc.DEFAULT_STARGATE_URL,
+        help="Stargate URL",
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=measure_svc.DEFAULT_TIMEOUT,
+        help="Per-request timeout in seconds",
+    )
+    p.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help=(
+            "Override output path for retrieval-profiles.yaml "
+            f"(default: {measure_analysis_svc.PROFILES_PATH})"
+        ),
+    )
+    p.add_argument(
+        "--save-results",
+        metavar="DIR",
+        default=None,
+        help="Save raw JSONL results to DIR (e.g. ./tmp/rag-measure)",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show recommended profile without writing to disk",
+    )
+    p.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print progress for each individual run",
+    )
+    p.set_defaults(func=_cmd_measure_profile)
+
+
+def _cmd_measure_profile(args: argparse.Namespace) -> None:
+    output_path = Path(args.output) if args.output else None
+    results_dir = Path(args.save_results) if args.save_results else None
+
+    print(f"Measuring RAG retrieval profile for: {args.model}")
+    print(f"  Sweeps: {', '.join(args.sweep)}")
+    print(f"  Scopes: {', '.join(args.scopes)}")
+    qs = args.questions or measure_svc.DEFAULT_QUESTIONS
+    print(f"  Questions: {len(qs)}")
+    print()
+
+    measure_svc.measure_profile(
+        args.model,
+        questions=args.questions,
+        sweeps=args.sweep,
+        scopes=args.scopes,
+        stargate_url=args.url,
+        timeout=args.timeout,
+        output_path=output_path,
+        results_dir=results_dir,
+        dry_run=args.dry_run,
+        verbose=args.verbose,
+    )
 
 
 # ---------------------------------------------------------------------------

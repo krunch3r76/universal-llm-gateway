@@ -15,6 +15,7 @@ steps:
   - name: get_context
     type: pipeline_call_v1
     pipeline_id: "rag-context"
+    consumer_model_ref: answer   # resolved at runtime → retrieval-profiles.yaml lookup
     timeout_seconds: 70
 
   - name: answer

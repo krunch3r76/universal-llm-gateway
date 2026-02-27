@@ -8,6 +8,9 @@ without duplicating logic inline.
 Domain fields (from pipeline YAML step config):
     pipeline_id: str  — virtual model ID of the pipeline to call (required)
     pipeline_options: dict — optional static options for the sub-pipeline
+    consumer_model_ref: str — model alias resolved at runtime via models.yaml;
+        injected as ``consumer_model`` into pipeline_options so the callee
+        can apply model-specific retrieval profiles (optional)
     stargate_url: str — Stargate base URL (default: http://localhost:9999)
 
 Forwards rag_* and scope_* keys from context.options so callers can tune
@@ -43,6 +46,10 @@ class PipelineCallHandler(AbstractStepHandler):
     pipeline's response as StepOutput.raw. Forwards pipeline_options
     from step config and rag_* / scope_* from context.options.
 
+    If ``consumer_model_ref`` is set, resolves the alias via the
+    calling pipeline's models.yaml and injects ``consumer_model``
+    into pipeline_options for profile-aware retrieval.
+
     Invariants:
     - ∀ execute(): pipeline_id field is required
     - ∀ response: StepOutput.raw = pipeline response text or error message
@@ -71,6 +78,29 @@ class PipelineCallHandler(AbstractStepHandler):
             if k.startswith("rag_") or k.startswith("scope_")
         }
         merged_options = {**step_options, **forwarded}
+
+        consumer_model_ref: str = step.get_domain_field("consumer_model_ref", "")
+        if consumer_model_ref and context._registry is not None:
+            try:
+                model_config = context._registry.get_model_config(
+                    consumer_model_ref,
+                    domain=context.pipeline.domain,
+                    search_path=context.pipeline.source_search_path,
+                )
+                merged_options["consumer_model"] = model_config.model
+                logger.debug(
+                    "pipeline_call_v1 '%s': resolved consumer_model_ref '%s' → '%s'",
+                    step.id,
+                    consumer_model_ref,
+                    model_config.model,
+                )
+            except KeyError:
+                logger.warning(
+                    "pipeline_call_v1 '%s': consumer_model_ref '%s' not found "
+                    "in model registry — skipping profile injection",
+                    step.id,
+                    consumer_model_ref,
+                )
 
         body: dict[str, Any] = {
             "model": pipeline_id,

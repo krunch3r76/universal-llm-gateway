@@ -5,6 +5,11 @@ Reads structured output from an upstream query-rewriting step, executes
 parallel RAG searches, and merges results via RRF into a single ranked
 context block.
 
+Tunable resolution (per-request):
+    runtime pipeline_options  >  profile[consumer_model]  >  scope_defaults[scope]  >  YAML defaults
+
+Profiles loaded from ``pipelines/rag/retrieval-profiles.yaml`` (cached after first load).
+
 Invariants:
 - ∀ execute(): returns StepOutput.raw = formatted context text (never empty string)
 - ∀ needs_retrieval=false: returns sentinel (generation step handles gracefully)
@@ -16,9 +21,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, override
 
 import httpx
+import yaml
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -29,6 +36,40 @@ if TYPE_CHECKING:
     from systems.pipeline.core.schemas import StepConfig
 
 logger = get_logger(__name__)
+
+_PROFILES_PATH = (
+    Path(__file__).resolve().parent.parent.parent / "retrieval-profiles.yaml"
+)
+_profiles_cache: dict[str, Any] | None = None
+
+
+def _load_retrieval_profiles() -> dict[str, Any]:
+    """Load retrieval profiles from YAML (cached after first load).
+
+    Returns top-level dict with ``profiles`` and ``scope_defaults`` keys.
+    Returns empty dict if file is missing.
+    """
+    global _profiles_cache  # noqa: PLW0603
+    if _profiles_cache is not None:
+        return _profiles_cache
+
+    if not _PROFILES_PATH.exists():
+        logger.info("No retrieval profiles at %s", _PROFILES_PATH)
+        result: dict[str, Any] = {}
+        _profiles_cache = result
+        return result
+
+    with _PROFILES_PATH.open() as f:
+        result = yaml.safe_load(f) or {}
+
+    _profiles_cache = result
+    logger.info(
+        "Loaded retrieval profiles: %d model(s), %d scope default(s)",
+        len(result.get("profiles", {})),
+        len(result.get("scope_defaults", {})),
+    )
+    return result
+
 
 _NO_RETRIEVAL_SENTINEL = "No retrieval needed — answering from model knowledge."
 _NO_RESULTS_SENTINEL = "No relevant documents found in the knowledge base."
@@ -94,6 +135,7 @@ def _resolve_source_prefixes(
 ) -> list[str] | None:
     """Map scope label to filesystem source prefixes for RAG filtering."""
     research = step.get_domain_field("research_prefix", "")
+    research_rag = step.get_domain_field("research_rag_design_prefix", "")
     engram = step.get_domain_field("engram_prefix", "")
     project = step.get_domain_field("project_prefix", "")
 
@@ -101,10 +143,13 @@ def _resolve_source_prefixes(
         case "research":
             prefixes = [p for p in (research, engram) if p]
             return prefixes or None
+        case "research_rag_design":
+            prefixes = [p for p in (research_rag, engram) if p]
+            return prefixes or None
         case "project" if project:
             return [project]
         case "both":
-            prefixes = [p for p in (research, engram, project) if p]
+            prefixes = [p for p in (research, research_rag, engram, project) if p]
             return prefixes or None
         case _:
             return None
@@ -152,15 +197,20 @@ class RagMultiRetrieveHandler(BaseHandler):
     executes parallel RAG searches for each rewritten query,
     merges via reciprocal rank fusion, and returns formatted context.
 
-    Options (context.options — YAML options + pipeline_options overrides):
+    Tunable resolution per request:
+        runtime pipeline_options  >  profile[consumer_model]  >  scope_defaults[scope]  >  YAML defaults
+
+    Options (via pipeline_options or YAML defaults):
         rag_top_k_per_query, rag_max_chunks, rag_rrf_k, rag_recency_weight,
-        scope_confidence_threshold, scope_override, rag_source_prefixes (optional).
+        scope_confidence_threshold, scope_override, rag_source_prefixes,
+        consumer_model (optional — triggers profile lookup from retrieval-profiles.yaml).
 
     Domain fields (from pipeline YAML step config, structural only):
-        endpoint: str               — RAG service URL
-        research_prefix: str        — source prefix for research papers
-        engram_prefix: str          — source prefix for engram/insight docs (optional)
-        project_prefix: str         — source prefix for project scope
+        endpoint: str                       — RAG service URL
+        research_prefix: str                — source prefix for prompting research papers
+        research_rag_design_prefix: str     — source prefix for RAG systems research papers
+        engram_prefix: str                  — source prefix for engram/insight docs (optional)
+        project_prefix: str                 — source prefix for project scope
 
     handler_inputs:
         rewrite_result              — bound to upstream step's .json output
@@ -206,19 +256,38 @@ class RagMultiRetrieveHandler(BaseHandler):
                 step.id,
             )
 
-        opts = context.options
-        top_k = int(opts.get("rag_top_k_per_query", 10))
-        max_chunks = int(opts.get("rag_max_chunks", 20))
-        rrf_k = int(opts.get("rag_rrf_k", 35))
-        recency_weight = float(opts.get("rag_recency_weight", 0.2))
-        confidence_threshold = float(opts.get("scope_confidence_threshold", 0.7))
+        # --- Three-tier tunable resolution ---
+        # Tier 1: YAML defaults from pipeline spec
+        yaml_defaults = context.pipeline.options.to_context_dict()
+        runtime = context.runtime_options
 
-        explicit_prefixes: list[str] | None = opts.get("rag_source_prefixes")
+        # Tier 2: retrieval profile for consumer model (if provided by caller)
+        profiles_data = _load_retrieval_profiles()
+        consumer_model: str = runtime.get("consumer_model", "")
+        profile = profiles_data.get("profiles", {}).get(consumer_model, {})
+        if consumer_model and profile:
+            logger.info(
+                "Step '%s': applying retrieval profile for consumer '%s'",
+                step.id,
+                consumer_model,
+            )
+
+        # Merge: yaml_defaults < profile < runtime (runtime always wins)
+        effective = {**yaml_defaults, **profile, **runtime}
+
+        top_k = int(effective.get("rag_top_k_per_query", 10))
+        max_chunks = int(effective.get("rag_max_chunks", 20))
+        rrf_k = int(effective.get("rag_rrf_k", 35))
+        recency_weight = float(effective.get("rag_recency_weight", 0.2))
+        confidence_threshold = float(effective.get("scope_confidence_threshold", 0.7))
+
+        # --- Scope resolution (unchanged logic) ---
+        explicit_prefixes: list[str] | None = effective.get("rag_source_prefixes")
         if explicit_prefixes:
             source_prefixes = explicit_prefixes
             scope = "custom"
         else:
-            scope_override_val: str = opts.get("scope_override", "")
+            scope_override_val: str = effective.get("scope_override", "")
             if scope_override_val:
                 scope = scope_override_val
             else:
@@ -239,6 +308,16 @@ class RagMultiRetrieveHandler(BaseHandler):
                         predicted_scope,
                     )
             source_prefixes = _resolve_source_prefixes(step, scope)
+
+        # Tier 3: scope-conditional recency (unless caller explicitly overrode it)
+        if "rag_recency_weight" not in runtime:
+            scope_recency = (
+                profiles_data.get("scope_defaults", {})
+                .get(scope, {})
+                .get("rag_recency_weight")
+            )
+            if scope_recency is not None:
+                recency_weight = float(scope_recency)
 
         logger.info(
             "Step '%s': executing %d queries (scope=%s, top_k=%d, rrf_k=%d)",
@@ -298,6 +377,8 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "rrf_k": rrf_k,
                     "recency_weight": recency_weight,
                     "scope_confidence_threshold": confidence_threshold,
+                    "consumer_model": consumer_model or None,
+                    "profile_applied": bool(consumer_model and profile),
                 },
             },
         )
