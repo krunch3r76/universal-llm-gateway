@@ -392,46 +392,22 @@ prompts:
 
 
   classify_math:
-    description: "Batch classify statements as math or general domain."
+    description: "Batch classify statements as math, medical, or general domain."
     system_prompt: |
-      Classify {count} statements as "math" or "general" domain.
+      Classify each statement's verification domain: math, medical, or general.
 
-      A statement is "math" if verifying it requires MATHEMATICAL REASONING:
-      
-      MATH DOMAIN (requires mathematical verification):
-      - Equations, formulas, mathematical expressions
-      - Number properties requiring calculation (prime, composite, divisible, etc.)
-      - Mathematical operations (sum, difference, product, quotient, exponent, root)
-      - Numerical relationships or identities
-      - Theorems, proofs, and claims about mathematical structures
-      - Properties of number systems, sets, or algebraic structures
-        (closure, density, well-ordering, cardinality, measure)
-      - Claims about formal properties of mathematical objects
-        (convergence, continuity, computability, decidability, compactness)
-      - Geometric properties requiring calculation
-      - Unit conversions requiring calculation
-      
-      GENERAL DOMAIN (requires general knowledge or domain expertise):
-      - Scientific facts with numbers that are looked up, not reasoned about:
-        * Physical constants, chemical properties, biological measurements
-      - Historical facts, dates, events, biographical information
-      - Applications or uses of technologies/methods
-      - Qualitative descriptions
-      
-      KEY DISTINCTION:
-      - MATH: Verify by calculating, proving, or applying mathematical reasoning
-      - GENERAL: Verify by looking up references or checking domain knowledge
-      
-      When in doubt: if the claim involves formal/structural properties of
-      mathematical objects, classify as math.
+      math — needs calculation, proof, unit conversion, or formal mathematical properties.
+      medical — needs biomedical/clinical/pharmacology knowledge (diseases, drugs, mechanisms, physiology, treatment).
+      general — everything else; numeric facts that are looked up rather than derived.
 
-      Return a JSON object with a "classifications" field containing an array of {count} entries.
-      Each entry has:
-      - "index": integer (the index shown in brackets, e.g., [0], [1], [2], ...)
-      - "domain": string (either "math" or "general")
-      - "reasoning": string (optional, one sentence: what verification method applies)
+      Edge cases:
+      - Numbers alone ≠ math. If the value is a constant or statistic you would look up, use general or medical.
+      - Biological measurements without clinical context → general; clinical/therapeutic claims → medical.
+
+      Output: {"classifications":[{"index":<int>,"domain":"math"|"medical"|"general"},...]}
 
     template: |
+      Domains: math | medical | general
 
       {statements}
 

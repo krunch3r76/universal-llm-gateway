@@ -1,4 +1,4 @@
-"""Assign each claim to a verification domain (math or general).
+"""Assign each claim to a verification domain (math, medical, or general).
 
 Takes the flat claim list from decompose and asks an LLM to label each
 claim's domain.  The domain tag determines how the claim is verified
@@ -6,6 +6,10 @@ downstream:
 
 - **math** claims are routed to a specialist math model in domain_verify
   and may receive authority verdicts that bypass general voting.
+- **medical** claims are routed to a medical authority model when one is
+  configured in domain_verifiers; otherwise fall through to general voting.
+  This routing is a no-op in v7 (no medical verifier configured) and is
+  forward-compatible with v7.1, which adds a medical authority model.
 - **general** claims flow through cross-model verification in
   verify_general, where multiple models independently vote.
 
@@ -37,9 +41,11 @@ logger = get_logger(__name__)
 
 
 class ClassifyDomainHandler(BaseHandler):
-    """Label each claim as math or general to control routing.
+    """Label each claim as math, medical, or general to control routing.
 
     Claims tagged ``math`` are sent to domain_verify's specialist model;
+    ``medical`` claims are routed to a medical authority model if one is
+    configured (v7.1+), otherwise fall through to general voting;
     ``general`` claims go through cross-model majority voting.
     """
 

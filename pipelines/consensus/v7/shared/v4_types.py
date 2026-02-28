@@ -49,7 +49,7 @@ class Candidate(TypedDict):
     text: str
     claim_type: Literal["direct", "supporting"]
     provenance: dict  # From libs/provenance/
-    domain: NotRequired[Literal["math", "general"]]
+    domain: NotRequired[Literal["math", "medical", "general"]]
     parent_statement_id: NotRequired[str]
     parent_text: NotRequired[str]
 

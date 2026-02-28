@@ -368,7 +368,7 @@ async def classify_claims(
     *,
     chunk_size: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Classify claims as math or general domain.
+    """Classify claims as math, medical, or general domain.
 
     Sets 'domain' field on each claim dict. If no classify prompt
     is configured, all claims default to 'general'.
@@ -437,11 +437,11 @@ async def classify_claims(
                                     "index": {"type": "integer"},
                                     "domain": {
                                         "type": "string",
-                                        "enum": ["math", "general"],
+                                        "enum": ["math", "medical", "general"],
                                     },
-                                    "reasoning": {"type": "string"},
                                 },
                                 "required": ["index", "domain"],
+                                "additionalProperties": False,
                             },
                         }
                     },
@@ -482,11 +482,13 @@ async def classify_claims(
                 claims[global_idx]["domain"] = domain
 
     math_count = sum(1 for c in claims if c.get("domain") == "math")
-    if math_count:
+    medical_count = sum(1 for c in claims if c.get("domain") == "medical")
+    if math_count or medical_count:
         logger.info(
-            "Step '%s': classified %d/%d claims as math",
+            "Step '%s': classified %d math, %d medical out of %d claims",
             step.id,
             math_count,
+            medical_count,
             len(claims),
         )
     return claims
