@@ -532,7 +532,7 @@ class DAGExecutor:
         self, node: StepNode, output: StepOutput, duration: float
     ) -> None:
         """Record successful step completion with auto-aggregated tokens."""
-        step_calls = self.context.drain_step_calls()
+        step_calls = self.context.drain_step_calls(node.step.name)
         if step_calls:
             output.model_call_count = len(step_calls)
             if output.prompt_tokens == 0 and output.completion_tokens == 0:
@@ -617,7 +617,7 @@ class DAGExecutor:
         self, node: StepNode, error: Exception, duration: float
     ) -> None:
         """Record step failure."""
-        all_calls = self.context.drain_step_calls()
+        all_calls = self.context.drain_step_calls(node.step.name)
         successful_calls = [
             call for call in all_calls if getattr(call, "success", True) is True
         ]

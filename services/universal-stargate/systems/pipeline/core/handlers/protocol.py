@@ -192,24 +192,26 @@ class PipelineContext:
     # Event recorder for pipeline observability (set by executor)
     _recorder: Any = None  # EventRecorder instance
 
-    # Auto-tracking: model calls made during current step
-    # Cleared by DAGExecutor at each step boundary
-    _step_model_calls: list[Any] = field(default_factory=list)
+    # Auto-tracking: model calls made during current step, keyed by step name.
+    # Using a dict prevents concurrent steps from contaminating each other's
+    # call lists: step A draining its own key does not remove step B's entries.
+    # Cleared per-key by DAGExecutor at each step boundary.
+    _step_model_calls: dict[str, list[Any]] = field(default_factory=dict)
 
     @property
     def recorder(self):
         """Event recorder for pipeline observability. May be None if not configured."""
         return self._recorder
 
-    def record_model_call(self, call_result: Any) -> None:
+    def record_model_call(self, call_result: Any, step_name: str) -> None:
         """Record a model call for automatic token aggregation."""
-        self._step_model_calls.append(call_result)
+        if step_name not in self._step_model_calls:
+            self._step_model_calls[step_name] = []
+        self._step_model_calls[step_name].append(call_result)
 
-    def drain_step_calls(self) -> list[Any]:
-        """Return and clear current step's model calls. DAGExecutor only."""
-        calls = self._step_model_calls
-        self._step_model_calls = []
-        return calls
+    def drain_step_calls(self, step_name: str) -> list[Any]:
+        """Return and clear calls recorded for step_name. DAGExecutor only."""
+        return self._step_model_calls.pop(step_name, [])
 
     def with_map_iteration_request_id(
         self, map_iteration_request_id: str
@@ -230,7 +232,7 @@ class PipelineContext:
         return dataclasses.replace(
             self,
             map_iteration_request_id=map_iteration_request_id,
-            _step_model_calls=[],  # Fresh list per map iteration
+            _step_model_calls={},  # Fresh dict per map iteration
         )
 
     def with_map_state(self, map_state: MapIterationState) -> PipelineContext:
@@ -245,7 +247,7 @@ class PipelineContext:
         Returns:
             Shallow copy of context with _map_state set
         """
-        return dataclasses.replace(self, _map_state=map_state, _step_model_calls=[])
+        return dataclasses.replace(self, _map_state=map_state, _step_model_calls={})
 
     def get_proxy_client(self) -> ProxyClient:
         """

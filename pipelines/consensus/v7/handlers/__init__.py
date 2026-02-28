@@ -14,8 +14,10 @@ chain-v7.yaml (top-level):
   synthesize            sub_pipeline                    → (below)
 
 synthesize/synthesize.yaml:
-  group_facts           consensus_group_facts_v7        group_facts.py
+  group_facts           consensus_group_facts_v7         group_facts.py
   synthesize_answer     consensus_synthesize_batched_v7  synthesize_batched.py
+  identify_redundancy   consensus_identify_redundancy_v7 identify_redundancy.py
+  reorganize_answer     consensus_reorganize_v7          reorganize_answer.py
 
 verify/verify.yaml:
   decompose             consensus_decompose_v7          verify/handlers/
@@ -40,6 +42,8 @@ from .citation_coverage import (
 )
 from .filter_negatives import FilterNegativesHandler
 from .group_facts import GroupFactsHandler
+from .identify_redundancy import IdentifyRedundancyHandler
+from .reorganize_answer import ReorganizeAnswerHandler
 from .single_call import SingleCallHandler
 from .synergize import SynergizeHandler
 from .synthesize_batched import SynthesizeBatchedHandler
@@ -71,6 +75,16 @@ def register_handlers(router) -> None:
         "consensus",
         "consensus_synthesize_batched_v7",
         SynthesizeBatchedHandler,
+    )
+    router.register_domain_handler_class(
+        "consensus",
+        "consensus_identify_redundancy_v7",
+        IdentifyRedundancyHandler,
+    )
+    router.register_domain_handler_class(
+        "consensus",
+        "consensus_reorganize_v7",
+        ReorganizeAnswerHandler,
     )
 
     register_verify_handlers(router)

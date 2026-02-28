@@ -230,6 +230,7 @@ class SynthesizeBatchedHandler(BaseHandler):
             raw=combined_prose,
             json={
                 "answer": combined_prose,
+                "batch_texts": prose_parts,
                 "incorporated": sorted(all_incorporated),
                 "excluded_with_reason": all_excluded_with_reason,
                 "excluded_without_reason": sorted(

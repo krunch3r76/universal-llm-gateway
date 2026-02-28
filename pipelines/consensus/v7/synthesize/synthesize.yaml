@@ -31,4 +31,29 @@ steps:
     model_ref: qwen
     timeout_seconds: 180
 
-output: synthesize_answer
+  - name: identify_redundancy
+    type: consensus_identify_redundancy_v7
+    enabled: false
+    handler_inputs:
+      answer: synthesize_answer.json.answer
+      batch_texts: synthesize_answer.json.batch_texts
+      question: inputs.question
+    system_prompt_ref: consensus.v7.identify_redundancy_context
+    prompt_ref: consensus.v7.identify_redundancy_initial
+    model_ref: qwen
+    timeout_seconds: 60
+
+  - name: reorganize_answer
+    type: consensus_reorganize_v7
+    handler_inputs:
+      answer: synthesize_answer.json.answer
+      question: inputs.question
+      incorporated: synthesize_answer.json.incorporated
+      excluded_with_reason: synthesize_answer.json.excluded_with_reason
+      merge_groups: identify_redundancy.json.merge_groups
+    system_prompt_ref: consensus.v7.reorganize_context
+    prompt_ref: consensus.v7.reorganize_initial
+    model_ref: ministral_3_8b
+    timeout_seconds: 120
+
+output: reorganize_answer

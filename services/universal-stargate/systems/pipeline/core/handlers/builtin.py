@@ -800,8 +800,9 @@ class BaseHandler(AbstractStepHandler):
                 )
             )
 
-        # Auto-record for pipeline-level token aggregation
-        context.record_model_call(result)
+        # Auto-record for pipeline-level token aggregation, keyed by step so
+        # concurrent steps don't contaminate each other's call lists.
+        context.record_model_call(result, step.name)
 
         return result
 

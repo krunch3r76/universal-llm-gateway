@@ -57,8 +57,9 @@ def default_rag_source_prefixes() -> list[Path]:
 
 
 DEFAULT_CONSULTANTS: list[str] = [
-    "qwen3-32b-awq-32768",
+    "arcee-ai/trinity-large-preview:free"
     "gpt-oss-20b-mxfp4-65536",
+    "google/gemini-2.5-pro",
 ]
 
 _SYSTEM_PROMPT = """\

@@ -442,45 +442,20 @@ prompts:
   verify_specific:
     description: "Single-claim verification with topic-anchored specificity check."
     system_prompt: |
-      You verify a single claim for truth, accuracy, and topic specificity.
-      Output a JSON object with exactly two fields:
-        "verdict": true or false
-        "reasoning": explain in detail why the claim is true or false
+      Verify this claim for factual accuracy and topic specificity.
+      Output {"verdict": true/false, "reasoning": "explain why"}.
+      Evaluate ONLY the <claim> content; the <topic> attribute disambiguates but must NOT bias toward acceptance.
 
-      CLAIM FORMAT:
-      The claim may be wrapped in a <topic name="..."> container that
-      provides the subject area for disambiguation, with a <claim> tag
-      holding the assertion you must evaluate.
-      Evaluate ONLY the <claim> content. The topic attribute helps you
-      understand what the claim refers to — it must NOT bias your
-      evaluation toward acceptance.
+      Mark FALSE if:
+      - Speculative language: "likely", "perhaps", "probably", "based on", "suggests"
+      - Load-bearing modal ("can/may/might/could") where removing it would make the claim false
+        (exception: modals asserting inherent capability, e.g. "TCP can retransmit packets")
+      - Inference or educated guess presented as fact
+      - Too generic: applies equally to 3+ other entities in the same field without modification
+      - Vague characterization with no topic-specific content (e.g., "improves performance")
+      - Partially true or imprecise
 
-      VERIFY FACTUAL CORRECTNESS:
-      - Check whether the claim accurately represents reality
-      - For scientific claims, consider precise definitions and measurements
-
-      ALSO mark FALSE if the claim:
-      - Contains speculation markers: "likely", "perhaps", "probably", "based on", "suggests"
-      - Uses load-bearing possibility/conditionality modals: "can", "may", "might", or "could"
-        where the modal is essential to accuracy — i.e., removing it would make the claim
-        overstated or false (e.g., "X can contraindicate Y" — without "can", the claim would
-        be false; the modal signals a conditional relationship, not an established fact)
-        EXCEPTION: modals expressing an inherent capability or mechanism are fine
-        (e.g., "TCP can retransmit packets" asserts a definite capability, not conditionality)
-      - Makes inferences not directly stated in source material
-      - Presents educated guesses as facts
-
-      SPECIFICITY CHECK (apply to EVERY claim):
-      - The claim must be SPECIFIC to the topic in the question, not just generically
-        true about the broader domain or field
-      - If the claim could equally apply to 3+ other technologies, concepts, or entities
-        in the same field without modification, it is TOO GENERIC — mark FALSE
-      - Vague characterizations that sound plausible but add no topic-specific information
-        are FALSE (e.g., "improves performance and efficiency" for any technology)
-      - Prefer rejecting vague claims over accepting plausible-sounding ones
-
-
-      QUESTION CONTEXT: {cleaned_question}
+      QUESTION: {cleaned_question}
 
       {parent_claim_context}
     template: |
@@ -573,12 +548,39 @@ prompts:
       or properties across a whole domain. A specific negative denies ONE particular
       property and is perfectly fine.
 
+      ORPHANED SUB-CLAIMS (return their indices in orphaned_indices):
+      A sub-claim is ORPHANED when it was split from a larger compound statement and
+      lost its specific subject or referent. These are recognizable by:
+      - Vague determiners or pronouns as the subject: "Certain X", "Some Y", "These Z",
+        "Various W", "This process", "It", "Those"
+      - The claim only makes sense if you know what the parent statement was
+      - The subject is an unnamed generic category (no specific entity, substance, or mechanism named)
+
+      KEY RULE: If the grammatical subject is a named entity — a specific drug, substance,
+      organ, medical condition, patient group, or mechanism — the claim is NOT orphaned,
+      regardless of whether the rest of the sentence seems incomplete.
+
+      Examples of ORPHANED sub-claims (return their indices in orphaned_indices):
+      - "Certain medications can lead to serious complications" — which medications?
+      - "These conditions may increase the risk" — which conditions?
+      - "Some factors can affect absorption" — which factors?
+      - "Various interactions exist" — with what?
+      - "This process requires specific enzymes" — which process? which enzymes?
+
+      NOT orphaned (do NOT return their indices):
+      - "NSAIDs can lead to renal impairment" — specific drug class named
+      - "Alcohol increases lactic acidosis risk" — specific substance named
+      - "Hepatic impairment affects drug clearance" — specific organ system named
+      - "Solar radiation drives photosynthesis" — specific agent and process named
+      - "Heart failure can be life-threatening" — specific medical condition named
+      - "Patients with liver disease are at elevated risk" — specific patient group named
+
       QUESTION CONTEXT (for reference only): {question}
 
       Return a JSON object:
-        {{"negative_indices": [list of integer indices of universal negatives]}}
+        {{"negative_indices": [indices of universal negatives], "orphaned_indices": [indices of orphaned sub-claims]}}
 
-      If NO claims are universal negatives, return {{"negative_indices": []}}
+      If none found, return empty arrays: {{"negative_indices": [], "orphaned_indices": []}}
     template: |
 
       {numbered_facts}
@@ -708,4 +710,116 @@ prompts:
 
       Current draft:
       {artifact}
+
+  identify_redundancy_context:
+    description: "System instructions for cross-section redundancy identification."
+    system_prompt: ""
+    template: |
+      You are an editor analyzing a draft composed of independently-written sections.
+
+      TASK:
+      Find all sets of sentences that express the same factual claim across different
+      sections. Each set becomes a merge group.
+
+      RULES:
+      - Only create a merge group when the same claim appears in at least 2 DIFFERENT sections
+      - Do NOT create merge groups for sentences within the same section
+      - A merge group requires 2 or more distinct sentences — multiple citations inside one sentence
+        do not count as multiple sentences
+      - Focus on factual redundancy: the same mechanism, effect, or property stated multiple times,
+        even with different phrasing or level of detail
+      - When assessing redundancy, treat synonymous expressions as identical claims:
+        "increases X" = "elevates X", "inhibits Y" = "reduces Y", "impairs Z" = "disrupts Z"
+      - Include only citation indices from the exact duplicated sentences — do not pull citations
+        from neighboring sentences
+      - Ignore stylistic similarity that is not factual duplication
+      - Do not merge sentences that cover genuinely different sub-aspects of a topic
+      - Output ONLY valid JSON — no prose, no explanation before or after
+
+  identify_redundancy_initial:
+    description: "Identify semantically duplicate claims across batched synthesis sections."
+    system_prompt: ""
+    template: |
+      QUESTION: {question}
+
+      DRAFT ANSWER:
+      {answer}
+
+      The numbers inside brackets (e.g. [1], [3, 7], [12, 15]) are citation indices.
+      The draft is divided into sections marked === SECTION N ===. Each section was written
+      independently and may repeat claims already stated in another section.
+
+      Find all groups where 2 or more sentences from DIFFERENT sections express the same
+      factual claim. For each group, collect the citation indices only from the exact
+      duplicate sentences.
+
+      Output a SINGLE JSON object with a "merge_groups" array containing ALL groups.
+      Example — "X increases Y [1, 5]" in SECTION 1 and "X elevates Y [10]" in SECTION 3
+      produce one group; "Z is contraindicated in W [3]" in SECTION 2 and
+      "W contraindicates Z [8, 12]" in SECTION 4 produce another:
+      {{"merge_groups": [
+        {{"theme": "X increases Y", "citations": [1, 5, 10]}},
+        {{"theme": "Z is contraindicated in W", "citations": [3, 8, 12]}}
+      ]}}
+
+      NOT a merge group: a single sentence "A causes B [43, 44]" with two citations is one
+      sentence, not two. Do not create a group from it.
+
+      If no cross-section redundancy exists, output: {{"merge_groups": []}}
+
+  reorganize_context:
+    description: "System instructions for post-synthesis answer reorganization."
+    system_prompt: ""
+    template: |
+      You are an editor reorganizing a draft answer for thematic coherence.
+
+      RULES:
+      - If a MERGE PLAN is provided, execute it first: for each group, locate all
+        sentences containing those citation indices and combine them into a single
+        sentence that cites ALL indices from the group
+      - Group paragraphs by topic: merge all paragraphs that address the same topic
+        into a single block; split any paragraph that covers multiple distinct
+        sub-topics so that each paragraph has a single coherent theme
+      - Contraindication consolidation: do not mention the same contraindication domain
+        in more than one paragraph — all content sharing a mechanism or organ system
+        (e.g. all renal content: excretion, GFR/CrCl thresholds, renal lactic acidosis
+        risk) must appear in one paragraph
+      - Each paragraph must open with a clear topic sentence that announces its theme
+      - Reorder paragraphs using logical dependency: definitions and background first,
+        then causal mechanisms, then consequences and outcomes, then risks and
+        limitations, then any remaining caveats or qualifications
+      - When two sentences or clauses make the same factual claim — even if worded
+        differently — combine them into one sentence citing all relevant indices
+      - Each [N] index must appear at most once in the ENTIRE output (global uniqueness);
+        if the same index appears in multiple draft sentences, keep it only in the single
+        most relevant sentence and remove it from all others
+      - Fold orphan sentences (isolated single-sentence paragraphs) into the
+        nearest thematically related paragraph
+      - Preserve every UNIQUE [N] citation index at least once in the output — do not
+        renumber or invent indices; if an index appears multiple times in the draft,
+        keep it exactly once (global deduplication)
+      - Do not add claims, opinions, or information not present in the draft
+      - Every sentence in the output must end with at least one [N] citation marker —
+        sentences without citations are hallucinations and must be deleted
+      - Final pass: verify each [N] appears no more than once in the entire output
+        and every sentence ends with at least one [N]
+      - Output only the reorganized prose — no preamble, no commentary, no status
+        summaries, no section headers, no DROPPED FACTS section
+
+  reorganize_initial:
+    description: "Reorganize a batched synthesis draft for thematic coherence."
+    system_prompt: ""
+    template: |
+      QUESTION: {question}
+
+      MERGE PLAN:
+      {merge_plan}
+
+      DRAFT ANSWER:
+      {answer}
+
+      Execute the MERGE PLAN first, then reorganize the draft for thematic coherence:
+      apply topical grouping (merge same-topic paragraphs, split multi-topic paragraphs),
+      reorder by logical dependency, fold orphan sentences.
+      Preserve every [N] citation exactly; each index appears at most once per sentence.
 

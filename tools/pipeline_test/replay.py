@@ -80,6 +80,10 @@ def replay_rerender(
                 stargate_url=stargate_url,
                 timeout=timeout,
             )
+        print(
+            f"  [warn] Could not re-render prompt for step '{step_name}' "
+            f"(call={call_label!r}) from {pipeline_dir} — falling back to recorded request."
+        )
 
     body = dict(call.request_body)
     _apply_overrides(body, overrides)
@@ -180,9 +184,10 @@ def _resolve_prompt_from_config(
     """Find a prompt name by scanning pipeline YAML for the step's config.
 
     Handles three patterns:
-      assess_N  → step-level prompt_ref (the assess prompt)
-      action_X_N → already handled by _infer_prompt_name
-      other (adjudicate, insert_missing, ...) → {call_label}_prompt_ref domain field
+      assess_N          → step-level prompt_ref (the assess prompt)
+      action_X_N        → already handled by _infer_prompt_name
+      plain single-call → step-level prompt_ref (fallback for simple steps)
+      other             → {call_label}_prompt_ref domain field
     """
     short_name = step.step_name.rsplit("__", 1)[-1]
     for yaml_file in pipeline_dir.rglob("*.yaml"):
@@ -201,12 +206,17 @@ def _resolve_prompt_from_config(
                 if ref:
                     return ref.rsplit(".", 1)[-1]
             else:
+                # Check call-specific domain field first (e.g. adjudicate_prompt_ref)
                 for key, val in step_cfg.items():
                     if not key.endswith("_prompt_ref") or not isinstance(val, str):
                         continue
                     prefix = key.removesuffix("_prompt_ref")
                     if call_label == prefix or call_label.startswith(prefix + "_"):
                         return val.rsplit(".", 1)[-1]
+                # Fallback: plain single-call step uses top-level prompt_ref
+                ref = step_cfg.get("prompt_ref", "")
+                if ref:
+                    return ref.rsplit(".", 1)[-1]
     return None
 
 

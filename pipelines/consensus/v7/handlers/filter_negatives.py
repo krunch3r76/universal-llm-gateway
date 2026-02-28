@@ -1,11 +1,16 @@
 """
-Filter universal negatives from verified facts via dedicated LLM classification.
+Filter universal negatives and orphaned sub-claims from verified facts.
 
-Single-concern step: asks one model "which of these claims are universal
-negatives?" and removes them. Universal negatives are claims asserting that
-a subject has NO properties, significance, or relevance across an entire
-domain (e.g., "42 has no mathematical significance"). These are unfalsifiable
-and poison synthesis when they contradict verified positive facts.
+Single-concern step: asks one model to classify facts into two removal
+categories and removes them both:
+
+  1. Universal negatives — claims asserting a subject has NO properties,
+     significance, or relevance across an entire domain (e.g., "42 has no
+     mathematical significance"). Unfalsifiable; poison synthesis.
+
+  2. Orphaned sub-claims — facts split from a compound statement that lost
+     their specific subject (e.g., "Certain medications can lead to X").
+     Without the parent context they are vague and unfalsifiable.
 
 Placed between synergize and veto_pass so negatives are removed before
 any further processing.
@@ -45,8 +50,12 @@ _JSON_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {"type": "integer", "minimum": 0},
         },
+        "orphaned_indices": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 0},
+        },
     },
-    "required": ["negative_indices"],
+    "required": ["negative_indices", "orphaned_indices"],
     "additionalProperties": False,
 }
 
@@ -149,35 +158,51 @@ class FilterNegativesHandler(BaseHandler):
         )
 
         # 5. Parse response and filter
-        negative_indices = _parse_negative_indices(
-            call_result.content, len(length_filtered_facts)
+        fact_count = len(length_filtered_facts)
+        negative_indices = _parse_indices(
+            call_result.content, "negative_indices", fact_count
         )
-        negative_indices_set = set(negative_indices)
+        orphaned_indices = _parse_indices(
+            call_result.content, "orphaned_indices", fact_count
+        )
+        negative_set = set(negative_indices)
+        orphaned_set = set(orphaned_indices)
 
         filtered_facts: list[dict[str, Any]] = []
-        removed_texts: list[str] = []
+        removed_negatives: list[str] = []
+        removed_orphaned: list[str] = []
         for idx, fact in enumerate(length_filtered_facts):
-            if idx in negative_indices_set:
-                removed_texts.append(fact.get("text", str(fact)))
+            text = fact.get("text", str(fact))
+            if idx in negative_set:
+                removed_negatives.append(text)
+            elif idx in orphaned_set:
+                removed_orphaned.append(text)
             else:
                 filtered_facts.append(fact)
 
         latency_ms = (time.time() - start_time) * 1000
 
-        if removed_texts:
+        if removed_negatives:
             logger.info(
-                "Step '%s': removed %d universal negative(s) from %d facts (%.0fms): %s",
+                "Step '%s': removed %d universal negative(s) (%.0fms): %s",
                 step.id,
-                len(removed_texts),
-                len(length_filtered_facts),
+                len(removed_negatives),
                 latency_ms,
-                removed_texts,
+                removed_negatives,
             )
-        else:
+        if removed_orphaned:
             logger.info(
-                "Step '%s': no universal negatives found in %d facts (%.0fms)",
+                "Step '%s': removed %d orphaned sub-claim(s) (%.0fms): %s",
                 step.id,
-                len(length_filtered_facts),
+                len(removed_orphaned),
+                latency_ms,
+                removed_orphaned,
+            )
+        if not removed_negatives and not removed_orphaned:
+            logger.info(
+                "Step '%s': no removals in %d facts (%.0fms)",
+                step.id,
+                fact_count,
                 latency_ms,
             )
 
@@ -209,17 +234,21 @@ class FilterNegativesHandler(BaseHandler):
         return errors
 
 
-def _parse_negative_indices(raw_response: str, fact_count: int) -> list[int]:
-    """Parse LLM response into validated list of negative indices."""
+def _parse_indices(raw_response: str, key: str, fact_count: int) -> list[int]:
+    """Parse a named integer-array field from the LLM JSON response.
+
+    ∀ index i returned: 0 ≤ i < fact_count.  Out-of-range values are logged
+    and dropped so a malformed response never removes valid facts.
+    """
     try:
         data = json.loads(raw_response)
     except json.JSONDecodeError as e:
         logger.warning("Failed to parse filter_negatives response: %s", e)
         return []
 
-    indices = data.get("negative_indices", [])
+    indices = data.get(key, [])
     if not isinstance(indices, list):
-        logger.warning("negative_indices is not a list: %s", type(indices))
+        logger.warning("%s is not a list: %s", key, type(indices))
         return []
 
     valid: list[int] = []
@@ -228,6 +257,6 @@ def _parse_negative_indices(raw_response: str, fact_count: int) -> list[int]:
             valid.append(idx)
         else:
             logger.warning(
-                "Ignoring out-of-range negative index: %s (max=%d)", idx, fact_count - 1
+                "Ignoring out-of-range %s index: %s (max=%d)", key, idx, fact_count - 1
             )
     return valid
