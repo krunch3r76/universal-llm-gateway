@@ -69,7 +69,7 @@ models:
     # USE FOR: Answer generation, verification (balanced quality/speed)
 
   qwen2_5_14b:
-    model: qwen2-5-14b-instruct-q4-k-m-32768
+    model: qwen2-5-14b-instruct-q4-k-m-32768-cpu
     system_prompt: ""
     # 14B | MMLU 78%+ | MATH 82%+ | best reasoning
     # USE FOR: Answer generation, verification (highest quality)

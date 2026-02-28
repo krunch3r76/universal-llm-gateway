@@ -12,6 +12,39 @@ inputs:
   - verified_facts
   - question
 
-steps: []
+steps:
+  - name: group_facts
+    type: consensus_group_facts_v7
+    # Input:  verified_facts — list of verified fact dicts from parent pipeline
+    # Process: embed fact texts, complete-linkage cluster (polarity_aware=True)
+    # Output: verified_facts — same facts reordered so similar facts are adjacent
+    handler_inputs:
+      verified_facts: inputs.verified_facts
+    embedding_model: embedding
+    similarity_threshold: 0.75
+    timeout_seconds: 60
 
-# output: (set when first step is ready)
+  - name: synthesize_answer
+    type: assess_loop_v1
+    handler_inputs:
+      verified_facts: group_facts.json.verified_facts
+      question: inputs.question
+    artifact_key: artifact
+    initial_artifact: ""
+    pre_assess_action: synthesize
+    context_prompt_ref: consensus.v7.synthesize_context
+    assess_handler: citation_coverage_check
+    strip_xml_tags: ["reasoning"]
+    terminal_action: accept
+    max_iterations: 5
+    actions:
+      synthesize:
+        prompt_ref: consensus.v7.synthesize_initial
+        model_ref: qwen
+      revise:
+        prompt_ref: consensus.v7.synthesize
+        model_ref: qwen
+    model_ref: qwen
+    timeout_seconds: 180
+
+output: synthesize_answer

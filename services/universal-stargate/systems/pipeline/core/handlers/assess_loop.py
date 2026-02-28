@@ -11,24 +11,26 @@ Invariants:
 - ∀ action call: returns plain text → becomes new artifact for next iteration
 - ∀ assess call: returns JSON matching assess_schema
 - artifact_key identifies which handler_input is the mutable artifact
+- ∀ programmatic handler returning "artifact" key: value replaces loop artifact
+  (popped before storing in last_decision to avoid bloating history)
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import TYPE_CHECKING, Any, override
 
-from systems.pipeline.core.events.assess_loop import (
-    AssessLoopCompleted,
-    AssessLoopStarted,
-)
-from systems.pipeline.core.execution import ProxyClientError
-from systems.pipeline.core.execution.resolver import NamespaceResolver
-from systems.pipeline.core.handlers.builtin import BaseHandler
-from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
+from ..events.assess_loop import (
+    AssessLoopCompleted,
+    AssessLoopPreAssessCompleted,
+    AssessLoopStarted,
+)
+from ..execution import ProxyClientError
+from ..execution.resolver import NamespaceResolver
 from .assess_loop_config import (
     PROGRAMMATIC_ASSESS_HANDLERS,
     AssessLoopConfig,
@@ -37,10 +39,13 @@ from .assess_loop_config import (
     emit_iteration_completed,
     sanitize_repeated_items_decision,
 )
+from .builtin import BaseHandler
+from .protocol import StepOutput
+from .registry import register_handler
 
 if TYPE_CHECKING:
-    from systems.pipeline.core.handlers.protocol import PipelineContext
-    from systems.pipeline.core.schemas import StepConfig
+    from .protocol import PipelineContext
+    from ..schemas import StepConfig
 
 logger = get_logger(__name__)
 
@@ -65,6 +70,19 @@ def _format_text_list(value: Any) -> Any:
     return value
 
 
+def _strip_xml_tags(text: str, tags: list[str]) -> str:
+    """Remove named XML blocks from text (e.g. <reasoning>...</reasoning>).
+
+    ∀ tag ∈ tags: all occurrences stripped, including multiline content.
+    Applied after each model response so downstream LLM calls and the final
+    artifact are free of bookkeeping blocks the model appended for the assessor.
+    """
+    for tag in tags:
+        text = re.sub(rf"<{re.escape(tag)}>.*?</{re.escape(tag)}>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    return text.strip()
+
+
+@register_handler
 class AssessLoopHandler(BaseHandler):
     """
     Engine-mediated iterative assess→act loop.
@@ -99,10 +117,17 @@ class AssessLoopHandler(BaseHandler):
         }
 
         if cfg.artifact_key not in resolved:
-            raise ValueError(
-                f"Step '{step.id}': artifact_key '{cfg.artifact_key}' not in "
-                f"handler_inputs. Available: {list(resolved.keys())}"
-            )
+            if cfg.initial_artifact is not None:
+                # Seed the artifact from the literal initial_artifact domain field
+                # (e.g. "" to bootstrap a coverage-check loop without a prior step).
+                # The key is injected into resolved so downstream contexts stay consistent.
+                resolved[cfg.artifact_key] = cfg.initial_artifact
+            else:
+                raise ValueError(
+                    f"Step '{step.id}': artifact_key '{cfg.artifact_key}' not in "
+                    f"handler_inputs and no initial_artifact provided. "
+                    f"Available: {list(resolved.keys())}"
+                )
 
         # Compress list-of-dict inputs that carry a "text" field into numbered
         # plain-text lists before they hit the prompt template. Raw JSON reprs
@@ -115,6 +140,8 @@ class AssessLoopHandler(BaseHandler):
         }
 
         artifact: str = str(resolved[cfg.artifact_key])
+        artifact_raw: str = artifact  # unstripped; used by programmatic assess handlers
+
         base_ctx: dict[str, Any] = {"text": context.source_text, **resolved}
 
         # Render static context ONCE (outside loop) → system_prompt for all calls,
@@ -137,12 +164,51 @@ class AssessLoopHandler(BaseHandler):
                     terminal_action=cfg.terminal_action,
                     action_names=cfg.action_names,
                     has_context_prompt=bool(cfg.context_prompt_ref),
+                    has_pre_assess_action=bool(cfg.pre_assess_action),
                 )
             )
 
         state = LoopState()
 
         try:
+            # Pre-assess call: generate initial artifact when action is configured
+            # and the current artifact is empty (mode 1 — loop-owned generation).
+            # Mode 2 (step-owned): artifact already populated via handler_inputs binding;
+            # pre_assess_action is ignored when artifact is non-empty.
+            if cfg.pre_assess_action and not artifact:
+                pre_action_ctx = {**base_ctx, cfg.artifact_key: artifact}
+                pre_rendered = self._render_prompt(
+                    cfg.get_action_prompt_ref(cfg.pre_assess_action), pre_action_ctx, context
+                )
+                pre_model = self._resolve_model_alias(
+                    cfg.get_action_model_ref(cfg.pre_assess_action, step.model_ref), context
+                )
+                t_pre = time.monotonic()
+                pre_r = await self._call_model(
+                    pre_model,
+                    pre_rendered.user_prompt,
+                    step,
+                    context,
+                    cached_sys or pre_rendered.system_prompt,
+                    temperature=cfg.temperature,
+                    call_label="pre_assess",
+                )
+                pre_latency_ms = (time.monotonic() - t_pre) * 1000
+                artifact_raw = pre_r.content.strip()
+                artifact = _strip_xml_tags(artifact_raw, cfg.strip_xml_tags)
+                state.add_tokens(pre_r.prompt_tokens, pre_r.completion_tokens)
+                if recorder:
+                    recorder.emit(
+                        AssessLoopPreAssessCompleted(
+                            step_name=step.name,
+                            action=cfg.pre_assess_action,
+                            model_id=pre_model,
+                            latency_ms=pre_latency_ms,
+                            prompt_tokens=pre_r.prompt_tokens,
+                            completion_tokens=pre_r.completion_tokens,
+                        )
+                    )
+
             for iteration in range(cfg.max_iterations):
                 assess_ctx = build_assess_ctx(
                     base_ctx, cfg.artifact_key, artifact, iteration, state.last_decision
@@ -152,7 +218,7 @@ class AssessLoopHandler(BaseHandler):
                 if cfg.assess_handler is not None:
                     # Programmatic assess — call registered Python function, no LLM.
                     handler_fn = PROGRAMMATIC_ASSESS_HANDLERS[cfg.assess_handler]
-                    handler_input = {**resolved, cfg.artifact_key: artifact}
+                    handler_input = {**resolved, cfg.artifact_key: artifact_raw}
                     t0 = time.monotonic()
                     try:
                         decision: dict[str, Any] = handler_fn(handler_input)
@@ -238,6 +304,9 @@ class AssessLoopHandler(BaseHandler):
                         state.exit_reason = "json_parse_failure"
                         break
 
+                if "artifact" in decision:
+                    artifact = decision.pop("artifact")
+                    artifact_raw = artifact
                 state.last_decision = decision
                 action = decision.get("action", "")
                 reason = decision.get("reason", "")
@@ -344,7 +413,8 @@ class AssessLoopHandler(BaseHandler):
                 )
                 action_ms = (time.monotonic() - t1) * 1000
                 state.add_tokens(action_r.prompt_tokens, action_r.completion_tokens)
-                artifact = action_r.content.strip()
+                artifact_raw = action_r.content.strip()
+                artifact = _strip_xml_tags(artifact_raw, cfg.strip_xml_tags)
 
                 emit_iteration_completed(
                     recorder,

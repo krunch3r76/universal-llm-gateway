@@ -639,3 +639,55 @@ prompts:
     template: |
 
       {numbered_claims}
+
+  synthesize_context:
+    description: "Cached system context for grounded answer synthesis loop."
+    system_prompt: ""
+    template: |
+      You are synthesizing a definitive answer from a set of verified facts.
+
+      QUESTION: {question}
+
+      VERIFIED FACTS:
+      {verified_facts}
+
+      RULES:
+      - Write flowing prose organized into thematic paragraphs
+      - Cite each incorporated fact with inline [N] — standalone or merged (e.g. [3, 7, 12])
+      - When multiple facts express the same idea, merge into one sentence and cite all indices
+      - Do not assert claims not supported by the facts
+      - Do not list facts verbatim
+
+      OUTPUT FORMAT:
+      1. Your answer (prose paragraphs with inline citations)
+      2. A line containing only: DROPPED FACTS:
+      3. One line per dropped fact: [N] reason for exclusion
+      If no facts were dropped, write: DROPPED FACTS: none
+
+  synthesize_initial:
+    description: "Generate initial grounded answer from scratch using verified facts."
+    system_prompt: ""
+    template: |
+      Write a comprehensive answer incorporating as many verified facts as possible.
+      Organize into thematic paragraphs. Merge facts that overlap into single sentences.
+      After your answer, add the DROPPED FACTS section listing every fact you excluded
+      and why (subsumed, redundant, too vague, etc.). Account for every fact index —
+      each must appear either as an inline citation or in DROPPED FACTS.
+
+  synthesize:
+    description: "Revise a grounded answer to add missing inline citations."
+    system_prompt: ""
+    template: |
+      Revise the answer to add the missing inline citations.
+
+      {assess_reason}
+
+      Rules:
+      - Keep all existing prose and inline citations unchanged
+      - For each missing index, insert [N] into an existing sentence where it fits,
+        or add a new sentence if none fits — do not remove or rewrite other sections
+      - Do not add claims beyond the provided facts
+
+      Current draft:
+      {artifact}
+

@@ -21,6 +21,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
+from starlette.responses import Response
 
 from .catalog import CatalogManager
 from .config import CloudProxyConfig, load_config
@@ -119,7 +120,7 @@ async def catalog() -> list[dict[str, Any]]:
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request) -> StreamingResponse | JSONResponse:
+async def chat_completions(request: Request) -> Response:
     """Forward chat completion request to the appropriate provider."""
     assert _catalog is not None
     assert _forwarder is not None

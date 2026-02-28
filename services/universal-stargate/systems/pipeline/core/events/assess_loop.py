@@ -8,7 +8,7 @@ Invariants:
 - ∀ AssessLoopStarted ⟹ ∃! AssessLoopCompleted (even on error — handler catches)
 - AssessLoopIterationCompleted count ∈ [0, max_iterations]
 - ∀ AssessLoopCompleted.exit_reason ∈ {terminal_action, budget_exhausted,
-  json_parse_failure, unknown_action, model_error}
+  json_parse_failure, unknown_action, model_error, assess_handler_error}
 """
 
 from __future__ import annotations
@@ -31,6 +31,22 @@ class AssessLoopStarted(PipelineEvent):
     terminal_action: str = ""
     action_names: list[str] | None = None  # configured action keys
     has_context_prompt: bool = False  # context_prompt_ref present?
+    has_pre_assess_action: bool = False  # True when pre_assess_action is configured
+
+
+@dataclass(slots=True, kw_only=True)
+class AssessLoopPreAssessCompleted(PipelineEvent):
+    """Emitted after the pre-assess model call, before iteration 0.
+
+    The pre-assess call generates the initial artifact from scratch.
+    It is outside the iteration budget and always labeled "pre_assess".
+    """
+
+    action: str = ""  # the action name used (e.g. "synthesize")
+    model_id: str = ""  # resolved model ID
+    latency_ms: float = 0.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 @dataclass(slots=True, kw_only=True)
@@ -59,13 +75,15 @@ class AssessLoopCompleted(PipelineEvent):
 
     Gives the UI a summary and the termination cause, which is a
     first-class concept (not inferrable from ModelInvocation events).
+
+    total_model_calls includes the pre-assess call when present.
     """
 
     iterations_used: int = 0
     max_iterations: int = 0
     terminal_action_reached: bool = False
     # terminal_action | budget_exhausted | json_parse_failure | unknown_action
-    # model_error
+    # model_error | assess_handler_error | max_consecutive
     exit_reason: str = ""
     last_action: str = ""  # last action taken (or terminal action)
     total_prompt_tokens: int = 0

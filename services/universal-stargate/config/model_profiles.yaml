@@ -15,6 +15,9 @@
 #     basename: "profile_name"  # References profiles.yaml
 
 basename_profiles:
+  "qwen3": "code-generation"
+  # Examples: qwen3-32b-awq-32768
+
   "ernie-4-5-21b-a3b-pt-q8-0": "general-chat"
   
   "uncensored-frank": "general-chat"

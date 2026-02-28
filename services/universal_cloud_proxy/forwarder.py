@@ -33,7 +33,7 @@ class ProviderForwarder:
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=15.0, read=300.0, write=15.0, pool=15.0),
             limits=httpx.Limits(max_connections=40, max_keepalive_connections=20),
-            http2=True,
+            http2=False,
         )
 
     async def close(self) -> None:

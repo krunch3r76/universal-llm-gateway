@@ -12,11 +12,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pipeline_assess_registry import PROGRAMMATIC_ASSESS_HANDLERS
-from systems.pipeline.core.events.assess_loop import AssessLoopIterationCompleted
 from universal_logging import get_logger
 
+from ..events.assess_loop import AssessLoopIterationCompleted
+
 if TYPE_CHECKING:
-    from systems.pipeline.core.schemas import StepConfig
+    from ..schemas import StepConfig
 
 _logger = get_logger(__name__)
 
@@ -38,9 +39,12 @@ class AssessLoopConfig:
     context_prompt_ref: str | None
     assess_pool: list[str]
     artifact_key: str
+    initial_artifact: str | None
     temperature: float | None
     assess_max_tokens: int | None
     assess_handler: str | None
+    pre_assess_action: str | None
+    strip_xml_tags: list[str]
 
     @classmethod
     def from_step(cls, step: StepConfig) -> AssessLoopConfig:
@@ -53,9 +57,12 @@ class AssessLoopConfig:
             context_prompt_ref=step.get_domain_field("context_prompt_ref"),
             assess_pool=step.get_domain_field("assess_pool") or [],
             artifact_key=step.get_domain_field("artifact_key") or "artifact",
+            initial_artifact=step.get_domain_field("initial_artifact"),
             temperature=step.generation_parameters.get("temperature"),
             assess_max_tokens=step.generation_parameters.get("max_tokens"),
             assess_handler=step.get_domain_field("assess_handler"),
+            pre_assess_action=step.get_domain_field("pre_assess_action"),
+            strip_xml_tags=step.get_domain_field("strip_xml_tags") or [],
         )
 
     @property
@@ -111,6 +118,11 @@ class AssessLoopConfig:
             errors.append(
                 f"Step '{step_id}' assess_handler '{self.assess_handler}' is not registered "
                 "(ensure the handler module is imported before pipeline load)"
+            )
+        if self.pre_assess_action is not None and self.pre_assess_action not in self.actions:
+            errors.append(
+                f"Step '{step_id}' pre_assess_action '{self.pre_assess_action}' "
+                "not defined in actions"
             )
         return errors
 

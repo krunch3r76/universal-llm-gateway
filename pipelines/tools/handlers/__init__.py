@@ -4,13 +4,15 @@ Pipeline tools handler registration.
 Registers generic (domain-agnostic) tool handlers available to all pipeline types.
 Loaded by user_handlers.py as shared handlers for the "tools" domain directory,
 but registered via register_generic_handler_class for tier-3 (universal) resolution.
+
+Note: assess_loop_v1 is a stargate-system primitive — registered via
+@register_handler in systems/pipeline/core/handlers/assess_loop.py.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .assess_loop import AssessLoopHandler
 from .coalesce import CoalesceHandler
 from .rag_source import RagSourceHandler
 from .shell import ShellHandler
@@ -24,4 +26,3 @@ def register_handlers(router: DomainRouter) -> None:
     router.register_generic_handler_class("shell_v1", ShellHandler)
     router.register_generic_handler_class("rag_source_v1", RagSourceHandler)
     router.register_generic_handler_class("coalesce_v1", CoalesceHandler)
-    router.register_generic_handler_class("assess_loop_v1", AssessLoopHandler)

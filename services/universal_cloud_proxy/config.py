@@ -78,14 +78,22 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
     if not provider or not isinstance(provider, str):
         raise ValueError("Provider entry missing 'provider' string")
 
-    api_key_env = entry.get("api_key_env", "")
-    if not api_key_env:
-        raise ValueError(f"providers[{provider}] missing 'api_key_env'")
+    raw_key = entry.get("api_key")
+    if isinstance(raw_key, str) and raw_key.strip():
+        api_key = raw_key.strip()
+    else:
+        api_key_env = entry.get("api_key_env", "")
+        if not api_key_env or not isinstance(api_key_env, str):
+            raise ValueError(
+                f"providers[{provider}] must set 'api_key' (literal) or 'api_key_env' (env var name)"
+            )
+        api_key = os.environ.get(api_key_env, "").strip()
 
-    api_key = os.environ.get(api_key_env, "")
     if not api_key:
         logger.warning(
-            "Provider '%s' skipped: env var %s is not set", provider, api_key_env
+            "Provider '%s' skipped: no api_key in config and env var %s is not set",
+            provider,
+            entry.get("api_key_env", "?"),
         )
         return None
 
