@@ -8,6 +8,7 @@ of the response is removed; content after </think> is kept.
 from __future__ import annotations
 
 import dataclasses
+import time
 from typing import TYPE_CHECKING, Any, override
 
 from systems.pipeline.core.handlers.builtin import ModelCallResult
@@ -67,6 +68,66 @@ class AnswerGenerateHandler(GenericGenerateHandler):
     """
 
     step_type = "generate"
+
+    @override
+    async def execute(
+        self,
+        step: StepConfig,
+        context: PipelineContext,
+    ) -> StepOutput:
+        """Execute answer step, honouring pipeline_options.model when supplied."""
+        override_model: str | None = (context.options or {}).get("model")
+        if not override_model:
+            return await super().execute(step, context)
+        return await self._execute_with_model_override(step, context, override_model)
+
+    async def _execute_with_model_override(
+        self,
+        step: StepConfig,
+        context: PipelineContext,
+        model_id: str,
+    ) -> StepOutput:
+        """Run the answer step using an explicitly supplied model ID.
+
+        Bypasses registry.get_model_config() — model_id is treated as already
+        resolved and forwarded to Stargate routing verbatim.
+        ∀ model_id supplied here: routing responsibility transferred to Stargate.
+        """
+        start_time = time.time()
+        registry = context._registry
+        prompt_config = registry.get_prompt(step.prompt_ref)
+        user_prompt = self._render_user_prompt(prompt_config, step, context)
+
+        resolved_config: dict[str, Any] = {
+            "model_id": model_id,
+            "system_prompt": prompt_config.system_prompt or "",
+            "temperature": step.generation_parameters.get("temperature"),
+            "max_tokens": self._resolve_max_tokens(step, context),
+            "json_schema": None,
+        }
+        if step.generation_parameters.get("response_format"):
+            resolved_config["json_schema"] = step.generation_parameters[
+                "response_format"
+            ].get("schema")
+
+        logger.debug("answer step: pipeline_options.model override → %s", model_id)
+
+        call_result = await self._call_model(
+            model_id,
+            user_prompt,
+            step,
+            context,
+            resolved_config["system_prompt"],
+            temperature=resolved_config["temperature"],
+            max_tokens=resolved_config["max_tokens"],
+            json_schema=resolved_config["json_schema"],
+            model_id_is_resolved=True,
+        )
+
+        latency_ms = (time.time() - start_time) * 1000
+        return self._build_step_output(
+            call_result, resolved_config, latency_ms, step.id
+        )
 
     @override
     def _build_step_output(

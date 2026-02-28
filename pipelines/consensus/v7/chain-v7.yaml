@@ -20,7 +20,7 @@
 #           → veto_pass (sub-pipeline: veto_verify → veto_threshold)
 #
 #   SYNTHESIZE (sub-pipeline):
-#     synthesize (organize_facts → review_outline → synthesize_from_outline → coverage_audit)
+#     synthesize (group_facts → synthesize_answer[batched])
 
 schema_version: 6
 id: consensus-chain-v7
@@ -242,7 +242,8 @@ steps:
   # SYNTHESIZE (sub-pipeline)
   # ==========================================================================
 
-  # Build an outline from verified facts, review it, synthesize prose, then audit coverage.
+  # Group facts by semantic similarity, then synthesize prose in batches.
+  # answer_0/1/2 and rejected_claims are bound but not consumed by synthesize.yaml.
   - name: synthesize
     type: sub_pipeline
     pipeline_ref: synthesize/synthesize.yaml

@@ -176,10 +176,16 @@ class GroupFactsHandler(BaseHandler):
             latency_ms,
         )
 
+        fact_clusters: list[list[dict[str, Any]]] = [
+            [verified_facts[idx] for idx in sorted(cluster)]
+            for cluster in clusters
+        ]
+
         return StepOutput(
             raw="",
             json={
                 "verified_facts": reordered,
+                "fact_clusters": fact_clusters,
                 "stats": {
                     "input_count": len(verified_facts),
                     "group_count": len(clusters),

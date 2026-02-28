@@ -30,16 +30,16 @@ class AssessLoopStarted(PipelineEvent):
     max_iterations: int = 0
     terminal_action: str = ""
     action_names: list[str] | None = None  # configured action keys
-    has_context_prompt: bool = False  # context_prompt_ref present?
-    has_pre_assess_action: bool = False  # True when pre_assess_action is configured
+    has_system_prompt: bool = False
+    has_initial_action: bool = False
 
 
 @dataclass(slots=True, kw_only=True)
-class AssessLoopPreAssessCompleted(PipelineEvent):
-    """Emitted after the pre-assess model call, before iteration 0.
+class AssessLoopInitialActionCompleted(PipelineEvent):
+    """Emitted after the initial model call, before iteration 0.
 
-    The pre-assess call generates the initial artifact from scratch.
-    It is outside the iteration budget and always labeled "pre_assess".
+    The initial call generates the artifact from scratch (initial_action).
+    It is outside the iteration budget and always labeled "initial".
     """
 
     action: str = ""  # the action name used (e.g. "synthesize")

@@ -102,6 +102,19 @@ class PipelineCallHandler(AbstractStepHandler):
                     consumer_model_ref,
                 )
 
+        # Override: if the caller specified pipeline_options.model (e.g. a cloud
+        # model), use it as consumer_model so the retrieval sub-pipeline applies
+        # the right profile. This overrides the static alias resolution above.
+        caller_model_override: str = context.runtime_options.get("model", "")
+        if caller_model_override:
+            merged_options["consumer_model"] = caller_model_override
+            logger.debug(
+                "pipeline_call_v1 '%s': pipeline_options.model overrides "
+                "consumer_model → '%s'",
+                step.id,
+                caller_model_override,
+            )
+
         body: dict[str, Any] = {
             "model": pipeline_id,
             "messages": [{"role": "user", "content": context.source_text}],

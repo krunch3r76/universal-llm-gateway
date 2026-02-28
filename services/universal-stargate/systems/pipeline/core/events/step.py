@@ -250,6 +250,45 @@ def CombinePassagesCompleted(  # noqa: N802
 
 
 @event_factory
+def RagRetrievalParamsResolved(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    consumer_model: str | None,
+    profile_class: str | None,
+    max_chunks: int,
+    top_k_per_query: int,
+    rrf_k: int,
+    scope: str,
+) -> Event:
+    """Emitted by rag_multi_retrieve_v1 after effective retrieval params are resolved.
+
+    Payload:
+        consumer_model: Model that will read the retrieved context (None if not set)
+        profile_class: Matched model_class name (e.g. "frontier"), None if exact profile
+                       or no profile matched
+        max_chunks: Effective rag_max_chunks after profile + runtime merge
+        top_k_per_query: Effective rag_top_k_per_query
+        rrf_k: Effective RRF constant
+        scope: Resolved retrieval scope (research / project / both / custom)
+    """
+    return Event(
+        signal="pipeline.rag.retrieval.params.resolved",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "consumer_model": consumer_model,
+            "profile_class": profile_class,
+            "max_chunks": max_chunks,
+            "top_k_per_query": top_k_per_query,
+            "rrf_k": rrf_k,
+            "scope": scope,
+        },
+    )
+
+
+@event_factory
 def StepConditionEvaluated(  # noqa: N802
     pipeline_id: str,
     execution_id: str,

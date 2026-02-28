@@ -26,7 +26,7 @@ from universal_logging import get_logger
 
 from ..events.assess_loop import (
     AssessLoopCompleted,
-    AssessLoopPreAssessCompleted,
+    AssessLoopInitialActionCompleted,
     AssessLoopStarted,
 )
 from ..execution import ProxyClientError
@@ -144,15 +144,13 @@ class AssessLoopHandler(BaseHandler):
 
         base_ctx: dict[str, Any] = {"text": context.source_text, **resolved}
 
-        # Render static context ONCE (outside loop) → system_prompt for all calls,
-        # enabling vLLM prefix cache reuse across every assess and action call.
-        # The context prompt's rendered *template* (user_prompt) is repurposed as
-        # the shared system prompt — a stable KV-cache prefix across all iterations.
+        # Render system_prompt_ref ONCE (outside loop) — stable KV-cache prefix
+        # reused as the system prompt for every assess and action call.
         cached_sys: str | None = None
-        if cfg.context_prompt_ref:
+        if cfg.system_prompt_ref:
             static = {k: v for k, v in base_ctx.items() if k != cfg.artifact_key}
             cached_sys = self._render_prompt(
-                cfg.context_prompt_ref, static, context
+                cfg.system_prompt_ref, static, context
             ).user_prompt
 
         recorder = context.recorder
@@ -163,35 +161,33 @@ class AssessLoopHandler(BaseHandler):
                     max_iterations=cfg.max_iterations,
                     terminal_action=cfg.terminal_action,
                     action_names=cfg.action_names,
-                    has_context_prompt=bool(cfg.context_prompt_ref),
-                    has_pre_assess_action=bool(cfg.pre_assess_action),
+                    has_system_prompt=bool(cfg.system_prompt_ref),
+                    has_initial_action=bool(cfg.initial_action),
                 )
             )
 
         state = LoopState()
 
         try:
-            # Pre-assess call: generate initial artifact when action is configured
-            # and the current artifact is empty (mode 1 — loop-owned generation).
-            # Mode 2 (step-owned): artifact already populated via handler_inputs binding;
-            # pre_assess_action is ignored when artifact is non-empty.
-            if cfg.pre_assess_action and not artifact:
-                pre_action_ctx = {**base_ctx, cfg.artifact_key: artifact}
-                pre_rendered = self._render_prompt(
-                    cfg.get_action_prompt_ref(cfg.pre_assess_action), pre_action_ctx, context
+            # Initial action: generate artifact from scratch when artifact is empty.
+            # Skipped when artifact already populated via handler_inputs (step-owned mode).
+            if cfg.initial_action and not artifact:
+                initial_ctx = {**base_ctx, cfg.artifact_key: artifact}
+                initial_rendered = self._render_prompt(
+                    cfg.get_action_prompt_ref(cfg.initial_action), initial_ctx, context
                 )
-                pre_model = self._resolve_model_alias(
-                    cfg.get_action_model_ref(cfg.pre_assess_action, step.model_ref), context
+                initial_model = self._resolve_model_alias(
+                    cfg.get_action_model_ref(cfg.initial_action, step.model_ref), context
                 )
                 t_pre = time.monotonic()
                 pre_r = await self._call_model(
-                    pre_model,
-                    pre_rendered.user_prompt,
+                    initial_model,
+                    initial_rendered.user_prompt,
                     step,
                     context,
-                    cached_sys or pre_rendered.system_prompt,
+                    cached_sys or initial_rendered.system_prompt,
                     temperature=cfg.temperature,
-                    call_label="pre_assess",
+                    call_label="initial",
                 )
                 pre_latency_ms = (time.monotonic() - t_pre) * 1000
                 artifact_raw = pre_r.content.strip()
@@ -199,10 +195,10 @@ class AssessLoopHandler(BaseHandler):
                 state.add_tokens(pre_r.prompt_tokens, pre_r.completion_tokens)
                 if recorder:
                     recorder.emit(
-                        AssessLoopPreAssessCompleted(
+                        AssessLoopInitialActionCompleted(
                             step_name=step.name,
-                            action=cfg.pre_assess_action,
-                            model_id=pre_model,
+                            action=cfg.initial_action,
+                            model_id=initial_model,
                             latency_ms=pre_latency_ms,
                             prompt_tokens=pre_r.prompt_tokens,
                             completion_tokens=pre_r.completion_tokens,

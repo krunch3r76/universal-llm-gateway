@@ -456,9 +456,10 @@ def _add_consult_parser(sub: Any) -> None:
     p.add_argument(
         "--rag-top-k",
         type=int,
-        default=budget_svc.MAX_RAG_TOP_K,
+        default=None,
+        metavar="N",
         help=(
-            "RAG chunk cap; adapts to context budget. "
+            "RAG chunk cap; default: auto from context (frontier vs local). "
             "Direct path: limits top_k. "
             "Pipeline path: sets rag_max_chunks + rag_top_k_per_query."
         ),
@@ -714,9 +715,10 @@ def _add_ask_parser(sub: Any) -> None:
     p.add_argument(
         "--rag-top-k",
         type=int,
-        default=budget_svc.MAX_RAG_TOP_K,
+        default=None,
+        metavar="N",
         help=(
-            "RAG chunk cap; adapts to context budget. "
+            "RAG chunk cap; default: auto from context (frontier vs local). "
             "Direct path: limits top_k. "
             "Pipeline path: sets rag_max_chunks + rag_top_k_per_query."
         ),

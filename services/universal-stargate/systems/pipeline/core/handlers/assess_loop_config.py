@@ -23,6 +23,11 @@ _logger = get_logger(__name__)
 
 _CITATION_RE = re.compile(r"\[Fact \d+\]")
 
+_RENAMED_FIELDS: dict[str, str] = {
+    "context_prompt_ref": "system_prompt_ref",
+    "pre_assess_action": "initial_action",
+}
+
 
 @dataclass(slots=True, kw_only=True)
 class AssessLoopConfig:
@@ -36,32 +41,38 @@ class AssessLoopConfig:
     actions: dict[str, Any]
     terminal_action: str
     max_iterations: int
-    context_prompt_ref: str | None
+    system_prompt_ref: str | None
     assess_pool: list[str]
     artifact_key: str
     initial_artifact: str | None
     temperature: float | None
     assess_max_tokens: int | None
     assess_handler: str | None
-    pre_assess_action: str | None
+    initial_action: str | None
     strip_xml_tags: list[str]
 
     @classmethod
     def from_step(cls, step: StepConfig) -> AssessLoopConfig:
         """Parse AssessLoopConfig from StepConfig domain fields."""
+        for old, new in _RENAMED_FIELDS.items():
+            if step.get_domain_field(old) is not None:
+                raise ValueError(
+                    f"Step '{step.id}': '{old}' was renamed to "
+                    f"'{new}' — update your YAML"
+                )
         return cls(
             assess_schema=step.get_domain_field("assess_schema"),
             actions=step.get_domain_field("actions") or {},
             terminal_action=step.get_domain_field("terminal_action") or "accept",
             max_iterations=step.get_domain_field("max_iterations") or 3,
-            context_prompt_ref=step.get_domain_field("context_prompt_ref"),
+            system_prompt_ref=step.get_domain_field("system_prompt_ref"),
             assess_pool=step.get_domain_field("assess_pool") or [],
             artifact_key=step.get_domain_field("artifact_key") or "artifact",
             initial_artifact=step.get_domain_field("initial_artifact"),
             temperature=step.generation_parameters.get("temperature"),
             assess_max_tokens=step.generation_parameters.get("max_tokens"),
             assess_handler=step.get_domain_field("assess_handler"),
-            pre_assess_action=step.get_domain_field("pre_assess_action"),
+            initial_action=step.get_domain_field("initial_action"),
             strip_xml_tags=step.get_domain_field("strip_xml_tags") or [],
         )
 
@@ -119,9 +130,9 @@ class AssessLoopConfig:
                 f"Step '{step_id}' assess_handler '{self.assess_handler}' is not registered "
                 "(ensure the handler module is imported before pipeline load)"
             )
-        if self.pre_assess_action is not None and self.pre_assess_action not in self.actions:
+        if self.initial_action is not None and self.initial_action not in self.actions:
             errors.append(
-                f"Step '{step_id}' pre_assess_action '{self.pre_assess_action}' "
+                f"Step '{step_id}' initial_action '{self.initial_action}' "
                 "not defined in actions"
             )
         return errors

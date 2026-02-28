@@ -15,9 +15,7 @@ chain-v7.yaml (top-level):
 
 synthesize/synthesize.yaml:
   group_facts           consensus_group_facts_v7        group_facts.py
-  synthesize_answer     assess_loop_v1                  tools/handlers/assess_loop.py
-                          assess_handler:               citation_coverage.py
-                            citation_coverage_check
+  synthesize_answer     consensus_synthesize_batched_v7  synthesize_batched.py
 
 verify/verify.yaml:
   decompose             consensus_decompose_v7          verify/handlers/
@@ -44,6 +42,7 @@ from .filter_negatives import FilterNegativesHandler
 from .group_facts import GroupFactsHandler
 from .single_call import SingleCallHandler
 from .synergize import SynergizeHandler
+from .synthesize_batched import SynthesizeBatchedHandler
 from .verify.handlers import register_handlers as register_verify_handlers
 from .veto.handlers import register_handlers as register_veto_handlers
 
@@ -67,6 +66,11 @@ def register_handlers(router) -> None:
     )
     router.register_domain_handler_class(
         "consensus", "consensus_group_facts_v7", GroupFactsHandler
+    )
+    router.register_domain_handler_class(
+        "consensus",
+        "consensus_synthesize_batched_v7",
+        SynthesizeBatchedHandler,
     )
 
     register_verify_handlers(router)

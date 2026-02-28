@@ -1,5 +1,4 @@
-# Synthesize sub-pipeline — UNDER CONSTRUCTION
-# Steps are added incrementally as prompts are written and validated.
+# Synthesize sub-pipeline
 #
 # Inputs (bound by parent pipeline):
 #   verified_facts  - Final verified facts after veto
@@ -15,9 +14,6 @@ inputs:
 steps:
   - name: group_facts
     type: consensus_group_facts_v7
-    # Input:  verified_facts — list of verified fact dicts from parent pipeline
-    # Process: embed fact texts, complete-linkage cluster (polarity_aware=True)
-    # Output: verified_facts — same facts reordered so similar facts are adjacent
     handler_inputs:
       verified_facts: inputs.verified_facts
     embedding_model: embedding
@@ -25,25 +21,13 @@ steps:
     timeout_seconds: 60
 
   - name: synthesize_answer
-    type: assess_loop_v1
+    type: consensus_synthesize_batched_v7
     handler_inputs:
-      verified_facts: group_facts.json.verified_facts
+      fact_clusters: group_facts.json.fact_clusters
       question: inputs.question
-    artifact_key: artifact
-    initial_artifact: ""
-    pre_assess_action: synthesize
-    context_prompt_ref: consensus.v7.synthesize_context
-    assess_handler: citation_coverage_check
-    strip_xml_tags: ["reasoning"]
-    terminal_action: accept
-    max_iterations: 5
-    actions:
-      synthesize:
-        prompt_ref: consensus.v7.synthesize_initial
-        model_ref: qwen
-      revise:
-        prompt_ref: consensus.v7.synthesize
-        model_ref: qwen
+    system_prompt_ref: consensus.v7.synthesize_context
+    prompt_ref: consensus.v7.synthesize_initial
+    max_batch_size: 15
     model_ref: qwen
     timeout_seconds: 180
 

@@ -20,7 +20,9 @@ from pipeline_assess_registry import register_assess_handler
 
 _BRACKET_RE = re.compile(r"\[[\d,\s]+\]")
 _DROPPED_SPLIT_RE = re.compile(r"\n?DROPPED FACTS:\s*")
-_DROPPED_LINE_RE = re.compile(r"^\[(\d+)\]\s*(.+)", re.MULTILINE)
+# Matches lines where the leading bracket may contain one or more comma-separated indices,
+# e.g. "[5] reason", "[22, 23] redundant with [1]" — all listed indices share the reason.
+_DROPPED_LINE_RE = re.compile(r"^\[([\d,\s]+)\]\s*(.+)", re.MULTILINE)
 
 
 def _extract_indices(text: str) -> set[int]:
@@ -38,17 +40,23 @@ def _extract_prose(text: str) -> str:
 
 
 def _parse_dropped_section(text: str) -> dict[int, str]:
-    """Parse DROPPED FACTS section into {index: reason}."""
+    """Parse DROPPED FACTS section into {index: reason}.
+
+    Handles both single-index lines ("[5] reason") and grouped lines
+    ("[22, 23] redundant with [1]") — all indices in the bracket share the reason.
+    """
     parts = _DROPPED_SPLIT_RE.split(text, maxsplit=1)
     if len(parts) < 2:
         return {}
     dropped_text = parts[1]
     if dropped_text.strip().lower() == "none":
         return {}
-    return {
-        int(m.group(1)): m.group(2).strip()
-        for m in _DROPPED_LINE_RE.finditer(dropped_text)
-    }
+    result: dict[int, str] = {}
+    for m in _DROPPED_LINE_RE.finditer(dropped_text):
+        reason = m.group(2).strip()
+        for idx in re.findall(r"\d+", m.group(1)):
+            result[int(idx)] = reason
+    return result
 
 
 def citation_coverage_check(resolved: dict[str, Any]) -> dict[str, Any]:
@@ -69,8 +77,12 @@ def citation_coverage_check(resolved: dict[str, Any]) -> dict[str, Any]:
     prose = _extract_prose(raw_artifact)
     incorporated = sorted(expected & _extract_indices(prose))
     dropped = _parse_dropped_section(raw_artifact)
+    # Exclude NEVER BOTH violations: an index already incorporated in prose takes
+    # precedence — do not also count it as explicitly dropped.
     excluded_with_reason = {
-        idx: reason for idx, reason in dropped.items() if idx in expected
+        idx: reason
+        for idx, reason in dropped.items()
+        if idx in expected and idx not in incorporated
     }
     excluded_without_reason = sorted(
         expected - set(incorporated) - set(excluded_with_reason)

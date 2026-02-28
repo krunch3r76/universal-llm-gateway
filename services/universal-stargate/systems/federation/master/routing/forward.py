@@ -346,6 +346,7 @@ class FederatedRequestForwarder:
         Forward token count request to Remote Stargate.
 
         Uses federation auth headers to access /api/v1/federation/tokens/count.
+        Cloud gateways have no remote token API; return permissive defaults.
 
         Args:
             gateway: Target federated gateway (provides remote_stargate_url)
@@ -359,6 +360,15 @@ class FederatedRequestForwarder:
             httpx.HTTPStatusError: On remote error (4xx/5xx)
             httpx.RequestError: On connection failure
         """
+        if gateway.is_cloud:
+            # Downstream only uses token_count and context_limit; with 0/0 it skips
+            # max_tokens adjustment. max_generation_tokens unused but included for shape.
+            return {
+                "token_count": 0,
+                "context_limit": 0,
+                "max_generation_tokens": 0,
+            }
+
         client = self._get_client_for_url(gateway.remote_stargate_url)
 
         # For Unix socket, use path-only endpoint

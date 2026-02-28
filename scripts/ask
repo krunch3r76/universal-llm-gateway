@@ -8,6 +8,7 @@
 #   ask -m rag-answer "How does HyDE compare to query rewriting?"
 #   echo "question" | ask
 #   ask -r                          # raw JSON response
+#   ask -M arcee-ai/trinity-large-preview:free "question"  # cloud model via rag-answer
 #   ask -o q1_gpt.txt "question"    # saves to ./tmp/ask/q1_gpt.txt by default
 #   ask -d ./tmp/my-run -o out.txt "question"
 
@@ -20,28 +21,32 @@ OUT_DIR="${ASK_OUT_DIR:-./}"
 OUT_FILE=""
 SCOPE=""
 SOURCE_PREFIXES=()
+ANSWER_MODEL=""
 
 usage() {
 	cat <<'EOF'
-Usage: ask [-m MODEL] [-u URL] [-r] [-s SCOPE] [-p PREFIX] [-d OUT_DIR] [-o OUT_FILE] [QUESTION]
+Usage: ask [-m MODEL] [-M ANSWER_MODEL] [-u URL] [-r] [-s SCOPE] [-p PREFIX] [-d OUT_DIR] [-o OUT_FILE] [QUESTION]
 
-  -m MODEL   Model or pipeline ID (default: rag-answer)
-  -u URL     Stargate URL (default: http://localhost:9999)
-  -r         Print raw JSON response
-  -s SCOPE   scope_override: research|project|both
-  -p PREFIX  RAG source prefix path (repeatable)
-  -d OUT_DIR Output directory for relative -o paths (default: $ASK_OUT_DIR or ./)
-  -o OUT_FILE Save output to file. If relative, saved under OUT_DIR.
-  -h         Show this help
+  -m MODEL         Model or pipeline ID (default: rag-answer)
+  -M ANSWER_MODEL  Override the answer model via pipeline_options.model
+                   (e.g. arcee-ai/trinity-large-preview:free)
+  -u URL           Stargate URL (default: http://localhost:9999)
+  -r               Print raw JSON response
+  -s SCOPE         scope_override: research|project|both
+  -p PREFIX        RAG source prefix path (repeatable)
+  -d OUT_DIR       Output directory for relative -o paths (default: $ASK_OUT_DIR or ./)
+  -o OUT_FILE      Save output to file. If relative, saved under OUT_DIR.
+  -h               Show this help
 
 Question can be passed as argument or piped via stdin.
 EOF
 	exit 0
 }
 
-while getopts "m:u:rs:p:o:d:h" opt; do
+while getopts "m:M:u:rs:p:o:d:h" opt; do
 	case "$opt" in
 	m) MODEL="$OPTARG" ;;
+	M) ANSWER_MODEL="$OPTARG" ;;
 	u) STARGATE_URL="$OPTARG" ;;
 	r) RAW=true ;;
 	s) SCOPE="$OPTARG" ;;
@@ -63,15 +68,17 @@ else
 	usage
 fi
 
-# Build pipeline_options only if any RAG tuning flags were set
+# Build pipeline_options only if any tuning flags were set
 PIPELINE_OPTS=""
-if [ -n "$SCOPE" ] || [ ${#SOURCE_PREFIXES[@]} -gt 0 ]; then
+if [ -n "$SCOPE" ] || [ ${#SOURCE_PREFIXES[@]} -gt 0 ] || [ -n "$ANSWER_MODEL" ]; then
 	PIPELINE_OPTS=$(jq -nc \
 		--arg scope "$SCOPE" \
+		--arg answer_model "$ANSWER_MODEL" \
 		--argjson prefixes "$(printf '%s\n' "${SOURCE_PREFIXES[@]}" | jq -R . | jq -sc .)" \
 		'{} +
          (if $scope != "" then {scope_override: $scope} else {} end) +
-         (if ($prefixes | length) > 0 then {rag_source_prefixes: $prefixes} else {} end)')
+         (if ($prefixes | length) > 0 then {rag_source_prefixes: $prefixes} else {} end) +
+         (if $answer_model != "" then {model: $answer_model} else {} end)')
 fi
 
 if [ -n "$PIPELINE_OPTS" ]; then

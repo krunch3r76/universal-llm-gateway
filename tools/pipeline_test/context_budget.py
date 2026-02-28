@@ -22,7 +22,8 @@ AVG_RAG_CHUNK_CHARS = 1200
 DEFAULT_LOCAL_CONTEXT = 32_768
 DEFAULT_FRONTIER_CONTEXT = 128_000
 MIN_RAG_TOP_K = 1
-MAX_RAG_TOP_K = 30
+MAX_RAG_TOP_K_LOCAL = 30
+MAX_RAG_TOP_K_FRONTIER = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +100,7 @@ def compute_budget(
     fixed_chars: int,
     output_chars: int,
     *,
-    top_k_cap: int = MAX_RAG_TOP_K,
+    top_k_cap: int | None = None,
 ) -> ContextBudget:
     """Allocate context window across output and RAG findings.
 
@@ -108,7 +109,16 @@ def compute_budget(
     2. Subtract *fixed_chars* (system prompt, headers, instructions).
     3. Fit the model output — truncate only if it would crowd out all RAG.
     4. Fill remaining space with RAG chunks up to *top_k_cap*.
+
+    When *top_k_cap* is None, it is inferred from *context_length*: frontier
+    (≥ DEFAULT_FRONTIER_CONTEXT) uses MAX_RAG_TOP_K_FRONTIER, else LOCAL.
     """
+    if top_k_cap is None:
+        top_k_cap = (
+            MAX_RAG_TOP_K_FRONTIER
+            if context_length >= DEFAULT_FRONTIER_CONTEXT
+            else MAX_RAG_TOP_K_LOCAL
+        )
     usable_chars = int(context_length * CHARS_PER_TOKEN * (1 - RESPONSE_RESERVE))
     remaining = max(usable_chars - fixed_chars, 0)
 

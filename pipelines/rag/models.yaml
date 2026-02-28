@@ -1,5 +1,7 @@
 models:
   phi4:
     model: phi-4-q4-k-m-16384
+  openrouter_free:
+    model: openrouter/free
   qwen3_32b:
     model: qwen3-32b-awq-32768

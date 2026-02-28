@@ -247,6 +247,15 @@ class FederatedLoadOrchestrator:
         Raises:
             HTTPException: If load fails or times out. ALWAYS explicit to client.
         """
+        # Cloud gateways (backend_type == "cloud_api") need no remote load:
+        # models are always available via the cloud proxy.
+        if gateway.is_cloud:
+            logger.debug(
+                f"☁️ Skipping load for cloud gateway {gateway.gateway_id}: "
+                f"{model_id} is always available via cloud proxy"
+            )
+            return True
+
         routing_key = model_id.routing_key
         # Tuple key: collision-proof (string keys fail if gateway_id or
         # routing_key contains separator)

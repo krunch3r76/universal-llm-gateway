@@ -641,48 +641,56 @@ prompts:
       {numbered_claims}
 
   synthesize_context:
-    description: "Cached system context for grounded answer synthesis loop."
+    description: "System instructions for batched grounded answer synthesis."
     system_prompt: ""
     template: |
       You are synthesizing a definitive answer from a set of verified facts.
 
-      QUESTION: {question}
-
-      VERIFIED FACTS:
-      {verified_facts}
-
       RULES:
       - Group related facts into thematic paragraphs (one per subtopic); separate with blank lines
+      - Order paragraphs from upstream/unifying mechanisms to downstream effects: if one mechanism causes or enables another, introduce the cause first
       - Cite each incorporated fact inline as [N] — standalone or merged (e.g. [3, 7, 12])
-      - Deduplicate: when multiple facts share the same meaning, write ONE sentence and cite all their indices — never write two sentences about the same idea
-      - Each concept appears ONCE — within and across paragraphs; do not restate what you already wrote
+      - Deduplicate within and across paragraphs: when multiple facts share the same meaning (even with different phrasing), write ONE sentence and cite all their indices — never write two sentences about the same idea, in the same paragraph or in different paragraphs
+      - Before writing each new sentence, check: does this answer already state this concept anywhere? If yes, add the citation to the existing sentence instead of writing a new one
+      - Every sentence must express a specific claim that all its cited facts directly support; do not write a vague filler sentence to attach leftover citations
+      - Vague or non-informative facts that cannot be made specific: drop them explicitly
       - Do not assert claims not supported by the facts
       - Do not list facts verbatim
 
       FACT PLACEMENT (CRITICAL — each index goes to exactly one place):
-      - Cited inline [N] in your prose → incorporated
-      - Listed in DROPPED FACTS with reason → excluded
-      - NEVER both: if you cite [N] in prose, do NOT list it in DROPPED FACTS
+      - Cited inline [N] in your prose → incorporated; each index may appear at most once across all sentences
+      - Listed in DROPPED FACTS with reason → excluded (valid reasons: "redundant with [N]", "too vague", "subsumed by [N]", "silent drop")
+      - NEVER both: if you cited [N] anywhere in your prose, do NOT list it in DROPPED FACTS under any circumstances
 
       OUTPUT FORMAT:
       1. Your answer (multiple paragraphs with inline citations, separated by blank lines)
-      2. On its own line: DROPPED FACTS:
-      3. One line per dropped fact: [N] reason for exclusion
+      2. A line containing only: DROPPED FACTS:   ← REQUIRED; omitting this line is a format error
+      3. List every index you did NOT cite in your prose as: [N] reason
       If no facts were dropped, write: DROPPED FACTS: none
 
   synthesize_initial:
     description: "Generate initial grounded answer from scratch using verified facts."
     system_prompt: ""
     template: |
-      Write a comprehensive answer using the verified facts.
+      QUESTION: {question}
+
+      VERIFIED FACTS:
+      {verified_facts}
+
+      Write a comprehensive answer using only the facts above.
 
       Structure:
       - Multiple paragraphs, one per subtopic, separated by blank lines
+      - Order paragraphs from upstream/unifying mechanisms to downstream effects
       - Cite facts inline as [N]
-      - Deduplicate within each paragraph: when two facts express the same idea, fold into ONE sentence with all their indices — never write two sentences about the same concept
-      - Each fact index goes to exactly ONE place: cited in prose OR listed in DROPPED FACTS — never both
+      - Deduplicate within and across paragraphs: when two facts express the same idea (even with different phrasing), fold into ONE sentence with all their indices; do not restate a concept in a second paragraph that was already covered in the first
+      - Before writing each new sentence, check: does this answer already state this concept anywhere? If yes, extend the existing sentence with the new citation instead
+      - Every sentence must express a specific claim that all its cited facts directly support; do not write a vague filler sentence to attach leftover citations
+      - Vague or non-informative facts: drop them explicitly; do not include in prose
+      - Each fact index goes to exactly ONE place across ALL sentences: cited in prose OR listed in DROPPED FACTS — never both, and never in two different prose sentences
 
-      After your answer, on a new line write DROPPED FACTS: then list every index not cited in your prose as [N] reason. If none, write DROPPED FACTS: none
+      After your answer, write a line containing only: DROPPED FACTS:   ← REQUIRED; omitting this line is a format error
+      List every index you did NOT cite in your prose as [N] reason (e.g. "redundant with [N]", "too vague", "subsumed by [N]", "silent drop"). If you cited [N] in your prose, do NOT list it here. If none, write DROPPED FACTS: none
 
   synthesize:
     description: "Revise a grounded answer to add missing inline citations."

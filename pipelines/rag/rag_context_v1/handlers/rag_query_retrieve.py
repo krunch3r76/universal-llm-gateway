@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, override
 
 import httpx
 import yaml
+from systems.pipeline.core.events.step import RagRetrievalParamsResolved
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -265,6 +266,31 @@ class RagMultiRetrieveHandler(BaseHandler):
         profiles_data = _load_retrieval_profiles()
         consumer_model: str = runtime.get("consumer_model", "")
         profile = profiles_data.get("profiles", {}).get(consumer_model, {})
+
+        # Class-based fallback: match consumer_model against model_classes patterns
+        matched_class_name: str | None = None
+        if consumer_model and not profile:
+            for class_name, class_config in profiles_data.get(
+                "model_classes", {}
+            ).items():
+                pattern = class_config.get("match", "")
+                if pattern and pattern in consumer_model:
+                    profile = {
+                        k: v
+                        for k, v in class_config.items()
+                        if k != "match"
+                    }
+                    matched_class_name = class_name
+                    logger.info(
+                        "Step '%s': no exact profile for '%s', "
+                        "using model_class '%s' (match='%s')",
+                        step.id,
+                        consumer_model,
+                        class_name,
+                        pattern,
+                    )
+                    break
+
         if consumer_model and profile:
             logger.info(
                 "Step '%s': applying retrieval profile for consumer '%s'",
@@ -326,6 +352,21 @@ class RagMultiRetrieveHandler(BaseHandler):
             scope,
             top_k,
             rrf_k,
+        )
+
+        self._publish_bus_event(
+            context,
+            RagRetrievalParamsResolved(
+                pipeline_id=context.pipeline.id,
+                execution_id=context.execution_id,
+                step_name=step.name,
+                consumer_model=consumer_model or None,
+                profile_class=matched_class_name,
+                max_chunks=max_chunks,
+                top_k_per_query=top_k,
+                rrf_k=rrf_k,
+                scope=scope,
+            ),
         )
 
         async with httpx.AsyncClient(timeout=30.0) as client:
