@@ -3,6 +3,8 @@ Token management for request execution.
 
 Handles token counting, context limit validation, and max_tokens computation.
 """
+# TODO: Move to a shared location (e.g. core/ or core/request/); used by both
+# streaming and non-streaming paths, so core/nonstreaming/ is misleading.
 
 from dataclasses import dataclass
 from typing import Any
@@ -368,6 +370,15 @@ async def apply_federated_token_management(
             f"federated request to {federated_gateway.gateway_id}"
         )
         context.middleware_actions.append("token_counting_bypassed_federated")
+        return
+
+    # Cloud gateways: no remote token API; skip token counting (same effect as bypass).
+    if getattr(federated_gateway, "is_cloud", False):
+        logger.info(
+            f"⏩ TOKEN COUNTING SKIPPED: Cloud gateway {federated_gateway.gateway_id} "
+            "(no remote token API)"
+        )
+        context.middleware_actions.append("token_counting_skipped_cloud")
         return
 
     # Reuse existing content extraction logic

@@ -16,7 +16,6 @@ def validate_model_id(model_id: str) -> str | None:
     - Cannot have duplicate suffixes (-cpu-cpu, -hybrid-hybrid)
     - Cannot have conflicting suffixes (-cpu-hybrid)
     - Suffixes must be at end in correct order
-    - Instance suffix `:N` is not supported
 
     Args:
         model_id: Model ID to validate
@@ -32,23 +31,10 @@ def validate_model_id(model_id: str) -> str | None:
         return "Model ID contains duplicate -cpu suffix"
     if model_id.count("-hybrid") > 1:
         return "Model ID contains duplicate -hybrid suffix"
-    if model_id.count(":") > 1:
-        return "Model ID contains multiple instance suffixes"
 
     # Check for conflicting suffixes
     if "-cpu" in model_id and "-hybrid" in model_id:
         return "Model ID cannot have both -cpu and -hybrid suffixes"
-
-    # Check for instance suffix (not supported)
-    if ":" in model_id:
-        parts = model_id.rsplit(":", 1)
-        instance_str = parts[1]
-        if instance_str.isdigit():
-            return (
-                "Model ID must not include an instance suffix like ':1' or ':2'. "
-                "Remove the ':N' suffix."
-            )
-        return f"Model ID contains unsupported ':' segment: '{instance_str}'"
 
     # Check -cpu is at end
     work_id = model_id
