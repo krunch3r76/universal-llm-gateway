@@ -1,6 +1,8 @@
 chromadb
 pymupdf4llm
 pymupdf-layout
+ebooklib
+beautifulsoup4
 pyyaml
 watchfiles
 # fastapi, uvicorn, httpx already in ~/.venvs/universal

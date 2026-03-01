@@ -16,6 +16,7 @@ class WatchDirectory:
     path: str
     extensions: list[str]
     recursive: bool = True
+    chunk_tokens: int | None = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -70,11 +71,14 @@ def load_config() -> RagConfig:
             continue
         recursive_value = item.get("recursive", True)
         recursive = recursive_value if isinstance(recursive_value, bool) else True
+        raw_chunk_tokens = item.get("chunk_tokens")
+        chunk_tokens = raw_chunk_tokens if isinstance(raw_chunk_tokens, int) else None
         watch_directories.append(
             WatchDirectory(
                 path=path.strip(),
                 extensions=_normalize_extensions(item.get("extensions")),
                 recursive=recursive,
+                chunk_tokens=chunk_tokens,
             )
         )
 

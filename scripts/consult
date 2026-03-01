@@ -1,0 +1,470 @@
+#!/usr/bin/env python3
+"""General-purpose multi-model consultation with role templates and RAG.
+
+Query multiple models in parallel with a configurable role (architect,
+reviewer, planner, researcher) and optional RAG context + file injection.
+
+Usage:
+  consult "How should we handle WebSocket reconnection?"
+  consult -r architect "Should routing use events or polling?" -f systems/routing/
+  consult -r reviewer "Review capacity module for race conditions" -f capacity/ledger.py
+  consult -r planner "Add per-model timeout configuration" -o plan.md
+  consult --models qwen3-32b-awq-32768 google/gemini-2.5-pro "question"
+  consult --no-rag "question"
+  consult --rag-pipeline "complex multi-faceted question"
+  consult --context-files f1.py f2.py "question about these files"
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import textwrap
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+DEFAULT_STARGATE_URL = "http://localhost:9999"
+DEFAULT_RAG_URL = "http://localhost:8100"
+
+DEFAULT_MODELS: list[str] = [
+    "qwen3-32b-awq-32768",
+    "ernie-4-5-21b-a3b-pt-q8-0-65536",
+    "google/gemini-2.5-pro",
+]
+
+# Code review: use only Gemini until better local models are available.
+REVIEWER_DEFAULT_MODELS: list[str] = ["google/gemini-2.5-pro"]
+
+DEFAULT_RAG_SOURCE_PREFIXES: list[str] = [
+    "docs/architecture",
+    "docs/vision",
+    "docs/engram",
+]
+
+EBOOK_RAG_SOURCE_PREFIXES: list[str] = [
+    "docs/reference",
+]
+
+SCOPE_PREFIX_MAP: dict[str, list[str]] = {
+    "project": DEFAULT_RAG_SOURCE_PREFIXES,
+    "ebooks": EBOOK_RAG_SOURCE_PREFIXES,
+    "all": DEFAULT_RAG_SOURCE_PREFIXES + EBOOK_RAG_SOURCE_PREFIXES,
+}
+
+ROLES: dict[str, str] = {
+    "architect": (
+        "You are a senior software architect reviewing a codebase. "
+        "Evaluate architectural approaches, identify trade-offs, and suggest "
+        "improvements grounded in the provided context.\n\n"
+        "Rules:\n"
+        "- Reference specific code/docs when making claims\n"
+        "- Identify trade-offs explicitly (not just pros)\n"
+        "- Suggest concrete alternatives with rationale\n"
+        "- Consider maintainability, testability, and operational impact\n"
+        "- Structure: Assessment → Trade-offs → Recommendation"
+    ),
+    "reviewer": (
+        "You are a code reviewer examining code for correctness, "
+        "race conditions, resource leaks, and adherence to architectural patterns.\n\n"
+        "Rules:\n"
+        "- Quote exact code that concerns you\n"
+        "- Classify severity: critical (breaks correctness), moderate (degrades quality), minor\n"
+        "- Suggest specific fixes, not vague improvements\n"
+        "- Check for: races, leaks, error handling, invariant violations\n"
+        "- Structure: Issues Found → Suggested Fixes → Rationale"
+    ),
+    "planner": (
+        "You are an implementation planner. Given a requirement and codebase context, "
+        "produce a concrete implementation plan.\n\n"
+        "Rules:\n"
+        "- List specific files to create/modify/delete\n"
+        "- Order steps by dependency (what must happen first)\n"
+        "- Identify risks and edge cases\n"
+        "- Estimate scope (small/medium/large)\n"
+        "- Structure: Scope → Files Affected → Step-by-Step Plan → Risks"
+    ),
+    "researcher": (
+        "You are an AI research assistant with expertise in LLM systems, "
+        "prompt engineering, and distributed inference. Research findings "
+        "from published papers are provided when available.\n\n"
+        "Rules:\n"
+        "- Ground responses in provided research when applicable\n"
+        "- Cite specific techniques or findings by source\n"
+        "- Be practical: suggest actionable approaches\n"
+        "- If research doesn't cover the question, say so\n"
+        "- Structure: Key Findings → Practical Application → Open Questions"
+    ),
+}
+
+DEFAULT_ROLE = "researcher"
+
+
+def _read_context_files(paths: list[str]) -> list[str]:
+    """Read files and return formatted content blocks."""
+    blocks: list[str] = []
+    for path_str in paths:
+        path = Path(path_str)
+        if path.is_dir():
+            for child in sorted(path.rglob("*.py"))[:20]:
+                try:
+                    content = child.read_text(errors="replace")
+                    if len(content) > 8000:
+                        content = content[:8000] + "\n[... truncated]"
+                    blocks.append(f"### {child}\n```\n{content}\n```")
+                except OSError:
+                    pass
+        elif path.is_file():
+            try:
+                content = path.read_text(errors="replace")
+                if len(content) > 12000:
+                    content = content[:12000] + "\n[... truncated]"
+                blocks.append(f"### {path}\n```\n{content}\n```")
+            except OSError:
+                blocks.append(f"### {path}\n[Error: could not read file]")
+        else:
+            blocks.append(f"### {path}\n[Error: file not found]")
+    return blocks
+
+
+def _fetch_rag_pipeline(
+    query: str,
+    *,
+    pipeline_id: str = "rag-context",
+    stargate_url: str = DEFAULT_STARGATE_URL,
+    timeout: float = 70.0,
+    scope_override: str | None = None,
+) -> tuple[list[str], str | None]:
+    """Use the rag-context pipeline for intelligent RAG retrieval."""
+    url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
+    pipeline_options: dict[str, Any] = {}
+    if scope_override:
+        pipeline_options["scope_override"] = scope_override
+    body: dict[str, Any] = {
+        "model": pipeline_id,
+        "messages": [{"role": "user", "content": query}],
+        "stream": False,
+        "pipeline_options": pipeline_options,
+    }
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(url, json=body)
+        resp.raise_for_status()
+    except Exception as exc:
+        return [], str(exc)
+    data = resp.json()
+    content: str = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    if not content.strip():
+        return [], f"Pipeline '{pipeline_id}' returned empty context"
+    return [content], None
+
+
+def _fetch_rag_direct(
+    query: str,
+    *,
+    rag_url: str = DEFAULT_RAG_URL,
+    top_k: int = 5,
+    source_prefixes: list[str] | None = None,
+    timeout: float = 10.0,
+) -> tuple[list[str], str | None]:
+    """Direct RAG search via the /search endpoint."""
+    url = f"{rag_url.rstrip('/')}/search"
+    body: dict[str, object] = {"query": query, "top_k": top_k}
+    if source_prefixes:
+        body["source_prefixes"] = source_prefixes
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(url, json=body)
+        resp.raise_for_status()
+    except Exception as exc:
+        return [], str(exc)
+    data = resp.json()
+    if not isinstance(data, dict):
+        return [], "RAG response was not a JSON object"
+    chunks = data.get("chunks", [])
+    metadata = data.get("metadata", [])
+    findings: list[str] = []
+    for idx, chunk in enumerate(chunks):
+        if not isinstance(chunk, str):
+            continue
+        meta = (
+            metadata[idx]
+            if idx < len(metadata) and isinstance(metadata[idx], dict)
+            else {}
+        )
+        source = meta.get("source", "unknown") if isinstance(meta, dict) else "unknown"
+        findings.append(f"Source: {source}\n{chunk}")
+    return findings, None
+
+
+def _build_prompt(
+    question: str,
+    rag_findings: list[str] | None = None,
+    file_context: list[str] | None = None,
+) -> str:
+    """Assemble the user prompt from question + context."""
+    sections: list[str] = []
+    if file_context:
+        sections.append("## Code/Documentation Context\n" + "\n\n".join(file_context))
+    if rag_findings:
+        sections.append(
+            "## Retrieved Knowledge\n"
+            + "\n\n".join(
+                f"### Finding {i}\n{f}" for i, f in enumerate(rag_findings, 1)
+            )
+        )
+    sections.append(f"## Question\n{question}")
+    return "\n\n".join(sections)
+
+
+def _query_model(
+    model_id: str,
+    system_prompt: str,
+    user_prompt: str,
+    stargate_url: str,
+    timeout: float,
+) -> dict[str, Any]:
+    """Send consultation to a single model."""
+    url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
+    body: dict[str, Any] = {
+        "model": model_id,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "stream": False,
+        "temperature": 0.4,
+    }
+    start = time.monotonic()
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.post(url, json=body)
+    elapsed_ms = (time.monotonic() - start) * 1000
+    resp.raise_for_status()
+    data = resp.json()
+    choice = data.get("choices", [{}])[0]
+    usage = data.get("usage", {})
+    return {
+        "model_id": data.get("model", model_id),
+        "response": choice.get("message", {}).get("content", ""),
+        "prompt_tokens": usage.get("prompt_tokens", 0),
+        "completion_tokens": usage.get("completion_tokens", 0),
+        "latency_ms": round(elapsed_ms),
+    }
+
+
+def _format_output(
+    question: str,
+    role: str,
+    results: list[dict[str, Any]],
+    rag_error: str | None,
+    file_paths: list[str],
+) -> str:
+    """Format consultation results as structured markdown."""
+    lines: list[str] = []
+    lines.append(f"# Consultation: {role}")
+    lines.append(f"**Date**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append(f"**Question**: {question}")
+    if file_paths:
+        lines.append(f"**Context files**: {', '.join(file_paths)}")
+    if rag_error:
+        lines.append(f"**RAG**: failed ({rag_error})")
+    lines.append("")
+
+    for result in results:
+        model = result.get("model_id", "unknown")
+        lines.append(f"## {model}")
+        if "error" in result:
+            lines.append(f"**Error**: {result['error']}")
+        else:
+            tokens = result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
+            lines.append(
+                f"*{result.get('latency_ms', 0)}ms, "
+                f"{tokens} tokens "
+                f"({result.get('prompt_tokens', 0)}+{result.get('completion_tokens', 0)})*\n"
+            )
+            lines.append(result.get("response", ""))
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Multi-model consultation with role templates and RAG",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent("""\
+            Roles:
+              architect   Evaluate architecture, trade-offs, improvements
+              reviewer    Code review: correctness, races, leaks, patterns
+              planner     Implementation plan: files, steps, risks
+              researcher  Research-grounded Q&A (default)
+
+            Examples:
+              consult "How should we handle reconnection?"
+              consult -r architect "Event bus: pub/sub vs direct?" -f docs/event-contracts.md
+              consult -r reviewer -f capacity/ledger.py "Check for race conditions"
+              consult -r planner "Add per-model timeouts" -o plan.md
+              consult --models qwen3-32b-awq-32768 google/gemini-2.5-pro "question"
+        """),
+    )
+    parser.add_argument("question", nargs="?", help="Question to consult on")
+    parser.add_argument(
+        "-r",
+        "--role",
+        default=DEFAULT_ROLE,
+        choices=list(ROLES),
+        help=f"Consultation role (default: {DEFAULT_ROLE})",
+    )
+    parser.add_argument(
+        "-f",
+        "--context-files",
+        nargs="+",
+        default=[],
+        metavar="PATH",
+        help="Files/directories to include as context",
+    )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        default=None,
+        metavar="MODEL",
+        help="Models to query (default: qwen3-32b + gpt-oss-20b)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        metavar="FILE",
+        help="Save results to file",
+    )
+    parser.add_argument(
+        "-u",
+        "--stargate-url",
+        default=DEFAULT_STARGATE_URL,
+        help="Stargate URL",
+    )
+    parser.add_argument("--no-rag", action="store_true", help="Disable RAG")
+    parser.add_argument(
+        "--scope",
+        default="project",
+        choices=list(SCOPE_PREFIX_MAP),
+        help="RAG retrieval scope (default: project)",
+    )
+    parser.add_argument(
+        "--rag-pipeline",
+        nargs="?",
+        const="rag-context",
+        default=None,
+        metavar="PIPELINE",
+        help="Use intelligent RAG pipeline (default: rag-context)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=300.0,
+        help="Per-model timeout in seconds",
+    )
+    parser.add_argument("--list-roles", action="store_true", help="List roles and exit")
+
+    args = parser.parse_args()
+
+    if args.list_roles:
+        for name, prompt in ROLES.items():
+            marker = " (default)" if name == DEFAULT_ROLE else ""
+            print(f"\n=== {name}{marker} ===")
+            print(prompt)
+        sys.exit(0)
+
+    if not args.question:
+        if not sys.stdin.isatty():
+            args.question = sys.stdin.read().strip()
+        if not args.question:
+            parser.error("No question provided")
+
+    target_models = args.models or (
+        REVIEWER_DEFAULT_MODELS if args.role == "reviewer" else DEFAULT_MODELS
+    )
+    system_prompt = ROLES[args.role]
+
+    # Gather context
+    file_context: list[str] | None = None
+    if args.context_files:
+        file_context = _read_context_files(args.context_files)
+        if file_context:
+            print(f"Read {len(file_context)} context blocks", file=sys.stderr)
+
+    # RAG retrieval
+    rag_findings: list[str] | None = None
+    rag_error: str | None = None
+    if not args.no_rag:
+        print("Retrieving RAG context...", file=sys.stderr)
+        source_prefixes = SCOPE_PREFIX_MAP[args.scope]
+        if args.rag_pipeline:
+            rag_findings, rag_error = _fetch_rag_pipeline(
+                args.question,
+                pipeline_id=args.rag_pipeline,
+                stargate_url=args.stargate_url,
+                scope_override=args.scope,
+            )
+        else:
+            rag_findings, rag_error = _fetch_rag_direct(
+                args.question,
+                source_prefixes=source_prefixes,
+            )
+        if rag_error:
+            print(f"RAG: {rag_error} (continuing without)", file=sys.stderr)
+        elif rag_findings:
+            print(f"RAG: {len(rag_findings)} findings", file=sys.stderr)
+
+    user_prompt = _build_prompt(args.question, rag_findings, file_context)
+
+    # Query models in parallel
+    print(
+        f"Consulting {len(target_models)} model(s) as {args.role}...",
+        file=sys.stderr,
+    )
+    results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=len(target_models)) as pool:
+        futures = {
+            pool.submit(
+                _query_model,
+                model_id=mid,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                stargate_url=args.stargate_url,
+                timeout=args.timeout,
+            ): mid
+            for mid in target_models
+        }
+        for future in as_completed(futures):
+            mid = futures[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                results.append({"model_id": mid, "error": str(exc)})
+
+    order = {m: i for i, m in enumerate(target_models)}
+    results.sort(key=lambda r: order.get(r.get("model_id", ""), 999))
+
+    output = _format_output(
+        args.question,
+        args.role,
+        results,
+        rag_error,
+        args.context_files,
+    )
+    print(output)
+
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(output)
+        print(f"Saved: {out_path}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

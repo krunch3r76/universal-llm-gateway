@@ -175,7 +175,17 @@ function renderParallelPhase(phase, allSteps) {
 
 function renderStepCard(step, allSteps, showArrow, vertical, showParent) {
   const idx = allSteps.indexOf(step);
-  const latency = step.latency_ms ? `${(step.latency_ms/1000).toFixed(1)}s` : '-';
+  const wallStr = step.latency_ms ? `${(step.latency_ms/1000).toFixed(1)}s` : null;
+  const hasInference = step.inference_ms > 0;
+  const isParallel = hasInference && step.latency_ms && step.inference_ms > step.latency_ms;
+  const latency = hasInference
+    ? `${(step.inference_ms/1000).toFixed(1)}s (${wallStr})`
+    : (wallStr ?? '-');
+  const latencyTitle = hasInference
+    ? (isParallel
+        ? 'Σ cumulative inference across parallel model calls (wall clock)'
+        : 'Cumulative inference time (wall clock)')
+    : null;
   const tokens = step.tokens.total || 0;
   const hasFailed = !!step.error;
   const tokStr = hasFailed ? 'ERROR' : (tokens > 1000 ? `${(tokens/1000).toFixed(0)}K tok` : `${tokens} tok`);
@@ -198,7 +208,7 @@ function renderStepCard(step, allSteps, showArrow, vertical, showParent) {
          onclick="selectStep(${idx})">
       ${badge}
       ${nameHtml}
-      <div class="step-meta">${model} &middot; ${latency} &middot; ${tokStr}</div>
+      <div class="step-meta"${latencyTitle ? ` title="${latencyTitle}"` : ''}>${model} &middot; ${latency} &middot; ${tokStr}</div>
     </div>`;
 }
 

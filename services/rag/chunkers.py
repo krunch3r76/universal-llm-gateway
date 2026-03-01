@@ -6,9 +6,11 @@ _TOKEN_ESTIMATE = 4  # chars per token approximation
 
 _CHUNK_TOKENS_LARGE = 512
 _CHUNK_TOKENS_CODE = 256
+_CHUNK_TOKENS_EBOOK = 1024
 
 _CHUNK_CHARS_LARGE = _CHUNK_TOKENS_LARGE * _TOKEN_ESTIMATE
 _CHUNK_CHARS_CODE = _CHUNK_TOKENS_CODE * _TOKEN_ESTIMATE
+_CHUNK_CHARS_EBOOK = _CHUNK_TOKENS_EBOOK * _TOKEN_ESTIMATE
 
 _CODE_EXTENSIONS = {".py", ".js", ".ts", ".go", ".rs", ".sh", ".yaml", ".toml"}
 
@@ -51,7 +53,12 @@ def _annotate_chunk_indices(chunks: list[Chunk]) -> list[Chunk]:
     return chunks
 
 
-def chunk_markdown(path: str, content: str) -> list[Chunk]:
+def chunk_markdown(
+    path: str,
+    content: str,
+    *,
+    max_chunk_chars: int = _CHUNK_CHARS_LARGE,
+) -> list[Chunk]:
     """Split markdown by headers, then paragraph-split within each section."""
     chunks: list[Chunk] = []
     source = str(path)
@@ -59,14 +66,13 @@ def chunk_markdown(path: str, content: str) -> list[Chunk]:
     sections = _HEADER_RE.split(content)
     headers = _HEADER_RE.findall(content)
 
-    # Text before the first header
     if sections[0].strip():
-        for text in _split_paragraphs(sections[0], _CHUNK_CHARS_LARGE):
+        for text in _split_paragraphs(sections[0], max_chunk_chars):
             chunks.append(Chunk(text=text, metadata={"source": source, "heading": ""}))
 
     for header, section_body in zip(headers, sections[1:], strict=False):
         heading = header.lstrip("#").strip()
-        for text in _split_paragraphs(section_body, _CHUNK_CHARS_LARGE):
+        for text in _split_paragraphs(section_body, max_chunk_chars):
             chunks.append(
                 Chunk(text=text, metadata={"source": source, "heading": heading})
             )
@@ -74,7 +80,11 @@ def chunk_markdown(path: str, content: str) -> list[Chunk]:
     return _annotate_chunk_indices(chunks)
 
 
-def chunk_pdf(path: str) -> list[Chunk]:
+def chunk_pdf(
+    path: str,
+    *,
+    max_chunk_chars: int = _CHUNK_CHARS_LARGE,
+) -> list[Chunk]:
     """Convert PDF to markdown via pymupdf4llm, then chunk as markdown."""
     try:
         import pymupdf4llm
@@ -88,7 +98,46 @@ def chunk_pdf(path: str) -> list[Chunk]:
     if isinstance(markdown_text, list):
         markdown_text = "\n\n".join(str(item) for item in markdown_text)
 
-    return chunk_markdown(path, markdown_text)
+    return chunk_markdown(path, markdown_text, max_chunk_chars=max_chunk_chars)
+
+
+def chunk_epub(
+    path: str,
+    *,
+    max_chunk_chars: int = _CHUNK_CHARS_EBOOK,
+) -> list[Chunk]:
+    """Extract EPUB chapters via ebooklib, convert to text, chunk as markdown."""
+    try:
+        import ebooklib
+        from ebooklib import epub
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing EPUB extraction dependency. "
+            "Install with: pip install ebooklib beautifulsoup4"
+        ) from exc
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing HTML parsing dependency. Install with: pip install beautifulsoup4"
+        ) from exc
+
+    book = epub.read_epub(path, options={"ignore_ncx": True})
+    sections: list[str] = []
+    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+        html = item.get_body_content()
+        if not html:
+            continue
+        soup = BeautifulSoup(html, "html.parser")
+        text = soup.get_text(separator="\n\n", strip=True)
+        if text:
+            sections.append(text)
+
+    if not sections:
+        return []
+
+    combined = "\n\n".join(sections)
+    return chunk_markdown(path, combined, max_chunk_chars=max_chunk_chars)
 
 
 def chunk_code(path: str, content: str) -> list[Chunk]:
@@ -126,15 +175,25 @@ def chunk_code(path: str, content: str) -> list[Chunk]:
     return _annotate_chunk_indices(chunks)
 
 
-def chunk_file(path: Path) -> list[Chunk]:
+def chunk_file(
+    path: Path,
+    *,
+    max_chunk_chars: int | None = None,
+) -> list[Chunk]:
     """Dispatch to the correct chunker based on file extension."""
     suffix = path.suffix.lower()
 
     if suffix in {".md", ".mdc", ".txt"}:
-        return chunk_markdown(str(path), path.read_text(errors="replace"))
+        kwargs = {"max_chunk_chars": max_chunk_chars} if max_chunk_chars else {}
+        return chunk_markdown(str(path), path.read_text(errors="replace"), **kwargs)
 
     if suffix == ".pdf":
-        return chunk_pdf(str(path))
+        kwargs = {"max_chunk_chars": max_chunk_chars} if max_chunk_chars else {}
+        return chunk_pdf(str(path), **kwargs)
+
+    if suffix == ".epub":
+        kwargs = {"max_chunk_chars": max_chunk_chars} if max_chunk_chars else {}
+        return chunk_epub(str(path), **kwargs)
 
     if suffix in _CODE_EXTENSIONS:
         return chunk_code(str(path), path.read_text(errors="replace"))

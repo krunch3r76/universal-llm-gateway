@@ -34,6 +34,9 @@ class IndexOutcome(Protocol):
     unchanged: bool
 
 
+IndexFn = Callable[[Path, int | None], Awaitable[IndexOutcome]]
+
+
 class WatcherManager:
     """Manages HotReloadWatcher instances for configured directories.
 
@@ -46,11 +49,11 @@ class WatcherManager:
 
     def __init__(
         self,
-        index_fn: Callable[[Path], Awaitable[IndexOutcome]],
+        index_fn: IndexFn,
         event_bus: EventBus | None = None,
         reconcile_interval_s: float = _RECONCILE_INTERVAL_S,
     ) -> None:
-        self._index_fn: Callable[[Path], Awaitable[IndexOutcome]] = index_fn
+        self._index_fn: IndexFn = index_fn
         self._event_bus: EventBus | None = event_bus
         self._reconcile_interval_s = reconcile_interval_s
         self._watchers: list[HotReloadWatcher] = []
@@ -95,10 +98,15 @@ class WatcherManager:
             return
 
         await self._initial_reindex(watch_path, watch_directory)
+        chunk_tokens = watch_directory.chunk_tokens
+
+        async def on_change(file_path: str, *, _ct: int | None = chunk_tokens) -> None:
+            await self._handle_file_change(file_path, _ct)
+
         watcher = HotReloadWatcher(
             name=f"rag-watch:{watch_path.name}",
             watch_path=watch_path,
-            on_change=self._on_file_change,
+            on_change=on_change,
             debounce_ms=2000,
             recursive=watch_directory.recursive,
             patterns=watch_directory.extensions,
@@ -143,7 +151,9 @@ class WatcherManager:
                     ):
                         continue
                     try:
-                        result = await self._index_fn(file_path)
+                        result = await self._index_fn(
+                            file_path, watch_directory.chunk_tokens
+                        )
                         if result.unchanged:
                             unchanged += 1
                         else:
@@ -182,7 +192,7 @@ class WatcherManager:
             if not file_path.is_file() or file_path.suffix.lower() not in extensions:
                 continue
             try:
-                result = await self._index_fn(file_path)
+                result = await self._index_fn(file_path, watch_directory.chunk_tokens)
                 file_total += 1
                 if result.unchanged:
                     unchanged_total += 1
@@ -207,13 +217,15 @@ class WatcherManager:
             )
         )
 
-    async def _on_file_change(self, file_path: str) -> None:
-        """Callback for HotReloadWatcher to reindex changed files."""
+    async def _handle_file_change(
+        self, file_path: str, chunk_tokens: int | None
+    ) -> None:
+        """Reindex a changed file with directory-specific chunk_tokens."""
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             logger.debug("Watcher change ignored for missing/non-file path: %s", path)
             return
-        result = await self._index_fn(path)
+        result = await self._index_fn(path, chunk_tokens)
         logger.info(
             "Watcher reindex complete: file=%s deleted=%d indexed=%d unchanged=%s",
             result.file,

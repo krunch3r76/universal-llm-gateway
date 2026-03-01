@@ -1,5 +1,5 @@
-# Consensus v7 prompts — Contextualized verification + model pool standardization
-# Namespace: consensus.v7
+# Consensus v7.1 prompts — Contextualized verification + model pool standardization
+# Namespace: consensus.v7.1
 #
 # Self-contained prompt set for v7 pipeline.
 
@@ -507,18 +507,16 @@ prompts:
       because proving the complete absence of all possible properties is impossible.
 
       UNIVERSAL NEGATIVES (return their indices):
-      - "X has no mathematical significance"
-      - "X does not hold any inherent scientific significance"
-      - "X does not possess any unique or exceptional mathematical properties"
-      - "X is not particularly special or significant in the world of Y"
-      - "Outside of context A, X does not hold any significance"
+      - "X has no significance in any domain or context"
+      - "The event has no bearing on any outcome whatsoever"
+      - "This substance has no role in any physical, chemical, or biological process"
 
       NOT universal negatives (do NOT return their indices):
-      - "44 is not a prime number" — specific falsifiable claim about one property
-      - "44 is not divisible by 5" — specific falsifiable arithmetic claim
-      - "X is a relatively ordinary integer" — subjective but not claiming total absence
-      - "44 is an even number" — positive factual claim
-      - "43 does not appear in the Fibonacci sequence" — specific falsifiable claim
+      - "The treaty was not ratified in 1919" — specific historical fact
+      - "Water does not boil at 90°C at sea level" — specific physical property
+      - "The algorithm does not run in O(n)" — specific complexity claim
+      - "Aspirin is not classified as an antibiotic" — specific classification
+      - "The reaction does not produce carbon dioxide" — specific chemical outcome
 
       The key distinction: a universal negative claims TOTAL ABSENCE of significance
       or properties across a whole domain. A specific negative denies ONE particular
@@ -529,6 +527,59 @@ prompts:
       Return a JSON object: {{"negative_indices": [indices of universal negatives]}}
 
       If none found, return an empty array: {{"negative_indices": []}}
+    template: |
+
+      {numbered_facts}
+
+  filter_orphans:
+    description: "Identify and remove orphaned sub-claims that lost their subject through compound decomposition."
+    system_prompt: |
+      You are given a numbered list of verified claims. Your ONLY task is to identify
+      which claims are ORPHANED SUB-CLAIMS and return their indices.
+
+      An ORPHANED SUB-CLAIM is a claim whose grammatical subject is a vague pronoun
+      or indefinite determiner (e.g. "It", "They", "Some factors"), not a specific
+      named entity.
+
+      IMPORTANT: Do not flag a claim just because it seems redundant or less detailed
+      than another. Base your decision ONLY on the grammatical subject.
+
+      Your decision follows a strict hierarchy based on the grammatical subject.
+
+      THE MOST IMPORTANT RULE: claims with named-entity subjects are NEVER orphaned.
+      If the subject is a specific drug, substance, organ, disease, patient group,
+      actor, mechanism, test, process, law, treaty, algorithm, or any other specific
+      named thing — it is NOT orphaned. Do NOT return its index.
+
+      Only if a claim does NOT have a named-entity subject should you consider whether
+      it is orphaned.
+
+      RULE 1 — NOT ORPHANED (do NOT return their indices):
+      - "A drug lowers blood glucose" — NOT orphaned, subject is the drug
+      - "NSAIDs can lead to renal impairment" — specific drug class named
+      - "Hepatic impairment affects drug clearance" — specific organ system named
+      - "AMPK inhibits glucose production" — specific mechanism named
+      - "The Clean Air Act limits emissions" — specific law named
+      - "Quicksort runs in O(n log n) average time" — specific algorithm named
+
+      RULE 2 — ORPHANED, only when no named entity is the subject (return their indices):
+      A claim is ORPHANED if its subject is a vague pronoun or indefinite determiner
+      with no specific referent ("It", "They", "This", "These conditions",
+      "Some factors", "Various interactions", "This process", "Certain medications")
+      AND the claim does not otherwise name a specific entity or actor.
+
+      ORPHANED (return their indices):
+      - "It is important to consider this further" — subject is "It", no specific entity named
+      - "These conditions may increase the risk" — which conditions?
+      - "Some factors can affect absorption" — which factors?
+      - "Certain medications interact with this pathway" — which medications?
+      - "This process requires specific enzymes" — which process?
+
+      QUESTION CONTEXT (for reference only): {question}
+
+      Return a JSON object: {{"orphaned_indices": [indices of orphaned sub-claims]}}
+
+      If none found, return an empty array: {{"orphaned_indices": []}}
     template: |
 
       {numbered_facts}

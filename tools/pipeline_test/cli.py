@@ -110,6 +110,11 @@ def _list_all_pipelines() -> None:
 def _add_snapshot_parser(sub: Any) -> None:
     p = sub.add_parser("snapshot", help="Capture execution into a fixture")
     p.add_argument("pipeline_id", help="Pipeline ID")
+    p.add_argument(
+        "--latest",
+        action="store_true",
+        help="Use latest execution (default when -e is omitted)",
+    )
     p.add_argument("--execution", "-e", help="Specific execution ID (default: latest)")
     p.add_argument("--output", "-o", help="Output fixture path")
     p.set_defaults(func=_cmd_snapshot)

@@ -50,6 +50,8 @@ structlog>=23.0.0
 nltk>=3.8
 pymupdf4llm
 pymupdf-layout
+ebooklib
+beautifulsoup4
 
 # ============================================================================
 # Scientific Computing (pipeline handlers — consensus dedup clustering)

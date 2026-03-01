@@ -69,7 +69,7 @@ def replay_rerender(
 
     if pipeline_dir is not None:
         pipeline_dir = Path(pipeline_dir)
-        rendered = _try_render_from_yaml(step, call, pipeline_dir, overrides)
+        rendered = _try_render_from_yaml(snapshot, step, call, pipeline_dir, overrides)
         if rendered is not None:
             body = rendered
             _apply_overrides(body, overrides)
@@ -101,7 +101,23 @@ def replay_rerender(
 # ---------------------------------------------------------------------------
 
 
+def _find_pipeline_root(pipeline_dir: Path, pipeline_id: str) -> Path | None:
+    """Return the directory containing the YAML with id == pipeline_id, or None."""
+    for yaml_file in pipeline_dir.rglob("*.yaml"):
+        if yaml_file.name == "prompts.yaml":
+            continue
+        try:
+            with yaml_file.open(encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+            if config.get("id") == pipeline_id:
+                return yaml_file.parent
+        except Exception:
+            continue
+    return None
+
+
 def _try_render_from_yaml(
+    snapshot: ExecutionSnapshot,
     step: Any,
     call: Any,
     pipeline_dir: Path,
@@ -123,9 +139,9 @@ def _try_render_from_yaml(
         prompt_name = parts[-1]
     else:
         prompt_name = _infer_prompt_name(call.call_label, step)
-        if prompt_name is None and call.call_label:
+        if prompt_name is None:
             prompt_name = _resolve_prompt_from_config(
-                step, call.call_label, pipeline_dir
+                step, call.call_label or "", pipeline_dir, snapshot
             )
 
     if not prompt_name or prompt_name not in prompts:
@@ -179,9 +195,16 @@ def _infer_prompt_name(call_label: str, step: Any) -> str | None:
 
 
 def _resolve_prompt_from_config(
-    step: Any, call_label: str, pipeline_dir: Path
+    step: Any,
+    call_label: str,
+    pipeline_dir: Path,
+    snapshot: ExecutionSnapshot | None = None,
 ) -> str | None:
     """Find a prompt name by scanning pipeline YAML for the step's config.
+
+    When snapshot is provided, only YAMLs under the pipeline's root (file with
+    id == snapshot.pipeline_id) are searched, so the correct pipeline variant
+    is used when multiple exist under pipeline_dir.
 
     Handles three patterns:
       assess_N          → step-level prompt_ref (the assess prompt)
@@ -190,7 +213,17 @@ def _resolve_prompt_from_config(
       other             → {call_label}_prompt_ref domain field
     """
     short_name = step.step_name.rsplit("__", 1)[-1]
-    for yaml_file in pipeline_dir.rglob("*.yaml"):
+    search_dir = pipeline_dir
+    if snapshot and snapshot.pipeline_id:
+        root = _find_pipeline_root(pipeline_dir, snapshot.pipeline_id)
+        if root is not None:
+            search_dir = root
+        else:
+            print(
+                f"  [warn] No YAML with id '{snapshot.pipeline_id}' under {pipeline_dir}; "
+                "using full directory for prompt resolution (may match wrong variant)."
+            )
+    for yaml_file in search_dir.rglob("*.yaml"):
         if yaml_file.name == "prompts.yaml":
             continue
         try:
@@ -221,13 +254,20 @@ def _resolve_prompt_from_config(
 
 
 def _build_template_variables(step: Any, call: Any) -> dict[str, Any]:
-    """Build template substitution context from step inputs and call data."""
+    """Build template substitution context from step inputs only.
+
+    Re-render must use the same inputs the live pipeline would use; do not
+    inject the previous render's system_prompt/user_prompt or templates
+    may incorrectly reuse prior output.
+    """
+    if len(step.model_calls) > 1:
+        print(
+            f"  [warn] Step '{step.step_name}' has multiple model calls. "
+            "Re-rendering from step-level inputs may be incorrect for this call. "
+            "The snapshot does not contain per-call template variables."
+        )
     variables: dict[str, Any] = {}
     variables.update(step.inputs)
-    if call.system_prompt:
-        variables["system_prompt"] = call.system_prompt
-    if call.user_prompt:
-        variables["user_prompt"] = call.user_prompt
     return variables
 
 
@@ -316,7 +356,7 @@ def resolve_model_alias(alias: str, pipeline_dir: Path | str | None) -> str:
             models = data.get("models", {})
             if alias in models:
                 return models[alias].get("model", alias)
-            return alias
+            # Alias not in this file; continue searching parent directories.
         if search.parent == search:
             break
         search = search.parent

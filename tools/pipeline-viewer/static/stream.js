@@ -76,7 +76,7 @@ function aggregateClientSide(events) {
     if (!stepData[sname]) {
       stepData[sname] = {
         step_id: sname, step_type: null, model: null, model_ref: null,
-        latency_ms: null, status: 'pending',
+        latency_ms: null, inference_ms: 0, status: 'pending',
         tokens: { prompt: 0, completion: 0, total: 0 },
         inputs: {}, raw_output: null, json_data: null,
         iterations: null, domain_routing: null,
@@ -124,9 +124,8 @@ function applyEvent(sd, ev) {
       sd.json_data = ev.json_data || sd.json_data;
       sd.latency_ms = ev.latency_ms || sd.latency_ms;
       if (ev.model_id) sd.model = ev.model_id;
-      // Only overwrite tokens if event has non-zero values
-      // (preserves accumulated map_iteration tokens for map steps)
-      if (ev.prompt_tokens || ev.completion_tokens) {
+      // For map steps, iterations already accumulated tokens; do not overwrite.
+      if ((ev.prompt_tokens != null || ev.completion_tokens != null) && !sd.iterations) {
         sd.tokens = {
           prompt: ev.prompt_tokens || 0,
           completion: ev.completion_tokens || 0,
@@ -173,10 +172,12 @@ function applyEvent(sd, ev) {
     case 'step_completed':
       sd.status = 'completed';
       if (ev.duration_ms) sd.latency_ms = ev.duration_ms;
-      if (ev.prompt_tokens) {
+      if (ev.prompt_tokens != null) {
+        if (!sd.tokens) sd.tokens = { prompt: 0, completion: 0, total: 0 };
+        const comp = ev.completion_tokens ?? 0;
         sd.tokens.prompt = ev.prompt_tokens;
-        sd.tokens.completion = ev.completion_tokens || 0;
-        sd.tokens.total = ev.prompt_tokens + (ev.completion_tokens || 0);
+        sd.tokens.completion = comp;
+        sd.tokens.total = ev.prompt_tokens + comp;
       }
       break;
     case 'step_failed':
@@ -187,6 +188,7 @@ function applyEvent(sd, ev) {
       break;
     case 'model_invocation':
       if (!sd.model_calls) sd.model_calls = [];
+      const callInferenceMs = ev.inference_ms || 0;
       sd.model_calls.push({
         call_label: ev.call_label || '',
         model: ev.model_id || '',
@@ -197,13 +199,14 @@ function applyEvent(sd, ev) {
         response_text: ev.response_text || null,
         error: ev.error || null,
         latency_ms: ev.latency_ms || 0,
-        inference_ms: ev.inference_ms || 0,
+        inference_ms: callInferenceMs,
         prompt_tokens: ev.prompt_tokens || 0,
         completion_tokens: ev.completion_tokens || 0,
         success: ev.success !== false,
         wall_clock: ev.wall_clock || '',
         metadata: ev.metadata || null,
       });
+      sd.inference_ms = (sd.inference_ms || 0) + callInferenceMs;
       break;
     case 'step_skipped':
       sd.status = 'skipped';

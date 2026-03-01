@@ -5,8 +5,10 @@ Asks one model to identify unfalsifiable universal-negative claims and removes
 them. Universal negatives assert a subject has NO properties, significance, or
 relevance across an entire domain (e.g., "42 has no mathematical significance").
 
-Orphaned sub-claim detection is intentionally absent in v7 — false-positive
-rate on medical questions was too high. Addressed in v7.1.
+Orphaned sub-claim detection is intentionally absent in v7.1 baseline — the
+v7 implementation produced false positives removing ~49% of facts on medical
+questions (named-entity subjects flagged as orphaned). The precision fix is the
+primary v7.1 deliverable and will be added once validated via replay/consult.
 
 Placed between synergize and veto_pass so negatives are removed before
 any further processing.
@@ -28,6 +30,7 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
 from .shared._chain_utils import format_numbered_facts
+from .shared._index_utils import build_rendered_order
 
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
@@ -55,7 +58,7 @@ _JSON_SCHEMA: dict[str, Any] = {
 class FilterNegativesHandler(BaseHandler):
     """Remove universal negatives from verified facts via LLM classification."""
 
-    step_type: str = "consensus_filter_negatives_v7"
+    step_type: str = "consensus_filter_negatives_v7_1"
 
     @override
     async def execute(
@@ -151,10 +154,16 @@ class FilterNegativesHandler(BaseHandler):
 
         # 5. Parse response and filter
         fact_count = len(length_filtered_facts)
-        negative_indices = _parse_indices(
+        rendered_indices = _parse_indices(
             call_result.content, "negative_indices", fact_count
         )
-        negative_set = set(negative_indices)
+        # Map rendered indices (model's view) to original list positions.
+        # format_numbered_facts groups by context_prefix before numbering, so
+        # rendered index N ≠ length_filtered_facts[N] when grouping reorders facts.
+        rendered_order = build_rendered_order(length_filtered_facts)
+        negative_set = {
+            rendered_order[i] for i in rendered_indices if i < len(rendered_order)
+        }
 
         filtered_facts: list[dict[str, Any]] = []
         removed_negatives: list[str] = []

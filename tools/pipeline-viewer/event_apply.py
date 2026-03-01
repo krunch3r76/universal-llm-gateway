@@ -34,11 +34,13 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
             new_prompt = ev.get("prompt_tokens", 0)
             new_completion = ev.get("completion_tokens", 0)
             if new_prompt or new_completion:
-                sd["tokens"] = {
-                    "prompt": new_prompt,
-                    "completion": new_completion,
-                    "total": new_prompt + new_completion,
-                }
+                # For map steps, iterations already accumulated tokens; do not overwrite.
+                if sd.get("iterations") is None:
+                    sd["tokens"] = {
+                        "prompt": new_prompt,
+                        "completion": new_completion,
+                        "total": new_prompt + new_completion,
+                    }
             if ev.get("system_prompt"):
                 sd["system_prompt"] = ev["system_prompt"]
             if ev.get("user_prompt"):
@@ -54,12 +56,14 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
         case "step_completed":
             if ev.get("duration_ms"):
                 sd["latency_ms"] = ev["duration_ms"]
-            if ev.get("prompt_tokens"):
-                sd["tokens"]["prompt"] = ev["prompt_tokens"]
-                sd["tokens"]["completion"] = ev.get("completion_tokens", 0)
-                sd["tokens"]["total"] = ev["prompt_tokens"] + ev.get(
-                    "completion_tokens", 0
-                )
+            prompt_tokens = ev.get("prompt_tokens")
+            if prompt_tokens is not None:
+                if "tokens" not in sd:
+                    sd["tokens"] = {"prompt": 0, "completion": 0, "total": 0}
+                completion_tokens = ev.get("completion_tokens", 0)
+                sd["tokens"]["prompt"] = prompt_tokens
+                sd["tokens"]["completion"] = completion_tokens
+                sd["tokens"]["total"] = prompt_tokens + completion_tokens
 
         case "map_iteration_completed":
             if sd["iterations"] is None:
@@ -185,6 +189,7 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
             pass
 
         case "model_invocation":
+            call_inference_ms = ev.get("inference_ms", 0.0)
             sd["model_calls"].append(
                 {
                     "call_label": ev.get("call_label", ""),
@@ -196,7 +201,7 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
                     "response_text": ev.get("response_text"),
                     "error": ev.get("error"),
                     "latency_ms": ev.get("latency_ms", 0),
-                    "inference_ms": ev.get("inference_ms", 0.0),
+                    "inference_ms": call_inference_ms,
                     "prompt_tokens": ev.get("prompt_tokens", 0),
                     "completion_tokens": ev.get("completion_tokens", 0),
                     "success": ev.get("success", True),
@@ -204,6 +209,7 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
                     "metadata": ev.get("metadata"),
                 }
             )
+            sd["inference_ms"] = sd.get("inference_ms", 0) + call_inference_ms
 
         case "step_failed":
             sd["error"] = ev.get("error")

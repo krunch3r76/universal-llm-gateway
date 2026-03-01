@@ -60,7 +60,7 @@ class VerifyGeneralHandler(BaseHandler):
     acceptance policy.
     """
 
-    step_type: str = "consensus_verify_general_v7"
+    step_type: str = "consensus_verify_general_v7_1"
 
     def _resolve_verify_models(
         self,

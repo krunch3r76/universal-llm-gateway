@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -113,23 +114,33 @@ def list_executions(summaries_dir: Path) -> list[dict[str, Any]]:
 def is_execution_complete(exec_dir: Path) -> bool:
     """Check whether the execution has a terminal event (completed/failed/cancelled).
 
-    Reads only the last few lines of the file to avoid parsing the whole thing.
+    Reads only the last portion of the file (tail) to avoid loading large logs.
     """
     events_file = exec_dir / "events.jsonl"
     if not events_file.exists():
         return False
 
     terminal_types = {"pipeline_completed", "pipeline_failed", "pipeline_cancelled"}
+    chunk_size = 8192
     try:
-        raw = events_file.read_text(encoding="utf-8")
-        # Scan from end for efficiency — terminal event is always last
+        with events_file.open("rb") as f:
+            _ = f.seek(0, os.SEEK_END)
+            size = f.tell()
+            read_size = min(size, chunk_size * 4)
+            if read_size == 0:
+                return False
+            _ = f.seek(max(0, size - read_size), os.SEEK_SET)
+            raw = f.read().decode("utf-8", errors="ignore")
         for line in reversed(raw.splitlines()):
             line = line.strip()
             if not line:
                 continue
-            ev = json.loads(line)
-            return ev.get("event_type", "") in terminal_types
-    except (json.JSONDecodeError, OSError) as e:
+            try:
+                ev = json.loads(line)
+                return ev.get("event_type", "") in terminal_types
+            except json.JSONDecodeError:
+                continue
+    except OSError as e:
         logger.warning("Could not check completion for %s: %s", exec_dir, e)
 
     return False
@@ -187,6 +198,7 @@ def _build_steps(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "model": None,
                 "model_ref": None,
                 "latency_ms": None,
+                "inference_ms": 0,
                 "tokens": {"prompt": 0, "completion": 0, "total": 0},
                 "inputs": {},
                 "raw_output": None,
@@ -301,7 +313,9 @@ def _build_summary(
         "prompt_tokens": total_prompt,
         "completion_tokens": total_completion,
         "wall_clock_ms": wall_clock_ms,
-        "total_latency_ms": wall_clock_ms if wall_clock_ms is not None else summed_latency,
+        "total_latency_ms": wall_clock_ms
+        if wall_clock_ms is not None
+        else summed_latency,
         "summed_latency_ms": summed_latency,
         "total_steps": len(steps),
         "models_used": sorted(models_used),

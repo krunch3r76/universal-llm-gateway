@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import math
@@ -31,7 +32,7 @@ from services.rag.watcher_manager import WatcherManager
 logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "knowledge"
-DEFAULT_EXTENSIONS = [".md", ".mdc", ".txt", ".pdf", ".py", ".js", ".ts"]
+DEFAULT_EXTENSIONS = [".md", ".mdc", ".txt", ".pdf", ".epub", ".py", ".js", ".ts"]
 
 app = FastAPI(title="RAG Service")
 
@@ -40,6 +41,9 @@ _collection: chromadb.Collection | None = None
 _watcher_manager: WatcherManager | None = None
 _event_bus: EventBus | None = None
 _broadcaster: MinimalEventDebugBroadcaster | None = None
+
+# Serialize concurrent indexing of the same file path (watcher + API can race).
+_file_index_locks: dict[str, asyncio.Lock] = {}
 
 
 def _get_collection() -> chromadb.Collection:
@@ -76,7 +80,15 @@ async def _startup() -> None:
     await _event_bus.publish_async(RagStarted())
     config = load_config()
     if config.watch_directories:
-        _watcher_manager = WatcherManager(index_fn=_index_file, event_bus=_event_bus)
+
+        async def _watcher_index_fn(
+            path: Path, chunk_tokens: int | None
+        ) -> IndexResult:
+            return await _index_file(path, chunk_tokens=chunk_tokens)
+
+        _watcher_manager = WatcherManager(
+            index_fn=_watcher_index_fn, event_bus=_event_bus
+        )
         try:
             await wait_until_healthy()
         except TimeoutError:
@@ -153,19 +165,36 @@ def _check_pdf_duplicate(
     return None
 
 
+_TOKEN_ESTIMATE = 4
+
+
 async def _index_file(
     file_path: Path,
     metadata_overrides: dict[str, str | int | float | bool] | None = None,
+    chunk_tokens: int | None = None,
 ) -> IndexResult:
     """Index a file, cleaning up stale chunks when content changed."""
     source = str(file_path)
+    lock = _file_index_locks.setdefault(source, asyncio.Lock())
+    async with lock:
+        return await _index_file_impl(
+            file_path, metadata_overrides, chunk_tokens, source
+        )
+
+
+async def _index_file_impl(
+    file_path: Path,
+    metadata_overrides: dict[str, str | int | float | bool] | None,
+    chunk_tokens: int | None,
+    source: str,
+) -> IndexResult:
+    """Inner implementation of file indexing (called with lock held)."""
     raw = file_path.read_bytes()
     content_hash = _file_hash(raw)
     prefix = content_hash[:16]
 
     collection = _get_collection()
 
-    # PDF cross-file dedup: same content under a different filename → skip
     if file_path.suffix.lower() == ".pdf":
         dup_result = _check_pdf_duplicate(collection, content_hash, source)
         if dup_result is not None:
@@ -188,7 +217,8 @@ async def _index_file(
     if existing_ids:
         collection.delete(ids=existing_ids)
 
-    chunks: list[Chunk] = chunk_file(file_path)
+    max_chunk_chars = chunk_tokens * _TOKEN_ESTIMATE if chunk_tokens else None
+    chunks: list[Chunk] = chunk_file(file_path, max_chunk_chars=max_chunk_chars)
     if not chunks:
         logger.info(
             "Index complete: file=%s deleted=%d indexed=0", source, len(existing_ids)
