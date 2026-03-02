@@ -33,7 +33,7 @@ All endpoints are served by Stargate on `:9999`.
 - [x] **Pipeline pseudo-tooling** — prompt-driven tool calling: any model becomes tool-capable without native function-calling support, and adversarial tool invocations are structurally prevented because models produce structured JSON decisions that the engine maps to pre-defined operations — models never call tools directly
 - [x] **Consensus pipeline (v7)** — multi-model answer generation with decomposition, domain-specific verification, veto, and structured synthesis
 - [x] **Pipeline event observability** — dedicated `/tmp/pipeline-events/` stream with per-step metrics (tokens, duration, call count)
-- [ ] **Cloud proxy stabilization** — OpenRouter integration (functional, under active development)
+- [x] **Cloud proxy** — OpenRouter integration with quality-tier autoselection and configurable provider allow-lists; browser UI for interactive model selection; vision model routing expected to work (untested)
 - [x] **RAG-augmented routing** — `rag-context` pipeline rewrites queries into embedding-optimized sub-queries, executes parallel retrieval with RRF merge, and returns assembled context chunks; `rag-answer` wraps it with grounded answer generation; both callable as virtual model IDs or via `./scripts/ask`; `source_prefixes` scopes retrieval to any indexed corpus subset; persona memory and project-scoped assistants are the next layer (see `stargate-persona-memory-model` in backlog)
 - [ ] **RAG recency scoring normalization** — current flat additive recency boost will be replaced with bucket-weighted hybrid scoring (cosine + BM25, time-bucketed, min-max normalized per bucket) so highly relevant older chunks can still outrank weakly relevant recent ones
 - [ ] Multi-GPU / tensor parallelism (vLLM)
@@ -168,6 +168,7 @@ Commands come from static YAML definitions, not from model output — the model 
 | Pipeline | Model ID | Purpose |
 |---|---|---|
 | **Consensus v7** | `consensus-chain-v7` | Multi-model answer generation with decomposition, domain-specific verification, veto gates, and structured synthesis |
+| **Consensus v7.1** | `consensus-chain-v7.1` | v7 + citation enforcement (`assert_then_revise`), uncited-claim filtering, and coherence repair |
 | **RAG Answer v1** | `rag-answer` | General-purpose RAG Q&A: calls `rag-context` sub-pipeline for retrieval, then generates grounded answer via phi4 |
 | **RAG Context** | `rag-context` | Reusable retrieval sub-pipeline — query rewriting + RRF retrieval, returns context chunks; callable by any pipeline as a service |
 | **RAG Journal v3.5** | `journal-agent` | Iterative context gathering via assess loop — RAG search, git log, journal index, then model-driven expansion |
@@ -180,9 +181,9 @@ A **single-pass dense retrieval** RAG service — one ChromaDB collection, one e
 
 The `rag-context` pipeline layers "Advanced RAG" on top: a small model (phi4) rewrites the user question into 1–3 embedding-optimized sub-queries (handling vocabulary mismatch, step-back expansion, and multi-hop decomposition), runs them in parallel, and merges results via reciprocal rank fusion. `rag-answer` wraps `rag-context` to add grounded answer generation from the retrieved context.
 
-- **Indexing**: Markdown, code, PDF (native via `pymupdf4llm`), and plain text — chunked by structure (headers, paragraphs, code blocks). PDF content-hashing (`pdf_hash`) for cross-file deduplication.
+- **Indexing**: Markdown, code, PDF (native via `pymupdf4llm`), EPUB/ebook, and plain text — chunked by structure (headers, paragraphs, code blocks, AST for source code). PDF content-hashing (`pdf_hash`) for cross-file deduplication.
 - **Search**: Cosine similarity with configurable recency scoring; recency is driven by `published_date` (preferred for research papers) or `indexed_at` timestamp; appropriate recency strategies vary by corpus type and are applied scope-conditionally
-- **Corpus scoping**: `source_prefixes` parameter restricts results to chunks under given path prefixes — multiple logical corpora in a single collection
+- **Corpus scoping**: Named scope registry (`GET /scopes`) with per-scope path roots and tunable retrieval parameters — consumers reference scopes by identifier; `source_prefixes` still available for ad-hoc queries
 - **File watching**: Automatic reindexing via inotify with periodic reconciliation
 - **Embeddings**: Uses a local embedding model (`bge-m3`) via the Gateway — no external API calls
 
@@ -190,7 +191,7 @@ Config: `~/.rag/config.yaml`. Store: `~/.rag/store/` (ChromaDB persistent data).
 
 ## Cloud Proxy (Experimental)
 
-> **Under active development.** Functional for text and vision models via OpenRouter.
+> Functional for text generation. Quality-tier autoselection and browser UI shipped. Vision model routing is implemented but untested. Provider catalog and edge cases under ongoing refinement.
 
 The cloud proxy is a **separate, optional service** that routes requests to cloud API providers (OpenRouter, Anthropic, OpenAI, Google, etc.). It is the **only component in the system with outbound internet access**, making cloud integration a structural security decision rather than a configuration flag.
 
@@ -244,9 +245,10 @@ universal-llm-gateway/
 ├── config/                           # Model catalog, templates, stargate configs
 ├── docker/                           # Dockerfiles, Compose configs, build scripts
 ├── pipelines/                        # Shipped pipeline definitions
-│   ├── consensus/                    # Multi-model consensus (v6.0, v6.1, v7)
+│   ├── consensus/                    # Multi-model consensus (v7, v7.1, v8.0)
 │   ├── rag/                          # RAG sub-pipelines (query rewriting, retrieval)
 │   ├── answer_v1/                    # RAG-augmented answer pipeline (calls rag-context)
+│   ├── modularize/                   # Code modularization pipeline (analyze→critique→finalize→refactor)
 │   └── tools/                        # Pseudo-tool handlers (shell, RAG, assess loop)
 └── tools/                            # Developer utilities (pipeline viewer, test infra)
 ```
