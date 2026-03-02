@@ -130,38 +130,13 @@ def _format_context(chunks: list[_RetrievedChunk]) -> str:
     return "\n\n---\n\n".join(sections)
 
 
-def _resolve_source_prefixes(
-    step: StepConfig,
-    scope: str,
-) -> list[str] | None:
-    """Map scope label to filesystem source prefixes for RAG filtering."""
-    research = step.get_domain_field("research_prefix", "")
-    research_rag = step.get_domain_field("research_rag_design_prefix", "")
-    engram = step.get_domain_field("engram_prefix", "")
-    project = step.get_domain_field("project_prefix", "")
-
-    match scope:
-        case "research":
-            prefixes = [p for p in (research, engram) if p]
-            return prefixes or None
-        case "research_rag_design":
-            prefixes = [p for p in (research_rag, engram) if p]
-            return prefixes or None
-        case "project" if project:
-            return [project]
-        case "both":
-            prefixes = [p for p in (research, research_rag, engram, project) if p]
-            return prefixes or None
-        case _:
-            return None
-
-
 async def _execute_single_query(
     client: httpx.AsyncClient,
     endpoint: str,
     query: str,
     top_k: int,
     recency_weight: float,
+    scope: str | None,
     source_prefixes: list[str] | None,
 ) -> list[_RetrievedChunk]:
     """Execute one RAG search and parse results into chunks."""
@@ -172,6 +147,8 @@ async def _execute_single_query(
     }
     if source_prefixes:
         body["source_prefixes"] = source_prefixes
+    elif scope:
+        body["scope"] = scope
 
     response = await client.post(endpoint, json=body)
     response.raise_for_status()
@@ -206,15 +183,17 @@ class RagMultiRetrieveHandler(BaseHandler):
         scope_confidence_threshold, scope_override, rag_source_prefixes,
         consumer_model (optional — triggers profile lookup from retrieval-profiles.yaml).
 
-    Domain fields (from pipeline YAML step config, structural only):
-        endpoint: str                       — RAG service URL
-        research_prefix: str                — source prefix for prompting research papers
-        research_rag_design_prefix: str     — source prefix for RAG systems research papers
-        engram_prefix: str                  — source prefix for engram/insight docs (optional)
-        project_prefix: str                 — source prefix for project scope
+    Scope-based retrieval:
+        - The rewrite step predicts a scope label (e.g., "research", "project")
+        - The handler sends the scope to the RAG /search endpoint via scope= param
+        - The RAG service resolves the scope to source prefixes using its config
+        - Explicit rag_source_prefixes in pipeline_options bypasses scope resolution
+
+    Domain fields (from pipeline YAML step config):
+        endpoint: str — RAG service URL
 
     handler_inputs:
-        rewrite_result              — bound to upstream step's .json output
+        rewrite_result — bound to upstream step's .json output
     """
 
     step_type: str = "rag_multi_retrieve_v1"
@@ -275,11 +254,7 @@ class RagMultiRetrieveHandler(BaseHandler):
             ).items():
                 pattern = class_config.get("match", "")
                 if pattern and pattern in consumer_model:
-                    profile = {
-                        k: v
-                        for k, v in class_config.items()
-                        if k != "match"
-                    }
+                    profile = {k: v for k, v in class_config.items() if k != "match"}
                     matched_class_name = class_name
                     logger.info(
                         "Step '%s': no exact profile for '%s', "
@@ -307,11 +282,13 @@ class RagMultiRetrieveHandler(BaseHandler):
         recency_weight = float(effective.get("rag_recency_weight", 0.2))
         confidence_threshold = float(effective.get("scope_confidence_threshold", 0.7))
 
-        # --- Scope resolution (unchanged logic) ---
+        # --- Scope resolution ---
         explicit_prefixes: list[str] | None = effective.get("rag_source_prefixes")
         if explicit_prefixes:
             source_prefixes = explicit_prefixes
             scope = "custom"
+            search_scope = None  # use raw prefixes
+            retrieval_mode = "source_prefixes"
         else:
             scope_override_val: str = effective.get("scope_override", "")
             if scope_override_val:
@@ -333,7 +310,9 @@ class RagMultiRetrieveHandler(BaseHandler):
                         confidence_threshold,
                         predicted_scope,
                     )
-            source_prefixes = _resolve_source_prefixes(step, scope)
+            source_prefixes = None  # let RAG service resolve
+            search_scope = scope  # pass scope label to /search
+            retrieval_mode = "scope"
 
         # Tier 3: scope-conditional recency (unless caller explicitly overrode it)
         if "rag_recency_weight" not in runtime:
@@ -366,13 +345,21 @@ class RagMultiRetrieveHandler(BaseHandler):
                 top_k_per_query=top_k,
                 rrf_k=rrf_k,
                 scope=scope,
+                retrieval_mode=retrieval_mode,
+                uses_explicit_prefixes=bool(source_prefixes),
             ),
         )
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             tasks = [
                 _execute_single_query(
-                    client, endpoint, q, top_k, recency_weight, source_prefixes
+                    client,
+                    endpoint,
+                    q,
+                    top_k,
+                    recency_weight,
+                    search_scope,
+                    source_prefixes,
                 )
                 for q in queries
             ]

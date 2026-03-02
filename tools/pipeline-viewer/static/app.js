@@ -3,6 +3,7 @@ let currentExecution = null;
 let selectedStepIdx = null;
 let pollTimer = null;
 let pinnedExecId = null;  // set on first manual selection; blocks auto-select
+let questionStateLocked = false; // true after user manually toggles question
 
 // -- API ------------------------------------------------------------------
 async function fetchJSON(url) {
@@ -29,9 +30,32 @@ function initTheme() {
 // -- Init -----------------------------------------------------------------
 async function init() {
   initTheme();
+  initCollapsibles();
   const executions = await fetchJSON('/api/executions');
   renderExecList(executions);
   startExecListPolling();
+}
+
+// -- Collapsibles ---------------------------------------------------------
+function initCollapsibles() {
+  const header = document.getElementById('question-header');
+  if (header) {
+    header.addEventListener('click', () => {
+      document.getElementById('question-display').classList.toggle('collapsed');
+      questionStateLocked = true;
+    });
+  }
+}
+
+function setQuestion(text) {
+  const textEl = document.getElementById('question-text');
+  const displayEl = document.getElementById('question-display');
+  if (!textEl || !displayEl) return;
+  if (textEl.textContent !== text) textEl.textContent = text;
+  displayEl.style.display = 'block';
+  if (!questionStateLocked) {
+    displayEl.classList.toggle('collapsed', text.length > 300);
+  }
 }
 
 // -- Execution List -------------------------------------------------------
@@ -44,11 +68,15 @@ function renderExecList(executions) {
   container.innerHTML = executions.map((ex) => {
     const liveTag = ex.is_live ? '<span class="live-badge">LIVE</span>' : '';
     const pipelineLabel = escHtml(ex.pipeline_id);
+    const expandToggle = ex.question.length > 150
+      ? `<a href="#" class="expand-toggle" onclick="toggleQuestion(event)">Show more</a>`
+      : '';
     return `
       <div class="exec-card ${ex.is_live ? 'live' : ''}"
            data-pipeline="${ex.pipeline_id}" data-exec="${ex.execution_id}"
            data-live="${ex.is_live}" onclick="loadExecution(this)">
         <div class="question">${liveTag}${escHtml(ex.question)}</div>
+        ${expandToggle}
         <div class="meta">${ex.step_count} steps &middot; ${ex.timestamp} &middot; <span class="pipeline-label">${pipelineLabel}</span></div>
       </div>
     `;
@@ -57,6 +85,16 @@ function renderExecList(executions) {
   if (pinnedExecId) {
     document.querySelector(`.exec-card[data-exec="${pinnedExecId}"]`)?.classList.add('active');
   }
+}
+
+function toggleQuestion(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const toggle = event.target;
+  const questionDiv = toggle.closest('.exec-card')?.querySelector('.question');
+  if (!questionDiv) return;
+  const expanded = questionDiv.classList.toggle('expanded');
+  toggle.textContent = expanded ? 'Show less' : 'Show more';
 }
 
 async function loadExecution(el) {
@@ -68,6 +106,7 @@ async function loadExecution(el) {
   const eid = el.dataset.exec;
   const isLive = el.dataset.live === 'true';
   pinnedExecId = eid;
+  questionStateLocked = false;
 
   if (isLive) {
     connectStream(pid, eid);
@@ -81,8 +120,7 @@ async function loadExecution(el) {
 // -- Static rendering (completed executions) ------------------------------
 function renderFullExecution() {
   setLiveIndicator(false);
-  document.getElementById('question-text').textContent = currentExecution.question;
-  document.getElementById('question-display').style.display = 'block';
+  setQuestion(currentExecution.question);
   renderSummaryBanner(currentExecution.summary);
   renderPipelineFlow(currentExecution.steps);
   renderFinalOutput(currentExecution.steps);

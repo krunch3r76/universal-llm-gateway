@@ -51,6 +51,9 @@ from .events.pipeline import (
 from .events.pipeline import (
     PipelineStarted as BusPipelineStarted,
 )
+from .events.step import (
+    SubPipelineExpanded as BusSubPipelineExpanded,
+)
 from .execution import DAGExecutor
 from .execution.disconnect_monitor import execute_with_disconnect_monitoring
 from .fragments import get_fragment_loader
@@ -129,8 +132,9 @@ class PipelineExecutor:
             f"(version {pipeline.version}, type: {pipeline.type})"
         )
 
-        # Extract source text
+        # Extract source text and full conversation history
         text = self._extract_source_text(context)
+        messages = self._extract_messages(context)
 
         # Validate original_request preservation for execution summaries
         # (Internal use only - not returned to client)
@@ -187,6 +191,7 @@ class PipelineExecutor:
             http_request=context.http_request,
             execution_id=execution_id,
             runtime_options=runtime_options,
+            _messages=messages,
         )
 
         # Log pipeline execution start with full original request (no truncation)
@@ -199,6 +204,27 @@ class PipelineExecutor:
         pipeline_context._registry = self.registry
         pipeline_context._request_executor = self.request_executor
         pipeline_context._proxy = self.proxy
+
+        # Emit sub-pipeline expansion events so expansion stays observable on bus.
+        if dag_builder.output_aliases:
+            for (
+                parent_step_name,
+                resolved_output_step,
+            ) in dag_builder.output_aliases.items():
+                prefix = f"{parent_step_name}__"
+                expanded_count = sum(
+                    1 for node_step_name in nodes if node_step_name.startswith(prefix)
+                )
+                self._publish_event(
+                    pipeline_context,
+                    BusSubPipelineExpanded(
+                        pipeline_id=pipeline.id,
+                        execution_id=pipeline_context.execution_id,
+                        parent_step_name=parent_step_name,
+                        resolved_output_step=resolved_output_step,
+                        expanded_step_count=expanded_count,
+                    ),
+                )
 
         # Create event recorder for pipeline observability
         from pathlib import Path
@@ -522,6 +548,20 @@ class PipelineExecutor:
                 bt_output = context.get_output(step.id)
                 if bt_output and bt_output.json:
                     return bt_output.json
+        return None
+
+    def _extract_messages(self, context) -> list[dict[str, Any]] | None:
+        """Extract full chat messages, preferring explicit pre-truncation capture."""
+        if hasattr(context.http_request, "state") and hasattr(
+            context.http_request.state, "pipeline_full_messages"
+        ):
+            return context.http_request.state.pipeline_full_messages
+
+        # Fallback to original_request (from raw body bytes — pre-truncation)
+        if context.original_request:
+            messages = context.original_request.get("messages")
+            if messages and isinstance(messages, list):
+                return messages
         return None
 
     def _extract_source_text(self, context) -> str:

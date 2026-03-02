@@ -6,6 +6,7 @@ and graceful shutdown. Configuration lives in config.py.
 """
 
 import asyncio
+import os
 import subprocess
 import time
 from enum import StrEnum
@@ -120,12 +121,21 @@ class LlamaServerManager:
 
         # Start process
         self.status = ServerStatus.STARTING
+        child_env: dict[str, str] | None = None
+        if self.config.n_gpu_layers == 0:
+            # Enforce strict CPU-only execution for CUDA-enabled builds.
+            child_env = os.environ.copy()
+            child_env["CUDA_VISIBLE_DEVICES"] = ""
+            logger.info(
+                "🔒 [llama-server] CPU-only mode: hiding CUDA devices for child process"
+            )
         try:
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                env=child_env,
             )
             logger.info(f"🚀 [llama-server] Process started (PID: {self.process.pid})")
         except Exception as e:

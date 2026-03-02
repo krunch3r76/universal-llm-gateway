@@ -467,7 +467,7 @@ prompts:
       - Contains speculation markers: "likely", "perhaps", "probably", "based on", "suggests"
       - Uses load-bearing possibility/conditionality modals: "can", "may", "might", or "could"
         where the modal is essential to accuracy — i.e., removing it would make the claim
-        overstated or false (e.g., "X can contraindicate Y" — without "can", the claim would
+        overstated or false (e.g., "X can invalidate Y" — without "can", the claim would
         be false; the modal signals a conditional relationship, not an established fact)
         EXCEPTION: modals expressing an inherent capability or mechanism are fine
         (e.g., "TCP can retransmit packets" asserts a definite capability, not conditionality)
@@ -547,7 +547,7 @@ prompts:
       Your decision follows a strict hierarchy based on the grammatical subject.
 
       THE MOST IMPORTANT RULE: claims with named-entity subjects are NEVER orphaned.
-      If the subject is a specific drug, substance, organ, disease, patient group,
+      If the subject is a specific named entity — a substance, system, organization,
       actor, mechanism, test, process, law, treaty, algorithm, or any other specific
       named thing — it is NOT orphaned. Do NOT return its index.
 
@@ -555,17 +555,17 @@ prompts:
       it is orphaned.
 
       RULE 1 — NOT ORPHANED (do NOT return their indices):
-      - "A drug lowers blood glucose" — NOT orphaned, subject is the drug
-      - "NSAIDs can lead to renal impairment" — specific drug class named
-      - "Hepatic impairment affects drug clearance" — specific organ system named
-      - "AMPK inhibits glucose production" — specific mechanism named
+      - "TCP retransmits lost packets" — NOT orphaned, subject is the protocol
+      - "Rust enforces memory safety at compile time" — specific language named
       - "The Clean Air Act limits emissions" — specific law named
       - "Quicksort runs in O(n log n) average time" — specific algorithm named
+      - "Silicon has a band gap of 1.1 eV" — specific element named
+      - "OPEC controls oil production quotas" — specific organization named
 
       RULE 2 — ORPHANED, only when no named entity is the subject (return their indices):
       A claim is ORPHANED if its subject is a vague pronoun or indefinite determiner
       with no specific referent ("It", "They", "This", "These conditions",
-      "Some factors", "Various interactions", "This process", "Certain medications")
+      "Some factors", "Various interactions", "This process", "Certain components")
       AND the claim does not otherwise name a specific entity or actor.
 
       ORPHANED (return their indices):
@@ -754,11 +754,11 @@ prompts:
 
       Output a SINGLE JSON object with a "merge_groups" array containing ALL groups.
       Example — "X increases Y [1, 5]" in SECTION 1 and "X elevates Y [10]" in SECTION 3
-      produce one group; "Z is contraindicated in W [3]" in SECTION 2 and
-      "W contraindicates Z [8, 12]" in SECTION 4 produce another:
+      produce one group; "Z is prohibited when W applies [3]" in SECTION 2 and
+      "W prohibits Z [8, 12]" in SECTION 4 produce another:
       {{"merge_groups": [
         {{"theme": "X increases Y", "citations": [1, 5, 10]}},
-        {{"theme": "Z is contraindicated in W", "citations": [3, 8, 12]}}
+        {{"theme": "Z is prohibited when W applies", "citations": [3, 8, 12]}}
       ]}}
 
       NOT a merge group: a single sentence "A causes B [43, 44]" with two citations is one
@@ -779,10 +779,10 @@ prompts:
       - Group paragraphs by topic: merge all paragraphs that address the same topic
         into a single block; split any paragraph that covers multiple distinct
         sub-topics so that each paragraph has a single coherent theme
-      - Contraindication consolidation: do not mention the same contraindication domain
-        in more than one paragraph — all content sharing a mechanism or organ system
-        (e.g. all renal content: excretion, GFR/CrCl thresholds, renal lactic acidosis
-        risk) must appear in one paragraph
+      - Restriction consolidation: do not mention the same restriction domain
+        in more than one paragraph — all content sharing a mechanism or subsystem
+        (e.g. all security content: authentication, authorization, access thresholds)
+        must appear in one paragraph
       - Each paragraph must open with a clear topic sentence that announces its theme
       - Reorder paragraphs using logical dependency: definitions and background first,
         then causal mechanisms, then consequences and outcomes, then risks and
@@ -800,10 +800,12 @@ prompts:
       - Do not add claims, opinions, or information not present in the draft
       - Every sentence in the output must end with at least one [N] citation marker —
         sentences without citations are hallucinations and must be deleted
-      - Final pass: verify each [N] appears no more than once in the entire output
-        and every sentence ends with at least one [N]
+      - Final pass (silent mental check only — do not write this as output prose):
+        verify each [N] appears no more than once in the entire output and every
+        sentence ends with at least one [N]
       - Output only the reorganized prose — no preamble, no commentary, no status
-        summaries, no section headers, no DROPPED FACTS section
+        summaries, no section headers, no DROPPED FACTS section, no sentence
+        summarizing citation coverage or confirming the final pass
 
   reorganize_initial:
     description: "Reorganize a batched synthesis draft for thematic coherence."
@@ -822,3 +824,374 @@ prompts:
       reorder by logical dependency, fold orphan sentences.
       Preserve every [N] citation exactly; each index appears at most once per sentence.
 
+  classify_restrictions:
+    description: "Identify restriction language in the draft to guide the coherence assessor."
+    system_prompt: |
+      Read the draft and list any words or short phrases that indicate a prohibition,
+      ban, or restriction — language that blocks or forbids an action rather than
+      recommending or advising one.
+
+      Return only the specific words or phrases you actually see in the draft.
+      Copy them verbatim — do not paraphrase, reword, or alter any character.
+      Do not invent or add terms not present. If you see none, return an empty list.
+
+      Output JSON only:
+      {"restriction_cues": ["phrase1", "phrase2", ...]}
+    template: |
+      {artifact}
+
+  find_uncited_scan:
+    description: "Segment draft into sentences and classify each as CITED or UNCITED based on last 1-2 characters."
+    system_prompt: |
+      You are a sentence-scanning bot. Output JSON only.
+
+      Follow these steps EXACTLY in order.
+
+      Step 1 (SEGMENTATION RULE): Split the draft into sentences.
+      - A sentence ends at the first ".", "!", or "?" that is NOT inside square brackets "[" ... "]",
+        and is followed by a space, newline, or end-of-text.
+      - FORBIDDEN: Do NOT split sentences on commas.
+      - FORBIDDEN: Do NOT split inside bracket groups like "[20, 3, 11]".
+
+      Step 2 (TRIM): For each sentence, define TRIMMED = the sentence with trailing whitespace removed.
+
+      Step 3 (ENDING EXTRACTION): For each TRIMMED sentence compute:
+      - last1  = last 1 character of TRIMMED
+      - last2  = last 2 characters of TRIMMED (or shorter if length < 2)
+      - last12 = last 12 characters of TRIMMED (or the whole sentence if shorter)
+
+      Step 4 (CITED RULE — use ONLY last1/last2, no digit parsing):
+      - If last1 is "]" OR last2 is "]." then verdict = "CITED".
+      - Otherwise verdict = "UNCITED".
+
+      Step 5 (OUTPUT): Create one object per sentence in order.
+      Return exactly:
+      {"sentence_checks": [
+        {"sentence": "<verbatim>", "last12": "<last12>", "last2": "<last2>", "last1": "<last1>", "verdict": "CITED|UNCITED"},
+        ...
+      ]}
+
+      FORBIDDEN:
+      - Do not paraphrase or modify any sentence text.
+      - Do not add extra keys.
+      - Do not output any non-JSON text.
+
+      EXAMPLE INPUT:
+      The sky is blue [1]. The grass is green. The sun is bright [2, 3].
+
+      EXAMPLE OUTPUT:
+      {"sentence_checks":[
+        {"sentence":"The sky is blue [1].","last12":" blue [1].","last2":"].","last1":".","verdict":"CITED"},
+        {"sentence":"The grass is green.","last12":"s is green.","last2":"n.","last1":".","verdict":"UNCITED"},
+        {"sentence":"The sun is bright [2, 3].","last12":"ht [2, 3].","last2":"].","last1":".","verdict":"CITED"}
+      ]}
+    template: |
+      {artifact}
+
+  # SUPERSEDED: find_uncited_filter step now uses consensus_find_uncited_filter_v7_1
+  # (deterministic regex handler in handlers/find_uncited_filter.py). This prompt is
+  # retained for reference but is no longer wired into synthesize/synthesize.yaml.
+  find_uncited_filter:
+    description: "Extract only UNCITED sentences from the sentence_checks produced by find_uncited_scan."
+    system_prompt: |
+      You are a JSON filtering bot. Output JSON only.
+
+      You will receive a numbered list. Each line has the format:
+      N: sentence: <text>, last12: <chars>, last2: <chars>, last1: <char>, verdict: CITED
+      OR
+      N: sentence: <text>, last12: <chars>, last2: <chars>, last1: <char>, verdict: UNCITED
+
+      Follow these steps EXACTLY in order.
+
+      Step 1 (EARLY EXIT): If there are ZERO lines where verdict is UNCITED,
+      output {"uncited_sentences": []} and STOP.
+
+      Step 2 (COPY RULE): For each line in order:
+      - If the line contains "verdict: UNCITED", copy the sentence text verbatim into uncited_sentences.
+      - If the line contains "verdict: CITED", do nothing.
+
+      Step 3 (OUTPUT): Return exactly:
+      {"uncited_sentences": ["verbatim sentence", ...]}
+
+      FORBIDDEN:
+      - Do not include any sentence from a line with "verdict: CITED".
+      - Do not edit, trim, paraphrase, or re-punctuate any sentence. Copy it exactly.
+      - Do not output any non-JSON text.
+
+      EXAMPLE INPUT:
+      0: sentence: The sky is blue [1]., last12:  blue [1]., last2: ]., last1: ., verdict: CITED
+      1: sentence: The grass is green., last12: s is green., last2: n., last1: ., verdict: UNCITED
+      2: sentence: The sun is bright [2, 3]., last12: ht [2, 3]., last2: ]., last1: ., verdict: CITED
+
+      EXAMPLE OUTPUT:
+      {"uncited_sentences":["The grass is green."]}
+    template: |
+      {sentence_checks}
+
+  find_duplicates:
+    description: "Identify candidate duplicate sentence pairs to guide the coherence assessor on C3."
+    system_prompt: |
+      Read the draft and list pairs of sentences that appear to express the same core
+      claim or idea using different wording. Focus on substantive claims — not generic
+      topic sentences or background definitions.
+
+      Return only pairs where both sentences are verbatim quotes from the draft.
+      Do not invent or paraphrase. If you find no duplicates, return an empty list.
+
+      Output JSON only:
+      {"duplicate_pairs": [{"a": "verbatim sentence", "b": "verbatim sentence"}, ...]}
+    template: |
+      {artifact}
+
+  # REGRESSION NOTE (2026-03-01, fixture consensus-chain-v7.1_4b37483b):
+  #   Stepped N/A gate (STEP 0–4) caused severe false positives on mechanistic/descriptive sentences
+  #   (e.g. "lowers blood glucose by reducing...") — 7B model pattern-matched UNCONDITIONAL on any
+  #   declarative sentence lacking an if/when clause, ignoring the keyword gate entirely.
+  #   Reverted to prose version: semantic anchor "language that blocks an action" is required.
+  # WORKING EXAMPLE — stepped variant confirmed on fixture consensus-chain-v7.1_58285118
+  #   (valid on that draft because it had real prohibition wording; gate failed when none present)
+  # CONVERGENCE FIX (2026-03-01, fixture consensus-chain-v7.1_39247117):
+  #   Criterion 1 misfired on correctly-ordered content (unconditional before conditional) —
+  #   7B anchored on "both types present → flag" before reaching the ordering check (instruction
+  #   salience issue, per consult with openai/gpt-5.2-pro). Fix: restructured criterion 1 as
+  #   PASS-first rule; FLAG is the named exception. Reviser also given explicit mechanical action
+  #   for criterion-1 violations (move conditional sentences after unconditional ones).
+  # PARAGRAPH HALLUCINATION FIX (2026-03-01, fixtures consensus-chain-v7.1_f74c2042 + 17c73042):
+  #   7B hallucinated paragraph numbers (P5/P10 in a 3-paragraph document), ignoring the negative
+  #   constraint "do not reference paragraph numbers greater than N". Fix: changed to positive
+  #   procedural instruction — "count first, let this be N, all refs must be 1..N".
+  # NAMED-SUBJECT-GROUP EXAMPLE FIX (2026-03-01, same fixtures):
+  #   7B treated "metformin is contraindicated in patients with eGFR < 45" as UNCONDITIONAL despite
+  #   explicit "eGFR < X" in the named-subject-group rule. Root cause: "contraindicated" overrides
+  #   the scoping clause. Fix: added concrete in-prompt example ("Metformin is contraindicated in
+  #   patients with eGFR < 45 is CONDITIONAL") directly mirroring the failure case.
+  # TIE-BREAKER + BLANK-LINE + OUTPUT-DISCIPLINE FIX (2026-03-01, consult openai/gpt-5.2-pro + RAG):
+  #   Named-subject-group rule still failed after example. Two remaining sub-cases:
+  #   (a) sentence-per-line draft: 7B counted newlines as paragraph breaks → hallucinated para count.
+  #       Fix: added "do NOT treat single-newline wrapping as paragraph breaks".
+  #   (b) "In all cases, … if …" opener: 7B read "In all cases" as unconditional despite the "if".
+  #       Fix: added tie-breaker rule — any trigger clause or named group in the same sentence
+  #       classifies it as CONDITIONAL regardless of the opener. Also added explicit PASS rule
+  #       when paragraph contains ONLY conditional restrictions (no ordering issue possible).
+  #   Output discipline: added to enforce single-sentence "reason" and all failures in "target".
+  # MONITORING-SENTENCE FP + EVIDENCE BYPASS + C4/C5 FP FIX (2026-03-01, fixture 1330801a,
+  #   consult google/gemini-2.5-pro → openai/gpt-5.2-pro chained):
+  #   Three failure modes on P3 where all prohibitions are conditional (named patient groups +
+  #   eGFR thresholds) but 7B still flags C1: (1) hard-gate bypass — monitoring sentence
+  #   "Routine monitoring... is essential for all patients" misread as unconditional restriction;
+  #   (2) evidence-requirement bypass — 7B ignores soft quoting instruction, producing generic
+  #   "Reorder sentences" targets without evidence; (3) C4/C5 FP — sentences with citations
+  #   flagged as uncited, substantive final sentence flagged as meta-commentary.
+  #   Fixes (7 changes, A–G): (A) explicit monitoring/recommendation/dose-adjustment/therapy-
+  #   selection exclusion from restriction classification; (B) hard gate restructured as 4-step
+  #   sequential process (scan → identify → gate → flag); (C) evidence requirement changed from
+  #   soft instruction to mandatory target-line template with quoted sentences; (D) final
+  #   example updated to reference new evidence format; (E) C4 trailing-citation definition +
+  #   evidence requirement + no-flag-on-cited guard; (F) C5 tightened with concrete meta-
+  #   commentary examples + positive guard for substantive claims with citations; (G) output
+  #   discipline strengthened — "reason" must use criterion numbers only.
+  # EXAMPLE-CONTAMINATION FIX (2026-03-01, fixture 32700668):
+  #   7B copy-pasted the domain-neutral C1 examples ("Revoke all access.", "Do not share
+  #   your password") as literal artifact sentences in target field; reviser then inserted
+  #   them verbatim into the draft (P2 gained "Revoke all access in patients with severe
+  #   renal impairment" and "Do not use metformin..." as back-to-back sentences).
+  #   Fix: removed ALL domain-neutral sentence examples from C1. The rules are sufficient;
+  #   examples at 12k system-prompt depth are contamination vectors for 7B models.
+  # PRE-STEP ARTIFACT + C1/C3/C4 FIX (2026-03-01, fixture 709d52b6,
+  #   consult google/gemini-2.5-pro chained):
+  #   Three failure modes:
+  #   (1) reorganize_answer artifact: model emitted "Each [N] citation appears exactly
+  #       once, and every sentence retains at least one unique citation." as the last
+  #       sentence of output (Final-pass instruction interpreted as prose to write).
+  #       Fix: "Final pass" reworded as "(silent mental check only — do not write as
+  #       output prose)"; output discipline bullet extended to explicitly prohibit
+  #       citation-coverage summaries.
+  #   (2) find_uncited false negative: artifact sentence contains [N] placeholder +
+  #       false assertion "every sentence retains at least one unique citation" →
+  #       7B returned [] despite 3 genuinely uncited sentences. Fix: added "A valid
+  #       citation marker contains only numbers inside the brackets — placeholders
+  #       like [N] are not citations" + "Disregard any sentences that make general
+  #       claims about citation coverage; apply the check to every sentence individually."
+  #   (3) C1 false positive: 7B treated "must be discontinued immediately if acute
+  #       kidney injury develops" as UNCONDITIONAL, ignoring the trailing if-clause.
+  #       Fix: replaced "Any of these patterns make it conditional: ..." with "A
+  #       restriction is conditional if a limiting phrase or clause (...) appears
+  #       anywhere in the same sentence, even after the cue word."
+  #   (4) C3/C4 false positives: 7B self-scanned draft despite empty pre-step lists,
+  #       overriding the PASSES rule. Fix: added "You MUST stop and not scan the
+  #       draft for this criterion." after each empty-list PASSES instruction; changed
+  #       "for each pair/sentence verify" → "for each pair/sentence in the list, verify"
+  #       to reinforce that scope is limited to the provided inputs.
+  # DEONTIC-PASSIVE REGRESSION FIX (2026-03-01, fixture 5b790c13):
+  #   Round-5 introduced "deontic passive constructions" framing which caused the 7B to
+  #   generalize beyond the explicit list — treating "is mandated" and mechanism verbs
+  #   ("suppresses", "inhibits") as restriction cues, triggering cross-paragraph C1 FPs
+  #   and reviser structural damage that degraded output coherence to 6/10.
+  #   Fix: merged the six deontic passive verbs directly into the explicit verb list;
+  #   removed the framing sentence that primed open-ended passive pattern-matching.
+  #   Also added "is mandated", "is warranted", "is necessary" to the NOT-a-restriction
+  #   exclusion list.
+  # ROUND-9 FIXES (2026-03-01, fixture consensus-chain-v7.1_1a953400):
+  #   (1) find_uncited false positive: "placeholders like [N]" framing caused 7B to
+  #       treat multi-number citations like [11, 25, 26] as [N]-style placeholders.
+  #       Fix: define placeholder by ABSENCE of digits; any bracketed group with ≥1
+  #       digit is a valid citation regardless of count.
+  #   (2) C1 false positive ("in these scenarios" → UNCONDITIONAL): anaphoric scope
+  #       phrases not covered by existing "in [group/condition]" examples. 7B failed
+  #       to classify "in these scenarios" as conditional. Fix: added explicit whitelist
+  #       of anaphoric scope phrases ("in these scenarios", "in these cases", etc.).
+  #   (3) C3 self-scan: "You MUST stop" is a control-flow instruction the 7B ignores
+  #       when the draft is present and scanning behavior is trained in. Fix (Option B):
+  #       replaced stop-framing with scope restriction — "You may ONLY evaluate
+  #       duplication using the provided list; you are forbidden to search the draft
+  #       for any other duplicates." Removes fragile imperative in favor of constraint.
+  #   (4) C4 verification failure: prompt said "verify it truly lacks a trailing [N]
+  #       marker" but didn't define what counts as a citation or instruct the model to
+  #       override the upstream list. Fix: explicit digit-presence rule + "IGNORE the
+  #       upstream label and re-check yourself" instruction. Upstream F1 fix also
+  #       eliminates the false positive that triggered C4 in the first place.
+  review_coherence_assess:
+    description: "Assess draft for five specific structural criteria; return revise or accept with issues."
+    system_prompt: |
+      You are a structural checker verifying that a draft satisfies five specific criteria listed below. Output exactly one JSON object with no other text.
+
+      OUTPUT SCHEMA:
+      {
+        "c1_analysis": "<Mandatory C1 reasoning — complete this before writing action. Step 0 (GUARD — DO THIS FIRST): You are FORBIDDEN to write 'C1 PASS' or 'C1 FAIL' anywhere in c1_analysis until Step 6 (exception: the sanctioned early-exit phrase in Step 2). You are FORBIDDEN to conclude 'no cues found' unless Step 1 shows FOUND_COUNT = 0. Step 1 (CUE SCAN — MUST OUTPUT THESE LINES): For EACH cue in the Property 1 list output exactly one line in this format: 'CUE i: \"<cue>\" | FOUND = YES | SENTENCE: \"<full sentence containing the exact cue>\"' OR 'CUE i: \"<cue>\" | FOUND = NO | SENTENCE: \"\"'. FOUND = YES only if the sentence contains the cue as an exact contiguous substring (case-sensitive). After all cues write: FOUND_COUNT = K. If FOUND_COUNT = 0, also write: EARLY_EXIT = TRUE. Step 2 (EARLY EXIT): If you wrote EARLY_EXIT = TRUE in Step 1, write EXACTLY: 'C1 PASS' then STOP — do not continue to Steps 3-5. Step 3: for each FOUND = YES sentence, apply the advisory filter — if its primary verb is recommend/advise/suggest/encourage write SKIP. Step 4: for each non-skipped sentence write CONDITIONAL or UNCONDITIONAL with a one-phrase reason (e.g. 'has in-patients-with clause' or 'no limiting clause'). Step 5: state which type appears first in the paragraph. Step 5b (VERDICT — do NOT write C1 PASS/C1 FAIL here): set VERDICT = PASS if all are the same type, if only one sentence remains after filtering, or if UNCONDITIONAL appears first; set VERDICT = FAIL only if a CONDITIONAL sentence appears before an UNCONDITIONAL sentence in the same paragraph. Step 6 (REQUIRED LAST TOKEN): End c1_analysis with EXACTLY one of: 'C1 PASS' or 'C1 FAIL'.>",
+        "c4_check": "<Mandatory C4 reasoning — complete this before writing action. Follow these steps exactly. Step 1 (WRITE + COUNT): Rewrite the uncited_sentences list as ITEM lines, one per line, exactly like: ITEM 1: <full sentence text> / ITEM 2: <full sentence text>. After the last ITEM line, write: COUNT = N (N is the number of ITEM lines you wrote). Step 2 (EARLY EXIT GUARD): If COUNT = 0, write EXACTLY: 'C4 PASSES — uncited_sentences is empty.' Then STOP and write nothing else in c4_check. Do NOT scan the draft. IMPORTANT: You are FORBIDDEN to write the Step 2 sentence unless COUNT = 0. Step 3 (SCOPE): If COUNT > 0, ONLY evaluate the ITEM sentences you wrote in Step 1. Do NOT look for any other sentences. Step 4 (DEFINITION): A sentence HAS CITATION if it ends with EITHER (A) a bracket group of digits/commas/spaces — e.g. '...[14, 39]' — OR (B) a bracket group immediately followed by a period — e.g. '...[14, 39].' Both endings count as HAS CITATION. Treat the entire bracket group as ONE unit — do NOT split '[14, 39]' into separate items. Step 5A (ENDING CHECK): For each ITEM sentence, look ONLY at its final 2 characters. If they are '].' then write HAS CITATION. Otherwise, look at the final 1 character: if it is ']' then write HAS CITATION. Otherwise write NO CITATION. Step 5 (PER-ITEM CHECK): For EACH ITEM sentence, output exactly ONE new line containing only one of these tokens (no extra words): HAS CITATION or NO CITATION. Step 6 (CONCLUSION): After Step 5 — if ALL Step 5 lines are HAS CITATION, write EXACTLY: 'C4 PASSES — all listed sentences have trailing citations.' If ANY Step 5 line is NO CITATION, write EXACTLY: 'C4 FAILS — at least one listed sentence lacks a trailing citation.' Step 7 (TARGET RULE): Only sentences with NO CITATION may be added to target. FORBIDDEN: Do NOT write any 'Fix:' instruction inside c4_check — Fix instructions belong ONLY in the JSON 'target' field. WORKED EXAMPLE (non-empty list, all pass): ITEM 1: Because X ... causing systemic accumulation [18, 19]. COUNT = 1 Step 5A: last 2 chars are '].' → HAS CITATION C4 PASSES — all listed sentences have trailing citations.>",
+        "action": "revise" | "accept",
+        "reason": "<one-sentence summary>",
+        "target": "<when action is revise: list of specific issues, one per line, for the reviser; when accept: empty string>"
+      }
+
+      GENERATION ORDER: You MUST fill c1_analysis and c4_check fully before writing action. These are mandatory reasoning steps — their conclusions determine what goes in target.
+
+      FAILURE CODE EXTRACTION (mandatory before writing action): After completing c1_analysis and c4_check, scan them for these exact substrings: "C1 FAIL" and "C4 FAILS". You may ONLY include a criterion code in "reason" and "target" if its FAIL substring is present in your scratchpad. If neither is found, action must be "accept" and target must be "".
+
+      PARAGRAPH NUMBERING: Before you begin, count the total number of paragraphs in the draft. Let this be N. Before counting, you MUST ignore and discard any paragraphs that consist ONLY of citation markers (e.g., a block like "[12, 13, 14]" with no other text). Do not include these in the total paragraph count N, and do not refer to them anywhere in your output. Paragraphs are text blocks separated by one or more blank lines — do NOT treat single-newline line wrapping (sentences on separate lines within the same block) as paragraph breaks. Number paragraphs sequentially starting at 1. All paragraph references in your target field must be an integer from 1 to N (e.g. "Paragraph 2: ..."). If unsure, recount before writing your answer. Note: bracketed paragraph labels like [P1] are NOT citations and do not satisfy Criterion 4; only numeric citation markers like [16] count.
+
+      You must evaluate and report failures for all five properties; do not stop after finding one failure.
+
+      Output discipline:
+      - Fill "c1_analysis" and "c4_check" completely before writing "action" — they are mandatory reasoning fields.
+      - "reason" must be exactly ONE sentence. When action is "accept", write exactly: "All criteria pass." When action is "revise", summarise all failures by criterion number only (e.g., "Fails C1 and C4"). It must NOT contain the word "Paragraph" (in any capitalization) or any paragraph numbers. If you include "Paragraph" or paragraph numbers in reason, your output is invalid.
+      - "target" must only contain failures that your c1_analysis or c4_check reasoning steps concluded with FAIL or NO CITATION. Do not add a criterion to target if your own reasoning step concluded PASS or HAS CITATION.
+      - You are FORBIDDEN to include "C4" in "reason" or add any line starting with "C4:" to "target" if your "c4_check" contains the exact substring "C4 PASSES".
+      - You are FORBIDDEN to include "C1" in "reason" or add any line starting with "C1:" to "target" if your "c1_analysis" ends with "C1 PASS".
+      - ALL detected failures across the five properties must appear in "target" (one per line).
+      - Never reference a paragraph number greater than N; if unsure, recount before answering.
+      - Consistency check (mandatory before writing action): if target == "" then action MUST be "accept" AND reason MUST be "All criteria pass." If target != "" then action MUST be "revise" AND reason MUST start with "Fails " followed by the failing criterion codes.
+
+      Check these five properties (all must pass for action "accept"):
+
+      1. RESTRICTION ORDERING: A preceding step identified the following restriction cue words/phrases actually present in the draft: {restriction_analysis}
+      If the list is empty, Criterion 1 PASSES — stop here.
+      Otherwise, use those cues to locate sentences in the draft. Before classifying, apply this filter: if the sentence's primary verb is advisory ("recommend", "advise", "suggest", "encourage") the sentence is NOT a restriction regardless of the cue — skip it.
+      WORKED EXAMPLE (advisory filter): "The American Diabetes Association advises discontinuing metformin for patients with creatinine clearance below 30 mL/min." — SKIP (primary verb is "advises"). Do NOT classify this as UNCONDITIONAL or CONDITIONAL.
+      WORKED EXAMPLE (conditional clause at end): Any restriction sentence containing "for patients with...", "for those with...", or "in patients with..." is CONDITIONAL because the phrase limits scope to a specific group, even when that phrase appears at the end of the sentence.
+      For each remaining restriction sentence, classify as:
+      - CONDITIONAL: the restriction is limited to a group, situation, or threshold. A restriction is conditional if a limiting phrase or clause (e.g. "in [group/condition]", "for [group]", "when [X]", "if [X]", "below/above [number]") appears anywhere in the same sentence, even after the cue word. The phrase "in patients with X" or "in cases of X" is always conditional. Also treat anaphoric scope phrases as CONDITIONAL — they limit the restriction to a previously defined set of conditions: "in these scenarios", "in these cases", "in such situations", "under these conditions", "in this setting". Also treat sentences of the form "X are absolute contraindications" or "X should avoid Y" where X is a condition, severity grade, patient group, or numeric threshold (e.g. an eGFR range) as CONDITIONAL, even if the condition is the grammatical subject rather than a limiting clause.
+      - UNCONDITIONAL: no limiting clause of any kind — the restriction applies to everyone with no stated scope.
+      You may flag C1 ONLY if you can identify at least one CONDITIONAL restriction sentence AND at least one UNCONDITIONAL restriction sentence in the SAME paragraph. If you cannot find BOTH types in the same paragraph, C1 PASSES — do not flag.
+      Flag Criterion 1 ONLY if a CONDITIONAL restriction sentence appears EARLIER in the paragraph than an UNCONDITIONAL restriction sentence. The reverse — UNCONDITIONAL appearing before CONDITIONAL — is the CORRECT order and must NOT be flagged. If no CONDITIONAL-before-UNCONDITIONAL ordering violation exists, or if all found restrictions are of the same type, Criterion 1 PASSES.
+      Evidence requirement (STRICT): if you flag, your target line MUST label both sentences exactly as: UNCONDITIONAL: "<full sentence>" / CONDITIONAL: "<full sentence>" and state which appears earlier (e.g., "Order: CONDITIONAL appears before UNCONDITIONAL in Paragraph N").
+
+      2. PARAGRAPH TRANSITIONS: Paragraphs 2 and beyond each open with a transition that references the preceding paragraph's topic. Paragraph 1 is exempt — do not flag it for a missing transition.
+
+      3. SAME-CONCEPT DUPLICATION: You may ONLY evaluate duplication using the candidate pairs listed below; you are forbidden to search the draft for any other duplicates.
+      Candidate pairs: {duplicate_pairs}
+      If the list is empty, Criterion 3 PASSES — report no C3 issues.
+      If the list is non-empty, for each pair in the list, verify both sentences express the same core claim with the same scope — if so, flag the one that appears later in the draft. Two sentences on the same general topic but making different specific claims are NOT duplicates.
+      Evidence requirement: if you flag, quote both sentences and state which paragraph contains the later one.
+
+      4. CITATION COVERAGE: A preceding step identified the following sentences as potentially missing a trailing citation: {uncited_sentences}
+      If this list is empty, Criterion 4 PASSES.
+      Otherwise (list non-empty), you MUST evaluate Criterion 4 using ONLY the c4_check scratchpad steps and its citation definition (including the rule that a final period after the bracket still counts as a trailing citation). Do not apply any other citation definition here. If c4_check concludes C4 PASSES, do not flag C4. If it concludes C4 FAILS, only sentences with NO CITATION may be flagged.
+      Evidence requirement: quote the full uncited sentence in your target line and include the instruction: "Fix: append an existing numeric citation already present elsewhere in the draft that supports this sentence; if no existing citation applies, DELETE the sentence. Moving the sentence does NOT fix C4."
+
+      5. FINAL SENTENCE: The final sentence is the LAST sentence of the LAST paragraph (after discarding any citation-only paragraphs). Evaluate only that one sentence. It must be a substantive domain claim with at least one trailing [N] citation, not meta-commentary about evidence quality or the writing process (e.g., "more research is needed", "this review suggests", "overall, the evidence is limited", "in conclusion", "this highlights"). Do not flag a final sentence that makes a substantive factual, mechanistic, or safety claim and ends with a citation. If the final sentence is substantive but missing a trailing citation, flag only under Criterion 4 (citation coverage) — do not flag Criterion 5. Evidence requirement: if you flag Criterion 5, quote that single final sentence in your target line and state the meta-commentary phrase that makes it non-substantive.
+
+      If any property fails, set action to "revise". The "target" field must contain a list of all detected failures, one per line. Each line MUST begin with the criterion code that failed (e.g., "C1:", "C2:", "C3:", "C4:", or "C5:"), followed by a specific instruction for the reviser that adheres to that criterion's evidence requirement. Example: "C3: Paragraph 3: Merge duplicate claims into one sentence with combined citations." In target, request only structural fixes (reordering, transitions, deduplication, adding missing citations) — do not ask the reviser to introduce new claims or facts not already present in the draft. If all pass, set action to "accept" and target to "".
+    template: |
+      QUESTION: {question}
+
+      DRAFT TO ASSESS:
+      {artifact}
+
+      Output exactly one JSON object matching the system OUTPUT SCHEMA.
+
+  review_coherence_revise:
+    description: "Revise draft to fix issues listed by the assessor; preserve citation indices."
+    system_prompt: |
+      You are a mechanical fix applier making minimum-scope targeted corrections to address the listed issues. Output only the revised prose — no preamble, no explanation, no markdown fences.
+
+      RULES:
+      - Paragraphs are numbered starting at 1. Paragraph 1 is the opening paragraph and is exempt from transition requirements — do not add a transition to Paragraph 1.
+      - Do not change any [N] citation index values; preserve every number exactly.
+      - Do not add sentences without at least one [N] citation.
+      - Do not introduce any new claim, recommendation, or fact not already present in the draft — only reorder, merge, or rephrase existing content.
+      - Address every issue in the issues list; do not introduce new structural problems.
+      - Do NOT move sentences between paragraphs. Every correction — including restriction reordering — must be made within the paragraph the sentence currently occupies. Moving content to a different paragraph is never correct.
+      - Criterion 1 (Restriction ordering): if a paragraph mixes unconditional restrictions (e.g., "do not", "must not", "prohibited" with no if/when/in-cases-of clause) and conditional restrictions (e.g., "if...", "in cases of...", "for users with..."), reorder sentences within that same paragraph so unconditional restriction sentence(s) appear before all conditional restriction sentence(s). Do not move those sentences to a different paragraph. Move the bracketed [N] citations together with the sentence they belong to. Do not invent new conditions or remove restrictions.
+    template: |
+      QUESTION: {question}
+
+      ISSUES TO FIX (address each):
+      {assess_target}
+
+      REASON: {assess_reason}
+
+      CURRENT DRAFT:
+      {artifact}
+
+      Revised draft (prose only):
+
+  post_coherence_repair:
+    description: "Fix structural artifacts (orphaned sentences, broken paragraph joins) left by revision passes."
+    system_prompt: |
+      You are a structural copy-editor. An article has been through several
+      revision passes. Your only job is to fix structural artifacts left by
+      those revisions.
+
+      Fix ONLY:
+      - Orphaned sentences: a sentence that no longer connects logically to its
+        paragraph because its referent was moved or removed (e.g., begins with
+        "These markers" but the referent paragraph was restructured). Move the
+        orphaned sentence to the paragraph where its referent lives, appending
+        it to the end of that paragraph.
+      - Broken paragraph joins: two paragraphs that were incorrectly merged into
+        one, identifiable by a hard abrupt topic shift mid-paragraph with no
+        connecting logic between the two halves.
+
+      DO NOT:
+      - Delete any sentence. Every sentence in the input must appear in the output.
+      - Add any new content or sentences
+      - Merge paragraphs that are individually coherent — only split, never join
+      - Change any citation brackets [N] or add citations
+      - Change any restriction language (prohibited, contraindicated, must not)
+      - Make stylistic improvements or rephrase any sentence
+
+      If the article has no structural artifacts, output it unchanged.
+      Output the complete article.
+    template: |
+      {artifact}
+
+  c4_revise:
+    description: "Delete specific uncited sentences from the draft. No additions, no rewrites."
+    system_prompt: |
+      You are a strict copy-editor. Your ONLY job is to delete specific sentences from the draft below. Output only the updated draft — no preamble, no explanation, no markdown fences.
+
+      RULES:
+      1. Delete each target sentence completely.
+      2. DO NOT add any new text, words, or citations.
+      3. DO NOT rewrite or adjust surrounding sentences, even if transitions seem abrupt.
+      4. If a target sentence is not found verbatim, leave the draft unchanged for that target.
+      5. Output the complete, updated draft.
+    template: |
+      TARGET SENTENCES TO DELETE:
+      {targets}
+
+      DRAFT:
+      {artifact}
+
+      Updated draft:

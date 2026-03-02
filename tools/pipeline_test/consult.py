@@ -2,11 +2,14 @@
 
 Sends pipeline step context (prompt + output + problem description) to
 consultant models via Stargate in parallel, returning their analysis.
+Supports chained mode where models run sequentially, each reviewing the
+prior model's output.
 """
 
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -57,10 +60,25 @@ def default_rag_source_prefixes() -> list[Path]:
 
 
 DEFAULT_CONSULTANTS: list[str] = [
-    "arcee-ai/trinity-large-preview:free"
     "gpt-oss-20b-mxfp4-65536",
-    "google/gemini-2.5-pro",
+    "google/gemini-2.5-flash",
 ]
+
+_CONSULT_SELECT_TAGS: list[str] = ["code", "reasoning"]
+_CONSULT_SELECT_MIN_CONTEXT: int = 32768
+
+
+def resolve_consultant_models(count: int = 2) -> list[str]:
+    """Pick consultant models via cloud proxy, falling back to defaults."""
+    from .cloud_select import select_models
+
+    selected = select_models(
+        tags=_CONSULT_SELECT_TAGS,
+        min_context=_CONSULT_SELECT_MIN_CONTEXT,
+        count=count,
+    )
+    return selected or DEFAULT_CONSULTANTS
+
 
 _SYSTEM_PROMPT = """\
 You are a prompt engineer evaluating a pipeline step executed by a smaller LLM. \
@@ -127,6 +145,73 @@ def consult_step(
     model_order = {m: i for i, m in enumerate(consultant_models)}
     results.sort(key=lambda r: model_order.get(r.model_id, 999))
     return results
+
+
+def chain_step(
+    step: StepSnapshot,
+    problem: str,
+    call_label: str | None = None,
+    models: list[str] | None = None,
+    rag_findings: list[str] | None = None,
+    stargate_url: str = DEFAULT_STARGATE_URL,
+    timeout: float = 300.0,
+    output_limit_chars: int | None = None,
+    on_result: Callable[[ConsultResult, int, int], None] | None = None,
+) -> list[ConsultResult]:
+    """Query consultant models sequentially, each reviewing prior output.
+
+    Model 1 receives the standard consultation prompt. Model 2+ receives
+    the same prompt augmented with all prior models' responses and a
+    reviewer directive.
+    """
+    consultant_models = models or DEFAULT_CONSULTANTS
+    base_prompt = _build_user_prompt(
+        step=step,
+        call_label=call_label,
+        problem=problem,
+        rag_findings=rag_findings,
+        output_limit_chars=output_limit_chars,
+    )
+
+    results: list[ConsultResult] = []
+    for idx, mid in enumerate(consultant_models):
+        prompt = _augment_with_prior(base_prompt, results) if results else base_prompt
+        try:
+            result = _query_consultant(
+                model_id=mid,
+                user_prompt=prompt,
+                stargate_url=stargate_url,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            result = ConsultResult(model_id=mid, error=str(exc))
+        results.append(result)
+        if on_result:
+            on_result(result, idx, len(consultant_models))
+    return results
+
+
+def _augment_with_prior(
+    base_prompt: str,
+    prior_results: list[ConsultResult],
+) -> str:
+    """Append prior models' analyses and a reviewer directive to the prompt."""
+    sections: list[str] = [base_prompt]
+    for result in prior_results:
+        if result.error or not result.response_text:
+            continue
+        sections.append(
+            f"## Prior Analysis (by {result.model_id})\n{result.response_text}"
+        )
+    sections.append(
+        "## Your Role\n"
+        "You are a reviewer in a chained consultation. The analysis above was "
+        "produced by a prior model. Evaluate whether you agree with its "
+        "recommendations, identify any gaps or risks it missed, and propose "
+        "additional changes if warranted. Do not re-derive what the prior "
+        "analysis already covers correctly — focus on validation and augmentation."
+    )
+    return "\n\n".join(sections)
 
 
 def estimate_fixed_chars(
@@ -240,6 +325,7 @@ def fetch_rag_findings(
     top_k: int = DEFAULT_RAG_TOP_K,
     timeout: float = DEFAULT_RAG_TIMEOUT,
     source_prefixes: list[str] | None = None,
+    scope: str | None = None,
     recency_weight: float = DEFAULT_RAG_RECENCY_WEIGHT,
 ) -> tuple[list[str], str | None]:
     """Search RAG for relevant prompt-engineering chunks.
@@ -255,6 +341,8 @@ def fetch_rag_findings(
     }
     if source_prefixes:
         body["source_prefixes"] = source_prefixes
+    elif scope:
+        body["scope"] = scope
 
     try:
         with httpx.Client(timeout=timeout) as client:
@@ -327,8 +415,12 @@ def fetch_rag_via_pipeline(
 
     Invariant: ∀ non-empty response: len(findings) == 1 (assembled context block)
     """
+    from pipelines.rag.scope_helpers import fetch_scope_options_text
+
     url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
     base_options: dict[str, Any] = pipeline_options or {}
+    # Inject scope_options for the rewrite prompt
+    base_options.setdefault("scope_options", fetch_scope_options_text())
     body: dict[str, Any] = {
         "model": pipeline_id,
         "messages": [{"role": "user", "content": query}],

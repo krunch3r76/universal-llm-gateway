@@ -38,6 +38,9 @@ class ResourceUpdateHandler(SyncMessageHandler):
     Side effect: callback notification (fire-and-forget)
     """
 
+    def __init__(self) -> None:
+        self._catalog_structure_warned: bool = False
+
     def handle(self, data: dict[str, Any], ctx: HandlerContext) -> None:
         self._apply_resource_update(data, ctx)
         self._sync_loaded_models(data, ctx)
@@ -52,21 +55,75 @@ class ResourceUpdateHandler(SyncMessageHandler):
         )
 
     def _sync_loaded_models(self, data: dict[str, Any], ctx: HandlerContext) -> None:
-        """Sync loaded_models and per-model VRAM if provided (Gateway authoritative)."""
+        """Sync loaded_models, measured VRAM, and check for catalog drift."""
         if "loaded_models" in data:
+            newly_loaded = set(data["loaded_models"])
+
+            # Prune stale measured state using authoritative loaded_models.
+            stale_measured = set(ctx.measured_model_vram.keys()) - newly_loaded
+            for model_id in stale_measured:
+                _ = ctx.measured_model_vram.pop(model_id, None)
+                _ = ctx.model_details.pop(model_id, None)
+
             ctx.loaded_models.clear()
-            ctx.loaded_models.update(data["loaded_models"])
+            ctx.loaded_models.update(newly_loaded)
 
         model_vram: dict[str, int] | None = data.get("model_vram")
-        if model_vram:
-            for model_id, vram_mb in model_vram.items():
-                if model_id in ctx.model_details:
-                    ctx.model_details[model_id]["vram_usage"] = vram_mb
-                else:
-                    ctx.model_details[model_id] = {
-                        "vram_usage": vram_mb,
-                        "ram_usage": 0,
-                    }
+        if not model_vram:
+            return
+
+        missing_key = "model_resources" not in ctx.catalog
+        if missing_key and not self._catalog_structure_warned:
+            logger.warning(
+                f"VRAM drift detection disabled: 'model_resources' absent from catalog "
+                f"for gateway {ctx.gateway_name}"
+            )
+            self._catalog_structure_warned = True
+        catalog_resources: dict[str, Any] = ctx.catalog.get("model_resources", {})
+
+        for model_id, measured_mb in model_vram.items():
+            # Update measured-only store (partial update — preserve other models)
+            ctx.measured_model_vram[model_id] = measured_mb
+
+            # Update mixed model_details for backward compatibility
+            if model_id in ctx.model_details:
+                ctx.model_details[model_id]["vram_usage"] = measured_mb
+            else:
+                ctx.model_details[model_id] = {
+                    "vram_usage": measured_mb,
+                    "ram_usage": 0,
+                }
+
+            # Drift check: compare measured against catalog (1h cooldown per model)
+            catalog_mb: int | None = catalog_resources.get(model_id, {}).get(
+                "vram_usage"
+            )
+            if catalog_mb and catalog_mb > 0:
+                drift_pct = abs(measured_mb - catalog_mb) / catalog_mb * 100.0
+                if drift_pct > 5.0 and ctx.can_report_vram_drift(model_id):
+                    self._handle_vram_drift(
+                        ctx, model_id, measured_mb, catalog_mb, drift_pct
+                    )
+
+    def _handle_vram_drift(
+        self,
+        ctx: HandlerContext,
+        model_id: str,
+        measured_mb: int,
+        catalog_mb: int,
+        drift_pct: float,
+    ) -> None:
+        """Log warning and schedule drift event.
+        Triggered when measured VRAM diverges from catalog by >5%.
+        """
+        logger.warning(
+            f"VRAM drift detected: {model_id} on {ctx.gateway_name} — "
+            f"measured={measured_mb}MB, catalog={catalog_mb}MB, drift={drift_pct:.1f}%"
+        )
+        if ctx.on_vram_drift:
+            ctx.schedule_callback(
+                ctx.on_vram_drift, (model_id, measured_mb, catalog_mb, drift_pct)
+            )
 
     def _log_resource_state(self, ctx: HandlerContext) -> None:
         """Log current resource state after update."""

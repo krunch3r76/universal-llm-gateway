@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""Download and ingest arXiv papers into the RAG corpus.
+
+Downloads PDFs from arXiv and ingests them via pipeline_test ingest-papers,
+preserving publication dates as metadata for recency-aware retrieval.
+
+Usage:
+  scripts/ingest-arxiv-papers [--dry-run] [--corpus-dir PATH]
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import httpx
+
+# Papers curated for relevance to large-LLM prompting and consensus pipeline work.
+# Format: (arxiv_id, published_date, slug, category)
+PAPERS: list[tuple[str, str, str, str]] = [
+    # --- Multi-model consensus & ensemble ---
+    (
+        "2601.07245",
+        "2026-01-13",
+        "multi-model-consensus-reasoning-engine",
+        "consensus",
+    ),
+    (
+        "2512.20184",
+        "2025-12-29",
+        "reaching-agreement-reasoning-llm-agents",
+        "consensus",
+    ),
+    (
+        "2503.10881",
+        "2025-03-13",
+        "scalable-consistency-ensembles",
+        "consensus",
+    ),
+    # --- Reasoning model prompting (o1/o3/R1) ---
+    (
+        "2502.15631",
+        "2025-02-21",
+        "o3-thinks-harder-not-longer",
+        "reasoning-models",
+    ),
+    (
+        "2509.13196",
+        "2025-09-17",
+        "few-shot-dilemma-over-prompting-large-llms",
+        "reasoning-models",
+    ),
+    # --- LLM-as-judge & evaluation ---
+    (
+        "2602.08672",
+        "2026-02-12",
+        "llm-designing-applying-evaluation-rubrics",
+        "llm-judge",
+    ),
+    (
+        "2512.16041",
+        "2025-12-20",
+        "assessing-llm-as-a-judge",
+        "llm-judge",
+    ),
+    (
+        "2503.23989",
+        "2025-03-31",
+        "rubric-is-all-you-need-code-evaluation",
+        "llm-judge",
+    ),
+    (
+        "2502.02988",
+        "2025-02-05",
+        "themis-fine-tuned-llm-judge",
+        "llm-judge",
+    ),
+    # --- Structured output / JSON mode ---
+    (
+        "2501.10868",
+        "2025-01-19",
+        "json-schema-bench-structured-outputs",
+        "structured-output",
+    ),
+    (
+        "2505.20139",
+        "2025-05-26",
+        "struct-eval-llm-structural-outputs",
+        "structured-output",
+    ),
+    # --- Cross-model prompt transfer ---
+    (
+        "2512.01420",
+        "2025-12-02",
+        "prompt-bridge-cross-model-transfer",
+        "cross-model",
+    ),
+    # --- Prompt compression & cost optimization ---
+    (
+        "2504.16005",
+        "2025-04-22",
+        "capo-cost-aware-prompt-optimization",
+        "cost-optimization",
+    ),
+    (
+        "2508.02053",
+        "2025-08-04",
+        "procut-attribution-prompt-compression",
+        "cost-optimization",
+    ),
+    (
+        "2511.12281",
+        "2025-11-18",
+        "cmprsr-abstractive-prompt-compression",
+        "cost-optimization",
+    ),
+    # --- Automatic prompt optimization ---
+    (
+        "2502.16923",
+        "2025-02-24",
+        "survey-automatic-prompt-optimization",
+        "prompt-optimization",
+    ),
+    (
+        "2505.16307",
+        "2025-05-22",
+        "pmpo-probabilistic-metric-prompt-optimization",
+        "prompt-optimization",
+    ),
+    (
+        "2511.19829",
+        "2025-11-29",
+        "evaluation-instructed-prompt-optimization",
+        "prompt-optimization",
+    ),
+    # --- Surveys ---
+    (
+        "2504.10179",
+        "2025-04-14",
+        "adaptive-mllm-prompting-comprehensive-evaluation",
+        "survey",
+    ),
+    (
+        "2508.11126",
+        "2025-08-15",
+        "ai-agentic-programming-survey",
+        "survey",
+    ),
+]
+
+ARXIV_PDF_URL = "https://arxiv.org/pdf/{arxiv_id}"
+DOWNLOAD_DIR = Path("/tmp/arxiv-papers")
+
+
+def download_pdf(arxiv_id: str, slug: str, *, dry_run: bool) -> Path | None:
+    """Download PDF from arXiv, return local path or None on failure."""
+    dest = DOWNLOAD_DIR / f"{slug}.pdf"
+    if dest.exists():
+        print(f"  [cached] {dest.name}")
+        return dest
+
+    url = ARXIV_PDF_URL.format(arxiv_id=arxiv_id)
+    print(f"  [download] {url}")
+    if dry_run:
+        print(f"    → would save to {dest}")
+        return None
+
+    try:
+        with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+            resp = client.get(url)
+        resp.raise_for_status()
+        content_type = resp.headers.get("content-type", "")
+        if "pdf" not in content_type and len(resp.content) < 10_000:
+            print(f"  [warn] unexpected content-type: {content_type}, skipping")
+            return None
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(resp.content)
+        print(f"    → saved {len(resp.content) // 1024}KB to {dest.name}")
+        return dest
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [error] download failed: {exc}")
+        return None
+
+
+def ingest_paper(
+    pdf_path: Path,
+    published_date: str,
+    corpus_dir: str,
+    *,
+    dry_run: bool,
+) -> bool:
+    """Call pipeline_test ingest-papers for a single PDF."""
+    cmd = [
+        sys.executable,
+        "-m",
+        "tools.pipeline_test",
+        "ingest-papers",
+        str(pdf_path),
+        "--published",
+        published_date,
+        "--corpus-dir",
+        corpus_dir,
+    ]
+    if dry_run:
+        print(f"  [dry-run] {' '.join(cmd)}")
+        return True
+    result = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
+    if result.returncode != 0:
+        print(f"  [error] ingest failed:\n{result.stderr.strip()}")
+        return False
+    print(f"  {result.stdout.strip()}")
+    return True
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Download and ingest arXiv papers")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print actions without executing",
+    )
+    parser.add_argument(
+        "--corpus-dir",
+        default="docs/research/prompting",
+        help="Corpus directory (default: docs/research/prompting)",
+    )
+    parser.add_argument(
+        "--category",
+        help="Only ingest papers in this category (e.g. consensus, llm-judge)",
+    )
+    parser.add_argument(
+        "--list-categories",
+        action="store_true",
+        help="List available categories and exit",
+    )
+    args = parser.parse_args()
+
+    if args.list_categories:
+        categories = sorted({cat for _, _, _, cat in PAPERS})
+        for cat in categories:
+            count = sum(1 for _, _, _, c in PAPERS if c == cat)
+            print(f"  {cat:30s} ({count} papers)")
+        return
+
+    papers = (
+        [(arxiv_id, date, slug, cat) for arxiv_id, date, slug, cat in PAPERS if cat == args.category]
+        if args.category
+        else PAPERS
+    )
+
+    if not papers:
+        print(f"No papers found for category: {args.category}")
+        sys.exit(1)
+
+    print(f"Processing {len(papers)} papers → {args.corpus_dir}")
+    if args.dry_run:
+        print("(dry-run mode — no files written)\n")
+
+    succeeded = failed = skipped = 0
+    for arxiv_id, published_date, slug, category in papers:
+        print(f"\n[{category}] {slug} ({arxiv_id}, {published_date})")
+        pdf_path = download_pdf(arxiv_id, slug, dry_run=args.dry_run)
+        if pdf_path is None and not args.dry_run:
+            failed += 1
+            continue
+        if pdf_path is not None:
+            ok = ingest_paper(pdf_path, published_date, args.corpus_dir, dry_run=args.dry_run)
+            if ok:
+                succeeded += 1
+            else:
+                failed += 1
+        else:
+            skipped += 1
+        # Brief pause between arXiv requests to be polite
+        if not args.dry_run:
+            time.sleep(1.5)
+
+    print(f"\n{'='*50}")
+    print(f"Done: {succeeded} ingested, {failed} failed, {skipped} skipped")
+    if failed:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

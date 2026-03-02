@@ -345,13 +345,13 @@ class SourceInput:
     """
     Pipeline input data, referenced via sourceNs.* namespace.
 
-    Explicit object replaces implicit source_text parameter.
+    For chat completions, `messages` holds the full conversation history
+    and `text` holds the last user message content (backward compat).
     """
 
     text: str
     metadata: dict[str, Any] = dataclass_field(default_factory=dict)
-
-    # Future: Add more source fields as needed (e.g., images, audio)
+    messages: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True, slots=True)

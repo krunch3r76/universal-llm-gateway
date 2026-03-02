@@ -1,0 +1,7 @@
+models:
+  analyze_model:
+    model: mistralai/devstral-medium
+  critique_model:
+    model: qwen/qwen3-coder
+  finalize_model:
+    model: google/gemini-2.5-flash

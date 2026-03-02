@@ -1,0 +1,45 @@
+schema_version: 6
+id: modularize
+version: "2"
+type: modularize
+description: "Modularize a Python file: analyze -> critique -> finalize (structural plan)"
+output: finalize
+
+options:
+  timeout_seconds: 360
+
+steps:
+  - name: analyze
+    type: generate
+    model_ref: analyze_model
+    prompt_ref: modularize.analyze
+    handler_inputs:
+      source_code: sourceNs.text
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 4096
+    timeout_seconds: 60
+
+  - name: critique
+    type: generate
+    model_ref: critique_model
+    prompt_ref: modularize.critique
+    handler_inputs:
+      source_code: sourceNs.text
+      domain_analysis: analyze.raw
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 8192
+    timeout_seconds: 120
+
+  - name: finalize
+    type: generate
+    model_ref: finalize_model
+    prompt_ref: modularize.finalize
+    handler_inputs:
+      source_code: sourceNs.text
+      verified_grouping: critique.raw
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 8192
+    timeout_seconds: 120

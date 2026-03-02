@@ -338,6 +338,35 @@ def _rewrite_aliases(
             )
 
 
+class ContextExceededError(PipelineExecutionError):
+    """Raised when estimated prompt tokens exceed the model's context window.
+
+    Pre-flight heuristic (chars/4) that catches gross mismatches before
+    wasting an inference call.  Analogous to ResponseTruncatedError but
+    detects the overflow before the request instead of after.
+    """
+
+    def __init__(
+        self,
+        step_name: str,
+        model_id: str,
+        estimated_tokens: int,
+        context_length: int,
+        prompt_chars: int,
+    ) -> None:
+        self.step_name = step_name
+        self.model_id = model_id
+        self.estimated_tokens = estimated_tokens
+        self.context_length = context_length
+        self.prompt_chars = prompt_chars
+        super().__init__(
+            f"Prompt too large for model {model_id}: "
+            f"~{estimated_tokens} estimated tokens exceeds "
+            f"context window of {context_length} tokens "
+            f"(step={step_name}, chars={prompt_chars})"
+        )
+
+
 class ResponseTruncatedError(PipelineExecutionError):
     """Raised when a model response is truncated due to max_tokens limit.
 

@@ -81,6 +81,11 @@ class EvictionPlanSummary:
     freed_vram_mb: int
     freed_ram_mb: int
     estimated_cost: float  # Penalty score for this eviction
+    # Observability for hardware-based correction (when applied)
+    catalog_freed_vram_mb: int = 0
+    hardware_used_vram_mb: int | None = None
+    non_evictable_vram_reserve_mb: int = 0
+    hardware_correction_applied: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -192,6 +197,12 @@ class DecisionTrace:
         Returns:
             Event payload dict for ROUTING_DECISION event
         """
+        correction_gateways = [
+            c.gateway.name
+            for c in self.candidates
+            if c.eviction_plan and c.eviction_plan.hardware_correction_applied
+        ]
+
         payload = {
             "model_id": self.model_id,
             "original_model_id": self.original_model_id,
@@ -204,6 +215,8 @@ class DecisionTrace:
             "request_id": self.request_id,
             "timestamp": self.timestamp,
             "is_sticky": self.is_sticky,
+            "hardware_correction_applied_count": len(correction_gateways),
+            "hardware_correction_gateways": correction_gateways,
         }
 
         if include_candidates:
@@ -243,6 +256,18 @@ class DecisionTrace:
                             "models_to_evict": list(c.eviction_plan.models_to_evict),
                             "freed_vram_mb": c.eviction_plan.freed_vram_mb,
                             "freed_ram_mb": c.eviction_plan.freed_ram_mb,
+                            "catalog_freed_vram_mb": (
+                                c.eviction_plan.catalog_freed_vram_mb
+                            ),
+                            "hardware_used_vram_mb": (
+                                c.eviction_plan.hardware_used_vram_mb
+                            ),
+                            "non_evictable_vram_reserve_mb": (
+                                c.eviction_plan.non_evictable_vram_reserve_mb
+                            ),
+                            "hardware_correction_applied": (
+                                c.eviction_plan.hardware_correction_applied
+                            ),
                         }
                         if c.eviction_plan
                         else None

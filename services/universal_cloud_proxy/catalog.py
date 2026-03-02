@@ -20,6 +20,14 @@ from .config import ProviderConfig
 logger = logging.getLogger(__name__)
 
 
+def _per_million(pricing: dict[str, Any], key: str) -> float:
+    """Convert per-token string price to per-million-token float."""
+    try:
+        return round(float(pricing.get(key, "0")) * 1_000_000, 4)
+    except (ValueError, TypeError):
+        return 0.0
+
+
 @dataclass(slots=True, kw_only=True)
 class CatalogModel:
     """A single model entry in the catalog served to Stargate."""
@@ -27,12 +35,29 @@ class CatalogModel:
     id: str
     provider: str
     max_concurrent: int
+    prompt_cost_per_m: float = 0.0
+    completion_cost_per_m: float = 0.0
+    context_length: int = 0
+    name: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """Stargate-facing shape (backward compatible)."""
         return {
             "id": self.id,
             "provider": self.provider,
             "max_concurrent": self.max_concurrent,
+        }
+
+    def to_pricing_dict(self) -> dict[str, Any]:
+        """Full shape including pricing for cost-aware routing."""
+        return {
+            "id": self.id,
+            "name": self.name or self.id,
+            "provider": self.provider,
+            "max_concurrent": self.max_concurrent,
+            "prompt_cost_per_m": self.prompt_cost_per_m,
+            "completion_cost_per_m": self.completion_cost_per_m,
+            "context_length": self.context_length,
         }
 
 
@@ -96,6 +121,13 @@ class CatalogManager:
             result.extend(m.to_dict() for m in catalog.models)
         return result
 
+    def get_all_models_with_pricing(self) -> list[dict[str, Any]]:
+        """Return the full catalog with pricing data for cost-aware consumers."""
+        result: list[dict[str, Any]] = []
+        for catalog in self._catalogs.values():
+            result.extend(m.to_pricing_dict() for m in catalog.models)
+        return result
+
     def resolve_provider(self, model_id: str) -> ProviderCatalog | None:
         """Find the provider catalog that contains the given model ID."""
         for catalog in self._catalogs.values():
@@ -128,11 +160,16 @@ class CatalogManager:
                 if not any(mid.startswith(p) for p in config.allow_prefixes):
                     continue
 
+            pricing = entry.get("pricing") or {}
             models.append(
                 CatalogModel(
                     id=mid,
                     provider=config.provider,
                     max_concurrent=config.max_concurrent,
+                    prompt_cost_per_m=_per_million(pricing, "prompt"),
+                    completion_cost_per_m=_per_million(pricing, "completion"),
+                    context_length=entry.get("context_length", 0),
+                    name=entry.get("name", mid),
                 )
             )
 

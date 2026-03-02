@@ -32,7 +32,7 @@ from . import measure as measure_svc
 from . import measure_analysis as measure_analysis_svc
 from . import replay as replay_svc
 from . import snapshot as snapshot_svc
-from .models import ReplayOverrides
+from .models import ConsultResult, ReplayOverrides
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 DEFAULT_REPLAY_DIR = Path("/tmp/replay")
@@ -111,11 +111,8 @@ def _add_snapshot_parser(sub: Any) -> None:
     p = sub.add_parser("snapshot", help="Capture execution into a fixture")
     p.add_argument("pipeline_id", help="Pipeline ID")
     p.add_argument(
-        "--latest",
-        action="store_true",
-        help="Use latest execution (default when -e is omitted)",
+        "--execution", "-e", help="Specific execution ID (default: latest completed)"
     )
-    p.add_argument("--execution", "-e", help="Specific execution ID (default: latest)")
     p.add_argument("--output", "-o", help="Output fixture path")
     p.set_defaults(func=_cmd_snapshot)
 
@@ -393,16 +390,29 @@ def _cmd_compare(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_rag_source_prefixes(args: argparse.Namespace) -> list[str]:
-    """Resolve RAG source paths: --rag-source-prefix, else --rag-corpus, else config."""
+def _resolve_explicit_source_prefixes(args: argparse.Namespace) -> list[str] | None:
+    """Resolve explicit source-prefix overrides from CLI args."""
     if getattr(args, "rag_source_prefix", None):
-        return [
-            str(Path(prefix).expanduser().resolve())
-            for prefix in args.rag_source_prefix
-        ]
-    if getattr(args, "rag_corpus", None):
-        return [str(Path(args.rag_corpus).expanduser().resolve())]
-    return [str(p) for p in consult_svc.default_rag_source_prefixes()]
+        return [str(Path(p).expanduser().resolve()) for p in args.rag_source_prefix]
+    rag_corpus = getattr(args, "rag_corpus", None)
+    if rag_corpus:
+        return [str(Path(rag_corpus).expanduser().resolve())]
+    return None
+
+
+def _validate_scope(scope: str | None, rag_url: str) -> str | None:
+    """Validate scope against dynamic /scopes list (no-op if unset)."""
+    if not scope:
+        return None
+    from pipelines.rag.scope_helpers import fetch_scope_choices
+
+    available_scopes = fetch_scope_choices(rag_url)
+    if scope not in available_scopes:
+        available = ", ".join(sorted(available_scopes))
+        raise ValueError(
+            f"Unknown --scope '{scope}'. Available scopes from RAG: {available}"
+        )
+    return scope
 
 
 def _add_consult_parser(sub: Any) -> None:
@@ -507,11 +517,18 @@ def _add_consult_parser(sub: Any) -> None:
     )
     p.add_argument(
         "--scope",
-        choices=["research", "project", "both"],
         default="research",
         help=(
             "Scope override for RAG pipeline retrieval "
             "(default: research). Pipeline path only."
+        ),
+    )
+    p.add_argument(
+        "--chain",
+        action="store_true",
+        help=(
+            "Run models sequentially, each reviewing the prior model's "
+            "output (default: parallel)"
         ),
     )
     p.set_defaults(func=_cmd_consult)
@@ -521,10 +538,17 @@ def _cmd_consult(args: argparse.Namespace) -> None:
     snap = _load_snapshot(args)
     step = _resolve_step(snap, args.step)
 
-    consultant_models = args.models or consult_svc.DEFAULT_CONSULTANTS
+    consultant_models = args.models or consult_svc.resolve_consultant_models()
     print(f"Consulting about: {step.step_name}")
     print(f"  Models: {', '.join(consultant_models)}")
     print(f"  Problem: {args.problem}")
+    validated_scope: str | None = None
+    if not args.no_rag:
+        try:
+            validated_scope = _validate_scope(args.scope, args.rag_url)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(2)
 
     ctx_len = budget_svc.resolve_min_context_length(
         consultant_models,
@@ -538,6 +562,7 @@ def _cmd_consult(args: argparse.Namespace) -> None:
 
     rag_findings: list[str] | None = None
     output_limit: int | None = None
+    explicit_prefixes = _resolve_explicit_source_prefixes(args)
 
     if args.no_rag:
         print(f"  Budget: {ctx_len}tok context (no RAG)")
@@ -550,15 +575,14 @@ def _cmd_consult(args: argparse.Namespace) -> None:
             top_k_cap=args.rag_top_k,
         )
         output_limit = budget.output_limit_chars
-        source_prefixes = _resolve_rag_source_prefixes(args)
 
         rag_options: dict[str, Any] = {
             "consumer_model": consultant_models[0],
         }
-        if args.scope:
-            rag_options["scope_override"] = args.scope
-        if source_prefixes:
-            rag_options["rag_source_prefixes"] = [str(p) for p in source_prefixes]
+        if explicit_prefixes:
+            rag_options["rag_source_prefixes"] = explicit_prefixes
+        elif validated_scope:
+            rag_options["scope_override"] = validated_scope
         if args.rag_recency is not None:
             rag_options["rag_recency_weight"] = args.rag_recency
 
@@ -585,14 +609,25 @@ def _cmd_consult(args: argparse.Namespace) -> None:
                 if args.rag_recency is not None
                 else consult_svc.DEFAULT_RAG_RECENCY_WEIGHT
             )
-            rag_findings, rag_error = consult_svc.fetch_rag_findings(
-                args.problem,
-                rag_url=args.rag_url,
-                top_k=budget.adaptive_top_k,
-                timeout=args.rag_timeout,
-                source_prefixes=source_prefixes,
-                recency_weight=direct_recency,
-            )
+            # Direct fallback: use scope if no explicit prefixes
+            if explicit_prefixes:
+                rag_findings, rag_error = consult_svc.fetch_rag_findings(
+                    args.problem,
+                    rag_url=args.rag_url,
+                    top_k=budget.adaptive_top_k,
+                    timeout=args.rag_timeout,
+                    source_prefixes=explicit_prefixes,
+                    recency_weight=direct_recency,
+                )
+            else:
+                rag_findings, rag_error = consult_svc.fetch_rag_findings(
+                    args.problem,
+                    rag_url=args.rag_url,
+                    top_k=budget.adaptive_top_k,
+                    timeout=args.rag_timeout,
+                    scope=validated_scope or "research",
+                    recency_weight=direct_recency,
+                )
             if rag_error:
                 print(f"  Direct RAG fallback: unavailable ({rag_error})")
             elif rag_findings:
@@ -618,52 +653,108 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         )
         print()
 
-        source_prefixes = _resolve_rag_source_prefixes(args)
         direct_recency = (
             args.rag_recency
             if args.rag_recency is not None
             else consult_svc.DEFAULT_RAG_RECENCY_WEIGHT
         )
-        rag_findings, rag_error = consult_svc.fetch_rag_findings(
-            args.problem,
-            rag_url=args.rag_url,
-            top_k=budget.adaptive_top_k,
-            timeout=args.rag_timeout,
-            source_prefixes=source_prefixes,
-            recency_weight=direct_recency,
-        )
-        if rag_error:
-            print(f"  RAG: unavailable ({rag_error})")
-        elif rag_findings:
-            sources = ", ".join(source_prefixes)
-            print(f"  RAG: injected {len(rag_findings)} finding(s) from {sources}")
-        else:
-            print("  RAG: no matching findings")
-
-    results = consult_svc.consult_step(
-        step=step,
-        problem=args.problem,
-        call_label=args.call,
-        models=args.models,
-        rag_findings=rag_findings,
-        stargate_url=args.url,
-        timeout=args.timeout,
-        output_limit_chars=output_limit,
-    )
-
-    for result in results:
-        print("=" * 72)
-        print(f"CONSULTANT: {result.model_id}")
-        if result.error:
-            print(f"[ERROR] {result.error}")
-        else:
-            print(
-                f"Tokens: {result.prompt_tokens}+{result.completion_tokens} | "
-                f"Latency: {result.latency_ms:.0f}ms"
+        # Direct path: explicit prefixes or scope
+        if explicit_prefixes:
+            source_prefixes = explicit_prefixes
+            rag_findings, rag_error = consult_svc.fetch_rag_findings(
+                args.problem,
+                rag_url=args.rag_url,
+                top_k=budget.adaptive_top_k,
+                timeout=args.rag_timeout,
+                source_prefixes=source_prefixes,
+                recency_weight=direct_recency,
             )
-            print("=" * 72)
-            print(result.response_text)
-        print()
+            if rag_error:
+                print(f"  RAG: unavailable ({rag_error})")
+            elif rag_findings:
+                sources = ", ".join(source_prefixes)
+                print(f"  RAG: injected {len(rag_findings)} finding(s) from {sources}")
+            else:
+                print("  RAG: no matching findings")
+        else:
+            rag_findings, rag_error = consult_svc.fetch_rag_findings(
+                args.problem,
+                rag_url=args.rag_url,
+                top_k=budget.adaptive_top_k,
+                timeout=args.rag_timeout,
+                scope=validated_scope or "research",
+                recency_weight=direct_recency,
+            )
+            if rag_error:
+                print(f"  RAG: unavailable ({rag_error})")
+            elif rag_findings:
+                print(
+                    "  RAG: injected "
+                    f"{len(rag_findings)} finding(s) (scope: {validated_scope or 'research'})"
+                )
+            else:
+                print("  RAG: no matching findings")
+
+    common_kwargs: dict[str, Any] = {
+        "step": step,
+        "problem": args.problem,
+        "call_label": args.call,
+        "models": args.models,
+        "rag_findings": rag_findings,
+        "stargate_url": args.url,
+        "timeout": args.timeout,
+        "output_limit_chars": output_limit,
+    }
+
+    if args.chain:
+        results = consult_svc.chain_step(
+            **common_kwargs,
+            on_result=lambda r, i, n: _print_chain_result(r, i, n, "CONSULTANT"),
+        )
+    else:
+        results = consult_svc.consult_step(**common_kwargs)
+        for result in results:
+            _print_result(result, "CONSULTANT")
+
+
+def _print_result(result: ConsultResult, label: str) -> None:
+    """Print a single model result with separator."""
+    print("=" * 72)
+    print(f"{label}: {result.model_id}")
+    if result.error:
+        print(f"[ERROR] {result.error}")
+    else:
+        print(
+            f"Tokens: {result.prompt_tokens}+{result.completion_tokens} | "
+            f"Latency: {result.latency_ms:.0f}ms"
+        )
+        print("=" * 72)
+        print(result.response_text)
+    print()
+
+
+def _print_chain_result(
+    result: ConsultResult,
+    index: int,
+    total: int,
+    label: str,
+) -> None:
+    """Print a chained model result with step counter and reviewer note."""
+    step_num = index + 1
+    header = f" CHAIN STEP {step_num}/{total} "
+    print(f"{header:=^72}")
+    suffix = f"  (reviewing step {index})" if index > 0 else ""
+    print(f"{label}: {result.model_id}{suffix}")
+    if result.error:
+        print(f"[ERROR] {result.error}")
+    else:
+        print(
+            f"Tokens: {result.prompt_tokens}+{result.completion_tokens} | "
+            f"Latency: {result.latency_ms:.0f}ms"
+        )
+        print("=" * 72)
+        print(result.response_text)
+    print()
 
 
 # ---------------------------------------------------------------------------
@@ -766,22 +857,37 @@ def _add_ask_parser(sub: Any) -> None:
     )
     p.add_argument(
         "--scope",
-        choices=["research", "project", "both"],
         default=None,
         help=(
             "Scope override for RAG pipeline retrieval "
             "(default: let pipeline decide). Pipeline path only."
         ),
     )
+    p.add_argument(
+        "--chain",
+        action="store_true",
+        help=(
+            "Run models sequentially, each reviewing the prior model's "
+            "output (default: parallel)"
+        ),
+    )
     p.set_defaults(func=_cmd_ask)
 
 
 def _cmd_ask(args: argparse.Namespace) -> None:
-    target_models = args.models or ask_svc.DEFAULT_ASK_MODELS
+    target_models = args.models or ask_svc.resolve_ask_models()
     print(f"Question: {args.question}")
     print(f"  Models: {', '.join(target_models)}")
+    validated_scope: str | None = None
+    if not args.no_rag:
+        try:
+            validated_scope = _validate_scope(args.scope, args.rag_url)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(2)
 
     rag_findings: list[str] | None = None
+    explicit_prefixes = _resolve_explicit_source_prefixes(args)
     if args.no_rag:
         print("  RAG: disabled")
     elif args.rag_pipeline:
@@ -797,14 +903,13 @@ def _cmd_ask(args: argparse.Namespace) -> None:
             top_k_cap=args.rag_top_k,
         )
 
-        source_prefixes = _resolve_rag_source_prefixes(args)
         rag_options: dict[str, Any] = {
             "consumer_model": target_models[0],
         }
-        if args.scope:
-            rag_options["scope_override"] = args.scope
-        if source_prefixes:
-            rag_options["rag_source_prefixes"] = [str(p) for p in source_prefixes]
+        if explicit_prefixes:
+            rag_options["rag_source_prefixes"] = explicit_prefixes
+        elif validated_scope:
+            rag_options["scope_override"] = validated_scope
         if args.rag_recency is not None:
             rag_options["rag_recency_weight"] = args.rag_recency
 
@@ -830,14 +935,25 @@ def _cmd_ask(args: argparse.Namespace) -> None:
                 if args.rag_recency is not None
                 else consult_svc.DEFAULT_RAG_RECENCY_WEIGHT
             )
-            rag_findings, rag_error = consult_svc.fetch_rag_findings(
-                args.question,
-                rag_url=args.rag_url,
-                top_k=budget.adaptive_top_k,
-                timeout=args.rag_timeout,
-                source_prefixes=source_prefixes,
-                recency_weight=direct_recency,
-            )
+            # Direct fallback: use scope if no explicit prefixes
+            if explicit_prefixes:
+                rag_findings, rag_error = consult_svc.fetch_rag_findings(
+                    args.question,
+                    rag_url=args.rag_url,
+                    top_k=budget.adaptive_top_k,
+                    timeout=args.rag_timeout,
+                    source_prefixes=explicit_prefixes,
+                    recency_weight=direct_recency,
+                )
+            else:
+                rag_findings, rag_error = consult_svc.fetch_rag_findings(
+                    args.question,
+                    rag_url=args.rag_url,
+                    top_k=budget.adaptive_top_k,
+                    timeout=args.rag_timeout,
+                    scope=validated_scope,
+                    recency_weight=direct_recency,
+                )
             if rag_error:
                 print(f"  Direct RAG fallback: unavailable ({rag_error})")
             elif rag_findings:
@@ -862,51 +978,65 @@ def _cmd_ask(args: argparse.Namespace) -> None:
         )
         print(f"  Budget: {ctx_len}tok context → RAG≤{budget.adaptive_top_k} chunks")
 
-        source_prefixes = _resolve_rag_source_prefixes(args)
         direct_recency = (
             args.rag_recency
             if args.rag_recency is not None
             else consult_svc.DEFAULT_RAG_RECENCY_WEIGHT
         )
-        rag_findings, rag_error = consult_svc.fetch_rag_findings(
-            args.question,
-            rag_url=args.rag_url,
-            top_k=budget.adaptive_top_k,
-            timeout=args.rag_timeout,
-            source_prefixes=source_prefixes,
-            recency_weight=direct_recency,
-        )
-        if rag_error:
-            print(f"  RAG: unavailable ({rag_error})")
-        elif rag_findings:
-            sources = ", ".join(source_prefixes)
-            print(f"  RAG: injected {len(rag_findings)} finding(s) from {sources}")
+        # Direct path: explicit prefixes or scope
+        if explicit_prefixes:
+            source_prefixes = explicit_prefixes
+            rag_findings, rag_error = consult_svc.fetch_rag_findings(
+                args.question,
+                rag_url=args.rag_url,
+                top_k=budget.adaptive_top_k,
+                timeout=args.rag_timeout,
+                source_prefixes=source_prefixes,
+                recency_weight=direct_recency,
+            )
+            if rag_error:
+                print(f"  RAG: unavailable ({rag_error})")
+            elif rag_findings:
+                sources = ", ".join(source_prefixes)
+                print(f"  RAG: injected {len(rag_findings)} finding(s) from {sources}")
+            else:
+                print("  RAG: no matching findings")
         else:
-            print("  RAG: no matching findings")
+            rag_findings, rag_error = consult_svc.fetch_rag_findings(
+                args.question,
+                rag_url=args.rag_url,
+                top_k=budget.adaptive_top_k,
+                timeout=args.rag_timeout,
+                scope=validated_scope,
+                recency_weight=direct_recency,
+            )
+            if rag_error:
+                print(f"  RAG: unavailable ({rag_error})")
+            elif rag_findings:
+                scope_label = f" (scope: {validated_scope})" if validated_scope else ""
+                print(f"  RAG: injected {len(rag_findings)} finding(s){scope_label}")
+            else:
+                print("  RAG: no matching findings")
 
     print()
 
-    results = ask_svc.ask_models(
-        args.question,
-        models=args.models,
-        rag_findings=rag_findings,
-        stargate_url=args.url,
-        timeout=args.timeout,
-    )
+    common_kwargs: dict[str, Any] = {
+        "models": args.models,
+        "rag_findings": rag_findings,
+        "stargate_url": args.url,
+        "timeout": args.timeout,
+    }
 
-    for result in results:
-        print("=" * 72)
-        print(f"MODEL: {result.model_id}")
-        if result.error:
-            print(f"[ERROR] {result.error}")
-        else:
-            print(
-                f"Tokens: {result.prompt_tokens}+{result.completion_tokens} | "
-                f"Latency: {result.latency_ms:.0f}ms"
-            )
-            print("=" * 72)
-            print(result.response_text)
-        print()
+    if args.chain:
+        results = ask_svc.chain_ask(
+            args.question,
+            **common_kwargs,
+            on_result=lambda r, i, n: _print_chain_result(r, i, n, "MODEL"),
+        )
+    else:
+        results = ask_svc.ask_models(args.question, **common_kwargs)
+        for result in results:
+            _print_result(result, "MODEL")
 
 
 # ---------------------------------------------------------------------------

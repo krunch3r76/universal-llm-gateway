@@ -115,6 +115,37 @@ def StepFailed(  # noqa: N802
 
 
 @event_factory
+def StepContextExceeded(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    model_id: str,
+    estimated_tokens: int,
+    context_length: int,
+    effective_context_per_slot: int,
+    prompt_chars: int,
+) -> Event:
+    """Emitted when estimated prompt tokens exceed the model's context window.
+
+    Pre-flight heuristic check (chars/4).  Accompanies the recorder-only
+    ContextExceeded event with a canonical bus signal for live debugging.
+    """
+    return Event(
+        signal="pipeline.step.context.exceeded",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "model_id": model_id,
+            "estimated_tokens": estimated_tokens,
+            "context_length": context_length,
+            "effective_context_per_slot": effective_context_per_slot,
+            "prompt_chars": prompt_chars,
+        },
+    )
+
+
+@event_factory
 def StepSkipped(  # noqa: N802
     pipeline_id: str,
     execution_id: str,
@@ -260,6 +291,8 @@ def RagRetrievalParamsResolved(  # noqa: N802
     top_k_per_query: int,
     rrf_k: int,
     scope: str,
+    retrieval_mode: str,
+    uses_explicit_prefixes: bool,
 ) -> Event:
     """Emitted by rag_multi_retrieve_v1 after effective retrieval params are resolved.
 
@@ -271,6 +304,8 @@ def RagRetrievalParamsResolved(  # noqa: N802
         top_k_per_query: Effective rag_top_k_per_query
         rrf_k: Effective RRF constant
         scope: Resolved retrieval scope (research / project / both / custom)
+        retrieval_mode: "scope" or "source_prefixes"
+        uses_explicit_prefixes: True iff caller passed rag_source_prefixes
     """
     return Event(
         signal="pipeline.rag.retrieval.params.resolved",
@@ -284,6 +319,8 @@ def RagRetrievalParamsResolved(  # noqa: N802
             "top_k_per_query": top_k_per_query,
             "rrf_k": rrf_k,
             "scope": scope,
+            "retrieval_mode": retrieval_mode,
+            "uses_explicit_prefixes": uses_explicit_prefixes,
         },
     )
 
@@ -307,5 +344,26 @@ def StepConditionEvaluated(  # noqa: N802
             "condition": condition,
             "result": result,
             "available_outputs": available_outputs,
+        },
+    )
+
+
+@event_factory
+def SubPipelineExpanded(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    parent_step_name: str,
+    resolved_output_step: str,
+    expanded_step_count: int,
+) -> Event:
+    """Emitted when a ``sub_pipeline`` step is expanded into namespaced steps."""
+    return Event(
+        signal="pipeline.subpipeline.expanded",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "parent_step_name": parent_step_name,
+            "resolved_output_step": resolved_output_step,
+            "expanded_step_count": expanded_step_count,
         },
     )

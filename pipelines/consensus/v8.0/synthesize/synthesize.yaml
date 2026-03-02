@@ -1,0 +1,211 @@
+# Synthesize sub-pipeline
+#
+# Inputs (bound by parent pipeline):
+#   verified_facts  - Final verified facts after veto
+#   question        - Cleaned question text
+
+id: consensus-synthesize-v7
+type: consensus
+
+inputs:
+  - verified_facts
+  - question
+
+steps:
+  - name: group_facts
+    type: consensus_group_facts_v8_0
+    handler_inputs:
+      verified_facts: inputs.verified_facts
+    embedding_model: embedding
+    similarity_threshold: 0.75
+    timeout_seconds: 60
+
+  - name: synthesize_answer
+    type: consensus_synthesize_batched_v8_0
+    handler_inputs:
+      fact_clusters: group_facts.json.fact_clusters
+      question: inputs.question
+    system_prompt_ref: consensus.v8.0.synthesize_context
+    prompt_ref: consensus.v8.0.synthesize_initial
+    max_batch_size: 15
+    model_ref: qwen
+    timeout_seconds: 180
+
+  - name: identify_redundancy
+    type: consensus_identify_redundancy_v8_0
+    enabled: false
+    handler_inputs:
+      answer: synthesize_answer.json.answer
+      batch_texts: synthesize_answer.json.batch_texts
+      question: inputs.question
+    system_prompt_ref: consensus.v8.0.identify_redundancy_context
+    prompt_ref: consensus.v8.0.identify_redundancy_initial
+    model_ref: qwen
+    timeout_seconds: 60
+
+  - name: reorganize_answer
+    type: consensus_reorganize_v8_0
+    handler_inputs:
+      answer: synthesize_answer.json.answer
+      question: inputs.question
+      incorporated: synthesize_answer.json.incorporated
+      excluded_with_reason: synthesize_answer.json.excluded_with_reason
+      merge_groups: identify_redundancy.json.merge_groups
+    system_prompt_ref: consensus.v8.0.reorganize_context
+    prompt_ref: consensus.v8.0.reorganize_initial
+    model_ref: ministral_3_8b
+    timeout_seconds: 120
+
+  - name: classify_restrictions
+    type: generate
+    model_ref: qwen
+    prompt_ref: consensus.v8.0.classify_restrictions
+    handler_inputs:
+      artifact: reorganize_answer.json.answer
+    generation_parameters:
+      temperature: 0.0
+      max_tokens: 256
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            restriction_cues:
+              type: array
+              items:
+                type: string
+          required: [restriction_cues]
+    timeout_seconds: 60
+
+  - name: find_uncited_scan
+    type: generate
+    model_ref: qwen
+    prompt_ref: consensus.v8.0.find_uncited_scan
+    handler_inputs:
+      artifact: reorganize_answer.json.answer
+    generation_parameters:
+      temperature: 0.0
+      max_tokens: 8192
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            sentence_checks:
+              type: array
+              items:
+                type: object
+                properties:
+                  sentence:
+                    type: string
+                  last12:
+                    type: string
+                  last2:
+                    type: string
+                  last1:
+                    type: string
+                  verdict:
+                    type: string
+                    enum: [CITED, UNCITED]
+                required: [sentence, last12, last2, last1, verdict]
+          required: [sentence_checks]
+    timeout_seconds: 60
+
+  - name: find_uncited_filter
+    type: consensus_find_uncited_filter_v8_0
+    handler_inputs:
+      sentence_checks: find_uncited_scan.json.sentence_checks
+    timeout_seconds: 5
+
+  - name: c4_enforce
+    type: consensus_assert_then_revise_v8_0
+    handler_inputs:
+      artifact: reorganize_answer.json.answer
+      uncited_sentences: find_uncited_filter.json.uncited_sentences
+    actions:
+      revise:
+        prompt_ref: consensus.v8.0.c4_revise
+        model_ref: ministral_3_8b
+    max_retries: 2
+    timeout_seconds: 120
+
+  - name: find_duplicates
+    type: generate
+    model_ref: qwen
+    prompt_ref: consensus.v8.0.find_duplicates
+    handler_inputs:
+      artifact: c4_enforce.raw
+    generation_parameters:
+      temperature: 0.0
+      max_tokens: 1024
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            duplicate_pairs:
+              type: array
+              items:
+                type: object
+                properties:
+                  a:
+                    type: string
+                  b:
+                    type: string
+                required: [a, b]
+          required: [duplicate_pairs]
+    timeout_seconds: 60
+
+  - name: review_coherence
+    type: assess_loop_v1
+    model_ref: qwen
+    prompt_ref: consensus.v8.0.review_coherence_assess
+    handler_inputs:
+      artifact: c4_enforce.raw
+      restriction_analysis: classify_restrictions.json.restriction_cues
+      uncited_sentences: find_uncited_filter.json.uncited_sentences
+      duplicate_pairs: find_duplicates.json.duplicate_pairs
+    artifact_key: artifact
+    assess_pool: [qwen]
+    terminal_action: accept
+    max_iterations: 3
+    pre_label_paragraphs: true
+    assess_schema:
+      type: object
+      properties:
+        c1_analysis:
+          type: string
+          description: "Step-by-step C1 reasoning: locate cues, filter advisories, classify CONDITIONAL/UNCONDITIONAL, check order, conclude PASS or FAIL."
+        c4_check:
+          type: string
+          description: "Step-by-step C4 reasoning: for each uncited sentence locate it in the draft, read its last bracket group, conclude HAS CITATION or NO CITATION."
+        action:
+          type: string
+          enum: [revise, accept]
+        reason:
+          type: string
+        target:
+          type: string
+          description: "When action is revise, list of issues (one per line) for the reviser."
+      required: [c1_analysis, c4_check, action, reason]
+    actions:
+      revise:
+        prompt_ref: consensus.v8.0.review_coherence_revise
+        model_ref: ministral_3_8b
+    generation_parameters:
+      temperature: 0.0
+      max_tokens: 8192
+    timeout_seconds: 180
+
+  - name: post_coherence_repair
+    type: generate
+    model_ref: ministral_3_8b
+    prompt_ref: consensus.v8.0.post_coherence_repair
+    handler_inputs:
+      artifact: review_coherence.raw
+    generation_parameters:
+      temperature: 0.0
+      max_tokens: 4096
+    timeout_seconds: 60
+
+output: post_coherence_repair

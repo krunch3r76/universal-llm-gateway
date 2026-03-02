@@ -1,0 +1,10 @@
+# Transformation pipeline model refs (e.g. style transfer, CSC, translation).
+# Step 'judge' in en-en-csc and similar pipelines resolves model_ref here.
+#
+# Override in pipelines.local/transformation/models.yaml if your pipeline
+# is loaded from that search path.
+
+models:
+  judge8b:
+    model: qwen2-5-7b-instruct-q8-0-32768
+    system_prompt: ""

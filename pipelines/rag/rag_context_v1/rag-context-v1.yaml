@@ -11,6 +11,7 @@ output: retrieve_assemble
 
 options:
   timeout_seconds: 60    # §4.2: raised from 30s; GPU contention headroom
+  scope_options: '"research", "project", or "all"'  # fallback when callers omit dynamic injection
   # --- Retrieval tunables (overridable via pipeline_options) ---
   rag_top_k_per_query: 10
   rag_max_chunks: 20
@@ -37,7 +38,3 @@ steps:
     endpoint: "http://localhost:8100/search"
     handler_inputs:
       rewrite_result: "analyze_rewrite.json"
-    research_prefix: "/mnt/torus/projects/universal-llm-gateway/docs/research/prompting"
-    research_rag_design_prefix: "/mnt/torus/projects/universal-llm-gateway/docs/research/rag-systems"
-    engram_prefix: "/mnt/torus/projects/universal-llm-gateway/docs/engram"
-    project_prefix: "/mnt/torus/projects/universal-llm-gateway"

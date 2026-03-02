@@ -238,6 +238,54 @@ def get_activated_models_for_display(
     return set().union(*activated_sets)
 
 
+def get_model_context_metadata(
+    gateway_manager: SingleGatewayManager | None,
+    federated_manager: FederatedGatewayManager | None,
+) -> dict[str, dict[str, int]]:
+    """Collect context-length metadata for all models from local + federated gateways.
+
+    Returns a dict keyed by model_id string, with values containing
+    ``context_length`` and ``effective_context_per_slot`` where available.
+    Provides parity with cloud model metadata from ``/api/select``.
+
+    Data sources (already populated by telemetry — no extra I/O):
+    - Local: WebSocket catalog ``model_resources``
+    - Federated: ``FederatedGateway.model_resources``
+    """
+    metadata: dict[str, dict[str, int]] = {}
+
+    # Local gateway: context metadata from WebSocket catalog cache
+    if gateway_manager:
+        local_gw = gateway_manager.get_gateway()
+        if local_gw and local_gw.client.is_connected():
+            catalog = local_gw.client.get_ws_catalog()
+            for model_id, res in catalog.get("model_resources", {}).items():
+                mid_str = str(model_id)
+                ctx_raw = res.get("context_length")
+                if ctx_raw:
+                    entry: dict[str, int] = {"context_length": int(ctx_raw)}
+                    eff_raw = res.get("effective_context_per_slot")
+                    if eff_raw:
+                        entry["effective_context_per_slot"] = int(eff_raw)
+                    metadata.setdefault(mid_str, entry)
+
+    # Federated gateways: context metadata from telemetry snapshots
+    if federated_manager:
+        for fed_gw in federated_manager.get_healthy_gateways():
+            for mid, res in fed_gw.model_resources.items():
+                mid_str = str(mid)
+                ctx_raw = res.get("context_length")
+                if ctx_raw and mid_str not in metadata:
+                    ctx_int = int(ctx_raw)
+                    entry: dict[str, int] = {"context_length": ctx_int}
+                    eff_raw = res.get("effective_context_per_slot")
+                    if eff_raw:
+                        entry["effective_context_per_slot"] = int(eff_raw)
+                    metadata[mid_str] = entry
+
+    return metadata
+
+
 def get_model_source_map(
     local_stargate_id: str,
     gateway_manager: SingleGatewayManager | None,

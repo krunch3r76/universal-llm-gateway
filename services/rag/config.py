@@ -20,8 +20,17 @@ class WatchDirectory:
 
 
 @dataclass(slots=True, kw_only=True)
+class ScopeDefinition:
+    """A named subset of indexed content for scoped retrieval."""
+
+    prefixes: list[str]
+    description: str = ""
+
+
+@dataclass(slots=True, kw_only=True)
 class RagConfig:
     watch_directories: list[WatchDirectory]
+    scopes: dict[str, ScopeDefinition]
 
 
 def _normalize_extensions(raw_extensions: object) -> list[str]:
@@ -34,28 +43,10 @@ def _normalize_extensions(raw_extensions: object) -> list[str]:
     return normalized
 
 
-def load_config() -> RagConfig:
-    """Load ~/.rag/config.yaml and return parsed watcher configuration."""
-    if not _CONFIG_PATH.exists():
-        return RagConfig(watch_directories=[])
-
-    try:
-        loaded: object = yaml.safe_load(_CONFIG_PATH.read_text(encoding="utf-8")) or {}
-    except Exception:
-        logger.error("Failed to parse RAG config: path=%s", _CONFIG_PATH, exc_info=True)
-        return RagConfig(watch_directories=[])
-
-    if not isinstance(loaded, dict):
-        logger.error("Invalid RAG config root type: expected mapping")
-        return RagConfig(watch_directories=[])
-    parsed_root: dict[str, object] = {
-        key: value for key, value in loaded.items() if isinstance(key, str)
-    }
-
-    raw_watchers = parsed_root.get("watch_directories", [])
+def _parse_watch_directories(raw_watchers: object) -> list[WatchDirectory]:
     if not isinstance(raw_watchers, list):
         logger.error("Invalid watch_directories type: expected list")
-        return RagConfig(watch_directories=[])
+        return []
 
     watch_directories: list[WatchDirectory] = []
     for raw_item in raw_watchers:
@@ -81,5 +72,85 @@ def load_config() -> RagConfig:
                 chunk_tokens=chunk_tokens,
             )
         )
+    return watch_directories
 
-    return RagConfig(watch_directories=watch_directories)
+
+def _normalize_scope_prefixes(scope_name: str, prefixes: object) -> list[str]:
+    if not isinstance(prefixes, list):
+        logger.warning("Skipping scope '%s': prefixes must be a list", scope_name)
+        return []
+    normalized = [
+        prefix.strip()
+        for prefix in prefixes
+        if isinstance(prefix, str) and prefix.strip()
+    ]
+    if not normalized:
+        logger.warning("Skipping scope '%s': no valid prefixes", scope_name)
+        return []
+    return normalized
+
+
+def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
+    if not isinstance(raw_scopes, dict):
+        logger.error("Invalid scopes type: expected mapping")
+        return {}
+
+    scopes: dict[str, ScopeDefinition] = {}
+    union_scopes: list[str] = []
+    for scope_name, scope_data in raw_scopes.items():
+        if not isinstance(scope_name, str) or not isinstance(scope_data, dict):
+            logger.warning("Skipping scope with invalid structure: %r", scope_name)
+            continue
+
+        if scope_data.get("union") is True:
+            union_scopes.append(scope_name)
+            continue
+
+        prefixes = _normalize_scope_prefixes(scope_name, scope_data.get("prefixes"))
+        if not prefixes:
+            continue
+
+        description = scope_data.get("description", "")
+        scopes[scope_name] = ScopeDefinition(
+            prefixes=prefixes,
+            description=description if isinstance(description, str) else "",
+        )
+
+    all_prefixes = sorted(
+        {prefix for scope in scopes.values() for prefix in scope.prefixes}
+    )
+    for union_name in union_scopes:
+        union_data = raw_scopes[union_name]
+        description = (
+            union_data.get("description", "") if isinstance(union_data, dict) else ""
+        )
+        scopes[union_name] = ScopeDefinition(
+            prefixes=all_prefixes,
+            description=description if isinstance(description, str) else "",
+        )
+    return scopes
+
+
+def load_config() -> RagConfig:
+    """Load ~/.rag/config.yaml and return parsed watcher configuration."""
+    if not _CONFIG_PATH.exists():
+        return RagConfig(watch_directories=[], scopes={})
+
+    try:
+        loaded: object = yaml.safe_load(_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    except Exception:
+        logger.error("Failed to parse RAG config: path=%s", _CONFIG_PATH, exc_info=True)
+        return RagConfig(watch_directories=[], scopes={})
+
+    if not isinstance(loaded, dict):
+        logger.error("Invalid RAG config root type: expected mapping")
+        return RagConfig(watch_directories=[], scopes={})
+    parsed_root: dict[str, object] = {
+        key: value for key, value in loaded.items() if isinstance(key, str)
+    }
+
+    watch_directories = _parse_watch_directories(
+        parsed_root.get("watch_directories", [])
+    )
+    scopes = _parse_scopes(parsed_root.get("scopes", {}))
+    return RagConfig(watch_directories=watch_directories, scopes=scopes)

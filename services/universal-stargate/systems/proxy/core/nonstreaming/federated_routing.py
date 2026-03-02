@@ -13,6 +13,7 @@ from systems.federation.common.config.schema import EndpointCategory
 
 from ..endpoint_category import derive_endpoint_category
 from .selection_errors import (
+    raise_all_gateways_excluded_error,
     raise_capacity_error,
     raise_eviction_failed_error,
     raise_gateway_capacity_error,
@@ -225,11 +226,10 @@ async def _route_to_federated_gateway(
 
     gateways_for_routing = federated_gateways_to_routing_candidates(federated_gateways)
 
-    # Exclude gateways that failed on previous retry.
-    # Guard: only apply if remaining gateways can serve the model.
-    # ∀ single-gateway sticky models: excluding the only gateway degenerates
-    # into unbounded routing failures (the model is in the excluded gateway's
-    # catalog but absent from all remaining gateways' catalogs).
+    # Exclude gateways that returned upstream (5xx) errors on previous retry.
+    # ∀ upstream failure: excluded gateways ⊇ gateways_with_model
+    #   ⟹ fail immediately (no alternative — retrying same gateway wastes budget)
+    # ∀ upstream failure: ∃ alternative gateway ⟹ apply exclusion and re-route
     if context.excluded_gateway_ids:
         kept = [
             g
@@ -243,10 +243,30 @@ async def _route_to_federated_gateway(
             logger.info("🚫 Routing: excluded %s", context.excluded_gateway_ids)
             gateways_for_routing = kept
         else:
+            # All gateways with the model have already returned upstream errors.
+            # Bypassing exclusion would retry on the same failed gateway —
+            # instead emit an event and fail non-retryably.
             logger.warning(
-                "🚫 Exclusion of %s skipped: no remaining gateway has %s in catalog",
-                context.excluded_gateway_ids,
+                "🚫 All gateways for %s excluded after upstream failures: %s",
                 model_id,
+                context.excluded_gateway_ids,
+            )
+            if event_bus:
+                import asyncio
+
+                from src.scheduling.events import RoutingUpstreamAllExcluded
+
+                asyncio.create_task(
+                    event_bus.publish_async_nowait(
+                        RoutingUpstreamAllExcluded(
+                            request_id=context.request_id,
+                            model_id=str(model_id),
+                            excluded_gateway_ids=list(context.excluded_gateway_ids),
+                        )
+                    )
+                )
+            raise_all_gateways_excluded_error(
+                str(model_id), list(context.excluded_gateway_ids)
             )
 
     # Exclude gateways with persistent load failures for this model+context
@@ -567,24 +587,72 @@ async def _route_to_federated_gateway(
             )
 
         # For sticky models: Check if we should wait (model at capacity)
-        # vs error (model doesn't exist)
+        # vs error (model doesn't exist or hardware can't serve it)
         if context.model_sticky and trace and trace.candidates:
-            # Check if ANY gateway fails capacity constraints
-            # Includes: compute_type limits, per-gateway capacity, resources
-            # Resource constraints (has_enough_vram/ram) indicate temporarily
-            # at capacity (e.g., loading models consuming resources)
-            capacity_constraints = {
+            # Always-transient: retrying will eventually help
+            transient_constraints: frozenset[str] = frozenset({
                 "compute_type_capacity",
+                # circuit_breaker: OPEN→HALF_OPEN after recovery_timeout.
+                # Model IS available; gateway is isolated. Not permanent.
+                "circuit_breaker",
+            })
+            # VRAM/RAM failures are transient only when eviction CAN free space.
+            # When can_fit_with_eviction also fails, no idle models exist that
+            # could be evicted — hardware limit, not a transient wait condition.
+            resource_constraints: frozenset[str] = frozenset({
                 "has_enough_vram",
                 "has_enough_ram",
-                # circuit_breaker: temporary (OPEN→HALF_OPEN after recovery_timeout).
-                # Model IS available; gateway is isolated. Retryable — not permanent.
-                "circuit_breaker",
-            }
+            })
+
+            def _is_transient_capacity_failure(c: Any) -> bool:
+                failed = {f.constraint for f in c.constraints_failed}
+                if failed & transient_constraints:
+                    return True
+                if failed & resource_constraints:
+                    return "can_fit_with_eviction" not in failed
+                return False
+
             has_capacity_failure = any(
-                any(f.constraint in capacity_constraints for f in c.constraints_failed)
-                for c in trace.candidates
+                _is_transient_capacity_failure(c) for c in trace.candidates
             )
+
+            # Permanent resource failure: VRAM or RAM insufficient even after
+            # evicting everything. Fail fast — no point waiting.
+            # Condition: (has_enough_vram ∨ has_enough_ram) ∧ can_fit_with_eviction
+            # both failed on the same candidate.
+            def _is_permanent_resource_failure(c: Any) -> bool:
+                failed = {f.constraint for f in c.constraints_failed}
+                return "can_fit_with_eviction" in failed and bool(
+                    failed & resource_constraints
+                )
+
+            has_permanent_resource_failure = any(
+                _is_permanent_resource_failure(c) for c in trace.candidates
+            )
+            if has_permanent_resource_failure and not has_capacity_failure:
+                from .selection_errors import raise_insufficient_resources_error
+
+                failure_reason = next(
+                    (
+                        f.reason
+                        for c in trace.candidates
+                        for f in c.constraints_failed
+                        if f.constraint in resource_constraints
+                    ),
+                    "VRAM/RAM insufficient to load model",
+                )
+                logger.warning(
+                    f"❌ Permanent resource failure for {model_id}: {failure_reason}"
+                )
+                if event_bus:
+                    await _emit_routing_model_infeasible_event(
+                        event_bus=event_bus,
+                        request_id=context.request_id,
+                        model_id=model_id,
+                        trace=trace,
+                        excluded_gateway_ids=list(context.excluded_gateway_ids),
+                    )
+                raise_insufficient_resources_error(str(model_id), failure_reason)
 
             if has_capacity_failure:
                 # Find details for error envelope data
@@ -592,9 +660,10 @@ async def _route_to_federated_gateway(
                 capacity_details: dict[str, Any] = {"model_id": str(model_id)}
 
                 # Extract capacity details from failures
+                _all_capacity = transient_constraints | resource_constraints
                 for c in trace.candidates:
                     for f in c.constraints_failed:
-                        if f.constraint in capacity_constraints:
+                        if f.constraint in _all_capacity:
                             capacity_details.update(f.details)
                             break
 

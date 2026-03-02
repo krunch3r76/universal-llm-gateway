@@ -3,6 +3,7 @@
 Cached state from INIT message + real-time updates via event handlers.
 """
 
+import time
 from typing import Any
 
 from universal_logging import get_logger
@@ -36,6 +37,10 @@ class GatewayState:
         self._catalog: dict[str, Any] = {}
         self._model_last_inference: dict[str, float] = {}  # model_id -> timestamp
         self._model_details: dict[str, dict[str, Any]] = {}  # model_id -> resources
+        self._measured_model_vram: dict[
+            str, int
+        ] = {}  # model_id -> nvidia-smi-measured MB
+        self._last_vram_drift_report: dict[str, float] = {}  # model_id -> monotonic ts
 
         # Separate timestamps for heartbeat vs resource freshness
         self._last_heartbeat: float = 0.0  # Last heartbeat (liveness)
@@ -76,6 +81,8 @@ class GatewayState:
         self._loading_models = set()  # Clear loading state on reconnect
         self._model_last_inference = {}  # Clear inference cache on reconnect
         self._model_details = {}  # Clear model details on reconnect
+        self._measured_model_vram = {}  # Clear measured VRAM on reconnect
+        self._last_vram_drift_report = {}  # Reset cooldown on reconnect
 
         # Reset reservation ledger (INIT is authoritative, no pending reservations)
         self._reserved_vram_mb = 0
@@ -295,6 +302,25 @@ class GatewayState:
     def model_details(self) -> dict[str, dict[str, Any]]:
         """Mutable reference for handlers."""
         return self._model_details
+
+    @property
+    def measured_model_vram(self) -> dict[str, int]:
+        """Mutable reference for handlers.
+        Populated only by RESOURCE_UPDATE model_vram."""
+        return self._measured_model_vram
+
+    _VRAM_DRIFT_COOLDOWN_SECONDS: float = 3600.0
+
+    def can_report_vram_drift(self, model_id: str) -> bool:
+        """Return True if drift for model_id may be reported (1h cooldown per model).
+        Marks the model as reported on True.
+        """
+        now = time.monotonic()
+        last = self._last_vram_drift_report.get(model_id, 0.0)
+        if now - last > self._VRAM_DRIFT_COOLDOWN_SECONDS:
+            self._last_vram_drift_report[model_id] = now
+            return True
+        return False
 
     def apply_reservation(self, *, vram_mb: int, ram_mb: int) -> None:
         """

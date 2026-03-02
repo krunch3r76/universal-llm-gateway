@@ -11,8 +11,7 @@ function connectStream(pipelineId, execId) {
   currentExecution = null;
   selectedStepIdx = null;
 
-  document.getElementById('question-text').textContent = 'Waiting for events...';
-  document.getElementById('question-display').style.display = 'block';
+  setQuestion('Waiting for events...');
   document.getElementById('summary-banner').classList.remove('visible');
   document.getElementById('pipeline-flow').classList.remove('visible');
   document.getElementById('final-output').classList.remove('visible');
@@ -55,7 +54,7 @@ function disconnectStream() {
 
 function renderLiveUpdate() {
   if (!currentExecution) return;
-  document.getElementById('question-text').textContent = currentExecution.question;
+  setQuestion(currentExecution.question);
   renderSummaryBanner(currentExecution.summary);
   renderPipelineFlow(currentExecution.steps);
 }

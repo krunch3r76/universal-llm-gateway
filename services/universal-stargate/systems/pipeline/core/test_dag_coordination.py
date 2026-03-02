@@ -7,13 +7,37 @@ for steps targeting different models.
 """
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from .dag import StepNode
+from .dag import StepNode, StepState
 from .execution import DAGExecutor, ModelUsageTracker
 from .schemas import StepConfig
+
+
+def _build_context(registry: MagicMock) -> MagicMock:
+    """Build minimal PipelineContext mock aligned with DAGExecutor contract."""
+    context = MagicMock(_registry=registry)
+    context.options = {}
+    context.pipeline = MagicMock(
+        id="test-pipeline",
+        domain="test",
+        source_search_path=[],
+    )
+    return context
+
+
+def _build_nodes(steps: list[StepConfig]) -> dict[str, StepNode]:
+    """Build step nodes matching DAGBuilder readiness semantics."""
+    return {
+        step.id: StepNode(
+            step=step,
+            dependencies=set(),
+            state=StepState.READY,
+        )
+        for step in steps
+    }
 
 
 @pytest.mark.asyncio
@@ -28,8 +52,10 @@ async def test_model_coordination_serializes_same_model():
 
     # Mock registry to return model IDs
     registry = MagicMock()
-    registry.get_model_config.side_effect = lambda ref: (
-        MagicMock(model="model-a") if ref == "ref1" else MagicMock(model="model-b")
+    registry.get_model_config.side_effect = (
+        lambda model_ref, **_: MagicMock(model="model-a")
+        if model_ref == "ref1"
+        else MagicMock(model="model-b")
     )
 
     # Track execution order
@@ -38,12 +64,15 @@ async def test_model_coordination_serializes_same_model():
     async def mock_execute_step(node):
         execution_log.append(f"{node.step.id}_start")
         await asyncio.sleep(0.1)  # Simulate work
+        node.state = StepState.COMPLETED
+        executor._propagate_completion(node.step.id)
         execution_log.append(f"{node.step.id}_end")
 
     # Build DAG and execute
-    nodes = {s.id: StepNode(step=s, dependencies=set()) for s in steps}
-    context = MagicMock(_registry=registry)
+    nodes = _build_nodes(steps)
+    context = _build_context(registry)
     executor = DAGExecutor(nodes, context)
+    executor._ensure_proxy_client = AsyncMock(return_value=MagicMock())
 
     # Patch _execute_step to use mock
     executor._execute_step = mock_execute_step
@@ -80,21 +109,25 @@ async def test_model_released_on_step_failure():
         execution_log.append(f"{node.step.id}_start")
         if node.step.id == "step1":
             raise ValueError("Simulated step1 failure")
+        node.state = StepState.COMPLETED
+        executor._propagate_completion(node.step.id)
         execution_log.append(f"{node.step.id}_end")
 
-    nodes = {s.id: StepNode(step=s, dependencies=set()) for s in steps}
-    context = MagicMock(_registry=registry)
+    nodes = _build_nodes(steps)
+    context = _build_context(registry)
     executor = DAGExecutor(nodes, context)
+    executor._ensure_proxy_client = AsyncMock(return_value=MagicMock())
     executor._execute_step = mock_execute_step
 
-    # Execute (step1 will fail, but step2 should still run)
+    # Execute (step1 fails; executor is fail-fast)
     try:
         await executor.execute()
     except Exception:
         pass  # Expected (step1 failure)
 
-    # Verify: step2 was able to start (model was released after step1 failure)
-    assert "step2_start" in execution_log, "step2 should run after step1 fails"
+    # Verify fail-fast behavior: step2 should not run after step1 failure.
+    assert "step1_start" in execution_log
+    assert "step2_start" not in execution_log
 
 
 @pytest.mark.asyncio
@@ -111,11 +144,14 @@ async def test_no_model_steps_run_freely():
     async def mock_execute_step(node):
         execution_log.append(f"{node.step.id}_start")
         await asyncio.sleep(0.05)
+        node.state = StepState.COMPLETED
+        executor._propagate_completion(node.step.id)
         execution_log.append(f"{node.step.id}_end")
 
-    nodes = {s.id: StepNode(step=s, dependencies=set()) for s in steps}
-    context = MagicMock(_registry=registry)
+    nodes = _build_nodes(steps)
+    context = _build_context(registry)
     executor = DAGExecutor(nodes, context)
+    executor._ensure_proxy_client = AsyncMock(return_value=MagicMock())
     executor._execute_step = mock_execute_step
 
     await executor.execute()
@@ -143,10 +179,13 @@ async def test_registry_missing_model_ref():
 
     async def mock_execute_step(node):
         execution_log.append(f"{node.step.id}_executed")
+        node.state = StepState.COMPLETED
+        executor._propagate_completion(node.step.id)
 
-    nodes = {s.id: StepNode(step=s, dependencies=set()) for s in steps}
-    context = MagicMock(_registry=registry)
+    nodes = _build_nodes(steps)
+    context = _build_context(registry)
     executor = DAGExecutor(nodes, context)
+    executor._ensure_proxy_client = AsyncMock(return_value=MagicMock())
     executor._execute_step = mock_execute_step
 
     await executor.execute()

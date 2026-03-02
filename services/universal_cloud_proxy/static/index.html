@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenRouter Model Browser</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="header-left">
+      <h1>OpenRouter Model Browser</h1>
+      <div class="subtitle">Cloud model pricing &amp; catalog explorer</div>
+    </div>
+    <div class="header-controls">
+      <div class="search-box">
+        <input type="text" id="search-input" placeholder="Filter by name, ID, or provider...">
+      </div>
+      <div class="model-count" id="model-count"></div>
+      <button id="refresh-btn" class="btn" title="Re-fetch from OpenRouter">Refresh</button>
+    </div>
+  </header>
+
+  <div id="modality-bar" class="modality-bar"></div>
+
+  <div class="table-container">
+    <table id="models-table">
+      <thead>
+        <tr>
+          <th data-sort="name" data-type="string">Model</th>
+          <th data-sort="provider" data-type="string">Provider</th>
+          <th data-sort="prompt_cost" data-type="number" class="col-cost">Prompt $/M</th>
+          <th data-sort="completion_cost" data-type="number" class="col-cost">Completion $/M</th>
+          <th data-sort="context_length" data-type="number" class="col-num">Context</th>
+          <th data-sort="modality" data-type="string">Modality</th>
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        <tr><td colspan="6" class="loading">Loading models...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    <span class="footer-note">Data from <a href="https://openrouter.ai/models" target="_blank" rel="noopener">OpenRouter</a>. Prices per million tokens.</span>
+    <span class="footer-note" id="last-refresh"></span>
+  </footer>
+</div>
+
+<script src="/static/app.js?v=2"></script>
+</body>
+</html>

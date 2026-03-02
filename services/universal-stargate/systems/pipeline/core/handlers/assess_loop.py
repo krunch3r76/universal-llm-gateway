@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, override
 
 from universal_logging import get_logger
 
+from ..dag import ContextExceededError
 from ..events.assess_loop import (
     AssessLoopCompleted,
     AssessLoopInitialActionCompleted,
@@ -44,8 +45,8 @@ from .protocol import StepOutput
 from .registry import register_handler
 
 if TYPE_CHECKING:
-    from .protocol import PipelineContext
     from ..schemas import StepConfig
+    from .protocol import PipelineContext
 
 logger = get_logger(__name__)
 
@@ -70,6 +71,18 @@ def _format_text_list(value: Any) -> Any:
     return value
 
 
+def _pre_label_paragraphs(artifact: str) -> str:
+    """Inject [P1], [P2], … labels before each paragraph block.
+
+    Applied to the artifact in the assess prompt context only — the stored
+    artifact and reviser input remain unlabeled so reviser output is clean.
+
+    Invariant: paragraph boundaries = one or more blank lines between text blocks.
+    """
+    blocks = re.split(r"\n{2,}", artifact.strip())
+    return "\n\n".join(f"[P{i}] {block.strip()}" for i, block in enumerate(blocks, 1))
+
+
 def _strip_xml_tags(text: str, tags: list[str]) -> str:
     """Remove named XML blocks from text (e.g. <reasoning>...</reasoning>).
 
@@ -78,7 +91,12 @@ def _strip_xml_tags(text: str, tags: list[str]) -> str:
     artifact are free of bookkeeping blocks the model appended for the assessor.
     """
     for tag in tags:
-        text = re.sub(rf"<{re.escape(tag)}>.*?</{re.escape(tag)}>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(
+            rf"<{re.escape(tag)}>.*?</{re.escape(tag)}>",
+            "",
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
     return text.strip()
 
 
@@ -120,7 +138,8 @@ class AssessLoopHandler(BaseHandler):
             if cfg.initial_artifact is not None:
                 # Seed the artifact from the literal initial_artifact domain field
                 # (e.g. "" to bootstrap a coverage-check loop without a prior step).
-                # The key is injected into resolved so downstream contexts stay consistent.
+                # The key is injected into resolved so downstream contexts stay
+                # consistent.
                 resolved[cfg.artifact_key] = cfg.initial_artifact
             else:
                 raise ValueError(
@@ -170,14 +189,17 @@ class AssessLoopHandler(BaseHandler):
 
         try:
             # Initial action: generate artifact from scratch when artifact is empty.
-            # Skipped when artifact already populated via handler_inputs (step-owned mode).
+            # Skipped when artifact already populated via handler_inputs
+            # (step-owned mode).
             if cfg.initial_action and not artifact:
                 initial_ctx = {**base_ctx, cfg.artifact_key: artifact}
                 initial_rendered = self._render_prompt(
                     cfg.get_action_prompt_ref(cfg.initial_action), initial_ctx, context
                 )
-                initial_model = self._resolve_model_alias(
-                    cfg.get_action_model_ref(cfg.initial_action, step.model_ref), context
+                initial_model = await self._resolve_model_alias_async(
+                    cfg.get_action_model_ref(cfg.initial_action, step.model_ref),
+                    context,
+                    step_name=step.name,
                 )
                 t_pre = time.monotonic()
                 pre_r = await self._call_model(
@@ -206,8 +228,17 @@ class AssessLoopHandler(BaseHandler):
                     )
 
             for iteration in range(cfg.max_iterations):
+                assess_artifact = (
+                    _pre_label_paragraphs(artifact)
+                    if cfg.pre_label_paragraphs
+                    else artifact
+                )
                 assess_ctx = build_assess_ctx(
-                    base_ctx, cfg.artifact_key, artifact, iteration, state.last_decision
+                    base_ctx,
+                    cfg.artifact_key,
+                    assess_artifact,
+                    iteration,
+                    state.last_decision,
                 )
                 state.iterations_used = iteration + 1
 
@@ -247,8 +278,10 @@ class AssessLoopHandler(BaseHandler):
                     iter_pt = 0
                     iter_ct = 0
                 else:
-                    assess_model = self._resolve_model_alias(
-                        cfg.get_assess_model_ref(iteration, step.model_ref), context
+                    assess_model = await self._resolve_model_alias_async(
+                        cfg.get_assess_model_ref(iteration, step.model_ref),
+                        context,
+                        step_name=step.name,
                     )
                     rendered = self._render_prompt(step.prompt_ref, assess_ctx, context)
                     sys_p = cached_sys or rendered.system_prompt
@@ -394,8 +427,10 @@ class AssessLoopHandler(BaseHandler):
                 action_rendered = self._render_prompt(
                     cfg.get_action_prompt_ref(action), action_ctx, context
                 )
-                action_model = self._resolve_model_alias(
-                    cfg.get_action_model_ref(action, step.model_ref), context
+                action_model = await self._resolve_model_alias_async(
+                    cfg.get_action_model_ref(action, step.model_ref),
+                    context,
+                    step_name=step.name,
                 )
                 t1 = time.monotonic()
                 action_r = await self._call_model(
@@ -437,9 +472,9 @@ class AssessLoopHandler(BaseHandler):
                     models_completed=state.model_call_count,
                 )
 
-        except ProxyClientError:
-            # Model API failure mid-loop — distinguish from budget exhaustion so
-            # the viewer and caller can surface the real cause.
+        except (ProxyClientError, ContextExceededError):
+            # Model API failure or context overflow mid-loop — distinguish from
+            # budget exhaustion so the viewer and caller can surface the real cause.
             state.exit_reason = "model_error"
             raise
 

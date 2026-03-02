@@ -72,6 +72,45 @@ class EventPublisher:
             f"{'connected' if connected else 'disconnected'}"
         )
 
+    def schedule_vram_drift(
+        self,
+        model_id: str,
+        measured_mb: int,
+        catalog_mb: int,
+        drift_pct: float,
+    ) -> None:
+        """Schedule federation.catalog.vram.drift event emission (non-blocking)."""
+        if self._event_bus is None:
+            return
+        asyncio.create_task(
+            self._publish_vram_drift(model_id, measured_mb, catalog_mb, drift_pct),
+            name=f"vram_drift_{model_id}",
+        )
+
+    async def _publish_vram_drift(
+        self,
+        model_id: str,
+        measured_mb: int,
+        catalog_mb: int,
+        drift_pct: float,
+    ) -> None:
+        try:
+            from src.scheduling.events import create_catalog_vram_drift_event
+
+            await self._event_bus.publish_async_nowait(
+                create_catalog_vram_drift_event(
+                    gateway_id=self._gateway_name,
+                    model_id=model_id,
+                    measured_mb=measured_mb,
+                    catalog_mb=catalog_mb,
+                    drift_pct=drift_pct,
+                )
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to emit federation.catalog.vram.drift for {model_id}: {e}"
+            )
+
     def schedule_capacity_freed(self, model_id: str) -> None:
         """
         Schedule model.capacity.freed event emission (non-blocking).

@@ -15,10 +15,12 @@ chain-v7.yaml (top-level):
   synthesize            sub_pipeline                    → (below)
 
 synthesize/synthesize.yaml:
-  group_facts           consensus_group_facts_v7_1         group_facts.py
-  synthesize_answer     consensus_synthesize_batched_v7_1  synthesize_batched.py
-  identify_redundancy   consensus_identify_redundancy_v7_1 identify_redundancy.py
-  reorganize_answer     consensus_reorganize_v7_1          reorganize_answer.py
+  group_facts           consensus_group_facts_v7_1              group_facts.py
+  synthesize_answer     consensus_synthesize_batched_v7_1       synthesize_batched.py
+  identify_redundancy   consensus_identify_redundancy_v7_1      identify_redundancy.py
+  reorganize_answer     consensus_reorganize_v7_1               reorganize_answer.py
+  find_uncited_filter   consensus_find_uncited_filter_v7_1      find_uncited_filter.py
+  c4_enforce            consensus_assert_then_revise_v7_1       assert_then_revise.py
 
 verify/verify.yaml:
   decompose             consensus_decompose_v7_1          verify/handlers/
@@ -38,11 +40,13 @@ from __future__ import annotations
 
 from .analyze_question import AnalyzeQuestionHandler
 from .answer import ConsensusAnswerHandler
+from .assert_then_revise import AssertThenReviseHandler
 from .citation_coverage import (
     citation_coverage_check as _citation_coverage_check,  # noqa: F401
 )
 from .filter_negatives import FilterNegativesHandler
 from .filter_orphans import FilterOrphansHandler
+from .find_uncited_filter import FindUncitedFilterHandler
 from .group_facts import GroupFactsHandler
 from .identify_redundancy import IdentifyRedundancyHandler
 from .reorganize_answer import ReorganizeAnswerHandler
@@ -90,6 +94,16 @@ def register_handlers(router) -> None:
         "consensus",
         "consensus_reorganize_v7_1",
         ReorganizeAnswerHandler,
+    )
+    router.register_domain_handler_class(
+        "consensus",
+        "consensus_find_uncited_filter_v7_1",
+        FindUncitedFilterHandler,
+    )
+    router.register_domain_handler_class(
+        "consensus",
+        "consensus_assert_then_revise_v7_1",
+        AssertThenReviseHandler,
     )
 
     register_verify_handlers(router)

@@ -86,3 +86,33 @@ def RagWatchReconcileComplete(  # noqa: N802
 @event_factory
 def RagWatchStopped(*, watchers: int) -> Event:  # noqa: N802
     return Event(signal="rag.watch.stopped", payload={"watchers": watchers})
+
+
+@event_factory
+def RagScopeResolved(  # noqa: N802
+    *,
+    scope: str,
+    prefix_count: int,
+) -> Event:
+    return Event(
+        signal="rag.scope.resolved",
+        payload={"scope": scope, "prefix_count": prefix_count},
+    )
+
+
+@event_factory
+def RagScopeRejected(  # noqa: N802
+    *,
+    scope: str,
+    reason: str,
+    available: list[str],
+) -> Event:
+    return Event(
+        signal="rag.scope.rejected",
+        payload={"scope": scope, "reason": reason, "available": available},
+    )
+
+
+@event_factory
+def RagScopesListed(*, count: int) -> Event:  # noqa: N802
+    return Event(signal="rag.scopes.listed", payload={"count": count})

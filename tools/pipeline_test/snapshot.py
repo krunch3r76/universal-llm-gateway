@@ -28,22 +28,33 @@ _BINDING_RE = re.compile(
 
 
 def list_executions(pipeline_id: str) -> list[dict[str, str]]:
-    """List available execution directories for a pipeline."""
+    """List completed execution directories for a pipeline, newest first.
+
+    ∀ directory: only included if events.jsonl contains "pipeline_completed" —
+    excludes in-progress executions that would produce partial fixtures.
+    """
     pipeline_dir = SUMMARIES_ROOT / pipeline_id
     if not pipeline_dir.is_dir():
         return []
     results: list[dict[str, str]] = []
     for d in sorted(pipeline_dir.iterdir(), reverse=True):
-        if d.is_dir() and (d / "events.jsonl").exists():
-            parts = d.name.split("_", 2)
-            results.append(
-                {
-                    "dir_name": d.name,
-                    "path": str(d / "events.jsonl"),
-                    "execution_id": parts[2] if len(parts) >= 3 else d.name,
-                    "timestamp": parts[0] if parts else "",
-                }
-            )
+        if not d.is_dir():
+            continue
+        events_path = d / "events.jsonl"
+        if not events_path.exists():
+            continue
+        with events_path.open(encoding="utf-8") as f:
+            if not any("pipeline_completed" in line for line in f):
+                continue
+        parts = d.name.split("_", 2)
+        results.append(
+            {
+                "dir_name": d.name,
+                "path": str(events_path),
+                "execution_id": parts[2] if len(parts) >= 3 else d.name,
+                "timestamp": parts[0] if parts else "",
+            }
+        )
     return results
 
 

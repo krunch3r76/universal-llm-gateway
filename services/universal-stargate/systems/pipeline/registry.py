@@ -124,7 +124,8 @@ class PipelineRegistry:
                 else:
                     resolved = expanded.resolve()
 
-                path_name = resolved.name
+                # Use resolved.name for namespace; fallback to search_path so we never key by ""
+                path_name = resolved.name or search_path.strip() or "config"
                 logger.info(f"🔍 Searching pipeline path: '{search_path}' → {resolved}")
 
                 self._load_root_models(resolved, path_name)
@@ -819,9 +820,17 @@ class PipelineRegistry:
                 f"or {search_path}/models.yaml\n"
             )
         elif domain:
-            msg_parts.append(f"  Define in: {{search_path}}/{domain}/models.yaml\n")
+            msg_parts.append(
+                f"  Define in: <search_path>/{domain}/models.yaml "
+                "(pipeline had empty source_search_path; check pipelines.search_paths in stargate config).\n"
+            )
         else:
-            msg_parts.append("  Define in: {search_path}/models.yaml (root)\n")
+            hint = (
+                f"  Define in: {search_path}/models.yaml (root)\n"
+                if search_path
+                else "  Define in: <search_path>/models.yaml (root; pipeline had empty source_search_path).\n"
+            )
+            msg_parts.append(hint)
 
         if domain_refs:
             msg_parts.append(f"  Available in '{domain}': {domain_refs}\n")

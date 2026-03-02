@@ -38,6 +38,9 @@ class HandlerContext:
     catalog: dict[str, Any]
     model_last_inference: dict[str, float] = field(default_factory=dict)
     model_details: dict[str, dict[str, Any]] = field(default_factory=dict)
+    measured_model_vram: dict[str, int] = field(default_factory=dict)
+    """Mutable reference to state._measured_model_vram.
+    Populated only by RESOURCE_UPDATE model_vram."""
     busy_since: dict[str, float] = field(default_factory=dict)
 
     # Resources state (read-only, updated via reservation-aware setter)
@@ -75,6 +78,10 @@ class HandlerContext:
     on_heartbeat: Callable[[], Awaitable[None]] | None = None
     on_resource_change: Callable[[], Awaitable[None]] | None = None
     on_telemetry_heartbeat: Callable[[dict], Awaitable[None]] | None = None
+    on_vram_drift: Callable[[str, int, int, float], None] | None = None
+    """Callback(model_id_str, measured_mb, catalog_mb, drift_pct) on >5% VRAM drift."""
+    can_report_vram_drift: Callable[[str], bool] = field(default=lambda _: True)
+    """Rate-limit check: returns True once per cooldown period per model_id."""
 
     # Model-specific callbacks (keyed by routing_key, multiple callbacks per key)
     # Used by LoadOutcomeTracker for concurrent load tracking without race conditions

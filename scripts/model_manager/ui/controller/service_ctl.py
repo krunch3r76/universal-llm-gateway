@@ -21,6 +21,7 @@ from .service_config import (
     ensure_socket_dir,
     ensure_stargate_config,
     load_env_file,
+    read_cloud_proxy_host,
     read_cloud_proxy_port,
 )
 from .sidecar_ctl import SidecarController
@@ -326,10 +327,11 @@ class ServiceController:
         """Start Cloud Proxy service as host process via uvicorn.
 
         Ensures ``~/.gateway/cloud-proxy.yaml`` exists (generates a
-        template on first run) and reads the configured port from it.
+        template on first run) and reads the configured port and host from it.
         """
         ensure_cloud_proxy_config()
         port = read_cloud_proxy_port()
+        host = read_cloud_proxy_host()
 
         venv_python = Path.home() / ".venvs" / "universal" / "bin" / "python"
         python = str(venv_python) if venv_python.exists() else "python3"
@@ -352,7 +354,7 @@ class ServiceController:
                 "uvicorn",
                 "services.universal_cloud_proxy.cloud_proxy:app",
                 "--host",
-                "127.0.0.1",
+                host,
                 "--port",
                 str(port),
                 env=env,
@@ -370,7 +372,7 @@ class ServiceController:
             pid_path = GATEWAY_DIR / "cloud-proxy.pid"
             GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
             pid_path.write_text(str(process.pid) + "\n")
-            return f"Cloud Proxy starting on port {port} (PID {process.pid})."
+            return f"Cloud Proxy starting on {host}:{port} (PID {process.pid})."
 
     async def stop_cloud_proxy(self) -> str:
         """Stop Cloud Proxy service gracefully."""

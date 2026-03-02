@@ -7,45 +7,67 @@ service over loopback to access cloud models without holding API keys.
 Endpoints:
     GET  /health              — liveness + provider reachability
     GET  /catalog             — cached model list for Stargate discovery
+    GET  /catalog/pricing     — configured models with pricing (routing)
     POST /v1/chat/completions — forward with auth injection + SSE relay
     POST /v1/embeddings       — forward with auth injection
+    GET  /                    — model browser UI
+    GET  /api/models          — full OpenRouter catalog with pricing
+    POST /api/refresh         — force re-fetch of browser catalog
+    GET  /api/models/{id}     — single model pricing lookup
 """
 
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 from starlette.responses import Response
+from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
+from .browser import BrowserCatalogCache
+from .browser_routes import register_browser_routes
 from .catalog import CatalogManager
 from .config import CloudProxyConfig, load_config
 from .events import (
+    CloudProxyBrowserCatalogRefreshed,
+    CloudProxyBrowserCatalogRefreshFailed,
+    CloudProxyBrowserUiUnavailable,
     CloudProxyCatalogRefreshed,
+    CloudProxyLocalCatalogRefreshed,
+    CloudProxyLocalCatalogUnavailable,
     CloudProxyRequestFailed,
     CloudProxyRequestForwarded,
     CloudProxyShutdown,
     CloudProxyStarted,
 )
 from .forwarder import ProviderForwarder
+from .local_catalog import LocalCatalogCache
 
 logger = logging.getLogger(__name__)
+
+_STATIC_DIR = Path(__file__).parent / "static"
+_REQUIRED_BROWSER_ASSETS = ("index.html", "app.js", "style.css")
 
 _config: CloudProxyConfig | None = None
 _catalog: CatalogManager | None = None
 _forwarder: ProviderForwarder | None = None
 _event_bus: EventBus | None = None
 _broadcaster: MinimalEventDebugBroadcaster | None = None
+_browser_cache: BrowserCatalogCache | None = None
+_local_cache: LocalCatalogCache | None = None
+_browser_ui_ready = False
+_browser_ui_error = "Browser UI not initialized"
 
 
 @asynccontextmanager
 async def _lifespan(application: FastAPI):  # noqa: ANN201, ARG001
-    global _config, _catalog, _forwarder, _event_bus, _broadcaster
+    global _config, _catalog, _forwarder, _event_bus, _broadcaster, _browser_cache
+    global _local_cache, _browser_ui_ready, _browser_ui_error
 
     _event_bus = EventBus()
     _broadcaster = MinimalEventDebugBroadcaster(
@@ -79,11 +101,74 @@ async def _lifespan(application: FastAPI):  # noqa: ANN201, ARG001
             )
         )
 
+    _browser_cache = BrowserCatalogCache()
+    try:
+        model_count = await _browser_cache.refresh()
+        if _event_bus is not None:
+            await _event_bus.publish_async(
+                CloudProxyBrowserCatalogRefreshed(
+                    trigger="startup",
+                    model_count=model_count,
+                )
+            )
+    except Exception as exc:
+        logger.warning(
+            "Browser catalog initial fetch failed — will retry on first request"
+        )
+        if _event_bus is not None:
+            await _event_bus.publish_async(
+                CloudProxyBrowserCatalogRefreshFailed(
+                    trigger="startup",
+                    error=str(exc)[:300],
+                )
+            )
+
+    _local_cache = LocalCatalogCache(stargate_url=_config.stargate_url)
+    try:
+        local_count = await _local_cache.refresh()
+        if _event_bus is not None:
+            await _event_bus.publish_async(
+                CloudProxyLocalCatalogRefreshed(
+                    stargate_url=_config.stargate_url,
+                    model_count=local_count,
+                )
+            )
+    except Exception as exc:
+        logger.info(
+            "Local catalog unavailable at startup (Stargate may not be running): %s",
+            exc,
+        )
+        if _event_bus is not None:
+            await _event_bus.publish_async(
+                CloudProxyLocalCatalogUnavailable(
+                    stargate_url=_config.stargate_url,
+                    error=str(exc)[:300],
+                )
+            )
+
+    missing_assets = [
+        asset
+        for asset in _REQUIRED_BROWSER_ASSETS
+        if not (_STATIC_DIR / asset).exists()
+    ]
+    if missing_assets:
+        _browser_ui_ready = False
+        _browser_ui_error = f"Missing browser assets: {', '.join(missing_assets)}"
+        logger.error(_browser_ui_error)
+        if _event_bus is not None:
+            await _event_bus.publish_async(
+                CloudProxyBrowserUiUnavailable(missing_files=missing_assets)
+            )
+    else:
+        _browser_ui_ready = True
+        _browser_ui_error = ""
+
     await _event_bus.publish_async(CloudProxyStarted())
     logger.info(
-        "Cloud proxy started: %d provider(s), %d models",
+        "Cloud proxy started: %d provider(s), %d models, browser catalog: %d",
         len(_config.providers),
         len(_catalog.get_all_models()),
+        _browser_cache.model_count,
     )
 
     yield
@@ -97,6 +182,37 @@ async def _lifespan(application: FastAPI):  # noqa: ANN201, ARG001
 
 
 app = FastAPI(title="Cloud Proxy", lifespan=_lifespan)
+
+
+def _get_browser_cache() -> BrowserCatalogCache | None:
+    return _browser_cache
+
+
+def _get_local_cache() -> LocalCatalogCache | None:
+    return _local_cache
+
+
+def _get_catalog() -> CatalogManager | None:
+    return _catalog
+
+
+def _get_event_bus() -> EventBus | None:
+    return _event_bus
+
+
+def _get_ui_status() -> tuple[bool, str]:
+    return _browser_ui_ready, _browser_ui_error
+
+
+register_browser_routes(
+    app,
+    static_dir=_STATIC_DIR,
+    get_browser_cache=_get_browser_cache,
+    get_local_cache=_get_local_cache,
+    get_catalog=_get_catalog,
+    get_event_bus=_get_event_bus,
+    get_ui_status=_get_ui_status,
+)
 
 
 @app.get("/health")

@@ -170,6 +170,20 @@ async def collect_gateways(
             # Get available models from WebSocket cache (instant, no HTTP)
             available_models = gw_instance.client.get_models()
 
+            # Parse measured VRAM from WebSocket state (populated by RESOURCE_UPDATE)
+            client_state = getattr(gw_instance.client, "state", None)
+            measured_vram_raw: dict[str, int] = (
+                getattr(client_state, "measured_model_vram", {}) if client_state else {}
+            )
+            model_measured_vram: dict[ModelId, int] = {}
+            for mid_str, vram_mb in measured_vram_raw.items():
+                try:
+                    model_measured_vram[ModelId.parse(mid_str)] = vram_mb
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to parse measured VRAM model ID {mid_str!r}: {e}"
+                    )
+
             # Get active_requests from in-flight tracker (tracks in-flight requests)
             # WebSocket telemetry doesn't track this, so we query the tracker directly
             active_requests = 0
@@ -204,6 +218,7 @@ async def collect_gateways(
                     ModelId.parse(mid) for mid in available_models
                 ),
                 model_details=model_details,
+                model_measured_vram=model_measured_vram,
                 health_score=getattr(status, "health_score", 1.0),
                 avg_latency_ms=getattr(status, "avg_latency_ms", 0.0),
                 active_requests=active_requests,
@@ -313,6 +328,7 @@ async def build_placement(
                                 vram_mb=vram_mb,
                                 is_gpu=is_gpu,
                                 original_model_id=original_model_id,
+                                context_length=resources.get("context_length"),
                                 endpoint_category=endpoint_category,
                             )
 
@@ -377,12 +393,14 @@ async def build_placement(
             vram_mb=vram_mb,
             is_gpu=is_gpu,
             original_model_id=original_model_id,
+            context_length=model_config.context_length,
             endpoint_category=endpoint_category,
         )
 
         logger.debug(
             f"📋 Created Placement for {model_id}: "
             f"VRAM={placement.vram_mb}MB, RAM={placement.ram_mb}MB, "
+            f"context_length={placement.context_length}, "
             f"original={placement.original_model_id}"
         )
 

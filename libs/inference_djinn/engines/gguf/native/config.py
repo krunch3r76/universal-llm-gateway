@@ -173,7 +173,7 @@ class ServerConfig:
             args.extend(["--threads-batch", str(self.n_threads_batch)])
 
         # Advanced options
-        if self.flash_attn:
+        if self.flash_attn and self.n_gpu_layers != 0:
             args.extend(["--flash-attn", "on"])
         if self.no_mmap:
             args.append("--no-mmap")

@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 """General-purpose multi-model consultation with role templates and RAG.
 
-Query multiple models in parallel with a configurable role (architect,
-reviewer, planner, researcher) and optional RAG context + file injection.
+Query multiple models in parallel (or chained sequentially) with a
+configurable role and optional RAG context + file injection.
 
 Usage:
   consult "How should we handle WebSocket reconnection?"
   consult -r architect "Should routing use events or polling?" -f systems/routing/
-  consult -r reviewer "Review capacity module for race conditions" -f capacity/ledger.py
-  consult -r planner "Add per-model timeout configuration" -o plan.md
+  consult -r reviewer -f capacity/ledger.py "Check for race conditions"
+  consult -r planner "Add per-model timeouts" -o plan.md
   consult --models qwen3-32b-awq-32768 google/gemini-2.5-pro "question"
+  consult --chain -r planner --models local cloud "complex question"
   consult --no-rag "question"
   consult --rag-pipeline "complex multi-faceted question"
-  consult --context-files f1.py f2.py "question about these files"
 """
 
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import sys
 import textwrap
 import time
@@ -27,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
 DEFAULT_RAG_URL = "http://localhost:8100"
@@ -34,74 +37,130 @@ DEFAULT_RAG_URL = "http://localhost:8100"
 DEFAULT_MODELS: list[str] = [
     "qwen3-32b-awq-32768",
     "ernie-4-5-21b-a3b-pt-q8-0-65536",
-    "google/gemini-2.5-pro",
+    "google/gemini-2.5-flash",
 ]
 
-# Code review: use only Gemini until better local models are available.
-REVIEWER_DEFAULT_MODELS: list[str] = ["google/gemini-2.5-pro"]
+REVIEWER_DEFAULT_MODELS: list[str] = ["qwen/qwen3-coder"]
 
-DEFAULT_RAG_SOURCE_PREFIXES: list[str] = [
-    "docs/architecture",
-    "docs/vision",
-    "docs/engram",
-]
-
-EBOOK_RAG_SOURCE_PREFIXES: list[str] = [
-    "docs/reference",
-]
-
-SCOPE_PREFIX_MAP: dict[str, list[str]] = {
-    "project": DEFAULT_RAG_SOURCE_PREFIXES,
-    "ebooks": EBOOK_RAG_SOURCE_PREFIXES,
-    "all": DEFAULT_RAG_SOURCE_PREFIXES + EBOOK_RAG_SOURCE_PREFIXES,
-}
-
-ROLES: dict[str, str] = {
-    "architect": (
-        "You are a senior software architect reviewing a codebase. "
-        "Evaluate architectural approaches, identify trade-offs, and suggest "
-        "improvements grounded in the provided context.\n\n"
-        "Rules:\n"
-        "- Reference specific code/docs when making claims\n"
-        "- Identify trade-offs explicitly (not just pros)\n"
-        "- Suggest concrete alternatives with rationale\n"
-        "- Consider maintainability, testability, and operational impact\n"
-        "- Structure: Assessment → Trade-offs → Recommendation"
-    ),
-    "reviewer": (
-        "You are a code reviewer examining code for correctness, "
-        "race conditions, resource leaks, and adherence to architectural patterns.\n\n"
-        "Rules:\n"
-        "- Quote exact code that concerns you\n"
-        "- Classify severity: critical (breaks correctness), moderate (degrades quality), minor\n"
-        "- Suggest specific fixes, not vague improvements\n"
-        "- Check for: races, leaks, error handling, invariant violations\n"
-        "- Structure: Issues Found → Suggested Fixes → Rationale"
-    ),
-    "planner": (
-        "You are an implementation planner. Given a requirement and codebase context, "
-        "produce a concrete implementation plan.\n\n"
-        "Rules:\n"
-        "- List specific files to create/modify/delete\n"
-        "- Order steps by dependency (what must happen first)\n"
-        "- Identify risks and edge cases\n"
-        "- Estimate scope (small/medium/large)\n"
-        "- Structure: Scope → Files Affected → Step-by-Step Plan → Risks"
-    ),
-    "researcher": (
-        "You are an AI research assistant with expertise in LLM systems, "
-        "prompt engineering, and distributed inference. Research findings "
-        "from published papers are provided when available.\n\n"
-        "Rules:\n"
-        "- Ground responses in provided research when applicable\n"
-        "- Cite specific techniques or findings by source\n"
-        "- Be practical: suggest actionable approaches\n"
-        "- If research doesn't cover the question, say so\n"
-        "- Structure: Key Findings → Practical Application → Open Questions"
-    ),
-}
+_ROLES_PATH = Path(__file__).resolve().parent / "consult-roles.yaml"
 
 DEFAULT_ROLE = "researcher"
+
+DEFAULT_CHAIN_DIRECTIVE = (
+    "You are a reviewer in a chained consultation. The analysis above was "
+    "produced by a prior model. Evaluate whether you agree with its "
+    "recommendations, identify any gaps or risks it missed, and propose "
+    "additional changes if warranted. Do not re-derive what the prior "
+    "analysis already covers correctly — focus on validation and augmentation."
+)
+
+
+def _fetch_scope_choices(rag_url: str = DEFAULT_RAG_URL) -> list[str]:
+    """Fetch available scopes from RAG service for CLI choices."""
+    try:
+        with httpx.Client(timeout=2.0) as client:
+            resp = client.get(f"{rag_url.rstrip('/')}/scopes")
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, dict):
+            scopes = data.get("scopes", {})
+            if isinstance(scopes, dict) and scopes:
+                return list(scopes.keys())
+    except Exception:
+        pass
+    return ["project", "research", "all"]
+
+
+def _fetch_scope_options_text(rag_url: str = DEFAULT_RAG_URL) -> str:
+    """Fetch and format scopes for rag-context prompt injection."""
+    try:
+        with httpx.Client(timeout=2.0) as client:
+            resp = client.get(f"{rag_url.rstrip('/')}/scopes")
+        resp.raise_for_status()
+        data = resp.json()
+        scopes = data.get("scopes", {}) if isinstance(data, dict) else {}
+        if not isinstance(scopes, dict) or not scopes:
+            return '"research", "project", or "all"'
+        lines: list[str] = []
+        for name, info in scopes.items():
+            if name == "all":
+                continue
+            desc = ""
+            if isinstance(info, dict):
+                raw_desc = info.get("description", "")
+                if isinstance(raw_desc, str):
+                    desc = raw_desc
+            lines.append(f'"{name}" — {desc}' if desc else f'"{name}"')
+        lines.append('"all" — when unclear or mixed across multiple scopes')
+        return "\n        ".join(lines)
+    except Exception:
+        return '"research", "project", or "all"'
+
+
+CLOUD_PROXY_URL = os.getenv("CLOUD_PROXY_URL", "http://localhost:8200").rstrip("/")
+
+
+def _load_roles() -> dict[str, Any]:
+    """Load role prompt templates and select configs from the companion YAML file."""
+    return yaml.safe_load(_ROLES_PATH.read_text())
+
+
+def _split_role_config(
+    roles_data: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
+    """Split YAML payload into role prompts and role selection configs."""
+    role_prompts: dict[str, str] = {}
+    role_select: dict[str, dict[str, Any]] = {}
+    for key, value in roles_data.items():
+        if key.endswith("_select"):
+            if isinstance(value, dict):
+                role_select[key[: -len("_select")]] = value
+            continue
+        if isinstance(value, str):
+            role_prompts[key] = value
+    return role_prompts, role_select
+
+
+def _select_models_for_role(
+    role: str,
+    role_select: dict[str, dict[str, Any]],
+    count: int = 2,
+) -> list[str] | None:
+    """Query cloud proxy /api/select using role's selection criteria.
+
+    Returns model IDs if the cloud proxy is available and the role has
+    a ``{role}_select`` config.  Returns None to signal "use defaults".
+    """
+    select_config = role_select.get(role)
+    if select_config is None:
+        return None
+
+    payload: dict[str, Any] = {"count": count}
+    for field in (
+        "tags",
+        "exclude_tags",
+        "min_context",
+        "modality_contains",
+        "providers",
+    ):
+        if field in select_config:
+            payload[field] = select_config[field]
+
+    try:
+        resp = httpx.post(
+            f"{CLOUD_PROXY_URL}/api/select",
+            json=payload,
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        models = [m["id"] for m in resp.json().get("models", [])]
+        if models:
+            return models
+    except Exception as exc:
+        print(
+            f"Cloud proxy select unavailable ({exc}), using defaults", file=sys.stderr
+        )
+    return None
 
 
 def _read_context_files(paths: list[str]) -> list[str]:
@@ -141,7 +200,9 @@ def _fetch_rag_pipeline(
 ) -> tuple[list[str], str | None]:
     """Use the rag-context pipeline for intelligent RAG retrieval."""
     url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
-    pipeline_options: dict[str, Any] = {}
+    pipeline_options: dict[str, Any] = {
+        "scope_options": _fetch_scope_options_text(),
+    }
     if scope_override:
         pipeline_options["scope_override"] = scope_override
     body: dict[str, Any] = {
@@ -168,14 +229,14 @@ def _fetch_rag_direct(
     *,
     rag_url: str = DEFAULT_RAG_URL,
     top_k: int = 5,
-    source_prefixes: list[str] | None = None,
+    scope: str | None = None,
     timeout: float = 10.0,
 ) -> tuple[list[str], str | None]:
     """Direct RAG search via the /search endpoint."""
     url = f"{rag_url.rstrip('/')}/search"
     body: dict[str, object] = {"query": query, "top_k": top_k}
-    if source_prefixes:
-        body["source_prefixes"] = source_prefixes
+    if scope:
+        body["scope"] = scope
     try:
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(url, json=body)
@@ -221,6 +282,18 @@ def _build_prompt(
     return "\n\n".join(sections)
 
 
+def _strip_think_blocks(text: str) -> str:
+    """Remove all <think>...</think> blocks from model output.
+
+    Handles leading blocks (reasoning models like Qwen3) and any embedded
+    blocks. Applied before chaining so thinking tokens never contaminate
+    the next model's context. Centralisation target: stargate-level stripping.
+    """
+    return re.sub(
+        r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE
+    ).strip()
+
+
 def _query_model(
     model_id: str,
     system_prompt: str,
@@ -247,13 +320,75 @@ def _query_model(
     data = resp.json()
     choice = data.get("choices", [{}])[0]
     usage = data.get("usage", {})
+    raw_response = choice.get("message", {}).get("content", "")
     return {
         "model_id": data.get("model", model_id),
-        "response": choice.get("message", {}).get("content", ""),
+        "response": _strip_think_blocks(raw_response),
         "prompt_tokens": usage.get("prompt_tokens", 0),
         "completion_tokens": usage.get("completion_tokens", 0),
         "latency_ms": round(elapsed_ms),
     }
+
+
+def _augment_with_prior(
+    base_prompt: str,
+    prior_results: list[dict[str, Any]],
+    directive: str | None = None,
+) -> str:
+    """Append prior models' analyses and a reviewer directive to the prompt."""
+    sections: list[str] = [base_prompt]
+    for result in prior_results:
+        if "error" in result or not result.get("response"):
+            continue
+        sections.append(
+            f"## Prior Analysis (by {result['model_id']})\n{result['response']}"
+        )
+    sections.append(f"## Your Role\n{directive or DEFAULT_CHAIN_DIRECTIVE}")
+    return "\n\n".join(sections)
+
+
+def _query_chain(
+    models: list[str],
+    system_prompt: str,
+    user_prompt: str,
+    stargate_url: str,
+    timeout: float,
+    chain_directive: str | None = None,
+) -> list[dict[str, Any]]:
+    """Query models sequentially, each reviewing prior output."""
+    results: list[dict[str, Any]] = []
+    for idx, mid in enumerate(models):
+        prompt = (
+            _augment_with_prior(user_prompt, results, chain_directive)
+            if results
+            else user_prompt
+        )
+        phase = "analyst" if idx == 0 else "reviewer"
+        print(f"  Phase {idx + 1} ({phase}): {mid}...", file=sys.stderr)
+        try:
+            result = _query_model(mid, system_prompt, prompt, stargate_url, timeout)
+            result["phase"] = phase
+        except Exception as exc:
+            result = {"model_id": mid, "error": str(exc), "phase": phase}
+        results.append(result)
+    return results
+
+
+def _format_result_block(result: dict[str, Any]) -> list[str]:
+    """Format a single model result as markdown lines."""
+    lines: list[str] = []
+    if "error" in result:
+        lines.append(f"**Error**: {result['error']}")
+    else:
+        tokens = result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
+        lines.append(
+            f"*{result.get('latency_ms', 0)}ms, "
+            f"{tokens} tokens "
+            f"({result.get('prompt_tokens', 0)}+{result.get('completion_tokens', 0)})*\n"
+        )
+        lines.append(result.get("response", ""))
+    lines.append("")
+    return lines
 
 
 def _format_output(
@@ -262,52 +397,88 @@ def _format_output(
     results: list[dict[str, Any]],
     rag_error: str | None,
     file_paths: list[str],
+    *,
+    chained: bool = False,
 ) -> str:
     """Format consultation results as structured markdown."""
     lines: list[str] = []
-    lines.append(f"# Consultation: {role}")
+    title = f"# Consultation: {role}" + (" (chained)" if chained else "")
+    lines.append(title)
     lines.append(f"**Date**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append(f"**Question**: {question}")
     if file_paths:
         lines.append(f"**Context files**: {', '.join(file_paths)}")
+    if chained:
+        lines.append("**Mode**: analyst -> reviewer(s)")
     if rag_error:
         lines.append(f"**RAG**: failed ({rag_error})")
     lines.append("")
 
-    for result in results:
+    for idx, result in enumerate(results):
         model = result.get("model_id", "unknown")
-        lines.append(f"## {model}")
-        if "error" in result:
-            lines.append(f"**Error**: {result['error']}")
+        if chained:
+            phase = result.get("phase", "analyst" if idx == 0 else "reviewer")
+            lines.append(f"## Phase {idx + 1}: {phase.title()} — {model}")
         else:
-            tokens = result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
-            lines.append(
-                f"*{result.get('latency_ms', 0)}ms, "
-                f"{tokens} tokens "
-                f"({result.get('prompt_tokens', 0)}+{result.get('completion_tokens', 0)})*\n"
-            )
-            lines.append(result.get("response", ""))
-        lines.append("")
+            lines.append(f"## {model}")
+        lines.extend(_format_result_block(result))
 
     return "\n".join(lines)
 
 
+def _query_parallel(
+    models: list[str],
+    system_prompt: str,
+    user_prompt: str,
+    stargate_url: str,
+    timeout: float,
+) -> list[dict[str, Any]]:
+    """Query models in parallel, return results in original order."""
+    results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=len(models)) as pool:
+        futures = {
+            pool.submit(
+                _query_model,
+                model_id=mid,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                stargate_url=stargate_url,
+                timeout=timeout,
+            ): mid
+            for mid in models
+        }
+        for future in as_completed(futures):
+            mid = futures[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                results.append({"model_id": mid, "error": str(exc)})
+    order = {m: i for i, m in enumerate(models)}
+    results.sort(key=lambda r: order.get(r.get("model_id", ""), 999))
+    return results
+
+
 def main() -> None:
+    raw_roles = _load_roles()
+    role_prompts, role_select = _split_role_config(raw_roles)
+
     parser = argparse.ArgumentParser(
         description="Multi-model consultation with role templates and RAG",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             Roles:
-              architect   Evaluate architecture, trade-offs, improvements
-              reviewer    Code review: correctness, races, leaks, patterns
-              planner     Implementation plan: files, steps, risks
-              researcher  Research-grounded Q&A (default)
+              architect    Evaluate architecture, trade-offs, improvements
+              reviewer     Code review: correctness, races, leaks, patterns
+              planner      Implementation plan: files, steps, risks
+              researcher   Research-grounded Q&A (default)
+              modularizer  Split oversized files respecting SLOC and SRP
 
             Examples:
               consult "How should we handle reconnection?"
               consult -r architect "Event bus: pub/sub vs direct?" -f docs/event-contracts.md
               consult -r reviewer -f capacity/ledger.py "Check for race conditions"
               consult -r planner "Add per-model timeouts" -o plan.md
+              consult --chain -r planner --models local cloud "complex question"
               consult --models qwen3-32b-awq-32768 google/gemini-2.5-pro "question"
         """),
     )
@@ -316,23 +487,23 @@ def main() -> None:
         "-r",
         "--role",
         default=DEFAULT_ROLE,
-        choices=list(ROLES),
+        choices=list(role_prompts),
         help=f"Consultation role (default: {DEFAULT_ROLE})",
     )
     parser.add_argument(
         "-f",
         "--context-files",
-        nargs="+",
+        action="append",
         default=[],
         metavar="PATH",
-        help="Files/directories to include as context",
+        help="Files/directories to include as context (repeatable)",
     )
     parser.add_argument(
         "--models",
         nargs="+",
         default=None,
         metavar="MODEL",
-        help="Models to query (default: qwen3-32b + gpt-oss-20b)",
+        help="Models to query (default: qwen3-32b + ernie + gemini-2.5-flash)",
     )
     parser.add_argument(
         "-o",
@@ -351,8 +522,7 @@ def main() -> None:
     parser.add_argument(
         "--scope",
         default="project",
-        choices=list(SCOPE_PREFIX_MAP),
-        help="RAG retrieval scope (default: project)",
+        help="RAG retrieval scope (default: project). Available scopes fetched from RAG service.",
     )
     parser.add_argument(
         "--rag-pipeline",
@@ -369,11 +539,22 @@ def main() -> None:
         help="Per-model timeout in seconds",
     )
     parser.add_argument("--list-roles", action="store_true", help="List roles and exit")
+    parser.add_argument(
+        "--chain",
+        action="store_true",
+        help="Chain models sequentially: first as analyst, rest as reviewers",
+    )
+    parser.add_argument(
+        "--chain-directive",
+        default=None,
+        metavar="TEXT",
+        help="Custom reviewer directive for chained mode",
+    )
 
     args = parser.parse_args()
 
     if args.list_roles:
-        for name, prompt in ROLES.items():
+        for name, prompt in role_prompts.items():
             marker = " (default)" if name == DEFAULT_ROLE else ""
             print(f"\n=== {name}{marker} ===")
             print(prompt)
@@ -385,24 +566,43 @@ def main() -> None:
         if not args.question:
             parser.error("No question provided")
 
-    target_models = args.models or (
-        REVIEWER_DEFAULT_MODELS if args.role == "reviewer" else DEFAULT_MODELS
-    )
-    system_prompt = ROLES[args.role]
+    if not args.no_rag:
+        available_scopes = _fetch_scope_choices()
+        if args.scope not in available_scopes:
+            parser.error(
+                f"Unknown --scope '{args.scope}'. Available scopes: "
+                f"{', '.join(sorted(available_scopes))}"
+            )
 
-    # Gather context
+    if args.models:
+        target_models = args.models
+    else:
+        selected = _select_models_for_role(args.role, role_select)
+        if selected:
+            print(
+                f"Auto-selected for '{args.role}': {', '.join(selected)}",
+                file=sys.stderr,
+            )
+            target_models = selected
+        else:
+            target_models = (
+                REVIEWER_DEFAULT_MODELS if args.role == "reviewer" else DEFAULT_MODELS
+            )
+    if args.chain and len(target_models) < 2:
+        parser.error("--chain requires at least 2 models")
+
+    system_prompt = role_prompts[args.role]
+
     file_context: list[str] | None = None
     if args.context_files:
         file_context = _read_context_files(args.context_files)
         if file_context:
             print(f"Read {len(file_context)} context blocks", file=sys.stderr)
 
-    # RAG retrieval
     rag_findings: list[str] | None = None
     rag_error: str | None = None
     if not args.no_rag:
         print("Retrieving RAG context...", file=sys.stderr)
-        source_prefixes = SCOPE_PREFIX_MAP[args.scope]
         if args.rag_pipeline:
             rag_findings, rag_error = _fetch_rag_pipeline(
                 args.question,
@@ -413,7 +613,7 @@ def main() -> None:
         else:
             rag_findings, rag_error = _fetch_rag_direct(
                 args.question,
-                source_prefixes=source_prefixes,
+                scope=args.scope,
             )
         if rag_error:
             print(f"RAG: {rag_error} (continuing without)", file=sys.stderr)
@@ -422,33 +622,29 @@ def main() -> None:
 
     user_prompt = _build_prompt(args.question, rag_findings, file_context)
 
-    # Query models in parallel
+    mode = "chained" if args.chain else "parallel"
     print(
-        f"Consulting {len(target_models)} model(s) as {args.role}...",
+        f"Consulting {len(target_models)} model(s) as {args.role} ({mode})...",
         file=sys.stderr,
     )
-    results: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=len(target_models)) as pool:
-        futures = {
-            pool.submit(
-                _query_model,
-                model_id=mid,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                stargate_url=args.stargate_url,
-                timeout=args.timeout,
-            ): mid
-            for mid in target_models
-        }
-        for future in as_completed(futures):
-            mid = futures[future]
-            try:
-                results.append(future.result())
-            except Exception as exc:
-                results.append({"model_id": mid, "error": str(exc)})
 
-    order = {m: i for i, m in enumerate(target_models)}
-    results.sort(key=lambda r: order.get(r.get("model_id", ""), 999))
+    if args.chain:
+        results = _query_chain(
+            models=target_models,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            stargate_url=args.stargate_url,
+            timeout=args.timeout,
+            chain_directive=args.chain_directive,
+        )
+    else:
+        results = _query_parallel(
+            models=target_models,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            stargate_url=args.stargate_url,
+            timeout=args.timeout,
+        )
 
     output = _format_output(
         args.question,
@@ -456,6 +652,7 @@ def main() -> None:
         results,
         rag_error,
         args.context_files,
+        chained=args.chain,
     )
     print(output)
 

@@ -1,0 +1,584 @@
+#!/usr/bin/env python3
+"""Scan for SLOC violations and generate refactoring plans.
+
+Usage:
+  modularize scan <paths...>
+  modularize plan <file> [--dry-run]
+  modularize plan --batch --severity red|yellow <paths...>
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import json
+import sys
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+
+import httpx
+
+
+@dataclass
+class FileInfo:
+    """File metadata for SLOC analysis."""
+
+    path: Path
+    sloc: int
+    functions: int
+    classes: int
+    category: str  # green, yellow, red
+
+
+@dataclass
+class ConsumerInfo:
+    """Consumer file with import count."""
+
+    path: Path
+    import_count: int
+
+
+def _count_sloc(path: Path) -> int:
+    """Count non-blank, non-comment lines."""
+    try:
+        content = path.read_text(errors="replace")
+    except OSError:
+        return 0
+    count = 0
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            count += 1
+    return count
+
+
+def _count_definitions(path: Path) -> tuple[int, int]:
+    """Count function and class definitions."""
+    try:
+        content = path.read_text(errors="replace")
+    except OSError:
+        return 0, 0
+    functions = sum(
+        1 for line in content.splitlines() if line.strip().startswith("def ")
+    )
+    classes = sum(
+        1 for line in content.splitlines() if line.strip().startswith("class ")
+    )
+    return functions, classes
+
+
+def _scan_directory(paths: list[str], skip_patterns: list[str]) -> list[FileInfo]:
+    """Scan paths for Python files and categorize by SLOC."""
+    files: list[FileInfo] = []
+    for path_str in paths:
+        path = Path(path_str)
+        if not path.exists():
+            print(f"Warning: {path} does not exist", file=sys.stderr)
+            continue
+        if path.is_file() and path.suffix == ".py":
+            to_scan = [path]
+        elif path.is_dir():
+            to_scan = list(path.rglob("*.py"))
+        else:
+            continue
+
+        for file_path in to_scan:
+            # Skip patterns
+            skip = False
+            for pattern in skip_patterns:
+                if pattern in str(file_path):
+                    skip = True
+                    break
+            if skip:
+                continue
+
+            sloc = _count_sloc(file_path)
+            if sloc <= 300:
+                category = "green"
+            elif sloc <= 400:
+                category = "yellow"
+            else:
+                category = "red"
+
+            functions, classes = 0, 0
+            if category in {"yellow", "red"}:
+                functions, classes = _count_definitions(file_path)
+
+            files.append(
+                FileInfo(
+                    path=file_path,
+                    sloc=sloc,
+                    functions=functions,
+                    classes=classes,
+                    category=category,
+                )
+            )
+
+    return files
+
+
+def _derive_import_candidates(file_path: Path, project_root: Path) -> set[str]:
+    """Derive likely import paths for a file across package roots."""
+    try:
+        rel = file_path.relative_to(project_root)
+    except ValueError:
+        rel_parts = [file_path.stem]
+    else:
+        rel_parts = list(rel.parts[:-1]) + [rel.stem]
+
+    candidates: set[str] = set()
+    # Generate suffix candidates to support different PYTHONPATH roots
+    # (e.g., src.scheduling.events vs scheduling.events).
+    for start in range(len(rel_parts)):
+        suffix = rel_parts[start:]
+        if not suffix or not all(part.isidentifier() for part in suffix):
+            continue
+        if len(suffix) < 2 and len(rel_parts) > 1:
+            continue
+        candidates.add(".".join(suffix))
+    return candidates
+
+
+def _plan_output_path(target: Path, project_root: Path) -> Path:
+    """Generate a collision-safe output path for a target file."""
+    try:
+        rel = target.relative_to(project_root)
+        stem = "__".join(rel.with_suffix("").parts)
+    except ValueError:
+        stem = target.stem
+    return Path("./tmp/modularize-plans") / f"{stem}.md"
+
+
+def _build_reverse_imports_for_many(
+    target_candidates: dict[Path, set[str]], project_root: Path
+) -> dict[Path, list[ConsumerInfo]]:
+    """Build reverse-import graph for many targets in one pass."""
+    consumers_map: dict[Path, dict[Path, int]] = {
+        target: defaultdict(int) for target in target_candidates
+    }
+    for py_file in project_root.rglob("*.py"):
+        if "__pycache__" in str(py_file) or "tmp/" in str(py_file):
+            continue
+        try:
+            content = py_file.read_text(errors="replace")
+        except OSError:
+            continue
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            for target, candidates in target_candidates.items():
+                if any(
+                    (
+                        f"from {candidate} import" in stripped
+                        or f"from {candidate}." in stripped
+                        or f"import {candidate}" in stripped
+                    )
+                    for candidate in candidates
+                ):
+                    consumers_map[target][py_file] += 1
+    return {
+        t: [ConsumerInfo(path=p, import_count=c) for p, c in consumers_map[t].items()]
+        for t in target_candidates
+    }
+
+
+def _write_scan_report(files: list[FileInfo], output_path: Path) -> None:
+    """Write scan results as markdown."""
+    files_by_dir: dict[str, list[FileInfo]] = defaultdict(list)
+    for info in files:
+        top_level = info.path.parts[0] if info.path.parts else "."
+        files_by_dir[top_level].append(info)
+
+    lines: list[str] = []
+    lines.append("# SLOC Scan Results\n")
+    for top_dir in sorted(files_by_dir):
+        dir_files = sorted(files_by_dir[top_dir], key=lambda f: f.sloc, reverse=True)
+        lines.append(f"## {top_dir}\n")
+        lines.append("| File | SLOC | Functions | Classes | Status |")
+        lines.append("|------|------|-----------|---------|--------|")
+        for info in dir_files:
+            emoji = {"green": "✅", "yellow": "⚠️", "red": "🛑"}[info.category]
+            lines.append(
+                f"| {info.path} | {info.sloc} | {info.functions} | {info.classes} | {emoji} {info.category} |"
+            )
+        lines.append("")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines))
+
+
+def _build_user_message(
+    target: Path,
+    sloc: int,
+    functions: int,
+    classes: int,
+    consumers: list[ConsumerInfo],
+) -> str:
+    """Assemble pipeline user message with metadata + source code."""
+    top_consumers = sorted(consumers, key=lambda c: c.import_count, reverse=True)[:5]
+    consumer_list = "\n".join(
+        f"  - {c.path} ({c.import_count} imports)" for c in top_consumers
+    )
+    source_content = target.read_text(errors="replace")
+
+    return (
+        f"# File: {target}\n\n"
+        f"## Metadata\n"
+        f"- SLOC: {sloc}\n"
+        f"- Functions: {functions}\n"
+        f"- Classes: {classes}\n"
+        f"- Consumers: {len(consumers)}\n\n"
+        f"## Top Consumers\n{consumer_list}\n\n"
+        f"## Source Code\n```python\n{source_content}\n```"
+    )
+
+
+def _normalize_plan_data(raw: dict) -> dict:
+    """Normalize model response into canonical {improvements, modules} shape.
+
+    Models return varied structures — this normalizes all observed formats:
+    1. Schema-compliant: {improvements: {...}, modules: [...]}
+    2. Prefixed keys: {part_1_improvements: {...}, part_2_module_manifest: [...]}
+    3. Flat dict: {"path/to/file.py": {definitions: [...]}, ...}
+    """
+    improvements: dict = {}
+    modules: list = []
+
+    for key, value in raw.items():
+        if "improvement" in key.lower() or key == "simplify":
+            improvements = value
+        elif "module" in key.lower() or key == "modules":
+            modules = value
+        elif isinstance(value, dict) and "definitions" in value:
+            modules.append({
+                "file_path": key,
+                "description": value.get("description", ""),
+                "definitions": value.get("definitions", []),
+                "estimated_sloc": value.get("estimated_sloc", 0),
+            })
+
+    # Normalize per-module keys: models sometimes use "path" instead of "file_path"
+    modules = [
+        {**m, "file_path": m.get("file_path") or m.get("path", "")}
+        for m in modules
+        if isinstance(m, dict)
+    ]
+
+    return {"improvements": improvements, "modules": modules}
+
+
+def _extract_source_definitions(path: Path) -> set[str]:
+    """Extract public top-level definition names from a Python file via AST.
+
+    Returns constants (UPPER_CASE module-level assignments), functions, and
+    classes. Private names (leading underscore) are excluded.
+    """
+    try:
+        tree = ast.parse(path.read_text(errors="replace"))
+    except SyntaxError:
+        return set()
+
+    names: set[str] = set()
+    for node in ast.iter_child_nodes(tree):
+        match node:
+            case ast.FunctionDef(name=name) | ast.AsyncFunctionDef(name=name):
+                if not name.startswith("_"):
+                    names.add(name)
+            case ast.ClassDef(name=name):
+                if not name.startswith("_"):
+                    names.add(name)
+            case ast.Assign(targets=targets):
+                for t in targets:
+                    if isinstance(t, ast.Name) and not t.id.startswith("_"):
+                        names.add(t.id)
+            case ast.AnnAssign(target=ast.Name(id=name)):
+                if not name.startswith("_"):
+                    names.add(name)
+    return names
+
+
+def _validate_plan_coverage(
+    source_defs: set[str], modules: list[dict]
+) -> list[str]:
+    """Check every public source definition is assigned to exactly one module.
+
+    Returns a list of human-readable issue strings (empty = no issues).
+    """
+    assignment: dict[str, list[str]] = defaultdict(list)
+    for m in modules:
+        file_path = m.get("file_path", m.get("path", "?"))
+        for d in m.get("definitions", []):
+            assignment[d].append(file_path)
+
+    issues: list[str] = []
+    plan_defs = set(assignment)
+
+    for name in sorted(source_defs - plan_defs):
+        issues.append(f"MISSING: `{name}` is in the source but not assigned to any module")
+
+    for name in sorted(plan_defs - source_defs):
+        issues.append(f"PHANTOM: `{name}` is in the plan but not found in the source")
+
+    for name, locations in sorted(assignment.items()):
+        if len(locations) > 1:
+            joined = ", ".join(f"`{p}`" for p in locations)
+            issues.append(f"DUPLICATE: `{name}` appears in multiple modules: {joined}")
+
+    return issues
+
+
+def _write_structural_plan(
+    plan_path: Path, target: Path, plan_data: dict, consumers: list[ConsumerInfo]
+) -> None:
+    """Format finalize JSON into structural plan for a Cursor agent."""
+    plan_data = _normalize_plan_data(plan_data)
+
+    source_defs = _extract_source_definitions(target)
+    coverage_issues = _validate_plan_coverage(source_defs, plan_data.get("modules", []))
+    if coverage_issues:
+        print(f"  WARNING: {len(coverage_issues)} coverage issue(s) in plan:", file=sys.stderr)
+        for issue in coverage_issues:
+            print(f"    {issue}", file=sys.stderr)
+
+    lines: list[str] = [f"# Modularize Plan: {target}\n"]
+
+    if coverage_issues:
+        lines.append("## ⚠️ COVERAGE WARNINGS\n")
+        lines.append(
+            "The pipeline did not correctly assign all source definitions. "
+            "Resolve these before implementing:\n"
+        )
+        for issue in coverage_issues:
+            lines.append(f"- {issue}")
+        lines.append("")
+
+    improvements = plan_data.get("improvements", {})
+    has_improvements = any(
+        improvements.get(k) for k in improvements if isinstance(improvements.get(k), list)
+    )
+    if has_improvements:
+        lines.append("## IMPROVEMENTS\n")
+        lines.append(
+            "Apply these improvements during modularization. Each is independently "
+            "valuable — they can also be applied without splitting the file.\n"
+        )
+        category_labels = {
+            "delete": "DELETE — Remove dead code",
+            "deduplicate": "DEDUPLICATE — Extract shared patterns",
+            "simplify": "SIMPLIFY — Replace verbose constructions",
+            "standardize": "STANDARDIZE — Fix API inconsistencies",
+        }
+        for key, label in category_labels.items():
+            items = improvements.get(key, [])
+            if items:
+                lines.append(f"### {label}\n")
+                for item in items:
+                    if isinstance(item, dict):
+                        desc = item.get("description", item.get("type", ""))
+                        fix = item.get("fix", "")
+                        funcs = item.get("functions", [])
+                        target = ", ".join(f"`{f}`" for f in funcs) if funcs else ""
+                        line = f"- {desc}"
+                        if target:
+                            line += f" [{target}]"
+                        if fix:
+                            line += f"\n  - **Action**: {fix}"
+                        lines.append(line)
+                    else:
+                        lines.append(f"- {item}")
+                lines.append("")
+
+    modules = plan_data.get("modules", [])
+    if modules:
+        lines.append("## MODULES\n")
+        for m in modules:
+            file_path = m.get("file_path", "")
+            description = m.get("description", "")
+            definitions = m.get("definitions", [])
+            estimated_sloc = m.get("estimated_sloc", 0)
+            sloc_suffix = f" (~{estimated_sloc} SLOC)" if estimated_sloc else ""
+            lines.append(f"### `{file_path}`{sloc_suffix}\n")
+            if description:
+                lines.append(f"{description}\n")
+            lines.append("Definitions:")
+            for d in definitions:
+                lines.append(f"- `{d}`")
+            lines.append("")
+
+    if consumers:
+        lines.append("## KNOWN CONSUMERS\n")
+        lines.append(
+            "The agent should also `grep` for all imports from the original module "
+            "to find consumers not listed here.\n"
+        )
+        for c in consumers:
+            lines.append(f"- `{c.path}` ({c.import_count} imports)")
+        lines.append("")
+
+    lines.append("## IMPLEMENTATION NOTES\n")
+    lines.append("- Read the original file and extract the listed definitions into each module")
+    lines.append("- Create `__init__.py` that re-exports all public names for backward compatibility")
+    lines.append("- Find all consumer files via grep and verify imports resolve")
+    lines.append("- Run `ruff check` and `python -m compileall` on all affected files")
+    lines.append("")
+
+    plan_path.write_text("\n".join(lines))
+
+
+def _run_plan(
+    target: Path,
+    consumers: list[ConsumerInfo],
+    project_root: Path,
+    dry_run: bool,
+) -> Path:
+    """Generate structural modularization plan via pipeline."""
+    sloc = _count_sloc(target)
+    if sloc <= 300:
+        print(f"{target} is {sloc} SLOC — within limits")
+        sys.exit(0)
+
+    functions, classes = _count_definitions(target)
+    user_message = _build_user_message(target, sloc, functions, classes, consumers)
+
+    plan_path = _plan_output_path(target, project_root)
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if dry_run:
+        print(f"Would POST to pipeline 'modularize' with {len(user_message)} chars")
+        return plan_path
+
+    print(f"Running modularize pipeline for {target}...", file=sys.stderr)
+    response = httpx.post(
+        "http://localhost:9999/v1/chat/completions",
+        json={
+            "model": "modularize",
+            "messages": [{"role": "user", "content": user_message}],
+            "stream": False,
+        },
+        timeout=600.0,
+    )
+    response.raise_for_status()
+
+    result = response.json()
+    content = result["choices"][0]["message"]["content"]
+    plan_data = json.loads(content)
+    _write_structural_plan(plan_path, target, plan_data, consumers)
+    return plan_path
+
+
+def _scan_cmd(args: argparse.Namespace) -> None:
+    """Execute scan subcommand."""
+    skip_patterns = ["__pycache__", ".venv", "node_modules", "tmp/", "pipelines.local/"]
+    files = _scan_directory(args.paths, skip_patterns)
+
+    output_path = Path("./tmp/modularize-scan.md")
+    _write_scan_report(files, output_path)
+
+    green = sum(1 for f in files if f.category == "green")
+    yellow = sum(1 for f in files if f.category == "yellow")
+    red = sum(1 for f in files if f.category == "red")
+
+    print(f"Scanned {len(files)} files:")
+    print(f"  ✅ Green (≤300): {green}")
+    print(f"  ⚠️  Yellow (301-400): {yellow}")
+    print(f"  🛑 Red (>400): {red}")
+    print(f"\nReport: {output_path}")
+
+
+def _plan_cmd(args: argparse.Namespace) -> None:
+    """Execute plan subcommand."""
+    if args.batch:
+        _plan_batch(args)
+        return
+
+    target = Path(args.file).resolve()
+    if not target.exists():
+        print(f"Error: {target} not found", file=sys.stderr)
+        sys.exit(1)
+
+    project_root = Path.cwd().resolve()
+    target_candidates = {target: _derive_import_candidates(target, project_root)}
+    consumers = _build_reverse_imports_for_many(target_candidates, project_root).get(
+        target, []
+    )
+
+    plan_path = _run_plan(target, consumers, project_root, args.dry_run)
+    if not args.dry_run:
+        print(f"Plan: {plan_path}")
+
+
+def _plan_batch(args: argparse.Namespace) -> None:
+    """Execute batch planning."""
+    skip_patterns = ["__pycache__", ".venv", "node_modules", "tmp/", "pipelines.local/"]
+    files = _scan_directory(args.paths, skip_patterns)
+
+    targets = [f for f in files if f.category == args.severity]
+    if not targets:
+        print(f"No {args.severity} files found")
+        return
+
+    print(
+        f"Generating plans for {len(targets)} {args.severity} files...", file=sys.stderr
+    )
+    project_root = Path.cwd()
+
+    # Build reverse-imports once for all targets in one pass
+    print("Building reverse-import graph...", file=sys.stderr)
+    target_candidates = {
+        target.path: _derive_import_candidates(target.path, project_root)
+        for target in targets
+    }
+    reverse_map = _build_reverse_imports_for_many(target_candidates, project_root)
+
+    for target in targets:
+        consumers = reverse_map.get(target.path, [])
+        _run_plan(target.path, consumers, project_root, False)
+
+    print(f"\nGenerated {len(targets)} plans in ./tmp/modularize-plans/")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Scan for SLOC violations and generate refactoring plans",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # scan
+    scan_parser = subparsers.add_parser("scan", help="Scan paths for SLOC violations")
+    scan_parser.add_argument("paths", nargs="+", help="Paths to scan")
+
+    # plan
+    plan_parser = subparsers.add_parser("plan", help="Generate refactoring plan")
+    plan_parser.add_argument("file", nargs="?", help="File to plan refactoring for")
+    plan_parser.add_argument(
+        "--dry-run", action="store_true", help="Show command without executing"
+    )
+    plan_parser.add_argument(
+        "--batch", action="store_true", help="Batch mode for multiple files"
+    )
+    plan_parser.add_argument(
+        "--severity",
+        choices=["red", "yellow"],
+        help="Severity filter for batch mode",
+    )
+    plan_parser.add_argument("paths", nargs="*", help="Paths for batch mode")
+
+    args = parser.parse_args()
+
+    if args.command == "scan":
+        _scan_cmd(args)
+    elif args.command == "plan":
+        if args.batch and not args.severity:
+            parser.error("--batch requires --severity")
+        if args.batch and not args.paths:
+            parser.error("--batch requires paths")
+        if not args.batch and not args.file:
+            parser.error("plan requires a file argument (or --batch)")
+        _plan_cmd(args)
+
+
+if __name__ == "__main__":
+    main()

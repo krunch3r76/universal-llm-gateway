@@ -32,6 +32,7 @@ logger = get_logger(__name__)
 
 _REFRESH_INTERVAL_S = 3600
 _MIN_REFRESH_S = 600
+_RETRY_INTERVAL_S = 30
 
 
 class CloudProxyCatalogPoller:
@@ -60,23 +61,25 @@ class CloudProxyCatalogPoller:
         self._client = httpx.AsyncClient(timeout=15.0)
         self._refresh_task: asyncio.Task[None] | None = None
         self._gateway_ids: list[str] = []
+        self._connected: bool = False
 
     async def startup(self) -> None:
         """Probe proxy health, fetch catalog, register virtual gateways."""
+        self._refresh_task = asyncio.create_task(
+            self._refresh_loop(), name="cloud-proxy-catalog-refresh"
+        )
+
         if not await self._probe_health():
             logger.warning(
                 "Cloud proxy not reachable at %s — no cloud models registered",
                 self._proxy_url,
             )
             await self._emit_unavailable("health probe failed at startup")
-            return
+        else:
+            await self._fetch_and_register()
+            self._connected = True
+            await self._emit_available()
 
-        await self._fetch_and_register()
-        await self._emit_available()
-
-        self._refresh_task = asyncio.create_task(
-            self._refresh_loop(), name="cloud-proxy-catalog-refresh"
-        )
         logger.info(
             "Cloud proxy catalog poller started: %d virtual gateway(s)",
             len(self._gateway_ids),
@@ -181,12 +184,23 @@ class CloudProxyCatalogPoller:
     async def _refresh_loop(self) -> None:
         """Periodically re-fetch the catalog from the proxy."""
         while True:
-            await asyncio.sleep(max(_REFRESH_INTERVAL_S, _MIN_REFRESH_S))
+            interval_s = (
+                _RETRY_INTERVAL_S
+                if not self._connected
+                else max(_REFRESH_INTERVAL_S, _MIN_REFRESH_S)
+            )
+            await asyncio.sleep(interval_s)
             try:
                 if not await self._probe_health():
+                    self._connected = False
                     await self._emit_unavailable("health probe failed during refresh")
                     continue
+
+                was_connected = self._connected
                 await self._fetch_and_register()
+                self._connected = True
+                if not was_connected:
+                    await self._emit_available()
             except Exception:
                 logger.exception("Error refreshing cloud proxy catalog")
 

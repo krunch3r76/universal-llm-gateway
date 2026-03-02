@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import math
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,20 +11,40 @@ from fastapi import FastAPI, HTTPException
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
 from services.rag.chunkers import Chunk, chunk_file
-from services.rag.config import load_config
+from services.rag.config import RagConfig, load_config
+from services.rag.directory_ops import find_removed_sources, index_directory_contents
 from services.rag.embeddings import embed_chunks, embed_query, wait_until_healthy
-from services.rag.events import RagShutdown, RagStarted
+from services.rag.events import (
+    RagScopeRejected,
+    RagScopeResolved,
+    RagScopesListed,
+    RagShutdown,
+    RagStarted,
+)
+from services.rag.indexing_helpers import (
+    all_ids_match_prefix,
+    check_pdf_duplicate,
+    file_hash,
+)
 from services.rag.models import (
-    DECAY_LAMBDA,
     ClearResponse,
     IndexDirectoryRequest,
     IndexDirectoryResponse,
     IndexRequest,
     IndexResult,
+    ScopeInfo,
+    ScopesResponse,
     SearchRequest,
     SearchResponse,
     SourceResponse,
     StatsResponse,
+)
+from services.rag.search_scope import (
+    apply_max_distance_filter,
+    apply_recency_sort,
+    apply_source_prefix_filter,
+    require_loaded_config,
+    resolve_scope_request,
 )
 from services.rag.watcher_manager import WatcherManager
 
@@ -41,6 +60,7 @@ _collection: chromadb.Collection | None = None
 _watcher_manager: WatcherManager | None = None
 _event_bus: EventBus | None = None
 _broadcaster: MinimalEventDebugBroadcaster | None = None
+_config: RagConfig | None = None
 
 # Serialize concurrent indexing of the same file path (watcher + API can race).
 _file_index_locks: dict[str, asyncio.Lock] = {}
@@ -57,7 +77,7 @@ def get_event_bus() -> EventBus | None:
 
 @app.on_event("startup")
 async def _startup() -> None:
-    global _chroma, _collection, _watcher_manager, _event_bus, _broadcaster
+    global _chroma, _collection, _watcher_manager, _event_bus, _broadcaster, _config
     store_path = Path.home() / ".rag" / "store"
     store_path.mkdir(parents=True, exist_ok=True)
     _chroma = chromadb.PersistentClient(path=str(store_path))
@@ -78,8 +98,8 @@ async def _startup() -> None:
     _event_bus.set_debug_broadcaster(_broadcaster)
     await _broadcaster.start_debug_server()
     await _event_bus.publish_async(RagStarted())
-    config = load_config()
-    if config.watch_directories:
+    _config = load_config()
+    if _config.watch_directories:
 
         async def _watcher_index_fn(
             path: Path, chunk_tokens: int | None
@@ -96,7 +116,7 @@ async def _startup() -> None:
                 "Embedding endpoint not healthy after timeout; "
                 "initial watcher sweep will be skipped for files requiring embedding"
             )
-        await _watcher_manager.start(config)
+        await _watcher_manager.start(_config)
 
 
 @app.on_event("shutdown")
@@ -116,53 +136,6 @@ async def _shutdown() -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _file_hash(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _all_ids_match_prefix(ids: list[str], prefix: str) -> bool:
-    return bool(ids) and all(id_.startswith(f"{prefix}-") for id_ in ids)
-
-
-def _matches_source_prefix(source: str, prefixes: list[str]) -> bool:
-    """Check if a chunk's source path starts with any of the given prefixes."""
-    return any(source.startswith(prefix) for prefix in prefixes)
-
-
-def _check_pdf_duplicate(
-    collection: chromadb.Collection,
-    pdf_hash: str,
-    source: str,
-) -> IndexResult | None:
-    """Return IndexResult if pdf_hash already exists under a different source path."""
-    try:
-        existing = collection.get(
-            where={"pdf_hash": pdf_hash},
-            include=["metadatas"],
-            limit=1,
-        )
-    except Exception:
-        return None
-    for meta in existing.get("metadatas") or []:
-        if isinstance(meta, dict):
-            existing_source = meta.get("source")
-            if isinstance(existing_source, str) and existing_source != source:
-                logger.info(
-                    "PDF duplicate detected: %s is duplicate of %s",
-                    source,
-                    existing_source,
-                )
-                return IndexResult(
-                    deleted=0,
-                    indexed=0,
-                    unchanged=True,
-                    file=source,
-                    duplicate=True,
-                    duplicate_of=existing_source,
-                )
-    return None
 
 
 _TOKEN_ESTIMATE = 4
@@ -190,20 +163,26 @@ async def _index_file_impl(
 ) -> IndexResult:
     """Inner implementation of file indexing (called with lock held)."""
     raw = file_path.read_bytes()
-    content_hash = _file_hash(raw)
+    content_hash = file_hash(raw)
     prefix = content_hash[:16]
 
     collection = _get_collection()
 
     if file_path.suffix.lower() == ".pdf":
-        dup_result = _check_pdf_duplicate(collection, content_hash, source)
+        dup_result = check_pdf_duplicate(collection, content_hash, source)
         if dup_result is not None:
+            if dup_result.duplicate_of is not None:
+                logger.info(
+                    "PDF duplicate detected: %s is duplicate of %s",
+                    source,
+                    dup_result.duplicate_of,
+                )
             return dup_result
 
     existing = collection.get(where={"source": source}, include=["metadatas"])
     existing_ids: list[str] = existing.get("ids", [])
 
-    if _all_ids_match_prefix(existing_ids, prefix):
+    if all_ids_match_prefix(existing_ids, prefix):
         return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
 
     existing_timestamps: dict[str, str] = {}
@@ -265,53 +244,43 @@ async def _index_file_impl(
 
 
 # ---------------------------------------------------------------------------
-# Scoring helpers
-# ---------------------------------------------------------------------------
-
-
-def _apply_recency(
-    distances: list[float],
-    metadatas: list[dict[str, str | int | float | bool]],
-    recency_weight: float,
-) -> list[float]:
-    """Re-score distances with optional recency decay.
-
-    ChromaDB distances are cosine distances (0 = identical, 2 = opposite).
-    Lower is better. Recency bonus subtracts from distance to boost recent items.
-
-    INV: recency_weight = 0.0 ⟹ distances unchanged
-    INV: ∀ chunk without date metadata: recency_bonus = 0.0 (no penalty, no boost)
-    INV: published_date takes priority over indexed_at when present
-    """
-    if recency_weight <= 0.0:
-        return distances
-
-    now = datetime.now(UTC)
-    result: list[float] = []
-    for dist, meta in zip(distances, metadatas, strict=True):
-        date_str = meta.get("published_date") or meta.get("indexed_at")
-        if not isinstance(date_str, str):
-            result.append(dist)
-            continue
-        try:
-            doc_date = datetime.fromisoformat(date_str)
-        except ValueError:
-            result.append(dist)
-            continue
-        days_old = max((now - doc_date).total_seconds() / 86400, 0.0)
-        recency_score = math.exp(-DECAY_LAMBDA * days_old)
-        adjusted = dist * (1 - recency_weight) - recency_weight * recency_score
-        result.append(adjusted)
-    return result
-
-
-# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
 
 @app.post("/search", response_model=SearchResponse)
 async def search(request: SearchRequest) -> SearchResponse:
+    original_scope = request.scope
+    try:
+        request = resolve_scope_request(request, _config)
+    except HTTPException as exc:
+        if (
+            _event_bus is not None
+            and original_scope is not None
+            and exc.status_code == 400
+        ):
+            available_scopes = sorted(_config.scopes) if _config is not None else []
+            asyncio.create_task(
+                _event_bus.publish_async_nowait(
+                    RagScopeRejected(
+                        scope=original_scope,
+                        reason="validation_error",
+                        available=available_scopes,
+                    )
+                )
+            )
+        raise
+
+    if original_scope is not None and _event_bus is not None:
+        resolved_prefixes = request.source_prefixes or []
+        asyncio.create_task(
+            _event_bus.publish_async_nowait(
+                RagScopeResolved(
+                    scope=original_scope, prefix_count=len(resolved_prefixes)
+                )
+            )
+        )
+
     collection = _get_collection()
     query_embedding = await embed_query(request.query)
 
@@ -331,41 +300,25 @@ async def search(request: SearchRequest) -> SearchResponse:
     )
     distances: list[float] = results["distances"][0] if results["distances"] else []
 
-    if request.source_prefixes:
-        filtered = [
-            (chunk, meta, dist)
-            for chunk, meta, dist in zip(chunks, metadatas, distances, strict=True)
-            if _matches_source_prefix(
-                str(meta.get("source", "")), request.source_prefixes
-            )
-        ]
-        chunks = [x[0] for x in filtered][: request.top_k]
-        metadatas = [x[1] for x in filtered][: request.top_k]
-        distances = [x[2] for x in filtered][: request.top_k]
-
-    # max_distance filters on raw cosine distances (scale-independent of recency)
-    if request.max_distance is not None:
-        filtered = [
-            (chunk, meta, dist)
-            for chunk, meta, dist in zip(chunks, metadatas, distances, strict=True)
-            if dist <= request.max_distance
-        ]
-        if filtered:
-            chunks = [x[0] for x in filtered]
-            metadatas = [x[1] for x in filtered]
-            distances = [x[2] for x in filtered]
-        else:
-            chunks, metadatas, distances = [], [], []
-
-    if request.recency_weight > 0.0 and chunks:
-        adjusted = _apply_recency(distances, metadatas, request.recency_weight)
-        sorted_triples = sorted(
-            zip(chunks, metadatas, distances, adjusted, strict=True),
-            key=lambda t: t[3],
-        )
-        chunks = [t[0] for t in sorted_triples]
-        metadatas = [t[1] for t in sorted_triples]
-        distances = [t[2] for t in sorted_triples]
+    chunks, metadatas, distances = apply_source_prefix_filter(
+        chunks=chunks,
+        metadatas=metadatas,
+        distances=distances,
+        source_prefixes=request.source_prefixes,
+        top_k=request.top_k,
+    )
+    chunks, metadatas, distances = apply_max_distance_filter(
+        chunks=chunks,
+        metadatas=metadatas,
+        distances=distances,
+        max_distance=request.max_distance,
+    )
+    chunks, metadatas, distances = apply_recency_sort(
+        chunks=chunks,
+        metadatas=metadatas,
+        distances=distances,
+        recency_weight=request.recency_weight,
+    )
 
     return SearchResponse(chunks=chunks, metadata=metadatas, distances=distances)
 
@@ -400,38 +353,23 @@ async def index_file(request: IndexRequest) -> IndexResult:
 async def index_directory(request: IndexDirectoryRequest) -> IndexDirectoryResponse:
     dir_path = _validate_directory(request.path)
     extensions = set(request.extensions or DEFAULT_EXTENSIONS)
-    total_indexed = 0
-    total_deleted = 0
-    total_unchanged = 0
-    total_duplicates = 0
-    file_count = 0
-
-    for root, _dirs, files in dir_path.walk():
-        for name in files:
-            file_path = root / name
-            if file_path.suffix.lower() not in extensions:
-                continue
-            try:
-                result = await _index_file(
-                    file_path,
-                    metadata_overrides=request.metadata_overrides,
-                )
-                total_indexed += result.indexed
-                total_deleted += result.deleted
-                if result.duplicate:
-                    total_duplicates += 1
-                elif result.unchanged:
-                    total_unchanged += 1
-                file_count += 1
-            except Exception as e:
-                logger.warning("Skipping %s: %s", file_path, e)
+    totals, _walked = await index_directory_contents(
+        dir_path=dir_path,
+        extensions=extensions,
+        index_file=_index_file,
+        metadata_overrides=request.metadata_overrides,
+        collect_walked_sources=False,
+        on_index_error=lambda file_path, exc: logger.warning(
+            "Skipping %s: %s", file_path, exc
+        ),
+    )
 
     return IndexDirectoryResponse(
-        indexed=total_indexed,
-        deleted=total_deleted,
-        unchanged=total_unchanged,
-        files=file_count,
-        duplicates=total_duplicates,
+        indexed=totals.indexed,
+        deleted=totals.deleted,
+        unchanged=totals.unchanged,
+        files=totals.files,
+        duplicates=totals.duplicates,
     )
 
 
@@ -448,66 +386,37 @@ async def reindex_directory(request: IndexDirectoryRequest) -> IndexDirectoryRes
     """Reindex a directory and remove chunks for deleted source files."""
     dir_path = _validate_directory(request.path)
     extensions = set(request.extensions or DEFAULT_EXTENSIONS)
-    total_indexed = 0
-    total_deleted = 0
-    total_unchanged = 0
-    total_duplicates = 0
-    file_count = 0
-    walked_sources: set[str] = set()
-
-    for root, _dirs, files in dir_path.walk():
-        for name in files:
-            file_path = root / name
-            if file_path.suffix.lower() not in extensions:
-                continue
-            walked_sources.add(str(file_path.resolve()))
-            try:
-                result = await _index_file(
-                    file_path,
-                    metadata_overrides=request.metadata_overrides,
-                )
-                total_indexed += result.indexed
-                total_deleted += result.deleted
-                if result.duplicate:
-                    total_duplicates += 1
-                elif result.unchanged:
-                    total_unchanged += 1
-                file_count += 1
-            except Exception as e:
-                logger.warning("Skipping %s: %s", file_path, e)
-
+    totals, walked_sources = await index_directory_contents(
+        dir_path=dir_path,
+        extensions=extensions,
+        index_file=_index_file,
+        metadata_overrides=request.metadata_overrides,
+        collect_walked_sources=True,
+        on_index_error=lambda file_path, exc: logger.warning(
+            "Skipping %s: %s", file_path, exc
+        ),
+    )
     collection = _get_collection()
-    all_meta = collection.get(include=["metadatas"])
-    metadata_rows = all_meta.get("metadatas") or []
-    dir_prefix = f"{dir_path.resolve()}/"
-
-    removed_sources = {
-        str(source)
-        for row in metadata_rows
-        if isinstance(row, dict)
-        for source in [row.get("source")]
-        if isinstance(source, str)
-        and source.startswith(dir_prefix)
-        and source not in walked_sources
-        and not Path(source).exists()
-    }
+    removed_sources = find_removed_sources(
+        collection=collection, dir_path=dir_path, walked_sources=walked_sources
+    )
 
     for source in removed_sources:
         stale = collection.get(where={"source": source}, include=[])
         stale_ids: list[str] = stale.get("ids", [])
         if stale_ids:
             collection.delete(ids=stale_ids)
-            total_deleted += len(stale_ids)
+            totals.deleted += len(stale_ids)
             logger.info(
                 "Removed stale chunks: source=%s deleted=%d", source, len(stale_ids)
             )
 
     return IndexDirectoryResponse(
-        indexed=total_indexed,
-        deleted=total_deleted,
-        unchanged=total_unchanged,
-        files=file_count,
-        duplicates=total_duplicates,
+        indexed=totals.indexed,
+        deleted=totals.deleted,
+        unchanged=totals.unchanged,
+        files=totals.files,
+        duplicates=totals.duplicates,
     )
 
 
@@ -543,6 +452,30 @@ def watch_status() -> list[dict[str, str | int | bool]]:
     if _watcher_manager is None:
         return []
     return _watcher_manager.get_status()
+
+
+@app.get("/scopes", response_model=ScopesResponse)
+def get_scopes() -> ScopesResponse:
+    loaded_config = require_loaded_config(_config)
+    if _event_bus is not None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # FastAPI can execute sync handlers in a worker thread where no
+            # event loop exists; scope listing should still succeed.
+            logger.debug("Skipping rag.scopes.listed event: no running event loop")
+        else:
+            loop.create_task(
+                _event_bus.publish_async_nowait(
+                    RagScopesListed(count=len(loaded_config.scopes))
+                )
+            )
+    return ScopesResponse(
+        scopes={
+            name: ScopeInfo(prefixes=scope.prefixes, description=scope.description)
+            for name, scope in loaded_config.scopes.items()
+        },
+    )
 
 
 @app.post("/clear", response_model=ClearResponse)

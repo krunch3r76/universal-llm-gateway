@@ -198,6 +198,9 @@ class PipelineContext:
     # Cleared per-key by DAGExecutor at each step boundary.
     _step_model_calls: dict[str, list[Any]] = field(default_factory=dict)
 
+    # Full conversation history (None for non-chat pipelines)
+    _messages: list[dict[str, Any]] | None = None
+
     @property
     def recorder(self):
         """Event recorder for pipeline observability. May be None if not configured."""
@@ -268,14 +271,15 @@ class PipelineContext:
 
     @property
     def source(self) -> SourceInput:
-        """
-        Pipeline input data as SourceInput object.
-
-        Wraps source_text for compatibility with PipelineContextProtocol.
-        """
+        """Pipeline input data as SourceInput object."""
         from ..schemas import SourceInput
 
-        return SourceInput(text=self.source_text)
+        return SourceInput(text=self.source_text, messages=self._messages)
+
+    @property
+    def messages(self) -> list[dict[str, Any]] | None:
+        """Full conversation history. None for non-chat requests."""
+        return self._messages
 
     @property
     def options(self) -> dict[str, Any]:

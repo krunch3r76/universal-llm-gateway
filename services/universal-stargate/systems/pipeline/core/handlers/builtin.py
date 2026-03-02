@@ -495,6 +495,171 @@ class BaseHandler(AbstractStepHandler):
             )
             raise
 
+    def _get_cloud_proxy_url(self, context: PipelineContext) -> str:
+        """Resolve cloud proxy URL from Stargate config, with safe default."""
+        proxy = getattr(context, "_proxy", None)
+        config = getattr(proxy, "config", None) if proxy else None
+        if config and hasattr(config, "get_cloud_proxy_config"):
+            raw_cfg = config.get_cloud_proxy_config() or {}
+            url = raw_cfg.get("url")
+            if isinstance(url, str) and url.strip():
+                return url.strip().rstrip("/")
+        return "http://localhost:8200"
+
+    async def _resolve_model_alias_async(
+        self,
+        model_id: str,
+        context: PipelineContext,
+        *,
+        step_name: str = "",
+    ) -> str:
+        """Async alias resolver with non-blocking cloud model selection."""
+        from ..events.inference import CloudModelResolutionFailed, CloudModelResolved
+        from ..execution.cloud_resolver import is_cloud_ref, resolve_cloud_ref_async
+
+        # Reuse existing optionsNs expansion logic.
+        if model_id.startswith("optionsNs."):
+            key = model_id[len("optionsNs.") :]
+            resolved = (context.options or {}).get(key)
+            if not resolved or not isinstance(resolved, str):
+                raise ValueError(
+                    f"model_ref '{model_id}' references optionsNs.{key} "
+                    f"but no string value found in pipeline options"
+                )
+            model_id = resolved
+
+        if is_cloud_ref(model_id):
+            cloud_proxy_url = self._get_cloud_proxy_url(context)
+            resolved, candidate_count = await resolve_cloud_ref_async(
+                model_id,
+                cloud_proxy_url=cloud_proxy_url,
+            )
+            recorder = context.recorder
+            if resolved is not None:
+                if recorder:
+                    recorder.emit(
+                        CloudModelResolved(
+                            step_name=step_name,
+                            requested_ref=model_id,
+                            resolved_model_id=resolved,
+                            cloud_proxy_url=cloud_proxy_url,
+                            candidate_count=candidate_count,
+                        )
+                    )
+                return resolved
+
+            if recorder:
+                recorder.emit(
+                    CloudModelResolutionFailed(
+                        step_name=step_name,
+                        requested_ref=model_id,
+                        cloud_proxy_url=cloud_proxy_url,
+                        reason="no_candidates_or_proxy_unavailable",
+                    )
+                )
+            raise KeyError(f"cloud resolver returned no models for '{model_id}'")
+
+        return self._resolve_model_alias(model_id, context)
+
+    def _check_context_feasibility(
+        self,
+        resolved_model_id: str,
+        messages: list[dict[str, str]],
+        step: StepConfig,
+        context: PipelineContext,
+        *,
+        system_prompt: str | None = None,
+        user_prompt: str = "",
+    ) -> None:
+        """Pre-flight: does the assembled prompt plausibly fit the model's context?
+
+        Uses a chars/4 heuristic (overestimates for English) and compares
+        against effective_context_per_slot (or total context_length).
+        On mismatch: emits ContextExceeded (recorder) + bus signal, emits a
+        failed ModelInvocation (preserving the 1:1 invariant), then raises
+        ContextExceededError.  No-ops when metadata is unavailable (fail-open).
+        """
+        from systems.routing.selection.catalog import get_model_context_metadata
+
+        proxy = getattr(context, "_proxy", None)
+        if not proxy:
+            return
+
+        gw_mgr = getattr(proxy, "gateway_manager", None)
+        fed_mgr = getattr(proxy, "federated_manager", None)
+        if not gw_mgr and not fed_mgr:
+            return
+
+        metadata = get_model_context_metadata(gw_mgr, fed_mgr)
+        model_meta = metadata.get(resolved_model_id)
+        if not model_meta:
+            return
+
+        total_chars = sum(len(m.get("content", "")) for m in messages)
+        estimated_tokens = total_chars // 4
+
+        ctx_len = model_meta.get("context_length", 0)
+        eff_ctx = model_meta.get("effective_context_per_slot", ctx_len)
+        if eff_ctx <= 0:
+            return
+
+        if estimated_tokens > eff_ctx:
+            from ..dag import ContextExceededError
+            from ..events.inference import ContextExceeded, ModelInvocation
+            from ..events.step import StepContextExceeded
+
+            recorder = context.recorder
+            if recorder:
+                recorder.emit(
+                    ContextExceeded(
+                        step_name=step.name,
+                        model_id=resolved_model_id,
+                        estimated_tokens=estimated_tokens,
+                        context_length=ctx_len,
+                        effective_context_per_slot=eff_ctx,
+                        prompt_chars=total_chars,
+                    )
+                )
+
+            error_msg = (
+                f"context_exceeded: ~{estimated_tokens} tokens "
+                f"vs {eff_ctx} context window"
+            )
+
+            # Preserve ModelInvocation 1:1 invariant
+            if recorder:
+                recorder.emit(
+                    ModelInvocation(
+                        step_name=step.name,
+                        model_id=resolved_model_id,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        error=error_msg,
+                        success=False,
+                    )
+                )
+
+            # Bus signal (Event, not PipelineEvent)
+            bus_event = StepContextExceeded(
+                pipeline_id=context.pipeline.name,
+                execution_id=context.execution_id,
+                step_name=step.name,
+                model_id=resolved_model_id,
+                estimated_tokens=estimated_tokens,
+                context_length=ctx_len,
+                effective_context_per_slot=eff_ctx,
+                prompt_chars=total_chars,
+            )
+            self._publish_bus_event(context, bus_event)
+
+            raise ContextExceededError(
+                step_name=step.name,
+                model_id=resolved_model_id,
+                estimated_tokens=estimated_tokens,
+                context_length=eff_ctx,
+                prompt_chars=total_chars,
+            )
+
     def _publish_bus_event(self, context: PipelineContext, event: Any) -> None:
         """
         Fire-and-forget publish to the global event bus (pipeline-events stream).
@@ -597,6 +762,7 @@ class BaseHandler(AbstractStepHandler):
             All data is per-call (no instance state mutation).
 
         Raises:
+            ContextExceededError: If prompt exceeds model context (pre-flight)
             ProxyClientError: If model call fails or response cannot be parsed
         """
         import time as _time
@@ -608,7 +774,9 @@ class BaseHandler(AbstractStepHandler):
         resolved_model_id = (
             model_id
             if model_id_is_resolved
-            else self._resolve_model_alias(model_id, context)
+            else await self._resolve_model_alias_async(
+                model_id, context, step_name=step.name
+            )
         )
 
         # Build messages
@@ -616,6 +784,16 @@ class BaseHandler(AbstractStepHandler):
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
+
+        # Pre-flight: reject prompts that obviously exceed the model's context
+        self._check_context_feasibility(
+            resolved_model_id,
+            messages,
+            step,
+            context,
+            system_prompt=system_prompt,
+            user_prompt=prompt,
+        )
 
         # Build generation params with filtering
         resolved = {

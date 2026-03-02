@@ -188,6 +188,12 @@ async def process_chat_completion(
     )
 
     if is_pipeline and chat_request.messages:
+        # Preserve full history before truncation for pipeline context.messages
+        request.state.pipeline_full_messages = [
+            msg.model_dump() if hasattr(msg, "model_dump") else msg
+            for msg in chat_request.messages
+        ]
+
         last_user_msg = next(
             (msg for msg in reversed(chat_request.messages) if msg.role == "user"), None
         )

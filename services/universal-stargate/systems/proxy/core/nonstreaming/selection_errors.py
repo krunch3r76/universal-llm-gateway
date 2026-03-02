@@ -103,6 +103,32 @@ def raise_no_feasible_gateway_error(
     )
 
 
+def raise_all_gateways_excluded_error(
+    model_id: str,
+    excluded_gateway_ids: list[str],
+) -> None:
+    """Raise non-retryable error when all gateways with the model have been excluded.
+
+    ∀ upstream failures: excluded gateways ⊇ gateways_with_model ⟹ fail immediately.
+    Retrying on the same failed gateway wastes the upstream budget without progress.
+    """
+    raise HTTPException(
+        status_code=get_http_status(ErrorCode.RESOURCE_UNAVAILABLE),
+        detail=error_envelope(
+            code=ErrorCode.RESOURCE_UNAVAILABLE,
+            message=(
+                f"All gateways for model {model_id} have returned upstream errors"
+            ),
+            source="master",
+            retryable=False,
+            data={
+                "model_id": model_id,
+                "excluded_gateways": excluded_gateway_ids,
+            },
+        ),
+    )
+
+
 def raise_load_failed_error(model_id: str, failed_gateways: list[str]) -> None:
     """Raise non-retryable error when model failed to load on all gateways."""
     raise HTTPException(
@@ -116,6 +142,24 @@ def raise_load_failed_error(model_id: str, failed_gateways: list[str]) -> None:
                 "model_id": str(model_id),
                 "failed_gateways": failed_gateways,
             },
+        ),
+    )
+
+
+def raise_insufficient_resources_error(model_id: str, reason: str) -> None:
+    """Non-retryable: model in catalog but hardware cannot load it even after eviction.
+
+    ∀ VRAM/RAM failure where can_fit_with_eviction also fails:
+    no idle models can free enough space → permanent hardware constraint.
+    """
+    raise HTTPException(
+        status_code=get_http_status(ErrorCode.RESOURCE_UNAVAILABLE),
+        detail=error_envelope(
+            code=ErrorCode.RESOURCE_UNAVAILABLE,
+            message=f"Model {model_id} cannot be served: insufficient resources",
+            source="master",
+            retryable=False,
+            data={"model_id": str(model_id), "reason": reason},
         ),
     )
 

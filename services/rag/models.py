@@ -11,6 +11,9 @@ class SearchRequest(BaseModel):
     recency_weight: float = 0.0
     max_distance: float | None = None  # None = return all (backward compat)
     source_prefixes: list[str] | None = None
+    scope: str | None = (
+        None  # Resolved to source_prefixes via config; mutually exclusive
+    )
 
 
 class SearchResponse(BaseModel):
@@ -60,3 +63,12 @@ class ClearResponse(BaseModel):
 class SourceResponse(BaseModel):
     chunks: list[str]
     metadata: list[dict[str, str | int | float | bool]]
+
+
+class ScopeInfo(BaseModel):
+    prefixes: list[str]
+    description: str
+
+
+class ScopesResponse(BaseModel):
+    scopes: dict[str, ScopeInfo]

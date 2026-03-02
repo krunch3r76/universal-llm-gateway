@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 _CONFIG_PATH = Path.home() / ".gateway" / "cloud-proxy.yaml"
 
 DEFAULT_PORT = 8200
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MAX_CONCURRENT = 5
 DEFAULT_REFRESH_INTERVAL_HOURS = 6
@@ -37,12 +38,17 @@ class ProviderConfig:
     allow_prefixes: list[str] = field(default_factory=list)
 
 
+DEFAULT_STARGATE_URL = "http://localhost:9999"
+
+
 @dataclass(slots=True, kw_only=True)
 class CloudProxyConfig:
     """Top-level cloud proxy configuration."""
 
     port: int = DEFAULT_PORT
+    host: str = DEFAULT_HOST
     providers: list[ProviderConfig] = field(default_factory=list)
+    stargate_url: str = DEFAULT_STARGATE_URL
 
 
 def _validate_base_url(provider: str, url: str) -> None:
@@ -156,10 +162,19 @@ def load_config(config_path: Path | None = None) -> CloudProxyConfig:
         logger.error("Invalid port in cloud proxy config: %r, using default", port)
         port = DEFAULT_PORT
 
+    host = raw.get("host", DEFAULT_HOST)
+    if not isinstance(host, str) or not host.strip():
+        logger.error("Invalid host in cloud proxy config: %r, using default", host)
+        host = DEFAULT_HOST
+
+    stargate_url = raw.get("stargate_url", DEFAULT_STARGATE_URL)
+    if not isinstance(stargate_url, str) or not stargate_url.strip():
+        stargate_url = DEFAULT_STARGATE_URL
+
     raw_providers = raw.get("providers", [])
     if not isinstance(raw_providers, list):
         logger.error("providers must be a list")
-        return CloudProxyConfig(port=port)
+        return CloudProxyConfig(port=port, host=host, stargate_url=stargate_url)
 
     providers: list[ProviderConfig] = []
     for entry in raw_providers:
@@ -167,4 +182,6 @@ def load_config(config_path: Path | None = None) -> CloudProxyConfig:
         if parsed is not None:
             providers.append(parsed)
 
-    return CloudProxyConfig(port=port, providers=providers)
+    return CloudProxyConfig(
+        port=port, host=host, providers=providers, stargate_url=stargate_url
+    )

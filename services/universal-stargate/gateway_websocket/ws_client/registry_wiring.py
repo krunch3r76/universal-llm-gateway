@@ -178,6 +178,7 @@ def build_handler_context(
         catalog=state.catalog,
         model_last_inference=state.model_last_inference,
         model_details=state.model_details,
+        measured_model_vram=state.measured_model_vram,
         # Resources (reservation-aware update via setter)
         _resources=state.resources,
         _resources_from_gateway_setter=state.update_resources_from_gateway,
@@ -203,6 +204,8 @@ def build_handler_context(
         on_heartbeat=on_heartbeat,
         on_resource_change=on_resource_change,
         on_telemetry_heartbeat=on_telemetry_heartbeat,
+        on_vram_drift=event_publisher.schedule_vram_drift,
+        can_report_vram_drift=state.can_report_vram_drift,
         # Model-specific callbacks (for concurrent load tracking)
         # CRITICAL: Pass dict by reference, not copy - use `is None` check
         model_loaded_callbacks=model_loaded_callbacks

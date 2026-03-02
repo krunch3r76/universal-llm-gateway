@@ -3,12 +3,15 @@
 Sends a free-form question with RAG-retrieved research context to local
 models via Stargate. Unlike ``consult`` (which requires a pipeline step
 fixture), ``ask`` takes any question and optionally enriches it with
-research findings before forwarding to one or more models.
+research findings before forwarding to one or more models.  Supports
+chained mode where models run sequentially, each reviewing the prior
+model's output.
 """
 
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -22,6 +25,24 @@ DEFAULT_ASK_MODELS: list[str] = [
     "qwen3-32b-awq-32768",
     "gpt-oss-20b-mxfp4-65536",
 ]
+
+_ASK_SELECT_TAGS: list[str] = ["general", "reasoning"]
+_ASK_SELECT_EXCLUDE_TAGS: list[str] = ["fast"]
+_ASK_SELECT_MIN_CONTEXT: int = 65536
+
+
+def resolve_ask_models(count: int = 2) -> list[str]:
+    """Pick ask models via cloud proxy, falling back to defaults."""
+    from .cloud_select import select_models
+
+    selected = select_models(
+        tags=_ASK_SELECT_TAGS,
+        exclude_tags=_ASK_SELECT_EXCLUDE_TAGS,
+        min_context=_ASK_SELECT_MIN_CONTEXT,
+        count=count,
+    )
+    return selected or DEFAULT_ASK_MODELS
+
 
 _SYSTEM_PROMPT = """\
 You are an AI assistant with deep expertise in LLM prompt engineering, \
@@ -75,6 +96,65 @@ def ask_models(
     model_order = {m: i for i, m in enumerate(target_models)}
     results.sort(key=lambda r: model_order.get(r.model_id, 999))
     return results
+
+
+def chain_ask(
+    question: str,
+    *,
+    models: list[str] | None = None,
+    rag_findings: list[str] | None = None,
+    stargate_url: str = DEFAULT_STARGATE_URL,
+    timeout: float = 300.0,
+    on_result: Callable[[ConsultResult, int, int], None] | None = None,
+) -> list[ConsultResult]:
+    """Send a question to models sequentially, each reviewing prior output.
+
+    Model 1 answers the question directly. Model 2+ receives the same
+    prompt augmented with all prior models' responses and a reviewer
+    directive.
+    """
+    target_models = models or DEFAULT_ASK_MODELS
+    base_prompt = _build_prompt(question, rag_findings)
+
+    results: list[ConsultResult] = []
+    for idx, mid in enumerate(target_models):
+        prompt = _augment_with_prior(base_prompt, results) if results else base_prompt
+        try:
+            result = _query_model(
+                model_id=mid,
+                user_prompt=prompt,
+                stargate_url=stargate_url,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            result = ConsultResult(model_id=mid, error=str(exc))
+        results.append(result)
+        if on_result:
+            on_result(result, idx, len(target_models))
+    return results
+
+
+def _augment_with_prior(
+    base_prompt: str,
+    prior_results: list[ConsultResult],
+) -> str:
+    """Append prior models' analyses and a reviewer directive to the prompt."""
+    sections: list[str] = [base_prompt]
+    for result in prior_results:
+        if result.error or not result.response_text:
+            continue
+        sections.append(
+            f"## Prior Analysis (by {result.model_id})\n{result.response_text}"
+        )
+    sections.append(
+        "## Your Role\n"
+        "You are a reviewer in a chained consultation. The analysis above was "
+        "produced by a prior model. Evaluate whether you agree with its "
+        "recommendations, identify any gaps or risks it missed, and propose "
+        "additional changes if warranted. Do not re-derive what the prior "
+        "analysis already covers correctly — focus on validation and augmentation."
+    )
+    return "\n\n".join(sections)
 
 
 def _build_prompt(

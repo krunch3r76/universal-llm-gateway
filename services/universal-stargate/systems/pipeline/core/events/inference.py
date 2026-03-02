@@ -40,3 +40,37 @@ class ModelInvocation(PipelineEvent):
     completion_tokens: int = 0
     success: bool = True
     metadata: dict[str, Any] | None = None
+
+
+@dataclass(slots=True, kw_only=True)
+class ContextExceeded(PipelineEvent):
+    """Emitted when estimated prompt tokens exceed the model's context window.
+
+    Pre-flight heuristic check (chars/4) that catches gross mismatches
+    before wasting an inference call.  Conservative — overestimates tokens
+    for English text, so borderline prompts still pass through.
+    """
+
+    estimated_tokens: int = 0
+    context_length: int = 0
+    effective_context_per_slot: int = 0
+    prompt_chars: int = 0
+
+
+@dataclass(slots=True, kw_only=True)
+class CloudModelResolved(PipelineEvent):
+    """Emitted when a ``cloud:`` model_ref resolves to a concrete model ID."""
+
+    requested_ref: str = ""
+    resolved_model_id: str = ""
+    cloud_proxy_url: str = ""
+    candidate_count: int = 0
+
+
+@dataclass(slots=True, kw_only=True)
+class CloudModelResolutionFailed(PipelineEvent):
+    """Emitted when ``cloud:`` model_ref resolution returns no candidates."""
+
+    requested_ref: str = ""
+    cloud_proxy_url: str = ""
+    reason: str = ""

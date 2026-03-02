@@ -243,6 +243,11 @@ _CLOUD_PROXY_CONFIG_TEMPLATE = """\
 
 port: 8200
 
+# Bind address. Default is loopback-only (127.0.0.1).
+# Set to a LAN interface IP (e.g. 192.168.1.x) or 0.0.0.0 to expose on the
+# local subnet. The cloud proxy holds API keys — do not expose to the internet.
+# host: "127.0.0.1"
+
 # providers:
 #   - provider: openrouter
 #     api_key_env: OPENROUTER_API_KEY
@@ -273,16 +278,33 @@ def read_cloud_proxy_port(config_path: Path | None = None) -> int:
     port field is absent/invalid.
     """
     path = config_path or (GATEWAY_DIR / "cloud-proxy.yaml")
+    default_port = 8200
     try:
-        import yaml
+        from services.universal_cloud_proxy.config import DEFAULT_PORT, load_config
 
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        port = raw.get("port", 8200)
-        if isinstance(port, int) and port > 0:
-            return port
+        default_port = DEFAULT_PORT
+        return load_config(path).port
     except Exception:
         logger.warning("Could not read port from %s — using default 8200", path)
-    return 8200
+    return default_port
+
+
+def read_cloud_proxy_host(config_path: Path | None = None) -> str:
+    """Read the host from cloud-proxy.yaml, defaulting to 127.0.0.1.
+
+    Tolerant: returns 127.0.0.1 if the file is missing, unparseable, or the
+    host field is absent/invalid.
+    """
+    path = config_path or (GATEWAY_DIR / "cloud-proxy.yaml")
+    default_host = "127.0.0.1"
+    try:
+        from services.universal_cloud_proxy.config import DEFAULT_HOST, load_config
+
+        default_host = DEFAULT_HOST
+        return load_config(path).host
+    except Exception:
+        logger.warning("Could not read host from %s — using default 127.0.0.1", path)
+    return default_host
 
 
 def is_relay_config(config_path: Path) -> bool:

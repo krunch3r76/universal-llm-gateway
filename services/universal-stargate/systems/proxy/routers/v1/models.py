@@ -8,6 +8,7 @@ from universal_logging import get_logger
 from systems.federation import get_federation_integration
 from systems.routing.selection.catalog import (
     get_activated_models_for_display,
+    get_model_context_metadata,
     get_model_source_map,
 )
 
@@ -43,22 +44,50 @@ def _get_gateway_stats(proxy: StargateProxy) -> dict[str, int]:
     }
 
 
-def _build_models_response(model_ids: list[str], pipeline_ids: list[str]) -> dict:
-    """Build OpenAI-compatible models list response."""
-    all_ids = sorted(set(model_ids) | set(pipeline_ids))
-    return {
-        "object": "list",
-        "data": [
+def _build_models_response(
+    model_ids: list[str],
+    pipeline_ids: list[str],
+    context_metadata: dict[str, dict[str, int]] | None = None,
+) -> dict:
+    """Build OpenAI-compatible models list response.
+
+    When *context_metadata* is provided, each model entry is enriched with
+    ``context_length`` and ``effective_context_per_slot`` (where known).
+
+    The ``type`` field distinguishes real inference models ("model") from
+    pipeline virtual IDs ("pipeline") so consumers can filter explicitly.
+    """
+    now = int(time.time())
+    data: list[dict] = []
+
+    for model_id in sorted(model_ids):
+        entry: dict = {
+            "id": model_id,
+            "object": "model",
+            "type": "model",
+            "owned_by": "universal-llm-gateway",
+            "permission": ["generate"],
+            "created": now,
+        }
+        if context_metadata:
+            meta = context_metadata.get(model_id)
+            if meta:
+                entry.update(meta)
+        data.append(entry)
+
+    for pipeline_id in sorted(pipeline_ids):
+        data.append(
             {
-                "id": model_id,
+                "id": pipeline_id,
                 "object": "model",
+                "type": "pipeline",
                 "owned_by": "universal-llm-gateway",
                 "permission": ["generate"],
-                "created": int(time.time()),
+                "created": now,
             }
-            for model_id in all_ids
-        ],
-    }
+        )
+
+    return {"object": "list", "data": data}
 
 
 def _build_debug_info(proxy: StargateProxy, stats: dict[str, int]) -> dict[str, dict]:
@@ -92,12 +121,18 @@ async def list_models(
     include_sources: bool = Query(
         False, description="Include source Stargates (debug)"
     ),
+    include_metadata: bool = Query(
+        False, description="Include context_length per model"
+    ),
 ):
     """
     List available models from Stargate pool.
 
     Returns activated models (filtered by activated_contexts).
     Routing can still use non-activated models if explicitly requested.
+
+    Pass ``?include_metadata=true`` to enrich each model entry with
+    ``context_length`` and ``effective_context_per_slot`` (where known).
     """
     request_start = time.time()
 
@@ -122,8 +157,16 @@ async def list_models(
             "Check gateway connectivity and federation config."
         )
 
+    # Collect context-length metadata when requested (no I/O — reads caches)
+    context_metadata = None
+    if include_metadata:
+        context_metadata = get_model_context_metadata(
+            proxy.gateway_manager,
+            proxy.federated_manager,
+        )
+
     # Build response
-    response = _build_models_response(model_ids, pipeline_ids)
+    response = _build_models_response(model_ids, pipeline_ids, context_metadata)
 
     if include_sources:
         response.update(_build_debug_info(proxy, stats))

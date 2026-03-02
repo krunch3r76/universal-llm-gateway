@@ -321,6 +321,19 @@ Payload: {
 }
 """
 
+FEDERATION_CATALOG_VRAM_DRIFT = "federation.catalog.vram.drift"
+"""
+VRAM drift detected: measured GPU VRAM diverges from catalog estimate by >5%.
+Emitted on RESOURCE_UPDATE when model_vram shows significant discrepancy.
+Payload: {
+    "gateway_id": str,    # Gateway where drift was observed
+    "model_id": str,      # Model with drifted VRAM
+    "measured_mb": int,   # Measured VRAM from nvidia-smi via RESOURCE_UPDATE
+    "catalog_mb": int,    # Catalog estimate from model registry
+    "drift_pct": float,   # |measured - catalog| / catalog * 100
+}
+"""
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Federation Events (signal naming: past-tense verbs per workspace policy)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -488,6 +501,24 @@ Payload: {
     "model_id": str,
     "gateway_constraints": list[dict]  # per-gateway constraint failures
     "excluded_gateway_ids": list[str]  # gateways excluded by retry logic
+}
+"""
+
+ROUTING_UPSTREAM_ALL_EXCLUDED = "routing.upstream.all.excluded"
+"""
+All gateways for a model have been excluded due to upstream (5xx) failures.
+
+Emitted immediately before failing non-retryably. Distinguishes "no alternative
+gateway" from retryable infeasibility — these requests should not be retried on
+the same gateway.
+
+Diagnostic query:
+    jq 'select(.signal == "routing.upstream.all.excluded")'
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "excluded_gateway_ids": list[str]  # gateways that returned upstream errors
 }
 """
 
@@ -1712,6 +1743,36 @@ def RoutingModelInfeasible(
 
 
 @event_factory
+def RoutingUpstreamAllExcluded(
+    request_id: str,
+    model_id: str,
+    excluded_gateway_ids: list[str],
+) -> Event:
+    """
+    Create ROUTING_UPSTREAM_ALL_EXCLUDED event.
+
+    All gateways for the model have been excluded due to upstream (5xx) failures.
+    Emitted immediately before a non-retryable fail-fast response.
+
+    Args:
+        request_id: Request that exhausted all gateways
+        model_id: Model whose gateways all failed upstream
+        excluded_gateway_ids: Gateways that returned upstream errors
+
+    Returns:
+        Event with RoutingUpstreamAllExcluded signal
+    """
+    return Event(
+        signal=ROUTING_UPSTREAM_ALL_EXCLUDED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "excluded_gateway_ids": excluded_gateway_ids,
+        },
+    )
+
+
+@event_factory
 def RoutingCapacityDivergence(
     request_id: str,
     model_id: str,
@@ -2252,6 +2313,27 @@ def FederationGatewayCatalogChanged(
     return Event(
         signal=FEDERATION_GATEWAY_CATALOG_CHANGED,
         payload=payload,
+    )
+
+
+@event_factory
+def create_catalog_vram_drift_event(
+    gateway_id: str,
+    model_id: str,
+    measured_mb: int,
+    catalog_mb: int,
+    drift_pct: float,
+) -> Event:
+    """Create FEDERATION_CATALOG_VRAM_DRIFT event."""
+    return Event(
+        signal=FEDERATION_CATALOG_VRAM_DRIFT,
+        payload={
+            "gateway_id": gateway_id,
+            "model_id": model_id,
+            "measured_mb": measured_mb,
+            "catalog_mb": catalog_mb,
+            "drift_pct": round(drift_pct, 2),
+        },
     )
 
 

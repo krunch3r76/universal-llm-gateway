@@ -37,7 +37,13 @@ scope_defaults:
     rag_recency_weight: 0.2
   research_rag_design:
     rag_recency_weight: 0.1
+  research_rag_code:
+    rag_recency_weight: 0.15
+  llm_foundations:
+    rag_recency_weight: 0.05
   project:
     rag_recency_weight: 0.0
   both:
+    rag_recency_weight: 0.1
+  all:
     rag_recency_weight: 0.1

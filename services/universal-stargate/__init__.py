@@ -17,6 +17,8 @@ API-BASED OPERATION:
 - Automatic failover and load balancing
 - Real-time configuration updates from gateway
 """
+from __future__ import annotations
+
 # middleware/
 # ├── proxy/
 # │   ├── __init__.py          # Package exports
@@ -26,24 +28,73 @@ API-BASED OPERATION:
 # ├── start_proxy.py          # Main entry point (used by service manager)
 # └── scripts/
 #     └── start-stargate.sh   # Service wrapper (recommended)
-
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
-# API-based components
-from .gateway_client import GatewayClient, GatewayConfig, ModelMetadata
-from .gateways import SingleGatewayManager
-from .personality_config import (
-    PersonalityConfig,
-    create_api_personality_config,
-    get_global_personality_config,
-)
-
-# Transformation system (new first-class system)
-from .systems.transformations import OutputFormat, TransformationEngine
+if TYPE_CHECKING:
+    from .gateway_client import GatewayClient, GatewayConfig, ModelMetadata
+    from .gateways import SingleGatewayManager
+    from .personality_config import (
+        PersonalityConfig,
+        create_api_personality_config,
+        get_global_personality_config,
+    )
+    from .systems.transformations import OutputFormat, TransformationEngine
 
 logger = get_logger(__name__)
+
+
+def __getattr__(name: str) -> Any:
+    """
+    Lazily resolve package exports.
+
+    This avoids import-time failures when test collection imports this module as a
+    plain file (without package context) while preserving public package exports.
+    """
+    if name in {"GatewayClient", "GatewayConfig", "ModelMetadata"}:
+        from .gateway_client import GatewayClient, GatewayConfig, ModelMetadata
+
+        mapping = {
+            "GatewayClient": GatewayClient,
+            "GatewayConfig": GatewayConfig,
+            "ModelMetadata": ModelMetadata,
+        }
+        return mapping[name]
+
+    if name == "SingleGatewayManager":
+        from .gateways import SingleGatewayManager
+
+        return SingleGatewayManager
+
+    if name in {
+        "PersonalityConfig",
+        "create_api_personality_config",
+        "get_global_personality_config",
+    }:
+        from .personality_config import (
+            PersonalityConfig,
+            create_api_personality_config,
+            get_global_personality_config,
+        )
+
+        mapping = {
+            "PersonalityConfig": PersonalityConfig,
+            "create_api_personality_config": create_api_personality_config,
+            "get_global_personality_config": get_global_personality_config,
+        }
+        return mapping[name]
+
+    if name in {"TransformationEngine", "OutputFormat"}:
+        from .systems.transformations import OutputFormat, TransformationEngine
+
+        mapping = {
+            "TransformationEngine": TransformationEngine,
+            "OutputFormat": OutputFormat,
+        }
+        return mapping[name]
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def get_global_middleware():
@@ -89,6 +140,9 @@ async def initialize_middleware(
         Dictionary containing initialized middleware components
     """
     from systems.proxy.utils import _normalize_gateway_config
+
+    from .gateways import SingleGatewayManager
+    from .personality_config import PersonalityConfig
 
     # Normalize to single GatewayConfig object (1:1 Stargate:Gateway relationship)
     gateway_config = _normalize_gateway_config(

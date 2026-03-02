@@ -78,6 +78,7 @@ class ModelUnloadedHandler(SyncMessageHandler):
         ctx.loaded_models.discard(model_id)
         _ = ctx.model_last_inference.pop(model_id, None)  # Cleanup cache
         _ = ctx.model_details.pop(model_id, None)  # Cleanup resource usage
+        _ = ctx.measured_model_vram.pop(model_id, None)  # Cleanup measured VRAM
         logger.info(f"Model unloaded on Gateway: {model_id}")
 
         if ctx.on_model_unloaded:

@@ -60,22 +60,24 @@ class Gateway:
     """
     Model details including last_inference_time and resource usage.
 
-    Populated by collect_gateways():
-    - When include_model_details=True: Full details from HTTP /api/v1/status/resources
-    - When include_model_details=False: Minimal details from WebSocket cache
-      (last_inference_time from MODEL_IDLE events, ram_usage=0, vram_usage=0)
+    Populated by collect_gateways() from WebSocket state (MODEL_LOADED, MODEL_IDLE
+    events) with fallback to model configuration catalog. Avoids blocking HTTP calls.
 
     Used by eviction planning to calculate staleness scores.
 
     Structure: {
         model_id: {
             "last_inference_time": float | None,
-            "vram_usage": int,  # MB (0 if from WebSocket cache)
-            "ram_usage": int,   # MB (0 if from WebSocket cache)
-            "status": str,
+            "vram_usage": int,  # MB, from cache or catalog
+            "ram_usage": int,   # MB, from cache or catalog
+            "status": str,      # "busy" or "loaded"
         }
     }
     """
+    model_measured_vram: dict[ModelId, int] = field(default_factory=dict)
+    """nvidia-smi-measured VRAM per loaded model.
+    Populated from RESOURCE_UPDATE model_vram. Empty until first RESOURCE_UPDATE.
+    Eviction planner prefers this over model_details."""
 
     # Optional metrics for advanced scoring
     health_score: float = 1.0

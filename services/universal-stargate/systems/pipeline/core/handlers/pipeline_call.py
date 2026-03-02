@@ -78,6 +78,18 @@ class PipelineCallHandler(AbstractStepHandler):
             if k.startswith("rag_") or k.startswith("scope_")
         }
         merged_options = {**step_options, **forwarded}
+        if pipeline_id == "rag-context" and "scope_options" not in merged_options:
+            try:
+                from pipelines.rag.scope_helpers import fetch_scope_options_text
+
+                merged_options["scope_options"] = fetch_scope_options_text()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "pipeline_call_v1 '%s': failed to inject scope_options "
+                    "for rag-context (%s)",
+                    step.id,
+                    exc,
+                )
 
         consumer_model_ref: str = step.get_domain_field("consumer_model_ref", "")
         if consumer_model_ref and context._registry is not None:

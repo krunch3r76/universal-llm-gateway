@@ -50,6 +50,7 @@ class AssessLoopConfig:
     assess_handler: str | None
     initial_action: str | None
     strip_xml_tags: list[str]
+    pre_label_paragraphs: bool
 
     @classmethod
     def from_step(cls, step: StepConfig) -> AssessLoopConfig:
@@ -74,6 +75,7 @@ class AssessLoopConfig:
             assess_handler=step.get_domain_field("assess_handler"),
             initial_action=step.get_domain_field("initial_action"),
             strip_xml_tags=step.get_domain_field("strip_xml_tags") or [],
+            pre_label_paragraphs=bool(step.get_domain_field("pre_label_paragraphs")),
         )
 
     @property
