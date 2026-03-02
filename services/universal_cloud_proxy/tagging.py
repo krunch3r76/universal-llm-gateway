@@ -4,6 +4,10 @@ Tags are derived from model ID patterns + modality. The mapping is
 intentionally conservative — only tag what the ID unambiguously signals.
 Shared by both browser (OpenRouter) and local (Stargate) catalog caches.
 
+Multimodal tags (vision, audio, video) indicate additional capabilities, not
+reduced text quality. They are included in selection results by default and
+only excluded when the caller explicitly passes them in exclude_tags.
+
 Quality tiers (0-3) rank models by cost/quality ratio:
   0 = free cloud junk, 1 = low, 2 = mid, 3 = high (sweet spot $5-30/M).
   Ultra-premium (>=$30/M) is capped to tier 2 — legacy/retiring models

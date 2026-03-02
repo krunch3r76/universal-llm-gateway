@@ -119,7 +119,7 @@ def CloudProxyBrowserSelectCompleted(  # noqa: N802
     min_context: int,
     modality_contains: str | None,
     max_completion_cost: float | None,
-    auto_excluded_multimodal: bool,
+    auto_excluded_multimodal: bool = False,
 ) -> Event:
     return Event(
         signal="cloud.proxy.browser.select.completed",

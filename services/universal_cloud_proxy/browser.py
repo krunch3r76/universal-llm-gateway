@@ -94,9 +94,9 @@ class BrowserCatalogCache:
         within the same tier.  Use ``sort_by="completion_cost"`` for
         deterministic cost-ascending ordering.
 
-        When the caller does not explicitly request multimodal capabilities,
-        models tagged vision/audio/video are auto-excluded to avoid paying
-        for unused features.
+        Multimodal models (vision/audio/video) are included by default —
+        multimodal capability does not diminish text quality. To exclude them,
+        pass ``exclude_tags=["vision", "audio", "video"]`` explicitly.
 
         Local models (source="local", cost=0) bypass min cost filters —
         those filters target free-tier cloud junk, not local resources.
@@ -104,15 +104,6 @@ class BrowserCatalogCache:
         candidates = self._models + (extra_models or [])
         _tags = set(tags) if tags else set()
         _excl = set(exclude_tags) if exclude_tags else set()
-
-        # Auto-exclude multimodal when caller didn't ask for it
-        _multimodal_tags = {"vision", "audio", "video"}
-        modality_filter = (modality_contains or "").lower()
-        requests_multimodal = bool(_tags & _multimodal_tags) or any(
-            signal in modality_filter for signal in _multimodal_tags
-        )
-        if not requests_multimodal:
-            _excl = _excl | _multimodal_tags
 
         results: list[dict[str, Any]] = []
         for m in candidates:

@@ -214,20 +214,47 @@ def ensure_bind_mount_dirs(
     return None
 
 
-def ensure_socket_dir() -> None:
+def ensure_socket_dir() -> str | None:
+    """Ensure /tmp/universal-protocol exists and is world-writable/traversable.
+
+    Returns an error message if the directory cannot be made world-writable,
+    None on success.  The container bind-mounts this directory and its appuser
+    (a different uid than the host user) writes a Unix socket into it — so the
+    directory must be world-writable, not just writable by the current host user.
+    """
+    import stat as stat_mod
+
     socket_dir = Path("/tmp/universal-protocol")
     socket_dir.mkdir(parents=True, exist_ok=True)
     try:
         socket_dir.chmod(0o777)
     except PermissionError:
-        logger.warning("Cannot chmod %s", socket_dir)
+        mode = stat_mod.S_IMODE(socket_dir.stat().st_mode)
+        logger.warning(
+            "Cannot chmod %s (current mode=%o, uid=%d)",
+            socket_dir,
+            mode,
+            socket_dir.stat().st_uid,
+        )
+    mode = stat_mod.S_IMODE(socket_dir.stat().st_mode)
+    world_writable = bool(mode & stat_mod.S_IWOTH)
+    world_executable = bool(mode & stat_mod.S_IXOTH)
+    if not (world_writable and world_executable):
+        return (
+            f"Socket directory {socket_dir} is not writable/traversable "
+            f"(owned by uid={socket_dir.stat().st_uid}, mode={oct(mode)}). "
+            f"Fix with: sudo chmod 777 {socket_dir}"
+        )
+    return None
 
 
 def ensure_relay_dirs(
     workspace_root: Path, node_id: str, model_path: Path
 ) -> str | None:
     """Ensure socket dir and bind-mount dirs for relay. Return error message or None."""
-    ensure_socket_dir()
+    err = ensure_socket_dir()
+    if err:
+        return err
     return ensure_bind_mount_dirs(workspace_root, node_id, model_path)
 
 

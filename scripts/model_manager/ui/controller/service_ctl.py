@@ -155,7 +155,9 @@ class ServiceController:
         if not compose_path.exists():
             return f"Compose file not found: {compose_path}"
 
-        ensure_socket_dir()
+        socket_dir_error = ensure_socket_dir()
+        if socket_dir_error:
+            return socket_dir_error
         node_env_path = ensure_node_env(self._root, node_id)
         node_env = load_env_file(node_env_path)
         model_path = Path(node_env.get("MODEL_PATH", str(Path.home() / ".models")))

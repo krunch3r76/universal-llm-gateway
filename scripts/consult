@@ -163,6 +163,33 @@ def _select_models_for_role(
     return None
 
 
+def _fetch_available_model_ids(
+    stargate_url: str,
+    *,
+    timeout: float = 5.0,
+) -> set[str] | None:
+    """Fetch currently exposed model IDs from Stargate /v1/models.
+
+    Returns None on transport/parse failure.
+    """
+    url = f"{stargate_url.rstrip('/')}/v1/models"
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(url)
+        resp.raise_for_status()
+        payload = resp.json()
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        if not isinstance(data, list):
+            return None
+        return {
+            model.get("id", "")
+            for model in data
+            if isinstance(model, dict) and isinstance(model.get("id"), str)
+        }
+    except Exception:
+        return None
+
+
 def _read_context_files(paths: list[str]) -> list[str]:
     """Read files and return formatted content blocks."""
     blocks: list[str] = []
@@ -480,6 +507,8 @@ def main() -> None:
               consult -r planner "Add per-model timeouts" -o plan.md
               consult --chain -r planner --models local cloud "complex question"
               consult --models qwen3-32b-awq-32768 google/gemini-2.5-pro "question"
+              consult --cloud-only -r reviewer -f myfile.py "question"
+              consult --cloud-only --models google/gemini-2.5-pro "question"
         """),
     )
     parser.add_argument("question", nargs="?", help="Question to consult on")
@@ -550,6 +579,15 @@ def main() -> None:
         metavar="TEXT",
         help="Custom reviewer directive for chained mode",
     )
+    parser.add_argument(
+        "--cloud-only",
+        action="store_true",
+        help=(
+            "Restrict to cloud models only (IDs containing '/'). "
+            "Errors if none are available — use to ensure cloud intelligence "
+            "rather than silently falling back to local GPU models."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -588,6 +626,40 @@ def main() -> None:
             target_models = (
                 REVIEWER_DEFAULT_MODELS if args.role == "reviewer" else DEFAULT_MODELS
             )
+    if args.cloud_only:
+        available_model_ids = _fetch_available_model_ids(args.stargate_url)
+        if available_model_ids is None:
+            parser.error(
+                "--cloud-only: failed to fetch available models from Stargate.\n"
+                f"  Check: curl -s {args.stargate_url}/v1/models"
+            )
+        available_cloud_models = {m for m in available_model_ids if "/" in m}
+        if not available_cloud_models:
+            parser.error(
+                "--cloud-only: no cloud models currently exposed by Stargate.\n"
+                "  Cloud proxy may be down."
+            )
+
+        cloud_models = [m for m in target_models if "/" in m]
+        local_excluded = [m for m in target_models if "/" not in m]
+        if not cloud_models:
+            parser.error(
+                "--cloud-only: selected models do not contain cloud IDs ('/').\n"
+                "  Pass --models with cloud IDs or enable cloud auto-select."
+            )
+        missing_cloud_models = [m for m in cloud_models if m not in available_cloud_models]
+        if missing_cloud_models:
+            parser.error(
+                "--cloud-only: selected cloud models are not currently available:\n"
+                f"  {', '.join(missing_cloud_models)}"
+            )
+        if local_excluded:
+            print(
+                f"--cloud-only: excluded local models: {', '.join(local_excluded)}",
+                file=sys.stderr,
+            )
+        target_models = cloud_models
+
     if args.chain and len(target_models) < 2:
         parser.error("--chain requires at least 2 models")
 

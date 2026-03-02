@@ -292,12 +292,6 @@ def register_browser_routes(
             sort_by=req.sort_by,
             extra_models=extra_models,
         )
-        multimodal_tags = {"vision", "audio", "video"}
-        modality_filter = (req.modality_contains or "").lower()
-        auto_excluded_multimodal = not (
-            bool(set(req.tags) & multimodal_tags)
-            or any(signal in modality_filter for signal in multimodal_tags)
-        )
         event_bus = get_event_bus()
         if event_bus is not None:
             await event_bus.publish_async(
@@ -309,7 +303,7 @@ def register_browser_routes(
                     min_context=req.min_context,
                     modality_contains=req.modality_contains,
                     max_completion_cost=req.max_completion_cost,
-                    auto_excluded_multimodal=auto_excluded_multimodal,
+                    auto_excluded_multimodal=False,
                 )
             )
         return JSONResponse(
