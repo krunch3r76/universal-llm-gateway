@@ -822,7 +822,7 @@ class PipelineRegistry:
         elif domain:
             msg_parts.append(
                 f"  Define in: <search_path>/{domain}/models.yaml "
-                "(pipeline had empty source_search_path; check pipelines.search_paths in stargate config).\n"
+                f"(pipeline had empty source_search_path; check pipelines.search_paths in stargate config).\n"
             )
         else:
             hint = (
