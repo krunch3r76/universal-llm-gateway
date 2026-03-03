@@ -29,18 +29,89 @@ steps:
     prompt_ref: consensus.v8.0.synthesize_initial
     max_batch_size: 15
     model_ref: qwen
+    generation_parameters:
+      response_format:
+        type: text
     timeout_seconds: 180
+
+  - name: extract_cited_sentences
+    type: generate
+    model_ref: qwen
+    prompt_ref: consensus.v8.0.extract_cited_sentences
+    handler_inputs:
+      artifact: synthesize_answer.json.sectioned_draft
+    generation_parameters:
+      temperature: 0.0
+      max_tokens: 4096
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            sentences:
+              type: array
+              items:
+                type: object
+                properties:
+                  section: {type: integer}
+                  text:    {type: string}
+                  citations: {type: array, items: {type: integer}}
+                required: [section, text, citations]
+          required: [sentences]
+    timeout_seconds: 60
+
+  - name: classify_drops
+    type: consensus_classify_drops_v8_0
+    handler_inputs:
+      verified_facts: group_facts.json.verified_facts
+      uncited_indices: synthesize_answer.json.excluded_without_reason
+      answer: synthesize_answer.json.answer
+    prompt_ref: consensus.v8.0.classify_drops
+    model_ref: qwen
+    generation_parameters:
+      temperature: 0.0
+      max_tokens: 512
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            drops:
+              type: object
+              additionalProperties:
+                type: string
+          required: [drops]
+    timeout_seconds: 30
 
   - name: identify_redundancy
     type: consensus_identify_redundancy_v8_0
     enabled: true
     handler_inputs:
+      extracted_sentences: extract_cited_sentences.json.sentences
       answer: synthesize_answer.json.answer
       batch_texts: synthesize_answer.json.batch_texts
       question: inputs.question
     system_prompt_ref: consensus.v8.0.identify_redundancy_context
     prompt_ref: consensus.v8.0.identify_redundancy_initial
     model_ref: qwen
+    generation_parameters:
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            merge_groups:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  theme:    {type: string}
+                  sections: {type: array, items: {type: integer}}
+                  citations: {type: array, items: {type: integer}}
+                required: [theme, sections, citations]
+          required: [merge_groups]
     timeout_seconds: 60
 
   - name: reorganize_answer
@@ -49,11 +120,14 @@ steps:
       answer: synthesize_answer.json.answer
       question: inputs.question
       incorporated: synthesize_answer.json.incorporated
-      excluded_with_reason: synthesize_answer.json.excluded_with_reason
+      excluded_with_reason: classify_drops.json.excluded_with_reason
       merge_groups: identify_redundancy.json.merge_groups
     system_prompt_ref: consensus.v8.0.reorganize_context
     prompt_ref: consensus.v8.0.reorganize_initial
     model_ref: ministral_3_8b
+    generation_parameters:
+      response_format:
+        type: text
     timeout_seconds: 120
 
   - name: classify_restrictions
@@ -137,7 +211,7 @@ steps:
       artifact: c4_enforce.raw
     generation_parameters:
       temperature: 0.0
-      max_tokens: 1024
+      max_tokens: 4096
       response_format:
         type: json_object
         schema:
@@ -206,6 +280,8 @@ steps:
     generation_parameters:
       temperature: 0.0
       max_tokens: 4096
+      response_format:
+        type: text
     timeout_seconds: 60
 
 output: post_coherence_repair

@@ -56,6 +56,28 @@ steps:
     type: consensus_contextualize_v8_0
     model_pool: optionsNs.contextualize_pool
     chunk_size: 16
+    generation_parameters:
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          additionalProperties: false
+          properties:
+            claims:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  index:
+                    type: integer
+                  context:
+                    type: string
+                required:
+                  - index
+                  - context
+          required:
+            - claims
     handler_inputs:
       claims: atomicity_gate.json.claims
       question: inputs.question

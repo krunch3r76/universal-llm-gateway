@@ -223,23 +223,30 @@ def _check_resources(
             else ""
         )
 
+        total_info = (
+            f", hw_total={gateway.vram_total_mb}MB" if gateway.vram_total_mb > 0 else ""
+        )
         logger.warning(
             f"❌ RESOURCE CHECK FAILED (VRAM): {placement.model_id} "
             f"on {gateway.name} | "
             f"Need {vram_needed}MB{margin_info}, "
             f"Available {effective_vram_free}MB "
-            f"(hardware={gateway.vram_free_mb}MB{reserved_info})"
+            f"(hw_free={gateway.vram_free_mb}MB{total_info}{reserved_info})"
         )
 
+        reason_total = (
+            f", hw_total={gateway.vram_total_mb}MB" if gateway.vram_total_mb > 0 else ""
+        )
         return False, ConstraintFailure(
             constraint="has_enough_vram",
             reason=(
                 f"Insufficient VRAM: {effective_vram_free}MB effective free "
-                f"(hardware: {gateway.vram_free_mb}MB{reserved_info}) "
+                f"(hw_free={gateway.vram_free_mb}MB{reason_total}{reserved_info}) "
                 f"< {vram_needed}MB needed{margin_info}"
             ),
             details={
                 "vram_free_hardware": gateway.vram_free_mb,
+                "vram_total_hardware": gateway.vram_total_mb,
                 "vram_reserved_loading": vram_reserved,
                 "vram_free_effective": effective_vram_free,
                 "vram_needed": vram_needed,
@@ -259,18 +266,21 @@ def _check_resources(
         )
 
         margin_info = f" (+ {ram_margin_pct}% margin)" if ram_margin_pct > 0 else ""
+        total_ram_info = (
+            f", hw_total={gateway.ram_total_mb}MB" if gateway.ram_total_mb > 0 else ""
+        )
         logger.warning(
             f"❌ RESOURCE CHECK FAILED (RAM): {placement.model_id} on {gateway.name} | "
             f"Need {ram_needed}MB{margin_info}, "
             f"Available {effective_ram_free}MB "
-            f"(hardware={gateway.ram_free_mb}MB{reserved_info})"
+            f"(hw_free={gateway.ram_free_mb}MB{total_ram_info}{reserved_info})"
         )
 
         return False, ConstraintFailure(
             constraint="has_enough_ram",
             reason=(
                 f"Insufficient RAM: {effective_ram_free}MB effective free "
-                f"(hardware: {gateway.ram_free_mb}MB{reserved_info}) "
+                f"(hw_free={gateway.ram_free_mb}MB{total_ram_info}{reserved_info}) "
                 f"< {ram_needed}MB needed"
             ),
             details={

@@ -208,9 +208,7 @@ class PipelineContext:
 
     def record_model_call(self, call_result: Any, step_name: str) -> None:
         """Record a model call for automatic token aggregation."""
-        if step_name not in self._step_model_calls:
-            self._step_model_calls[step_name] = []
-        self._step_model_calls[step_name].append(call_result)
+        self._step_model_calls.setdefault(step_name, []).append(call_result)
 
     def drain_step_calls(self, step_name: str) -> list[Any]:
         """Return and clear calls recorded for step_name. DAGExecutor only."""
@@ -235,7 +233,6 @@ class PipelineContext:
         return dataclasses.replace(
             self,
             map_iteration_request_id=map_iteration_request_id,
-            _step_model_calls={},  # Fresh dict per map iteration
         )
 
     def with_map_state(self, map_state: MapIterationState) -> PipelineContext:
@@ -250,7 +247,7 @@ class PipelineContext:
         Returns:
             Shallow copy of context with _map_state set
         """
-        return dataclasses.replace(self, _map_state=map_state, _step_model_calls={})
+        return dataclasses.replace(self, _map_state=map_state)
 
     def get_proxy_client(self) -> ProxyClient:
         """

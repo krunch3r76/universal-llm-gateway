@@ -1,0 +1,18 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Llama-3.1-SuperNova-Lite-Q8_0
+  format: gguf
+  arch: llama
+  quant: Q8_0
+  parameters_m: 10200
+  training_context_length: 131072
+  supports_chat_history: true
+  input_schema: messages
+download:
+  huggingface:
+    repo: bartowski/Llama-3.1-SuperNova-Lite-GGUF
+    verified: true
+    file: Llama-3.1-SuperNova-Lite-Q8_0.gguf
+  size_bytes: 8540771680
+  sha256: 7df396d8be755ce434a73e2511f8d3c4abe4490db66afe2a40ef00a8d8b9ef5b

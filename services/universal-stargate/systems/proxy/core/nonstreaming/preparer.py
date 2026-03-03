@@ -248,6 +248,15 @@ class RequestPreparer:
                 logger.error(f"❌ JSON Schema validation failed: {e.message}")
                 raise HTTPException(status_code=400, detail=error_detail)
 
+            # Adapt response_format to target engine (GGUF keeps json_object; vLLM gets json_schema)
+            from ...validation.response_format_converter import (
+                convert_response_format_for_engine,
+            )
+
+            original_request["response_format"] = convert_response_format_for_engine(
+                selected_model_str, original_request["response_format"]
+            )
+
         user_params = {
             field_name: field_value
             for field_name, field_value in raw_client_fields.items()

@@ -17,6 +17,7 @@ chain-v7.yaml (top-level):
 synthesize/synthesize.yaml:
   group_facts           consensus_group_facts_v8_0              group_facts.py
   synthesize_answer     consensus_synthesize_batched_v8_0       synthesize_batched.py
+  classify_drops        consensus_classify_drops_v8_0           classify_drops.py
   identify_redundancy   consensus_identify_redundancy_v8_0      identify_redundancy.py
   reorganize_answer     consensus_reorganize_v8_0               reorganize_answer.py
   find_uncited_filter   consensus_find_uncited_filter_v8_0      find_uncited_filter.py
@@ -44,6 +45,7 @@ from .assert_then_revise import AssertThenReviseHandler
 from .citation_coverage import (
     citation_coverage_check as _citation_coverage_check,  # noqa: F401
 )
+from .classify_drops import ClassifyDropsHandler
 from .filter_negatives import FilterNegativesHandler
 from .filter_orphans import FilterOrphansHandler
 from .find_uncited_filter import FindUncitedFilterHandler
@@ -104,6 +106,11 @@ def register_handlers(router) -> None:
         "consensus",
         "consensus_assert_then_revise_v8_0",
         AssertThenReviseHandler,
+    )
+    router.register_domain_handler_class(
+        "consensus",
+        "consensus_classify_drops_v8_0",
+        ClassifyDropsHandler,
     )
 
     register_verify_handlers(router)

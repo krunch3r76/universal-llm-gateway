@@ -221,7 +221,7 @@ def parse_batch_verdicts_chain(
 
     evaluations = parsed.get("evaluations")
     if not isinstance(evaluations, list):
-        if expected_count == 1 and "verdict" in parsed:
+        if expected_count == 1 and "factual" in parsed and "specific" in parsed:
             logger.warning(
                 "Chain verify batch: model returned bare verdict object for single claim, wrapping in array"
             )
@@ -299,9 +299,10 @@ def parse_batch_verdicts_chain(
 
     # Normalize: some models return reasoning as nested object instead of string
     for ev in evaluations:
-        reasoning = ev.get("reasoning")
-        if reasoning is not None and not isinstance(reasoning, str):
-            ev["reasoning"] = json.dumps(reasoning, ensure_ascii=False)
+        for key in ("factual_reasoning", "specific_reasoning"):
+            val = ev.get(key)
+            if val is not None and not isinstance(val, str):
+                ev[key] = json.dumps(val, ensure_ascii=False)
 
     return evaluations
 
@@ -368,10 +369,18 @@ async def verify_batch_chunked(
                             "type": "object",
                             "properties": {
                                 "index": {"type": "integer"},
-                                "verdict": {"type": "boolean"},
-                                "reasoning": {"type": "string"},
+                                "factual": {"type": "boolean"},
+                                "factual_reasoning": {"type": "string"},
+                                "specific": {"type": "boolean"},
+                                "specific_reasoning": {"type": "string"},
                             },
-                            "required": ["index", "verdict", "reasoning"],
+                            "required": [
+                                "index",
+                                "factual",
+                                "factual_reasoning",
+                                "specific",
+                                "specific_reasoning",
+                            ],
                         },
                     }
                 },
@@ -408,8 +417,15 @@ async def verify_batch_chunked(
             raise
         results_list: list[dict[str, Any]] = []
         for item, eval_data in zip(chunk.items, evaluations, strict=True):
-            verdict = normalize_verdict(eval_data.get("verdict"))
-            reasoning = eval_data.get("reasoning", "")
+            factual = normalize_verdict(eval_data.get("factual"))
+            specific = normalize_verdict(eval_data.get("specific"))
+            verdict = factual and specific
+            f_r = eval_data.get("factual_reasoning", "")
+            s_r = eval_data.get("specific_reasoning", "")
+            reasoning = (
+                f"[FACTUAL: {'PASS' if factual else 'FAIL'}] {f_r} "
+                f"| [SPECIFIC: {'PASS' if specific else 'FAIL'}] {s_r}"
+            )
             results_list.append(
                 {
                     "statement_id": item.get("statement_id", ""),

@@ -6,6 +6,12 @@ Reads fact_clusters from group_facts, merges small adjacent clusters
 into batches ≤ max_batch_size, calls the synthesis prompt per batch
 with original global indices, then concatenates prose and aggregates
 citation coverage stats.
+
+Drop classification is intentionally excluded from this step. The model
+only writes prose with inline citations. A downstream classify_drops step
+classifies any uncited facts using the full combined prose as context,
+which is more accurate than per-batch classification where cross-batch
+coverage is invisible.
 """
 
 from __future__ import annotations
@@ -28,9 +34,6 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _BRACKET_RE = re.compile(r"\[[\d,\s]+\]")
-_DROPPED_SPLIT_RE = re.compile(r"\n?DROPPED FACTS:\s*")
-_DROPPED_LINE_RE = re.compile(r"^\[([\d,\s]+)\]\s*(.+)", re.MULTILINE)
-
 _DEFAULT_MAX_BATCH_SIZE = 15
 
 
@@ -41,16 +44,23 @@ def _merge_clusters_into_batches(
     """Merge adjacent clusters into batches of at most max_size facts.
 
     Walks clusters in order; appends each cluster to the current batch
-    if it fits, otherwise starts a new batch. A single cluster larger
-    than max_size becomes its own batch (never split mid-cluster).
+    if it fits, otherwise starts a new batch. Clusters that individually
+    exceed max_size are split into consecutive sub-batches of max_size.
     """
     batches: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     for cluster in clusters:
-        if current and len(current) + len(cluster) > max_size:
-            batches.append(current)
-            current = []
-        current.extend(cluster)
+        if len(cluster) > max_size:
+            if current:
+                batches.append(current)
+                current = []
+            for i in range(0, len(cluster), max_size):
+                batches.append(cluster[i : i + max_size])
+        else:
+            if current and len(current) + len(cluster) > max_size:
+                batches.append(current)
+                current = []
+            current.extend(cluster)
     if current:
         batches.append(current)
     return batches
@@ -69,11 +79,6 @@ def _format_batch_facts(
     return "\n".join(lines)
 
 
-def _extract_prose(text: str) -> str:
-    parts = _DROPPED_SPLIT_RE.split(text, maxsplit=1)
-    return parts[0].rstrip()
-
-
 def _extract_indices(text: str) -> set[int]:
     indices: set[int] = set()
     for bracket in _BRACKET_RE.findall(text):
@@ -81,23 +86,12 @@ def _extract_indices(text: str) -> set[int]:
     return indices
 
 
-def _parse_dropped(text: str) -> dict[int, str]:
-    parts = _DROPPED_SPLIT_RE.split(text, maxsplit=1)
-    if len(parts) < 2:
-        return {}
-    dropped_text = parts[1]
-    if dropped_text.strip().lower() == "none":
-        return {}
-    result: dict[int, str] = {}
-    for m in _DROPPED_LINE_RE.finditer(dropped_text):
-        reason = m.group(2).strip()
-        for idx in re.findall(r"\d+", m.group(1)):
-            result[int(idx)] = reason
-    return result
-
-
 class SynthesizeBatchedHandler(BaseHandler):
-    """Synthesize answer in batches sized for reliable citation tracking."""
+    """Synthesize answer in batches sized for reliable citation tracking.
+
+    Outputs incorporated (cited indices) and excluded_without_reason
+    (uncited indices). Drop classification is deferred to classify_drops.
+    """
 
     step_type: str = "consensus_synthesize_batched_v8_0"
 
@@ -136,7 +130,6 @@ class SynthesizeBatchedHandler(BaseHandler):
 
         prose_parts: list[str] = []
         all_incorporated: list[int] = []
-        all_excluded_with_reason: dict[int, str] = {}
         all_excluded_without_reason: list[int] = []
         total_pt = 0
         total_ct = 0
@@ -164,34 +157,25 @@ class SynthesizeBatchedHandler(BaseHandler):
             total_pt += result.prompt_tokens
             total_ct += result.completion_tokens
 
-            raw_text = result.content.strip()
-            prose = _extract_prose(raw_text)
+            prose = result.content.strip()
             if prose:
                 prose_parts.append(prose)
 
             incorporated = sorted(batch_expected & _extract_indices(prose))
-            dropped = _parse_dropped(raw_text)
-            excluded_wr = {
-                idx: reason
-                for idx, reason in dropped.items()
-                if idx in batch_expected and idx not in incorporated
-            }
-            excluded_nr = sorted(batch_expected - set(incorporated) - set(excluded_wr))
+            excluded_nr = sorted(batch_expected - set(incorporated))
 
             all_incorporated.extend(incorporated)
-            all_excluded_with_reason.update(excluded_wr)
             all_excluded_without_reason.extend(excluded_nr)
 
             global_offset += len(batch)
 
             logger.info(
-                "Step '%s' batch %d/%d: %d facts → inc=%d exc_wr=%d silent=%d",
+                "Step '%s' batch %d/%d: %d facts → inc=%d uncited=%d",
                 step.id,
                 batch_idx + 1,
                 len(batches),
                 len(batch),
                 len(incorporated),
-                len(excluded_wr),
                 len(excluded_nr),
             )
 
@@ -199,23 +183,31 @@ class SynthesizeBatchedHandler(BaseHandler):
         latency_ms = (time.monotonic() - start_time) * 1000
 
         logger.info(
-            "Step '%s': %d batches, %d facts → inc=%d exc_wr=%d silent=%d (%.0fms)",
+            "Step '%s': %d batches, %d facts → inc=%d uncited=%d (%.0fms)",
             step.id,
             len(batches),
             sum(len(b) for b in batches),
             len(all_incorporated),
-            len(all_excluded_with_reason),
             len(all_excluded_without_reason),
             latency_ms,
+        )
+
+        valid_prose = [t.strip() for t in prose_parts if t.strip()]
+        sectioned_draft = (
+            "\n\n".join(
+                f"=== SECTION {i + 1} ===\n{text}" for i, text in enumerate(valid_prose)
+            )
+            if valid_prose
+            else combined_prose
         )
 
         return StepOutput(
             raw=combined_prose,
             json={
                 "answer": combined_prose,
+                "sectioned_draft": sectioned_draft,
                 "batch_texts": prose_parts,
                 "incorporated": sorted(all_incorporated),
-                "excluded_with_reason": all_excluded_with_reason,
                 "excluded_without_reason": sorted(all_excluded_without_reason),
                 "batch_count": len(batches),
                 "batch_sizes": [len(b) for b in batches],

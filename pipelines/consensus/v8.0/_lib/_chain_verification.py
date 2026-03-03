@@ -240,10 +240,17 @@ async def _verify_batch_individual(
                 json_schema={
                     "type": "object",
                     "properties": {
-                        "verdict": {"type": "boolean"},
-                        "reasoning": {"type": "string"},
+                        "factual": {"type": "boolean"},
+                        "factual_reasoning": {"type": "string"},
+                        "specific": {"type": "boolean"},
+                        "specific_reasoning": {"type": "string"},
                     },
-                    "required": ["verdict", "reasoning"],
+                    "required": [
+                        "factual",
+                        "factual_reasoning",
+                        "specific",
+                        "specific_reasoning",
+                    ],
                 },
             )
 
@@ -258,8 +265,15 @@ async def _verify_batch_individual(
                 )
 
             parsed = json.loads(strip_json_fences(call_result.content))
-            verdict = normalize_verdict(parsed.get("verdict"))
-            reasoning = parsed.get("reasoning", "")
+            factual = normalize_verdict(parsed.get("factual"))
+            specific = normalize_verdict(parsed.get("specific"))
+            verdict = factual and specific
+            f_r = parsed.get("factual_reasoning", "")
+            s_r = parsed.get("specific_reasoning", "")
+            reasoning = (
+                f"[FACTUAL: {'PASS' if factual else 'FAIL'}] {f_r} "
+                f"| [SPECIFIC: {'PASS' if specific else 'FAIL'}] {s_r}"
+            )
         except Exception as e:
             logger.error("Chain verify: claim %d failed for %s: %s", idx, model_id, e)
             verdict = False

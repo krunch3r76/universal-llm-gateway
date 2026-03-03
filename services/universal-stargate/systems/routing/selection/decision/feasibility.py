@@ -29,48 +29,56 @@ def _can_fit_after_eviction_including_busy(
     gateway: Gateway,
     placement: Placement,
     requirements_lookup: Callable[[ModelId], tuple[int, int]],
-) -> bool:
-    """Return True iff model fits if ALL loaded models (incl. busy) could be evicted.
+    resource_margins: dict[str, float] | None = None,
+) -> tuple[bool, dict[str, int]]:
+    """Return True iff reclaimable resources can fit target after eviction.
 
-    Distinguishes transient eviction failure (all models busy now, but hardware
-    CAN serve once they become idle) from permanent (hardware truly insufficient).
+    Distinguishes transient eviction failure (capacity is reclaimable once loaded
+    models can be evicted) from permanent (insufficient reclaimable capacity).
 
-    ∀ loaded ∈ gateway.loaded_models: eventually becomes idle → eligible for eviction.
+    Returns:
+        tuple[bool, dict[str, int]]:
+            - can_fit: True if reclaimable VRAM/RAM can satisfy requirement
+            - diagnostics: reclaimable, required, and deficit values
     """
-    loaded_models = set(gateway.loaded_models)
-    if not loaded_models:
-        return False
-
-    busy_loaded_models = loaded_models.intersection(gateway.busy_models)
-    # Strict classification: transient only when all currently loaded models are busy.
-    if busy_loaded_models != loaded_models:
-        return False
-
     resolved = resolve_gateway_requirements(gateway, placement)
     if isinstance(resolved, ConstraintFailure):
-        return False
+        return False, {}
     gw_vram_mb, gw_ram_mb = resolved
 
-    total_freeable_vram = 0
-    total_freeable_ram = 0
-    for mid in loaded_models:
-        measured = gateway.model_measured_vram.get(mid)
-        catalog_vram, catalog_ram = gateway.get_model_resource_usage(mid)
-        req_vram_mb, req_ram_mb = requirements_lookup(mid)
+    margins = resource_margins or {}
+    ram_margin_pct = int(margins.get("ram_margin_pct", 3))
+    vram_margin_pct = int(margins.get("vram_margin_pct", 2))
+    ram_needed = int(gw_ram_mb * (1.0 + ram_margin_pct / 100))
+    vram_needed = int(gw_vram_mb * (1.0 + vram_margin_pct / 100))
+
+    reclaimable_vram = gateway.vram_free_mb
+    reclaimable_ram = gateway.ram_free_mb
+    for loaded_model_id in gateway.loaded_models:
+        measured_vram = gateway.model_measured_vram.get(loaded_model_id)
+        catalog_vram, catalog_ram = gateway.get_model_resource_usage(loaded_model_id)
+        req_vram_mb, req_ram_mb = requirements_lookup(loaded_model_id)
         effective_vram = (
-            measured
-            if measured is not None
+            measured_vram
+            if measured_vram is not None
             else (req_vram_mb if req_vram_mb > 0 else catalog_vram)
         )
         effective_ram = req_ram_mb if req_ram_mb > 0 else catalog_ram
-        total_freeable_vram += effective_vram
-        total_freeable_ram += effective_ram
+        reclaimable_vram += max(effective_vram, 0)
+        reclaimable_ram += max(effective_ram, 0)
 
-    vram_ok = gw_vram_mb <= 0 or (
-        gateway.vram_free_mb + total_freeable_vram >= gw_vram_mb
-    )
-    ram_ok = gw_ram_mb <= 0 or (gateway.ram_free_mb + total_freeable_ram >= gw_ram_mb)
-    return vram_ok and ram_ok
+    vram_ok = vram_needed <= 0 or reclaimable_vram >= vram_needed
+    ram_ok = ram_needed <= 0 or reclaimable_ram >= ram_needed
+
+    diagnostics = {
+        "max_freeable_vram": reclaimable_vram,
+        "required_vram": vram_needed,
+        "vram_deficit_mb": max(0, vram_needed - reclaimable_vram),
+        "max_freeable_ram": reclaimable_ram,
+        "required_ram": ram_needed,
+        "ram_deficit_mb": max(0, ram_needed - reclaimable_ram),
+    }
+    return vram_ok and ram_ok, diagnostics
 
 
 def evaluate_feasibility(
@@ -240,29 +248,38 @@ def evaluate_feasibility(
 
         # Distinguish transient from permanent eviction failure.
         #
-        # Transient: idle_models is empty because loaded models are all BUSY
-        # (serving concurrent requests), but the hardware CAN fit the model once
-        # those requests complete and models become idle.
+        # Transient: reclaimable resources (free + evictable loaded usage) can
+        # satisfy the requirement with margins once loaded models can be evicted.
+        # Queueing/retry is useful.
         #
-        # Permanent: hardware is genuinely insufficient — even evicting every
-        # loaded model (including busy ones) would not free enough VRAM/RAM.
+        # Permanent: even reclaiming all currently loaded model usage cannot
+        # satisfy required resources with margins; retrying will loop.
         #
-        # ∀ busy ∈ loaded_models: busy → idle ∈ evictable (eventually)
-        can_fit_theoretically = _can_fit_after_eviction_including_busy(
-            gateway, placement, requirements_lookup
+        # ∀ loaded ∈ gateway.loaded_models: eventually idle → evictable
+        can_fit_theoretically, reclaimable = _can_fit_after_eviction_including_busy(
+            gateway,
+            placement,
+            requirements_lookup,
+            policy.resource_margins,
         )
         if can_fit_theoretically:
             failures.append(
                 ConstraintFailure(
                     constraint="eviction_blocked_by_busy_models",
                     reason=(
-                        "No idle models to evict; loaded models are currently busy. "
-                        "Eviction will be possible once in-flight requests complete."
+                        "No idle evictable models right now; reclaimable resources "
+                        "indicate model can fit after queued requests complete."
                     ),
                     details={
                         "vram_free": gateway.vram_free_mb,
+                        "vram_total": gateway.vram_total_mb,
+                        "ram_free": gateway.ram_free_mb,
+                        "ram_total": gateway.ram_total_mb,
                         "loaded_count": len(gateway.loaded_models),
                         "busy_count": len(gateway.busy_models),
+                        "retryable": True,
+                        "classification_basis": "reclaimable_resources",
+                        **reclaimable,
                     },
                 )
             )
@@ -270,10 +287,20 @@ def evaluate_feasibility(
             failures.append(
                 ConstraintFailure(
                     constraint="can_fit_with_eviction",
-                    reason="Cannot fit even after evicting all idle models",
+                    reason=(
+                        "Insufficient reclaimable resources even after evicting all "
+                        "currently loaded models"
+                    ),
                     details={
                         "vram_free": gateway.vram_free_mb,
+                        "vram_total": gateway.vram_total_mb,
                         "ram_free": gateway.ram_free_mb,
+                        "ram_total": gateway.ram_total_mb,
+                        "loaded_count": len(gateway.loaded_models),
+                        "busy_count": len(gateway.busy_models),
+                        "retryable": False,
+                        "classification_basis": "reclaimable_resources",
+                        **reclaimable,
                     },
                 )
             )

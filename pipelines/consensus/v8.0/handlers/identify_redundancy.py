@@ -43,6 +43,22 @@ logger = get_logger(__name__)
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
+def _format_sentences_for_comparison(sentences: list[dict[str, Any]]) -> str:
+    """Format pre-extracted sentences as a structured list grouped by section."""
+    by_section: dict[int, list[dict[str, Any]]] = {}
+    for s in sentences:
+        sec = int(s.get("section", 0))
+        by_section.setdefault(sec, []).append(s)
+    lines: list[str] = []
+    for sec in sorted(by_section):
+        lines.append(f"=== SECTION {sec} ===")
+        for s in by_section[sec]:
+            cites = s.get("citations", [])
+            cite_str = " " + " ".join(f"[{c}]" for c in cites) if cites else ""
+            lines.append(f"- {s.get('text', '')}{cite_str}")
+    return "\n".join(lines)
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     # qwen wraps every brace in {{ }} (Python f-string style) — replace all occurrences
     # globally before parsing; the while-loop approach only fixed the outermost layer,
@@ -130,6 +146,12 @@ class IdentifyRedundancyHandler(BaseHandler):
             raw_batch_texts if isinstance(raw_batch_texts, list) else []
         )
 
+        extracted_sentences_raw = (
+            self._resolve_input(resolver, step, "extracted_sentences", inputs)
+            if "extracted_sentences" in inputs
+            else None
+        )
+
         def _empty(reason: str) -> StepOutput:
             latency = (time.monotonic() - start_time) * 1000
             logger.info("Step '%s': skipping identification — %s", step.id, reason)
@@ -154,13 +176,24 @@ class IdentifyRedundancyHandler(BaseHandler):
         if sys_ref:
             cached_sys = self._render_prompt(sys_ref, {}, context).user_prompt
 
-        draft = _compose_draft(answer, batch_texts)
-        using_sections = bool(batch_texts)
-        logger.info(
-            "Step '%s': composing draft as %s",
-            step.id,
-            f"{len(batch_texts)} labeled sections" if using_sections else "flat answer",
-        )
+        if extracted_sentences_raw and isinstance(extracted_sentences_raw, list):
+            draft = _format_sentences_for_comparison(extracted_sentences_raw)
+            using_sections = True
+            logger.info(
+                "Step '%s': using %d pre-extracted sentences",
+                step.id,
+                len(extracted_sentences_raw),
+            )
+        else:
+            draft = _compose_draft(answer, batch_texts)
+            using_sections = bool(batch_texts)
+            logger.info(
+                "Step '%s': composing draft as %s",
+                step.id,
+                f"{len(batch_texts)} labeled sections"
+                if using_sections
+                else "flat answer",
+            )
 
         rendered = self._render_prompt(
             step.prompt_ref, {"question": question, "answer": draft}, context

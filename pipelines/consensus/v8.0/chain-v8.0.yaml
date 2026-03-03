@@ -129,6 +129,8 @@ steps:
       answers: answer_all.*.raw
     generation_parameters:
       temperature: 0.7
+      response_format:
+        type: text
     timeout_seconds: 180
 
   # ==========================================================================

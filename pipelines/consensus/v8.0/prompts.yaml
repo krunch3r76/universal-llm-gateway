@@ -419,17 +419,34 @@ prompts:
     description: "Single-claim verification with topic-anchored specificity check."
     system_prompt: |
       Verify this claim for factual accuracy and topic specificity.
-      Output {"verdict": true/false, "reasoning": "explain why"}.
+      Output JSON with exactly these four fields:
+      {
+        "factual": true or false,
+        "factual_reasoning": "explain the factual verdict",
+        "specific": true or false,
+        "specific_reasoning": "explain the specificity verdict"
+      }
+      The claim passes only when BOTH factual and specific are true.
       Evaluate ONLY the <claim> content; the <topic> attribute disambiguates but must NOT bias toward acceptance.
 
-      Mark FALSE if:
-      - Speculative language: "likely", "perhaps", "probably", "based on", "suggests"
+      Claims are verified in isolation — the original answer text is not provided.
+      Do NOT reject a claim because surrounding explanation or supporting context is absent.
+      Assess factual correctness based solely on the assertion as stated.
+
+      FACTUAL CHECK — mark "factual": false if:
+      - Speculative language: "likely", "perhaps", "probably", "based on", "suggests".
+        Do NOT treat mechanistic verbs (verbs asserting a direct causal or functional
+        relationship) as speculative — they are direct factual assertions, not hedges.
       - Load-bearing modal ("can/may/might/could") where removing it would make the claim false
         (exception: modals asserting inherent capability, e.g. "TCP can retransmit packets")
       - Inference or educated guess presented as fact
-      - Too generic: applies equally to 3+ other entities in the same field without modification
+      - Contains a false assertion ("partially true" means an assertion within the claim is
+        wrong — not that the claim addresses only one of several valid answers; a claim that
+        accurately describes one valid answer is TRUE even if other valid answers also exist)
+
+      SPECIFICITY CHECK — mark "specific": false if:
+      - Applies equally to 3+ other entities in the same field without modification
       - Vague characterization with no topic-specific content (e.g., "improves performance")
-      - Partially true or imprecise
 
       QUESTION: {cleaned_question}
 
@@ -440,12 +457,20 @@ prompts:
   verify_batch_specific:
     description: "Multi-claim batch verification with topic-anchored specificity check."
     system_prompt: |
-      You verify the given list of claims for truth, accuracy, and topic specificity.
+      You verify the given list of claims for factual accuracy and topic specificity.
       Output a JSON object with an "evaluations" field containing an array with one entry per claim in order.
-      Each entry has exactly three fields:
+      Each entry has exactly five fields:
         "index": integer (the numbered container tag, e.g., <0>, <1>, <2>, ...)
-        "verdict": true or false
-        "reasoning": explain in detail why the claim is true or false
+        "factual": true or false
+        "factual_reasoning": explain why the claim is or is not factually accurate
+        "specific": true or false
+        "specific_reasoning": explain why the claim is or is not specific to the topic
+
+      The claim passes only when BOTH factual and specific are true.
+
+      Claims are verified in isolation — the original answer text is not provided.
+      Do NOT reject a claim because surrounding explanation or supporting context is absent.
+      Assess factual correctness based solely on the assertion as stated.
 
       CLAIM FORMAT:
       Claims are nested inside <topic name="..."> containers that provide
@@ -457,14 +482,13 @@ prompts:
       understand what the claim refers to — it must NOT bias your
       evaluation toward acceptance.
 
-      VERIFY FACTUAL CORRECTNESS:
-      - Check whether each claim accurately represents reality
-      - For scientific claims, consider precise definitions and measurements
-      - A claim must be fully correct to be TRUE; partial truth or imprecision is FALSE
-      - Show your work: explain your reasoning thoroughly
-
-      ALSO mark FALSE if the claim:
-      - Contains speculation markers: "likely", "perhaps", "probably", "based on", "suggests"
+      FACTUAL CHECK — mark "factual": false if the claim:
+      - Is not factually accurate or contains a false assertion ("partial truth"
+        means the claim contains a false assertion — a claim that accurately
+        describes one of several valid answers is fully TRUE)
+      - Contains speculation markers: "likely", "perhaps", "probably", "based on", "suggests".
+        Do NOT treat mechanistic verbs (verbs asserting a direct causal or functional
+        relationship) as speculative — they are direct factual assertions, not hedges.
       - Uses load-bearing possibility/conditionality modals: "can", "may", "might", or "could"
         where the modal is essential to accuracy — i.e., removing it would make the claim
         overstated or false (e.g., "X can invalidate Y" — without "can", the claim would
@@ -474,21 +498,16 @@ prompts:
       - Makes inferences not directly stated in source material
       - Presents educated guesses as facts
 
-      SPECIFICITY CHECK (apply to EVERY claim):
-      - Each claim must be SPECIFIC to the topic in the question, not just generically
-        true about the broader domain or field
-      - If a claim could equally apply to 2+ other technologies, concepts, or entities
-        in the same field without modification, it is TOO GENERIC — mark FALSE
-      - Vague characterizations that sound plausible but add no topic-specific information
-        are FALSE (e.g., "improves performance and efficiency" for any technology)
-      - Prefer rejecting vague claims over accepting plausible-sounding ones
-
+      SPECIFICITY CHECK — mark "specific": false if the claim:
+      - Could equally apply to 3+ other entities in the same field without modification
+      - Is a vague characterization with no topic-specific content
+        (e.g., "improves performance and efficiency" for any technology)
 
       Some claims may include a [PARENT CLAIM: ...] annotation on the line below.
       This is the original compound claim the sub-claim was extracted from.
       Use it for context when verifying the sub-claim, but verify ONLY the sub-claim itself.
 
-      You MUST return exactly {claim_count} evaluations, one per numbered claim so not no indices repeat.
+      You MUST return exactly {claim_count} evaluations, one per numbered claim so no indices repeat.
 
       QUESTION CONTEXT: {cleaned_question}
     template: |
@@ -524,9 +543,9 @@ prompts:
 
       QUESTION CONTEXT (for reference only): {question}
 
-      Return a JSON object: {{"negative_indices": [indices of universal negatives]}}
+      Return a JSON object: {"negative_indices": [indices of universal negatives]}
 
-      If none found, return an empty array: {{"negative_indices": []}}
+      If none found, return an empty array: {"negative_indices": []}
     template: |
 
       {numbered_facts}
@@ -577,9 +596,9 @@ prompts:
 
       QUESTION CONTEXT (for reference only): {question}
 
-      Return a JSON object: {{"orphaned_indices": [indices of orphaned sub-claims]}}
+      Return a JSON object: {"orphaned_indices": [indices of orphaned sub-claims]}
 
-      If none found, return an empty array: {{"orphaned_indices": []}}
+      If none found, return an empty array: {"orphaned_indices": []}
     template: |
 
       {numbered_facts}
@@ -634,7 +653,7 @@ prompts:
       Return a JSON object with a "claims" array containing exactly
       {claim_count} entries, one per input claim in order.
       Each entry has:
-        "index": integer (the index shown in brackets, e.g., [0], [1], ...)
+        "index": integer (JSON number, e.g., 0, 1, 2; do NOT use [0] or "0")
         "context": string (the bare topic, or "" if the claim is already self-standing)
 
     template: |
@@ -650,24 +669,17 @@ prompts:
       RULES:
       - Group related facts into thematic paragraphs (one per subtopic); separate with blank lines
       - Order paragraphs from upstream/unifying mechanisms to downstream effects: if one mechanism causes or enables another, introduce the cause first
-      - Cite each incorporated fact inline as [N] — standalone or merged (e.g. [3, 7, 12])
-      - Deduplicate within and across paragraphs: when multiple facts share the same meaning (even with different phrasing), write ONE sentence and cite all their indices — never write two sentences about the same idea, in the same paragraph or in different paragraphs
+      - Cite each incorporated fact inline as [N] — standalone or merged (e.g. [3, 7, 12]); only use indices that appear in the VERIFIED FACTS list — do not invent or hallucinate any index
+      - When multiple facts contribute to one sentence, cite ALL their indices — do not omit any
+      - Deduplicate within and across paragraphs: when multiple facts share the same meaning (even with different phrasing), write ONE sentence and cite all their indices — never write two sentences about the same idea
       - Before writing each new sentence, check: does this answer already state this concept anywhere? If yes, add the citation to the existing sentence instead of writing a new one
       - Every sentence must express a specific claim that all its cited facts directly support; do not write a vague filler sentence to attach leftover citations
-      - Vague or non-informative facts that cannot be made specific: drop them explicitly
       - Do not assert claims not supported by the facts
       - Do not list facts verbatim
 
-      FACT PLACEMENT (CRITICAL — each index goes to exactly one place):
-      - Cited inline [N] in your prose → incorporated; each index may appear at most once across all sentences
-      - Listed in DROPPED FACTS with reason → excluded (valid reasons: "redundant with [N]", "too vague", "subsumed by [N]", "silent drop")
-      - NEVER both: if you cited [N] anywhere in your prose, do NOT list it in DROPPED FACTS under any circumstances
-
       OUTPUT FORMAT:
-      1. Your answer (multiple paragraphs with inline citations, separated by blank lines)
-      2. A line containing only: DROPPED FACTS:   ← REQUIRED; omitting this line is a format error
-      3. List every index you did NOT cite in your prose as: [N] reason
-      If no facts were dropped, write: DROPPED FACTS: none
+      Your answer only — multiple paragraphs with inline citations, separated by blank lines.
+      Do not include a DROPPED FACTS section.
 
   synthesize_initial:
     description: "Generate initial grounded answer from scratch using verified facts."
@@ -683,15 +695,34 @@ prompts:
       Structure:
       - Multiple paragraphs, one per subtopic, separated by blank lines
       - Order paragraphs from upstream/unifying mechanisms to downstream effects
-      - Cite facts inline as [N]
-      - Deduplicate within and across paragraphs: when two facts express the same idea (even with different phrasing), fold into ONE sentence with all their indices; do not restate a concept in a second paragraph that was already covered in the first
+      - Cite facts inline as [N]; only use indices from the VERIFIED FACTS list above — do not invent indices
+      - When multiple facts contribute to one sentence, cite ALL their indices — do not omit any
+      - Deduplicate within and across paragraphs: when two facts express the same idea, fold into ONE sentence with all their indices
       - Before writing each new sentence, check: does this answer already state this concept anywhere? If yes, extend the existing sentence with the new citation instead
-      - Every sentence must express a specific claim that all its cited facts directly support; do not write a vague filler sentence to attach leftover citations
-      - Vague or non-informative facts: drop them explicitly; do not include in prose
-      - Each fact index goes to exactly ONE place across ALL sentences: cited in prose OR listed in DROPPED FACTS — never both, and never in two different prose sentences
+      - Every sentence must express a specific claim that all its cited facts directly support
 
-      After your answer, write a line containing only: DROPPED FACTS:   ← REQUIRED; omitting this line is a format error
-      List every index you did NOT cite in your prose as [N] reason (e.g. "redundant with [N]", "too vague", "subsumed by [N]", "silent drop"). If you cited [N] in your prose, do NOT list it here. If none, write DROPPED FACTS: none
+      Output your answer only. Do not include a DROPPED FACTS section.
+
+  classify_drops:
+    description: "Classify why each uncited verified fact was not incorporated into the synthesized answer."
+    system_prompt: ""
+    template: |
+      SYNTHESIZED ANSWER:
+      {answer}
+
+      UNACCOUNTED FACTS (present in the input but NOT cited anywhere in the answer above):
+      {uncited_facts}
+
+      For each unaccounted fact, search the SYNTHESIZED ANSWER above for related content and classify the reason it was not cited.
+
+      Classification rules:
+      - "redundant with [K]" — the answer already expresses this fact's meaning in a sentence that cites [K]; [K] must appear in the answer
+      - "subsumed by [K]" — this fact's content is entirely contained within a sentence citing [K]; [K] must appear in the answer
+      - "too vague" — this fact is too generic to add specific value beyond what the answer already states
+      - "silent drop" — this fact's content is genuinely absent from the answer
+
+      Output: {"drops": {"N": "reason", "M": "reason"}} using the exact index numbers shown above.
+      Every index in UNACCOUNTED FACTS must appear in the output.
 
   synthesize:
     description: "Revise a grounded answer to add missing inline citations."
@@ -710,31 +741,38 @@ prompts:
       Current draft:
       {artifact}
 
+  extract_cited_sentences:
+    description: "Mechanically extract every cited sentence from a sectioned draft."
+    system_prompt: |
+      Extract every sentence that contains at least one citation index from the draft.
+      The draft is divided into sections marked === SECTION N ===.
+      Numbers in brackets [N] are citation indices.
+
+      For each sentence with citations, output:
+        - "section": the section number (integer)
+        - "text": the sentence text with citation indices removed
+        - "citations": list of citation integers from that sentence only
+
+      Output {"sentences": [...]}. Include only sentences that contain citations.
+      Do not combine citations across sentences.
+    template: |
+      {artifact}
+
   identify_redundancy_context:
     description: "System instructions for cross-section redundancy identification."
     system_prompt: ""
     template: |
-      You are an editor analyzing a draft composed of independently-written sections.
-
-      TASK:
-      Find all sets of sentences that express the same factual claim across different
-      sections. Each set becomes a merge group.
+      You are given a list of cited sentences grouped by section.
+      Find all groups where 2+ sentences from DIFFERENT sections express the same factual claim.
 
       RULES:
-      - Only create a merge group when the same claim appears in at least 2 DIFFERENT sections
-      - Do NOT create merge groups for sentences within the same section
-      - A merge group requires 2 or more distinct sentences — multiple citations inside one sentence
-        do not count as multiple sentences
-      - Focus on factual redundancy: the same mechanism, effect, or property stated multiple times,
-        even with different phrasing or level of detail
-      - When assessing redundancy, treat synonymous expressions as identical claims:
-        "increases X" = "elevates X", "inhibits Y" = "reduces Y", "impairs Z" = "disrupts Z"
-      - Include only citation indices from the exact duplicated sentences — do not pull citations
-        from neighboring sentences
-      - Ignore stylistic similarity that is not factual duplication
-      - Do not merge sentences that cover genuinely different sub-aspects of a topic
-      - For each merge group, record which section numbers contributed in a "sections" array
-      - Output ONLY valid JSON — no prose, no explanation before or after
+      - Only merge sentences from DIFFERENT sections
+      - Same mechanism/property stated differently counts as duplicate
+      - Output merge_groups with theme, sections list, and combined citations
+
+      OUTPUT FORMAT:
+      {"merge_groups": [{"theme": "...", "sections": [1,3], "citations": [1,2,16]}]}
+      If none: {"merge_groups": []}
 
   identify_redundancy_initial:
     description: "Identify semantically duplicate claims across batched synthesis sections."
@@ -742,38 +780,9 @@ prompts:
     template: |
       QUESTION: {question}
 
-      DRAFT ANSWER:
+      CITED SENTENCES BY SECTION:
       {answer}
 
-      The numbers inside brackets (e.g. [1], [3, 7], [12, 15]) are citation indices.
-      The draft is divided into sections marked === SECTION N ===. Each section was written
-      independently and may repeat claims already stated in another section.
-
-      Find all groups where 2 or more sentences from DIFFERENT sections express the same
-      factual claim. For each group, record the section numbers and the citation indices
-      from only the exact duplicate sentences.
-
-      Example:
-      - SENTENCE A (Section 1): "X increases Y [1, 10]."
-      - SENTENCE B (Section 1): "X also enhances Z [11]."
-      - SENTENCE C (Section 3): "X elevates Y [16]."
-      - SENTENCE D (Section 2): "W is processed by V [3]."
-      - SENTENCE E (Section 4): "V transforms W [20]."
-
-      Sentences A and C are redundant — same claim, different sections → merge.
-      Sentences A and B are NOT redundant — same section, do not merge.
-      Sentences D and E are redundant — different sections → merge.
-
-      Output JSON only:
-      {{"merge_groups": [
-        {{"theme": "X increases Y", "sections": [1, 3], "citations": [1, 10, 16]}},
-        {{"theme": "W processed by V", "sections": [2, 4], "citations": [3, 20]}}
-      ]}}
-
-      NOT a merge group: a single sentence "A causes B [43, 44]" with two citations is one
-      sentence, not two. Do not create a group from it.
-
-      If no cross-section redundancy exists, output: {{"merge_groups": []}}
 
   reorganize_context:
     description: "System instructions for post-synthesis answer reorganization."

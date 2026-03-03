@@ -35,8 +35,8 @@ models:
 #      max_concurrent: 3       # Max parallel chunks (default: unlimited)
 
   phi4:
-    # model: phi-4-q4-k-m-16384
     model: phi-4-q4-k-m-16384
+    # model: microsoft/phi-4
 
     system_prompt: ""
     # 3.8B | 128K context | multilingual | logical reasoning
@@ -46,6 +46,7 @@ models:
 
   qwen:
     model: qwen2-5-7b-instruct-q8-0-32768
+    # model: qwen/qwen-2.5-7b-instruct
     system_prompt: ""
     # 7B | fast inference | scalable | multilingual
     # Alias for qwen2_5_7b
@@ -110,6 +111,7 @@ models:
 
   gemma_2_9b:
     model: gemma-2-9b-it-q4-k-m-8192
+    # model: google/gemma-2-9b-it
     system_prompt: ""
     # 7B | Falcon H1 | fast inference
     # USE FOR: General QA, sentiment analysis
@@ -124,7 +126,8 @@ models:
   # correctly when processing one statement at a time.
 
   llama_3_1_8b:
-    model: meta-llama-3-1-8b-instruct-q8-0-32768
+    model: llama-3-1-supernova-lite-q8-0-32768
+    #model: meta-llama/llama-3.1-8b-instruct
     system_prompt: ""
     # 8B | Llama 3.1 | Q8 quantization
     # KNOWN ISSUE: Produces contradictory reasoning in batch mode

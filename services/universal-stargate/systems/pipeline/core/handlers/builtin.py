@@ -342,6 +342,7 @@ class BaseHandler(AbstractStepHandler):
         Heuristic to detect if model_id is a full ID vs an alias.
 
         Full IDs typically contain:
+        - Provider prefix separators (vendor/model)
         - Multiple hyphens (segmented naming)
         - Version indicators (instruct, chat, base)
         - Quantization markers (q4, q6, q8, f16)
@@ -364,6 +365,11 @@ class BaseHandler(AbstractStepHandler):
         # Aliases are typically short, single words or underscored
         if "_" in model_id and "-" not in model_id:
             return False  # Underscored aliases like "llama_3_1_8b"
+
+        # Provider-prefixed IDs (e.g., "google/gemma-2-9b-it", "qwen/qwen-2.5-7b-instruct")
+        # are full model IDs, not registry aliases.
+        if "/" in model_id:
+            return True
 
         # Full IDs have multiple segments
         segments = model_id.split("-")
@@ -806,6 +812,16 @@ class BaseHandler(AbstractStepHandler):
         # Explicitly remove response_format for free-form output (e.g., math LaTeX)
         if disable_json_response:
             params.pop("response_format", None)
+
+        # Adapt response_format for target engine
+        if "response_format" in params:
+            from ....proxy.validation.response_format_converter import (
+                convert_response_format_for_engine,
+            )
+
+            params["response_format"] = convert_response_format_for_engine(
+                resolved_model_id, params["response_format"]
+            )
 
         # Build complete request body (capture for debugging)
         request_body = {

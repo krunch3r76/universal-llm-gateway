@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -111,8 +112,16 @@ def list_executions(summaries_dir: Path) -> list[dict[str, Any]]:
     return executions
 
 
+_STALE_THRESHOLD_SECONDS = 5 * 60  # No new events for 5 min → dead execution
+
+
 def is_execution_complete(exec_dir: Path) -> bool:
-    """Check whether the execution has a terminal event (completed/failed/cancelled).
+    """Check whether the execution has a terminal event or is stale.
+
+    An execution is complete when:
+    - Its last event is a terminal type (pipeline_completed/failed/cancelled), OR
+    - Its events.jsonl hasn't been written to in _STALE_THRESHOLD_SECONDS
+      (handles abrupt kills — e.g. Stargate restart — that never write a terminal event)
 
     Reads only the last portion of the file (tail) to avoid loading large logs.
     """
@@ -123,21 +132,37 @@ def is_execution_complete(exec_dir: Path) -> bool:
     terminal_types = {"pipeline_completed", "pipeline_failed", "pipeline_cancelled"}
     chunk_size = 8192
     try:
+        stat = events_file.stat()
+        mtime = stat.st_mtime
+        size = stat.st_size
+
+        if size == 0:
+            return False
+
         with events_file.open("rb") as f:
-            _ = f.seek(0, os.SEEK_END)
-            size = f.tell()
             read_size = min(size, chunk_size * 4)
-            if read_size == 0:
-                return False
             _ = f.seek(max(0, size - read_size), os.SEEK_SET)
             raw = f.read().decode("utf-8", errors="ignore")
+
         for line in reversed(raw.splitlines()):
             line = line.strip()
             if not line:
                 continue
             try:
                 ev = json.loads(line)
-                return ev.get("event_type", "") in terminal_types
+                if ev.get("event_type", "") in terminal_types:
+                    return True
+                # Last parseable event is non-terminal — check staleness
+                age_seconds = time.time() - mtime
+                if age_seconds > _STALE_THRESHOLD_SECONDS:
+                    logger.info(
+                        "Marking %s as complete: no terminal event and file "
+                        "unmodified for %.0fs",
+                        exec_dir.name,
+                        age_seconds,
+                    )
+                    return True
+                return False
             except json.JSONDecodeError:
                 continue
     except OSError as e:

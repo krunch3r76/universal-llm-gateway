@@ -7,7 +7,7 @@ orphan sentences, and reordering paragraphs logically.
 
 Invariants:
     ∀ citation [N] ∈ input prose: [N] ∈ output prose  (unless fallback triggered)
-    |output citations lost| / |input incorporated| ≤ 0.20  (else fall back)
+    |output citations lost| / |input incorporated| ≤ 0.35  (else fall back)
     output.excluded_with_reason == input.excluded_with_reason  (passed through)
 """
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _BRACKET_RE = re.compile(r"\[[\d,\s]+\]")
-_MAX_CITATION_LOSS_RATIO = 0.20
+_MAX_CITATION_LOSS_RATIO = 0.35
 
 
 def _extract_cited_indices(text: str) -> set[int]:

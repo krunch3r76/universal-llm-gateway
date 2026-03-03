@@ -43,24 +43,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_CONTEXTUALIZE_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "claims": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "index": {"type": "integer"},
-                    "context": {"type": "string"},
-                },
-                "required": ["index", "context"],
-            },
-        },
-    },
-    "required": ["claims"],
-}
-
 
 class ContextualizeHandler(BaseHandler):
     """Add topic-anchoring context prefix before cross-model verification.
@@ -138,7 +120,10 @@ class ContextualizeHandler(BaseHandler):
             ).chunk_size
             for a in pool_aliases
         ]
-        chunk_size = min(step_chunk, *model_chunks) if model_chunks else step_chunk
+        valid_model_chunks = [c for c in model_chunks if isinstance(c, int) and c > 0]
+        chunk_size = (
+            min(step_chunk, *valid_model_chunks) if valid_model_chunks else step_chunk
+        )
 
         chunks = list(batched(range(len(claims)), chunk_size))
 
@@ -177,7 +162,6 @@ class ContextualizeHandler(BaseHandler):
                 system_prompt=rendered.system_prompt,
                 temperature=0.0,
                 max_tokens=max_tok,
-                json_schema=_CONTEXTUALIZE_SCHEMA,
                 call_label="contextualize",
             )
 
@@ -216,35 +200,61 @@ def _apply_context_prefixes(
     The verification formatter reads ``context_prefix`` and ``original_text``
     to build XML-structured input for verifiers.
 
-    Falls back to originals on parse failure.
+    Raises:
+        ValueError: If model output violates the expected strict JSON shape.
     """
     try:
         cleaned = strip_json_fences(content)
         data = json.loads(cleaned)
     except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning(
-            "Step '%s': failed to parse contextualize response, "
-            "keeping original claims: %s",
-            step_id,
-            exc,
-        )
-        return list(original_claims)
+        raise ValueError(
+            f"Step '{step_id}': contextualize returned invalid JSON: {exc}"
+        ) from exc
 
-    prefix_list = data.get("claims", [])
+    prefix_list = data.get("claims")
+    if not isinstance(prefix_list, list):
+        raise ValueError(
+            f"Step '{step_id}': contextualize output missing list field 'claims'"
+        )
+    if len(prefix_list) != len(original_claims):
+        raise ValueError(
+            f"Step '{step_id}': contextualize claim count mismatch "
+            f"(expected {len(original_claims)}, got {len(prefix_list)})"
+        )
+
     topic_map: dict[int, str] = {}
-    for entry in prefix_list:
+    for expected_idx, entry in enumerate(prefix_list):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"Step '{step_id}': contextualize claim entry must be object "
+                f"(index={expected_idx})"
+            )
+
         idx = entry.get("index")
         ctx = entry.get("context")
-        if idx is not None and ctx is not None:
-            topic_map[idx] = ctx.strip()
+        if not isinstance(idx, int):
+            raise ValueError(
+                f"Step '{step_id}': contextualize index must be integer, got {idx!r}"
+            )
+        if idx != expected_idx:
+            raise ValueError(
+                f"Step '{step_id}': contextualize index order mismatch "
+                f"(expected {expected_idx}, got {idx})"
+            )
+        if not isinstance(ctx, str):
+            raise ValueError(
+                f"Step '{step_id}': contextualize context must be string for index {idx}"
+            )
+
+        topic_map[idx] = ctx.strip()
 
     result: list[dict[str, Any]] = []
     applied = 0
     for i, claim in enumerate(original_claims):
         updated = dict(claim)
+        updated["original_text"] = updated.get("text", "")
         topic = topic_map.get(i, "")
         if topic:
-            updated["original_text"] = updated.get("text", "")
             updated["context_prefix"] = topic
             applied += 1
         result.append(updated)
