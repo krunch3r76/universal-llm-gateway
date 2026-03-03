@@ -84,6 +84,18 @@ def _load_entry(yaml_file: Path) -> dict[str, Any] | None:
             )
             return None
 
+        # Vision models: ensure loader.clip_model_path from download.mmproj_file
+        # so entries written by measurement (authoritative local catalog) pass
+        # schema validation without requiring a separate static export.
+        metadata = entry.get("metadata", {})
+        if metadata.get("is_vision_model"):
+            loader = entry.setdefault("loader", {})
+            if not loader.get("clip_model_path"):
+                hf = (entry.get("download") or {}).get("huggingface") or {}
+                mmproj = hf.get("mmproj_file")
+                if mmproj:
+                    loader["clip_model_path"] = mmproj
+
         return entry
 
     except yaml.YAMLError as e:

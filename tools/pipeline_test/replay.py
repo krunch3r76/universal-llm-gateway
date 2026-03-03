@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 import yaml
 
-from .models import ExecutionSnapshot, ReplayOverrides, ReplayResult
+from .models import ExecutionSnapshot, ReplayOverrides, ReplayResult, StepConfigMatch
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
 _PLACEHOLDER_RE = re.compile(r"\{([\w]+(?:\.[\w]+)*)\}")
@@ -29,15 +29,21 @@ def replay_recorded(
     step_name: str,
     call_label: str | None = None,
     overrides: ReplayOverrides | None = None,
+    pipeline_dir: Path | str | None = None,
     stargate_url: str = DEFAULT_STARGATE_URL,
     timeout: float = 300.0,
 ) -> ReplayResult:
-    """Re-send the exact recorded request_body, with optional overrides."""
+    """Re-send the exact recorded request_body, with optional overrides.
+
+    When pipeline_dir is provided, model and generation parameters from
+    the step YAML are applied between snapshot defaults and CLI overrides.
+    """
     step = _get_step(snapshot, step_name)
     call = _get_call(step.model_calls, call_label)
     overrides = overrides or ReplayOverrides()
 
     body = dict(call.request_body)
+    _apply_step_yaml_settings(body, snapshot, step, pipeline_dir)
     _apply_overrides(body, overrides)
 
     return _send_request(
@@ -72,6 +78,7 @@ def replay_rerender(
         rendered = _try_render_from_yaml(snapshot, step, call, pipeline_dir, overrides)
         if rendered is not None:
             body = rendered
+            _apply_step_yaml_settings(body, snapshot, step, pipeline_dir)
             _apply_overrides(body, overrides)
             return _send_request(
                 body=body,
@@ -86,6 +93,7 @@ def replay_rerender(
         )
 
     body = dict(call.request_body)
+    _apply_step_yaml_settings(body, snapshot, step, pipeline_dir)
     _apply_overrides(body, overrides)
     return _send_request(
         body=body,
@@ -160,15 +168,13 @@ def _try_render_from_yaml(
         else call.system_prompt
     )
 
-    model = overrides.model or call.request_body.get("model", call.model_id)
-
     messages: list[dict[str, str]] = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": user_prompt})
 
     body: dict[str, Any] = {
-        "model": model,
+        "model": call.request_body.get("model", call.model_id),
         "messages": messages,
         "stream": False,
     }
@@ -194,25 +200,16 @@ def _infer_prompt_name(call_label: str, step: Any) -> str | None:
     return None
 
 
-def _resolve_prompt_from_config(
+def _find_step_config(
     step: Any,
-    call_label: str,
     pipeline_dir: Path,
-    snapshot: ExecutionSnapshot | None = None,
-) -> str | None:
-    """Find a prompt name by scanning pipeline YAML for the step's config.
-
-    When snapshot is provided, only YAMLs under the pipeline's root (file with
-    id == snapshot.pipeline_id) are searched, so the correct pipeline variant
-    is used when multiple exist under pipeline_dir.
-
-    Handles three patterns:
-      assess_N          → step-level prompt_ref (the assess prompt)
-      action_X_N        → already handled by _infer_prompt_name
-      plain single-call → step-level prompt_ref (fallback for simple steps)
-      other             → {call_label}_prompt_ref domain field
-    """
-    short_name = step.step_name.rsplit("__", 1)[-1]
+    snapshot: ExecutionSnapshot | None,
+) -> StepConfigMatch | None:
+    """Return the pipeline + step config dict for this step, if discoverable."""
+    raw_name = step.step_name
+    if "__map_" in raw_name:
+        raw_name = raw_name.split("__map_", 1)[0]
+    short_name = raw_name.rsplit("__", 1)[-1]
     search_dir = pipeline_dir
     if snapshot and snapshot.pipeline_id:
         root = _find_pipeline_root(pipeline_dir, snapshot.pipeline_id)
@@ -221,10 +218,10 @@ def _resolve_prompt_from_config(
         else:
             print(
                 f"  [warn] No YAML with id '{snapshot.pipeline_id}' under {pipeline_dir}; "
-                "using full directory for prompt resolution (may match wrong variant)."
+                "using full directory for step config lookup."
             )
     for yaml_file in search_dir.rglob("*.yaml"):
-        if yaml_file.name == "prompts.yaml":
+        if yaml_file.name in ("prompts.yaml", "models.yaml"):
             continue
         try:
             with yaml_file.open(encoding="utf-8") as f:
@@ -232,25 +229,121 @@ def _resolve_prompt_from_config(
         except Exception:
             continue
         for step_cfg in config.get("steps", []):
-            if step_cfg.get("name") != short_name:
-                continue
-            if call_label.startswith("assess_"):
-                ref = step_cfg.get("prompt_ref", "")
-                if ref:
-                    return ref.rsplit(".", 1)[-1]
-            else:
-                # Check call-specific domain field first (e.g. adjudicate_prompt_ref)
-                for key, val in step_cfg.items():
-                    if not key.endswith("_prompt_ref") or not isinstance(val, str):
-                        continue
-                    prefix = key.removesuffix("_prompt_ref")
-                    if call_label == prefix or call_label.startswith(prefix + "_"):
-                        return val.rsplit(".", 1)[-1]
-                # Fallback: plain single-call step uses top-level prompt_ref
-                ref = step_cfg.get("prompt_ref", "")
-                if ref:
-                    return ref.rsplit(".", 1)[-1]
+            if step_cfg.get("name") == short_name:
+                return StepConfigMatch(pipeline_config=config, step_config=step_cfg)
     return None
+
+
+def _resolve_prompt_from_config(
+    step: Any,
+    call_label: str,
+    pipeline_dir: Path,
+    snapshot: ExecutionSnapshot | None = None,
+) -> str | None:
+    """Find a prompt name from the step's YAML config.
+
+    Handles three patterns:
+      assess_N          -> step-level prompt_ref (the assess prompt)
+      action_X_N        -> already handled by _infer_prompt_name
+      plain single-call -> step-level prompt_ref (fallback for simple steps)
+      other             -> {call_label}_prompt_ref domain field
+    """
+    match = _find_step_config(step, pipeline_dir, snapshot)
+    if match is None:
+        return None
+    step_cfg = match.step_config
+    if call_label.startswith("assess_"):
+        ref = step_cfg.get("prompt_ref", "")
+        return ref.rsplit(".", 1)[-1] if ref else None
+    for key, val in step_cfg.items():
+        if not key.endswith("_prompt_ref") or not isinstance(val, str):
+            continue
+        prefix = key.removesuffix("_prompt_ref")
+        if call_label == prefix or call_label.startswith(prefix + "_"):
+            return val.rsplit(".", 1)[-1]
+    ref = step_cfg.get("prompt_ref", "")
+    return ref.rsplit(".", 1)[-1] if ref else None
+
+
+# ---------------------------------------------------------------------------
+# Step YAML config resolution (model + generation parameters)
+# ---------------------------------------------------------------------------
+
+_ALLOWED_GEN_PARAMS = frozenset(
+    {
+        "temperature",
+        "max_tokens",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "stop",
+        "response_format",
+    }
+)
+
+
+def _resolve_namespaced_value(ref: str, pipeline_config: dict[str, Any]) -> Any:
+    """Resolve optionsNs.* references against the pipeline's options block."""
+    if not isinstance(ref, str):
+        return ref
+    if ref.startswith("optionsNs."):
+        options = pipeline_config.get("options", {})
+        path = ref.split(".", 1)[1] if "." in ref else ""
+        return _resolve_path(path, options) if path else options
+    return ref
+
+
+def _resolve_model_from_config(
+    match: StepConfigMatch, pipeline_dir: Path
+) -> str | None:
+    """Resolve model_ref from step config through namespace + alias lookup."""
+    ref = match.step_config.get("model_ref") or match.step_config.get("model")
+    if not ref:
+        return None
+    resolved = _resolve_namespaced_value(ref, match.pipeline_config)
+    if not isinstance(resolved, str):
+        return None
+    model_id = resolve_model_alias(resolved, pipeline_dir)
+    if model_id != resolved:
+        print(f"  YAML model: '{ref}' -> '{resolved}' -> '{model_id}'")
+    elif ref != resolved:
+        print(f"  YAML model: '{ref}' -> '{resolved}'")
+    return model_id
+
+
+def _apply_step_yaml_settings(
+    body: dict[str, Any],
+    snapshot: ExecutionSnapshot,
+    step: Any,
+    pipeline_dir: Path | str | None,
+) -> None:
+    """Overlay model + generation parameters from step YAML onto request body.
+
+    Applied between snapshot defaults and CLI overrides in the precedence chain.
+    """
+    if pipeline_dir is None:
+        return
+    pipeline_dir = Path(pipeline_dir)
+    is_map_step = "__map_" in step.step_name
+    if is_map_step:
+        print(
+            f"  [warn] Map step detected: '{step.step_name}'. "
+            "Preserving recorded per-iteration model; applying only generation parameters."
+        )
+    match = _find_step_config(step, pipeline_dir, snapshot)
+    if match is None:
+        return
+    if not is_map_step:
+        yaml_model = _resolve_model_from_config(match, pipeline_dir)
+        if yaml_model:
+            body["model"] = yaml_model
+    gen_params = match.step_config.get("generation_parameters")
+    if isinstance(gen_params, dict):
+        for key, value in gen_params.items():
+            if key not in _ALLOWED_GEN_PARAMS:
+                print(f"  [warn] Ignoring unsupported generation parameter: {key}")
+                continue
+            body[key] = value
 
 
 def _build_template_variables(step: Any, call: Any) -> dict[str, Any]:

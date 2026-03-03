@@ -13,6 +13,7 @@ Subcommands:
     consult     Query consultant models for prompt improvements
     ask         Free-form question to local models with RAG context
     ingest-papers  Copy PDFs into RAG corpus directory for indexing
+    sandbox     Manage pipeline sandboxes for experimentation
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from . import ingest as ingest_svc
 from . import measure as measure_svc
 from . import measure_analysis as measure_analysis_svc
 from . import replay as replay_svc
+from . import sandbox as sandbox_svc
 from . import snapshot as snapshot_svc
 from .models import ConsultResult, ReplayOverrides
 
@@ -55,6 +57,7 @@ def main(argv: list[str] | None = None) -> None:
     _add_ask_parser(sub)
     _add_ingest_papers_parser(sub)
     _add_measure_profile_parser(sub)
+    _add_sandbox_parser(sub)
 
     args = parser.parse_args(argv)
     args.func(args)
@@ -304,6 +307,7 @@ def _cmd_replay(args: argparse.Namespace) -> None:
             args.step,
             args.call,
             overrides,
+            pipeline_dir=args.pipeline_dir,
             stargate_url=args.url,
             timeout=args.timeout,
         )
@@ -1246,6 +1250,75 @@ def _cmd_measure_profile(args: argparse.Namespace) -> None:
         dry_run=args.dry_run,
         verbose=args.verbose,
     )
+
+
+# ---------------------------------------------------------------------------
+# sandbox
+# ---------------------------------------------------------------------------
+
+
+def _add_sandbox_parser(sub: Any) -> None:
+    p = sub.add_parser("sandbox", help="Manage pipeline sandboxes for experimentation")
+    sp = p.add_subparsers(dest="sandbox_cmd", required=True)
+
+    create = sp.add_parser("create", help="Copy a pipeline directory into sandbox")
+    create.add_argument("source", help="Pipeline directory to copy")
+    create.add_argument("--name", help="Sandbox name (default: derived from path)")
+    create.set_defaults(func=_cmd_sandbox_create)
+
+    apply = sp.add_parser("apply", help="Copy changed files back to repo")
+    apply.add_argument("name", help="Sandbox name")
+    apply.add_argument("target", help="Repository pipeline directory to update")
+    apply.set_defaults(func=_cmd_sandbox_apply)
+
+    listing = sp.add_parser("list", help="List active sandboxes")
+    listing.set_defaults(func=_cmd_sandbox_list)
+
+    clean = sp.add_parser("clean", help="Delete one or all sandboxes")
+    clean.add_argument("name", nargs="?", help="Sandbox name (omit to delete all)")
+    clean.set_defaults(func=_cmd_sandbox_clean)
+
+
+def _cmd_sandbox_create(args: argparse.Namespace) -> None:
+    try:
+        path = sandbox_svc.create_sandbox(args.source, name=args.name)
+    except (FileNotFoundError, FileExistsError) as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+    print(f"Sandbox created: {path}")
+    print(f"  Use with: --pipeline-dir {path}")
+
+
+def _cmd_sandbox_apply(args: argparse.Namespace) -> None:
+    try:
+        updated = sandbox_svc.apply_sandbox(args.name, args.target)
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+    if not updated:
+        print("No files changed; target already matches sandbox.")
+        return
+    print(f"Updated {len(updated)} file(s):")
+    for rel in updated:
+        print(f"  {rel}")
+
+
+def _cmd_sandbox_list(_args: argparse.Namespace) -> None:
+    sandboxes = sandbox_svc.list_sandboxes()
+    if not sandboxes:
+        print("No sandboxes found.")
+        return
+    print("Sandboxes:")
+    for path in sandboxes:
+        print(f"  {path.name}  ({path})")
+
+
+def _cmd_sandbox_clean(args: argparse.Namespace) -> None:
+    sandbox_svc.clean_sandbox(args.name)
+    if args.name:
+        print(f"Sandbox '{args.name}' deleted.")
+    else:
+        print("All sandboxes deleted.")
 
 
 # ---------------------------------------------------------------------------

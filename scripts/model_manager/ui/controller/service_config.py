@@ -106,7 +106,7 @@ def load_env_file(path: Path) -> dict[str, str]:
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             key, value = line.split("=", 1)
-            entries[key.strip()] = value.strip()
+            entries[key.strip()] = os.path.expandvars(value.strip())
     return entries
 
 

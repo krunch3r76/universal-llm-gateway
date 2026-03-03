@@ -67,7 +67,7 @@ options:
   # Chunk sizes — number of claims processed per model call.
   # Each option overrides the step default; omit to use the step default.
   # Effective size is always min(option, model execution.chunk_size).
-  classify_chunk_size:      42  # classify_domain step
+  classify_chunk_size:      8  # classify_domain step
   atomicity_chunk_size:     16  # atomicity_gate step
   contextualize_chunk_size: 6  # contextualize step
   verify_chunk_size:         1  # verify_general step

@@ -1,11 +1,13 @@
 """Helper functions for verified registry operations."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from ..config import Config
 from ..huggingface import get_hf_file_info
 from ..models import VerifiedModel
 from ..registry import VerifiedRegistry
+from ..utils import compute_sha256
 
 
 def add_entries_to_verified_registry(
@@ -13,9 +15,11 @@ def add_entries_to_verified_registry(
     config: Config,
     network: bool = False,
     force: bool = False,
+    local_path_by_model_id: dict[str, Path] | None = None,
 ) -> int:
     """Add generated catalog entries to the verified registry."""
     print("\n📋 Adding to verified registry...")
+    paths = local_path_by_model_id or {}
     for model_id, entry in entries.items():
         result = add_single_to_verified(
             model_id=model_id,
@@ -23,6 +27,7 @@ def add_entries_to_verified_registry(
             config=config,
             network=network,
             force=force,
+            local_path=paths.get(model_id),
         )
         if result != 0:
             return result
@@ -36,6 +41,7 @@ def add_single_to_verified(
     config: Config,
     network: bool = False,
     force: bool = False,
+    local_path: Path | None = None,
 ) -> int:
     """Add a single catalog entry to the verified registry."""
     download = entry.get("download", {})
@@ -50,7 +56,13 @@ def add_single_to_verified(
         print(f"   ⚠️  {model_id}: Missing HF repo/file, skipping verified registry")
         return 0  # Not fatal, just skip
 
-    # Fetch from HF if missing
+    # Prefer local file when model is on disk (single-file case)
+    if (not sha256 or not size_bytes) and local_path is not None and local_path.is_file():
+        print(f"   Computing sha256/size from local file for {model_id}...")
+        sha256 = compute_sha256(local_path)
+        size_bytes = local_path.stat().st_size
+
+    # Fetch from HF only if still missing
     if not sha256 or not size_bytes:
         if not network:
             print(

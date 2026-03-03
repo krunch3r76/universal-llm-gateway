@@ -101,6 +101,18 @@ class ComparisonResult:
 
 
 @dataclass(slots=True, kw_only=True)
+class StepConfigMatch:
+    """A step definition resolved from pipeline YAML.
+
+    Carries both the parent pipeline config (needed for optionsNs.* resolution)
+    and the individual step config dict.
+    """
+
+    pipeline_config: dict[str, Any]
+    step_config: dict[str, Any]
+
+
+@dataclass(slots=True, kw_only=True)
 class ConsultResult:
     """Response from a consultant model evaluating a pipeline step."""
 

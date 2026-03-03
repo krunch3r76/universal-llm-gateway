@@ -169,11 +169,17 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
 
     # Add to verified registry if requested
     if getattr(args, "add_verified", False):
+        # When generating from a single local file, pass path so sha256/size can be computed without --network
+        local_paths: dict[str, Path] | None = None
+        if len(entries) == 1 and model_path.is_file():
+            (mid,) = entries.keys()
+            local_paths = {mid: model_path}
         return add_entries_to_verified_registry(
             entries=entries,
             config=config,
             network=getattr(args, "network", False),
             force=getattr(args, "force_verified", False),
+            local_path_by_model_id=local_paths,
         )
 
     return 0
