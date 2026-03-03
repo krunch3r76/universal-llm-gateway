@@ -14,7 +14,7 @@ from universal_logging import get_logger
 
 from .eviction_planning import _compute_eviction_plan
 from .model_checks import _is_model_available, _is_model_loaded
-from .resource_checks import _check_resources
+from .resource_checks import _check_resources, resolve_gateway_requirements
 from .types import ConstraintFailure, EvictionPlanSummary, FeasibilityTier
 
 if TYPE_CHECKING:
@@ -23,6 +23,54 @@ if TYPE_CHECKING:
     from .protocols import RoutingKeyTracker
 
 logger = get_logger(__name__)
+
+
+def _can_fit_after_eviction_including_busy(
+    gateway: Gateway,
+    placement: Placement,
+    requirements_lookup: Callable[[ModelId], tuple[int, int]],
+) -> bool:
+    """Return True iff model fits if ALL loaded models (incl. busy) could be evicted.
+
+    Distinguishes transient eviction failure (all models busy now, but hardware
+    CAN serve once they become idle) from permanent (hardware truly insufficient).
+
+    ∀ loaded ∈ gateway.loaded_models: eventually becomes idle → eligible for eviction.
+    """
+    loaded_models = set(gateway.loaded_models)
+    if not loaded_models:
+        return False
+
+    busy_loaded_models = loaded_models.intersection(gateway.busy_models)
+    # Strict classification: transient only when all currently loaded models are busy.
+    if busy_loaded_models != loaded_models:
+        return False
+
+    resolved = resolve_gateway_requirements(gateway, placement)
+    if isinstance(resolved, ConstraintFailure):
+        return False
+    gw_vram_mb, gw_ram_mb = resolved
+
+    total_freeable_vram = 0
+    total_freeable_ram = 0
+    for mid in loaded_models:
+        measured = gateway.model_measured_vram.get(mid)
+        catalog_vram, catalog_ram = gateway.get_model_resource_usage(mid)
+        req_vram_mb, req_ram_mb = requirements_lookup(mid)
+        effective_vram = (
+            measured
+            if measured is not None
+            else (req_vram_mb if req_vram_mb > 0 else catalog_vram)
+        )
+        effective_ram = req_ram_mb if req_ram_mb > 0 else catalog_ram
+        total_freeable_vram += effective_vram
+        total_freeable_ram += effective_ram
+
+    vram_ok = gw_vram_mb <= 0 or (
+        gateway.vram_free_mb + total_freeable_vram >= gw_vram_mb
+    )
+    ram_ok = gw_ram_mb <= 0 or (gateway.ram_free_mb + total_freeable_ram >= gw_ram_mb)
+    return vram_ok and ram_ok
 
 
 def evaluate_feasibility(
@@ -187,19 +235,48 @@ def evaluate_feasibility(
     )
 
     if eviction_plan is None:
-        # Cannot fit even with full eviction
         if resource_failure is not None:
             failures.append(resource_failure)
-        failures.append(
-            ConstraintFailure(
-                constraint="can_fit_with_eviction",
-                reason="Cannot fit even after evicting all idle models",
-                details={
-                    "vram_free": gateway.vram_free_mb,
-                    "ram_free": gateway.ram_free_mb,
-                },
-            )
+
+        # Distinguish transient from permanent eviction failure.
+        #
+        # Transient: idle_models is empty because loaded models are all BUSY
+        # (serving concurrent requests), but the hardware CAN fit the model once
+        # those requests complete and models become idle.
+        #
+        # Permanent: hardware is genuinely insufficient — even evicting every
+        # loaded model (including busy ones) would not free enough VRAM/RAM.
+        #
+        # ∀ busy ∈ loaded_models: busy → idle ∈ evictable (eventually)
+        can_fit_theoretically = _can_fit_after_eviction_including_busy(
+            gateway, placement, requirements_lookup
         )
+        if can_fit_theoretically:
+            failures.append(
+                ConstraintFailure(
+                    constraint="eviction_blocked_by_busy_models",
+                    reason=(
+                        "No idle models to evict; loaded models are currently busy. "
+                        "Eviction will be possible once in-flight requests complete."
+                    ),
+                    details={
+                        "vram_free": gateway.vram_free_mb,
+                        "loaded_count": len(gateway.loaded_models),
+                        "busy_count": len(gateway.busy_models),
+                    },
+                )
+            )
+        else:
+            failures.append(
+                ConstraintFailure(
+                    constraint="can_fit_with_eviction",
+                    reason="Cannot fit even after evicting all idle models",
+                    details={
+                        "vram_free": gateway.vram_free_mb,
+                        "ram_free": gateway.ram_free_mb,
+                    },
+                )
+            )
         return FeasibilityTier.T0_INFEASIBLE, tuple(failures), None
 
     # T2: Feasible with eviction

@@ -518,6 +518,45 @@ Payload: {
 }
 """
 
+ROUTING_EVICTION_BLOCKED_BUSY = "routing.eviction.blocked.busy"
+"""
+Eviction is temporarily blocked because all loaded models on a gateway are busy.
+
+Emitted when routing cannot create an eviction plan now, but the model can fit
+once currently busy loaded models become idle and evictable.
+
+Diagnostic query:
+    jq 'select(.signal == "routing.eviction.blocked.busy")'
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
+    "loaded_count": int,
+    "busy_count": int,
+    "vram_free": int
+}
+"""
+
+ROUTING_EVICTION_INSUFFICIENT_PERMANENT = "routing.eviction.insufficient.permanent"
+"""
+Eviction cannot make enough room — permanent hardware constraint.
+
+Emitted immediately before RESOURCE_UNAVAILABLE when routing determines that
+VRAM/RAM are insufficient even after considering eviction.
+
+Diagnostic query:
+    jq 'select(.signal == "routing.eviction.insufficient.permanent")'
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
+    "reason": str,
+    "failed_constraints": list[str]
+}
+"""
+
 ROUTING_UPSTREAM_ALL_EXCLUDED = "routing.upstream.all.excluded"
 """
 All gateways for a model have been excluded due to upstream (5xx) failures.
@@ -1781,6 +1820,50 @@ def RoutingModelInfeasible(
             "model_id": model_id,
             "gateway_constraints": gateway_constraints,
             "excluded_gateway_ids": excluded_gateway_ids,
+        },
+    )
+
+
+@event_factory
+def RoutingEvictionBlockedBusy(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    loaded_count: int,
+    busy_count: int,
+    vram_free: int,
+) -> Event:
+    """Create ROUTING_EVICTION_BLOCKED_BUSY event."""
+    return Event(
+        signal=ROUTING_EVICTION_BLOCKED_BUSY,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "loaded_count": loaded_count,
+            "busy_count": busy_count,
+            "vram_free": vram_free,
+        },
+    )
+
+
+@event_factory
+def RoutingEvictionInsufficientPermanent(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    reason: str,
+    failed_constraints: list[str],
+) -> Event:
+    """Create ROUTING_EVICTION_INSUFFICIENT_PERMANENT event."""
+    return Event(
+        signal=ROUTING_EVICTION_INSUFFICIENT_PERMANENT,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "reason": reason,
+            "failed_constraints": failed_constraints,
         },
     )
 

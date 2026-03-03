@@ -55,17 +55,19 @@ async def _emit_routing_resource_gap_event(
         for fg in federated_gateways
         if model_id in fg.available_models and model_id not in fg.model_resources
     ]
-    if gap_gateway_ids:
+    for gateway_id in gap_gateway_ids:
         try:
             await event_bus.publish_async_nowait(
                 RoutingResourceDataMissing(
                     request_id=request_id,
                     model_id=str(model_id),
-                    gateway_ids=gap_gateway_ids,
+                    gateway_ids=[gateway_id],
                 )
             )
         except Exception as exc:
-            logger.debug(f"Failed to emit routing resource gap event: {exc}")
+            logger.debug(
+                f"Failed to emit routing resource gap event for {gateway_id}: {exc}"
+            )
 
 
 def _build_constraint_summary(
@@ -129,6 +131,72 @@ async def _emit_routing_model_infeasible_event(
         )
     except Exception as exc:
         logger.debug(f"Failed to emit routing model infeasible event: {exc}")
+
+
+async def _emit_eviction_classification_event(
+    event_bus: Any,
+    request_id: str,
+    model_id: "ModelId",
+    trace: Any | None,
+    classification: str,
+    failure_reason: str,
+) -> None:
+    """Emit granular routing eviction classification event."""
+    from src.scheduling.events import (
+        RoutingEvictionBlockedBusy,
+        RoutingEvictionInsufficientPermanent,
+    )
+
+    gateway_id = "unknown"
+    loaded_count = 0
+    busy_count = 0
+    vram_free = 0
+    failed_constraints: list[str] = []
+
+    if trace and trace.candidates:
+        target_constraint = (
+            "eviction_blocked_by_busy_models"
+            if classification == "busy_blocked"
+            else "can_fit_with_eviction"
+        )
+        selected = next(
+            (
+                c
+                for c in trace.candidates
+                if any(f.constraint == target_constraint for f in c.constraints_failed)
+            ),
+            trace.candidates[0],
+        )
+        gateway_id = selected.gateway.name
+        loaded_count = len(selected.gateway.loaded_models)
+        busy_count = len(selected.gateway.busy_models)
+        vram_free = selected.gateway.vram_free_mb
+        failed_constraints = [f.constraint for f in selected.constraints_failed]
+
+    try:
+        if classification == "busy_blocked":
+            await event_bus.publish_async_nowait(
+                RoutingEvictionBlockedBusy(
+                    request_id=request_id,
+                    model_id=str(model_id),
+                    gateway_id=gateway_id,
+                    loaded_count=loaded_count,
+                    busy_count=busy_count,
+                    vram_free=vram_free,
+                )
+            )
+        elif classification == "permanent_insufficient":
+            await event_bus.publish_async_nowait(
+                RoutingEvictionInsufficientPermanent(
+                    request_id=request_id,
+                    model_id=str(model_id),
+                    gateway_id=gateway_id,
+                    reason=failure_reason,
+                    failed_constraints=failed_constraints,
+                )
+            )
+    except Exception as exc:
+        logger.debug(f"Failed to emit routing eviction classification event: {exc}")
 
 
 async def _route_to_federated_gateway(
@@ -598,6 +666,9 @@ async def _route_to_federated_gateway(
                     # circuit_breaker: OPEN→HALF_OPEN after recovery_timeout.
                     # Model IS available; gateway is isolated. Not permanent.
                     "circuit_breaker",
+                    # All loaded models are busy; once in-flight requests complete,
+                    # those models become idle and can be evicted to make room.
+                    "eviction_blocked_by_busy_models",
                 }
             )
             # VRAM/RAM failures are transient only when eviction CAN free space.
@@ -620,6 +691,13 @@ async def _route_to_federated_gateway(
 
             has_capacity_failure = any(
                 _is_transient_capacity_failure(c) for c in trace.candidates
+            )
+            has_busy_eviction_block = any(
+                any(
+                    f.constraint == "eviction_blocked_by_busy_models"
+                    for f in c.constraints_failed
+                )
+                for c in trace.candidates
             )
 
             # Permanent resource failure: VRAM or RAM insufficient even after
@@ -651,6 +729,14 @@ async def _route_to_federated_gateway(
                     f"❌ Permanent resource failure for {model_id}: {failure_reason}"
                 )
                 if event_bus:
+                    await _emit_eviction_classification_event(
+                        event_bus=event_bus,
+                        request_id=context.request_id,
+                        model_id=model_id,
+                        trace=trace,
+                        classification="permanent_insufficient",
+                        failure_reason=failure_reason,
+                    )
                     await _emit_routing_model_infeasible_event(
                         event_bus=event_bus,
                         request_id=context.request_id,
@@ -735,6 +821,17 @@ async def _route_to_federated_gateway(
                     f"⏳ Sticky model {model_id} at capacity on "
                     f"{capacity_gateway_url or 'UNKNOWN'} (reactive fallback path)"
                 )
+                if event_bus and has_busy_eviction_block:
+                    await _emit_eviction_classification_event(
+                        event_bus=event_bus,
+                        request_id=context.request_id,
+                        model_id=model_id,
+                        trace=trace,
+                        classification="busy_blocked",
+                        failure_reason=(
+                            "No idle models to evict; loaded models are currently busy"
+                        ),
+                    )
                 raise_capacity_error(str(model_id), capacity_details)
 
         # Distinguish: model in catalog but infeasible vs truly absent
