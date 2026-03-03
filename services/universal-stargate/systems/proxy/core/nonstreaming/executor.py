@@ -712,13 +712,15 @@ class RequestExecutor:
         Invariants:
             - Remote→Master uses NDJSON framing (preserves line boundaries)
             - Master→Client converts to SSE via ChunkProcessor
-            - On error, log and terminate stream (do NOT inject SSE error events)
+            - yielded_count == 0 ⟹ emit SSE error event + [DONE]
+            - yielded_count > 0 ⟹ log and terminate stream (no SSE error injection)
             - Capacity cleanup: MasterRequestTracker decrements in finally
         """
         import httpx
 
         from ...utils.analysis_section_filter import create_content_filter
-        from ..common import ChunkProcessor
+        from ..common import ChunkProcessor, ErrorNormalizer
+        from ..streaming.error_handler import StreamingErrorHandler
         from ..streaming.response_tracker import TrackedStreamingResponse
 
         # Create content filter for analysis section filtering
@@ -799,6 +801,18 @@ class RequestExecutor:
                         f"ZERO yielded chunks (received={received_count}) "
                         f"for {model_name} on {fed_gateway.gateway_id}"
                     )
+                    error_dict = {
+                        "error": {
+                            "message": (
+                                f"Gateway '{fed_gateway.gateway_id}' returned an "
+                                "empty stream — no content was generated"
+                            ),
+                            "type": "gateway_error",
+                            "code": "empty_stream",
+                        }
+                    }
+                    yield StreamingErrorHandler.create_sse_error_event(error_dict)
+                    yield StreamingErrorHandler.create_sse_done_event()
                 else:
                     logger.info(
                         f"✅ [FED:{request_id[:8]}] Stream completed "
@@ -806,7 +820,6 @@ class RequestExecutor:
                         f"for {model_name}"
                     )
             except httpx.HTTPStatusError as e:
-                # Log error, terminate stream (no SSE injection per invariant)
                 logger.exception(
                     f"Federated streaming HTTP error "
                     f"(received={received_count}, yielded={yielded_count})",
@@ -816,13 +829,30 @@ class RequestExecutor:
                         "status_code": e.response.status_code,
                     },
                 )
-                # Stream terminates - client sees incomplete response
-            except Exception:
+                if yielded_count == 0:
+                    _, error_dict = ErrorNormalizer.normalize_to_openai_format(
+                        error=e,
+                        default_status=e.response.status_code,
+                        operation="federated_streaming",
+                        gateway_name=fed_gateway.gateway_id,
+                    )
+                    yield StreamingErrorHandler.create_sse_error_event(error_dict)
+                    yield StreamingErrorHandler.create_sse_done_event()
+            except Exception as e:
                 logger.exception(
                     f"Federated streaming error "
                     f"(received={received_count}, yielded={yielded_count})",
                     extra={"request_id": request_id},
                 )
+                if yielded_count == 0:
+                    _, error_dict = ErrorNormalizer.normalize_to_openai_format(
+                        error=e,
+                        default_status=503,
+                        operation="federated_streaming",
+                        gateway_name=fed_gateway.gateway_id,
+                    )
+                    yield StreamingErrorHandler.create_sse_error_event(error_dict)
+                    yield StreamingErrorHandler.create_sse_done_event()
             finally:
                 await self._release_capacity_token(context)
 

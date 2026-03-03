@@ -106,25 +106,48 @@ def raise_no_feasible_gateway_error(
 def raise_all_gateways_excluded_error(
     model_id: str,
     excluded_gateway_ids: list[str],
+    upstream_errors: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """Raise non-retryable error when all gateways with the model have been excluded.
 
     ∀ upstream failures: excluded gateways ⊇ gateways_with_model ⟹ fail immediately.
     Retrying on the same failed gateway wastes the upstream budget without progress.
+
+    When upstream_errors is provided, the original upstream status code is
+    preserved so the client sees the real cause (e.g. 429 rate-limit vs
+    generic 503 unavailable).
     """
+    upstream_codes = set()
+    if upstream_errors:
+        for err_ctx in upstream_errors.values():
+            code = err_ctx.get("upstream_status_code")
+            if code is not None:
+                upstream_codes.add(int(code))
+
+    # If every upstream failure is 429, report 429 to the client so rate-limit
+    # semantics are preserved end-to-end.
+    if upstream_codes == {429}:
+        http_status = 429
+        message = f"Provider rate limit (429) for model {model_id}"
+    else:
+        http_status = get_http_status(ErrorCode.RESOURCE_UNAVAILABLE)
+        message = f"All gateways for model {model_id} have returned upstream errors"
+
+    data: dict[str, Any] = {
+        "model_id": model_id,
+        "excluded_gateways": excluded_gateway_ids,
+    }
+    if upstream_errors:
+        data["upstream_errors"] = upstream_errors
+
     raise HTTPException(
-        status_code=get_http_status(ErrorCode.RESOURCE_UNAVAILABLE),
+        status_code=http_status,
         detail=error_envelope(
             code=ErrorCode.RESOURCE_UNAVAILABLE,
-            message=(
-                f"All gateways for model {model_id} have returned upstream errors"
-            ),
+            message=message,
             source="master",
             retryable=False,
-            data={
-                "model_id": model_id,
-                "excluded_gateways": excluded_gateway_ids,
-            },
+            data=data,
         ),
     )
 

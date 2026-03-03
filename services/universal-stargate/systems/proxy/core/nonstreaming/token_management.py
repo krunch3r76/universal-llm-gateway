@@ -328,7 +328,7 @@ async def apply_federated_token_management(
 
     INVARIANT: ∀ federated_request: token_counting_before_forward
     INVARIANT: uses federation auth headers via forwarder
-    INVARIANT (Router-Only): ∀ router_only_request:
+    INVARIANT (Master): ∀ master_mode_request:
         token_counting_target = execution_target
         execution_target = federated_gateway
         ¬∃ local_gateway ⟹ token_counting via federation_forwarder ONLY
@@ -353,7 +353,7 @@ async def apply_federated_token_management(
     # Fail-fast: allocation_policy is non-optional
     if allocation_policy is None:
         raise TypeError(
-            "BUG: allocation_policy is None - router-only wiring must provide policy"
+            "BUG: allocation_policy is None - master mode wiring must provide policy"
         )
 
     if federation_forwarder is None:

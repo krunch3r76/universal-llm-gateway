@@ -83,6 +83,11 @@ class RequestContext:
         # Gateways to exclude from routing (accumulated across retries)
         self.excluded_gateway_ids: set[str] = set()
 
+        # Per-gateway upstream error context (gateway_id → {status_code, message})
+        # Populated alongside excluded_gateway_ids so the final error can
+        # surface the original upstream status (e.g. 429) to the client.
+        self.excluded_gateway_errors: dict[str, dict[str, Any]] = {}
+
         # Capacity token acquired during routing, released after execution
         self.capacity_token: Any | None = None
 

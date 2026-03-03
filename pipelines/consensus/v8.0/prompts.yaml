@@ -733,6 +733,7 @@ prompts:
         from neighboring sentences
       - Ignore stylistic similarity that is not factual duplication
       - Do not merge sentences that cover genuinely different sub-aspects of a topic
+      - For each merge group, record which section numbers contributed in a "sections" array
       - Output ONLY valid JSON — no prose, no explanation before or after
 
   identify_redundancy_initial:
@@ -749,16 +750,24 @@ prompts:
       independently and may repeat claims already stated in another section.
 
       Find all groups where 2 or more sentences from DIFFERENT sections express the same
-      factual claim. For each group, collect the citation indices only from the exact
-      duplicate sentences.
+      factual claim. For each group, record the section numbers and the citation indices
+      from only the exact duplicate sentences.
 
-      Output a SINGLE JSON object with a "merge_groups" array containing ALL groups.
-      Example — "X increases Y [1, 5]" in SECTION 1 and "X elevates Y [10]" in SECTION 3
-      produce one group; "Z is prohibited when W applies [3]" in SECTION 2 and
-      "W prohibits Z [8, 12]" in SECTION 4 produce another:
+      Example:
+      - SENTENCE A (Section 1): "X increases Y [1, 10]."
+      - SENTENCE B (Section 1): "X also enhances Z [11]."
+      - SENTENCE C (Section 3): "X elevates Y [16]."
+      - SENTENCE D (Section 2): "W is processed by V [3]."
+      - SENTENCE E (Section 4): "V transforms W [20]."
+
+      Sentences A and C are redundant — same claim, different sections → merge.
+      Sentences A and B are NOT redundant — same section, do not merge.
+      Sentences D and E are redundant — different sections → merge.
+
+      Output JSON only:
       {{"merge_groups": [
-        {{"theme": "X increases Y", "citations": [1, 5, 10]}},
-        {{"theme": "Z is prohibited when W applies", "citations": [3, 8, 12]}}
+        {{"theme": "X increases Y", "sections": [1, 3], "citations": [1, 10, 16]}},
+        {{"theme": "W processed by V", "sections": [2, 4], "citations": [3, 20]}}
       ]}}
 
       NOT a merge group: a single sentence "A causes B [43, 44]" with two citations is one

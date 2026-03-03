@@ -235,14 +235,14 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
     _wire_forwarder_to_model_router(proxy)
 
     # Initialize request components (depends on federation_forwarder)
-    # Router-only mode uses different initialization path
+    # Master mode (no local gateway) uses different initialization path
     if gateway_name is not None:
         initialize_request_components(proxy)
     else:
-        from .component_factory import initialize_router_only_request_components
+        from .component_factory import initialize_master_request_components
 
-        initialize_router_only_request_components(proxy)
-        logger.info("✅ Router-only request components initialized")
+        initialize_master_request_components(proxy)
+        logger.info("✅ Master request components initialized")
 
     # Initialize pipeline system (depends on request_executor)
     await initialize_pipeline_system(proxy)

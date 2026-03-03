@@ -18,7 +18,9 @@ Endpoints:
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -184,6 +186,83 @@ async def _lifespan(application: FastAPI):  # noqa: ANN201, ARG001
 app = FastAPI(title="Cloud Proxy", lifespan=_lifespan)
 
 
+async def _relay_stream_safe(
+    chunks: AsyncIterator[bytes],
+    provider: str,
+    model_id: str,
+    event_bus: EventBus | None = None,
+) -> AsyncIterator[bytes]:
+    """Relay SSE chunks, converting upstream errors to SSE error events.
+
+    ∀ error raised after HTTP 200 headers are committed: yield SSE error + [DONE]
+    rather than aborting the chunked transfer (which produces an incomplete-read
+    error on the caller side).
+    """
+    try:
+        async for chunk in chunks:
+            yield chunk
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response else 502
+        error_text = str(exc)[:300]
+        logger.error(
+            "Streaming %d from provider %s model=%s: %s",
+            status,
+            provider,
+            model_id,
+            error_text,
+        )
+        if event_bus is not None:
+            await event_bus.publish_async(
+                CloudProxyRequestFailed(
+                    provider=provider,
+                    model=model_id,
+                    status_code=status,
+                    error=error_text,
+                )
+            )
+        # Avoid duplicating prefix from forwarder errors that already start with
+        # "Provider returned <status>: ..."
+        if error_text.startswith(f"Provider returned {status}: "):
+            message = error_text
+        else:
+            message = f"Provider returned {status}: {error_text[:200]}"
+        error_dict = {
+            "error": {
+                "message": message,
+                "type": "provider_error",
+                "code": str(status),
+            }
+        }
+        yield f"data: {json.dumps(error_dict)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+    except Exception as exc:
+        error_text = str(exc)[:300]
+        logger.error(
+            "Streaming error from provider %s model=%s: %s",
+            provider,
+            model_id,
+            error_text,
+        )
+        if event_bus is not None:
+            await event_bus.publish_async(
+                CloudProxyRequestFailed(
+                    provider=provider,
+                    model=model_id,
+                    status_code=502,
+                    error=error_text,
+                )
+            )
+        error_dict = {
+            "error": {
+                "message": error_text,
+                "type": "upstream_error",
+                "code": "stream_error",
+            }
+        }
+        yield f"data: {json.dumps(error_dict)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+
 def _get_browser_cache() -> BrowserCatalogCache | None:
     return _browser_cache
 
@@ -249,37 +328,42 @@ async def chat_completions(request: Request) -> Response:
     if provider_catalog is None:
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
 
+    if streaming:
+        chunks = _forwarder.forward_request_stream(
+            base_url=provider_catalog.base_url,
+            api_key=provider_catalog.api_key,
+            request_body=body,
+        )
+        if _event_bus:
+            await _event_bus.publish_async(
+                CloudProxyRequestForwarded(
+                    provider=provider_catalog.provider,
+                    model=model_id,
+                    streaming=True,
+                )
+            )
+        return StreamingResponse(
+            _relay_stream_safe(
+                chunks, provider_catalog.provider, model_id, event_bus=_event_bus
+            ),
+            media_type="text/event-stream",
+        )
+
     try:
-        if streaming:
-            chunks = _forwarder.forward_request_stream(
-                base_url=provider_catalog.base_url,
-                api_key=provider_catalog.api_key,
-                request_body=body,
-            )
-            if _event_bus:
-                await _event_bus.publish_async(
-                    CloudProxyRequestForwarded(
-                        provider=provider_catalog.provider,
-                        model=model_id,
-                        streaming=True,
-                    )
+        response = await _forwarder.forward_request(
+            base_url=provider_catalog.base_url,
+            api_key=provider_catalog.api_key,
+            request_body=body,
+        )
+        if _event_bus:
+            await _event_bus.publish_async(
+                CloudProxyRequestForwarded(
+                    provider=provider_catalog.provider,
+                    model=model_id,
+                    streaming=False,
                 )
-            return StreamingResponse(chunks, media_type="text/event-stream")
-        else:
-            response = await _forwarder.forward_request(
-                base_url=provider_catalog.base_url,
-                api_key=provider_catalog.api_key,
-                request_body=body,
             )
-            if _event_bus:
-                await _event_bus.publish_async(
-                    CloudProxyRequestForwarded(
-                        provider=provider_catalog.provider,
-                        model=model_id,
-                        streaming=False,
-                    )
-                )
-            return JSONResponse(content=response.json())
+        return JSONResponse(content=response.json())
 
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code if exc.response else 502

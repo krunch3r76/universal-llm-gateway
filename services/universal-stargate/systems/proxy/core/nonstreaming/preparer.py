@@ -107,7 +107,7 @@ class RequestPreparer:
     Design highlights and invariants:
       - Isolates mutation of client input; raw_client_fields is never modified.
       - All internal state and decision points are tracked in middleware_actions.
-      - Supports multiple modes (normal, bypass, router-only, federated).
+      - Supports multiple modes (normal, bypass, master, federated).
       - Strict points of input validation / model ID canonicalization.
       - Designed to be resilient to configuration, model upgrades, and profile changes.
     """
@@ -133,13 +133,11 @@ class RequestPreparer:
 
     @property
     def is_router_only(self) -> bool:
-        """
-        Return True if this is router-only mode (there is no local gateway).
+        """No local gateway -- Master preparation mode.
 
-        Router-only mode occurs when gateway_manager is None; in this mode,
-        the preparer delegates all model-specific processing (configuration fetching,
-        transformation, validation, etc) to the execution/federation target.
-        Preparation here is minimal (just input normalization and routing metadata).
+        When True, the preparer applies client-facing policy (profiles,
+        system prompts) but defers model-specific transformations to
+        the execution target (Edge/Gateway).
         """
         return self.gateway_manager is None
 
@@ -385,14 +383,13 @@ class RequestPreparer:
         self, context: RequestContext
     ) -> list[dict[str, Any]]:
         """
-        Extract and filter messages for router-only mode and pass them on for forwarding.
+        Extract and filter messages for Master mode forwarding.
 
-        In router-only mode, full transformation to legacy prompt format is NOT performed;
-        instead, all user content is extracted as messages and basic filters (such as profanity,
-        redaction, etc) are applied.
+        Full transformation to prompt format is NOT performed; messages are
+        extracted and basic filters (profanity, redaction, etc.) applied.
 
         Returns:
-            List of filtered message dictionaries, ready to be forwarded (in messages format).
+            List of filtered message dictionaries, ready for forwarding.
         """
         original_messages = self._extract_messages(context)
         return self._transformation_engine.apply_filters_only(
@@ -414,56 +411,37 @@ class RequestPreparer:
             f"model_sticky:{'true' if context.model_sticky else 'false'}"
         )
 
-    def _build_router_only_forward_payload(
+    def _build_federation_forward_payload(
         self, context: RequestContext, filtered_messages: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """
-        Build the minimal request payload for forwarding in router-only/federation mode.
+        Build request payload for federation forwarding (Master mode).
 
-        This payload:
-          - Contains user messages after filtering.
-          - Applies generation_params (e.g. default stop sequences, max tokens)
-            from model transformation config if and only if not overridden by the user.
-          - Strips redundant prompt fields if present (after legacy handling).
-          - Leaves full transformation (prompt template, input schema, etc)
-            to the execution (federation) target gateway.
+        Applies client-facing policy (generation_params, profile params) but
+        defers model-specific transformations (prompt templates, input schemas)
+        to the execution target.
 
         Args:
             context: The RequestContext holding all input/context metadata.
             filtered_messages: Pre-filtered, format-normalized user messages.
 
         Returns:
-            request_data: Dict suitable for direct federation/forwarding to a remote gateway.
+            request_data: Dict suitable for federation forwarding to a remote gateway.
         """
         request_data = context.original_request.copy()
         request_data["messages"] = filtered_messages
 
-        # Remove prompt if present (converted to messages)
         if "prompt" in request_data:
             del request_data["prompt"]
 
         # Apply generation_params from transformation config (e.g., stop sequences)
-        # Even though we defer full transformations, generation params like stop
-        # sequences must be applied before forwarding
-        logger.debug(
-            f"🔍 Router-only: Looking for generation_params for {context.selected_model}"
-        )
         transform_config = self._transformation_engine.get_config_for_model(
             context.selected_model
         )
-        logger.debug(
-            f"🔍 Router-only: transform_config={'found' if transform_config else 'NOT FOUND'}"
-        )
         if transform_config:
             settings = transform_config.get("settings", {})
-            logger.debug(
-                f"🔍 Router-only: Has generation_params: {'generation_params' in settings}"
-            )
             if "generation_params" in settings:
                 gen_params = settings["generation_params"]
-                logger.info(
-                    f"🔍 Router-only: generation_params = {list(gen_params.keys())}"
-                )
                 applied_params = []
                 for param_name, param_value in gen_params.items():
                     if param_name not in request_data:
@@ -471,55 +449,84 @@ class RequestPreparer:
                         applied_params.append(param_name)
                 if applied_params:
                     logger.info(
-                        f"✅ Applied generation params in router-only mode: "
-                        f"{applied_params}"
+                        "Applied generation params in master mode: %s", applied_params
                     )
+
+        # Apply profile params (fill-only: never override user params)
+        if hasattr(context, "profile_data") and context.profile_data:
+            for key, value in context.profile_data.params.items():
+                if key not in context.user_params and key not in request_data:
+                    request_data[key] = value
 
         return request_data
 
-    async def _prepare_router_only_mode(self, context: RequestContext):
+    async def _prepare_master_mode(self, context: RequestContext):
         """
-        Prepare a request for router-only Master (where there is no local model gateway).
+        Prepare a request on the Master (no local gateway).
 
-        Behavior:
-          - Only messages filtering and minimal transformation is performed locally.
-          - No model-specific configuration or prompt templates are applied locally
-            (these are the responsibility of the execution/federation target).
-          - Only data needed for routing and minimal compliance is set.
-          - Updates context with processed messages, sticky routing decision,
-            and builds minimal request payload for federation forwarding.
-
-        This method is a critical fast-path for large deployments and advanced routing setups.
+        Client-facing policy (profiles, system prompts) is applied here.
+        Model-specific transformations (prompt templates, input schemas)
+        are deferred to the execution target (Edge/Gateway).
 
         INVARIANT:
-            For all router_only_master:
-                No local_gateway => minimal_for_routing preparation only.
-                All model configuration and transformations are performed downstream.
+            For all master_mode:
+                Client-facing policy (profiles, system prompts) applied locally.
+                Model-specific transformations deferred to execution target.
         """
-        context.middleware_actions.append("router_only_mode")
-        logger.debug(
-            f"Router-only mode: minimal preparation for {context.selected_model}"
+        context.middleware_actions.append("master_mode")
+        logger.debug(f"Master mode: preparing request for {context.selected_model}")
+
+        # Resolve profile (client-facing policy applied on Master)
+        profile_data = None
+        if self._profile_manager and not context.disable_profile:
+            profile_data = self._profile_manager.get_complete_profile(
+                model_id=str(context.selected_model),
+                user_params=context.user_params,
+                request_profile=context.request_profile,
+                model_info={},
+                disable_profile=context.disable_profile,
+            )
+            for warning in profile_data.warnings:
+                logger.warning(warning)
+                context.middleware_actions.append(f"profile_warning:{warning}")
+            context.profile_data = profile_data
+
+        # Expose resolved profile in early monitoring request_info events.
+        if profile_data and profile_data.name:
+            context.request_profile = profile_data.name
+            context.middleware_actions.append(f"profile_resolved:{profile_data.name}")
+
+        # Match normal-mode ordering: inject system prompt before filtering.
+        original_messages = self._extract_messages(context)
+        if (
+            profile_data
+            and profile_data.has_system_prompt()
+            and profile_data.system_prompt
+            and profile_data.name
+        ):
+            original_messages = self._inject_profile_system_prompt(
+                original_messages,
+                profile_data.system_prompt,
+                profile_data.name,
+                context,
+            )
+        filtered_messages = self._transformation_engine.apply_filters_only(
+            original_messages, context.selected_model
         )
 
-        # Extract and filter messages (execution target handles transformations)
-        filtered_messages = self._extract_and_filter_messages(context)
-
-        # Update context with minimal metadata
         context.processed_messages = filtered_messages
-        context.transformation_metadata = {}  # No local transformations
-        context.model_metadata = None  # Fetched by execution target
+        context.transformation_metadata = {}
+        context.model_metadata = None
 
-        # Set sticky routing policy (needed for routing decision)
         self._set_sticky_policy(context)
 
-        # Build minimal request data for forwarding
-        context.modified_request = self._build_router_only_forward_payload(
+        context.modified_request = self._build_federation_forward_payload(
             context, filtered_messages
         )
         context.client_wants_streaming = context.original_request.get("stream", False)
 
         logger.debug(
-            f"Router-only preparation complete: {len(filtered_messages)} messages, "
+            f"Master mode preparation complete: {len(filtered_messages)} messages, "
             f"sticky={context.model_sticky}"
         )
 
@@ -549,12 +556,9 @@ class RequestPreparer:
         """
         logger.debug(f"🔍 PREPARING NORMAL MODE for model: {context.selected_model}")
 
-        # Router-only Master: skip local model config fetching
+        # Master mode: no local gateway, apply client-facing policy only
         if self.is_router_only:
-            logger.debug(
-                f"Router-only mode: skipping local model config for {context.selected_model}"
-            )
-            await self._prepare_router_only_mode(context)
+            await self._prepare_master_mode(context)
             return
 
         try:
@@ -635,10 +639,20 @@ class RequestPreparer:
 
             # Store for later use in builder
             context.profile_data = profile_data
+            if profile_data.name:
+                context.request_profile = profile_data.name
+                context.middleware_actions.append(
+                    f"profile_resolved:{profile_data.name}"
+                )
 
         # Extract and apply system prompt to messages
         original_messages = self._extract_messages(context)
-        if profile_data and profile_data.has_system_prompt():
+        if (
+            profile_data
+            and profile_data.has_system_prompt()
+            and profile_data.system_prompt
+            and profile_data.name
+        ):
             original_messages = self._inject_profile_system_prompt(
                 original_messages,
                 profile_data.system_prompt,

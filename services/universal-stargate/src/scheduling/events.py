@@ -422,6 +422,20 @@ Payload: {
 }
 """
 
+REQUEST_PROFILE_RESOLVED = "request.profile.resolved"
+"""
+Request profile resolved during preparation.
+
+Emitted after request preparation when a profile is in effect for the request
+(auto-assigned by model basename or explicitly requested by client).
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "profile_name": str
+}
+"""
+
 REQUEST_COMPLETED = "request.completed"
 """
 Request completed successfully
@@ -1532,6 +1546,35 @@ def RequestProcessing(
             "request_id": request_id,
             "gateway_url": gateway_url,
             "model_id": model_id,
+        },
+    )
+
+
+@event_factory
+def RequestProfileResolved(
+    request_id: str,
+    model_id: str,
+    profile_name: str,
+) -> Event:
+    """
+    Create REQUEST_PROFILE_RESOLVED event.
+
+    INVARIANT: request_id always present (proxy request ID for tracking)
+
+    Args:
+        request_id: Proxy request ID for tracking and tracing
+        model_id: Model selected for execution
+        profile_name: Profile resolved for this request
+
+    Returns:
+        Event with RequestProfileResolved signal
+    """
+    return Event(
+        signal=REQUEST_PROFILE_RESOLVED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "profile_name": profile_name,
         },
     )
 

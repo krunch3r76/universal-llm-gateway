@@ -212,13 +212,14 @@ def _create_local_forward_guards():
     return _raise_local_forward_error, _raise_local_streaming_error
 
 
-def initialize_router_only_request_components(proxy: StargateProxy) -> None:
+def initialize_master_request_components(proxy: StargateProxy) -> None:
     """
-    Initialize request components for router-only Master.
+    Initialize request components for Master (no local gateway).
 
-    Router-only mode:
-    - No local gateway → no local forwarding
+    Master mode:
+    - No local gateway -> no local forwarding
     - All requests routed to federated remotes
+    - Client-facing policy (profiles, system prompts) applied locally
     - Token counting via federation forwarder (on execution target)
 
     INVARIANT:
@@ -240,14 +241,13 @@ def initialize_router_only_request_components(proxy: StargateProxy) -> None:
     # Initialize profile manager (startup I/O) - stored on proxy for DI access
     proxy.profile_manager = initialize_profile_manager(config_dir)
 
-    # Request preparer works without gateway (prepares request for routing)
-    # Router-only detected via gateway_manager=None (single source of truth)
+    # Master preparer: no local gateway, applies client-facing policy (profiles)
     proxy.request_preparer = RequestPreparer(
-        gateway_manager=None,  # No local gateway → is_router_only=True
+        gateway_manager=None,  # No local gateway -> Master mode
         transformation_engine=transformation_engine,
         profile_manager=proxy.profile_manager,
-        token_manager=None,  # No local token manager
-        token_management_enabled=False,  # Disabled for router-only
+        token_manager=None,
+        token_management_enabled=False,
         config=proxy.config,
     )
 
@@ -295,7 +295,7 @@ def initialize_router_only_request_components(proxy: StargateProxy) -> None:
     proxy.request_forwarder = None
     proxy.stream_handler = None
 
-    logger.info("✅ Router-only components initialized (federated token counting)")
+    logger.info("✅ Master request components initialized")
 
 
 async def initialize_hot_reload(proxy: StargateProxy) -> None:

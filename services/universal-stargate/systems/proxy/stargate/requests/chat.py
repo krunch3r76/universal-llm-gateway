@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
@@ -15,6 +15,7 @@ from src.scheduling.events import (
     RequestCompleted,
     RequestFailed,
     RequestProcessing,
+    RequestProfileResolved,
 )
 
 # Import from service root to avoid "beyond top-level package" error
@@ -79,6 +80,28 @@ def _extract_failed_gateway_id(exc: HTTPException) -> str | None:
         return None
     gw_id = data.get("gateway_id")
     return gw_id if isinstance(gw_id, str) else None
+
+
+def _extract_upstream_error_context(exc: HTTPException) -> dict[str, Any]:
+    """Extract upstream error details from a federated error envelope.
+
+    Preserves the original upstream status code and message so the
+    client-facing error can surface provider-level semantics (e.g. 429).
+    """
+    detail = exc.detail
+    if not isinstance(detail, dict):
+        return {}
+    data = detail.get("data", {})
+    if not isinstance(data, dict):
+        data = {}
+    ctx: dict[str, Any] = {}
+    upstream_status = data.get("status_code")
+    if upstream_status is not None:
+        ctx["upstream_status_code"] = upstream_status
+    msg = detail.get("message")
+    if msg:
+        ctx["message"] = str(msg)[:300]
+    return ctx
 
 
 def _read_positive_float(
@@ -289,6 +312,15 @@ async def process_chat_completion(
 
     if proxy.event_bus:
         try:
+            profile_name = getattr(context, "request_profile", None)
+            if profile_name:
+                await proxy.event_bus.publish_async_nowait(
+                    RequestProfileResolved(
+                        request_id=context.request_id,
+                        model_id=model_id,
+                        profile_name=profile_name,
+                    )
+                )
             await proxy.event_bus.publish_async_nowait(
                 RequestProcessing(
                     request_id=context.request_id,
@@ -360,6 +392,9 @@ async def process_chat_completion(
                     failed_gw = _extract_failed_gateway_id(exc)
                     if failed_gw:
                         context.excluded_gateway_ids.add(failed_gw)
+                        upstream_ctx = _extract_upstream_error_context(exc)
+                        if upstream_ctx:
+                            context.excluded_gateway_errors[failed_gw] = upstream_ctx
                         logger.info(
                             "🚫 [REQ:%s] Excluding gateway %s from routing "
                             "(%d excluded)",

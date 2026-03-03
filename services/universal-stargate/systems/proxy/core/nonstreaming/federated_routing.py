@@ -1,5 +1,5 @@
 """
-Federated gateway routing for router-only mode.
+Federated gateway routing for Master mode.
 
 Handles gateway selection, model loading, and routing events.
 """
@@ -266,7 +266,9 @@ async def _route_to_federated_gateway(
                     )
                 )
             raise_all_gateways_excluded_error(
-                str(model_id), list(context.excluded_gateway_ids)
+                str(model_id),
+                list(context.excluded_gateway_ids),
+                upstream_errors=context.excluded_gateway_errors or None,
             )
 
     # Exclude gateways with persistent load failures for this model+context
@@ -590,19 +592,23 @@ async def _route_to_federated_gateway(
         # vs error (model doesn't exist or hardware can't serve it)
         if context.model_sticky and trace and trace.candidates:
             # Always-transient: retrying will eventually help
-            transient_constraints: frozenset[str] = frozenset({
-                "compute_type_capacity",
-                # circuit_breaker: OPEN→HALF_OPEN after recovery_timeout.
-                # Model IS available; gateway is isolated. Not permanent.
-                "circuit_breaker",
-            })
+            transient_constraints: frozenset[str] = frozenset(
+                {
+                    "compute_type_capacity",
+                    # circuit_breaker: OPEN→HALF_OPEN after recovery_timeout.
+                    # Model IS available; gateway is isolated. Not permanent.
+                    "circuit_breaker",
+                }
+            )
             # VRAM/RAM failures are transient only when eviction CAN free space.
             # When can_fit_with_eviction also fails, no idle models exist that
             # could be evicted — hardware limit, not a transient wait condition.
-            resource_constraints: frozenset[str] = frozenset({
-                "has_enough_vram",
-                "has_enough_ram",
-            })
+            resource_constraints: frozenset[str] = frozenset(
+                {
+                    "has_enough_vram",
+                    "has_enough_ram",
+                }
+            )
 
             def _is_transient_capacity_failure(c: Any) -> bool:
                 failed = {f.constraint for f in c.constraints_failed}
@@ -774,10 +780,10 @@ async def _route_to_federated_gateway(
         # Execute eviction if needed (T2_FEASIBLE_EVICT tier)
         from systems.routing.selection.decision import FeasibilityTier
 
-        from .eviction_execution import execute_router_only_eviction
+        from .eviction_execution import execute_master_eviction
 
         if trace.selection_tier == FeasibilityTier.T2_FEASIBLE_EVICT:
-            eviction_ok = await execute_router_only_eviction(
+            eviction_ok = await execute_master_eviction(
                 federation_forwarder=federation_forwarder,
                 federated_manager=federated_manager,
                 selected_gateway=selected_gateway,

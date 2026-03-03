@@ -48,7 +48,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup.
 ## Architecture
 
 ```
-Client → Master Stargate:9999 (host, router-only)
+Client → Master Stargate:9999 (host, orchestrator)
          ├─ Unix socket (local) → Edge container (network_mode: "none")
          │                         ├─ Edge Stargate (federation endpoint)
          │                         └─ Gateway + Worker (inference)

@@ -33,7 +33,7 @@ steps:
 
   - name: identify_redundancy
     type: consensus_identify_redundancy_v8_0
-    enabled: false
+    enabled: true
     handler_inputs:
       answer: synthesize_answer.json.answer
       batch_texts: synthesize_answer.json.batch_texts

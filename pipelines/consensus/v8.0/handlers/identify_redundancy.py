@@ -69,7 +69,15 @@ def _compose_draft(answer: str, batch_texts: list[str]) -> str:
     return sections
 
 
-def _parse_merge_groups(raw: str) -> list[dict[str, Any]]:
+def _parse_merge_groups(
+    raw: str, enforce_sections: bool = False
+) -> list[dict[str, Any]]:
+    """Parse and validate merge groups from model output.
+
+    ∀ group G: |G.citations| ≥ 2
+    When enforce_sections=True (batch_texts provided):
+        ∀ group G: len(set(G.sections)) ≥ 2 — else discarded as same-section false positive
+    """
     parsed = _extract_json(raw)
     raw_groups = parsed.get("merge_groups", [])
     if not isinstance(raw_groups, list):
@@ -88,10 +96,15 @@ def _parse_merge_groups(raw: str) -> list[dict[str, Any]]:
                     citations.append(n)
             except (ValueError, TypeError):
                 pass
-        if len(citations) >= 2:
-            groups.append(
-                {"theme": str(g.get("theme", "")), "citations": sorted(citations)}
-            )
+        if len(citations) < 2:
+            continue
+        if enforce_sections:
+            sections = [int(s) for s in g.get("sections", []) if str(s).isdigit()]
+            if len(set(sections)) < 2:
+                continue  # same-section false positive — discard
+        groups.append(
+            {"theme": str(g.get("theme", "")), "citations": sorted(citations)}
+        )
     return groups
 
 
@@ -166,11 +179,19 @@ class IdentifyRedundancyHandler(BaseHandler):
         merge_groups: list[dict[str, Any]] = []
 
         try:
-            merge_groups = _parse_merge_groups(raw)
+            merge_groups = _parse_merge_groups(raw, enforce_sections=using_sections)
         except (json.JSONDecodeError, ValueError, TypeError) as exc:
             logger.warning("Step '%s': failed to parse merge groups — %s", step.id, exc)
 
         latency_ms = (time.monotonic() - start_time) * 1000
+        if merge_groups:
+            for g in merge_groups:
+                logger.info(
+                    "Step '%s': merge group '%s' citations=%s",
+                    step.id,
+                    g.get("theme", ""),
+                    g["citations"],
+                )
         logger.info(
             "Step '%s': identified %d merge group(s) (%.0fms)",
             step.id,

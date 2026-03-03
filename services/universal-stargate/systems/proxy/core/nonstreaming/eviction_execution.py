@@ -1,4 +1,4 @@
-"""Eviction execution for router-only mode."""
+"""Eviction execution for Master mode (remote gateway eviction)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-async def execute_router_only_eviction(
+async def execute_master_eviction(
     federation_forwarder: FederatedRequestForwarder | None,
     federated_manager: FederatedGatewayManager | None,
     selected_gateway: Gateway,
@@ -28,7 +28,7 @@ async def execute_router_only_eviction(
     event_bus: EventBus | None = None,
 ) -> bool:
     """
-    Execute eviction for router-only mode.
+    Execute eviction on a remote gateway (Master mode).
 
     Args:
         federation_forwarder: FederatedRequestForwarder from FederationIntegration

@@ -78,7 +78,13 @@ class ProfileResolver:
             if not profile_def:
                 continue
 
-            profile_params = self._get_profile_for_engine(name, profile_def, engine)
+            profile_params = self._get_profile_for_engine(
+                name=name,
+                profile=profile_def,
+                engine=engine,
+                warnings=warnings,
+                model_id=model_id,
+            )
 
             for key, value in profile_params.items():
                 if key in user_params:
@@ -109,7 +115,12 @@ class ProfileResolver:
         )
 
     def _get_profile_for_engine(
-        self, name: str, profile: dict[str, Any], engine: str
+        self,
+        name: str,
+        profile: dict[str, Any],
+        engine: str,
+        warnings: list[str],
+        model_id: str,
     ) -> dict[str, Any]:
         """Get profile parameters adapted for target engine."""
         result = {}
@@ -133,6 +144,11 @@ class ProfileResolver:
                     result = self._converter.convert_llama_cpp_to_vllm(full_params)
                     logger.debug(f"Auto-converted llama-cpp to vLLM for '{name}'")
         else:
-            logger.warning(f"Unknown engine '{engine}', using shared params only")
+            warning = (
+                f"profile_{name}: unknown engine '{engine}' for model {model_id}; "
+                "using shared params only"
+            )
+            warnings.append(warning)
+            logger.warning(warning)
 
         return result
