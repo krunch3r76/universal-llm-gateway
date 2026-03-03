@@ -44,10 +44,10 @@ _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
 def _extract_json(text: str) -> dict[str, Any]:
-    # qwen wraps JSON output in {{ }} (Python f-string style) — strip outer double braces
-    stripped = text.strip()
-    while stripped.startswith("{{") and stripped.endswith("}}"):
-        stripped = stripped[1:-1].strip()
+    # qwen wraps every brace in {{ }} (Python f-string style) — replace all occurrences
+    # globally before parsing; the while-loop approach only fixed the outermost layer,
+    # leaving inner {{"key": ...}} entries invalid after one strip.
+    stripped = text.strip().replace("{{", "{").replace("}}", "}")
     match = _JSON_RE.search(stripped)
     if not match:
         return {}
