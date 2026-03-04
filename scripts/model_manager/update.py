@@ -15,14 +15,15 @@ Usage:
 import argparse
 import json
 import logging
+import os
+import signal
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.error import URLError
-from urllib.parse import urlparse
 from urllib.request import urlopen
-
-import yaml
 
 from scripts.model_manager.ui.controller.service_config import (
     build_service_env,
@@ -31,15 +32,18 @@ from scripts.model_manager.ui.controller.service_config import (
     ensure_socket_dir,
     load_env_file,
 )
+from scripts.model_manager.update_targets import collect_remote_targets
 
 logger = logging.getLogger(__name__)
+
+# Process registry for Ctrl+C cancellation when running --all-nodes concurrently
+_active_processes: set[subprocess.Popen] = set()
+_active_lock = threading.Lock()
+_cancel_event = threading.Event()
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
 _BUILD_SCRIPT = _ROOT / "docker" / "scripts" / "build" / "build-gpu.sh"
 _COMPOSE_PATH = _ROOT / "docker" / "compose" / "gpu-edge.yml"
-_GATEWAY_DIR = Path.home() / ".gateway"
-_NODES_DIR = _GATEWAY_DIR / "nodes"
-_MASTER_CONFIG = _GATEWAY_DIR / "stargate.yaml"
 
 _GITHUB_REPOS: dict[str, str] = {
     "llama-server": "ggml-org/llama.cpp",
@@ -52,6 +56,49 @@ _BUILD_FLAGS: dict[str, str] = {
 }
 
 _GITHUB_API_TIMEOUT = 10
+
+
+def _sigint_handler(_signum: int, _frame: object) -> None:
+    """On Ctrl+C, terminate all active subprocesses so they can be cancelled."""
+    _cancel_event.set()
+    with _active_lock:
+        for proc in _active_processes:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+
+def _run_with_registry(
+    args: list[str],
+    *,
+    cwd: str | Path,
+    env: dict[str, str] | None = None,
+    capture: bool = False,
+) -> int:
+    """Run a subprocess, registering it for cancellation. Returns exit code."""
+    proc = subprocess.Popen(
+        args,
+        cwd=str(cwd),
+        env=env,
+        stdout=None if not capture else subprocess.PIPE,
+        stderr=None if not capture else subprocess.STDOUT,
+        text=capture,
+        start_new_session=True,
+    )
+    with _active_lock:
+        _active_processes.add(proc)
+    try:
+        if capture:
+            out, _ = proc.communicate()
+            if out:
+                print(out, end="")
+        else:
+            proc.wait()
+    finally:
+        with _active_lock:
+            _active_processes.discard(proc)
+    return proc.returncode if proc.returncode is not None else -1
 
 
 def fetch_latest_release(repo: str) -> str | None:
@@ -106,10 +153,10 @@ def run_build(versions: dict[str, str]) -> int:
     print(f"\nBuilding ({label})...")
     print(f"$ {' '.join(args)}")
 
-    result = subprocess.run(args, cwd=str(_ROOT))
-    if result.returncode != 0:
-        print(f"ERROR: Build failed (exit {result.returncode})", file=sys.stderr)
-    return result.returncode
+    code = _run_with_registry(args, cwd=_ROOT)
+    if code != 0:
+        print(f"ERROR: Build failed (exit {code})", file=sys.stderr)
+    return code
 
 
 def restart_local_edge(node_id: str = "localhost") -> int:
@@ -135,7 +182,7 @@ def restart_local_edge(node_id: str = "localhost") -> int:
     env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
 
     print("\nRestarting edge container...")
-    result = subprocess.run(
+    code = _run_with_registry(
         [
             "docker",
             "compose",
@@ -145,43 +192,15 @@ def restart_local_edge(node_id: str = "localhost") -> int:
             "-d",
             "--force-recreate",
         ],
+        cwd=_ROOT,
         env=env,
-        cwd=str(_ROOT),
-        capture_output=True,
-        text=True,
+        capture=True,
     )
-    output = (result.stdout or "") + (result.stderr or "")
-    if result.returncode == 0:
+    if code == 0:
         print(f"  edge-{node_id} recreated.")
     else:
-        print(f"ERROR: Failed to restart edge-{node_id} (exit {result.returncode})")
-        if output.strip():
-            print(output.strip())
-    return result.returncode
-
-
-def _list_remotes() -> list[dict[str, str]]:
-    """Read remote nodes from ~/.gateway/stargate.yaml."""
-    if not _MASTER_CONFIG.exists():
-        return []
-    data = yaml.safe_load(_MASTER_CONFIG.read_text()) or {}
-    return data.get("federation", {}).get("remotes") or []
-
-
-def _read_node_env_key(node_env: Path, key: str) -> str | None:
-    """Read a single KEY=value from a node env file."""
-    prefix = f"{key}="
-    for line in node_env.read_text().splitlines():
-        if line.startswith(prefix):
-            return line[len(prefix) :]
-    return None
-
-
-def _hostname_from_remote(remote: dict[str, str]) -> str:
-    """Extract hostname from remote URL (e.g. 'http://jupiter:9999' -> 'jupiter')."""
-    url = remote.get("url", "")
-    parsed = urlparse(url)
-    return parsed.hostname or ""
+        print(f"ERROR: Failed to restart edge-{node_id} (exit {code})")
+    return code
 
 
 def run_remote(
@@ -200,7 +219,6 @@ def run_remote(
     ssh_target = f"{ssh_user}@{hostname}"
     ssh_args = [
         "ssh",
-        "-t",
         "-o",
         "BatchMode=yes",
         ssh_target,
@@ -210,13 +228,13 @@ def run_remote(
     print(f"\n--- Remote: {hostname} ---")
     print(f"$ {' '.join(ssh_args)}")
 
-    result = subprocess.run(ssh_args)
-    if result.returncode != 0:
+    code = _run_with_registry(ssh_args, cwd=_ROOT)
+    if code != 0:
         print(
-            f"ERROR: Remote update on {hostname} failed (exit {result.returncode})",
+            f"ERROR: Remote update on {hostname} failed (exit {code})",
             file=sys.stderr,
         )
-    return result.returncode
+    return code
 
 
 def prune_images() -> int:
@@ -232,49 +250,14 @@ def prune_images() -> int:
     return result.returncode
 
 
-def _run_on_remotes(
-    versions: dict[str, str],
-    *,
-    target_host: str | None = None,
-) -> int:
-    """Build + restart on remote nodes. Returns worst exit code."""
-    remotes = _list_remotes()
-    if not remotes:
-        print("No remote nodes configured.", file=sys.stderr)
-        return 1
-
-    worst = 0
-    for remote in remotes:
-        hostname = _hostname_from_remote(remote)
-        if not hostname:
-            continue
-        if target_host and hostname != target_host:
-            continue
-
-        node_env = _NODES_DIR / f"{hostname}.env"
-        if not node_env.exists():
-            print(f"WARNING: Node env not found: {node_env}, skipping {hostname}")
-            worst = max(worst, 1)
-            continue
-
-        ssh_user = _read_node_env_key(node_env, "SSH_USER")
-        if not ssh_user:
-            print(f"WARNING: SSH_USER missing in {node_env}, skipping {hostname}")
-            worst = max(worst, 1)
-            continue
-
-        code = run_remote(hostname, ssh_user, versions)
-        worst = max(worst, code)
-
-    if (
-        target_host
-        and worst == 0
-        and not any(_hostname_from_remote(r) == target_host for r in remotes)
-    ):
-        print(f"ERROR: Remote '{target_host}' not found in federation config.")
-        return 1
-
-    return worst
+def _run_local_task(versions: dict[str, str], build_only: bool) -> int:
+    """Build + restart locally. Returns exit code."""
+    code = run_build(versions)
+    if code != 0:
+        return code
+    if build_only:
+        return 0
+    return restart_local_edge()
 
 
 def main() -> int:
@@ -313,25 +296,51 @@ def main() -> int:
         help="Prune dangling Docker images after restart",
     )
     args = parser.parse_args()
-
+    _cancel_event.clear()
     versions = _resolve_versions(args.components, args.version)
 
-    code = run_build(versions)
-    if code != 0:
-        return code
+    run_remotes = bool(args.all_nodes or args.remote)
+    remote_targets = collect_remote_targets(args.remote) if run_remotes else []
 
-    if not args.build_only:
-        code = restart_local_edge()
+    if run_remotes and args.remote and not remote_targets:
+        return 1
+
+    # Concurrent execution: local + all remotes in parallel (cancellable via Ctrl+C)
+    if run_remotes and remote_targets:
+        signal.signal(signal.SIGINT, _sigint_handler)
+        try:
+            with ThreadPoolExecutor(max_workers=1 + len(remote_targets)) as ex:
+                futures = {
+                    ex.submit(_run_local_task, versions, args.build_only): "local",
+                }
+                for hostname, ssh_user in remote_targets:
+                    fut = ex.submit(run_remote, hostname, ssh_user, versions)
+                    futures[fut] = hostname
+
+                worst = 0
+                for fut in as_completed(futures):
+                    if _cancel_event.is_set():
+                        break
+                    try:
+                        code = fut.result()
+                        worst = max(worst, code)
+                    except Exception as e:
+                        name = futures.get(fut, "?")
+                        print(f"ERROR: {name} failed: {e}", file=sys.stderr)
+                        worst = max(worst, 1)
+
+            if _cancel_event.is_set():
+                print("\nCancelled.", file=sys.stderr)
+                return 130
+            if worst != 0:
+                return worst
+        finally:
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+    else:
+        # Local only
+        code = _run_local_task(versions, args.build_only)
         if code != 0:
             return code
-
-    if args.all_nodes or args.remote:
-        remote_code = _run_on_remotes(
-            versions,
-            target_host=args.remote,
-        )
-        if remote_code != 0:
-            return remote_code
 
     if args.prune:
         prune_images()
