@@ -95,10 +95,10 @@ class EventPublisher:
         drift_pct: float,
     ) -> None:
         try:
-            from src.scheduling.events import create_catalog_vram_drift_event
+            from src.scheduling.events import FederationCatalogVramDrift
 
             await self._event_bus.publish_async_nowait(
-                create_catalog_vram_drift_event(
+                FederationCatalogVramDrift(
                     gateway_id=self._gateway_name,
                     model_id=model_id,
                     measured_mb=measured_mb,

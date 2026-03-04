@@ -83,6 +83,25 @@ class SelectRequest(BaseModel):
         default="tier",
         description="Sort field: 'tier' (highest quality first, randomized within tier) or 'completion_cost', 'prompt_cost', 'context_length' (ascending)",
     )
+    estimated_tokens: int | None = Field(
+        default=None,
+        ge=0,
+        description="Optional token estimate for projected cost fields in response",
+    )
+
+
+def _project_cost(
+    model: dict[str, object],
+    estimated_tokens: int,
+) -> dict[str, float]:
+    """Project prompt and completion cost for a token estimate."""
+    units = estimated_tokens / 1_000_000
+    prompt_cost = float(model.get("prompt_cost", 0.0))
+    completion_cost = float(model.get("completion_cost", 0.0))
+    return {
+        "projected_prompt_cost": round(prompt_cost * units, 8),
+        "projected_completion_cost": round(completion_cost * units, 8),
+    }
 
 
 def register_browser_routes(
@@ -292,6 +311,11 @@ def register_browser_routes(
             sort_by=req.sort_by,
             extra_models=extra_models,
         )
+        if req.estimated_tokens is not None:
+            selected = [
+                {**model, **_project_cost(model, req.estimated_tokens)}
+                for model in selected
+            ]
         event_bus = get_event_bus()
         if event_bus is not None:
             await event_bus.publish_async(

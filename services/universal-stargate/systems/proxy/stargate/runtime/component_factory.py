@@ -369,10 +369,10 @@ async def _emit_pipeline_unavailable_events(proxy: StargateProxy) -> None:
     if proxy.event_bus is None or proxy.pipeline_registry is None:
         return
 
-    from src.scheduling.events import PipelineRegistryUnavailable
+    from src.scheduling.events import pipeline_registry_unavailable
 
     for pipeline_id, missing_models in proxy.pipeline_registry.unavailable_pipelines:
-        event = PipelineRegistryUnavailable(
+        event = pipeline_registry_unavailable(
             pipeline_id=pipeline_id,
             missing_models=missing_models,
         )

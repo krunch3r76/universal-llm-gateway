@@ -78,11 +78,12 @@ def _find_rag_pid_by_cmdline(*, uds_mode: bool) -> int | None:
 
 
 def _safe_unlink_stale_socket(socket_path: Path) -> bool:
-    """Unlink socket only if stale: not bound by any live process, S_ISSOCK.
+    """Unlink socket only if stale: not actively listened on by any live process, S_ISSOCK.
 
-    Uses socket.bind() to probe liveness — avoids the TOCTOU race inherent
-    in checking a PID then unlinking: if bind() raises EADDRINUSE the socket
-    is actively owned and must not be removed.
+    Uses connect() to probe liveness — if connect() succeeds the socket is live
+    and must not be removed. ConnectionRefusedError means nobody is listening
+    (stale) and the file is safe to unlink. bind() cannot distinguish a live
+    socket from a stale one because it raises EADDRINUSE for any existing path.
     """
     if not socket_path.exists():
         return True
@@ -101,22 +102,21 @@ def _safe_unlink_stale_socket(socket_path: Path) -> bool:
 
     try:
         with socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM) as probe:
-            probe.bind(str(socket_path))
-        # bind() succeeded → nobody is listening → stale
+            probe.settimeout(0.5)
+            probe.connect(str(socket_path))
+        # connect() succeeded → live socket → do not unlink
+        logger.debug("Socket %s is in use by a live process, skipping unlink", socket_path)
+        return False
+    except ConnectionRefusedError:
+        # Nobody listening → stale socket → fall through to unlink
+        logger.debug("Socket probe for %s refused connection → stale", socket_path)
     except OSError as e:
-        if e.errno == 98:  # EADDRINUSE
-            logger.debug(
-                "Socket %s is in use by a live process, skipping unlink", socket_path
-            )
-            return False
-        # Any other bind error — fall through and attempt unlink
-        logger.debug(
-            "Socket probe failed for %s (%s), attempting unlink", socket_path, e
-        )
+        # FileNotFoundError, permission errors, etc. — attempt unlink
+        logger.debug("Socket probe failed for %s (%s), attempting unlink", socket_path, e)
 
     try:
         socket_path.unlink()
-        logger.info("Unlinked stale RAG socket %s", socket_path)
+        logger.info("Unlinked stale socket %s", socket_path)
         return True
     except OSError as e:
         logger.warning("Could not unlink %s: %s", socket_path, e)

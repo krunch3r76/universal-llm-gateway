@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -270,6 +271,129 @@ def _read_context_files(paths: list[str]) -> list[str]:
         else:
             blocks.append(f"### {path}\n[Error: file not found]")
     return blocks
+
+
+def _collect_context_file_paths(paths: list[str]) -> list[str]:
+    """Expand context file arguments into concrete file paths."""
+    files: list[str] = []
+    for path_str in paths:
+        path = Path(path_str)
+        if path.is_dir():
+            files.extend(
+                str(child)
+                for child in sorted(path.rglob("*"))
+                if child.is_file() and ".git/" not in str(child)
+            )
+        elif path.is_file():
+            files.append(str(path))
+    # Preserve input order and remove duplicates.
+    return list(dict.fromkeys(files))
+
+
+def _fetch_pipeline_batches(
+    stargate_url: str,
+    files: list[str],
+    *,
+    pipeline: str = "code-review",
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    """Fetch token-budgeted batch plan from Stargate estimator endpoint."""
+    items = [{"name": path, "chars": Path(path).stat().st_size} for path in files]
+    payload = {"pipeline": pipeline, "items": items}
+    with httpx.Client(timeout=timeout) as client:
+        response = client.post(
+            f"{stargate_url.rstrip('/')}/v1/pipelines/estimate",
+            json=payload,
+            params={"disable_profile": "true"},
+        )
+    response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError("Estimator response is not a JSON object")
+    return data
+
+
+def _query_code_review_batch(
+    *,
+    stargate_url: str,
+    batch: dict[str, Any],
+    timeout: float,
+) -> dict[str, Any]:
+    """Run a single code-review batch via pipeline model."""
+    batch_files = [str(path) for path in batch.get("items", [])]
+    parts: list[str] = []
+    for file_path in batch_files:
+        content = Path(file_path).read_text(errors="replace")
+        parts.append(f"### {file_path}\n{content}")
+    body = {
+        "model": "code-review",
+        "messages": [{"role": "user", "content": "\n\n".join(parts)}],
+        "stream": False,
+    }
+    with httpx.Client(timeout=timeout) as client:
+        response = client.post(
+            f"{stargate_url.rstrip('/')}/v1/chat/completions",
+            json=body,
+            params={"disable_profile": "true"},
+        )
+    response.raise_for_status()
+    data = response.json()
+    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    try:
+        parsed = json.loads(content) if isinstance(content, str) else content
+    except Exception:
+        parsed = content
+    usage = data.get("usage", {}) if isinstance(data, dict) else {}
+    return {
+        "batch": batch,
+        "result": parsed,
+        "prompt_tokens": usage.get("prompt_tokens", 0),
+        "completion_tokens": usage.get("completion_tokens", 0),
+    }
+
+
+def _run_code_review_pipeline(
+    *,
+    stargate_url: str,
+    files: list[str],
+    timeout: float,
+) -> list[dict[str, Any]]:
+    """Estimate and execute code-review batches in parallel."""
+    estimate = _fetch_pipeline_batches(stargate_url, files, timeout=min(timeout, 30.0))
+    warnings = estimate.get("warnings", []) if isinstance(estimate, dict) else []
+    if warnings:
+        for warning in warnings:
+            print(
+                f"Estimator warning [{warning.get('code', 'unknown')}]: "
+                f"{warning.get('name', '?')} - {warning.get('message', '')}",
+                file=sys.stderr,
+            )
+
+    batches = estimate.get("batches", []) if isinstance(estimate, dict) else []
+    if not batches:
+        return [
+            {
+                "batch": {"items": files, "tokens": estimate.get("total_source_tokens", 0)},
+                "result": {"status": "no_batches", "message": "Estimator returned no batches"},
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+            }
+        ]
+
+    results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=len(batches)) as pool:
+        futures = [
+            pool.submit(
+                _query_code_review_batch,
+                stargate_url=stargate_url,
+                batch=batch,
+                timeout=timeout,
+            )
+            for batch in batches
+        ]
+        for future in as_completed(futures):
+            results.append(future.result())
+    return results
 
 
 def _fetch_rag_pipeline(
@@ -535,6 +659,38 @@ def _format_output(
     return "\n".join(lines)
 
 
+def _format_pipeline_review_output(
+    *,
+    question: str,
+    file_paths: list[str],
+    batches: list[dict[str, Any]],
+) -> str:
+    """Format code-review pipeline batch outputs as markdown."""
+    lines: list[str] = []
+    lines.append("# Consultation: reviewer (pipeline)")
+    lines.append(f"**Date**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
+    lines.append(f"**Question**: {question}")
+    lines.append(f"**Context files**: {', '.join(file_paths)}")
+    lines.append("**Mode**: estimator-driven parallel batches")
+    lines.append("")
+    for idx, batch_result in enumerate(batches, 1):
+        batch = batch_result.get("batch", {})
+        files = batch.get("items", [])
+        tokens = batch.get("tokens", 0)
+        prompt_tokens = batch_result.get("prompt_tokens", 0)
+        completion_tokens = batch_result.get("completion_tokens", 0)
+        total_tokens = prompt_tokens + completion_tokens
+        lines.append(
+            f"## Batch {idx} ({len(files)} files, estimate={tokens} tokens, actual={total_tokens} tokens)"
+        )
+        lines.append(f"**Files**: {', '.join(files)}")
+        lines.append("```json")
+        lines.append(json.dumps(batch_result.get("result", {}), indent=2))
+        lines.append("```")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def _query_parallel(
     models: list[str],
     system_prompt: str,
@@ -675,6 +831,14 @@ def main() -> None:
             "rather than silently falling back to local GPU models."
         ),
     )
+    parser.add_argument(
+        "--pipeline",
+        action="store_true",
+        help=(
+            "Use estimator-driven parallel code-review pipeline batches "
+            "(reviewer role only)"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -690,6 +854,9 @@ def main() -> None:
             args.question = sys.stdin.read().strip()
         if not args.question:
             parser.error("No question provided")
+
+    if args.pipeline and args.role != "reviewer":
+        parser.error("--pipeline is only supported with --role reviewer")
 
     if not args.no_rag:
         if not _rag_socket_present(args.rag_url):
@@ -759,6 +926,35 @@ def main() -> None:
 
     if args.chain and len(target_models) < 2:
         parser.error("--chain requires at least 2 models")
+
+    if args.pipeline:
+        context_file_paths = _collect_context_file_paths(args.context_files)
+        if not context_file_paths:
+            parser.error("--pipeline requires at least one --context-files path")
+        print(
+            f"Pipeline mode: estimating batches for {len(context_file_paths)} files",
+            file=sys.stderr,
+        )
+        try:
+            batch_results = _run_code_review_pipeline(
+                stargate_url=args.stargate_url,
+                files=context_file_paths,
+                timeout=args.timeout,
+            )
+        except Exception as exc:
+            parser.error(f"--pipeline failed: {exc}")
+        output = _format_pipeline_review_output(
+            question=args.question,
+            file_paths=context_file_paths,
+            batches=batch_results,
+        )
+        print(output)
+        if args.output:
+            out_path = Path(args.output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(output)
+            print(f"Saved: {out_path}", file=sys.stderr)
+        return
 
     system_prompt = role_prompts[args.role]
 

@@ -47,7 +47,12 @@ class CloudProxyClient:
     def __init__(self, proxy_url: str) -> None:
         self._proxy_url = proxy_url.rstrip("/")
         uds_path, base_url = parse_cloud_proxy_url(proxy_url)
-        timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0)
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=300.0,
+            write=10.0,
+            pool=10.0,
+        )
         limits = httpx.Limits(max_connections=40, max_keepalive_connections=20)
         if uds_path:
             transport = httpx.AsyncHTTPTransport(uds=uds_path)

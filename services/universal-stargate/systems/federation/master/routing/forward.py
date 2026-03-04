@@ -8,7 +8,7 @@ CRITICAL: Separate methods for streaming vs non-streaming
 
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 from fastapi import HTTPException
@@ -29,6 +29,26 @@ from ...common.types import (
 logger = get_logger(__name__)
 
 
+class _EventBusPublisher(Protocol):
+    def publish_async_nowait(self, event: object) -> object: ...
+
+
+class _CloudForwarder(Protocol):
+    async def close(self) -> None: ...
+
+    async def forward_request(
+        self, request_body: dict[str, Any], request_id: str
+    ) -> httpx.Response: ...
+
+    async def forward_request_stream(
+        self, request_body: dict[str, Any], request_id: str
+    ) -> AsyncIterator[bytes]: ...
+
+    async def forward_embedding_request(
+        self, request_body: dict[str, Any], request_id: str
+    ) -> dict[str, Any]: ...
+
+
 class FederatedRequestForwarder:
     """
     Forwards requests to federated gateways via Remote Stargates.
@@ -44,8 +64,8 @@ class FederatedRequestForwarder:
     def __init__(
         self,
         config: FederationConfig,
-        event_bus: Any | None = None,
-        cloud_forwarder: Any | None = None,
+        event_bus: _EventBusPublisher | None = None,
+        cloud_forwarder: _CloudForwarder | None = None,
     ):
         self._config = config
         self._event_bus = event_bus
@@ -53,7 +73,7 @@ class FederatedRequestForwarder:
 
         # HTTP client with connection pooling (TCP)
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0),
+            timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0),
             limits=httpx.Limits(
                 max_connections=config.http_pool.max_connections,
                 max_keepalive_connections=config.http_pool.max_keepalive_connections,
@@ -87,7 +107,7 @@ class FederatedRequestForwarder:
         logger.debug("FederatedRequestForwarder closed")
 
     @property
-    def cloud_forwarder(self) -> Any | None:
+    def cloud_forwarder(self) -> _CloudForwarder | None:
         """CloudProxyClient for metadata passthrough (/api/select, /api/models)."""
         return self._cloud_forwarder
 
@@ -100,7 +120,12 @@ class FederatedRequestForwarder:
                 self._unix_clients[socket_path] = httpx.AsyncClient(
                     transport=transport,
                     base_url="http://localhost",  # Host ignored for UDS
-                    timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0),
+                    timeout=httpx.Timeout(
+                        connect=10.0,
+                        read=300.0,
+                        write=10.0,
+                        pool=10.0,
+                    ),
                 )
             return self._unix_clients[socket_path]
         return self._client
@@ -146,7 +171,7 @@ class FederatedRequestForwarder:
         gateway: FederatedGateway,
         request_id: str,
         hop_count: int,
-        hints: dict[str, Any] | None = None,
+        hints: dict[str, object] | None = None,
     ) -> dict[str, Any]:
         """Build request body with federation metadata and transformation hints."""
         federation = {
@@ -170,7 +195,7 @@ class FederatedRequestForwarder:
         request_body: dict[str, Any],
         hop_count: int,
         request_id: str,
-        hints: dict[str, Any] | None = None,
+        hints: dict[str, object] | None = None,
     ) -> httpx.Response:
         """
         Forward non-streaming request to federated gateway.
@@ -219,7 +244,7 @@ class FederatedRequestForwarder:
                     FederationRoutingDelegated(
                         request_id=request_id,
                         target_remote=gateway.remote_stargate_id,
-                        model_id=ModelId(model_id),
+                        model_id=ModelId.parse(model_id),
                         reason=f"Model routed to {gateway.gateway_id}",
                     )
                 )
@@ -233,8 +258,10 @@ class FederatedRequestForwarder:
         # Only override client-level timeout if explicitly configured
         timeout_kwargs: dict[str, Any] = {}
         if hints and "timeout" in hints:
-            timeout_kwargs["timeout"] = float(hints["timeout"])
-            logger.debug("Using timeout hint: %ss", hints["timeout"])
+            timeout_value = hints["timeout"]
+            if isinstance(timeout_value, int | float | str):
+                timeout_kwargs["timeout"] = float(timeout_value)
+                logger.debug("Using timeout hint: %ss", timeout_value)
 
         response = await client.post(
             endpoint, json=body, headers=headers, **timeout_kwargs
@@ -248,7 +275,7 @@ class FederatedRequestForwarder:
         request_body: dict[str, Any],
         hop_count: int,
         request_id: str,
-        hints: dict[str, Any] | None = None,
+        hints: dict[str, object] | None = None,
     ) -> AsyncIterator[bytes]:
         """
         Forward streaming request to federated gateway.
@@ -303,7 +330,7 @@ class FederatedRequestForwarder:
                     FederationRoutingDelegated(
                         request_id=request_id,
                         target_remote=gateway.remote_stargate_id,
-                        model_id=ModelId(model_id),
+                        model_id=ModelId.parse(model_id),
                         reason=f"Model routed to {gateway.gateway_id}",
                     )
                 )
@@ -321,7 +348,9 @@ class FederatedRequestForwarder:
         # Only override client-level timeout if explicitly configured
         timeout_kwargs: dict[str, Any] = {}
         if hints and "timeout" in hints:
-            timeout_kwargs["timeout"] = float(hints["timeout"])
+            timeout_value = hints["timeout"]
+            if isinstance(timeout_value, int | float | str):
+                timeout_kwargs["timeout"] = float(timeout_value)
 
         async with client.stream(
             "POST", endpoint, json=body, headers=headers, **timeout_kwargs
@@ -456,7 +485,7 @@ class FederatedRequestForwarder:
                 endpoint,
                 json=payload,
                 headers=headers,
-                timeout=httpx.Timeout(connect=10.0, read=175.0, write=10.0),
+                timeout=httpx.Timeout(connect=10.0, read=175.0, write=10.0, pool=10.0),
             )
 
             if response.is_success:
@@ -542,7 +571,7 @@ class FederatedRequestForwarder:
                 endpoint,
                 json=payload,
                 headers=headers,
-                timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0),
+                timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0),
             )
 
             if response.is_success:
@@ -568,9 +597,9 @@ class FederatedRequestForwarder:
     async def forward_embedding_request(
         self,
         gateway: FederatedGateway,
-        request_body: dict,
+        request_body: dict[str, Any],
         request_id: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Forward embedding request to federated gateway.
 

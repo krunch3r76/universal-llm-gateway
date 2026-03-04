@@ -123,7 +123,19 @@ class FragmentLoader:
         self,
         fragments: dict[str, list[dict[str, Any]]] | None,
     ) -> None:
-        """Register fragments defined inline in a pipeline."""
+        """Register fragments defined inline in a pipeline.
+
+        CONCURRENCY NOTE: This method mutates the shared singleton's `_fragments`
+        dict on every request that uses inline fragments. It is safe under asyncio
+        because it contains no `await` — the dict write runs to completion without
+        yielding, so concurrent coroutines cannot interleave.
+
+        ∀ two pipelines P1, P2: P1.fragments ∩ keys(P2.fragments) ≠ ∅
+        ⟹ last-writer-wins (silent overwrite, no error). Avoid sharing
+        fragment IDs across pipelines that use inline definitions.
+
+        If this code ever moves to a thread-pool executor, add a threading.Lock.
+        """
         if not fragments:
             return
 
