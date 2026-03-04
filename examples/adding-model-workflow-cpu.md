@@ -12,11 +12,11 @@ Maintainer workflow for adding and measuring a CPU-profiled model in federated d
 export ROOT="/path/to/universal-llm-gateway"
 export PY="$HOME/.venvs/universal/bin/python"
 export STARGATE_URL="http://localhost:9999"  # Master/Relay Stargate endpoint
-export DEST="/mnt/torus/models"
+export MODELS_DIR="$HOME/.models"
 
 export MODEL_FILE="gemma-3-1b-it-Q6_K.gguf"
 export REPO="bartowski/gemma-3-1b-it-GGUF"
-export MODEL_PATH="$DEST/$MODEL_FILE"
+export MODEL_PATH="$MODELS_DIR/$MODEL_FILE"
 export MODEL_ID="gemma-3-1b-it-q6-k"
 ```
 
@@ -26,7 +26,7 @@ cd "$ROOT"
 $PY -m scripts.model_manager download \
   --repo "$REPO" \
   --file "$MODEL_FILE" \
-  --dest "$DEST" \
+  --dest "$MODELS_DIR" \
   --network
 ```
 
@@ -204,7 +204,7 @@ Expected: Response with generated text.
 ```bash
 # 1. Use original HF filename during verification and generation
 export HF_FILENAME="Gemma-The-Writer-J.GutenBerg-10B-D_AU-Q4_k_m.gguf"
-export MODEL_PATH="$DEST/$HF_FILENAME"
+export MODEL_PATH="$MODELS_DIR/$HF_FILENAME"
 
 # 2. Verify and generate with original name
 $PY -m scripts.model_manager verify "$MODEL_PATH" --repo "$REPO" --network
@@ -212,7 +212,7 @@ $PY -m scripts.model_manager generate "$MODEL_PATH" --repo "$REPO" --static --ad
 
 # 3. Rename the file after catalog generation
 export NEW_NAME="Gemma-The-Writer-10B-D_AU-Q4_k_m.gguf"
-mv "$MODEL_PATH" "$DEST/$NEW_NAME"
+mv "$MODEL_PATH" "$MODELS_DIR/$NEW_NAME"
 
 # 4. Update the catalog YAML to reference the new filename
 # Edit config/models/text_llm/llama-cpp/<model-id>.yaml
@@ -224,7 +224,7 @@ mv "$MODEL_PATH" "$DEST/$NEW_NAME"
 ```bash
 # 1. Local file already renamed
 export MODEL_FILE="Gemma-The-Writer-10B-D_AU-Q4_k_m.gguf"
-export MODEL_PATH="$DEST/$MODEL_FILE"
+export MODEL_PATH="$MODELS_DIR/$MODEL_FILE"
 export HF_FILENAME="Gemma-The-Writer-J.GutenBerg-10B-D_AU-Q4_k_m.gguf"
 
 # 2. Verify and generate using --file to specify HF filename for hash verification

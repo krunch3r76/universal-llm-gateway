@@ -154,17 +154,18 @@ def extract_training_context_from_gguf(file_path: Path) -> int | None:
 
 async def get_training_context(model_id: str) -> int | None:
     """
-    Get training_context_length from catalog (single source of truth).
+    Get training_context_length for a model.
 
-    The catalog is the authoritative source for model metadata. If a model
-    is not in the catalog or the catalog doesn't have training_context_length,
-    this function returns None to indicate the gateway needs to be updated.
+    Priority:
+    1. Catalog entry (authoritative)
+    2. GGUF file metadata (fallback for GGUF models with incomplete catalog entries)
+    3. None — measurement cannot proceed
 
     Args:
         model_id: Model identifier from catalog
 
     Returns:
-        Training context length from catalog, or None if not found
+        Training context length, or None if not found anywhere
     """
     # Check if model_id is an absolute file path (for backwards compatibility)
     potential_path = Path(model_id)
@@ -179,7 +180,8 @@ async def get_training_context(model_id: str) -> int | None:
         )
         return extract_training_context_from_gguf(potential_path)
 
-    # Catalog is the single source of truth
+    # Catalog is the primary source of truth
+    model = None
     try:
         from ..core.catalog import get_catalog_loader
 
@@ -187,29 +189,41 @@ async def get_training_context(model_id: str) -> int | None:
         model = loader.get_model(model_id)
 
         if not model:
-            # Model not in catalog - gateway may need reload
             logger.warning(
                 f"Model '{model_id}' not found in catalog. "
                 "If recently added, restart gateway to reload catalog."
             )
-            return None
-
-        metadata = model.get("metadata", {})
-        training_ctx = metadata.get("training_context_length")
-
-        if not training_ctx:
-            # Entry exists but missing required field
-            logger.error(
-                f"Catalog entry for '{model_id}' missing training_context_length. "
-                "Update catalog with correct metadata."
+        else:
+            metadata = model.get("metadata", {})
+            training_ctx = metadata.get("training_context_length")
+            if training_ctx:
+                return training_ctx
+            logger.warning(
+                f"Catalog entry for '{model_id}' missing training_context_length; "
+                "attempting GGUF extraction as fallback."
             )
-            return None
-
-        return training_ctx
 
     except Exception as e:
         logger.error(f"Failed to access catalog for model '{model_id}': {e}")
-        return None
+
+    # Fallback: extract directly from GGUF file metadata
+    model_path = resolve_model_path(model_id)
+    if model_path and model_path.is_file() and model_path.suffix == ".gguf":
+        ctx = extract_training_context_from_gguf(model_path)
+        if ctx:
+            logger.warning(
+                f"Extracted training_context_length={ctx} from GGUF for '{model_id}'. "
+                "Update catalog entry to avoid this fallback: "
+                "metadata.training_context_length: %d",
+                ctx,
+            )
+            return ctx
+
+    logger.error(
+        f"Cannot determine training_context_length for '{model_id}'. "
+        "Update the catalog entry with the correct value."
+    )
+    return None
 
 
 def resolve_model_path(model_id: str) -> Path | None:
@@ -224,15 +238,21 @@ def resolve_model_path(model_id: str) -> Path | None:
             download = model.get("download", {})
             hf_info = download.get("huggingface", {})
             filename = hf_info.get("file")
+            local_subdir = hf_info.get("local_subdir", "")
 
             model_root = Path(os.environ.get("MODEL_PATH_ROOT", "/mnt/torus/models"))
 
             if filename:
-                path = model_root / filename
+                # local_subdir places the file in a named subdirectory under model_root
+                path = model_root / local_subdir / filename if local_subdir else model_root / filename
                 if path.exists():
                     return path
             else:
-                # vLLM/HF models: directory from repo name
+                # vLLM/HF models: prefer local_subdir, fall back to repo basename
+                if local_subdir:
+                    path = model_root / local_subdir
+                    if path.exists() and path.is_dir():
+                        return path
                 repo = hf_info.get("repo")
                 if repo:
                     dir_name = repo.split("/")[-1] if "/" in repo else repo

@@ -87,10 +87,7 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
                 "Error: --vision-architecture required with --mmproj", file=sys.stderr
             )
             return 1
-        if tokens_per_image is None:
-            print("Error: --tokens-per-image required with --mmproj", file=sys.stderr)
-            return 1
-        if tokens_per_image <= 0:
+        if tokens_per_image is not None and tokens_per_image <= 0:
             print("Error: --tokens-per-image must be > 0", file=sys.stderr)
             return 1
 
@@ -110,6 +107,21 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
         args.file if args.file else (model_path.name if model_path.is_file() else None)
     )
 
+    # Compute local_subdir: set when the model file lives in a named subdirectory
+    # of the model root (e.g. ~/.models/Qwen3.5-9B-GGUF/model.gguf → "Qwen3.5-9B-GGUF").
+    # The TUI uses this to check model_root / local_subdir / hf_file for "downloaded" status.
+    local_subdir: str | None = None
+    if model_path.is_file():
+        model_root = config.model_root.expanduser().resolve()
+        model_parent = model_path.parent
+        if model_parent != model_root:
+            try:
+                rel = model_parent.relative_to(model_root)
+                local_subdir = str(rel)
+            except ValueError:
+                # Path is outside model_root; do not synthesize local_subdir.
+                local_subdir = None
+
     discovery = ModelDiscovery()
     generator = CatalogEntryGenerator(discovery=discovery)
 
@@ -124,7 +136,10 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
             return 1
 
         print(f"Found {len(models)} model(s)")
-        entries = generator.generate_batch(models, trace_source=not args.no_trace)
+        network = getattr(args, "network", False)
+        no_trace = getattr(args, "no_trace", False)
+        trace_source = not no_trace and network
+        entries = generator.generate_batch(models, trace_source=trace_source)
 
         # Inject thinking capability into all entries if flagged
         if thinking:
@@ -135,7 +150,7 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
                 reasoning["supports_thinking"] = True
 
         # Inject vision metadata into all entries if provided
-        if mmproj and vision_arch and tokens_per_image:
+        if mmproj and vision_arch:
             for entry in entries.values():
                 _inject_vision_metadata(entry, mmproj, vision_arch, tokens_per_image)
     else:
@@ -145,12 +160,24 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
             return 1
 
         try:
+            network = getattr(args, "network", False)
+            no_trace = getattr(args, "no_trace", False)
+            # All HuggingFace network calls (verify_against_repo, trace_huggingface)
+            # require explicit --network. Without it: inject repo/file manually so the
+            # catalog records the source without making an outbound connection.
+            trace_source = not no_trace and network and not args.repo
             entry = generator.generate(
                 discovered,
-                trace_source=not args.no_trace,
-                hf_repo=args.repo,
+                trace_source=trace_source,
+                hf_repo=args.repo if network else None,
                 hf_file=hf_file,
             )
+            if args.repo and not network:
+                download = entry.setdefault("download", {})
+                hf = download.setdefault("huggingface", {})
+                hf.setdefault("repo", args.repo)
+                hf.setdefault("file", hf_file or discovered.filename)
+                hf.setdefault("verified", False)
 
             # Inject thinking capability if flagged
             if thinking:
@@ -160,8 +187,14 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
                 reasoning["supports_thinking"] = True
 
             # Inject vision metadata if provided
-            if mmproj and vision_arch and tokens_per_image:
+            if mmproj and vision_arch:
                 _inject_vision_metadata(entry, mmproj, vision_arch, tokens_per_image)
+
+            # Inject local_subdir so TUI can locate the file under model_root
+            if local_subdir:
+                download = entry.setdefault("download", {})
+                hf = download.setdefault("huggingface", {})
+                hf["local_subdir"] = local_subdir
 
             entries = {discovered.model_id: entry}
         except Exception as e:
@@ -480,12 +513,12 @@ def _inject_vision_metadata(
     entry: dict,
     mmproj_path: str,
     vision_architecture: str,
-    tokens_per_image: int,
+    tokens_per_image: int | None,
 ) -> None:
     """Inject vision model metadata into catalog entry (V4 format).
 
     Sets capabilities.modalities and adds vision params to loader.
-    tokens_per_image stays in loader (engine config, not capability).
+    tokens_per_image is optional: omit for dynamic-resolution models (Qwen2-VL, Qwen3.5).
     """
     metadata = entry.setdefault("metadata", {})
     capabilities = metadata.setdefault("capabilities", {})
@@ -493,8 +526,8 @@ def _inject_vision_metadata(
     modalities["input"] = ["text", "vision"]
     modalities["vision_architecture"] = vision_architecture
 
-    # Update loader (V2: top-level, not configurations.base_loader)
     loader = entry.setdefault("loader", {})
     loader["clip_model_path"] = Path(mmproj_path).name
     loader["vision_architecture"] = vision_architecture
-    loader["tokens_per_image"] = tokens_per_image
+    if tokens_per_image is not None:
+        loader["tokens_per_image"] = tokens_per_image

@@ -1,0 +1,30 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: Qwen3.5-9B-Q8_0
+  format: gguf
+  quant: Q8_0
+  capabilities:
+    input_schema: messages
+    modalities:
+      input:
+        - text
+        - vision
+      output:
+        - text
+      vision_architecture: qwen3_5
+    interaction:
+      chat_template: false
+    reasoning:
+      supports_thinking: true
+    limits: {}
+    provenance: {}
+  training_context_length: 262144
+download:
+  huggingface:
+    repo: unsloth/Qwen3.5-9B-GGUF
+    verified: true
+    file: Qwen3.5-9B-Q8_0.gguf
+    local_subdir: Qwen3.5-9B-GGUF
+  size_bytes: 9527502048
+  sha256: 809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4

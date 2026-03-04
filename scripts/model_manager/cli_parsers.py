@@ -58,7 +58,7 @@ def add_generate_parser(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--network",
         action="store_true",
-        help="Allow network access to HuggingFace for --add-verified when sha256/size cannot be computed from local file",
+        help="Allow network access to HuggingFace (enables source tracing and --add-verified). Omit when model is already downloaded locally.",
     )
     p.add_argument(
         "--force-verified",
