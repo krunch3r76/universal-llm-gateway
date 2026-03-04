@@ -53,10 +53,10 @@ Client → Master Stargate:9999 (host, orchestrator)
          │                         ├─ Edge Stargate (federation endpoint)
          │                         └─ Gateway + Worker (inference)
          ├─ TCP (remote) → Relay Stargate → Edge container → Gateway
-         └─ loopback (optional) → Cloud Proxy:8200 → OpenRouter/Anthropic/etc (HTTPS)
+         └─ loopback (optional) → Cloud Proxy (UDS /tmp/universal-protocol/cloud-proxy.sock) → OpenRouter/Anthropic/etc (HTTPS)
 
 Pipeline-tools sidecar (network_mode: "none", read-only) ← shell execution for pipeline steps
-RAG Service:8100 (host) ← semantic search for pipeline handlers
+RAG Service (UDS /tmp/universal-protocol/rag.sock by default) ← semantic search for pipeline handlers
 ```
 
 For remote GPU nodes, a **Relay Stargate** on the remote host bridges the Master to the network-isolated Edge container on that host.
@@ -71,8 +71,8 @@ For remote GPU nodes, a **Relay Stargate** on the remote host bridges the Master
 | **Gateway** (container-internal) | Inference engine, worker lifecycle, model loading |
 | **Worker** | LLM engine process (llama.cpp, vLLM, Whisper, Flux) |
 | **Pipeline-tools sidecar** (container, no network) | Hardened Alpine container for shell execution in pipeline steps |
-| **RAG Service** (host, port 8100) | Semantic search, file indexing, ChromaDB vector store |
-| **Cloud Proxy** (host, port 8200) | Optional cloud API relay (OpenRouter, Anthropic, OpenAI) |
+| **RAG Service** (host, UDS default) | Semantic search, file indexing, ChromaDB vector store |
+| **Cloud Proxy** (host, UDS default) | Optional cloud API relay (OpenRouter, Anthropic, OpenAI); UDS at `/tmp/universal-protocol/cloud-proxy.sock` |
 
 ### Key Design Decisions
 
@@ -157,8 +157,8 @@ Commands come from static YAML definitions, not from model output — the model 
 | Handler | Action | Isolation |
 |---|---|---|
 | `shell_v1` | Execute commands in the pipeline-tools sidecar | `network_mode: none`, read-only, capability-dropped |
-| `rag_search_v1` | Semantic search against the RAG service | Host-only (loopback to `:8100`) |
-| `rag_source_v1` | Fetch full file content from indexed corpus | Host-only (loopback to `:8100`) |
+| `rag_search_v1` | Semantic search against the RAG service | Host-only (UDS or TCP per config) |
+| `rag_source_v1` | Fetch full file content from indexed corpus | Host-only (UDS or TCP per config) |
 | `assess_loop_v1` | Iterative model-driven decision loop | Engine dispatches actions per JSON decisions |
 
 **Tooling by policy (under construction):** The sidecar establishes a container-per-concern security tier. Today, the sidecar is `network_mode: none` with a static command set. The planned evolution introduces per-pipeline tool whitelists and network policy tiers — a sidecar that needs HTTP access to an approved API runs with outbound traffic restricted to declared domains (the same pattern used by the cloud proxy), while sidecars that only need filesystem access stay fully network-isolated. The pipeline YAML declares what a step needs; the container policy enforces it.
@@ -227,7 +227,7 @@ universal-llm-gateway/
 ├── services/
 │   ├── _universal-llm-gateway/       # Gateway service (container-internal)
 │   ├── universal-stargate/           # Stargate service (port 9999)
-│   ├── rag/                          # RAG service (port 8100)
+│   ├── rag/                          # RAG service (UDS default)
 │   └── universal_cloud_proxy/        # Cloud proxy service (port 8200)
 ├── libs/
 │   ├── inference_djinn/              # LLM engines (llama.cpp, vLLM, Whisper, Flux)

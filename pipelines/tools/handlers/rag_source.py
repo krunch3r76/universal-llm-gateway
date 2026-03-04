@@ -2,7 +2,7 @@
 RAG source step handler — fetches full file content from RAG /source endpoint.
 
 Host-local call: pipeline executor (Master Stargate on host) → RAG service
-(host port 8100). No container networking involved.
+(UDS default or TCP via rag.host/rag.port in stargate.yaml).
 
 Invariants:
 - ∀ execute(): returns StepOutput.raw = reconstructed document text
@@ -12,24 +12,42 @@ Invariants:
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, override
+from urllib.parse import urlparse
 
-import httpx
 from systems.pipeline.core.handlers.protocol import AbstractStepHandler, StepOutput
+from systems.pipeline.core.schemas import StepConfig
+from transport_utils.rag_client import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
-    from systems.pipeline.core.schemas import StepConfig
 
 logger = get_logger(__name__)
+
+
+def _resolve_rag_base_and_path(
+    step: StepConfig, endpoint: str, default_path: str
+) -> tuple[str, str]:
+    """Resolve RAG base URL and path. Base: socket_path override or central config."""
+    socket_path = step.get_domain_field("socket_path")
+    if socket_path:
+        base = f"unix://{socket_path}" if not str(socket_path).startswith("unix://") else str(socket_path)
+    else:
+        base = resolve_rag_base_url()
+    path = urlparse(endpoint).path or default_path
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return base, path
 
 
 class RagSourceHandler(AbstractStepHandler):
     """Fetch all chunks for a file from the RAG /source endpoint.
 
     Domain fields (from pipeline YAML step config):
-        endpoint: str   — RAG source URL (required, e.g. http://localhost:8100/source)
+        endpoint: str   — RAG base + path (e.g. http://localhost:8100/source); path
+                         extracted at runtime; transport resolved from config.
         path: str       — file path to retrieve (required)
+        socket_path: str — optional override for UDS path
     """
 
     step_type: str = "rag_source_v1"
@@ -48,8 +66,9 @@ class RagSourceHandler(AbstractStepHandler):
         if not path:
             raise ValueError(f"Step '{step.id}': missing required 'path' field")
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(endpoint, params={"path": path})
+        base_url, api_path = _resolve_rag_base_and_path(step, endpoint, "/source")
+        async with make_async_client(base_url, timeout=30.0) as client:
+            response = await client.get(api_path, params={"path": path})
 
         if response.status_code == 404:
             logger.info("rag_source_v1 '%s': file not indexed: %s", step.id, path)

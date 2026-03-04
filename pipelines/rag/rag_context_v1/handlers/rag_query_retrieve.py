@@ -23,6 +23,7 @@ import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, override
+from urllib.parse import urlparse
 
 import httpx
 import yaml
@@ -30,6 +31,7 @@ from systems.pipeline.core.events.step import RagRetrievalParamsResolved
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
+from transport_utils.rag_client import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -208,6 +210,15 @@ class RagMultiRetrieveHandler(BaseHandler):
         if not endpoint:
             raise ValueError(f"Step '{step.id}': missing 'endpoint' domain field")
 
+        socket_path = step.get_domain_field("socket_path")
+        if socket_path:
+            base_url = f"unix://{socket_path}" if not str(socket_path).startswith("unix://") else str(socket_path)
+        else:
+            base_url = resolve_rag_base_url()
+        api_path = urlparse(endpoint).path or "/search"
+        if not api_path.startswith("/"):
+            api_path = f"/{api_path}"
+
         resolver = NamespaceResolver(context)
         rewrite_data: dict[str, Any] = self._resolve_input(
             resolver, step, "rewrite_result", step.handler_inputs
@@ -350,11 +361,11 @@ class RagMultiRetrieveHandler(BaseHandler):
             ),
         )
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with make_async_client(base_url, timeout=30.0) as client:
             tasks = [
                 _execute_single_query(
                     client,
-                    endpoint,
+                    api_path,
                     q,
                     top_k,
                     recency_weight,

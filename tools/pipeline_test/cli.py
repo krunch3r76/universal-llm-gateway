@@ -608,6 +608,7 @@ def _cmd_consult(args: argparse.Namespace) -> None:
             args.problem,
             pipeline_id=args.rag_pipeline,
             stargate_url=args.url,
+            rag_url=args.rag_url,
             timeout=consult_svc.DEFAULT_RAG_PIPELINE_TIMEOUT,
             pipeline_options=rag_options,
         )
@@ -935,6 +936,7 @@ def _cmd_ask(args: argparse.Namespace) -> None:
             args.question,
             pipeline_id=args.rag_pipeline,
             stargate_url=args.url,
+            rag_url=args.rag_url,
             timeout=consult_svc.DEFAULT_RAG_PIPELINE_TIMEOUT,
             pipeline_options=rag_options,
         )

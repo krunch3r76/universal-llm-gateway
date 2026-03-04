@@ -11,7 +11,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from ..controller.service_config import (
+    read_cloud_proxy_socket_path,
+    read_rag_socket_path,
+    read_rag_tcp_config,
+)
+
 logger = logging.getLogger(__name__)
+
+_SERVICE_HEALTH_TIMEOUT = 2.0
 
 
 class ServiceStatus(StrEnum):
@@ -43,7 +51,7 @@ class ServiceState:
     GATEWAY_PORT = 9998
     STARGATE_PORT = 9999
     RAG_PORT = 8100
-    CLOUD_PROXY_PORT = 8200
+    CLOUD_PROXY_PORT = 8200  # TCP mode only; UDS mode uses socket
     STARGATE_PID_FILE = Path.home() / ".gateway" / "stargate.pid"
     RAG_PID_FILE = Path.home() / ".gateway" / "rag.pid"
     CLOUD_PROXY_PID_FILE = Path.home() / ".gateway" / "cloud-proxy.pid"
@@ -60,53 +68,185 @@ class ServiceState:
         ]
 
     def check_rag(self) -> ServiceInfo:
+        try:
+            tcp_config = read_rag_tcp_config()
+        except ValueError:
+            tcp_config = None
+        uds_mode = tcp_config is None
+        socket_path = read_rag_socket_path()
         pid = self._read_pid(self.RAG_PID_FILE)
+
+        if uds_mode:
+            return self._check_rag_uds(pid, socket_path)
+        return self._check_rag_tcp(pid, tcp_config)
+
+    def _check_rag_uds(self, pid: int | None, socket_path: Path) -> ServiceInfo:
+        """UDS mode: PID + socket presence + readiness probe."""
+        if not socket_path.exists():
+            if pid and self._pid_alive(pid):
+                return ServiceInfo(
+                    name="RAG",
+                    status=ServiceStatus.UNHEALTHY,
+                    port=None,
+                    pid=pid,
+                    health_url=f"unix://{socket_path}/stats",
+                    detail=f"PID {pid}, socket not ready",
+                )
+            return ServiceInfo(
+                name="RAG",
+                status=ServiceStatus.STOPPED,
+                port=None,
+                pid=pid,
+            )
         if pid and self._pid_alive(pid):
-            healthy = self._port_open(self.RAG_PORT)
+            healthy = self._rag_probe_uds(socket_path)
             return ServiceInfo(
                 name="RAG",
                 status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
-                port=self.RAG_PORT,
+                port=None,
                 pid=pid,
-                health_url=f"http://localhost:{self.RAG_PORT}/stats",
+                health_url=f"unix://{socket_path}/stats",
+                detail=f"PID {pid}" + ("" if healthy else ", probe failed"),
+            )
+        healthy = self._rag_probe_uds(socket_path)
+        return ServiceInfo(
+            name="RAG",
+            status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
+            port=None,
+            detail="Socket ready (no PID file)" + ("" if healthy else ", probe failed"),
+        )
+
+    def _rag_probe_uds(self, socket_path: Path) -> bool:
+        """Perform readiness probe via UDS to /stats. Short timeout, fail closed."""
+        from transport_utils.rag_client import make_sync_client
+
+        url = f"unix://{socket_path}"
+        try:
+            with make_sync_client(url, timeout=_SERVICE_HEALTH_TIMEOUT) as client:
+                resp = client.get("/stats")
+                return resp.status_code == 200
+        except Exception:
+            return False
+
+    def _check_rag_tcp(
+        self, pid: int | None, tcp_config: tuple[str, int]
+    ) -> ServiceInfo:
+        """TCP mode: port-based + HTTP health."""
+        host, port = tcp_config
+        if pid and self._pid_alive(pid):
+            healthy = self._port_open(port, host)
+            return ServiceInfo(
+                name="RAG",
+                status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
+                port=port,
+                pid=pid,
+                health_url=f"http://{host}:{port}/stats",
                 detail=f"PID {pid}" + ("" if healthy else ", port not responding"),
             )
-        if self._port_open(self.RAG_PORT):
+        if self._port_open(port, host):
             return ServiceInfo(
                 name="RAG",
                 status=ServiceStatus.RUNNING,
-                port=self.RAG_PORT,
+                port=port,
                 detail="Port open (no PID file)",
             )
         return ServiceInfo(
             name="RAG",
             status=ServiceStatus.STOPPED,
-            port=self.RAG_PORT,
+            port=port,
         )
 
     def check_cloud_proxy(self) -> ServiceInfo:
+        try:
+            from services.universal_cloud_proxy.config import load_config
+
+            cfg = load_config(Path.home() / ".gateway" / "cloud-proxy.yaml")
+            uds_mode = cfg.socket_path is not None
+            host = cfg.host
+            port = cfg.port
+        except Exception:
+            uds_mode = True
+            host = "127.0.0.1"
+            port = self.CLOUD_PROXY_PORT
+        if uds_mode:
+            return self._check_cloud_proxy_uds()
+        return self._check_cloud_proxy_tcp(host=host, port=port)
+
+    def _check_cloud_proxy_uds(self) -> ServiceInfo:
+        """UDS mode: PID + socket + bounded readiness probe to /health."""
         pid = self._read_pid(self.CLOUD_PROXY_PID_FILE)
+        socket_path = read_cloud_proxy_socket_path()
+        if not socket_path.exists():
+            if pid and self._pid_alive(pid):
+                return ServiceInfo(
+                    name="Cloud Proxy",
+                    status=ServiceStatus.UNHEALTHY,
+                    port=None,
+                    pid=pid,
+                    health_url=f"unix://{socket_path}/health",
+                    detail=f"PID {pid}, socket not ready",
+                )
+            return ServiceInfo(
+                name="Cloud Proxy",
+                status=ServiceStatus.STOPPED,
+                port=None,
+                pid=pid,
+            )
         if pid and self._pid_alive(pid):
-            healthy = self._port_open(self.CLOUD_PROXY_PORT)
+            healthy = self._cloud_proxy_probe_uds(socket_path)
             return ServiceInfo(
                 name="Cloud Proxy",
                 status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
-                port=self.CLOUD_PROXY_PORT,
+                port=None,
                 pid=pid,
-                health_url=f"http://localhost:{self.CLOUD_PROXY_PORT}/health",
+                health_url=f"unix://{socket_path}/health",
+                detail=f"PID {pid}" + ("" if healthy else ", probe failed"),
+            )
+        healthy = self._cloud_proxy_probe_uds(socket_path)
+        return ServiceInfo(
+            name="Cloud Proxy",
+            status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
+            port=None,
+            detail="Socket ready (no PID file)" + ("" if healthy else ", probe failed"),
+        )
+
+    def _cloud_proxy_probe_uds(self, socket_path: Path) -> bool:
+        """Probe /health via UDS. Short timeout, fail closed."""
+        from transport_utils.rag_client import make_sync_client
+
+        try:
+            with make_sync_client(
+                f"unix://{socket_path}", timeout=_SERVICE_HEALTH_TIMEOUT
+            ) as client:
+                resp = client.get("/health")
+                return resp.status_code == 200
+        except Exception:
+            return False
+
+    def _check_cloud_proxy_tcp(self, *, host: str, port: int) -> ServiceInfo:
+        """TCP mode: port-based + HTTP health."""
+        pid = self._read_pid(self.CLOUD_PROXY_PID_FILE)
+        if pid and self._pid_alive(pid):
+            healthy = self._port_open(port, host)
+            return ServiceInfo(
+                name="Cloud Proxy",
+                status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
+                port=port,
+                pid=pid,
+                health_url=f"http://{host}:{port}/health",
                 detail=f"PID {pid}" + ("" if healthy else ", port not responding"),
             )
-        if self._port_open(self.CLOUD_PROXY_PORT):
+        if self._port_open(port, host):
             return ServiceInfo(
                 name="Cloud Proxy",
                 status=ServiceStatus.RUNNING,
-                port=self.CLOUD_PROXY_PORT,
+                port=port,
                 detail="Port open (no PID file)",
             )
         return ServiceInfo(
             name="Cloud Proxy",
             status=ServiceStatus.STOPPED,
-            port=self.CLOUD_PROXY_PORT,
+            port=port,
         )
 
     def check_gateway(self) -> ServiceInfo:

@@ -14,10 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import httpx
+from transport_utils.rag_client import DEFAULT_RAG_URL, make_sync_client
 
 DEFAULT_CORPUS_DIR = Path("docs/research/prompting")
-DEFAULT_RAG_URL = "http://localhost:8100"
 DEFAULT_RAG_TIMEOUT = 30.0
 
 
@@ -109,7 +108,6 @@ def index_corpus_directory(
     metadata_overrides: dict[str, str | int | float | bool] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Ask RAG to index PDF files in a directory."""
-    url = f"{rag_url.rstrip('/')}/index_directory"
     body: dict[str, Any] = {
         "path": str(directory.expanduser().resolve()),
         "extensions": [".pdf"],
@@ -117,8 +115,8 @@ def index_corpus_directory(
     if metadata_overrides:
         body["metadata_overrides"] = metadata_overrides
     try:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.post(url, json=body)
+        with make_sync_client(rag_url, timeout=timeout) as client:
+            response = client.post("/index_directory", json=body)
         _ = response.raise_for_status()
     except Exception as exc:  # noqa: BLE001
         return None, str(exc)
@@ -131,10 +129,9 @@ def rag_watch_status(
     timeout: float = DEFAULT_RAG_TIMEOUT,
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
     """Return current RAG watch paths for quick diagnostics."""
-    url = f"{rag_url.rstrip('/')}/watch/status"
     try:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.get(url)
+        with make_sync_client(rag_url, timeout=timeout) as client:
+            response = client.get("/watch/status")
         _ = response.raise_for_status()
     except Exception as exc:  # noqa: BLE001
         return None, str(exc)

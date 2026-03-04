@@ -1,0 +1,39 @@
+schema_version: 6
+id: code-review
+version: "1"
+type: code_review
+description: "Code review: structured critique → cross-model validation → deterministic merge"
+output: merge
+
+options:
+  timeout_seconds: 360
+
+steps:
+  - name: review
+    type: generate
+    model_ref: review_model
+    prompt_ref: code_review.review
+    handler_inputs:
+      source_code: sourceNs.text
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 8192
+    timeout_seconds: 120
+
+  - name: validate
+    type: generate
+    model_ref: validate_model
+    prompt_ref: code_review.validate
+    handler_inputs:
+      source_code: sourceNs.text
+      review_output: review.raw
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 8192
+    timeout_seconds: 120
+
+  - name: merge
+    type: code_review_merge_findings
+    handler_inputs:
+      validated_output: validate.raw
+    timeout_seconds: 10

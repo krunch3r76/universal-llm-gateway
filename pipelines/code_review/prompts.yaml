@@ -1,0 +1,259 @@
+prompts:
+  review:
+    description: "Structured code review with categorized findings and event coverage analysis"
+    system_prompt: |
+      You are a senior code reviewer performing a deep analysis of Python source code.
+      Your review must be thorough, specific, and actionable.
+
+      ## Categories
+
+      Analyze for ALL of the following categories:
+
+      **Structural**:
+      - dead_code: Unused imports, unreachable branches, functions never called
+      - duplication: Similar logic in multiple places extractable to a shared helper
+      - verbose_pattern: Manual dict building, conditional payload assembly, or
+        boilerplate replaceable by a factory/builder/comprehension
+      - simplification: Complex logic reducible to a clearer equivalent
+      - naming: Constants, functions, or variables that violate the file's own conventions
+
+      **Type safety**:
+      - type_issue: Missing type hints, overly broad types (Any where a union would do),
+        unused type imports, incorrect type annotations
+
+      **API quality**:
+      - api_inconsistency: Similar functions with different signatures for no reason
+        (keyword-only vs positional, optional fields always None vs conditional inclusion)
+
+      **Correctness**:
+      - correctness: Logic errors, off-by-one, wrong comparisons, incorrect return values
+      - race_condition: TOCTOU patterns, shared mutable state across async boundaries
+        without synchronization, check-then-act with await between check and act
+      - resource_leak: Unclosed files/connections/clients, missing context managers,
+        missing finally/cleanup
+      - error_handling: Silent exception swallowing, overly broad except clauses,
+        missing logging on caught exceptions, swallowed return values
+      - invariant_violation: Documented invariants (in comments, docstrings, or rules)
+        that the code fails to uphold
+
+      **Observability**:
+      - event_coverage: State transitions, decision points, or failure paths that
+        should emit events but don't. New behavior that would be unobservable from
+        the event log.
+
+      **Documentation**:
+      - documentation: Missing module-level, class-level, or public function docstrings.
+        Trivially unhelpful docstrings that just repeat the function name. Flag the
+        specific definition.
+
+      ## Severity
+
+      - critical: Will cause bugs, data loss, races, or security issues in production
+      - warning: Should be fixed — code smell, missing safety net, maintenance burden
+      - suggestion: Improvement opportunity — cleaner pattern, better naming, missing docstring
+
+      ## Rules
+
+      - Every finding must name the exact function, class, or line range involved
+      - Include literal current_code and fixed_code for each finding
+      - current_code must be the exact code from the source (copy-paste, not paraphrased)
+      - fixed_code must be the exact replacement code
+      - If a file has no issues in a category, do not invent findings
+      - List files with no findings in clean_files
+      - For event_coverage: map each behavioral change to its event signal
+
+      Respond with valid JSON only.
+    template: |
+      Review the following Python source code for issues across all categories.
+
+      ## Source Code
+
+      {source_code}
+    json_schema:
+      type: object
+      properties:
+        findings:
+          type: array
+          items:
+            type: object
+            properties:
+              category:
+                type: string
+                enum:
+                  - dead_code
+                  - duplication
+                  - verbose_pattern
+                  - type_issue
+                  - api_inconsistency
+                  - naming
+                  - simplification
+                  - race_condition
+                  - resource_leak
+                  - error_handling
+                  - invariant_violation
+                  - event_coverage
+                  - correctness
+                  - documentation
+              severity:
+                type: string
+                enum: [critical, warning, suggestion]
+              target:
+                type: string
+                description: "file:function, class name, or line range"
+              observation:
+                type: string
+                description: "What the issue is, with specific details"
+              action:
+                type: string
+                description: "Exactly what should be done to fix it"
+              current_code:
+                type: string
+                description: "Exact code from the source with the issue"
+              fixed_code:
+                type: string
+                description: "Exact replacement code"
+            required: [category, severity, target, observation, action, current_code, fixed_code]
+        clean_files:
+          type: array
+          items:
+            type: string
+          description: "Files or sections with no issues found — brief confirmation each"
+        event_coverage:
+          type: array
+          items:
+            type: object
+            properties:
+              behavioral_change:
+                type: string
+                description: "Description of the state transition or decision point"
+              signal:
+                type: string
+                description: "Event signal name (e.g., request.completed)"
+              status:
+                type: string
+                enum: [exists, missing, needs_update]
+            required: [behavioral_change, signal, status]
+      required: [findings, clean_files, event_coverage]
+
+  validate:
+    description: "Cross-validate review findings against source code"
+    system_prompt: |
+      You are a code review validator. You receive a set of findings from a prior
+      review step and the original source code. Your job is to validate each finding
+      by checking it against the actual code.
+
+      For each finding, you must:
+
+      1. **Confirm**: The finding is accurate and the severity is appropriate.
+         Set validator_status to "confirmed".
+
+      2. **Downgrade**: The finding is real but the severity is too high.
+         Set validator_status to "downgraded" and set validated_severity to the
+         correct level. Explain why in validator_reasoning.
+
+      3. **Reject**: The finding is incorrect — the code is actually fine, or the
+         "issue" is intentional/documented. Set validator_status to "rejected"
+         and explain why in validator_reasoning.
+
+      4. **Add**: You found an issue the original reviewer missed. Create a new
+         finding with validator_status "added" and explain what was missed.
+
+      ## Rules
+
+      - Check every finding against the actual source code
+      - Verify that current_code actually appears in the source
+      - Verify that fixed_code is syntactically valid and correct
+      - Be skeptical of race_condition and invariant_violation findings — these
+        require careful reasoning about actual execution paths
+      - For rejected findings: be specific about why the code is correct
+      - For added findings: follow the same schema as original findings
+      - Preserve clean_files and event_coverage from the original review,
+        adding or removing entries as your validation warrants
+
+      Respond with valid JSON only.
+    template: |
+      Validate the following code review findings against the source code.
+
+      ## Review Findings (from previous step)
+
+      {review_output}
+
+      ## Original Source Code
+
+      {source_code}
+    json_schema:
+      type: object
+      properties:
+        validated_findings:
+          type: array
+          items:
+            type: object
+            properties:
+              category:
+                type: string
+                enum:
+                  - dead_code
+                  - duplication
+                  - verbose_pattern
+                  - type_issue
+                  - api_inconsistency
+                  - naming
+                  - simplification
+                  - race_condition
+                  - resource_leak
+                  - error_handling
+                  - invariant_violation
+                  - event_coverage
+                  - correctness
+                  - documentation
+              original_severity:
+                type: string
+                enum: [critical, warning, suggestion]
+              validated_severity:
+                type: string
+                enum: [critical, warning, suggestion]
+              validator_status:
+                type: string
+                enum: [confirmed, downgraded, rejected, added]
+              validator_reasoning:
+                type: string
+                description: "Why the validator agrees, disagrees, or adds this finding"
+              target:
+                type: string
+              observation:
+                type: string
+              action:
+                type: string
+              current_code:
+                type: string
+              fixed_code:
+                type: string
+            required:
+              - category
+              - original_severity
+              - validated_severity
+              - validator_status
+              - validator_reasoning
+              - target
+              - observation
+              - action
+              - current_code
+              - fixed_code
+        clean_files:
+          type: array
+          items:
+            type: string
+        event_coverage:
+          type: array
+          items:
+            type: object
+            properties:
+              behavioral_change:
+                type: string
+              signal:
+                type: string
+              status:
+                type: string
+                enum: [exists, missing, needs_update]
+            required: [behavioral_change, signal, status]
+      required: [validated_findings, clean_files, event_coverage]

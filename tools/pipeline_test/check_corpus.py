@@ -59,7 +59,8 @@ def check_corpus(corpus_dir: Path) -> None:
         corpus_abs = corpus_dir.resolve()
         for pdf in not_indexed:
             print(
-                f'  curl -s -X POST http://localhost:8100/index \\\n'
+                f'  curl -s -X POST --unix-socket /tmp/universal-protocol/rag.sock '
+                f'http://localhost/index \\\n'
                 f'    -H \'Content-Type: application/json\' \\\n'
                 f'    -d \'{{"path": "{corpus_abs}/{pdf.name}", "metadata_overrides": {{"published_date": "YYYY-MM-DDT00:00:00+00:00"}}}}\''
             )

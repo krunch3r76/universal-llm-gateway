@@ -99,6 +99,9 @@ prompts:
         (e.g., some use keyword-only args, others don't; some include optional fields
         conditionally, others always include them as None)
       - Naming: constants/functions that don't follow the file's own conventions
+      - Missing docstrings: module-level, class-level, or public function
+        docstrings that are absent or trivially unhelpful (e.g., just repeating
+        the function name). Flag the specific definition.
 
       Each observation must be actionable — something a code agent can implement.
       Do not list observations that amount to "this is fine as-is."
@@ -157,7 +160,7 @@ prompts:
             properties:
               category:
                 type: string
-                enum: [dead_code, duplication, verbose_pattern, type_issue, api_inconsistency, naming, simplification]
+                enum: [dead_code, duplication, verbose_pattern, type_issue, api_inconsistency, naming, simplification, documentation]
               target:
                 type: string
                 description: "The specific function(s), constant(s), or pattern involved"

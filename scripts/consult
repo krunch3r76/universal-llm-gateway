@@ -30,9 +30,9 @@ from typing import Any
 
 import httpx
 import yaml
+from transport_utils.rag_client import DEFAULT_RAG_URL, make_sync_client
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
-DEFAULT_RAG_URL = "http://localhost:8100"
 
 DEFAULT_MODELS: list[str] = [
     "qwen3-32b-awq-32768",
@@ -55,11 +55,29 @@ DEFAULT_CHAIN_DIRECTIVE = (
 )
 
 
+def _rag_socket_present(rag_url: str) -> bool:
+    """Return True if the RAG socket file exists (unix://) or URL is TCP.
+
+    Existence check only — not a full connectivity probe. A stale socket
+    (process crashed, file left behind) returns True here; the subsequent
+    fetch call will surface a ConnectError and continue gracefully. The
+    purpose is to suppress the noisy "No such file or directory" message
+    that fires when RAG is simply not configured/started.
+
+    For TCP URLs: always returns True (errors surface at connection time).
+    """
+    if not rag_url.startswith("unix://"):
+        return True
+    rest = rag_url[7:].lstrip("/")
+    socket_path = Path(f"/{rest}") if rest else Path("/tmp/universal-protocol/rag.sock")
+    return socket_path.exists()
+
+
 def _fetch_scope_choices(rag_url: str = DEFAULT_RAG_URL) -> list[str]:
     """Fetch available scopes from RAG service for CLI choices."""
     try:
-        with httpx.Client(timeout=2.0) as client:
-            resp = client.get(f"{rag_url.rstrip('/')}/scopes")
+        with make_sync_client(rag_url, timeout=2.0) as client:
+            resp = client.get("/scopes")
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, dict):
@@ -68,7 +86,7 @@ def _fetch_scope_choices(rag_url: str = DEFAULT_RAG_URL) -> list[str]:
                 return list(scopes.keys())
     except Exception as exc:
         print(
-            f"RAG scope discovery failed ({exc}); using default scopes",
+            f"RAG scope discovery failed ({type(exc).__name__}); using defaults",
             file=sys.stderr,
         )
     return ["project", "research", "all"]
@@ -77,8 +95,8 @@ def _fetch_scope_choices(rag_url: str = DEFAULT_RAG_URL) -> list[str]:
 def _fetch_scope_options_text(rag_url: str = DEFAULT_RAG_URL) -> str:
     """Fetch and format scopes for rag-context prompt injection."""
     try:
-        with httpx.Client(timeout=2.0) as client:
-            resp = client.get(f"{rag_url.rstrip('/')}/scopes")
+        with make_sync_client(rag_url, timeout=2.0) as client:
+            resp = client.get("/scopes")
         resp.raise_for_status()
         data = resp.json()
         scopes = data.get("scopes", {}) if isinstance(data, dict) else {}
@@ -98,13 +116,14 @@ def _fetch_scope_options_text(rag_url: str = DEFAULT_RAG_URL) -> str:
         return "\n        ".join(lines)
     except Exception as exc:
         print(
-            f"RAG scope option fetch failed ({exc}); using fallback text",
+            f"RAG scope option fetch failed ({type(exc).__name__}); using fallback text",
             file=sys.stderr,
         )
         return '"research", "project", or "all"'
 
 
-CLOUD_PROXY_URL = os.getenv("CLOUD_PROXY_URL", "http://localhost:8200").rstrip("/")
+# Cloud model selection via Stargate passthrough (sole endpoint invariant)
+STARGATE_URL = os.getenv("STARGATE_URL", DEFAULT_STARGATE_URL).rstrip("/")
 
 
 def _load_roles() -> dict[str, Any]:
@@ -131,6 +150,7 @@ def _split_role_config(
 def _select_models_for_role(
     role: str,
     role_select: dict[str, dict[str, Any]],
+    stargate_url: str = STARGATE_URL,
     count: int = 2,
 ) -> list[str] | None:
     """Query cloud proxy /api/select using role's selection criteria.
@@ -154,11 +174,8 @@ def _select_models_for_role(
             payload[field] = select_config[field]
 
     try:
-        resp = httpx.post(
-            f"{CLOUD_PROXY_URL}/api/select",
-            json=payload,
-            timeout=5.0,
-        )
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.post(f"{stargate_url.rstrip('/')}/api/select", json=payload)
         resp.raise_for_status()
         models = [m["id"] for m in resp.json().get("models", [])]
         if models:
@@ -241,7 +258,7 @@ def _read_context_files(paths: list[str]) -> list[str]:
                         content = content[:8000] + "\n[... truncated]"
                     blocks.append(f"### {child}\n```\n{content}\n```")
                 except OSError:
-                    pass
+                    blocks.append(f"### {child}\n[Error: could not read file]")
         elif path.is_file():
             try:
                 content = path.read_text(errors="replace")
@@ -260,13 +277,14 @@ def _fetch_rag_pipeline(
     *,
     pipeline_id: str = "rag-context",
     stargate_url: str = DEFAULT_STARGATE_URL,
+    rag_url: str = DEFAULT_RAG_URL,
     timeout: float = 70.0,
     scope_override: str | None = None,
 ) -> tuple[list[str], str | None]:
     """Use the rag-context pipeline for intelligent RAG retrieval."""
     url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
     pipeline_options: dict[str, Any] = {
-        "scope_options": _fetch_scope_options_text(),
+        "scope_options": _fetch_scope_options_text(rag_url=rag_url),
     }
     if scope_override:
         pipeline_options["scope_override"] = scope_override
@@ -298,16 +316,16 @@ def _fetch_rag_direct(
     timeout: float = 10.0,
 ) -> tuple[list[str], str | None]:
     """Direct RAG search via the /search endpoint."""
-    url = f"{rag_url.rstrip('/')}/search"
     body: dict[str, object] = {"query": query, "top_k": top_k}
     if scope:
         body["scope"] = scope
     try:
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.post(url, json=body)
+        with make_sync_client(rag_url, timeout=timeout) as client:
+            resp = client.post("/search", json=body)
         resp.raise_for_status()
     except Exception as exc:
-        return [], str(exc)
+        reason = f"RAG service unreachable ({type(exc).__name__})"
+        return [], reason
     data = resp.json()
     if not isinstance(data, dict):
         return [], "RAG response was not a JSON object"
@@ -412,6 +430,9 @@ def _augment_with_prior(
     return "\n\n".join(sections)
 
 
+_MAX_PRIOR_CHARS = 24_000
+
+
 def _query_chain(
     models: list[str],
     system_prompt: str,
@@ -420,21 +441,44 @@ def _query_chain(
     timeout: float,
     chain_directive: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Query models sequentially, each reviewing prior output."""
+    """Query models sequentially, each reviewing prior output.
+
+    Prior responses are capped at _MAX_PRIOR_CHARS to prevent unbounded
+    prompt growth across chain phases.
+    """
     results: list[dict[str, Any]] = []
     for idx, mid in enumerate(models):
-        prompt = (
-            _augment_with_prior(user_prompt, results, chain_directive)
-            if results
-            else user_prompt
-        )
+        if results:
+            # Cap prior responses to prevent payload ballooning across phases.
+            capped: list[dict[str, Any]] = []
+            for r in results:
+                if "response" in r and len(r["response"]) > _MAX_PRIOR_CHARS:
+                    r = dict(r)
+                    r["response"] = (
+                        r["response"][:_MAX_PRIOR_CHARS]
+                        + f"\n[... truncated to {_MAX_PRIOR_CHARS} chars]"
+                    )
+                capped.append(r)
+            prompt = _augment_with_prior(user_prompt, capped, chain_directive)
+        else:
+            prompt = user_prompt
         phase = "analyst" if idx == 0 else "reviewer"
-        print(f"  Phase {idx + 1} ({phase}): {mid}...", file=sys.stderr)
+        print(
+            f"  Phase {idx + 1} ({phase}): {mid} (timeout={timeout:.0f}s)...",
+            file=sys.stderr,
+        )
+        start = time.monotonic()
         try:
             result = _query_model(mid, system_prompt, prompt, stargate_url, timeout)
             result["phase"] = phase
         except Exception as exc:
-            result = {"model_id": mid, "error": str(exc), "phase": phase}
+            elapsed = time.monotonic() - start
+            error_msg = str(exc)
+            if elapsed >= timeout * 0.95:
+                error_msg = f"timeout after {elapsed:.0f}s: {error_msg}"
+            elif "connect" in error_msg.lower() or "connection" in error_msg.lower():
+                error_msg = f"connection error: {error_msg}"
+            result = {"model_id": mid, "error": error_msg, "phase": phase}
         results.append(result)
     return results
 
@@ -585,6 +629,11 @@ def main() -> None:
         default=DEFAULT_STARGATE_URL,
         help="Stargate URL",
     )
+    parser.add_argument(
+        "--rag-url",
+        default=DEFAULT_RAG_URL,
+        help="RAG service URL (default: unix socket)",
+    )
     parser.add_argument("--no-rag", action="store_true", help="Disable RAG")
     parser.add_argument(
         "--scope",
@@ -643,18 +692,25 @@ def main() -> None:
             parser.error("No question provided")
 
     if not args.no_rag:
-        available_scopes = _fetch_scope_choices()
-        if args.scope not in available_scopes:
-            parser.error(
-                f"Unknown --scope '{args.scope}'. Available scopes: "
-                f"{', '.join(sorted(available_scopes))}"
+        if not _rag_socket_present(args.rag_url):
+            print(
+                "RAG service not available (socket absent); running without context retrieval",
+                file=sys.stderr,
             )
+            args.no_rag = True
+        else:
+            available_scopes = _fetch_scope_choices(rag_url=args.rag_url)
+            if args.scope not in available_scopes:
+                parser.error(
+                    f"Unknown --scope '{args.scope}'. Available scopes: "
+                    f"{', '.join(sorted(available_scopes))}"
+                )
 
     if args.models:
         target_models = args.models
         _warn_local_model_for_role(args.role, target_models, role_select)
     else:
-        selected = _select_models_for_role(args.role, role_select)
+        selected = _select_models_for_role(args.role, role_select, args.stargate_url)
         if selected:
             print(
                 f"Auto-selected for '{args.role}': {', '.join(selected)}",
@@ -721,11 +777,13 @@ def main() -> None:
                 args.question,
                 pipeline_id=args.rag_pipeline,
                 stargate_url=args.stargate_url,
+                rag_url=args.rag_url,
                 scope_override=args.scope,
             )
         else:
             rag_findings, rag_error = _fetch_rag_direct(
                 args.question,
+                rag_url=args.rag_url,
                 scope=args.scope,
             )
         if rag_error:

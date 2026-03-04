@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -31,7 +32,6 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _REFRESH_INTERVAL_S = 3600
-_MIN_REFRESH_S = 600
 _RETRY_INTERVAL_S = 30
 
 
@@ -58,10 +58,35 @@ class CloudProxyCatalogPoller:
         self._proxy_url = proxy_config.url.rstrip("/")
         self._gateway_manager = gateway_manager
         self._event_bus = event_bus
-        self._client = httpx.AsyncClient(timeout=15.0)
+        self._client = self._make_client(proxy_config.url)
         self._refresh_task: asyncio.Task[None] | None = None
         self._gateway_ids: list[str] = []
+        self._gateway_ids_lock: asyncio.Lock = asyncio.Lock()
         self._connected: bool = False
+        self._last_connected_at: float | None = None
+        # Extracted once at construction for fast socket-existence checks.
+        self._uds_socket_path: Path | None = self._extract_uds_path(proxy_config.url)
+
+    def _make_client(self, url: str) -> httpx.AsyncClient:
+        """Create httpx client with UDS or TCP transport."""
+        from .forwarder import parse_cloud_proxy_url
+
+        uds_path, base_url = parse_cloud_proxy_url(url)
+        if uds_path:
+            transport = httpx.AsyncHTTPTransport(uds=uds_path)
+            return httpx.AsyncClient(
+                transport=transport,
+                base_url=base_url,
+                timeout=15.0,
+            )
+        return httpx.AsyncClient(base_url=base_url, timeout=15.0)
+
+    def _extract_uds_path(self, url: str) -> Path | None:
+        """Return the UDS socket path if the proxy URL is unix://, else None."""
+        from .forwarder import parse_cloud_proxy_url
+
+        uds_path, _ = parse_cloud_proxy_url(url)
+        return Path(uds_path) if uds_path else None
 
     async def startup(self) -> None:
         """Probe proxy health, fetch catalog, register virtual gateways."""
@@ -69,15 +94,20 @@ class CloudProxyCatalogPoller:
             self._refresh_loop(), name="cloud-proxy-catalog-refresh"
         )
 
-        if not await self._probe_health():
+        reachable, detection_method = await self._probe_health()
+        if not reachable:
             logger.warning(
-                "Cloud proxy not reachable at %s — no cloud models registered",
+                "Cloud proxy not reachable at %s (%s) — no cloud models registered",
                 self._proxy_url,
+                detection_method,
             )
-            await self._emit_unavailable("health probe failed at startup")
+            await self._emit_unavailable(
+                "health probe failed at startup", detection_method=detection_method
+            )
         else:
             await self._fetch_and_register()
             self._connected = True
+            self._last_connected_at = time.time()
             await self._emit_available()
 
         logger.info(
@@ -96,19 +126,31 @@ class CloudProxyCatalogPoller:
         await self._client.aclose()
         logger.debug("CloudProxyCatalogPoller shut down")
 
-    async def _probe_health(self) -> bool:
-        """Check if the cloud proxy is reachable."""
+    async def _probe_health(self) -> tuple[bool, str]:
+        """Check if the cloud proxy is reachable.
+
+        Returns (reachable, detection_method) where detection_method is one of:
+            'socket_missing'     — UDS socket file absent (no HTTP attempted)
+            'health_probe_failed' — HTTP GET /health returned error or timeout
+            'ok'                 — probe succeeded
+        """
+        if self._uds_socket_path is not None and not self._uds_socket_path.exists():
+            logger.debug("Cloud proxy UDS socket missing: %s", self._uds_socket_path)
+            return False, "socket_missing"
         try:
-            response = await self._client.get(f"{self._proxy_url}/health")
-            return response.status_code == 200
+            response = await self._client.get("/health")
+            if response.status_code == 200:
+                return True, "ok"
+            logger.debug("Cloud proxy health probe returned %d", response.status_code)
+            return False, "health_probe_failed"
         except httpx.HTTPError as exc:
             logger.debug("Cloud proxy health probe failed: %s", exc)
-            return False
+            return False, "health_probe_failed"
 
     async def _fetch_catalog(self) -> list[dict[str, Any]]:
         """Fetch the model catalog from the proxy."""
         try:
-            response = await self._client.get(f"{self._proxy_url}/catalog")
+            response = await self._client.get("/catalog")
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as exc:
@@ -117,16 +159,19 @@ class CloudProxyCatalogPoller:
             return []
 
     async def _fetch_and_register(self) -> None:
-        """Fetch catalog and register virtual gateways grouped by provider."""
+        """Fetch catalog, register virtual gateways grouped by provider.
+
+        Prunes gateways absent from the current catalog so _gateway_ids
+        remains an accurate reflection of live cloud providers.
+        """
         catalog = await self._fetch_catalog()
-        if not catalog:
-            return
 
         by_provider: dict[str, list[dict[str, Any]]] = {}
-        for entry in catalog:
+        for entry in catalog or []:
             provider = entry.get("provider", "unknown")
             by_provider.setdefault(provider, []).append(entry)
 
+        current_ids: set[str] = set()
         for provider, entries in by_provider.items():
             model_ids: list[ModelId] = []
             max_concurrent = 5
@@ -141,9 +186,11 @@ class CloudProxyCatalogPoller:
 
             gateway = self._build_virtual_gateway(provider, model_ids, max_concurrent)
             await self._gateway_manager.register_cloud_gateway(gateway)
+            current_ids.add(gateway.gateway_id)
 
-            if gateway.gateway_id not in self._gateway_ids:
-                self._gateway_ids.append(gateway.gateway_id)
+            async with self._gateway_ids_lock:
+                if gateway.gateway_id not in self._gateway_ids:
+                    self._gateway_ids.append(gateway.gateway_id)
 
             logger.info(
                 "Registered cloud gateway '%s': %d models via proxy",
@@ -151,7 +198,15 @@ class CloudProxyCatalogPoller:
                 len(model_ids),
             )
 
-        await self._emit_catalog_updated(len(catalog))
+        # Prune gateways absent from this catalog iteration.
+        async with self._gateway_ids_lock:
+            stale = [gid for gid in self._gateway_ids if gid not in current_ids]
+            self._gateway_ids = [gid for gid in self._gateway_ids if gid in current_ids]
+
+        for gid in stale:
+            logger.info("Pruned stale cloud gateway '%s' (absent from catalog)", gid)
+
+        await self._emit_catalog_updated(len(catalog or []))
 
     def _build_virtual_gateway(
         self,
@@ -185,22 +240,27 @@ class CloudProxyCatalogPoller:
         """Periodically re-fetch the catalog from the proxy."""
         while True:
             interval_s = (
-                _RETRY_INTERVAL_S
-                if not self._connected
-                else max(_REFRESH_INTERVAL_S, _MIN_REFRESH_S)
+                _RETRY_INTERVAL_S if not self._connected else _REFRESH_INTERVAL_S
             )
             await asyncio.sleep(interval_s)
             try:
-                if not await self._probe_health():
+                reachable, detection_method = await self._probe_health()
+                if not reachable:
                     self._connected = False
-                    await self._emit_unavailable("health probe failed during refresh")
+                    await self._emit_unavailable(
+                        "health probe failed during refresh",
+                        detection_method=detection_method,
+                    )
                     continue
 
                 was_connected = self._connected
                 await self._fetch_and_register()
                 self._connected = True
+                self._last_connected_at = time.time()
                 if not was_connected:
                     await self._emit_available()
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.exception("Error refreshing cloud proxy catalog")
 
@@ -211,22 +271,30 @@ class CloudProxyCatalogPoller:
             return
         from src.scheduling.events import CloudProxyAvailable
 
+        async with self._gateway_ids_lock:
+            ids_snapshot = list(self._gateway_ids)
         total_models = sum(
             len(gw.available_models)
-            for gid in self._gateway_ids
+            for gid in ids_snapshot
             if (gw := self._gateway_manager.get_gateway(gid))
         )
         await self._event_bus.publish_async(
             CloudProxyAvailable(proxy_url=self._proxy_url, model_count=total_models)
         )
 
-    async def _emit_unavailable(self, reason: str) -> None:
+    async def _emit_unavailable(
+        self, reason: str, *, detection_method: str | None = None
+    ) -> None:
         if not self._event_bus:
             return
         from src.scheduling.events import CloudProxyUnavailable
 
         await self._event_bus.publish_async(
-            CloudProxyUnavailable(proxy_url=self._proxy_url, reason=reason)
+            CloudProxyUnavailable(
+                proxy_url=self._proxy_url,
+                reason=reason,
+                detection_method=detection_method,
+            )
         )
 
     async def _emit_catalog_updated(self, model_count: int) -> None:
@@ -234,11 +302,13 @@ class CloudProxyCatalogPoller:
             return
         from src.scheduling.events import CloudProxyCatalogUpdated
 
+        async with self._gateway_ids_lock:
+            gateway_count = len(self._gateway_ids)
         await self._event_bus.publish_async(
             CloudProxyCatalogUpdated(
                 proxy_url=self._proxy_url,
                 model_count=model_count,
-                gateway_count=len(self._gateway_ids),
+                gateway_count=gateway_count,
             )
         )
 

@@ -53,7 +53,7 @@ class FederatedRequestForwarder:
 
         # HTTP client with connection pooling (TCP)
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0),
+            timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0),
             limits=httpx.Limits(
                 max_connections=config.http_pool.max_connections,
                 max_keepalive_connections=config.http_pool.max_keepalive_connections,
@@ -86,6 +86,11 @@ class FederatedRequestForwarder:
             await self._cloud_forwarder.close()
         logger.debug("FederatedRequestForwarder closed")
 
+    @property
+    def cloud_forwarder(self) -> Any | None:
+        """CloudProxyClient for metadata passthrough (/api/select, /api/models)."""
+        return self._cloud_forwarder
+
     def _get_client_for_url(self, url: str) -> httpx.AsyncClient:
         """Get appropriate HTTP client for URL (TCP or Unix socket)."""
         if url.startswith("unix://"):
@@ -95,9 +100,7 @@ class FederatedRequestForwarder:
                 self._unix_clients[socket_path] = httpx.AsyncClient(
                     transport=transport,
                     base_url="http://localhost",  # Host ignored for UDS
-                    timeout=httpx.Timeout(
-                        connect=10.0, read=300.0, write=10.0, pool=10.0
-                    ),
+                    timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0),
                 )
             return self._unix_clients[socket_path]
         return self._client
@@ -216,7 +219,7 @@ class FederatedRequestForwarder:
                     FederationRoutingDelegated(
                         request_id=request_id,
                         target_remote=gateway.remote_stargate_id,
-                        model_id=model_id,
+                        model_id=ModelId(model_id),
                         reason=f"Model routed to {gateway.gateway_id}",
                     )
                 )
@@ -300,7 +303,7 @@ class FederatedRequestForwarder:
                     FederationRoutingDelegated(
                         request_id=request_id,
                         target_remote=gateway.remote_stargate_id,
-                        model_id=model_id,
+                        model_id=ModelId(model_id),
                         reason=f"Model routed to {gateway.gateway_id}",
                     )
                 )
@@ -453,7 +456,7 @@ class FederatedRequestForwarder:
                 endpoint,
                 json=payload,
                 headers=headers,
-                timeout=httpx.Timeout(connect=10.0, read=175.0, write=10.0, pool=10.0),
+                timeout=httpx.Timeout(connect=10.0, read=175.0, write=10.0),
             )
 
             if response.is_success:
@@ -539,7 +542,7 @@ class FederatedRequestForwarder:
                 endpoint,
                 json=payload,
                 headers=headers,
-                timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0),
+                timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0),
             )
 
             if response.is_success:

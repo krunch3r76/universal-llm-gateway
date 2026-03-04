@@ -15,12 +15,12 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from transport_utils.rag_client import DEFAULT_RAG_URL, make_sync_client
 
 from .http_helpers import PIPELINE_TEST_HEADERS, PIPELINE_TEST_PARAMS
 from .models import ConsultResult, ModelCall, StepSnapshot
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
-DEFAULT_RAG_URL = "http://localhost:8100"
 DEFAULT_RAG_TOP_K = 5
 DEFAULT_RAG_TIMEOUT = 10.0
 DEFAULT_RAG_RECENCY_WEIGHT = 0.1
@@ -350,7 +350,6 @@ def fetch_rag_findings(
     Returns findings and optional error text. Errors are non-fatal so consult can
     continue without RAG context.
     """
-    url = f"{rag_url.rstrip('/')}/search"
     body: dict[str, object] = {
         "query": problem,
         "top_k": top_k,
@@ -362,8 +361,8 @@ def fetch_rag_findings(
         body["scope"] = scope
 
     try:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.post(url, json=body)
+        with make_sync_client(rag_url, timeout=timeout) as client:
+            response = client.post("/search", json=body)
         _ = response.raise_for_status()
     except Exception as exc:  # noqa: BLE001
         return [], str(exc)
@@ -418,6 +417,7 @@ def fetch_rag_via_pipeline(
     *,
     pipeline_id: str = DEFAULT_RAG_PIPELINE_ID,
     stargate_url: str = DEFAULT_STARGATE_URL,
+    rag_url: str = DEFAULT_RAG_URL,
     timeout: float = DEFAULT_RAG_PIPELINE_TIMEOUT,
     pipeline_options: dict[str, Any] | None = None,
 ) -> tuple[list[str], str | None]:
@@ -436,8 +436,7 @@ def fetch_rag_via_pipeline(
 
     url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
     base_options: dict[str, Any] = pipeline_options or {}
-    # Inject scope_options for the rewrite prompt
-    base_options.setdefault("scope_options", fetch_scope_options_text())
+    base_options.setdefault("scope_options", fetch_scope_options_text(rag_url=rag_url))
     body: dict[str, Any] = {
         "model": pipeline_id,
         "messages": [{"role": "user", "content": query}],

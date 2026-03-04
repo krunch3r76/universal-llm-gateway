@@ -1,0 +1,5 @@
+models:
+  review_model:
+    model: mistralai/devstral-medium
+  validate_model:
+    model: google/gemini-2.5-flash

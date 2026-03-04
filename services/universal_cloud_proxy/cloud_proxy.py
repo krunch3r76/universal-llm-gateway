@@ -18,8 +18,10 @@ Endpoints:
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -65,11 +67,28 @@ _local_cache: LocalCatalogCache | None = None
 _browser_ui_ready = False
 _browser_ui_error = "Browser UI not initialized"
 
+# ∀ process exit: _shutdown_clean is set iff lifespan shutdown handler ran.
+# atexit fires on clean Python exit (crash, sys.exit) but NOT on SIGKILL.
+# Absence of shutdown log + _shutdown_clean=False → crash or unhandled exception.
+_shutdown_clean: bool = False
+
+
+def _atexit_handler() -> None:
+    if not _shutdown_clean:
+        logger.warning(
+            "Cloud proxy (PID %d) exited without clean shutdown — "
+            "lifespan shutdown handler did not run (crash or unhandled exception). "
+            "SIGKILL cannot be detected this way; check for OOM or external kill.",
+            os.getpid(),
+        )
+
 
 @asynccontextmanager
 async def _lifespan(application: FastAPI):  # noqa: ANN201, ARG001
     global _config, _catalog, _forwarder, _event_bus, _broadcaster, _browser_cache
-    global _local_cache, _browser_ui_ready, _browser_ui_error
+    global _local_cache, _browser_ui_ready, _browser_ui_error, _shutdown_clean
+
+    atexit.register(_atexit_handler)
 
     _event_bus = EventBus()
     _broadcaster = MinimalEventDebugBroadcaster(
@@ -165,17 +184,25 @@ async def _lifespan(application: FastAPI):  # noqa: ANN201, ARG001
         _browser_ui_ready = True
         _browser_ui_error = ""
 
-    await _event_bus.publish_async(CloudProxyStarted())
+    _proxy_mode = "uds" if _config.socket_path else "tcp"
+    _socket_path_str = str(_config.socket_path) if _config.socket_path else None
+    await _event_bus.publish_async(
+        CloudProxyStarted(
+            pid=os.getpid(), mode=_proxy_mode, socket_path=_socket_path_str
+        )
+    )
     logger.info(
-        "Cloud proxy started: %d provider(s), %d models, browser catalog: %d",
+        "Cloud proxy started: %d provider(s), %d models, browser catalog: %d, mode: %s",
         len(_config.providers),
         len(_catalog.get_all_models()),
         _browser_cache.model_count,
+        _proxy_mode,
     )
 
     yield
 
-    await _event_bus.publish_async(CloudProxyShutdown())
+    _shutdown_clean = True
+    await _event_bus.publish_async(CloudProxyShutdown(reason="clean"))
     await _catalog.shutdown()
     await _forwarder.close()
     if _broadcaster:

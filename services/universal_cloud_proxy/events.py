@@ -4,13 +4,22 @@ from universal_event_bus import Event, event_factory
 
 
 @event_factory
-def CloudProxyStarted() -> Event:  # noqa: N802
-    return Event(signal="cloud.proxy.started", payload={})
+def CloudProxyStarted(  # noqa: N802
+    *,
+    pid: int,
+    mode: str,
+    socket_path: str | None,
+) -> Event:
+    return Event(
+        signal="cloud.proxy.started",
+        payload={"pid": pid, "mode": mode, "socket_path": socket_path},
+    )
 
 
 @event_factory
-def CloudProxyShutdown() -> Event:  # noqa: N802
-    return Event(signal="cloud.proxy.shutdown", payload={})
+def CloudProxyShutdown(*, reason: str) -> Event:  # noqa: N802
+    """reason: 'clean' | 'crash' (atexit without clean flag set)"""
+    return Event(signal="cloud.proxy.shutdown", payload={"reason": reason})
 
 
 @event_factory

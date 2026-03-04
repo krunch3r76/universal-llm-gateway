@@ -2783,11 +2783,24 @@ def CloudProxyAvailable(proxy_url: str, model_count: int) -> Event:  # noqa: N80
 
 
 @event_factory
-def CloudProxyUnavailable(proxy_url: str, reason: str) -> Event:  # noqa: N802
-    """Proxy health probe failed — no cloud models will be registered."""
+def CloudProxyUnavailable(  # noqa: N802
+    proxy_url: str,
+    reason: str,
+    detection_method: str | None = None,
+) -> Event:
+    """Proxy health probe failed — no cloud models will be registered.
+
+    detection_method: 'socket_missing' (UDS socket absent, no HTTP attempted)
+                    | 'health_probe_failed' (HTTP probe returned error/timeout)
+                    | None (legacy callers)
+    """
     return Event(
         signal=CLOUD_PROXY_UNAVAILABLE,
-        payload={"proxy_url": proxy_url, "reason": reason},
+        payload={
+            "proxy_url": proxy_url,
+            "reason": reason,
+            "detection_method": detection_method,
+        },
     )
 
 

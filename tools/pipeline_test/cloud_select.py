@@ -1,8 +1,8 @@
-"""Cloud proxy model selection for pipeline_test tools.
+"""Cloud model selection for pipeline_test tools.
 
-Queries the cloud proxy /api/select endpoint to dynamically choose
-models based on capability tags and context requirements.  Falls back
-to caller-supplied defaults when the proxy is unreachable.
+Queries Stargate passthrough /api/select (localhost:9999/api/select) to
+dynamically choose models. Falls back to caller-supplied defaults when
+Stargate or cloud proxy is unreachable.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-CLOUD_PROXY_URL = os.getenv("CLOUD_PROXY_URL", "http://localhost:8200").rstrip("/")
+STARGATE_URL = os.getenv("STARGATE_URL", "http://localhost:9999").rstrip("/")
 
 
 def select_models(
@@ -40,7 +40,7 @@ def select_models(
 
     try:
         resp = httpx.post(
-            f"{CLOUD_PROXY_URL}/api/select",
+            f"{STARGATE_URL}/api/select",
             json=payload,
             timeout=timeout,
         )

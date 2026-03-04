@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-import httpx
+from transport_utils.rag_client import DEFAULT_RAG_URL, make_sync_client
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
-
-_DEFAULT_RAG_URL = "http://localhost:8100"
 _FALLBACK_SCOPE_OPTIONS = '"research", "project", or "all"'
 _scopes_cache: dict[str, dict[str, str | list[str]]] | None = None
 
 
-def _fetch_scopes(rag_url: str) -> dict[str, dict[str, str | list[str]]]:
+def _fetch_scopes(rag_url: str = DEFAULT_RAG_URL) -> dict[str, dict[str, str | list[str]]]:
     """Fetch and cache scope registry from RAG service."""
     global _scopes_cache  # noqa: PLW0603
     if _scopes_cache is not None:
         return _scopes_cache
     try:
-        with httpx.Client(timeout=3.0) as client:
-            resp = client.get(f"{rag_url.rstrip('/')}/scopes")
+        with make_sync_client(rag_url, timeout=3.0) as client:
+            resp = client.get("/scopes")
         resp.raise_for_status()
         _scopes_cache = resp.json().get("scopes", {})
     except Exception:
@@ -28,7 +26,7 @@ def _fetch_scopes(rag_url: str) -> dict[str, dict[str, str | list[str]]]:
     return _scopes_cache
 
 
-def fetch_scope_choices(rag_url: str = _DEFAULT_RAG_URL) -> list[str]:
+def fetch_scope_choices(rag_url: str = DEFAULT_RAG_URL) -> list[str]:
     """Return available scope identifiers from RAG service."""
     scopes = _fetch_scopes(rag_url)
     if scopes:
@@ -36,7 +34,7 @@ def fetch_scope_choices(rag_url: str = _DEFAULT_RAG_URL) -> list[str]:
     return ["project", "research", "all"]
 
 
-def fetch_scope_options_text(rag_url: str = _DEFAULT_RAG_URL) -> str:
+def fetch_scope_options_text(rag_url: str = DEFAULT_RAG_URL) -> str:
     """Fetch scopes from RAG service and format for prompt injection.
 
     Returns a formatted string listing available scopes with descriptions,

@@ -1,4 +1,4 @@
-"""Cloud-aware model resolution via the cloud proxy's /api/select endpoint.
+"""Cloud-aware model resolution via cloud subsystem /api/select.
 
 Handles ``cloud:`` prefixed model_ref values in pipeline steps:
     model_ref: "cloud:code"           → cheapest coding model
@@ -7,6 +7,7 @@ Handles ``cloud:`` prefixed model_ref values in pipeline steps:
 
 Syntax: cloud:<tag>[,<min_context_k>][,<max_cost>]
 
+Uses cloud subsystem Python API directly (no HTTP round-trip to self).
 Falls back to None (caller should raise or use default) if the cloud
 proxy is unavailable or returns no matches.
 """
@@ -14,14 +15,12 @@ proxy is unavailable or returns no matches.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
-
-import httpx
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CLOUD_PROXY_URL = "http://localhost:8200"
-_SELECT_TIMEOUT = 3.0
+CloudSelectFn = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 def is_cloud_ref(model_ref: str) -> bool:
@@ -32,22 +31,25 @@ def is_cloud_ref(model_ref: str) -> bool:
 async def resolve_cloud_ref_async(
     model_ref: str,
     *,
-    cloud_proxy_url: str = DEFAULT_CLOUD_PROXY_URL,
+    cloud_select_fn: CloudSelectFn | None = None,
 ) -> tuple[str | None, int]:
     """Resolve a ``cloud:`` prefixed model_ref to a concrete model ID.
 
-    Returns the best matching model ID, or None if unavailable, plus
-    candidate_count observed from /api/select.
+    Uses cloud_select_fn (from cloud subsystem) when provided. Returns
+    the best matching model ID, or None if unavailable, plus candidate_count.
     """
+    if not cloud_select_fn:
+        logger.warning(
+            "cloud resolver: no cloud_select_fn — cloud proxy not configured"
+        )
+        return None, 0
+
     spec = model_ref[len("cloud:") :]
     payload = _parse_cloud_spec(spec)
-    endpoint = f"{cloud_proxy_url.rstrip('/')}/api/select"
 
     try:
-        async with httpx.AsyncClient(timeout=_SELECT_TIMEOUT) as client:
-            resp = await client.post(endpoint, json=payload)
-            resp.raise_for_status()
-            models = resp.json().get("models", [])
+        result = await cloud_select_fn(payload)
+        models = result.get("models", [])
         if models:
             selected = models[0]["id"]
             logger.info(
@@ -65,7 +67,7 @@ async def resolve_cloud_ref_async(
 
 
 def _parse_cloud_spec(spec: str) -> dict[str, Any]:
-    """Parse ``tag[,context_k][,max_cost]`` into a /api/select payload."""
+    """Parse ``tag[,tag...][,context_k][,max_cost]`` into a /api/select payload."""
     parts = [p.strip() for p in spec.split(",") if p.strip()]
     payload: dict[str, Any] = {"count": 1, "sort_by": "completion_cost"}
 

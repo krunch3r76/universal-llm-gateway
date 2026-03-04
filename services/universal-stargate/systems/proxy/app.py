@@ -23,7 +23,7 @@ from .core.common import ErrorNormalizer
 from .core.streaming import StreamingErrorHandler
 from .dependencies import get_proxy, init_proxy
 from .middleware.raw_body_cache import RawBodyCacheMiddleware
-from .routers import api, forwarding, health, monitoring, schedule, v1
+from .routers import api, cloud_passthrough, forwarding, health, monitoring, schedule, v1
 
 logger = get_logger(__name__)
 
@@ -453,6 +453,7 @@ async def root():
 # Include all routers
 app.include_router(v1.router)  # /v1/* endpoints (OpenAI API compatible)
 app.include_router(api.router)  # /api/v1/* endpoints (administrative)
+app.include_router(cloud_passthrough.router)  # /api/models, /api/select (cloud passthrough)
 app.include_router(health.router)  # /health
 app.include_router(schedule.router)  # /scheduler/* endpoints
 app.include_router(monitoring.router)  # /api/v1/monitoring/* endpoints (Phase 4)

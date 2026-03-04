@@ -4,6 +4,9 @@ import logging
 import os
 import secrets
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +72,13 @@ debug_events:
 # Cloud proxy integration (optional).
 # Requires the cloud proxy service to be running (start via ./manage).
 # cloud_proxy:
-#   url: "http://localhost:8200"
+#   url: "unix:///tmp/universal-protocol/cloud-proxy.sock"
+
+# RAG transport (optional). Default: Unix socket at /tmp/universal-protocol/rag.sock.
+# Uncomment both host and port to use TCP instead (logs network exposure warning).
+# rag:
+#   host: "127.0.0.1"
+#   port: 8100
 """
 
 # Fallback content when service config files are unavailable
@@ -266,14 +275,11 @@ _CLOUD_PROXY_CONFIG_TEMPLATE = """\
 # forwards requests to cloud providers. Stargate connects to it
 # over loopback — no API keys in Stargate config.
 #
-# Uncomment and configure a provider to enable cloud models:
-
-port: 8200
-
-# Bind address. Default is loopback-only (127.0.0.1).
-# Set to a LAN interface IP (e.g. 192.168.1.x) or 0.0.0.0 to expose on the
-# local subnet. The cloud proxy holds API keys — do not expose to the internet.
+# Default transport: Unix socket (no config needed).
+# For TCP access, uncomment host + port and remove socket_path:
+socket_path: "/tmp/universal-protocol/cloud-proxy.sock"
 # host: "127.0.0.1"
+# port: 8200
 
 # providers:
 #   - provider: openrouter
@@ -298,12 +304,47 @@ def ensure_cloud_proxy_config() -> Path:
     return config_path
 
 
-def read_cloud_proxy_port(config_path: Path | None = None) -> int:
-    """Read the port from cloud-proxy.yaml, defaulting to 8200.
+CLOUD_PROXY_SOCKET_PATH_DEFAULT = "/tmp/universal-protocol/cloud-proxy.sock"
 
-    Tolerant: returns 8200 if the file is missing, unparseable, or the
-    port field is absent/invalid.
+
+def read_cloud_proxy_socket_path(config_path: Path | None = None) -> Path:
+    """Read cloud proxy socket path from cloud-proxy.yaml.
+
+    Returns default /tmp/universal-protocol/cloud-proxy.sock when
+    socket_path is absent or UDS mode is used.
     """
+    path = config_path or (GATEWAY_DIR / "cloud-proxy.yaml")
+    try:
+        from services.universal_cloud_proxy.config import load_config
+    except ImportError as exc:
+        logger.warning(
+            "Could not import cloud proxy config module: %s; using default socket path",
+            exc,
+        )
+        return Path(CLOUD_PROXY_SOCKET_PATH_DEFAULT)
+    try:
+        cfg = load_config(path)
+        if cfg.socket_path:
+            return Path(cfg.socket_path)
+    except Exception as exc:
+        logger.warning(
+            "Could not read cloud proxy socket path from %s: %s; using default",
+            path,
+            exc,
+        )
+    return Path(CLOUD_PROXY_SOCKET_PATH_DEFAULT)
+
+
+def read_cloud_proxy_port(config_path: Path | None = None) -> int:
+    """Read the port from cloud-proxy.yaml (TCP mode only). DEPRECATED.
+
+    Logs WARNING. Use read_cloud_proxy_socket_path for UDS mode.
+    Returns 8200 if TCP configured, else default (for backward compat).
+    """
+    logger.warning(
+        "read_cloud_proxy_port is deprecated; cloud proxy defaults to UDS. "
+        "Use read_cloud_proxy_socket_path for UDS mode."
+    )
     path = config_path or (GATEWAY_DIR / "cloud-proxy.yaml")
     default_port = 8200
     try:
@@ -317,11 +358,14 @@ def read_cloud_proxy_port(config_path: Path | None = None) -> int:
 
 
 def read_cloud_proxy_host(config_path: Path | None = None) -> str:
-    """Read the host from cloud-proxy.yaml, defaulting to 127.0.0.1.
+    """Read the host from cloud-proxy.yaml (TCP mode only). DEPRECATED.
 
-    Tolerant: returns 127.0.0.1 if the file is missing, unparseable, or the
-    host field is absent/invalid.
+    Logs WARNING. Use read_cloud_proxy_socket_path for UDS mode.
     """
+    logger.warning(
+        "read_cloud_proxy_host is deprecated; cloud proxy defaults to UDS. "
+        "Use read_cloud_proxy_socket_path for UDS mode."
+    )
     path = config_path or (GATEWAY_DIR / "cloud-proxy.yaml")
     default_host = "127.0.0.1"
     try:
@@ -332,6 +376,85 @@ def read_cloud_proxy_host(config_path: Path | None = None) -> str:
     except Exception:
         logger.warning("Could not read host from %s — using default 127.0.0.1", path)
     return default_host
+
+
+RAG_SOCKET_PATH_DEFAULT = "/tmp/universal-protocol/rag.sock"
+
+
+def read_rag_socket_path() -> Path:
+    """Return default RAG Unix socket path."""
+    return Path(RAG_SOCKET_PATH_DEFAULT)
+
+
+def read_rag_tcp_config(config_path: Path | None = None) -> tuple[str, int] | None:
+    """Read RAG TCP config from stargate.yaml.
+
+    Returns (host, port) if both rag.host and rag.port are present and valid.
+    Returns None if both are absent.
+    Raises ValueError on partial config (only one key) or invalid port.
+    Logs WARNING when valid TCP config is used (network exposure).
+    """
+    path = config_path or (GATEWAY_DIR / "stargate.yaml")
+    if not path.exists():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as e:
+        logger.warning("Could not parse %s: %s", path, e)
+        return None
+    rag = data.get("rag")
+    if not isinstance(rag, dict):
+        return None
+    host = rag.get("host")
+    port_val = rag.get("port")
+    host_absent = host is None or (isinstance(host, str) and not host.strip())
+    port_absent = port_val is None
+    if host_absent and port_absent:
+        return None
+    if host_absent or port_absent:
+        raise ValueError(
+            "RAG TCP config requires both rag.host and rag.port; "
+            "partial config is invalid"
+        )
+    host_str = str(host).strip() if host else ""
+    if not host_str:
+        raise ValueError("rag.host must be non-empty")
+    try:
+        port_int = int(port_val)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"rag.port must be an integer: {e}") from e
+    if not (1 <= port_int <= 65535):
+        raise ValueError(f"rag.port must be 1-65535, got {port_int}")
+    logger.warning(
+        "RAG using TCP (rag.host=%s, rag.port=%d) — service exposed on network",
+        host_str,
+        port_int,
+    )
+    return (host_str, port_int)
+
+
+def write_cloud_proxy_url_to_stargate(proxy_url: str) -> None:
+    """Update cloud_proxy.url in ~/.gateway/stargate.yaml.
+
+    Merges cloud_proxy section; preserves rest of config. Creates file if absent.
+    """
+    config_path = GATEWAY_DIR / "stargate.yaml"
+    GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+    data: dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            data = yaml.safe_load(config_path.read_text()) or {}
+        except yaml.YAMLError as e:
+            logger.warning(
+                "Could not parse stargate.yaml for cloud_proxy update: %s", e
+            )
+            return
+    if not isinstance(data, dict):
+        return
+    if "cloud_proxy" not in data:
+        data["cloud_proxy"] = {}
+    data["cloud_proxy"]["url"] = proxy_url.rstrip("/")
+    config_path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
 
 
 def is_relay_config(config_path: Path) -> bool:

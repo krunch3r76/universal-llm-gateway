@@ -360,7 +360,7 @@ class BaseHandler(AbstractStepHandler):
         if "_" in model_id and "-" not in model_id:
             return False  # Underscored aliases like "llama_3_1_8b"
 
-        # Provider-prefixed IDs (e.g., "google/gemma-2-9b-it", "qwen/qwen-2.5-7b-instruct")
+        # Provider-prefixed IDs (e.g., "google/gemma-2-9b-it", "qwen/qwen-2.5-7b")
         # are full model IDs, not registry aliases.
         if "/" in model_id:
             return True
@@ -495,16 +495,33 @@ class BaseHandler(AbstractStepHandler):
             )
             raise
 
-    def _get_cloud_proxy_url(self, context: PipelineContext) -> str:
-        """Resolve cloud proxy URL from Stargate config, with safe default."""
+    def _get_cloud_select_fn(self, context: PipelineContext):
+        """Get cloud select callable from federation integration, or None."""
         proxy = getattr(context, "_proxy", None)
-        config = getattr(proxy, "config", None) if proxy else None
-        if config and hasattr(config, "get_cloud_proxy_config"):
-            raw_cfg = config.get_cloud_proxy_config() or {}
-            url = raw_cfg.get("url")
-            if isinstance(url, str) and url.strip():
-                return url.strip().rstrip("/")
-        return "http://localhost:8200"
+        if not proxy:
+            return None
+        fed = getattr(proxy, "federation_integration", None)
+        if not fed:
+            return None
+        fwd = getattr(fed, "forwarder", None)
+        if not fwd:
+            return None
+        client = getattr(fwd, "cloud_forwarder", None)
+        if not client or not hasattr(client, "select_models"):
+            return None
+
+        async def _select(payload: dict) -> dict:
+            return await client.select_models(payload)
+
+        return _select
+
+    def _get_cloud_proxy_mode(self, context: PipelineContext) -> str:
+        """Return cloud proxy transport mode ('uds' or 'tcp'), or 'unknown'."""
+        proxy = getattr(context, "_proxy", None)
+        fed = getattr(proxy, "federation_integration", None) if proxy else None
+        fwd = getattr(fed, "forwarder", None) if fed else None
+        client = getattr(fwd, "cloud_forwarder", None) if fwd else None
+        return getattr(client, "proxy_mode", "unknown") if client else "unknown"
 
     async def _resolve_model_alias_async(
         self,
@@ -529,11 +546,12 @@ class BaseHandler(AbstractStepHandler):
             model_id = resolved
 
         if is_cloud_ref(model_id):
-            cloud_proxy_url = self._get_cloud_proxy_url(context)
+            cloud_select_fn = self._get_cloud_select_fn(context)
             resolved, candidate_count = await resolve_cloud_ref_async(
                 model_id,
-                cloud_proxy_url=cloud_proxy_url,
+                cloud_select_fn=cloud_select_fn,
             )
+            cloud_proxy_mode = self._get_cloud_proxy_mode(context)
             recorder = context.recorder
             if resolved is not None:
                 if recorder:
@@ -542,7 +560,7 @@ class BaseHandler(AbstractStepHandler):
                             step_name=step_name,
                             requested_ref=model_id,
                             resolved_model_id=resolved,
-                            cloud_proxy_url=cloud_proxy_url,
+                            cloud_proxy_mode=cloud_proxy_mode,
                             candidate_count=candidate_count,
                         )
                     )
@@ -553,7 +571,7 @@ class BaseHandler(AbstractStepHandler):
                     CloudModelResolutionFailed(
                         step_name=step_name,
                         requested_ref=model_id,
-                        cloud_proxy_url=cloud_proxy_url,
+                        cloud_proxy_mode=cloud_proxy_mode,
                         reason="no_candidates_or_proxy_unavailable",
                     )
                 )

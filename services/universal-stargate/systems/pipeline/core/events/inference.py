@@ -64,7 +64,7 @@ class CloudModelResolved(PipelineEvent):
 
     requested_ref: str = ""
     resolved_model_id: str = ""
-    cloud_proxy_url: str = ""
+    cloud_proxy_mode: str = "uds"
     candidate_count: int = 0
 
 
@@ -73,7 +73,7 @@ class CloudModelResolutionFailed(PipelineEvent):
     """Emitted when ``cloud:`` model_ref resolution returns no candidates."""
 
     requested_ref: str = ""
-    cloud_proxy_url: str = ""
+    cloud_proxy_mode: str = "uds"
     reason: str = ""
 
 
