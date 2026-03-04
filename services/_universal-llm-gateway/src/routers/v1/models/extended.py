@@ -54,24 +54,26 @@ def get_extended_models() -> list[ExtendedModelInfo]:
                             "owned_by", "universal-llm-gateway"
                         ),
                         "permission": openai_fields.get("permission", ["generate"]),
-                        # Standardized model metadata
+                        # Standardized model metadata (from capabilities)
                         "input_schema": model_info.get("input_schema"),
                         "training_context_length": model_info.get(
                             "training_context_length"
-                        ),
-                        "supports_chat_history": model_info.get(
-                            "supports_chat_history"
+                        )
+                        or (model_info.get("capabilities") or {}).get("limits", {}).get(
+                            "max_context_length"
                         ),
                         "training_cutoff_year": model_info.get("training_cutoff_year"),
                         "model_family": model_info.get("family"),
                         "quantization": model_info.get("quant"),
                         "architecture": model_info.get("arch"),
-                        "license": model_info.get("license"),
+                        "license": (
+                            model_info.get("capabilities") or {}
+                        ).get("provenance", {}).get("license")
+                        or model_info.get("license"),
                         "parameters": model_info.get("parameters"),
                         "release_date": model_info.get("release_date"),
                         "description": model_info.get("description"),
                         "capabilities": model_info.get("capabilities"),
-                        "safety_info": model_info.get("safety_info"),
                         # Loader-specific fields
                         "name": model_info.get("name"),
                         "format": model_info.get("format"),

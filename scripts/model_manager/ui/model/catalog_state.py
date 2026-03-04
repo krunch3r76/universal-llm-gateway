@@ -132,10 +132,18 @@ class CatalogState:
             data: dict[str, Any] = yaml.safe_load(f) or {}
 
         metadata = data.get("metadata", {})
+        caps = metadata.get("capabilities", {})
+        limits = caps.get("limits", {})
+        modalities = caps.get("modalities", {})
         download = data.get("download", {})
         hf = download.get("huggingface", {})
         devices = data.get("devices", {})
         loader = data.get("loader", {})
+
+        training_ctx = limits.get("max_context_length") or metadata.get(
+            "training_context_length", 0
+        )
+        is_vision = "vision" in modalities.get("input", [])
 
         return ModelInfo(
             model_id=model_id,
@@ -146,7 +154,7 @@ class CatalogState:
             schema=data.get("schema", engine),
             parameters_m=metadata.get("parameters_m", 0),
             quant=metadata.get("quant", ""),
-            training_context_length=metadata.get("training_context_length", 0),
+            training_context_length=training_ctx,
             activated_gpu_contexts=metadata.get("activated_gpu_contexts", []),
             activated_cpu_contexts=metadata.get("activated_cpu_contexts", []),
             hf_repo=hf.get("repo", ""),
@@ -157,7 +165,7 @@ class CatalogState:
             has_gpu_profiles=bool(devices.get("gpu", {}).get("profiles")),
             has_cpu_profiles=bool(devices.get("cpu", {}).get("profiles")),
             has_hybrid_profiles=bool(devices.get("hybrid", {}).get("profiles")),
-            is_vision_model=bool(metadata.get("is_vision_model")),
+            is_vision_model=is_vision,
             is_embedding=loader.get("embedding") is True,
             source_path=path,
             is_local=is_local,

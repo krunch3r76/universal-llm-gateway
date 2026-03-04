@@ -3,9 +3,10 @@ EXL3 (ExLlamaV3) metadata extraction.
 """
 
 import json
-from universal_logging import get_logger
 from pathlib import Path
 from typing import Any
+
+from universal_logging import get_logger
 
 from .base import CatalogMetadata
 from .hf import calculate_parameters
@@ -87,6 +88,17 @@ def extract_exl3(path: Path) -> CatalogMetadata:
     has_chat_template = bool(tokenizer_config.get("chat_template"))
     input_schema = "messages" if has_chat_template else "prompt"
 
+    capabilities: dict[str, Any] = {
+        "input_schema": input_schema,
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "interaction": {"chat_template": has_chat_template},
+        "reasoning": {"supports_thinking": False},
+        "limits": {},
+        "provenance": {},
+    }
+    if max_position:
+        capabilities["limits"]["max_context_length"] = max_position
+
     return CatalogMetadata(
         name=path.name,
         format="exl3",
@@ -94,10 +106,7 @@ def extract_exl3(path: Path) -> CatalogMetadata:
         arch=arch,
         quant=quant,
         parameters_m=parameters_m,
-        training_context_length=max_position,
-        supports_chat_history=has_chat_template,
-        input_schema=input_schema,
-        has_chat_template=has_chat_template,
+        capabilities=capabilities,
         extra={
             "config": config,
             "tokenizer_config": tokenizer_config,

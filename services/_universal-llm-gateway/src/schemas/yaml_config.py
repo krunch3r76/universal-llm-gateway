@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .capabilities import ModelCapabilities
+
 # === Common Schemas ===
 
 
@@ -54,7 +56,6 @@ class GGUFModelInfo(BaseModel):
 
     # Optional Architecture
     quant: str | None = Field(None, description="Quantization method")
-    license: str | None = Field(None, description="License type")
     parameters: int | None = Field(None, description="Number of parameters")
 
     # Optional Training Information
@@ -66,23 +67,14 @@ class GGUFModelInfo(BaseModel):
     )
     release_date: str | None = Field(None, description="Model release date")
 
-    # Required Capabilities
-    supports_chat_history: bool = Field(..., description="Supports chat history")
-    input_schema: Literal["prompt", "messages"] = Field(..., description="Input format")
-
-    # Optional Capabilities
-    supports_thinking: bool = Field(
-        False,
-        description=(
-            "Model supports extended thinking / chain-of-thought via chat template. "
-            'Enables chat_template_kwargs={"enable_thinking": ...} per request.'
-        ),
+    # Capabilities (structured metadata)
+    capabilities: ModelCapabilities = Field(
+        default_factory=ModelCapabilities,
+        description="Model capability metadata",
     )
 
     # Optional Extended Fields (include even if rarely used)
     description: str | None = Field(None, description="Model description")
-    capabilities: list[str] | None = Field(None, description="Model capabilities")
-    safety_info: dict[str, Any] | None = Field(None, description="Safety information")
 
     # Optional Default Context Settings
     default_gpu_context: int | None = Field(
@@ -230,7 +222,6 @@ class HFModelInfo(BaseModel):
 
     # Optional Architecture
     quant: str | None = Field(None, description="Quantization method")
-    license: str | None = Field(None, description="License type")
     parameters: int | None = Field(None, description="Number of parameters")
 
     # Optional Training Information
@@ -242,23 +233,14 @@ class HFModelInfo(BaseModel):
     )
     release_date: str | None = Field(None, description="Model release date")
 
-    # Required Capabilities
-    supports_chat_history: bool = Field(..., description="Supports chat history")
-    input_schema: Literal["prompt", "messages"] = Field(..., description="Input format")
-
-    # Optional Capabilities
-    supports_thinking: bool = Field(
-        False,
-        description=(
-            "Model supports extended thinking / chain-of-thought via chat template. "
-            'Enables chat_template_kwargs={"enable_thinking": ...} per request.'
-        ),
+    # Capabilities (structured metadata)
+    capabilities: ModelCapabilities = Field(
+        default_factory=ModelCapabilities,
+        description="Model capability metadata",
     )
 
     # Optional Extended Fields
     description: str | None = Field(None, description="Model description")
-    capabilities: list[str] | None = Field(None, description="Model capabilities")
-    safety_info: dict[str, Any] | None = Field(None, description="Safety information")
 
     # Optional Default Context Settings
     default_gpu_context: int | None = Field(

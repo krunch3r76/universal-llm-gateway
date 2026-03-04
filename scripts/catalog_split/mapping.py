@@ -11,7 +11,7 @@ SCHEMA_TO_PATH = {
     "diffusers": "graphics/diffusers",
 }
 
-# ∀ visual models (metadata.is_vision_model=True): routed by engine, not family
+# ∀ visual models (capabilities.modalities.input contains "vision"): routed by engine
 VISUAL_SCHEMA_TO_PATH = {
     "llama-cpp": "visual/llama-cpp",
     "vllm": "visual/vllm",
@@ -42,7 +42,9 @@ def determine_model_path(model_id: str, model_entry: dict[str, Any]) -> str:
     if not schema:
         raise ValueError(f"Model '{model_id}' missing schema field")
 
-    is_vision = model_entry.get("metadata", {}).get("is_vision_model", False)
+    caps = model_entry.get("metadata", {}).get("capabilities", {})
+    modalities = caps.get("modalities", {})
+    is_vision = "vision" in modalities.get("input", [])
     if is_vision:
         path = VISUAL_SCHEMA_TO_PATH.get(schema)
         if not path:

@@ -1,4 +1,4 @@
-catalog_schema: 3
+catalog_schema: 4
 schema: llama-cpp
 metadata:
   name: Ministral-3-8B-Instruct-2512-Q6_K
@@ -6,11 +6,22 @@ metadata:
   arch: mistral3
   quant: Q6_K
   parameters_m: 10838
-  training_context_length: 262144
-  supports_chat_history: true
-  input_schema: messages
-  is_vision_model: true
-  vision_architecture: mistral3
+  capabilities:
+    input_schema: messages
+    modalities:
+      input:
+      - text
+      - vision
+      output:
+      - text
+      vision_architecture: mistral3
+    interaction:
+      chat_template: true
+    reasoning:
+      supports_thinking: false
+    limits:
+      max_context_length: 262144
+    provenance: {}
 loader:
   clip_model_path: Ministral-3-8B-Instruct-2512/mmproj-BF16.gguf
 download:

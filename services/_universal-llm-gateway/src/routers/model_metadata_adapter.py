@@ -61,6 +61,11 @@ def extract_comprehensive_model_info(
         if profile_config.get("loader"):
             loader_config.update(profile_config["loader"])
 
+    capabilities = model_info.get("capabilities", {})
+    limits = capabilities.get("limits", {})
+    provenance = capabilities.get("provenance", {})
+    input_schema = capabilities.get("input_schema", "messages")
+
     # Create comprehensive model info with ALL fields
     return {
         # OpenAI API fields
@@ -76,20 +81,18 @@ def extract_comprehensive_model_info(
         # Resource usage
         "ram_usage": model_info.get("ram_usage"),
         "vram_usage": model_info.get("vram_usage"),
-        # Standardized metadata
-        "training_context_length": model_info.get("training_context_length"),
-        "supports_chat_history": model_info.get("supports_chat_history"),
-        "input_schema": model_info.get("input_schema"),
+        # Standardized metadata (from capabilities)
+        "training_context_length": limits.get("max_context_length"),
+        "input_schema": input_schema,
         "training_cutoff_year": model_info.get("training_cutoff_year"),
         "model_family": model_info.get("family"),
         "quantization": model_info.get("quant"),
         "architecture": model_info.get("arch"),
-        "license": model_info.get("license"),
+        "license": provenance.get("license"),
         "parameters": model_info.get("parameters"),
         "release_date": model_info.get("release_date"),
         "description": model_info.get("description"),
-        "capabilities": model_info.get("capabilities"),
-        "safety_info": model_info.get("safety_info"),
+        "capabilities": capabilities,
         # Loader configuration - the actual config used by workers
         "loader_config": loader_config,
         # Legacy fields for simple loader format
@@ -241,12 +244,22 @@ class ModelMetadataAdapter:
 
         # Check metadata first (current schema), then info (legacy)
         model_info = model_config.get("metadata") or model_config.get("info") or {}
+        capabilities = model_info.get("capabilities", {})
+        interaction = capabilities.get("interaction", {})
+        has_chat = interaction.get("chat_template", False)
+        input_schema = (
+            capabilities.get("input_schema")
+            or model_info.get("input_schema")
+            or "prompt"
+        )
+
         logger.debug(
             "📄 get_chat_template_from_config(%s): reading from YAML config - "
-            "family=%s, input_schema=%s",
+            "family=%s, input_schema=%s, chat_template=%s",
             model_id,
             model_info.get("family"),
-            model_info.get("input_schema"),
+            input_schema,
+            has_chat,
         )
 
         # Priority 1: Explicit chat_template in config
@@ -258,9 +271,18 @@ class ModelMetadataAdapter:
                 "source": "yaml_config",
             }
 
-        # Priority 2: Infer from model_family and input_schema
+        # Priority 2: From capabilities.interaction.chat_template
+        if has_chat:
+            model_family = safe_lower(model_info.get("family")) or "default"
+            return {
+                "exists": True,
+                "content": f"{model_family}_chat_template",
+                "supports_system_role": True,
+                "source": "capabilities",
+            }
+
+        # Priority 3: Infer from model_family and input_schema
         model_family = safe_lower(model_info.get("family"))
-        input_schema = model_info.get("input_schema") or "prompt"
 
         # Models with input_schema='messages' have chat templates
         if input_schema == "messages":
@@ -272,7 +294,7 @@ class ModelMetadataAdapter:
                 "source": "inferred_from_family",
             }
 
-        # Priority 3: Models with 'prompt' input_schema but known families
+        # Priority 4: Models with 'prompt' input_schema but known families
         if model_family in ["llama", "mistral", "qwen", "deepseek"]:
             return {
                 "exists": True,
@@ -322,19 +344,17 @@ class ModelMetadataAdapter:
         Returns:
             Dictionary with inference engine information
         """
-        metadata = self.registry.get_model_metadata(model_id)
-        if not metadata:
+        model_info = self.registry.get_model_info(model_id)
+        if not model_info:
             return {}
 
-        model_format = metadata.format
+        model_format = model_info.format
 
         # Get engine specifications from config (format-based only)
         engine_specs = self.inference_engine_specs.get(model_format, {})
 
-        # STRICT: Use input_schema from metadata - no overrides, no degradation
-        input_schema = getattr(
-            metadata, "input_schema", "messages"
-        )  # Default to messages if not set
+        # STRICT: Use input_schema from metadata (top-level alias) - no overrides
+        input_schema = getattr(model_info, "input_schema", "messages")
         uses_chat_template = input_schema == "messages"
 
         # Build specification dictionary
@@ -429,8 +449,11 @@ class ModelMetadataAdapter:
             **base_loader,  # Include loader-specific defaults
         }
 
-        # Build middleware configuration
-        input_schema = model_info_section.get("input_schema", "prompt")
+        # Build middleware configuration (input_schema from capabilities or top-level)
+        caps_section = model_info_section.get("capabilities", {})
+        input_schema = caps_section.get("input_schema") or model_info_section.get(
+            "input_schema", "prompt"
+        )
         model_family = model_info_section.get("family", "default")
         preserve_personality = model_family != "default" and input_schema != "messages"
 

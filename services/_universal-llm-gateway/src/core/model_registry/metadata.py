@@ -59,12 +59,9 @@ class MetadataExtractor:
         logger.debug(f"Model data: {json.dumps(model_data, default=str)}")
 
         if model_format == "api_proxy":
-            # API proxy models are no longer supported in the gateway
-            # External API calls should be handled by the proxy (stargate)
-            logger.warning(
+            raise ValueError(
                 f"API proxy format is no longer supported in the gateway for model_id={model_id}"
             )
-            return None, None, False
         else:
             djinn_inspector = self.djinn_inspector_lookup.get(model_format)
             if not djinn_inspector:
@@ -138,12 +135,14 @@ class MetadataExtractor:
     ) -> tuple[int | None, str | None, bool]:
         """Extract metadata from complete djinn inspector summary"""
 
-        # Extract context length from capabilities metadata or main metadata
+        # Extract context length from capabilities.limits or metadata
         capabilities = djinn_summary.get("capabilities", {})
-        metadata = capabilities.get("metadata", {})
-        context_length = metadata.get("training_context_length")
+        limits = capabilities.get("limits", {}) if isinstance(capabilities, dict) else {}
+        context_length = limits.get("max_context_length")
 
-        # Fallback to main metadata if not found in capabilities.metadata
+        if context_length is None:
+            metadata = capabilities.get("metadata", {}) if isinstance(capabilities, dict) else {}
+            context_length = metadata.get("training_context_length")
         if context_length is None:
             main_metadata = djinn_summary.get("metadata", {})
             context_length = main_metadata.get("training_context_length")

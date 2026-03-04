@@ -202,6 +202,21 @@ class ModelDiscovery:
 
         # Extract context length
         training_ctx = metadata.get("context_length")
+        supports_chat = metadata.get("supports_chat", True)
+        input_schema = "messages" if supports_chat else "prompt"
+
+        capabilities: dict[str, Any] = metadata.get("capabilities") or {}
+        if not capabilities:
+            capabilities = {
+                "input_schema": input_schema,
+                "modalities": {"input": ["text"], "output": ["text"]},
+                "interaction": {"chat_template": supports_chat},
+                "reasoning": {"supports_thinking": False},
+                "limits": {"max_context_length": training_ctx} if training_ctx else {},
+                "provenance": {"license": metadata.get("license")}
+                if metadata.get("license")
+                else {},
+            }
 
         # Build complete GGUF config
         config = {
@@ -213,18 +228,12 @@ class ModelDiscovery:
                 "family": family,
                 "arch": arch,
                 "quant": quant,
-                "license": metadata.get("license"),
                 "parameters": metadata.get("parameters"),
                 "training_cutoff_year": metadata.get("training_cutoff_year"),
                 "training_context_length": training_ctx,
                 "release_date": metadata.get("release_date"),
-                "supports_chat_history": metadata.get("supports_chat", True),
-                "input_schema": "messages"
-                if metadata.get("supports_chat", True)
-                else "prompt",
                 "description": metadata.get("description"),
-                "capabilities": metadata.get("capabilities"),
-                "safety_info": metadata.get("safety_info"),
+                "capabilities": capabilities,
                 "openai_api_fields": {
                     "id": model_id,
                     "object": "model",
@@ -288,6 +297,21 @@ class ModelDiscovery:
         # Extract context length
         training_ctx = metadata.get("context_length")
         max_model_len = metadata.get("max_model_len", training_ctx or 8192)
+        supports_chat = metadata.get("supports_chat", True)
+        input_schema = "messages" if supports_chat else "prompt"
+
+        capabilities: dict[str, Any] = metadata.get("capabilities") or {}
+        if not capabilities:
+            capabilities = {
+                "input_schema": input_schema,
+                "modalities": {"input": ["text"], "output": ["text"]},
+                "interaction": {"chat_template": supports_chat},
+                "reasoning": {"supports_thinking": False},
+                "limits": {"max_context_length": training_ctx} if training_ctx else {},
+                "provenance": {"license": metadata.get("license")}
+                if metadata.get("license")
+                else {},
+            }
 
         # Build complete HF config
         config = {
@@ -299,18 +323,12 @@ class ModelDiscovery:
                 "family": family,
                 "arch": arch,
                 "quant": quant,
-                "license": metadata.get("license"),
                 "parameters": metadata.get("parameters"),
                 "training_cutoff_year": metadata.get("training_cutoff_year"),
                 "training_context_length": training_ctx,
                 "release_date": metadata.get("release_date"),
-                "supports_chat_history": metadata.get("supports_chat", True),
-                "input_schema": "messages"
-                if metadata.get("supports_chat", True)
-                else "prompt",
                 "description": metadata.get("description"),
-                "capabilities": metadata.get("capabilities"),
-                "safety_info": metadata.get("safety_info"),
+                "capabilities": capabilities,
                 "openai_api_fields": {
                     "id": model_id,
                     "object": "model",

@@ -11,6 +11,18 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 
+def _default_capabilities() -> dict[str, Any]:
+    """Default capabilities dict for catalog metadata."""
+    return {
+        "input_schema": "messages",
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "interaction": {"chat_template": False},
+        "reasoning": {"supports_thinking": False},
+        "limits": {},
+        "provenance": {},
+    }
+
+
 @dataclass
 class CatalogMetadata:
     """Extracted metadata for catalog entry."""
@@ -24,16 +36,9 @@ class CatalogMetadata:
     # Model specs
     quant: str | None = None
     parameters_m: int | None = None
-    training_context_length: int | None = None
 
-    # Capabilities
-    supports_chat_history: bool = True
-    supports_thinking: bool = False
-    input_schema: str = "messages"
-    has_chat_template: bool = False
-
-    # License
-    license: str | None = None
+    # Capabilities (structured dict)
+    capabilities: dict[str, Any] = field(default_factory=_default_capabilities)
 
     # Extra data
     extra: dict[str, Any] = field(default_factory=dict)
@@ -54,14 +59,8 @@ class CatalogMetadata:
             result["quant"] = self.quant
         if self.parameters_m:
             result["parameters_m"] = self.parameters_m
-        if self.training_context_length:
-            result["training_context_length"] = self.training_context_length
-        if self.license:
-            result["license"] = self.license
 
-        result["supports_chat_history"] = self.supports_chat_history
-        result["supports_thinking"] = self.supports_thinking
-        result["input_schema"] = self.input_schema
+        result["capabilities"] = self.capabilities
 
         return result
 

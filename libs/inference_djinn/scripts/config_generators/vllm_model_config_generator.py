@@ -1018,9 +1018,19 @@ def generate_standardized_yaml(
             architecture = "bloom"
 
     # Determine chat template support
-    supports_chat_history = chat_template_analysis.get("has_chat_template", False)
+    has_chat = chat_template_analysis.get("has_chat_template", False)
+    input_schema = "messages" if has_chat else "prompt"
 
-    # Build the info section (gateway schema)
+    capabilities = {
+        "input_schema": input_schema,
+        "modalities": {"input": ["text"], "output": ["text"]},
+        "interaction": {"chat_template": has_chat},
+        "reasoning": {"supports_thinking": False},
+        "limits": {"max_context_length": base_max_len} if base_max_len else {},
+        "provenance": {},
+    }
+
+    # Build the info section (gateway schema, v4 capabilities)
     info_section = {
         "name": model_name,
         "format": format_type,  # "hf", "gptq", or "awq"
@@ -1029,16 +1039,13 @@ def generate_standardized_yaml(
         "family": model_family or "unknown",
         "arch": architecture or "unknown",
         "quant": quant_str,
-        "license": None,
         "parameters": None,
         "training_cutoff_year": None,
         "training_context_length": base_max_len,
         "release_date": None,
-        "supports_chat_history": supports_chat_history,
-        "input_schema": "messages" if supports_chat_history else "prompt",
         "description": None,
-        "capabilities": None,
-        "safety_info": None,
+        "capabilities": capabilities,
+        "input_schema": input_schema,
         "openai_api_fields": {
             "id": model_id,
             "object": "model",

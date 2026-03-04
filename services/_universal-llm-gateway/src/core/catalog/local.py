@@ -14,9 +14,16 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-ALLOWED_DOMAINS = frozenset({
-    "text_llm", "audio", "translation", "visual", "graphics", "embedding",
-})
+ALLOWED_DOMAINS = frozenset(
+    {
+        "text_llm",
+        "audio",
+        "translation",
+        "visual",
+        "graphics",
+        "embedding",
+    }
+)
 
 
 def get_local_catalog_dir() -> Path | None:
@@ -58,7 +65,7 @@ def _load_entry(yaml_file: Path) -> dict[str, Any] | None:
         Model entry dict, or None if invalid (warning logged)
     """
     try:
-        with open(yaml_file) as f:
+        with open(yaml_file, encoding="utf-8") as f:
             entry = yaml.safe_load(f)
 
         if not entry:
@@ -88,7 +95,9 @@ def _load_entry(yaml_file: Path) -> dict[str, Any] | None:
         # so entries written by measurement (authoritative local catalog) pass
         # schema validation without requiring a separate static export.
         metadata = entry.get("metadata", {})
-        if metadata.get("is_vision_model"):
+        modalities = metadata.get("capabilities", {}).get("modalities", {})
+        is_vision = "vision" in modalities.get("input", [])
+        if is_vision:
             loader = entry.setdefault("loader", {})
             if not loader.get("clip_model_path"):
                 hf = (entry.get("download") or {}).get("huggingface") or {}

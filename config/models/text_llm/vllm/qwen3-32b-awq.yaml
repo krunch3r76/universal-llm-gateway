@@ -1,4 +1,4 @@
-catalog_schema: 3
+catalog_schema: 4
 schema: vllm
 metadata:
   name: Qwen3-32B-AWQ
@@ -6,9 +6,20 @@ metadata:
   arch: qwen3
   quant: AWQ-4bit
   parameters_m: 24266
-  training_context_length: 40960
-  supports_chat_history: true
-  input_schema: messages
+  capabilities:
+    input_schema: messages
+    modalities:
+      input:
+      - text
+      output:
+      - text
+    interaction:
+      chat_template: true
+    reasoning:
+      supports_thinking: false
+    limits:
+      max_context_length: 40960
+    provenance: {}
 download:
   huggingface:
     repo: Qwen/Qwen3-32B-AWQ

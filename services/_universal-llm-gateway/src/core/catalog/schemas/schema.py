@@ -361,6 +361,13 @@ class BaseEngineSchema(ABC):
             except ValueError:
                 parameters = None
 
+        capabilities = metadata.get("capabilities", {})
+        limits = capabilities.get("limits", {})
+        input_schema = capabilities.get("input_schema", "messages")
+        training_context_length = limits.get("max_context_length") or metadata.get(
+            "training_context_length"
+        )
+
         return {
             "name": metadata.get("name", model_id),
             "format": model_format,
@@ -370,12 +377,10 @@ class BaseEngineSchema(ABC):
             "family": metadata.get("family"),
             "arch": metadata.get("arch"),
             "quant": quant_str,
-            "license": metadata.get("license"),
             "parameters": parameters,
-            "training_context_length": metadata.get("training_context_length"),
-            "supports_chat_history": metadata.get("supports_chat_history", True),
-            "supports_thinking": metadata.get("supports_thinking", False),
-            "input_schema": metadata.get("input_schema", "messages"),
+            "capabilities": capabilities,
+            "input_schema": input_schema,
+            "training_context_length": training_context_length,
             "description": metadata.get("description"),
             "activated_gpu_contexts": metadata.get("activated_gpu_contexts", []),
             "activated_cpu_contexts": metadata.get("activated_cpu_contexts", []),

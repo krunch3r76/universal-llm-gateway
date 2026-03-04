@@ -1,13 +1,25 @@
-catalog_schema: 3
+catalog_schema: 4
 schema: faster-whisper
 metadata:
   name: whisper-medium
   format: whisper
   family: whisper
   parameters_m: 769
-  license: mit
-  input_schema: audio
   supports_streaming: true
+  capabilities:
+    input_schema: audio
+    modalities:
+      input:
+      - text
+      output:
+      - text
+    interaction:
+      chat_template: false
+    reasoning:
+      supports_thinking: false
+    limits: {}
+    provenance:
+      license: mit
 download:
   huggingface:
     repo: null

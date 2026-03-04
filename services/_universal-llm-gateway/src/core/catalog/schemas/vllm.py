@@ -15,7 +15,7 @@ Loader Parameters:
         - tensor_parallel_size: Multi-GPU parallelism
         - trust_remote_code: Allow custom model code
     - Unknown parameters generate warnings (non-blocking)
-    
+
 Validation Strategy:
     - Uses inspect.signature(AsyncEngineArgs.__init__) for parameter list
     - Always accurate for installed vLLM version (no hardcoded whitelist)
@@ -41,10 +41,10 @@ class VllmSchema(BaseEngineSchema):
     def get_default_loader(self) -> dict[str, Any]:
         """
         DEPRECATED: Pass-through architecture means no defaults should be injected.
-        
+
         This method remains for API compatibility but returns only safe,
         non-opinionated values. Catalog must provide all required parameters explicitly.
-        
+
         Returns only:
         - Security settings (trust_remote_code=False)
         - Stability settings (disable_custom_all_reduce, disable_log_stats)
@@ -58,12 +58,13 @@ class VllmSchema(BaseEngineSchema):
     def _get_valid_loader_params(self) -> set[str] | None:
         """
         Get valid vLLM AsyncEngineArgs parameters via runtime introspection.
-        
+
         Returns:
             Set of parameter names, or None if vLLM not available
         """
         try:
             from vllm import AsyncEngineArgs
+
             return set(inspect.signature(AsyncEngineArgs.__init__).parameters.keys())
         except ImportError:
             return None
@@ -146,7 +147,7 @@ class VllmSchema(BaseEngineSchema):
     ) -> ConvertedModel | None:
         """
         Convert catalog entry to registry format.
-        
+
         Pass-through architecture: catalog MUST provide all required parameters.
         No defaults injected - missing parameters cause conversion to fail.
         """

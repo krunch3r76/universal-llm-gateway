@@ -675,14 +675,15 @@ def _build_updated_catalog_entry(
     if "engine" in metadata:
         del metadata["engine"]
 
-    # Add vision model metadata if mmproj provided
+    # Add vision model metadata if mmproj provided (V4: capabilities.modalities)
     if mmproj_path:
         vision_arch = vision_architecture or _detect_vision_architecture(model_id)
         if vision_arch:
-            metadata["is_vision_model"] = True
-            metadata["vision_architecture"] = vision_arch
+            capabilities = metadata.setdefault("capabilities", {})
+            modalities = capabilities.setdefault("modalities", {})
+            modalities["input"] = ["text", "vision"]
+            modalities["vision_architecture"] = vision_arch
             if tokens_per_image is not None:
-                metadata["tokens_per_image"] = tokens_per_image
                 print(f"   Setting tokens_per_image: {tokens_per_image}")
             if vision_architecture:
                 print(f"   Using vision architecture: {vision_arch}")

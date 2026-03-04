@@ -96,13 +96,20 @@ class ModelRegistry:
             f"loaded_models={loaded_count})"
         )
 
-    def find_config_key_for_openai_id(self, model_id: str) -> str | None:
+    def find_config_key_for_openai_id(
+        self, model_id: str, _seen: set[str] | None = None
+    ) -> str | None:
         """
         Resolve synthetic or base model ID to YAML config key.
 
         Accepts both synthetic IDs (e.g., 'model-name-32768-cpu') and base model IDs.
         Returns the base model config key from YAML.
         """
+        _seen = _seen or set()
+        if model_id in _seen:
+            raise ValueError(f"Cyclic model alias detected: {model_id}")
+        _seen = _seen | {model_id}
+
         # Normalize to strip -hybrid suffix (informational only)
         model_id = normalize_model_id(model_id)
         models_data = self.model_loaders_config.get("models", {})
@@ -114,7 +121,7 @@ class ModelRegistry:
             # Check if it's an alias (string value)
             if isinstance(model_entry, str):
                 # Recursively resolve the alias
-                return self.find_config_key_for_openai_id(model_entry)
+                return self.find_config_key_for_openai_id(model_entry, _seen)
             return model_id
 
         # Try to resolve as synthetic ID (only if direct lookup failed)
@@ -122,7 +129,7 @@ class ModelRegistry:
         if resolution:
             base_model_id, _, _, _ = resolution
             # Recursively resolve the base model ID (may be an alias)
-            return self.find_config_key_for_openai_id(base_model_id)
+            return self.find_config_key_for_openai_id(base_model_id, _seen)
 
         # Search by OpenAI API ID in standardized structure (for base model IDs)
         for config_key, model_config in models_data.items():
@@ -182,6 +189,11 @@ class ModelRegistry:
             synthetic_id if synthetic_id else openai_fields.get("id", model_id)
         )
 
+        capabilities = model_info.get("capabilities", {})
+        input_schema = model_info.get("input_schema") or capabilities.get(
+            "input_schema", "messages"
+        )
+
         return ModelInfo(
             id=model_id_to_use,  # Use synthetic ID if available
             name=model_info.get("name", model_id_to_use),  # Needed fallback logic
@@ -189,6 +201,8 @@ class ModelRegistry:
             enabled=model_info.get("enabled"),  # Let schema default=True handle None
             training_context_length=model_info.get("training_context_length"),
             estimated_vram_mb=model_info.get("vram_usage"),
+            input_schema=input_schema,
+            capabilities=capabilities if capabilities else None,
             # All other fields use schema defaults automatically!
         )
 

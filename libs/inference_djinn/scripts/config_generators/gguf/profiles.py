@@ -29,12 +29,9 @@ class BaseProfile:
     parameters: int | None = None
     training_context_length: int | None = None
     release_date: str | None = None
-    supports_chat_history: bool = True
-    input_schema: str = "messages"
     training_cutoff_year: int | None = None
     description: str | None = None
-    capabilities: list[str] | None = None
-    safety_info: dict[str, Any] | None = None
+    capabilities: dict[str, Any] | None = None  # v4 structured capabilities
     default_gpu_context: int | None = None
     default_cpu_context: int | None = None
     # Vision model fields

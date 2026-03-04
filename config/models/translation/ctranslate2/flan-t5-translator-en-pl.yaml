@@ -1,12 +1,23 @@
-catalog_schema: 3
+catalog_schema: 4
 schema: ctranslate2
 metadata:
   name: Flan-T5 Base Translator (Polish-English)
   format: ct2
   family: flan-t5
   parameters_m: 250
-  supports_chat_history: false
-  input_schema: prompt
+  capabilities:
+    input_schema: prompt
+    modalities:
+      input:
+      - text
+      output:
+      - text
+    interaction:
+      chat_template: false
+    reasoning:
+      supports_thinking: false
+    limits: {}
+    provenance: {}
 download:
   huggingface:
     repo: null

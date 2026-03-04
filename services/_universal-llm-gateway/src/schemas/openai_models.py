@@ -34,9 +34,6 @@ class ExtendedModelInfo(BaseModel):
     training_context_length: int | None = Field(
         None, description="Training context length (historical reference only)"
     )
-    supports_chat_history: bool | None = Field(
-        None, description="Whether model supports chat history"
-    )
     input_schema: str | None = Field(
         None, description="Input schema: 'prompt' or 'messages'"
     )
@@ -46,12 +43,12 @@ class ExtendedModelInfo(BaseModel):
     model_family: str | None = Field(None, description="Model family")
     quantization: str | None = Field(None, description="Quantization method")
     architecture: str | None = Field(None, description="Base architecture")
-    license: str | None = Field(None, description="Model license")
     parameters: int | None = Field(None, description="Number of parameters")
     release_date: str | None = Field(None, description="Release date")
     description: str | None = Field(None, description="Model description")
-    capabilities: list[str] | None = Field(None, description="Model capabilities")
-    safety_info: dict[str, Any] | None = Field(None, description="Safety information")
+    capabilities: dict[str, Any] | None = Field(
+        None, description="Structured capabilities"
+    )
 
     # Loader-specific fields
     name: str | None = Field(None, description="Human-readable model name")
@@ -101,9 +98,6 @@ class ComprehensiveModelInfo(BaseModel):
     context_length: int | None = Field(
         None, description="Context length for this model profile"
     )
-    supports_chat_history: bool | None = Field(
-        None, description="Whether model supports chat history"
-    )
     input_schema: str | None = Field(
         None, description="Input schema: 'prompt' or 'messages'"
     )
@@ -113,12 +107,12 @@ class ComprehensiveModelInfo(BaseModel):
     model_family: str | None = Field(None, description="Model family")
     quantization: str | None = Field(None, description="Quantization method")
     architecture: str | None = Field(None, description="Base architecture")
-    license: str | None = Field(None, description="Model license")
     parameters: int | None = Field(None, description="Number of parameters")
     release_date: str | None = Field(None, description="Release date")
     description: str | None = Field(None, description="Model description")
-    capabilities: list[str] | None = Field(None, description="Model capabilities")
-    safety_info: dict[str, Any] | None = Field(None, description="Safety information")
+    capabilities: dict[str, Any] | None = Field(
+        None, description="Structured capabilities"
+    )
 
     # Loader-specific configuration - the actual config used by workers and inference engines
     loader_config: dict[str, Any] | None = Field(

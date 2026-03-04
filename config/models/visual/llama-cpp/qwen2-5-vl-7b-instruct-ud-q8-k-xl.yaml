@@ -1,4 +1,4 @@
-catalog_schema: 3
+catalog_schema: 4
 schema: llama-cpp
 metadata:
   name: Qwen2.5-VL-7B-Instruct-UD-Q8_K_XL
@@ -6,11 +6,22 @@ metadata:
   arch: qwen2vl
   quant: Q8_K_XL
   parameters_m: 8118
-  training_context_length: 128000
-  supports_chat_history: true
-  input_schema: messages
-  is_vision_model: true
-  vision_architecture: qwen2_vl
+  capabilities:
+    input_schema: messages
+    modalities:
+      input:
+      - text
+      - vision
+      output:
+      - text
+      vision_architecture: qwen2_vl
+    interaction:
+      chat_template: true
+    reasoning:
+      supports_thinking: false
+    limits:
+      max_context_length: 128000
+    provenance: {}
 download:
   huggingface:
     repo: unsloth/Qwen2.5-VL-7B-Instruct-GGUF

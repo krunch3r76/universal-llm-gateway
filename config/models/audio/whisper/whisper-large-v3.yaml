@@ -1,28 +1,39 @@
-catalog_schema: 3
+catalog_schema: 4
 schema: faster-whisper
 metadata:
   name: whisper-large-v3
   format: whisper
   family: whisper
   parameters_m: 1550
-  license: mit
-  supports_chat_history: false
-  input_schema: audio
   supports_streaming: true
   languages:
-    - en
-    - fa
-    - ar
-    - zh
-    - es
-    - fr
-    - de
-    - it
-    - ja
-    - ko
-    - pt
-    - ru
-    - tr
+  - en
+  - fa
+  - ar
+  - zh
+  - es
+  - fr
+  - de
+  - it
+  - ja
+  - ko
+  - pt
+  - ru
+  - tr
+  capabilities:
+    input_schema: audio
+    modalities:
+      input:
+      - text
+      output:
+      - text
+    interaction:
+      chat_template: false
+    reasoning:
+      supports_thinking: false
+    limits: {}
+    provenance:
+      license: mit
 download:
   huggingface:
     repo: null

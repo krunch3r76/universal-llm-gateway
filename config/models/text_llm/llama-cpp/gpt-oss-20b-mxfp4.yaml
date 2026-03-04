@@ -1,4 +1,4 @@
-catalog_schema: 3
+catalog_schema: 4
 schema: llama-cpp
 metadata:
   name: gpt-oss-20b-mxfp4
@@ -7,9 +7,20 @@ metadata:
   quant: MXFP4
   parameters_m: 2786
   block_count: 24
-  training_context_length: 131072
-  supports_chat_history: true
-  input_schema: messages
+  capabilities:
+    input_schema: messages
+    modalities:
+      input:
+      - text
+      output:
+      - text
+    interaction:
+      chat_template: true
+    reasoning:
+      supports_thinking: false
+    limits:
+      max_context_length: 131072
+    provenance: {}
 download:
   huggingface:
     repo: ggml-org/gpt-oss-20b-GGUF

@@ -65,6 +65,7 @@ class ModelMetadata:
     vram_usage: int = 0
     context_length: int | None = None
     sticky: bool = True
+    capabilities: dict[str, Any] | None = None
 
     @property
     def format(self) -> str:
@@ -87,12 +88,19 @@ class ModelMetadata:
                 else:
                     loader_type = "llama_cpp_hybrid"
 
+        caps = data.get("capabilities", {})
+        input_schema = (
+            caps.get("input_schema")
+            if isinstance(caps, dict)
+            else None
+        ) or data.get("input_schema", "prompt")
+
         return cls(
             id=data["id"],
             model_type=data.get("model_type")
             or data.get("format")
             or data.get("model_family", "default"),
-            input_schema=data.get("input_schema", "prompt"),
+            input_schema=input_schema,
             parameter_defaults=data.get("parameter_defaults", {}),
             supported_parameters=data.get("supported_parameters", []),
             middleware_config=data.get("middleware_config", {}),
@@ -102,6 +110,12 @@ class ModelMetadata:
             ram_usage=data.get("ram_usage", 0),
             vram_usage=data.get("vram_usage", 0),
             context_length=data.get("context_length")
-            or data.get("training_context_length"),
+            or data.get("training_context_length")
+            or (
+                caps.get("limits", {}).get("max_context_length")
+                if isinstance(caps, dict)
+                else None
+            ),
             sticky=bool(data.get("middleware_config", {}).get("sticky", True)),
+            capabilities=caps if isinstance(caps, dict) and caps else None,
         )

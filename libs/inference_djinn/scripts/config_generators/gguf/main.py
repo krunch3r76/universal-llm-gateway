@@ -39,58 +39,80 @@ def build_base_profile_from_metadata(
 
     # Extract metadata
     meta, reader = extract_metadata(model_path)
+    try:
+        base_name = filename.replace(".gguf", "")
+        model_id = sanitize_model_id(filename)
 
-    # Build base info
-    base_name = filename.replace(".gguf", "")
-    model_id = sanitize_model_id(filename)
+        # Determine defaults from filename/metadata
+        arch = meta.architecture if meta else "unknown"
+        family = normalize_family(arch)
+        quant = extract_quant_from_filename(filename)
+        parameters_raw = extract_params_from_filename(filename)
+        training_context_length_raw = meta.context_length if meta else None
+        # Convert numpy types to native Python int
+        from .utils import to_native_int
 
-    # Determine defaults from filename/metadata
-    arch = meta.architecture if meta else "unknown"
-    family = normalize_family(arch)
-    quant = extract_quant_from_filename(filename)
-    parameters_raw = extract_params_from_filename(filename)
-    training_context_length_raw = meta.context_length if meta else None
-    # Convert numpy types to native Python int
-    from .utils import to_native_int
+        parameters = to_native_int(parameters_raw) if parameters_raw is not None else None
+        training_context_length = to_native_int(training_context_length_raw)
+        has_chat_template = bool(meta and meta.chat_template and meta.chat_template.strip())
+        input_schema = "messages" if has_chat_template else "prompt"
 
-    parameters = to_native_int(parameters_raw) if parameters_raw is not None else None
-    training_context_length = to_native_int(training_context_length_raw)
-    has_chat_template = bool(meta and meta.chat_template and meta.chat_template.strip())
-    input_schema = "messages" if has_chat_template else "prompt"
+        # Check for vision model
+        vision_config = get_vision_config_fields(model_path)
+        vision_architecture = None
+        clip_model_path = None
+        if vision_config:
+            vision_architecture = vision_config.get("vision_architecture")
+            clip_model_path = vision_config.get("clip_model_path")
+            print(f"🔮 Vision model detected: {vision_architecture}", file=sys.stderr)
+            if not clip_model_path:
+                print(
+                    "⚠️ Vision model detected but mmproj file not found. "
+                    "Set clip_model_path manually in config.",
+                    file=sys.stderr,
+                )
 
-    # Check for vision model
-    vision_config = get_vision_config_fields(model_path)
-    vision_architecture = None
-    clip_model_path = None
-    if vision_config:
-        vision_architecture = vision_config.get("vision_architecture")
-        clip_model_path = vision_config.get("clip_model_path")
-        print(f"🔮 Vision model detected: {vision_architecture}", file=sys.stderr)
-        if not clip_model_path:
-            print(
-                "⚠️ Vision model detected but mmproj file not found. "
-                "Set clip_model_path manually in config.",
-                file=sys.stderr,
-            )
+        # Build v4 capabilities
+        modalities: dict = (
+            {"input": ["text", "vision"], "output": ["text"]}
+            if vision_architecture
+            else {"input": ["text"], "output": ["text"]}
+        )
+        if vision_architecture:
+            modalities["vision_architecture"] = vision_architecture
+        capabilities = {
+            "input_schema": input_schema,
+            "modalities": modalities,
+            "interaction": {"chat_template": has_chat_template},
+            "reasoning": {"supports_thinking": False},
+            "limits": {"max_context_length": training_context_length}
+            if training_context_length
+            else {},
+            "provenance": {"license": meta.license} if meta and meta.license else {},
+        }
 
-    base_profile = BaseProfile(
-        name=base_name,
-        family=family,
-        arch=arch,
-        path=abs_path,
-        quant=quant,
-        parameters=parameters,
-        training_context_length=training_context_length,
-        input_schema=input_schema,
-        vision_architecture=vision_architecture,
-        clip_model_path=clip_model_path,
-        openai_api_fields={
-            "id": model_id,
-            "object": "model",
-            "owned_by": owned_by,
-            "permission": ["generate"],
-        },
-    )
+        base_profile = BaseProfile(
+            name=base_name,
+            family=family,
+            arch=arch,
+            path=abs_path,
+            quant=quant,
+            parameters=parameters,
+            training_context_length=training_context_length,
+            license=meta.license if meta else None,
+            vision_architecture=vision_architecture,
+            clip_model_path=clip_model_path,
+            capabilities=capabilities,
+            openai_api_fields={
+                "id": model_id,
+                "object": "model",
+                "owned_by": owned_by,
+                "permission": ["generate"],
+            },
+        )
+    finally:
+        if reader is not None:
+            reader.close()
 
     return base_profile
 

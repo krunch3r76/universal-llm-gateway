@@ -120,8 +120,13 @@ class LlamaCppSchema(BaseEngineSchema):
                             )
                         )
 
-        # Vision model validation
-        if metadata.get("is_vision_model"):
+        # Vision model validation (from capabilities.modalities)
+        capabilities = metadata.get("capabilities", {})
+        modalities = capabilities.get("modalities", {})
+        is_vision = "vision" in modalities.get("input", [])
+        vision_architecture = modalities.get("vision_architecture")
+
+        if is_vision:
             if not loader.get("clip_model_path"):
                 issues.append(
                     ValidationIssue(
@@ -132,13 +137,13 @@ class LlamaCppSchema(BaseEngineSchema):
                         fix="Add path to mmproj.gguf file",
                     )
                 )
-            if not metadata.get("vision_architecture"):
+            if not vision_architecture:
                 issues.append(
                     ValidationIssue(
                         model_id=model_id,
                         severity="warning",
                         message="Vision model missing vision_architecture",
-                        field="metadata.vision_architecture",
+                        field="metadata.capabilities.modalities.vision_architecture",
                         fix="Add vision_architecture (llava, minicpmv, etc.)",
                     )
                 )

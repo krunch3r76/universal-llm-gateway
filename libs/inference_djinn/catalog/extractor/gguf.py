@@ -102,8 +102,11 @@ def extract_gguf(path: Path) -> CatalogMetadata:
         from ...engines.gguf.gguf_metadata import GGUFMetadataLite
 
         reader = GGUFReader(str(path), "r")
-        meta = GGUFMetadataLite.from_gguf(reader)
-        meta_dict = meta.to_dict()
+        try:
+            meta = GGUFMetadataLite.from_gguf(reader)
+            meta_dict = meta.to_dict()
+        finally:
+            reader.close()
 
         arch = meta_dict.get("architecture")
         if arch and arch != "unknown":
@@ -118,16 +121,24 @@ def extract_gguf(path: Path) -> CatalogMetadata:
             quant = _resolve_file_type(meta_dict.get("file_type"))
 
         has_chat_template = bool(meta_dict.get("chat_template"))
-
         if has_chat_template:
             input_schema = "messages"
-            supports_chat_history = True
         elif "instruct" in path.stem.lower() or "chat" in path.stem.lower():
             input_schema = "messages"
-            supports_chat_history = True
         else:
             input_schema = "prompt"
-            supports_chat_history = False
+
+        capabilities: dict[str, Any] = {
+            "input_schema": input_schema,
+            "modalities": {"input": ["text"], "output": ["text"]},
+            "interaction": {"chat_template": has_chat_template},
+            "reasoning": {"supports_thinking": False},
+            "limits": {},
+            "provenance": {},
+        }
+        training_ctx = meta_dict.get("context_length")
+        if training_ctx:
+            capabilities["limits"]["max_context_length"] = training_ctx
 
         parameters_m = _estimate_parameters(meta_dict)
 
@@ -138,10 +149,7 @@ def extract_gguf(path: Path) -> CatalogMetadata:
             arch=arch,
             quant=quant,
             parameters_m=parameters_m,
-            training_context_length=meta_dict.get("context_length"),
-            supports_chat_history=supports_chat_history,
-            input_schema=input_schema,
-            has_chat_template=has_chat_template,
+            capabilities=capabilities,
             extra=meta_dict,
         )
 
@@ -183,7 +191,7 @@ def _resolve_file_type(file_type: object | None) -> str | None:
         return resolved
 
     if isinstance(file_type, str):
-        cleaned = file_type.replace("MOSTLY_", "").replace("ALL_", "")
+        cleaned = file_type.replace("MOSTLY_", "").replace("ALL_", "").upper()
         return cleaned if cleaned else None
 
     if hasattr(file_type, "name"):

@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .capabilities import ModelCapabilities
+
 
 class InferenceEngineInfo(BaseModel):
     """Information about the inference engine for a model"""
@@ -74,7 +76,6 @@ class ModelInfo(BaseModel):
                 "specialties": ["instruction_following", "conversation"],
                 "quantization": "AWQ",
                 "parameters": "30B",
-                "has_chat_template": False,
                 "model_type": "wizard-vicuna",
                 "chat_template": {
                     "exists": False,
@@ -122,8 +123,8 @@ class ModelInfo(BaseModel):
     specialties: list[str] | None = Field(None, description="Model specialties")
     quantization: str | None = Field(None, description="Quantization method")
     parameters: str | None = Field(None, description="Parameter count")
-    has_chat_template: bool = Field(
-        default=False, description="Whether model has built-in chat template"
+    capabilities: ModelCapabilities | None = Field(
+        None, description="Structured model capabilities"
     )
 
     # Runtime metadata (for debug/admin endpoints - can be None)

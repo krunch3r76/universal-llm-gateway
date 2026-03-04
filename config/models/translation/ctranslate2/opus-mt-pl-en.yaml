@@ -1,12 +1,23 @@
-catalog_schema: 3
+catalog_schema: 4
 schema: ctranslate2
 metadata:
   name: OPUS-MT Polish-English
   format: ct2
   family: opus-mt
   parameters_m: 74
-  supports_chat_history: false
-  input_schema: prompt
+  capabilities:
+    input_schema: prompt
+    modalities:
+      input:
+      - text
+      output:
+      - text
+    interaction:
+      chat_template: false
+    reasoning:
+      supports_thinking: false
+    limits: {}
+    provenance: {}
 download:
   huggingface:
     repo: null

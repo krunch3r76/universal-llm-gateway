@@ -1,4 +1,4 @@
-catalog_schema: 3
+catalog_schema: 4
 schema: llama-cpp
 metadata:
   name: deepseek-llm-67b-chat.Q4_K_M
@@ -7,10 +7,21 @@ metadata:
   arch: llama
   quant: Q4_K_M
   parameters_m: 67000
-  training_context_length: 4096
-  license: deepseek-license
-  supports_chat_history: true
-  input_schema: messages
+  capabilities:
+    input_schema: messages
+    modalities:
+      input:
+      - text
+      output:
+      - text
+    interaction:
+      chat_template: true
+    reasoning:
+      supports_thinking: false
+    limits:
+      max_context_length: 4096
+    provenance:
+      license: deepseek-license
 download:
   huggingface:
     repo: TheBloke/deepseek-llm-67b-chat-GGUF

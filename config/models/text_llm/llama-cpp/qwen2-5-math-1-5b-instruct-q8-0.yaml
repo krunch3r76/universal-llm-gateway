@@ -1,4 +1,4 @@
-catalog_schema: 3
+catalog_schema: 4
 schema: llama-cpp
 metadata:
   name: Qwen2.5-Math-1.5B-Instruct-Q8_0
@@ -6,9 +6,20 @@ metadata:
   arch: qwen2
   quant: Q8_0
   parameters_m: 1563
-  training_context_length: 4096
-  supports_chat_history: true
-  input_schema: messages
+  capabilities:
+    input_schema: messages
+    modalities:
+      input:
+      - text
+      output:
+      - text
+    interaction:
+      chat_template: true
+    reasoning:
+      supports_thinking: false
+    limits:
+      max_context_length: 4096
+    provenance: {}
 download:
   huggingface:
     repo: bartowski/Qwen2.5-Math-1.5B-Instruct-GGUF

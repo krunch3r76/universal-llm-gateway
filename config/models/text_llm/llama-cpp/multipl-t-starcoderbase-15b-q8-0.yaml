@@ -1,13 +1,24 @@
-catalog_schema: 3
+catalog_schema: 4
 schema: llama-cpp
 metadata:
   name: MultiPL-T-StarCoderBase_15b.Q8_0
   format: gguf
   family: starcoder
   arch: starcoder
-  supports_chat_history: true
-  input_schema: prompt
   quant: Q8_0
+  capabilities:
+    input_schema: prompt
+    modalities:
+      input:
+      - text
+      output:
+      - text
+    interaction:
+      chat_template: true
+    reasoning:
+      supports_thinking: false
+    limits: {}
+    provenance: {}
 download:
   huggingface:
     repo: mradermacher/MultiPL-T-StarCoderBase_15b-GGUF

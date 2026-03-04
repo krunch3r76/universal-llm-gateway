@@ -117,21 +117,25 @@ def build_comprehensive_model_info_for_synthetic(
         "ram_usage": profile_config.get("resources", {}).get("ram_mb"),
         "vram_usage": profile_config.get("resources", {}).get("vram_mb"),
         "loader_type": loader_type,
-        # Standardized metadata
-        "training_context_length": model_info.get("training_context_length"),
-        "supports_chat_history": model_info.get("supports_chat_history"),
+        # Standardized metadata (from capabilities)
+        "training_context_length": model_info.get("training_context_length")
+        or (model_info.get("capabilities") or {}).get("limits", {}).get(
+            "max_context_length"
+        ),
         "input_schema": model_info.get("input_schema"),
         "context_length": context_length,
         "training_cutoff_year": model_info.get("training_cutoff_year"),
         "model_family": model_info.get("family"),
         "quantization": model_info.get("quant"),
         "architecture": model_info.get("arch"),
-        "license": model_info.get("license"),
+        "license": (model_info.get("capabilities") or {}).get("provenance", {}).get(
+            "license"
+        )
+        or model_info.get("license"),
         "parameters": model_info.get("parameters"),
         "release_date": model_info.get("release_date"),
         "description": model_info.get("description"),
         "capabilities": model_info.get("capabilities"),
-        "safety_info": model_info.get("safety_info"),
         # Loader configuration - the actual config used by workers
         "loader_config": loader_config,
     }
@@ -170,8 +174,10 @@ def get_openai_models(
 
         return models
 
-    except Exception:
-        # Return empty list if config loading fails
+    except Exception as e:
+        logger.error(
+            "Error generating OpenAI models list: %s", e, exc_info=True
+        )
         return []
 
 
@@ -204,8 +210,10 @@ def get_comprehensive_models(
 
         return models
 
-    except Exception:
-        # Return empty list if config loading fails
+    except Exception as e:
+        logger.error(
+            "Error generating comprehensive models list: %s", e, exc_info=True
+        )
         return []
 
 

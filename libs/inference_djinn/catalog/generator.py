@@ -1,10 +1,10 @@
 """
-Catalog Entry Generator - V3 Static-Only Format.
+Catalog Entry Generator - V4 Static-Only Format.
 
 Generates static catalog entries for the Universal LLM Gateway.
 
-V3 Static Schema:
-    - catalog_schema: 3
+V4 Static Schema:
+    - catalog_schema: 4
     - schema: Engine reference (llama-cpp, vllm, etc.)
     - metadata: Model info (format, family, etc.) - NO engine field
     - loader: Routing discriminants only (embedding models only)
@@ -196,7 +196,7 @@ class CatalogEntryGenerator:
         metadata: CatalogMetadata,
         hf_source: HFSource | None,
     ) -> dict[str, Any]:
-        """Build static catalog entry in V3 format.
+        """Build static catalog entry in V4 format.
 
         Embedding models get a loader section with routing discriminants
         (loader.embedding, embedding_task_default). All other models remain
@@ -204,11 +204,11 @@ class CatalogEntryGenerator:
         """
         meta = metadata.to_catalog_metadata()
 
-        # V3: engine derived from schema, not stored in metadata
+        # V4: engine derived from schema, not stored in metadata
         meta.pop("engine", None)
 
         entry: dict[str, Any] = {
-            "catalog_schema": 3,
+            "catalog_schema": 4,
             "schema": self._get_schema_for_format(model.format),
             "metadata": meta,
             "download": self._build_download(model, hf_source),

@@ -129,7 +129,10 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
         # Inject thinking capability into all entries if flagged
         if thinking:
             for entry in entries.values():
-                entry.setdefault("metadata", {})["supports_thinking"] = True
+                metadata = entry.setdefault("metadata", {})
+                capabilities = metadata.setdefault("capabilities", {})
+                reasoning = capabilities.setdefault("reasoning", {})
+                reasoning["supports_thinking"] = True
 
         # Inject vision metadata into all entries if provided
         if mmproj and vision_arch and tokens_per_image:
@@ -151,7 +154,10 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
 
             # Inject thinking capability if flagged
             if thinking:
-                entry.setdefault("metadata", {})["supports_thinking"] = True
+                metadata = entry.setdefault("metadata", {})
+                capabilities = metadata.setdefault("capabilities", {})
+                reasoning = capabilities.setdefault("reasoning", {})
+                reasoning["supports_thinking"] = True
 
             # Inject vision metadata if provided
             if mmproj and vision_arch and tokens_per_image:
@@ -476,15 +482,16 @@ def _inject_vision_metadata(
     vision_architecture: str,
     tokens_per_image: int,
 ) -> None:
-    """Inject vision model metadata into catalog entry (V2 format).
+    """Inject vision model metadata into catalog entry (V4 format).
 
-    Sets metadata fields and adds vision params to loader.
+    Sets capabilities.modalities and adds vision params to loader.
+    tokens_per_image stays in loader (engine config, not capability).
     """
-    # Update metadata
     metadata = entry.setdefault("metadata", {})
-    metadata["is_vision_model"] = True
-    metadata["vision_architecture"] = vision_architecture
-    metadata["tokens_per_image"] = tokens_per_image
+    capabilities = metadata.setdefault("capabilities", {})
+    modalities = capabilities.setdefault("modalities", {})
+    modalities["input"] = ["text", "vision"]
+    modalities["vision_architecture"] = vision_architecture
 
     # Update loader (V2: top-level, not configurations.base_loader)
     loader = entry.setdefault("loader", {})
