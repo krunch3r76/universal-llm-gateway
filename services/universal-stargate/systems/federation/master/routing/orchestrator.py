@@ -64,6 +64,11 @@ class MasterRequestTracker:
         # Maps gateway_id -> set of routing_keys (for fast lookup)
         self._routing_keys_by_gateway: dict[str, set[str]] = {}
 
+        # Cancel groups: group_id → set of request_ids
+        # A cancel group is a lifecycle boundary (e.g., one map iteration).
+        # cancel_group(group_id) cancels all member requests.
+        self._cancel_groups: dict[str, set[str]] = {}
+
     @property
     def active_count(self) -> int:
         """Count of active requests."""
@@ -73,6 +78,11 @@ class MasterRequestTracker:
     def pending_cancel_count(self) -> int:
         """Count of pending cancellations across all remotes."""
         return sum(len(cancels) for cancels in self._pending_cancels.values())
+
+    @property
+    def cancel_group_count(self) -> int:
+        """Count of active cancel groups."""
+        return len(self._cancel_groups)
 
     def count_active_by_remote(self, remote_id: str) -> int:
         """Count active requests for a specific remote."""
@@ -188,6 +198,8 @@ class MasterRequestTracker:
         model_id: str,
         hints: dict[str, Any] | None = None,
         request_id: str | None = None,
+        *,
+        cancel_group: str | None = None,
     ) -> AsyncIterator[bytes]:
         """
         Forward streaming request to federated gateway.
@@ -217,6 +229,8 @@ class MasterRequestTracker:
             compute_type="",
         )
         self._active[request_id] = tracked
+        if cancel_group:
+            self.register_cancel_group(cancel_group, request_id)
 
         logger.debug(
             f"Registered outbound request {request_id[:8]}... -> {gateway.gateway_id}"
@@ -246,6 +260,7 @@ class MasterRequestTracker:
         finally:
             self._active.pop(request_id, None)
             self.release_routing_key(request_id)
+            self._remove_from_cancel_groups(request_id)
 
     async def forward(
         self,
@@ -256,6 +271,8 @@ class MasterRequestTracker:
         model_id: str,
         hints: dict[str, Any] | None = None,
         request_id: str | None = None,
+        *,
+        cancel_group: str | None = None,
     ) -> dict[str, Any]:
         """
         Forward non-streaming request to federated gateway.
@@ -285,6 +302,8 @@ class MasterRequestTracker:
             compute_type="",
         )
         self._active[request_id] = tracked
+        if cancel_group:
+            self.register_cancel_group(cancel_group, request_id)
 
         try:
             response = await self._forwarder.forward_request(
@@ -302,6 +321,7 @@ class MasterRequestTracker:
         finally:
             self._active.pop(request_id, None)
             self.release_routing_key(request_id)
+            self._remove_from_cancel_groups(request_id)
 
     async def cancel(self, request_id: str) -> bool:
         """
@@ -332,6 +352,8 @@ class MasterRequestTracker:
         request_body: dict[str, Any],
         model_id: str,
         request_id: str | None = None,
+        *,
+        cancel_group: str | None = None,
     ) -> dict[str, Any]:
         """
         Forward embedding request to federated gateway.
@@ -360,6 +382,8 @@ class MasterRequestTracker:
             compute_type="",
         )
         self._active[request_id] = tracked
+        if cancel_group:
+            self.register_cancel_group(cancel_group, request_id)
 
         try:
             # Call embedding-specific forwarder method
@@ -378,6 +402,43 @@ class MasterRequestTracker:
         finally:
             self._active.pop(request_id, None)
             self.release_routing_key(request_id)
+            self._remove_from_cancel_groups(request_id)
+
+    def register_cancel_group(self, group_id: str, request_id: str) -> None:
+        """Register request_id under a cancel group.
+
+        Called when X-Pipeline-Cancel-Group header is present.
+        A single request belongs to at most one group.
+        """
+        self._cancel_groups.setdefault(group_id, set()).add(request_id)
+        logger.debug("Cancel group %s: registered %s", group_id[:8], request_id[:8])
+
+    async def cancel_group(self, group_id: str) -> int:
+        """Cancel all requests in a cancel group.
+
+        Returns count of successfully cancelled requests.
+        Removes the group after processing.
+        """
+        request_ids = self._cancel_groups.pop(group_id, set())
+        if not request_ids:
+            logger.debug("Cancel group %s: not found or empty", group_id[:8])
+            return 0
+
+        logger.info(
+            "Cancel group %s: cancelling %d request(s)", group_id[:8], len(request_ids)
+        )
+        cancelled = 0
+        for rid in request_ids:
+            if await self.cancel(rid):
+                cancelled += 1
+        return cancelled
+
+    def _remove_from_cancel_groups(self, request_id: str) -> None:
+        """Remove a completed request from any cancel group it belongs to."""
+        for group_id, members in list(self._cancel_groups.items()):
+            members.discard(request_id)
+            if not members:
+                del self._cancel_groups[group_id]
 
     async def _try_cancel(self, tracked: TrackedRequest) -> bool:
         """

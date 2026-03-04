@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 import yaml
 
+from .http_helpers import PIPELINE_TEST_HEADERS, PIPELINE_TEST_PARAMS
 from .models import ExecutionSnapshot, ReplayOverrides, ReplayResult, StepConfigMatch
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
@@ -137,9 +138,15 @@ def _try_render_from_yaml(
         return None
 
     with prompts_path.open(encoding="utf-8") as f:
-        prompts_data = yaml.safe_load(f) or {}
+        prompts_loaded = yaml.safe_load(f)
+    if not isinstance(prompts_loaded, dict):
+        return None
+    prompts_data: dict[str, Any] = prompts_loaded
 
-    prompts = prompts_data.get("prompts", prompts_data)
+    prompts_raw = prompts_data.get("prompts", prompts_data)
+    if not isinstance(prompts_raw, dict):
+        return None
+    prompts = prompts_raw
 
     prompt_ref = overrides.prompt_ref
     if prompt_ref:
@@ -156,6 +163,8 @@ def _try_render_from_yaml(
         return None
 
     prompt_config = prompts[prompt_name]
+    if not isinstance(prompt_config, dict):
+        return None
     template = prompt_config.get("template", "")
     system_prompt_template = prompt_config.get("system_prompt", "")
 
@@ -225,10 +234,18 @@ def _find_step_config(
             continue
         try:
             with yaml_file.open(encoding="utf-8") as f:
-                config = yaml.safe_load(f) or {}
+                config_loaded = yaml.safe_load(f)
         except Exception:
             continue
-        for step_cfg in config.get("steps", []):
+        if not isinstance(config_loaded, dict):
+            continue
+        config: dict[str, Any] = config_loaded
+        steps = config.get("steps", [])
+        if not isinstance(steps, list):
+            continue
+        for step_cfg in steps:
+            if not isinstance(step_cfg, dict):
+                continue
             if step_cfg.get("name") == short_name:
                 return StepConfigMatch(pipeline_config=config, step_config=step_cfg)
     return None
@@ -409,7 +426,9 @@ def _send_request(
 
     start = time.monotonic()
     with httpx.Client(timeout=timeout) as client:
-        resp = client.post(url, json=body, params={"disable_profile": "true"})
+        resp = client.post(
+            url, json=body, params=PIPELINE_TEST_PARAMS, headers=PIPELINE_TEST_HEADERS
+        )
     elapsed_ms = (time.monotonic() - start) * 1000
 
     resp.raise_for_status()

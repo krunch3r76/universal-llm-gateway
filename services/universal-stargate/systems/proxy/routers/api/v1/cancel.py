@@ -1,12 +1,12 @@
 """
 Pipeline cancellation endpoint.
 
-Cancels federation requests by request_id.
+Cancels federation requests by request_id or cancel_group.
 Used by pipeline layer when steps timeout.
 
 Cancellation path:
+    Queue (via proxy.cancel_request) - for requests still waiting.
     Remote (via MasterRequestTracker) - for requests already forwarded.
-    Queue-based cancellation was removed with unified capacity tracking.
 """
 
 from __future__ import annotations
@@ -27,9 +27,14 @@ router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
 
 class CancelRequest(BaseModel):
-    """Request body for cancellation."""
+    """Request body for cancellation.
 
-    request_id: str
+    Exactly one of request_id or cancel_group must be provided.
+    cancel_group cancels all requests registered under that group ID.
+    """
+
+    request_id: str | None = None
+    cancel_group: str | None = None
     model_id: str | None = None
 
 
@@ -37,7 +42,8 @@ class CancelResponse(BaseModel):
     """Response for cancellation."""
 
     cancelled: bool
-    request_id: str
+    request_id: str  # request_id or cancel_group that was processed
+    cancelled_count: int = 0  # Number of requests cancelled (for group cancel)
 
 
 # Injected at app startup
@@ -53,14 +59,15 @@ def set_proxy(proxy: StargateProxy) -> None:
 @router.post("/cancel", response_model=CancelResponse)
 async def cancel_request(body: CancelRequest) -> CancelResponse:
     """
-    Cancel a federation request by request_id.
+    Cancel a federation request by request_id or cancel_group.
 
     Called by pipeline layer when step times out.
     Attempts cancellation from:
     1. Queues (if request is still waiting)
     2. Remote federation (if request was already forwarded)
     """
-    if _proxy is None:
+    proxy = _proxy
+    if proxy is None:
         raise HTTPException(
             status_code=503,
             detail=error_envelope(
@@ -71,23 +78,64 @@ async def cancel_request(body: CancelRequest) -> CancelResponse:
             ),
         )
 
-    request_id = body.request_id
-    model_id = body.model_id
+    has_request_id = bool(body.request_id)
+    has_cancel_group = bool(body.cancel_group)
+    if has_request_id == has_cancel_group:
+        raise HTTPException(
+            status_code=400,
+            detail=error_envelope(
+                code=ErrorCode.INVALID_REQUEST,
+                message="Exactly one of request_id or cancel_group must be provided",
+                source="master",
+                retryable=False,
+            ),
+        )
 
     try:
+        if body.cancel_group:
+            federation = proxy.federation_integration
+            count = 0
+            if federation and federation.request_tracker:
+                count = await federation.request_tracker.cancel_group(body.cancel_group)
+            cancelled = count > 0
+            if cancelled:
+                logger.info(
+                    "Cancelled %d request(s) in group %s",
+                    count,
+                    body.cancel_group[:8],
+                )
+            return CancelResponse(
+                cancelled=cancelled,
+                request_id=body.cancel_group,
+                cancelled_count=count,
+            )
+
+        request_id = body.request_id
+        model_id = body.model_id
+        if request_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail=error_envelope(
+                    code=ErrorCode.INVALID_REQUEST,
+                    message="request_id is required when cancel_group is not provided",
+                    source="master",
+                    retryable=False,
+                ),
+            )
+
         # First try to cancel from queues (if still waiting)
-        queue_cancelled = _proxy.cancel_request(request_id, model_id)
+        queue_cancelled = proxy.cancel_request(request_id, model_id)
 
         # Then try to cancel from remote (if already forwarded)
         remote_cancelled = False
-        federation = _proxy.federation_integration
+        federation = proxy.federation_integration
         if federation and federation.request_tracker:
             remote_cancelled = await federation.request_tracker.cancel(request_id)
 
         cancelled = queue_cancelled or remote_cancelled
 
         if cancelled:
-            where = []
+            where: list[str] = []
             if queue_cancelled:
                 where.append("queue")
             if remote_cancelled:
@@ -106,13 +154,16 @@ async def cancel_request(body: CancelRequest) -> CancelResponse:
             request_id=request_id,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error("Cancel failed for %s: %s", request_id[:8], e)
+        label = (body.cancel_group or body.request_id or "unknown")[:8]
+        logger.error("Cancel failed for %s: %s", label, e)
         raise HTTPException(
             status_code=500,
             detail=error_envelope(
                 code=ErrorCode.UNEXPECTED_ERROR,
-                message=f"Cancel failed: {e}",
+                message="Cancel failed",
                 source="master",
                 retryable=False,
             ),

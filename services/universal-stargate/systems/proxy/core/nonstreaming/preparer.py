@@ -337,6 +337,10 @@ class RequestPreparer:
                 except ValueError:
                     logger.warning(f"Invalid X-Request-Timeout header: {timeout_hint}")
 
+            cancel_group = request.headers.get("X-Pipeline-Cancel-Group")
+            if cancel_group:
+                context.cancel_group = cancel_group
+
             if execution_id or step_id:
                 logger.debug(
                     f"Pipeline request: execution={execution_id}, step={step_id}"

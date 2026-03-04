@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from .http_helpers import PIPELINE_TEST_HEADERS, PIPELINE_TEST_PARAMS
 from .models import ConsultResult
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
@@ -72,6 +73,8 @@ def ask_models(
 ) -> list[ConsultResult]:
     """Send a free-form question (optionally RAG-augmented) to local models."""
     target_models = models or DEFAULT_ASK_MODELS
+    if not target_models:
+        return []
     user_prompt = _build_prompt(question, rag_findings)
 
     results: list[ConsultResult] = []
@@ -197,7 +200,9 @@ def _query_model(
 
     start = time.monotonic()
     with httpx.Client(timeout=timeout) as client:
-        resp = client.post(url, json=body, params={"disable_profile": "true"})
+        resp = client.post(
+            url, json=body, params=PIPELINE_TEST_PARAMS, headers=PIPELINE_TEST_HEADERS
+        )
     elapsed_ms = (time.monotonic() - start) * 1000
 
     resp.raise_for_status()

@@ -77,6 +77,9 @@ class RequestContext:
         # Federation timeout hint (passed from pipeline step timeout)
         self.request_timeout_hint: float | None = None
 
+        # Cancel group ID (X-Pipeline-Cancel-Group header), for group cancellation
+        self.cancel_group: str | None = None
+
         # Endpoint category determined during routing (for consistent capacity tracking)
         self.routing_endpoint_category: EndpointCategory | None = None
 

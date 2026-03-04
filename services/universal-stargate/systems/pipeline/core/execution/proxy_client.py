@@ -101,6 +101,7 @@ class ProxyClient:
         """
         self._config = config or ProxyClientConfig.from_environment()
         self._client: httpx.AsyncClient | None = None
+        self._active_requests: int = 0
 
     @classmethod
     def from_environment(cls) -> ProxyClient:
@@ -149,7 +150,19 @@ class ProxyClient:
         return self._client
 
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Close the HTTP client.
+
+        Defers close if requests are still in flight to avoid StreamClosed
+        errors.  Logs at ERROR rather than raising — pipeline cleanup calls
+        close() from finally blocks, and raising would mask the original error.
+        """
+        if self._active_requests > 0:
+            logger.error(
+                "ProxyClient.close() called with %d active request(s) — "
+                "deferring close to avoid StreamClosed errors",
+                self._active_requests,
+            )
+            return
         if self._client:
             await self._client.aclose()
             self._client = None
@@ -160,20 +173,21 @@ class ProxyClient:
         step_id: str | None,
         skip_token_counting: bool,
         timeout: float | None = None,
-        map_iteration_request_id: str | None = None,
+        *,
+        request_id: str | None = None,
+        cancel_group: str | None = None,
     ) -> dict[str, str]:
-        """
-        Build internal request headers for pipeline identification.
+        """Build internal request headers for pipeline identification.
 
         Args:
             execution_id: Pipeline execution ID (for tracing)
             step_id: Pipeline step ID (for tracing)
             skip_token_counting: Whether to skip token counting
             timeout: Request timeout (passed to stargate for federation)
-            map_iteration_request_id: Per-iteration request ID for cancellation tracking
-
-        Returns:
-            Headers dict for internal requests
+            request_id: Per-call unique ID for capacity tracking + snapshots.
+                Becomes context.request_id in Stargate via X-Internal-Request-ID.
+            cancel_group: Iteration-level ID for group cancellation.
+                Stargate's MasterRequestTracker indexes requests by this group.
         """
         headers: dict[str, str] = {"X-Pipeline-Internal": "true"}
 
@@ -185,8 +199,10 @@ class ProxyClient:
             headers["X-Skip-Token-Counting"] = "true"
         if timeout:
             headers["X-Request-Timeout"] = str(timeout)
-        if map_iteration_request_id:
-            headers["X-Internal-Request-ID"] = map_iteration_request_id
+        if request_id:
+            headers["X-Internal-Request-ID"] = request_id
+        if cancel_group:
+            headers["X-Pipeline-Cancel-Group"] = cancel_group
 
         return headers
 
@@ -258,14 +274,13 @@ class ProxyClient:
         }
         request_body["stream"] = False
 
-        # Build headers for internal identification
-        # Use unique_request_id for X-Internal-Request-ID (becomes proxy request_id)
         request_headers = self._build_request_headers(
             execution_id,
             step_id,
             skip_token_counting,
             timeout,
-            unique_request_id,  # Each call gets unique ID for capacity tracking
+            request_id=unique_request_id,
+            cancel_group=map_iteration_request_id,
         )
 
         # Build query params for profile control.
@@ -283,6 +298,7 @@ class ProxyClient:
         # Apply timeout override if specified
         request_timeout = timeout or self._config.request_timeout
 
+        self._active_requests += 1
         try:
             response = await client.post(
                 "/v1/chat/completions",
@@ -336,24 +352,21 @@ class ProxyClient:
                 detail=str(e),
             ) from e
 
+        finally:
+            self._active_requests -= 1
+
     async def cancel(
         self, map_iteration_request_id: str, model_id: str | None = None
     ) -> bool:
-        """
-        Cancel a federation request by map_iteration_request_id.
+        """Cancel a cancel group by map_iteration_request_id.
 
-        Args:
-            map_iteration_request_id: The request ID returned from chat_completion()
-            model_id: Optional model ID for queue-specific cancellation
-                (enables sticky/non-sticky queue cancellation)
-
-        Returns:
-            True if cancelled, False if not found or already terminal
+        Sends cancel_group to Stargate, which cancels all requests
+        registered under this group (all calls within one map iteration).
         """
         client = await self._ensure_client()
 
         try:
-            body: dict[str, str] = {"request_id": map_iteration_request_id}
+            body: dict[str, str] = {"cancel_group": map_iteration_request_id}
             if model_id:
                 body["model_id"] = model_id
 
@@ -428,9 +441,9 @@ class ProxyClient:
             execution_id, step_id, skip_token_counting=True, timeout=timeout
         )
 
-        # Apply timeout override if specified
         request_timeout = timeout or self._config.request_timeout
 
+        self._active_requests += 1
         try:
             response = await client.post(
                 "/v1/embeddings",
@@ -440,7 +453,6 @@ class ProxyClient:
             )
 
             if response.status_code >= 400:
-                # Parse error detail if available
                 try:
                     error_body = response.json()
                     detail = error_body.get("detail", error_body)
@@ -482,3 +494,6 @@ class ProxyClient:
                 f"HTTP error: {error_msg}",
                 detail=str(e),
             ) from e
+
+        finally:
+            self._active_requests -= 1

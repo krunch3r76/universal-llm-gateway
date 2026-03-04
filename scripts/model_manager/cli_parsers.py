@@ -85,6 +85,7 @@ def add_generate_parser(subparsers: argparse._SubParsersAction) -> None:
         metavar="ARCH",
         choices=[
             "qwen2_vl",
+            "qwen3_5",
             "llava_1_5",
             "llava_1_6",
             "minicpm_v",

@@ -581,6 +581,7 @@ class RequestExecutor:
 
             return response_content, response_headers, response_status_code
         else:
+            cancel_group = getattr(context, "cancel_group", None) if context else None
             response_content = await request_tracker.forward(
                 gateway=fed_gateway,
                 request_body=request_body,
@@ -589,6 +590,7 @@ class RequestExecutor:
                 model_id=model_id,
                 hints=hints,
                 request_id=request_id,
+                cancel_group=cancel_group,
             )
             # Note: request_tracker doesn't preserve remote headers
             # This is acceptable for Master mode - headers are informational only
@@ -781,6 +783,7 @@ class RequestExecutor:
                         model_id=context.selected_model.routing_key,
                         hints=hints,
                         request_id=request_id,
+                        cancel_group=getattr(context, "cancel_group", None),
                     )
 
                 async for chunk in stream:

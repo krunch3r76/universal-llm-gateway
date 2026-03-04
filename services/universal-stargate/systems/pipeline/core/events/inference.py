@@ -10,6 +10,7 @@ Invariant: ∀ _call_model() invocation ⟹ ∃! ModelInvocation event
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Any
 
 from .base import PipelineEvent
@@ -74,3 +75,11 @@ class CloudModelResolutionFailed(PipelineEvent):
     requested_ref: str = ""
     cloud_proxy_url: str = ""
     reason: str = ""
+
+
+@dataclass(slots=True, kw_only=True)
+class GenerationParamsFiltered(PipelineEvent):
+    """Emitted when unsupported generation parameters are removed."""
+
+    removed_keys: list[str] = dataclass_field(default_factory=list)
+    allowed_keys: list[str] = dataclass_field(default_factory=list)

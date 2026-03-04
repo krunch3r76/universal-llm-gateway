@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from .http_helpers import PIPELINE_TEST_HEADERS, PIPELINE_TEST_PARAMS
 from .models import ConsultResult, ModelCall, StepSnapshot
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
@@ -115,6 +116,8 @@ def consult_step(
     in parallel, along with a problem description.
     """
     consultant_models = models or DEFAULT_CONSULTANTS
+    if not consultant_models:
+        return []
     user_prompt = _build_user_prompt(
         step=step,
         call_label=call_label,
@@ -299,7 +302,9 @@ def _query_consultant(
 
     start = time.monotonic()
     with httpx.Client(timeout=timeout) as client:
-        resp = client.post(url, json=body, params={"disable_profile": "true"})
+        resp = client.post(
+            url, json=body, params=PIPELINE_TEST_PARAMS, headers=PIPELINE_TEST_HEADERS
+        )
     elapsed_ms = (time.monotonic() - start) * 1000
 
     resp.raise_for_status()
@@ -429,7 +434,12 @@ def fetch_rag_via_pipeline(
     }
     try:
         with httpx.Client(timeout=timeout) as client:
-            resp = client.post(url, json=body)
+            resp = client.post(
+                url,
+                json=body,
+                params=PIPELINE_TEST_PARAMS,
+                headers=PIPELINE_TEST_HEADERS,
+            )
         resp.raise_for_status()
     except Exception as exc:  # noqa: BLE001
         return [], str(exc)

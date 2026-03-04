@@ -121,7 +121,7 @@ def cmd_measure(args: argparse.Namespace, config: Config) -> int:
 
     print(f"\nStarting measurement for {args.model_id}...")
     if contexts is None:
-        print("  Contexts: auto-detect from training_context_length")
+        print("  Contexts: auto-detect from capabilities.limits.max_context_length")
     else:
         print(f"  Contexts: {contexts}")
     print(f"  Mode: {mode}")
@@ -351,9 +351,9 @@ def cmd_remeasure(args: argparse.Namespace, config: Config) -> int:  # noqa: PLR
     - vLLM (hf/awq/gptq): GPU only (no CPU/hybrid support)
 
     Uses smart context detection:
-    - GPU mode: steps down from training_context_length until it fits
-    - CPU mode: uses training_context_length (GGUF only)
-    - Auto: tries GPU first with step-down, falls back to CPU (GGUF only)
+        - GPU mode: steps down from capabilities.limits.max_context_length until it fits
+        - CPU mode: uses capabilities.limits.max_context_length (GGUF only)
+        - Auto: tries GPU first with step-down, falls back to CPU (GGUF only)
     """
     models = get_models_to_remeasure(args, config)
     if models is None:
@@ -379,7 +379,7 @@ def cmd_remeasure(args: argparse.Namespace, config: Config) -> int:  # noqa: PLR
     if args.contexts:
         print(f"  Contexts: {args.contexts} (explicit)")
     else:
-        print("  Contexts: auto-detect from training_context_length")
+        print("  Contexts: auto-detect from capabilities.limits.max_context_length")
     print()
 
     failed = []
@@ -505,6 +505,8 @@ def _detect_vision_architecture(model_id: str) -> str | None:
     model_lower = model_id.lower()
 
     # Vision model patterns
+    if "qwen3.5" in model_lower or ("qwen3" in model_lower and "vl" in model_lower):
+        return "qwen3_5"
     if "qwen2" in model_lower and "vl" in model_lower:
         return "qwen2_vl"
     elif "llava" in model_lower:

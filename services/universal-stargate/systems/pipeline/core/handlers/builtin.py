@@ -283,9 +283,8 @@ class BaseHandler(AbstractStepHandler):
         self,
         step: StepConfig,
         resolved_config: dict[str, Any],
-    ) -> dict[str, Any]:
-        """
-        Build generation parameters with filtering.
+    ) -> tuple[dict[str, Any], set[str]]:
+        """Build generation parameters with filtering.
 
         Hierarchy:
         1. Start with resolved config (from handler logic, token_defaults, etc.)
@@ -294,40 +293,35 @@ class BaseHandler(AbstractStepHandler):
 
         response_format merging from prompt.json_schema preserved for compatibility.
 
-        Filtering: Only ALLOWED_GENERATION_PARAMS passed to ProxyClient.
-
         Token constraint invariant: max_tokens from resolved_config already includes
         constrained_multiplier when expansion_safe=false, so explicit step values
         must not override it (would bypass epistemic boundedness constraint).
+
+        Returns:
+            Tuple of (filtered_params, removed_keys). removed_keys is empty
+            when no filtering occurred.
         """
-        # Start with resolved config values (handler-calculated, token_defaults, etc.)
-        params = {}
+        params: dict[str, Any] = {}
         if resolved_config.get("temperature") is not None:
             params["temperature"] = resolved_config["temperature"]
         if resolved_config.get("max_tokens") is not None:
             params["max_tokens"] = resolved_config["max_tokens"]
 
-        # Overlay step's generation_parameters (explicit overrides take precedence)
-        # Exclude max_tokens: already resolved with constraint multiplier applied
         step_overrides = {
             k: v for k, v in step.generation_parameters.items() if k != "max_tokens"
         }
         params.update(step_overrides)
 
-        # Special case: merge response_format from prompt.json_schema if not in step
-        # (backward compatibility for prompts that specify json_schema)
         if not params.get("response_format") and resolved_config.get("json_schema"):
             params["response_format"] = {
                 "type": "json_object",
                 "schema": resolved_config["json_schema"],
             }
 
-        # Filter to whitelist
         filtered = {
             k: v for k, v in params.items() if k in self.ALLOWED_GENERATION_PARAMS
         }
 
-        # Warn on filtered params
         removed = set(params.keys()) - set(filtered.keys())
         if removed:
             logger.warning(
@@ -335,7 +329,7 @@ class BaseHandler(AbstractStepHandler):
                 f"Allowed: {self.ALLOWED_GENERATION_PARAMS}"
             )
 
-        return filtered
+        return filtered, removed
 
     def _looks_like_full_model_id(self, model_id: str) -> bool:
         """
@@ -801,13 +795,24 @@ class BaseHandler(AbstractStepHandler):
             user_prompt=prompt,
         )
 
-        # Build generation params with filtering
         resolved = {
             "temperature": temperature,
             "max_tokens": max_tokens,
             "json_schema": json_schema,
         }
-        params = self._build_generation_params(step, resolved)
+        params, removed_params = self._build_generation_params(step, resolved)
+
+        if removed_params and context.recorder:
+            from ..events.inference import GenerationParamsFiltered
+
+            context.recorder.emit(
+                GenerationParamsFiltered(
+                    step_name=step.name,
+                    model_id=resolved_model_id,
+                    removed_keys=sorted(removed_params),
+                    allowed_keys=sorted(self.ALLOWED_GENERATION_PARAMS),
+                )
+            )
 
         # Explicitly remove response_format for free-form output (e.g., math LaTeX)
         if disable_json_response:
