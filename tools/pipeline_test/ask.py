@@ -197,7 +197,7 @@ def _query_model(
 
     start = time.monotonic()
     with httpx.Client(timeout=timeout) as client:
-        resp = client.post(url, json=body)
+        resp = client.post(url, json=body, params={"disable_profile": "true"})
     elapsed_ms = (time.monotonic() - start) * 1000
 
     resp.raise_for_status()

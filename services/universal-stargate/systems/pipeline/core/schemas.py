@@ -48,6 +48,12 @@ class PipelineOptions(BaseModel):
     timeout_seconds: int = 60
     max_tokens: int | None = None
     skip_token_counting: bool = False
+    # Profile control — pipelines manage their own generation parameters,
+    # so model-assigned profiles (e.g. "creative" on qwen2-5) are suppressed by default.
+    # Set disable_profile=False to allow profile assignment, or set profile
+    # to a specific profile name to apply it to all steps.
+    disable_profile: bool = True
+    profile: str | None = None
     save_execution_summary: bool = False  # Write detailed execution log to disk
     summary_format: str = (
         "markdown"  # Format: "markdown" (default), "yaml", "json", or "all"
@@ -57,7 +63,7 @@ class PipelineOptions(BaseModel):
         """Get option by key (explicit or extra)."""
         if hasattr(self, key):
             return getattr(self, key)
-        return self.model_extra.get(key, default)
+        return (self.model_extra or {}).get(key, default)
 
     def to_context_dict(self) -> dict[str, Any]:
         """
@@ -67,7 +73,7 @@ class PipelineOptions(BaseModel):
         by extracting the 'default' value instead of returning the schema dict.
         """
         result = self.model_dump()
-        result.update(self.model_extra)
+        result.update(self.model_extra or {})
 
         # Extract defaults from schema definitions
         # Schema format: {"type": "...", "description": "...", "default": value}
@@ -504,6 +510,9 @@ class StepConfig(BaseModel):
     prompt_ref: str | None = None
     condition: str | None = None
     skip_token_counting: bool | None = None
+    # Step-level profile control — None means inherit from pipeline options.
+    disable_profile: bool | None = None
+    profile: str | None = None
     inputs: list[str] | None = None  # Legacy - prefer handler_inputs
     from_: str | None = Field(None, alias="from")
     source_text_id: str | None = None

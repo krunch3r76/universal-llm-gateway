@@ -198,6 +198,8 @@ class ProxyClient:
         execution_id: str | None = None,
         step_id: str | None = None,
         skip_token_counting: bool = False,
+        disable_profile: bool = True,
+        profile: str | None = None,
         timeout: float | None = None,
         map_iteration_request_id: str | None = None,
         **params: Any,
@@ -212,6 +214,12 @@ class ProxyClient:
             step_id: Pipeline step ID (for tracing)
             skip_token_counting: Skip pre-request token counting
                 (default: False — token counting runs for slot-aware max_tokens)
+            disable_profile: Suppress model-assigned profile injection (default: True).
+                Pipelines manage their own generation parameters; automatic profile
+                application (e.g. "creative" on qwen2-5) is counterproductive.
+            profile: Explicit profile to apply (overrides model assignment).
+                Passed as ?filter= query param. Takes effect only when
+                disable_profile=False, or forces the named profile when set.
             timeout: Request timeout (overrides default)
             map_iteration_request_id: Pre-generated per-iteration request ID
                 for cancellation tracking. If None, generates new UUID.
@@ -242,13 +250,13 @@ class ProxyClient:
         # for 1 acquisition → double-wake → livelock.
         unique_request_id = str(uuid.uuid4())
 
-        # Build request body
+        # Build request body (stream=False enforced after merge — pipeline invariant)
         request_body: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "stream": False,  # Pipeline always non-streaming (aggregates internally)
             **params,
         }
+        request_body["stream"] = False
 
         # Build headers for internal identification
         # Use unique_request_id for X-Internal-Request-ID (becomes proxy request_id)
@@ -260,6 +268,18 @@ class ProxyClient:
             unique_request_id,  # Each call gets unique ID for capacity tracking
         )
 
+        # Build query params for profile control.
+        # disable_profile and profile (alias: filter) are Stargate-only query params
+        # — they control profile application without entering the forwarded body.
+        # When profile is set, do not pass disable_profile — Stargate skips all
+        # profile logic when disable_profile=true, so the explicit profile would
+        # be ignored.
+        query_params: dict[str, str] = {}
+        if disable_profile and not profile:
+            query_params["disable_profile"] = "true"
+        if profile:
+            query_params["filter"] = profile
+
         # Apply timeout override if specified
         request_timeout = timeout or self._config.request_timeout
 
@@ -268,6 +288,7 @@ class ProxyClient:
                 "/v1/chat/completions",
                 json=request_body,
                 headers=request_headers,
+                params=query_params,
                 timeout=request_timeout,
             )
 

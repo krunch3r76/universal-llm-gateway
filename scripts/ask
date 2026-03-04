@@ -98,7 +98,7 @@ else
 fi
 
 RESPONSE=$(curl -sf --max-time 180 \
-	"${STARGATE_URL}/v1/chat/completions" \
+	"${STARGATE_URL}/v1/chat/completions?disable_profile=true" \
 	-H 'Content-Type: application/json' \
 	-d "$BODY") || {
 	echo "Error: request failed (is Stargate running on ${STARGATE_URL}?)" >&2

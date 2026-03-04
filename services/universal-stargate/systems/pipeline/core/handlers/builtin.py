@@ -843,6 +843,15 @@ class BaseHandler(AbstractStepHandler):
         if skip_tc is None:
             skip_tc = context.pipeline.options.skip_token_counting
 
+        # Resolve profile control: step overrides pipeline options.
+        # disable_profile defaults True in PipelineOptions — pipelines own their params.
+        effective_disable_profile = step.disable_profile
+        if effective_disable_profile is None:
+            effective_disable_profile = context.pipeline.options.disable_profile
+        effective_profile = step.profile
+        if effective_profile is None:
+            effective_profile = context.pipeline.options.profile
+
         recorder = context.recorder
         call_start = _time.monotonic()
 
@@ -859,6 +868,8 @@ class BaseHandler(AbstractStepHandler):
                 execution_id=context.execution_id,
                 step_id=step.id,
                 skip_token_counting=skip_tc,
+                disable_profile=effective_disable_profile,
+                profile=effective_profile,
                 timeout=http_timeout,
                 map_iteration_request_id=context.map_iteration_request_id,
                 **params,
