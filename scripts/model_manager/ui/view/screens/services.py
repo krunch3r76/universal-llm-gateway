@@ -17,7 +17,7 @@ from ..widgets.log_stream import LogStream
 
 _SCOPE_FLAGS: dict[str, list[str]] = {
     "all": ["--cpu-native", "--gpu-native"],
-    "llama": ["--cpu-native", "--gpu-native", "--no-vllm"],
+    "llama": ["--cpu-native", "--gpu-native"],
 }
 
 

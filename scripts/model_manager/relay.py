@@ -79,11 +79,18 @@ def _render_template(template: Path, env: dict[str, str]) -> Path:
 
 _SCOPE_FLAGS: dict[str, list[str]] = {
     "all": ["--cpu-native", "--gpu-native"],
-    "llama": ["--cpu-native", "--gpu-native", "--no-vllm"],
+    "llama": ["--cpu-native", "--gpu-native"],
 }
 
 _STARGATE_SENTINEL = "Stargate Proxy started successfully"
 _STARGATE_STARTUP_TIMEOUT = 60
+
+
+def _write_stargate_pid(pid: int) -> None:
+    """Write relay Stargate PID for ServiceController stop/restart flows."""
+    pid_path = _GATEWAY_DIR / "stargate.pid"
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(f"{pid}\n")
 
 
 def _run_build(scope: str = "all") -> int:
@@ -191,17 +198,20 @@ def _launch_stargate(node_id: str, stargate_env: dict[str, str]) -> int:
             if line:
                 print(line.rstrip())
                 if _STARGATE_SENTINEL in line:
+                    _write_stargate_pid(proc.pid)
                     print(f"Relay started (PID {proc.pid})")
                     return 0
             elif proc.poll() is not None:
                 for rest in reader:
                     print(rest.rstrip())
+                (_GATEWAY_DIR / "stargate.pid").unlink(missing_ok=True)
                 logger.error("Stargate exited early (code %d)", proc.returncode)
                 return proc.returncode
             else:
                 time.sleep(0.2)
 
     if proc.poll() is None:
+        _write_stargate_pid(proc.pid)
         logger.warning(
             "Stargate running (PID %d) but startup not confirmed within %ds",
             proc.pid,

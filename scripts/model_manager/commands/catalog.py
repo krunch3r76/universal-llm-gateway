@@ -73,6 +73,9 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
         )
         return 1
 
+    # Thinking model flag
+    thinking = getattr(args, "thinking", False)
+
     # Validate vision model flags
     mmproj = getattr(args, "mmproj", None)
     vision_arch = getattr(args, "vision_architecture", None)
@@ -123,6 +126,11 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
         print(f"Found {len(models)} model(s)")
         entries = generator.generate_batch(models, trace_source=not args.no_trace)
 
+        # Inject thinking capability into all entries if flagged
+        if thinking:
+            for entry in entries.values():
+                entry.setdefault("metadata", {})["supports_thinking"] = True
+
         # Inject vision metadata into all entries if provided
         if mmproj and vision_arch and tokens_per_image:
             for entry in entries.values():
@@ -140,6 +148,10 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
                 hf_repo=args.repo,
                 hf_file=hf_file,
             )
+
+            # Inject thinking capability if flagged
+            if thinking:
+                entry.setdefault("metadata", {})["supports_thinking"] = True
 
             # Inject vision metadata if provided
             if mmproj and vision_arch and tokens_per_image:
@@ -433,11 +445,7 @@ def _info_from_files(
             # Show complete devices with loader and profiles (V2)
             if hasattr(cat_model, "devices") and cat_model.devices:
                 print("devices:")
-                print(
-                    yaml.dump(
-                        cat_model.devices, default_flow_style=False, indent=2
-                    )
-                )
+                print(yaml.dump(cat_model.devices, default_flow_style=False, indent=2))
             else:
                 print("❌ No devices configured (invalid V2 entry)", file=sys.stderr)
                 return 1  # Fail fast

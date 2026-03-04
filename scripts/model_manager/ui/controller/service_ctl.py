@@ -112,8 +112,6 @@ class ServiceController:
         if no_cache:
             args.append("--no-cache")
         args.append("--refresh-source")
-        if scope == "llama":
-            args.append("--no-vllm")
 
         log_path = Path("/tmp/rebuild-gpu.log")
         cmd_line = f"$ {' '.join(args)}"

@@ -174,11 +174,34 @@ class BaseEngineSchema(ABC):
                 )
             )
 
+        if devices is None:
+            issues.append(
+                ValidationIssue(
+                    model_id=model_id,
+                    severity="error",
+                    message="devices must be a dict when present",
+                    field="devices",
+                    fix="Remove devices for static entries or provide a dict of device configs",
+                )
+            )
+            return issues
+        if not isinstance(devices, dict):
+            issues.append(
+                ValidationIssue(
+                    model_id=model_id,
+                    severity="error",
+                    message="devices must be a dict when present",
+                    field="devices",
+                    fix="Provide devices as a mapping of device_name -> config",
+                )
+            )
+            return issues
+
         # V3 static entries have no devices section — this is valid
         catalog_schema = entry.get("catalog_schema", 0)
-        is_v3_static = catalog_schema >= 3 and not devices
+        is_v3_static = catalog_schema >= 3 and devices == {}
 
-        if not devices:
+        if devices == {}:
             if not is_v3_static:
                 issues.append(
                     ValidationIssue(
@@ -235,8 +258,30 @@ class BaseEngineSchema(ABC):
                 )
             )
             return issues
+        if not isinstance(profiles, dict):
+            issues.append(
+                ValidationIssue(
+                    model_id=model_id,
+                    severity="error",
+                    message=f"profiles in {device_name} must be a dict",
+                    field=f"devices.{device_name}.profiles",
+                    fix="Provide profiles as a mapping of profile_key -> profile config",
+                )
+            )
+            return issues
 
         for profile_key, profile in profiles.items():
+            if not isinstance(profile, dict):
+                issues.append(
+                    ValidationIssue(
+                        model_id=model_id,
+                        severity="error",
+                        message=f"Profile '{profile_key}' must be a dict",
+                        field=f"devices.{device_name}.profiles.{profile_key}",
+                        fix="Define profile as a mapping with resource fields like vram_mb/ram_mb",
+                    )
+                )
+                continue
             # Validate profile key format
             if self.profile_type == "context_length":
                 if not str(profile_key).isdigit():
@@ -302,6 +347,19 @@ class BaseEngineSchema(ABC):
 
         quant_value = metadata.get("quant")
         quant_str = str(quant_value) if quant_value is not None else None
+        parameters_m = metadata.get("parameters_m")
+        parameters: int | None = None
+        if isinstance(parameters_m, int | float) and not isinstance(parameters_m, bool):
+            if parameters_m >= 0:
+                parameters = int(parameters_m * 1_000_000)
+        elif isinstance(parameters_m, str):
+            raw = parameters_m.strip()
+            try:
+                parsed = float(raw)
+                if parsed >= 0:
+                    parameters = int(parsed * 1_000_000)
+            except ValueError:
+                parameters = None
 
         return {
             "name": metadata.get("name", model_id),
@@ -313,9 +371,10 @@ class BaseEngineSchema(ABC):
             "arch": metadata.get("arch"),
             "quant": quant_str,
             "license": metadata.get("license"),
-            "parameters": (metadata.get("parameters_m") or 0) * 1_000_000,
+            "parameters": parameters,
             "training_context_length": metadata.get("training_context_length"),
             "supports_chat_history": metadata.get("supports_chat_history", True),
+            "supports_thinking": metadata.get("supports_thinking", False),
             "input_schema": metadata.get("input_schema", "messages"),
             "description": metadata.get("description"),
             "activated_gpu_contexts": metadata.get("activated_gpu_contexts", []),

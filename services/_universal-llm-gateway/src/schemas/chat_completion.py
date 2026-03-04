@@ -10,7 +10,7 @@ import time
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ChatMessage(BaseModel):
@@ -104,12 +104,25 @@ class ChatCompletionRequest(BaseModel):
     )
     user: str | None = Field(None, description="User identifier")
 
-    def model_post_init(self, __context) -> None:
-        """Validate that either messages or prompt is provided"""
+    # Chat template control — forwarded verbatim to llama-server
+    # ∀ thinking-capable models: set {"enable_thinking": false} to suppress <think> tokens
+    # Default unset → model/server default applies (thinking on for Qwen3.5, etc.)
+    chat_template_kwargs: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Jinja template kwargs forwarded to llama-server. "
+            'Use {"enable_thinking": false} to disable thinking mode on supporting models.'
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_prompt_or_messages(self) -> "ChatCompletionRequest":
+        """Validate that either messages or prompt is provided."""
         if not self.messages and not self.prompt:
             raise ValueError("Either 'messages' or 'prompt' field must be provided")
         if self.messages and self.prompt:
             raise ValueError("Cannot provide both 'messages' and 'prompt' fields")
+        return self
 
     model_config = ConfigDict(extra="allow")
 

@@ -2,10 +2,11 @@
 Base metadata extraction classes and dataclasses.
 """
 
-from universal_logging import get_logger
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -27,6 +28,7 @@ class CatalogMetadata:
 
     # Capabilities
     supports_chat_history: bool = True
+    supports_thinking: bool = False
     input_schema: str = "messages"
     has_chat_template: bool = False
 
@@ -58,6 +60,7 @@ class CatalogMetadata:
             result["license"] = self.license
 
         result["supports_chat_history"] = self.supports_chat_history
+        result["supports_thinking"] = self.supports_thinking
         result["input_schema"] = self.input_schema
 
         return result

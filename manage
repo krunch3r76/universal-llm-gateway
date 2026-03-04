@@ -41,7 +41,7 @@ check_venv_support() {
     exit 1
 }
 
-HEADLESS_SUBCOMMANDS="relay topology"
+HEADLESS_SUBCOMMANDS="relay topology update"
 is_headless() {
     [[ -n "${1:-}" ]] && [[ " $HEADLESS_SUBCOMMANDS " == *" $1 "* ]]
 }
@@ -123,6 +123,10 @@ case "${1:-}" in
     topology)
         shift
         exec "$VENV_PYTHON" -m scripts.model_manager.topology "$@"
+        ;;
+    update)
+        shift
+        exec "$VENV_PYTHON" -m scripts.model_manager.update "$@"
         ;;
     *)
         exec "$VENV_PYTHON" -m scripts.model_manager.ui "$@"

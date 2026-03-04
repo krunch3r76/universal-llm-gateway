@@ -70,6 +70,15 @@ class GGUFModelInfo(BaseModel):
     supports_chat_history: bool = Field(..., description="Supports chat history")
     input_schema: Literal["prompt", "messages"] = Field(..., description="Input format")
 
+    # Optional Capabilities
+    supports_thinking: bool = Field(
+        False,
+        description=(
+            "Model supports extended thinking / chain-of-thought via chat template. "
+            'Enables chat_template_kwargs={"enable_thinking": ...} per request.'
+        ),
+    )
+
     # Optional Extended Fields (include even if rarely used)
     description: str | None = Field(None, description="Model description")
     capabilities: list[str] | None = Field(None, description="Model capabilities")
@@ -237,6 +246,15 @@ class HFModelInfo(BaseModel):
     supports_chat_history: bool = Field(..., description="Supports chat history")
     input_schema: Literal["prompt", "messages"] = Field(..., description="Input format")
 
+    # Optional Capabilities
+    supports_thinking: bool = Field(
+        False,
+        description=(
+            "Model supports extended thinking / chain-of-thought via chat template. "
+            'Enables chat_template_kwargs={"enable_thinking": ...} per request.'
+        ),
+    )
+
     # Optional Extended Fields
     description: str | None = Field(None, description="Model description")
     capabilities: list[str] | None = Field(None, description="Model capabilities")
@@ -256,14 +274,16 @@ class HFModelInfo(BaseModel):
 
 class HFLoaderConfig(BaseModel):
     """HuggingFace/vLLM loader configuration.
-    
+
     All parameters are optional except max_model_len.
     No defaults provided - catalog must be explicit.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    trust_remote_code: bool = Field(False, description="Execute remote code (SECURITY: always False)")
+    trust_remote_code: bool = Field(
+        False, description="Execute remote code (SECURITY: always False)"
+    )
     gpu_memory_utilization: float | None = Field(
         None, description="GPU memory fraction (0.0-1.0)"
     )
@@ -273,7 +293,9 @@ class HFLoaderConfig(BaseModel):
     disable_custom_all_reduce: bool = Field(
         True, description="Disable custom all-reduce (stability)"
     )
-    disable_log_stats: bool = Field(True, description="Disable statistics logging (noise)")
+    disable_log_stats: bool = Field(
+        True, description="Disable statistics logging (noise)"
+    )
     disable_sliding_window: bool | None = Field(
         None,
         description="Whether to disable sliding window attention. AWQ models with RoPE scaling require this to be false.",

@@ -66,6 +66,13 @@ def add_generate_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Overwrite existing verified registry entry",
     )
 
+    # Thinking / reasoning model options
+    p.add_argument(
+        "--thinking",
+        action="store_true",
+        help="Mark model as supporting extended thinking (chat_template_kwargs enable_thinking)",
+    )
+
     # Vision model options
     vision_group = p.add_argument_group("Vision Model Options")
     vision_group.add_argument(
@@ -76,7 +83,14 @@ def add_generate_parser(subparsers: argparse._SubParsersAction) -> None:
     vision_group.add_argument(
         "--vision-architecture",
         metavar="ARCH",
-        choices=["qwen2_vl", "llava_1_5", "llava_1_6", "minicpm_v", "moondream", "mistral3"],
+        choices=[
+            "qwen2_vl",
+            "llava_1_5",
+            "llava_1_6",
+            "minicpm_v",
+            "moondream",
+            "mistral3",
+        ],
         help="Vision architecture (required with --mmproj)",
     )
     vision_group.add_argument(
@@ -158,7 +172,9 @@ def add_download_from_catalog_parser(subparsers: argparse._SubParsersAction) -> 
         help="Download model from static catalog (supports GGUF and vLLM formats)",
     )
     p.add_argument("model_id", help="Model ID from catalog to download")
-    p.add_argument("--dest", type=Path, help="Destination directory (default: MODEL_PATH_ROOT)")
+    p.add_argument(
+        "--dest", type=Path, help="Destination directory (default: MODEL_PATH_ROOT)"
+    )
     p.add_argument(
         "--ignore-patterns",
         nargs="+",
@@ -301,7 +317,9 @@ Resource caps:
         help="[Deprecated] GPU mode is now the default. This flag is ignored.",
     )
     p.add_argument(
-        "--cpu", action="store_true", help="CPU-only mode (default: GPU with hybrid offload)"
+        "--cpu",
+        action="store_true",
+        help="CPU-only mode (default: GPU with hybrid offload)",
     )
     p.add_argument(
         "--gpu-index", type=int, default=0, help="GPU index to use (default: 0)"
@@ -500,7 +518,8 @@ def add_lint_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Lint catalog for V2 schema compliance",
     )
     parser.add_argument(
-        "--catalog", "-c",
+        "--catalog",
+        "-c",
         dest="catalog_file",
         help="Path to catalog YAML file",
     )
@@ -513,7 +532,8 @@ def add_stats_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Display catalog summary statistics",
     )
     parser.add_argument(
-        "--catalog", "-c",
+        "--catalog",
+        "-c",
         dest="catalog_file",
         help="Path to catalog YAML file",
     )
