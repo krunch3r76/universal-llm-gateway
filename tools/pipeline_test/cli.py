@@ -10,7 +10,7 @@ Subcommands:
     refine-context  Agent-optimized context views for one step
     replay      Re-execute a model call against running Stargate
     compare     Diff original vs replay output
-    consult     Query consultant models for prompt improvements
+    consult     Query consultant models for prompt improvements (chained by default)
     ask         Free-form question to local models with RAG context
     ingest-papers  Copy PDFs into RAG corpus directory for indexing
     sandbox     Manage pipeline sandboxes for experimentation
@@ -422,7 +422,7 @@ def _validate_scope(scope: str | None, rag_url: str) -> str | None:
 def _add_consult_parser(sub: Any) -> None:
     p = sub.add_parser(
         "consult",
-        help="Query other models for prompt improvement suggestions",
+        help="Query other models for prompt improvement suggestions (chained by default)",
     )
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument("fixture", nargs="?", default=None, help="Path to fixture JSON")
@@ -528,11 +528,11 @@ def _add_consult_parser(sub: Any) -> None:
         ),
     )
     p.add_argument(
-        "--chain",
+        "--parallel",
         action="store_true",
         help=(
-            "Run models sequentially, each reviewing the prior model's "
-            "output (default: parallel)"
+            "Run models in parallel instead of chained "
+            "(default: chained — each model reviews the prior model's output)"
         ),
     )
     p.set_defaults(func=_cmd_consult)
@@ -543,8 +543,14 @@ def _cmd_consult(args: argparse.Namespace) -> None:
     step = _resolve_step(snap, args.step)
 
     consultant_models = args.models or consult_svc.resolve_consultant_models()
-    print(f"Consulting about: {step.step_name}")
-    print(f"  Models: {', '.join(consultant_models)}")
+    mode = "parallel" if args.parallel else "chained"
+    display_models = (
+        consultant_models
+        if args.parallel
+        else consult_svc.order_for_chain(consultant_models)
+    )
+    print(f"Consulting about: {step.step_name} ({mode})")
+    print(f"  Models: {' → '.join(display_models)}")
     print(f"  Problem: {args.problem}")
     validated_scope: str | None = None
     if not args.no_rag:
@@ -703,22 +709,23 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         "step": step,
         "problem": args.problem,
         "call_label": args.call,
-        "models": args.models,
+        "models": consultant_models,
         "rag_findings": rag_findings,
         "stargate_url": args.url,
         "timeout": args.timeout,
         "output_limit_chars": output_limit,
     }
 
-    if args.chain:
+    if args.parallel:
+        results = consult_svc.consult_step(**common_kwargs)
+        for result in results:
+            _print_result(result, "CONSULTANT")
+    else:
+        common_kwargs["models"] = consult_svc.order_for_chain(consultant_models)
         results = consult_svc.chain_step(
             **common_kwargs,
             on_result=lambda r, i, n: _print_chain_result(r, i, n, "CONSULTANT"),
         )
-    else:
-        results = consult_svc.consult_step(**common_kwargs)
-        for result in results:
-            _print_result(result, "CONSULTANT")
 
 
 def _print_result(result: ConsultResult, label: str) -> None:

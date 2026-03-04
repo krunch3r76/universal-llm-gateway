@@ -1,9 +1,9 @@
 """Consultation service: query other models for prompt improvement suggestions.
 
 Sends pipeline step context (prompt + output + problem description) to
-consultant models via Stargate in parallel, returning their analysis.
-Supports chained mode where models run sequentially, each reviewing the
-prior model's output.
+consultant models via Stargate, returning their analysis.  Default mode
+is chained (sequential, each model reviews the prior model's output);
+parallel mode is available for independent perspectives.
 """
 
 from __future__ import annotations
@@ -64,6 +64,18 @@ DEFAULT_CONSULTANTS: list[str] = [
     "gpt-oss-20b-mxfp4-65536",
     "google/gemini-2.5-flash",
 ]
+
+
+def order_for_chain(models: list[str]) -> list[str]:
+    """Order models for chaining: local first (analyst), cloud second (reviewer).
+
+    Local models (no '/' in ID) have lower context and are typically lower-tier,
+    making them natural analysts. Cloud models review and augment.
+    Preserves relative order within each group.
+    """
+    local = [m for m in models if "/" not in m]
+    cloud = [m for m in models if "/" in m]
+    return local + cloud
 
 _CONSULT_SELECT_TAGS: list[str] = ["code", "reasoning"]
 _CONSULT_SELECT_MIN_CONTEXT: int = 32768
