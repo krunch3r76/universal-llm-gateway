@@ -10,7 +10,7 @@ architect: |
 
 architect_select:
   tags: [general, reasoning]
-  exclude_tags: [fast]
+  exclude_tags: [fast, local]
   min_context: 128000
 
 reviewer: |
@@ -49,6 +49,7 @@ planner: |
 
 planner_select:
   tags: [code, reasoning]
+  exclude_tags: [local]
   min_context: 65536
 
 researcher: |

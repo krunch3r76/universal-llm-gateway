@@ -8,6 +8,7 @@ cost-sorted selection results.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -29,6 +30,7 @@ class LocalCatalogCache:
         self._stargate_url = stargate_url.rstrip("/")
         self._models: list[dict[str, Any]] = []
         self._last_refresh: float = 0.0
+        self._refresh_lock = asyncio.Lock()
 
     @property
     def is_stale(self) -> bool:
@@ -45,7 +47,11 @@ class LocalCatalogCache:
             response = await client.get(url, params={"include_metadata": "true"})
             response.raise_for_status()
 
-        raw_models: list[dict[str, Any]] = response.json().get("data", [])
+        payload = response.json()
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        if not isinstance(data, list):
+            raise ValueError("Invalid /v1/models payload: data must be a list")
+        raw_models: list[dict[str, Any]] = [m for m in data if isinstance(m, dict)]
         self._models = [
             _process_local_model(m)
             for m in raw_models
@@ -61,14 +67,19 @@ class LocalCatalogCache:
 
     async def ensure_fresh(self) -> None:
         """Refresh if cache is stale."""
-        if self.is_stale:
+        if not self.is_stale:
+            return
+
+        async with self._refresh_lock:
+            if not self.is_stale:
+                return
             try:
                 await self.refresh()
             except Exception as exc:
-                logger.debug("Local catalog refresh failed: %s", exc)
+                logger.warning("Local catalog refresh failed: %s", exc, exc_info=True)
 
     def get_models(self) -> list[dict[str, Any]]:
-        return self._models
+        return [model.copy() for model in self._models]
 
 
 def _process_local_model(raw: dict[str, Any]) -> dict[str, Any]:
@@ -77,7 +88,31 @@ def _process_local_model(raw: dict[str, Any]) -> dict[str, Any]:
     context_length = raw.get("context_length", 0) or raw.get(
         "effective_context_per_slot", 0
     )
-    tags = derive_tags(model_id)
+
+    modality = ""
+    capabilities: dict[str, Any] | None = raw.get("capabilities") or None
+    if isinstance(capabilities, dict):
+        modalities = capabilities.get("modalities", {})
+        if isinstance(modalities, dict):
+            input_modalities_raw = modalities.get("input", [])
+            output_modalities_raw = modalities.get("output", [])
+
+            input_modalities = (
+                input_modalities_raw if isinstance(input_modalities_raw, list) else []
+            )
+            output_modalities = (
+                output_modalities_raw if isinstance(output_modalities_raw, list) else []
+            )
+
+            all_modalities = {
+                value
+                for value in [*input_modalities, *output_modalities]
+                if isinstance(value, str)
+            }
+            all_modalities.discard("text")
+            modality = ",".join(sorted(all_modalities))
+
+    tags = sorted({*derive_tags(model_id, modality), "local"})
 
     return {
         "id": model_id,
@@ -88,9 +123,10 @@ def _process_local_model(raw: dict[str, Any]) -> dict[str, Any]:
         "completion_cost": 0.0,
         "image_cost": 0.0,
         "request_cost": 0.0,
-        "modality": "",
+        "modality": modality,
         "description": "",
         "tags": tags,
         "tier": derive_tier(model_id, 0.0, "local"),
         "source": "local",
+        "capabilities": capabilities,
     }

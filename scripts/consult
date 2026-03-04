@@ -66,8 +66,11 @@ def _fetch_scope_choices(rag_url: str = DEFAULT_RAG_URL) -> list[str]:
             scopes = data.get("scopes", {})
             if isinstance(scopes, dict) and scopes:
                 return list(scopes.keys())
-    except Exception:
-        pass
+    except Exception as exc:
+        print(
+            f"RAG scope discovery failed ({exc}); using default scopes",
+            file=sys.stderr,
+        )
     return ["project", "research", "all"]
 
 
@@ -93,7 +96,11 @@ def _fetch_scope_options_text(rag_url: str = DEFAULT_RAG_URL) -> str:
             lines.append(f'"{name}" — {desc}' if desc else f'"{name}"')
         lines.append('"all" — when unclear or mixed across multiple scopes')
         return "\n        ".join(lines)
-    except Exception:
+    except Exception as exc:
+        print(
+            f"RAG scope option fetch failed ({exc}); using fallback text",
+            file=sys.stderr,
+        )
         return '"research", "project", or "all"'
 
 
@@ -163,6 +170,33 @@ def _select_models_for_role(
     return None
 
 
+def _is_local_model_id(model_id: str) -> bool:
+    """Heuristic: local models lack '/' (cloud IDs use provider/model format)."""
+    return "/" not in model_id
+
+
+def _warn_local_model_for_role(
+    role: str,
+    model_ids: list[str],
+    role_select: dict[str, dict[str, Any]],
+) -> None:
+    """Warn when --models includes local models for a role that excludes them."""
+    select_config = role_select.get(role)
+    if not select_config:
+        return
+    exclude_tags = select_config.get("exclude_tags", [])
+    if not isinstance(exclude_tags, list) or "local" not in exclude_tags:
+        return
+    local_models = [model_id for model_id in model_ids if _is_local_model_id(model_id)]
+    if not local_models:
+        return
+    print(
+        f"Warning: role '{role}' excludes local models in auto-selection, "
+        f"but --models includes: {', '.join(local_models)}",
+        file=sys.stderr,
+    )
+
+
 def _fetch_available_model_ids(
     stargate_url: str,
     *,
@@ -186,7 +220,11 @@ def _fetch_available_model_ids(
             for model in data
             if isinstance(model, dict) and isinstance(model.get("id"), str)
         }
-    except Exception:
+    except Exception as exc:
+        print(
+            f"Failed to fetch available model IDs from Stargate ({exc})",
+            file=sys.stderr,
+        )
         return None
 
 
@@ -614,6 +652,7 @@ def main() -> None:
 
     if args.models:
         target_models = args.models
+        _warn_local_model_for_role(args.role, target_models, role_select)
     else:
         selected = _select_models_for_role(args.role, role_select)
         if selected:
