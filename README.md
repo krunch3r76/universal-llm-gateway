@@ -253,6 +253,10 @@ universal-llm-gateway/
 └── tools/                            # Developer utilities (pipeline viewer, test infra)
 ```
 
+## Documentation
+
+Architecture docs live in [`docs/architecture/`](docs/architecture/overview.md) — start with the [system overview](docs/architecture/overview.md) for service roles, request flow, and deployment topology.
+
 ## License
 
 MIT License — see [LICENSE](LICENSE).

@@ -18,14 +18,14 @@ from typing import TYPE_CHECKING, Any
 from model_id import ModelId, validate_model_id
 from universal_logging import get_logger
 
-from .eviction.planner import unload_models
 from .selection.collector import build_placement
 from .selection.decision import DecisionEngine, FeasibilityTier, load_routing_policy
 
 if TYPE_CHECKING:
     from systems.federation.master.routing.forward import FederatedRequestForwarder
 
-    from .selection.types import DecisionTrace, Gateway, Placement
+    from .selection.decision.types import DecisionTrace
+    from .selection.types import Gateway, Placement
 
 logger = get_logger(__name__)
 
@@ -294,7 +294,7 @@ class ModelRouter:
         Returns:
             Refreshed gateway list (or original if no refresh needed/timeout)
         """
-        max_telemetry_age_ms = 1000  # 1 second threshold
+        max_telemetry_age_ms = self._routing_policy.telemetry_max_age_ms
         stale_gateways = [
             gw
             for gw in gateways
@@ -307,12 +307,16 @@ class ModelRouter:
 
         logger.debug(f"Telemetry stale on {len(stale_gateways)} gateways, waiting...")
 
-        if await self._telemetry_waiter.wait_for_telemetry_update(timeout_s=0.5):
+        refresh_timeout_s = self._routing_policy.telemetry_refresh_timeout_s
+        updated = await self._telemetry_waiter.wait_for_telemetry_update(
+            timeout_s=refresh_timeout_s
+        )
+        if updated:
             logger.debug("✅ Received fresh telemetry update")
             return self._collect_candidate_gateways()
 
         logger.warning(
-            f"⚠️ Telemetry sync timed out after 500ms "
+            f"⚠️ Telemetry sync timed out after {int(refresh_timeout_s * 1000)}ms "
             f"(stale on {len(stale_gateways)} gateways), using cached data"
         )
         return gateways
@@ -445,7 +449,7 @@ class ModelRouter:
         parsed_result = self._validate_and_parse_model(model_id)
         if not parsed_result:
             return None
-        parsed, routing_key = parsed_result
+        parsed = parsed_result[0]
 
         # 2. Build placement
         placement = await build_placement(
@@ -496,7 +500,7 @@ class ModelRouter:
                     if parsed in g.loaded_models
                 )
 
-            timeout_s = 30.0
+            timeout_s = self._routing_policy.capacity_acquire_timeout_s
 
             try:
                 token = await self._capacity_pool.acquire_token(
@@ -530,46 +534,6 @@ class ModelRouter:
             return None  # Return to queue, retry later
 
         return selected
-
-    # -------------------------------------------------------------------------
-    # Supporting Methods
-    # -------------------------------------------------------------------------
-
-    async def _is_cpu_model(self, model_id: str) -> bool:
-        """
-        Check if model is CPU-only.
-
-        Required by: ResourceVerifier
-        """
-        from model_id import ModelId
-
-        parsed = ModelId.parse(model_id)
-        placement = await build_placement(parsed, self.gateway_manager)
-        return placement is not None and not placement.is_gpu
-
-    async def _is_gpu_model(self, model_id: str) -> bool:
-        """
-        Check if model uses GPU.
-
-        Required by: ResourceVerifier
-        """
-        return not await self._is_cpu_model(model_id)
-
-    def _is_hybrid_request(self, routing_model_id: str, original_model_id: str) -> bool:
-        """Determine if this request is for a hybrid model."""
-        return "-hybrid" in original_model_id
-
-    async def _execute_eviction(
-        self, gateway_instance, models_to_evict: list[str]
-    ) -> bool:
-        """Execute eviction plan."""
-        if not models_to_evict:
-            return True
-        return await unload_models(
-            self._load_waiter,
-            gateway_instance,
-            models_to_evict,
-        )
 
     def log_routing_stats(self) -> None:
         """Log current routing statistics."""

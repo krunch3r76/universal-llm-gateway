@@ -39,7 +39,7 @@ federation coordination, pipeline execution, and model profiles.
 |---|---|---|
 | `StargateProxy` | `systems/proxy/stargate/proxy.py` | Central orchestrator |
 | `RequestPreparer` | `systems/proxy/core/nonstreaming/preparer.py` | Validation, model ID, profiles, sticky |
-| `RequestExecutor` | `systems/proxy/core/nonstreaming/executor.py` | Gateway selection, forwarding |
+| `RequestExecutor` | `systems/proxy/core/nonstreaming/executor/core.py` | Gateway selection, forwarding |
 | `RequestContext` | `systems/proxy/core/nonstreaming/context.py` | Per-request state |
 | `PipelineExecutor` | `systems/pipeline/core/executor.py` | DAG-based pipeline execution |
 | `PipelineRegistry` | `systems/pipeline/core/registry.py` | Pipeline loading and model resolution |

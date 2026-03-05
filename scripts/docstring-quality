@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""Verify docstring quality for Python source files.
+
+Scans Python files using tree-sitter to extract docstrings and checks them
+against structural quality criteria: presence, minimum length, and name-echo
+detection. Designed to run as a gate in the /overhaul workflow between the
+docstring writing pass (step 6) and quality gates (step 7).
+
+Usage:
+    docstring-quality scan <directory>
+    docstring-quality check <file>
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import re
+import sys
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+import tree_sitter as _ts
+import tree_sitter_python as _tspython
+
+_PY_LANG: _ts.Language = _ts.Language(_tspython.language())
+_PY_PARSER = _ts.Parser(_PY_LANG)
+_STRING_NODE_TYPES = {"string", "concatenated_string"}
+_DEF_NODE_TYPES = {"function_definition", "async_function_definition"}
+
+MODULE_MIN_WORDS = 15
+CLASS_MIN_WORDS = 15
+FUNCTION_MIN_WORDS = 10
+
+
+@dataclass(slots=True, kw_only=True)
+class Issue:
+    """A single docstring quality issue."""
+
+    path: str
+    line: int
+    scope: Literal["module", "class", "function"]
+    name: str
+    issue: Literal["empty", "too_short", "name_echo"]
+    severity: Literal["critical", "warning"]
+    words: int
+    threshold: int
+    excerpt: str
+
+
+def _decode(node: _ts.Node, source: bytes) -> str:
+    return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+
+
+def _extract_docstring(block_node: _ts.Node | None, source: bytes) -> str:
+    if block_node is None or not block_node.children:
+        return ""
+    first = block_node.children[0]
+    if first.type != "expression_statement" or not first.children:
+        return ""
+    maybe_str = first.children[0]
+    if maybe_str.type not in _STRING_NODE_TYPES:
+        return ""
+    literal = _decode(maybe_str, source)
+    try:
+        value: object = ast.literal_eval(literal)
+    except (SyntaxError, ValueError):
+        return literal.strip()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    return str(value).strip()
+
+
+def _is_name_echo(docstring: str, name: str) -> bool:
+    """True if docstring first sentence just restates the element name."""
+    if not name:
+        return False
+    first_sentence = docstring.split(".")[0].split("\n")[0].strip().lower()
+    words = first_sentence.split()
+    if len(words) > 6:
+        return False
+    # Normalize: remove underscores, split camelCase
+    name_parts = set(
+        w.lower() for w in re.split(r"[_\s]+|(?<=[a-z])(?=[A-Z])", name) if w
+    )
+    doc_words = set(words) - {"the", "a", "an", "for", "of", "and", "to", "is", "this"}
+    if not doc_words:
+        return True
+    overlap = doc_words & name_parts
+    return len(overlap) >= len(doc_words) * 0.7
+
+
+def _check_file(path: Path) -> list[Issue]:
+    try:
+        source = path.read_bytes()
+    except OSError:
+        return []
+
+    tree = _PY_PARSER.parse(source)
+    root = tree.root_node
+    issues: list[Issue] = []
+    is_init = path.name == "__init__.py"
+    rel = str(path)
+
+    # Module docstring
+    mod_doc = _extract_docstring(root, source)
+    if not mod_doc:
+        issues.append(
+            Issue(
+                path=rel,
+                line=1,
+                scope="module",
+                name=path.stem,
+                issue="empty",
+                severity="critical",
+                words=0,
+                threshold=MODULE_MIN_WORDS,
+                excerpt="",
+            )
+        )
+    elif not is_init:
+        wc = len(mod_doc.split())
+        if wc < MODULE_MIN_WORDS:
+            issues.append(
+                Issue(
+                    path=rel,
+                    line=1,
+                    scope="module",
+                    name=path.stem,
+                    issue="too_short",
+                    severity="warning",
+                    words=wc,
+                    threshold=MODULE_MIN_WORDS,
+                    excerpt=mod_doc[:80] + ("..." if len(mod_doc) > 80 else ""),
+                )
+            )
+        if _is_name_echo(mod_doc, path.stem):
+            issues.append(
+                Issue(
+                    path=rel,
+                    line=1,
+                    scope="module",
+                    name=path.stem,
+                    issue="name_echo",
+                    severity="warning",
+                    words=wc,
+                    threshold=MODULE_MIN_WORDS,
+                    excerpt=mod_doc[:80],
+                )
+            )
+
+    for child in root.children:
+        if child.type == "class_definition":
+            name_node = child.child_by_field_name("name")
+            if name_node is None:
+                continue
+            cname = _decode(name_node, source)
+            if cname.startswith("_"):
+                continue
+            body = child.child_by_field_name("body")
+            doc = _extract_docstring(body, source)
+            ln = child.start_point[0] + 1
+            if not doc:
+                issues.append(
+                    Issue(
+                        path=rel,
+                        line=ln,
+                        scope="class",
+                        name=cname,
+                        issue="empty",
+                        severity="critical",
+                        words=0,
+                        threshold=CLASS_MIN_WORDS,
+                        excerpt="",
+                    )
+                )
+            else:
+                wc = len(doc.split())
+                if wc < CLASS_MIN_WORDS:
+                    issues.append(
+                        Issue(
+                            path=rel,
+                            line=ln,
+                            scope="class",
+                            name=cname,
+                            issue="too_short",
+                            severity="warning",
+                            words=wc,
+                            threshold=CLASS_MIN_WORDS,
+                            excerpt=doc[:80] + ("..." if len(doc) > 80 else ""),
+                        )
+                    )
+                if _is_name_echo(doc, cname):
+                    issues.append(
+                        Issue(
+                            path=rel,
+                            line=ln,
+                            scope="class",
+                            name=cname,
+                            issue="name_echo",
+                            severity="warning",
+                            words=wc,
+                            threshold=CLASS_MIN_WORDS,
+                            excerpt=doc[:80],
+                        )
+                    )
+
+        elif child.type in _DEF_NODE_TYPES:
+            name_node = child.child_by_field_name("name")
+            if name_node is None:
+                continue
+            fname = _decode(name_node, source)
+            if fname.startswith("_"):
+                continue
+            body = child.child_by_field_name("body")
+            doc = _extract_docstring(body, source)
+            ln = child.start_point[0] + 1
+            if not doc:
+                issues.append(
+                    Issue(
+                        path=rel,
+                        line=ln,
+                        scope="function",
+                        name=fname,
+                        issue="empty",
+                        severity="critical",
+                        words=0,
+                        threshold=FUNCTION_MIN_WORDS,
+                        excerpt="",
+                    )
+                )
+            else:
+                wc = len(doc.split())
+                if wc < FUNCTION_MIN_WORDS:
+                    issues.append(
+                        Issue(
+                            path=rel,
+                            line=ln,
+                            scope="function",
+                            name=fname,
+                            issue="too_short",
+                            severity="warning",
+                            words=wc,
+                            threshold=FUNCTION_MIN_WORDS,
+                            excerpt=doc[:80] + ("..." if len(doc) > 80 else ""),
+                        )
+                    )
+                if _is_name_echo(doc, fname):
+                    issues.append(
+                        Issue(
+                            path=rel,
+                            line=ln,
+                            scope="function",
+                            name=fname,
+                            issue="name_echo",
+                            severity="warning",
+                            words=wc,
+                            threshold=FUNCTION_MIN_WORDS,
+                            excerpt=doc[:80],
+                        )
+                    )
+
+    return issues
+
+
+def _format_report(all_issues: list[Issue]) -> str:
+    if not all_issues:
+        return "# Docstring Quality Report\n\nAll docstrings pass quality checks."
+
+    by_file: dict[str, list[Issue]] = defaultdict(list)
+    for iss in all_issues:
+        by_file[iss.path].append(iss)
+
+    critical = sum(1 for i in all_issues if i.severity == "critical")
+    warnings = sum(1 for i in all_issues if i.severity == "warning")
+
+    lines = [
+        "# Docstring Quality Report\n",
+        f"**{critical} critical**, **{warnings} warning** across "
+        f"**{len(by_file)} file(s)**\n",
+    ]
+
+    for path in sorted(by_file):
+        file_issues = by_file[path]
+        lines.append(f"## {path}\n")
+        lines.append("| Line | Scope | Name | Issue | Words | Threshold | Excerpt |")
+        lines.append("|------|-------|------|-------|-------|-----------|---------|")
+        for iss in sorted(file_issues, key=lambda i: i.line):
+            sev = "**CRITICAL**" if iss.severity == "critical" else "warning"
+            excerpt = iss.excerpt.replace("|", "\\|") if iss.excerpt else "—"
+            lines.append(
+                f"| {iss.line} | {iss.scope} | `{iss.name}` | "
+                f"{sev}: {iss.issue} | {iss.words} | {iss.threshold} | {excerpt} |"
+            )
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _scan_cmd(args: argparse.Namespace) -> None:
+    target = Path(args.directory)
+    if not target.is_dir():
+        print(f"Error: {target} is not a directory", file=sys.stderr)
+        sys.exit(1)
+
+    skip = {"__pycache__", ".venv", "node_modules"}
+    issues: list[Issue] = []
+    for py in sorted(target.rglob("*.py")):
+        if any(part in skip for part in py.parts):
+            continue
+        issues.extend(_check_file(py))
+
+    print(_format_report(issues))
+    critical = sum(1 for i in issues if i.severity == "critical")
+    warnings = sum(1 for i in issues if i.severity == "warning")
+    print(
+        f"\nSummary: {critical} critical, {warnings} warning, "
+        f"{len(issues)} total issues"
+    )
+
+    if critical > 0:
+        sys.exit(1)
+
+
+def _check_cmd(args: argparse.Namespace) -> None:
+    target = Path(args.file)
+    if not target.is_file():
+        print(f"Error: {target} is not a file", file=sys.stderr)
+        sys.exit(1)
+
+    issues = _check_file(target)
+    print(_format_report(issues))
+    if any(i.severity == "critical" for i in issues):
+        sys.exit(1)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Docstring quality verification",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    scan_p = sub.add_parser("scan", help="Scan directory for docstring issues")
+    scan_p.add_argument("directory", help="Directory to scan")
+
+    check_p = sub.add_parser("check", help="Check single file")
+    check_p.add_argument("file", help="File to check")
+
+    args = parser.parse_args()
+    if args.command == "scan":
+        _scan_cmd(args)
+    elif args.command == "check":
+        _check_cmd(args)
+
+
+if __name__ == "__main__":
+    main()

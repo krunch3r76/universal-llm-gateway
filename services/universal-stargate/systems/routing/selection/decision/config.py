@@ -136,6 +136,9 @@ class RoutingPolicy:
         10.0  # Score margin required to prefer eviction (reduced for load balancing)
     )
     telemetry_max_age_ms: int = 2000  # Stale telemetry threshold
+    # ∀ telemetry_refresh_timeout_s >= telemetry_max_age_ms/1000
+    telemetry_refresh_timeout_s: float = 1.0
+    capacity_acquire_timeout_s: float = 30.0
 
     weights: ScoringWeights = field(default_factory=ScoringWeights)
     affinity_rules: tuple[AffinityRule, ...] = ()
@@ -314,6 +317,8 @@ def load_routing_policy(config: dict[str, Any]) -> RoutingPolicy:
     return RoutingPolicy(
         eviction_margin=scoring.get("eviction_margin", 10.0),
         telemetry_max_age_ms=scoring.get("telemetry_max_age_ms", 2000),
+        telemetry_refresh_timeout_s=scoring.get("telemetry_refresh_timeout_s", 1.0),
+        capacity_acquire_timeout_s=scoring.get("capacity_acquire_timeout_s", 30.0),
         weights=weights,
         affinity_rules=tuple(rules),
         emit_decision_traces=emit_decision_traces,
