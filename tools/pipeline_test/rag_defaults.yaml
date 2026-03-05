@@ -1,7 +1,8 @@
-# Default RAG source paths for ask and consult (direct search path).
+# Default RAG source paths for consult (direct search path).
 # Used when neither --rag-source-prefix nor --rag-corpus is set.
 # Paths are relative to CWD or absolute.
 default_rag_source_prefixes:
-  - docs/research/prompting
+  - docs/research/small_llm/prompting
+  - docs/research/llm/prompting
   - docs/research/code-retrieval
   - docs/engram

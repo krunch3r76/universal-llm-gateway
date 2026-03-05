@@ -23,34 +23,24 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-# Ensure consult_lib is importable regardless of working directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from consult_lib.constants import (
-    DEFAULT_MODELS,
     DEFAULT_ROLE,
     DEFAULT_STARGATE_URL,
     REVIEWER_DEFAULT_MODELS,
 )
-from consult_lib.context import collect_context_file_paths, read_context_files
+from consult_lib.context import collect_context_file_paths
+from consult_lib.core import ConsultResult, execute_consult
 from consult_lib.model_selection import (
-    fetch_available_model_ids,
     load_roles,
     select_models_for_role,
     split_role_config,
-    warn_local_model_for_role,
 )
 from consult_lib.output import format_output, format_pipeline_review_output
 from consult_lib.pipeline import (
     build_reviewer_pipeline_model_overrides,
     run_code_review_pipeline,
-)
-from consult_lib.query import build_prompt, query_chain, query_parallel
-from consult_lib.rag import (
-    fetch_rag_direct,
-    fetch_rag_pipeline,
-    fetch_scope_choices,
-    rag_socket_present,
 )
 from transport_utils.rag_client import DEFAULT_RAG_URL
 
@@ -66,6 +56,7 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
               planner      Implementation plan: files, steps, risks
               researcher   Research-grounded Q&A (default)
               modularizer  Split oversized files respecting SLOC and SRP
+              prompt_engineer  Diagnose pipeline step failures, suggest fixes
 
             Examples:
               consult "How should we handle reconnection?"
@@ -99,7 +90,7 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
         nargs="+",
         default=None,
         metavar="MODEL",
-        help="Models to query (default: qwen3-32b + ernie + gemini-2.5-flash)",
+        help="Models to query (default: role-based auto-selection)",
     )
     parser.add_argument(
         "-o", "--output", default=None, metavar="FILE", help="Save results to file"
@@ -147,72 +138,67 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Restrict to cloud models only (IDs containing '/'). "
-            "Errors if none are available — use to ensure cloud intelligence "
-            "rather than silently falling back to local GPU models."
+            "Errors if none are available."
         ),
     )
     parser.add_argument("--pipeline", action="store_true", help=argparse.SUPPRESS)
     return parser
 
 
-def _resolve_target_models(
-    args: argparse.Namespace,
-    role_select: dict[str, dict[str, Any]],
-    parser: argparse.ArgumentParser,
-) -> list[str]:
-    """Resolve target models from explicit args, profile selection, or defaults."""
-    if args.models:
-        warn_local_model_for_role(args.role, args.models, role_select)
-        target_models = args.models
-    else:
-        selected = select_models_for_role(args.role, role_select, args.stargate_url)
-        if selected:
-            print(f"Models for '{args.role}': {', '.join(selected)}", file=sys.stderr)
-            target_models = selected
+def _results_to_dicts(results: list[ConsultResult]) -> list[dict[str, Any]]:
+    """Convert ConsultResult list back to dicts for format_output compatibility."""
+    out: list[dict[str, Any]] = []
+    for r in results:
+        d: dict[str, Any] = {"model_id": r.model_id}
+        if r.error:
+            d["error"] = r.error
         else:
-            defaults = (
-                REVIEWER_DEFAULT_MODELS if args.role == "reviewer" else DEFAULT_MODELS
-            )
-            print(
-                f"Selection path: static-defaults ({', '.join(defaults)})",
-                file=sys.stderr,
-            )
-            target_models = defaults
+            d["response"] = r.response_text
+            d["prompt_tokens"] = r.prompt_tokens
+            d["completion_tokens"] = r.completion_tokens
+            d["latency_ms"] = r.latency_ms
+        if r.phase:
+            d["phase"] = r.phase
+        out.append(d)
+    return out
 
-    if not args.cloud_only:
-        return target_models
 
-    available_model_ids = fetch_available_model_ids(args.stargate_url)
-    if available_model_ids is None:
-        parser.error(
-            "--cloud-only: failed to fetch available models from Stargate.\n"
-            f"  Check: curl -s {args.stargate_url}/v1/models"
-        )
-    available_cloud_models = {m for m in available_model_ids if "/" in m}
-    if not available_cloud_models:
-        parser.error(
-            "--cloud-only: no cloud models currently exposed by Stargate.\n"
-            "  Cloud proxy may be down."
-        )
-    cloud_models = [m for m in target_models if "/" in m]
-    local_excluded = [m for m in target_models if "/" not in m]
-    if not cloud_models:
-        parser.error(
-            "--cloud-only: selected models do not contain cloud IDs ('/').\n"
-            "  Pass --models with cloud IDs or enable cloud auto-select."
-        )
-    missing = [m for m in cloud_models if m not in available_cloud_models]
-    if missing:
-        parser.error(
-            f"--cloud-only: selected cloud models are not currently available:\n"
-            f"  {', '.join(missing)}"
-        )
-    if local_excluded:
+def _run_reviewer_pipeline(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    target_models: list[str],
+) -> str:
+    """Handle reviewer pipeline mode (separate from execute_consult)."""
+    context_file_paths = collect_context_file_paths(args.context_files)
+    if not context_file_paths:
+        parser.error("--pipeline requires at least one --context-files path")
+    pipeline_options: dict[str, Any] | None = None
+    overrides = build_reviewer_pipeline_model_overrides(target_models)
+    if overrides:
+        pipeline_options = {"model_ref_overrides": overrides}
         print(
-            f"--cloud-only: excluded local models: {', '.join(local_excluded)}",
+            "Pipeline reviewer model overrides: "
+            + ", ".join(f"{k}={v}" for k, v in overrides.items()),
             file=sys.stderr,
         )
-    return cloud_models
+    print(
+        f"Pipeline mode: estimating batches for {len(context_file_paths)} files",
+        file=sys.stderr,
+    )
+    try:
+        batch_results = run_code_review_pipeline(
+            stargate_url=args.stargate_url,
+            files=context_file_paths,
+            timeout=args.timeout,
+            pipeline_options=pipeline_options,
+        )
+    except Exception as exc:
+        parser.error(f"--pipeline failed: {exc}")
+    return format_pipeline_review_output(
+        question=args.question,
+        file_paths=context_file_paths,
+        batches=batch_results,
+    )
 
 
 def main() -> None:
@@ -237,58 +223,12 @@ def main() -> None:
         if not args.question:
             parser.error("No question provided")
 
-    if not args.no_rag:
-        if not rag_socket_present(args.rag_url):
-            print(
-                "RAG service not available (socket absent); running without context retrieval",
-                file=sys.stderr,
-            )
-            args.no_rag = True
-        else:
-            available_scopes = fetch_scope_choices(rag_url=args.rag_url)
-            if args.scope not in available_scopes:
-                parser.error(
-                    f"Unknown --scope '{args.scope}'. Available scopes: "
-                    f"{', '.join(sorted(available_scopes))}"
-                )
-
-    target_models = _resolve_target_models(args, role_select, parser)
-
-    if args.chain and len(target_models) < 2:
-        parser.error("--chain requires at least 2 models")
-
     if args.pipeline:
-        context_file_paths = collect_context_file_paths(args.context_files)
-        if not context_file_paths:
-            parser.error("--pipeline requires at least one --context-files path")
-        pipeline_options: dict[str, Any] | None = None
-        if args.role == "reviewer":
-            overrides = build_reviewer_pipeline_model_overrides(target_models)
-            if overrides:
-                pipeline_options = {"model_ref_overrides": overrides}
-                print(
-                    "Pipeline reviewer model overrides: "
-                    + ", ".join(f"{k}={v}" for k, v in overrides.items()),
-                    file=sys.stderr,
-                )
-        print(
-            f"Pipeline mode: estimating batches for {len(context_file_paths)} files",
-            file=sys.stderr,
-        )
-        try:
-            batch_results = run_code_review_pipeline(
-                stargate_url=args.stargate_url,
-                files=context_file_paths,
-                timeout=args.timeout,
-                pipeline_options=pipeline_options,
-            )
-        except Exception as exc:
-            parser.error(f"--pipeline failed: {exc}")
-        output = format_pipeline_review_output(
-            question=args.question,
-            file_paths=context_file_paths,
-            batches=batch_results,
-        )
+        target_models = args.models or REVIEWER_DEFAULT_MODELS
+        selected = select_models_for_role("reviewer", role_select, args.stargate_url)
+        if selected and not args.models:
+            target_models = selected
+        output = _run_reviewer_pipeline(args, parser, target_models)
         print(output)
         if args.output:
             out_path = Path(args.output)
@@ -297,66 +237,33 @@ def main() -> None:
             print(f"Saved: {out_path}", file=sys.stderr)
         return
 
-    system_prompt = role_prompts[args.role]
-    file_context: list[str] | None = None
-    if args.context_files:
-        file_context = read_context_files(args.context_files)
-        if file_context:
-            print(f"Read {len(file_context)} context blocks", file=sys.stderr)
-
-    rag_findings: list[str] | None = None
-    rag_error: str | None = None
-    if not args.no_rag:
-        print("Retrieving RAG context...", file=sys.stderr)
-        if args.rag_pipeline:
-            rag_findings, rag_error = fetch_rag_pipeline(
-                args.question,
-                pipeline_id=args.rag_pipeline,
-                stargate_url=args.stargate_url,
-                rag_url=args.rag_url,
-                scope_override=args.scope,
-            )
-        else:
-            rag_findings, rag_error = fetch_rag_direct(
-                args.question,
-                rag_url=args.rag_url,
-                scope=args.scope,
-            )
-        if rag_error:
-            print(f"RAG: {rag_error} (continuing without)", file=sys.stderr)
-        elif rag_findings:
-            print(f"RAG: {len(rag_findings)} findings", file=sys.stderr)
-
-    user_prompt = build_prompt(args.question, rag_findings, file_context)
-    mode = "chained" if args.chain else "parallel"
-    print(
-        f"Consulting {len(target_models)} model(s) as {args.role} ({mode})...",
-        file=sys.stderr,
-    )
-
-    if args.chain:
-        results = query_chain(
-            models=target_models,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+    try:
+        results = execute_consult(
+            args.question,
+            role=args.role,
+            context_files=[Path(p) for p in args.context_files]
+            if args.context_files
+            else None,
+            scope=args.scope,
+            chain=args.chain,
+            models=args.models,
             stargate_url=args.stargate_url,
+            rag_url=args.rag_url,
+            no_rag=args.no_rag,
+            use_rag_pipeline=args.rag_pipeline is not None,
             timeout=args.timeout,
             chain_directive=args.chain_directive,
+            cloud_only=args.cloud_only,
         )
-    else:
-        results = query_parallel(
-            models=target_models,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            stargate_url=args.stargate_url,
-            timeout=args.timeout,
-        )
+    except (ValueError, RuntimeError) as exc:
+        parser.error(str(exc))
 
+    result_dicts = _results_to_dicts(results)
     output = format_output(
         args.question,
         args.role,
-        results,
-        rag_error,
+        result_dicts,
+        None,
         args.context_files,
         chained=args.chain,
     )

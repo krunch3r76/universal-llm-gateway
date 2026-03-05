@@ -70,6 +70,13 @@ def build_role_requirements(role: str, count: int) -> dict[str, Any] | None:
                 "count": count,
                 "source": "any",
             }
+        case "prompt_engineer":
+            return {
+                "task": "code_review",
+                "min_score": "good",
+                "count": count,
+                "source": "cloud",
+            }
         case _:
             return None
 
@@ -115,9 +122,19 @@ def select_models_via_profiles(
             f"Selection path: intelligence-profiles returned no matches for '{role}'",
             file=sys.stderr,
         )
+    except httpx.HTTPStatusError as exc:
+        print(
+            f"Selection path: intelligence-profiles HTTP error: {exc.response.status_code} {exc.response.text}",
+            file=sys.stderr,
+        )
+    except httpx.RequestError as exc:
+        print(
+            f"Selection path: intelligence-profiles network error: {exc}",
+            file=sys.stderr,
+        )
     except Exception as exc:
         print(
-            f"Selection path: intelligence-profiles unavailable ({type(exc).__name__})",
+            f"Selection path: intelligence-profiles unexpected error: {type(exc).__name__}: {exc}",
             file=sys.stderr,
         )
     return None
@@ -167,9 +184,19 @@ def select_models_for_role(
                 f"Selection path: cloud-select ({', '.join(models)})", file=sys.stderr
             )
             return models
+    except httpx.HTTPStatusError as exc:
+        print(
+            f"Selection path: cloud-select HTTP error: {exc.response.status_code} {exc.response.text}",
+            file=sys.stderr,
+        )
+    except httpx.RequestError as exc:
+        print(
+            f"Selection path: cloud-select network error: {exc}",
+            file=sys.stderr,
+        )
     except Exception as exc:
         print(
-            f"Selection path: cloud-select unavailable ({type(exc).__name__})",
+            f"Selection path: cloud-select unexpected error: {type(exc).__name__}: {exc}",
             file=sys.stderr,
         )
     return None
@@ -225,9 +252,21 @@ def fetch_available_model_ids(
             for m in data
             if isinstance(m, dict) and isinstance(m.get("id"), str)
         }
+    except httpx.HTTPStatusError as exc:
+        print(
+            f"Failed to fetch available model IDs from Stargate (HTTP error: {exc.response.status_code} {exc.response.text})",
+            file=sys.stderr,
+        )
+        return None
+    except httpx.RequestError as exc:
+        print(
+            f"Failed to fetch available model IDs from Stargate (network error: {exc})",
+            file=sys.stderr,
+        )
+        return None
     except Exception as exc:
         print(
-            f"Failed to fetch available model IDs from Stargate ({exc})",
+            f"Failed to fetch available model IDs from Stargate (unexpected error: {type(exc).__name__}: {exc})",
             file=sys.stderr,
         )
         return None
