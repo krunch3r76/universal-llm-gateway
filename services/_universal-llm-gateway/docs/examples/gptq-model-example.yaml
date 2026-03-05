@@ -1,0 +1,59 @@
+# Universal LLM Gateway - GPTQ Model Configuration Example
+# Source of Truth: src/schemas/yaml_config.py::HFModelConfig
+# 
+# This example is GENERATED from Pydantic schemas to ensure accuracy.
+# All fields are shown with explicit type annotations.
+#
+# Type Notation:
+# - type       : Required field
+# - type | null: Optional field (can be null)
+#
+# Usage:
+# 1. Copy this structure to model_loaders.yaml under models:
+# 2. Replace example values with your model's actual values
+# 3. Ensure types match exactly (string, int, boolean, null, etc.)
+# 4. All optional fields shown for completeness (can be null)
+resource_management:
+  max_concurrent_models: 100  # int - Maximum concurrent models
+
+models:
+  example-model-id:
+    info:
+      name: "Example Model Name"  # string - Human-readable model name
+      format: "gptq"  # string (one of: 'gptq') - Model format
+      path: "/path/to/model/directory"  # string - Path to model directory
+      enabled: true  # boolean - Whether model is enabled
+      family: "llama"  # string - Model family
+      arch: "llama-3.1-8b"  # string - Architecture identifier
+      quant: "gptq-4bit"  # string | null - Quantization method
+      license: null  # string | null - License type
+      parameters: null  # int | null - Number of parameters
+      training_cutoff_year: null  # int | null - Training data cutoff year
+      training_context_length: null  # int | null - Training context length
+      release_date: null  # string | null - Model release date
+      supports_chat_history: true  # boolean - Supports chat history
+      input_schema: "prompt"  # string (one of: 'prompt', 'messages') - Input format
+      description: null  # string | null - Model description
+      capabilities: null  # array[string] | null - Model capabilities
+      safety_info: null  # object | null - Safety information
+      openai_api_fields:
+        id: "example-model-id"  # string - OpenAI-compatible model ID
+        object: "model"  # string - Object type
+        owned_by: "example_value"  # string - Owner identifier
+        permission: [generate]  # array[string] - Permissions
+    base_loader:
+      trust_remote_code: false  # boolean - Execute remote code
+      gpu_memory_utilization: 0.95  # float - GPU memory fraction (0.0-1.0)
+      max_model_len: 8192  # int - Maximum sequence length
+      dtype: "auto"  # string - Model data type
+      enforce_eager: true  # boolean - Disable CUDA graphs
+      disable_custom_all_reduce: true  # boolean - Disable custom all-reduce
+      disable_log_stats: true  # boolean - Disable statistics logging
+      disable_sliding_window: true  # boolean - Whether to disable sliding window attention. AWQ models with RoPE scaling require this to be false.
+    profiles:
+      "8192":  # string - Context length as key
+        loader:
+          max_model_len: 8192  # int - Maximum sequence length
+        resources:
+          ram_mb: 8192  # int - RAM requirement in MB
+          vram_mb: 16384  # int - VRAM requirement in MB

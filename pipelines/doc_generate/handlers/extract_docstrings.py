@@ -8,6 +8,7 @@ tree-sitter-python, and attaches any existing architecture document content.
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -20,13 +21,21 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
+from .events import (
+    doc_generate_architecture_found,
+    doc_generate_architecture_notfound,
+    doc_generate_extract_failed,
+    doc_generate_extract_success,
+    doc_generate_python_empty,
+)
+
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
     from systems.pipeline.core.schemas import StepConfig
 
 logger = get_logger(__name__)
 
-_PY_LANG = _ts.Language(_tspython.language())
+_PY_LANG: _ts.Language = _ts.Language(_tspython.language())
 _PY_PARSER = _ts.Parser(_PY_LANG)
 _STRING_NODE_TYPES = {"string", "concatenated_string"}
 _DEF_NODE_TYPES = {"function_definition", "async_function_definition"}
@@ -54,9 +63,7 @@ def _string_node_to_text(node: _ts.Node, source: bytes) -> str:
 
 
 def _extract_docstring_from_block(block_node: _ts.Node | None, source: bytes) -> str:
-    if block_node is None:
-        return ""
-    if not block_node.children:
+    if block_node is None or not block_node.children:
         return ""
     first_child = block_node.children[0]
     if first_child.type != "expression_statement" or not first_child.children:
@@ -171,6 +178,14 @@ def _error_output(step_id: str, message: str) -> StepOutput:
     )
 
 
+def _publish_event(context: PipelineContext, event: object) -> None:
+    proxy = getattr(context, "_proxy", None)
+    event_bus = getattr(proxy, "event_bus", None) if proxy else None
+    if event_bus is None:
+        return
+    _ = asyncio.create_task(event_bus.publish_async_nowait(event))
+
+
 class ExtractDocstringsHandler(BaseHandler):
     """Extract docstring inventory for a subsystem directory."""
 
@@ -195,9 +210,29 @@ class ExtractDocstringsHandler(BaseHandler):
                 f"{type(subsystem_path_value).__name__}"
             )
             logger.error("Step '%s': %s", step.id, msg)
+            _publish_event(
+                context,
+                doc_generate_extract_failed(
+                    execution_id=context.execution_id,
+                    step_id=step.id,
+                    subsystem_path=None,
+                    reason="invalid_subsystem_path_type",
+                    error=msg,
+                ),
+            )
             return _error_output(step.id, msg)
         subsystem_path_raw = subsystem_path_value.strip()
         if not subsystem_path_raw:
+            _publish_event(
+                context,
+                doc_generate_extract_failed(
+                    execution_id=context.execution_id,
+                    step_id=step.id,
+                    subsystem_path=subsystem_path_raw,
+                    reason="empty_subsystem_path",
+                    error="subsystem_path is empty",
+                ),
+            )
             return _error_output(step.id, "subsystem_path is empty")
 
         workspace_root = _repo_root()
@@ -211,14 +246,43 @@ class ExtractDocstringsHandler(BaseHandler):
         except ValueError:
             msg = f"subsystem_path outside repository root: {subsystem_path_raw}"
             logger.error("Step '%s': %s", step.id, msg)
+            _publish_event(
+                context,
+                doc_generate_extract_failed(
+                    execution_id=context.execution_id,
+                    step_id=step.id,
+                    subsystem_path=subsystem_path_raw,
+                    reason="path_outside_repo_root",
+                    error=msg,
+                ),
+            )
             return _error_output(step.id, msg)
 
         if not target_dir.exists() or not target_dir.is_dir():
             msg = f"subsystem_path is not a directory: {subsystem_path_raw}"
             logger.error("Step '%s': %s", step.id, msg)
+            _publish_event(
+                context,
+                doc_generate_extract_failed(
+                    execution_id=context.execution_id,
+                    step_id=step.id,
+                    subsystem_path=subsystem_path_raw,
+                    reason="path_not_directory",
+                    error=msg,
+                ),
+            )
             return _error_output(step.id, msg)
 
         py_files = sorted(target_dir.rglob("*.py"))
+        if not py_files:
+            _publish_event(
+                context,
+                doc_generate_python_empty(
+                    execution_id=context.execution_id,
+                    step_id=step.id,
+                    subsystem_path=target_dir.as_posix(),
+                ),
+            )
         modules: list[dict[str, Any]] = []
         classes: list[dict[str, Any]] = []
         functions: list[dict[str, Any]] = []
@@ -246,15 +310,35 @@ class ExtractDocstringsHandler(BaseHandler):
             )
 
         subsystem_name = target_dir.name
-        arch_doc = (workspace_root / "docs" / "architecture" / f"{subsystem_name}.md").resolve()
+        arch_doc = (
+            workspace_root / "docs" / "architecture" / f"{subsystem_name}.md"
+        ).resolve()
         existing_doc = ""
+        arch_doc_rel = _relative_path(arch_doc, workspace_root)
         if arch_doc.exists() and arch_doc.is_file():
             existing_doc = arch_doc.read_text(encoding="utf-8")
+            _publish_event(
+                context,
+                doc_generate_architecture_found(
+                    execution_id=context.execution_id,
+                    step_id=step.id,
+                    architecture_doc_path=arch_doc_rel,
+                ),
+            )
+        else:
+            _publish_event(
+                context,
+                doc_generate_architecture_notfound(
+                    execution_id=context.execution_id,
+                    step_id=step.id,
+                    architecture_doc_path=arch_doc_rel,
+                ),
+            )
 
         result: dict[str, Any] = {
             "subsystem_path": target_dir.as_posix(),
             "subsystem_name": subsystem_name,
-            "architecture_doc_path": _relative_path(arch_doc, workspace_root),
+            "architecture_doc_path": arch_doc_rel,
             "modules": modules,
             "classes": classes,
             "functions": functions,
@@ -269,6 +353,17 @@ class ExtractDocstringsHandler(BaseHandler):
             len(py_files),
             len(classes),
             len(functions),
+        )
+        _publish_event(
+            context,
+            doc_generate_extract_success(
+                execution_id=context.execution_id,
+                step_id=step.id,
+                subsystem_path=target_dir.as_posix(),
+                file_count=len(py_files),
+                class_count=len(classes),
+                function_count=len(functions),
+            ),
         )
         return StepOutput(
             raw=json.dumps(result, indent=2),

@@ -1,0 +1,57 @@
+# Universal LLM Gateway - GGUF Model Configuration Example
+# Source of Truth: src/schemas/yaml_config.py::GGUFModelConfig
+# 
+# This example is GENERATED from Pydantic schemas to ensure accuracy.
+# All fields are shown with explicit type annotations.
+#
+# Type Notation:
+# - type       : Required field
+# - type | null: Optional field (can be null)
+#
+# Usage:
+# 1. Copy this structure to model_loaders.yaml under models:
+# 2. Replace example values with your model's actual values
+# 3. Ensure types match exactly (string, int, boolean, null, etc.)
+# 4. All optional fields shown for completeness (can be null)
+resource_management:
+  max_concurrent_models: 100  # int - Maximum concurrent models
+
+models:
+  example-model-id:
+    info:
+      name: "Example Model Name"  # string - Human-readable model name
+      format: "gguf"  # string (one of: 'gguf') - Model format
+      path: "/path/to/model/file.gguf"  # string - Absolute path to .gguf file
+      enabled: true  # boolean - Whether model is enabled
+      family: "llama"  # string - Model family (llama, mistral, qwen, etc.)
+      arch: "llama-3.1-8b"  # string - Architecture identifier
+      quant: null  # string | null - Quantization method
+      license: null  # string | null - License type
+      parameters: null  # int | null - Number of parameters
+      training_cutoff_year: null  # int | null - Training data cutoff year
+      training_context_length: null  # int | null - Training context length
+      release_date: null  # string | null - Model release date
+      supports_chat_history: true  # boolean - Supports chat history
+      input_schema: "prompt"  # string (one of: 'prompt', 'messages') - Input format
+      description: null  # string | null - Model description
+      capabilities: null  # array[string] | null - Model capabilities
+      safety_info: null  # object | null - Safety information
+      openai_api_fields:
+        id: "example-model-id"  # string - OpenAI-compatible model ID
+        object: "model"  # string - Object type
+        owned_by: "example_value"  # string - Owner identifier
+        permission: [generate]  # array[string] - Permissions
+    base_loader:
+      n_batch: 512  # int - Batch size for prompt processing
+      f16_kv: true  # boolean - Use float16 for KV cache
+      use_mmap: false  # boolean - Use memory mapping
+      use_mlock: true  # boolean - Lock pages in RAM
+      verbose: false  # boolean - Enable verbose logging
+    profiles:
+      "32768":  # string - Context length as key
+        loader:
+          n_ctx: 32768  # int - Context window length
+          n_gpu_layers: -1  # int - GPU layers (-1 = all)
+        resources:
+          ram_mb: null  # int | null - RAM requirement in MB
+          vram_mb: null  # int | null - VRAM requirement in MB

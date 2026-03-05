@@ -45,7 +45,9 @@ config/env/*.local
 !.env.example
 !.env.*.example
 tmp/
-docs/
+docs/*
+!docs/architecture/
+!docs/architecture/*.md
 
 # IDE - Keep settings.json but ignore other VS Code files
 .vscode/
@@ -92,6 +94,7 @@ ATTRIBUTION.txt
 !/README.md
 !/CONTRIBUTING.md
 !/examples/adding-model-workflow-cpu.md
+!/docs/architecture/*.md
 
 # Internal architecture/proposal notes
 **/proposals/

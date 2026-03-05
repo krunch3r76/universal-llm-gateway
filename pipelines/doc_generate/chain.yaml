@@ -3,7 +3,7 @@ id: doc-generate
 version: "1"
 type: doc_generate
 description: "Generate architecture docs from Python docstrings with verification"
-output: review
+output: result
 
 options:
   timeout_seconds: 480
@@ -19,6 +19,7 @@ steps:
     type: generate
     model_ref: draft_model
     prompt_ref: doc_generate.draft
+    condition: "extract.json.get('error') is None"
     handler_inputs:
       subsystem_path: sourceNs.text
       inventory_json: extract.raw
@@ -46,6 +47,7 @@ steps:
     type: generate
     model_ref: review_model
     prompt_ref: doc_generate.review
+    condition: "extract.json.get('error') is None"
     handler_inputs:
       subsystem_path: sourceNs.text
       inventory_json: extract.raw
@@ -93,3 +95,12 @@ steps:
       initial_interval_seconds: 3.0
       max_interval_seconds: 15.0
       retry_on: ["ProxyClientError"]
+
+  - name: result
+    type: select_output
+    candidates:
+      - review
+      - extract
+    handler_inputs:
+      review_out: review.raw
+      extract_out: extract.raw
