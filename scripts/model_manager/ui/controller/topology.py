@@ -1,4 +1,8 @@
-"""Topology management — add/remove remote nodes in Master Stargate config."""
+"""Topology management for federated remotes.
+
+This module owns remote CRUD in ``~/.gateway/stargate.yaml``, emits node env files
+for deployment, and provides async deploy/restart flows used by the TUI.
+"""
 
 import asyncio
 import json
@@ -6,8 +10,9 @@ import logging
 import secrets
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import yaml
 
@@ -18,13 +23,33 @@ _NODES_DIR = _GATEWAY_DIR / "nodes"
 _MASTER_CONFIG = _GATEWAY_DIR / "stargate.yaml"
 
 
-def list_remotes() -> list[dict[str, Any]]:
+class RemoteConfig(TypedDict):
+    stargate_id: str
+    url: str
+    api_key: str
+
+
+def list_remotes() -> list[RemoteConfig]:
     """Read remotes from ~/.gateway/stargate.yaml federation section."""
     if not _MASTER_CONFIG.exists():
         return []
     data = yaml.safe_load(_MASTER_CONFIG.read_text()) or {}
     federation = data.get("federation", {})
-    return federation.get("remotes") or []
+    remotes_raw = federation.get("remotes") or []
+    remotes: list[RemoteConfig] = []
+    if not isinstance(remotes_raw, list):
+        return remotes
+    for remote in remotes_raw:
+        if not isinstance(remote, dict):
+            continue
+        remotes.append(
+            {
+                "stargate_id": str(remote.get("stargate_id", "")),
+                "url": str(remote.get("url", "")),
+                "api_key": str(remote.get("api_key", "")),
+            }
+        )
+    return remotes
 
 
 def get_master_port() -> int:
@@ -178,7 +203,9 @@ async def deploy_remote(
         stderr=asyncio.subprocess.STDOUT,
         cwd=str(repo),
     )
-    assert proc.stdout is not None
+    if proc.stdout is None:
+        yield "[red]rsync failed to stream output.[/red]"
+        return
     async for raw in proc.stdout:
         yield raw.decode(errors="replace").rstrip()
     code = await proc.wait()
@@ -197,7 +224,9 @@ async def deploy_remote(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    assert proc.stdout is not None
+    if proc.stdout is None:
+        yield "[red]scp failed to stream output.[/red]"
+        return
     async for raw in proc.stdout:
         yield raw.decode(errors="replace").rstrip()
     code = await proc.wait()
@@ -224,7 +253,9 @@ async def deploy_remote(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    assert proc.stdout is not None
+    if proc.stdout is None:
+        yield "[red]ssh relay failed to stream output.[/red]"
+        return
     async for raw in proc.stdout:
         yield raw.decode(errors="replace").rstrip()
     code = await proc.wait()
@@ -241,21 +272,24 @@ _EVENTS_FILE = Path("/tmp/stargate-events/current.jsonl")
 _CONNECTION_EVENT = "federation.connection.established"
 
 
+@dataclass(slots=True, kw_only=True)
+class RelayConnectionResult:
+    connected: bool
+    reason: str | None = None
+
+
 async def wait_for_relay_connected(
     remote_id: str,
     *,
     master_port: int = 9999,
     timeout: float = 90.0,
     interval: float = 3.0,
-) -> bool:
+) -> RelayConnectionResult:
     """Wait for a relay to appear in master's model sources after deploy.
 
     Runs event-tail (if events file exists) and HTTP poll concurrently; returns
-    True as soon as either confirms. The concurrent approach handles the race
+    as soon as either confirms. The concurrent approach handles the race
     where the relay reconnects before we start tailing the events file.
-
-    Returns:
-        True if the relay was confirmed within *timeout* seconds.
     """
     tasks: list[asyncio.Task[bool]] = []
     if _EVENTS_FILE.exists():
@@ -279,7 +313,12 @@ async def wait_for_relay_connected(
                 connected = True
     for t in pending:
         t.cancel()
-    return connected
+    if connected:
+        return RelayConnectionResult(connected=True)
+    return RelayConnectionResult(
+        connected=False,
+        reason=f"relay {remote_id} did not appear within {timeout}s",
+    )
 
 
 def _tail_events_for_connection(remote_id: str, timeout: float) -> bool:
@@ -290,8 +329,7 @@ def _tail_events_for_connection(remote_id: str, timeout: float) -> bool:
         while time.monotonic() < deadline:
             line = fh.readline()
             if line:
-                line = line.strip()
-                if not line:
+                if not (line := line.strip()):
                     continue
                 try:
                     event = json.loads(line)
@@ -320,7 +358,7 @@ async def _poll_master_for_relay(
     deadline = loop.time() + timeout
     while loop.time() < deadline:
         sources = await asyncio.to_thread(probe_federation_sources, master_port)
-        if remote_id in sources:
+        if sources is not None and remote_id in sources:
             return True
         await asyncio.sleep(interval)
     return False
@@ -363,7 +401,9 @@ async def restart_relay(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    assert proc.stdout is not None
+    if proc.stdout is None:
+        yield "[red]ssh relay restart failed to stream output.[/red]"
+        return
     async for raw in proc.stdout:
         yield raw.decode(errors="replace").rstrip()
     code = await proc.wait()
@@ -423,7 +463,7 @@ def _append_remote_to_config(
     """Append a remote entry to ~/.gateway/stargate.yaml."""
     data = yaml.safe_load(_MASTER_CONFIG.read_text()) or {}
     federation = data.get("federation", {})
-    remotes: list[dict[str, Any]] = federation.get("remotes") or []
+    remotes: list[RemoteConfig] = list_remotes()
 
     relay_id = f"relay-{hostname}"
     for existing in remotes:

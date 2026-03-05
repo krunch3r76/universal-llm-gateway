@@ -154,16 +154,21 @@ def ensure_stargate_config() -> Path:
         logger.info("Generated stargate config: %s", config_path)
 
     for name, fallback in _GATEWAY_SEED_FALLBACK.items():
-        path = GATEWAY_DIR / name
-        existing = path.read_text() if path.exists() else None
-        if existing is None or existing == fallback:
-            # Create or reseed: file absent OR previously seeded with empty placeholder
-            content = _gateway_seed_content(name)
-            path.write_text(content)
-            action = "Reseeded" if existing == fallback else "Generated"
-            logger.info("%s %s", action, path)
+        _ensure_seeded_gateway_file(name=name, fallback=fallback)
 
     return config_path
+
+
+def _ensure_seeded_gateway_file(*, name: str, fallback: str) -> None:
+    """Generate or reseed a gateway sibling config file when needed."""
+    path = GATEWAY_DIR / name
+    existing = path.read_text() if path.exists() else None
+    if existing is not None and existing != fallback:
+        return
+    content = _gateway_seed_content(name)
+    path.write_text(content)
+    action = "Reseeded" if existing == fallback else "Generated"
+    logger.info("%s %s", action, path)
 
 
 def ensure_node_env(workspace_root: Path, node_id: str) -> Path:
@@ -230,6 +235,10 @@ def ensure_socket_dir() -> str | None:
     None on success.  The container bind-mounts this directory and its appuser
     (a different uid than the host user) writes a Unix socket into it — so the
     directory must be world-writable, not just writable by the current host user.
+
+    If the directory is root-owned (e.g. Docker daemon created it via bind-mount
+    auto-creation after a host reboot), attempts recovery by removing and
+    recreating it as the current user.
     """
     import stat as stat_mod
 
@@ -238,11 +247,25 @@ def ensure_socket_dir() -> str | None:
     try:
         socket_dir.chmod(0o777)
     except PermissionError:
-        mode = stat_mod.S_IMODE(socket_dir.stat().st_mode)
+        owner_uid = socket_dir.stat().st_uid
+        if owner_uid == 0 and os.getuid() != 0:
+            logger.warning(
+                "Socket dir %s is root-owned (Docker bind-mount race); "
+                "attempting recovery",
+                socket_dir,
+            )
+            recovered = _recover_root_owned_socket_dir(socket_dir)
+            if not recovered:
+                mode = stat_mod.S_IMODE(socket_dir.stat().st_mode)
+                return (
+                    f"Socket directory {socket_dir} is root-owned "
+                    f"(uid={owner_uid}, mode={oct(mode)}) and recovery failed. "
+                    f"Fix with: sudo rm -rf {socket_dir}"
+                )
+            return None
         logger.warning(
-            "Cannot chmod %s (current mode=%o, uid=%d)",
+            "Cannot chmod %s (uid=%d)",
             socket_dir,
-            mode,
             socket_dir.stat().st_uid,
         )
     mode = stat_mod.S_IMODE(socket_dir.stat().st_mode)
@@ -255,6 +278,82 @@ def ensure_socket_dir() -> str | None:
             f"Fix with: sudo chmod 777 {socket_dir}"
         )
     return None
+
+
+def _recover_root_owned_socket_dir(socket_dir: Path) -> bool:
+    """Remove a root-owned socket dir and recreate as current user.
+
+    Docker daemon creates bind-mount source dirs as root when the host path
+    doesn't exist (e.g. after reboot clears tmpfs /tmp). This function
+    recovers by removing the root-owned directory and recreating it.
+
+    Returns True on success, False if recovery failed.
+    """
+    import shutil
+    import subprocess
+
+    _stop_edge_container_for_socket_recovery()
+
+    # Try direct removal first (won't work on sticky-bit /tmp for root-owned dirs)
+    try:
+        shutil.rmtree(socket_dir)
+    except PermissionError:
+        # Need elevated privileges — try sudo
+        result = subprocess.run(
+            ["sudo", "-n", "rm", "-rf", str(socket_dir)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.error(
+                "Cannot remove root-owned %s (sudo -n failed: %s)",
+                socket_dir,
+                result.stderr.strip(),
+            )
+            return False
+
+    # Recreate as current user
+    try:
+        socket_dir.mkdir(parents=True, exist_ok=True)
+        socket_dir.chmod(0o777)
+    except OSError as exc:
+        logger.error("Failed to recreate %s after removal: %s", socket_dir, exc)
+        return False
+
+    logger.info("Recovered root-owned socket dir: %s", socket_dir)
+    return True
+
+
+def _stop_edge_container_for_socket_recovery() -> None:
+    """Best-effort compose down to release /tmp/universal-protocol bind mount."""
+    import subprocess
+
+    workspace_root = Path(__file__).parents[4]
+    compose_file = workspace_root / "docker" / "compose" / "gpu-edge.yml"
+    if not compose_file.exists():
+        return
+    result = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(compose_file),
+            "down",
+            "--timeout",
+            "10",
+        ],
+        cwd=str(workspace_root),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        logger.info("Stopped edge container before socket-dir recovery")
+    else:
+        logger.debug(
+            "docker compose down during socket-dir recovery returned %d: %s",
+            result.returncode,
+            (result.stderr or "").strip(),
+        )
 
 
 def ensure_relay_dirs(
@@ -440,7 +539,7 @@ def write_cloud_proxy_url_to_stargate(proxy_url: str) -> None:
     """
     config_path = GATEWAY_DIR / "stargate.yaml"
     GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
-    data: dict[str, Any] = {}
+    data: Any = {}
     if config_path.exists():
         try:
             data = yaml.safe_load(config_path.read_text()) or {}

@@ -68,7 +68,7 @@ def _resolve_models(
     """Resolve target models from explicit list, role selection, or defaults, with cloud-only filtering."""
     if models:
         warn_local_model_for_role(role, models, role_select)
-        target = list(models)
+        target = models.copy()
     else:
         selected = select_models_for_role(role, role_select, stargate_url)
         if selected:
@@ -79,7 +79,7 @@ def _resolve_models(
                 f"Selection path: static-defaults ({', '.join(DEFAULT_MODELS)})",
                 file=sys.stderr,
             )
-            target = list(DEFAULT_MODELS)
+            target = DEFAULT_MODELS.copy()
 
     if not cloud_only:
         return target
@@ -120,7 +120,7 @@ def _fetch_rag(
         )
         return None
 
-    available_scopes = fetch_scope_choices(rag_url=rag_url)
+    available_scopes = set(fetch_scope_choices(rag_url=rag_url))
     if scope not in available_scopes:
         print(
             f"Unknown scope '{scope}'. Available: {', '.join(sorted(available_scopes))}. "
@@ -215,7 +215,13 @@ def execute_consult(
             print(f"Read {len(file_context)} context blocks", file=sys.stderr)
 
     rag_findings: list[str] | None = None
-    effective_scope = scope or "project"
+    scope_hint = role_select.get(role, {}).get("scope_hint")
+    effective_scope = scope or scope_hint or "project"
+    if scope_hint and not scope:
+        print(
+            f"Using role scope hint '{scope_hint}' (override with --scope)",
+            file=sys.stderr,
+        )
     if not no_rag:
         rag_findings = _fetch_rag(
             question=question,
@@ -225,9 +231,7 @@ def execute_consult(
             use_pipeline=use_rag_pipeline,
         )
 
-    context_parts: list[str] = []
-    if file_context:
-        context_parts.extend(file_context)
+    context_parts: list[str] = file_context.copy() if file_context else []
     if context_text:
         context_parts.append(context_text)
     user_prompt = build_prompt(

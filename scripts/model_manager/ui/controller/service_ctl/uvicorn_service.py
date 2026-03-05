@@ -23,6 +23,19 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+# Per-service asyncio locks keyed by app_module.
+# ∀ concurrent start_rag() calls: serialized within the same process.
+# The file lock in _pre_launch() guards cross-process safety; this covers
+# the intra-process race between _pre_launch() and PID file registration
+# (a 3-second window where concurrent calls both find no valid PID).
+_service_start_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_service_start_lock(app_module: str) -> asyncio.Lock:
+    if app_module not in _service_start_locks:
+        _service_start_locks[app_module] = asyncio.Lock()
+    return _service_start_locks[app_module]
+
 
 async def _start_uvicorn_service(
     service_state: ServiceState,
@@ -63,57 +76,58 @@ async def _start_uvicorn_service(
         finally:
             _release_lock(fd)
 
-    loop = asyncio.get_running_loop()
-    pre_result = await loop.run_in_executor(None, _pre_launch)
-    if pre_result is not None:
-        return pre_result
+    async with _get_service_start_lock(app_module):
+        loop = asyncio.get_running_loop()
+        pre_result = await loop.run_in_executor(None, _pre_launch)
+        if pre_result is not None:
+            return pre_result
 
-    venv_python = Path.home() / ".venvs" / "universal" / "bin" / "python"
-    python = str(venv_python) if venv_python.exists() else "python3"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / log_filename
-    env = build_service_env(root)
-    libs_path = str(root / "libs")
-    existing_pythonpath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        f"{libs_path}:{existing_pythonpath}" if existing_pythonpath else libs_path
-    )
-
-    uvicorn_args: list[str] = ["-m", "uvicorn", app_module]
-    if uds_mode and socket_path is not None:
-        uvicorn_args.extend(["--uds", str(socket_path)])
-    elif tcp_config is not None:
-        host, port = tcp_config
-        uvicorn_args.extend(["--host", host, "--port", str(port)])
-
-    with log_file.open("a") as log_fh:
-        process = await asyncio.create_subprocess_exec(
-            python,
-            *uvicorn_args,
-            env=env,
-            cwd=str(root),
-            stdout=log_fh,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
+        venv_python = Path.home() / ".venvs" / "universal" / "bin" / "python"
+        python = str(venv_python) if venv_python.exists() else "python3"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / log_filename
+        env = build_service_env(root)
+        libs_path = str(root / "libs")
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            f"{libs_path}:{existing_pythonpath}" if existing_pythonpath else libs_path
         )
 
-    try:
-        exit_code = await asyncio.wait_for(process.wait(), timeout=3.0)
-        tail = log_file.read_text(errors="replace")[-1000:]
-        return f"{service_name} failed (exit {exit_code}).\n{tail}"
-    except TimeoutError:
-        if on_timeout_success is not None:
-            on_timeout_success(socket_path, tcp_config, process.pid)
-        fd = _acquire_lock(lock_file)
+        uvicorn_args: list[str] = ["-m", "uvicorn", app_module]
+        if uds_mode and socket_path is not None:
+            uvicorn_args.extend(["--uds", str(socket_path)])
+        elif tcp_config is not None:
+            host, port = tcp_config
+            uvicorn_args.extend(["--host", host, "--port", str(port)])
+
+        with log_file.open("a") as log_fh:
+            process = await asyncio.create_subprocess_exec(
+                python,
+                *uvicorn_args,
+                env=env,
+                cwd=str(root),
+                stdout=log_fh,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+            )
+
         try:
-            GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
-            pid_file.write_text(str(process.pid) + "\n")
-        finally:
-            _release_lock(fd)
-        msg = f"{service_name} starting (PID {process.pid})."
-        if not uds_mode and tcp_config is not None:
-            msg += f" on {tcp_config[0]}:{tcp_config[1]}"
-        return msg
+            exit_code = await asyncio.wait_for(process.wait(), timeout=3.0)
+            tail = log_file.read_text(errors="replace")[-1000:]
+            return f"{service_name} failed (exit {exit_code}).\n{tail}"
+        except TimeoutError:
+            if on_timeout_success is not None:
+                on_timeout_success(socket_path, tcp_config, process.pid)
+            fd = _acquire_lock(lock_file)
+            try:
+                GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+                pid_file.write_text(str(process.pid) + "\n")
+            finally:
+                _release_lock(fd)
+            msg = f"{service_name} starting (PID {process.pid})."
+            if not uds_mode and tcp_config is not None:
+                msg += f" on {tcp_config[0]}:{tcp_config[1]}"
+            return msg
 
 
 async def _stop_uvicorn_service(

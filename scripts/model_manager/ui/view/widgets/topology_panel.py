@@ -7,8 +7,9 @@ switches the LogStream to that node's output.
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 from textual.app import ComposeResult
@@ -16,6 +17,9 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, DataTable, Select, Static
+
+if TYPE_CHECKING:
+    from ...app import ModelManagerApp
 
 from scripts.model_manager.topology import TopologySnapshot
 
@@ -26,6 +30,22 @@ from .log_stream import LogStream
 logger = logging.getLogger(__name__)
 
 _STATUS_COL = "status"
+# Row key used for the master node.  All status updates target this key; if the
+# master's stargate_id ever becomes user-configurable this constant must follow.
+_MASTER_ROW_KEY = "localhost"
+# Build scope options offered in the Select widget.  Keep in sync with the
+# ./manage relay --scope CLI argument.
+_BUILD_SCOPES: list[tuple[str, str]] = [
+    ("vLLM + llama", "all"),
+    ("llama only", "llama"),
+]
+_STATUS_REASON_DISPLAY: dict[str, str] = {
+    "master_down": "master stargate is not running",
+    "node_env_missing": "node env file missing under ~/.gateway/nodes",
+    "no_recent_telemetry": "no recent federation telemetry for relay",
+    "connected_no_models": "relay connected but zero models advertised",
+    "connected_models_unknown": "relay connected but model source probe unavailable",
+}
 
 
 class TopologyPanel(Widget):
@@ -71,7 +91,7 @@ class TopologyPanel(Widget):
     }
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._workspace_root: Path | None = None
         self._node_buffers: dict[str, list[str]] = {}
@@ -90,7 +110,7 @@ class TopologyPanel(Widget):
                 variant="warning",
             )
             yield Select(
-                [("vLLM + llama", "all"), ("llama only", "llama")],
+                _BUILD_SCOPES,
                 id="topo-build-scope",
                 value="all",
             )
@@ -124,7 +144,7 @@ class TopologyPanel(Widget):
             "Master",
             _status_cell(m.status),
             f":{m.port}" + (f" PID {m.pid}" if m.pid else ""),
-            key="localhost",
+            key=_MASTER_ROW_KEY,
         )
 
         if snapshot.local_edge:
@@ -144,11 +164,12 @@ class TopologyPanel(Widget):
         for r in snapshot.remotes:
             hostname = _hostname_from_stargate_id(r.stargate_id)
             models = f" ({r.model_count} models)" if r.model_count is not None else ""
+            reason = _status_reason_suffix(r.status_reason)
             table.add_row(
                 r.stargate_id,
                 "Relay",
                 _status_cell(r.status),
-                f"{r.url}{models}",
+                f"{r.url}{models}{reason}",
                 key=hostname,
             )
 
@@ -182,8 +203,8 @@ class TopologyPanel(Widget):
         table = self.query_one("#topo-table", DataTable)
         try:
             table.update_cell(node_key, _STATUS_COL, status_text)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Could not update status cell for %s: %s", node_key, e)
 
     # ── fleet operations ──────────────────────────────────────────────────
 
@@ -207,7 +228,7 @@ class TopologyPanel(Widget):
     async def _do_fleet_deploy(self, *, build: bool, scope: str) -> None:
         self._deploying = True
         self._node_buffers.clear()
-        self._active_node = "localhost"
+        self._active_node = _MASTER_ROW_KEY
         self.post_message(self.DeployStateChanged(deploying=True))
 
         log = self.query_one("#topo-progress", LogStream)
@@ -232,55 +253,53 @@ class TopologyPanel(Widget):
 
     async def _build_local(self, scope: str) -> None:
         """Build image + restart local services (sequential)."""
-        svc = self.app.service_controller  # type: ignore[attr-defined]
-        self._set_node_status("localhost", "⟳ building...")
+        svc = cast("ModelManagerApp", self.app).service_controller
+        mk = _MASTER_ROW_KEY
+        self._set_node_status(mk, "⟳ building...")
 
-        self._append_line("localhost", f"Building image (scope={scope})...")
+        self._append_line(mk, f"Building image (scope={scope})...")
         summary = tee_with_summary(
             svc.build_image(scope=scope),
             operation="build",
-            host="localhost",
+            host=mk,
         )
         async for line in summary:
-            self._append_line("localhost", line)
+            self._append_line(mk, line)
 
-        self._append_line("localhost", "Restarting local services...")
-        self._append_line("localhost", await svc.stop_stargate())
-        self._append_line("localhost", await svc.stop_rag())
-        self._append_line("localhost", await svc.stop_gateway())
+        self._append_line(mk, "Restarting local services...")
+        self._append_line(mk, await svc.stop_stargate())
+        self._append_line(mk, await svc.stop_rag())
+        self._append_line(mk, await svc.stop_gateway())
         await asyncio.sleep(1)
-        self._append_line("localhost", await svc.start_gateway())
+        self._append_line(mk, await svc.start_gateway())
         await asyncio.sleep(0.5)
-        self._append_line("localhost", await svc.start_rag())
+        self._append_line(mk, await svc.start_rag())
         result = await svc.start_stargate()
-        self._append_line("localhost", result)
-        if result.startswith("Stargate failed") or result.startswith(
-            "Script not found"
-        ):
-            self._set_node_status("localhost", "✗ stargate failed")
+        self._append_line(mk, result)
+        if not result.startswith("Stargate starting"):
+            self._set_node_status(mk, "✗ stargate failed")
             self._append_line(
-                "localhost",
+                mk,
                 "⚠ Stargate did not restart — events file NOT truncated.",
             )
             return
-        self._set_node_status("localhost", "● running")
+        self._set_node_status(mk, "● running")
 
     async def _deploy_remotes_parallel(self, *, build: bool, scope: str) -> None:
         """Deploy all remotes in parallel via TaskGroup."""
         remotes = list_remotes()
         if not remotes:
-            self._append_line("localhost", "No remotes configured.")
+            self._append_line(_MASTER_ROW_KEY, "No remotes configured.")
             return
 
         targets = _parse_remote_targets(remotes)
-        for hostname, _ in targets:
-            self._set_node_status(hostname, "⟳ deploying...")
-
-        if targets:
-            self._switch_to_node(targets[0][0])
-
+        first = True
         async with asyncio.TaskGroup() as tg:
             for hostname, address in targets:
+                self._set_node_status(hostname, "⟳ deploying...")
+                if first:
+                    self._switch_to_node(hostname)
+                    first = False
                 tg.create_task(
                     self._deploy_single_remote(
                         hostname=hostname,
@@ -313,7 +332,8 @@ class TopologyPanel(Widget):
         failed = False
         async for line in summary:
             self._append_line(hostname, line)
-            if "failed" in line.lower():
+            # deploy_remote uses [red]...[/red] exclusively to signal errors
+            if "[red]" in line:
                 failed = True
 
         if failed:
@@ -325,9 +345,21 @@ class TopologyPanel(Widget):
         self._append_line(
             hostname, f"[{hostname}] Waiting for relay to register with master..."
         )
-        connected = await wait_for_relay_connected(remote_id)
-        status = "● connected" if connected else "◌ unreachable"
+        result = await wait_for_relay_connected(remote_id)
+        status = "● connected" if result.connected else "◌ unreachable"
         self._set_node_status(hostname, status)
+        if not result.connected and result.reason:
+            self._append_line(hostname, f"  reason: {result.reason}")
+        if not result.connected:
+            self._append_line(hostname, "  relay did not register in time")
+            self._append_line(
+                hostname,
+                "  check: SSH_USER, ~/.gateway/nodes/<host>.env, FEDERATION_KEY_RELAY",
+            )
+            self._append_line(
+                hostname,
+                "  check: remote ./manage relay --restart output for auth/connection errors",
+            )
         self._append_line(hostname, f"--- {hostname}: {status} ---")
 
 
@@ -335,18 +367,23 @@ class TopologyPanel(Widget):
 
 
 def _hostname_from_stargate_id(stargate_id: str) -> str:
+    """Derive the bare hostname from a relay stargate_id (strips 'relay-' prefix)."""
     return stargate_id.removeprefix("relay-")
 
 
 def _parse_remote_targets(
-    remotes: list[dict[str, object]],
+    remotes: Sequence[Mapping[str, Any]],
 ) -> list[tuple[str, str]]:
     """Extract (hostname, address) pairs from remote config dicts."""
     targets: list[tuple[str, str]] = []
     for remote in remotes:
-        sid = str(remote.get("stargate_id", "?"))
+        sid = remote.get("stargate_id", "?")
+        if not isinstance(sid, str):
+            sid = str(sid)
         hostname = _hostname_from_stargate_id(sid)
-        url = str(remote.get("url", ""))
+        url = remote.get("url", "")
+        if not isinstance(url, str):
+            url = str(url)
         try:
             address = urlparse(url).hostname or ""
         except Exception:
@@ -358,15 +395,22 @@ def _parse_remote_targets(
     return targets
 
 
+_STATUS_DISPLAY: dict[str, str] = {
+    "running": "● running",
+    "stopped": "○ stopped",
+    "unreachable": "◌ unreachable",
+    "configured": "○ configured",
+}
+
+
 def _status_cell(status: str) -> str:
-    match status:
-        case "running":
-            return "● running"
-        case "stopped":
-            return "○ stopped"
-        case "unreachable":
-            return "◌ unreachable"
-        case "configured":
-            return "○ configured"
-        case _:
-            return f"? {status}"
+    """Map a raw status string to a display string with a Unicode bullet prefix."""
+    return _STATUS_DISPLAY.get(status, f"? {status}")
+
+
+def _status_reason_suffix(status_reason: str | None) -> str:
+    """Render a readable status-reason suffix for the relay detail column."""
+    if not status_reason:
+        return ""
+    reason_text = _STATUS_REASON_DISPLAY.get(status_reason, status_reason)
+    return f" [{reason_text}]"

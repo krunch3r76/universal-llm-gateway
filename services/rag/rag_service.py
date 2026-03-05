@@ -61,6 +61,7 @@ _watcher_manager: WatcherManager | None = None
 _event_bus: EventBus | None = None
 _broadcaster: MinimalEventDebugBroadcaster | None = None
 _config: RagConfig | None = None
+_init_task: asyncio.Task[None] | None = None
 
 # Serialize concurrent indexing of the same file path (watcher + API can race).
 _file_index_locks: dict[str, asyncio.Lock] = {}
@@ -77,7 +78,7 @@ def get_event_bus() -> EventBus | None:
 
 @app.on_event("startup")
 async def _startup() -> None:
-    global _chroma, _collection, _watcher_manager, _event_bus, _broadcaster, _config
+    global _chroma, _collection, _watcher_manager, _event_bus, _broadcaster, _config, _init_task
     store_path = Path.home() / ".rag" / "store"
     store_path.mkdir(parents=True, exist_ok=True)
     _chroma = chromadb.PersistentClient(path=str(store_path))
@@ -100,23 +101,35 @@ async def _startup() -> None:
     await _event_bus.publish_async(RagStarted())
     _config = load_config()
     if _config.watch_directories:
-
-        async def _watcher_index_fn(
-            path: Path, chunk_tokens: int | None
-        ) -> IndexResult:
-            return await _index_file(path, chunk_tokens=chunk_tokens)
-
-        _watcher_manager = WatcherManager(
-            index_fn=_watcher_index_fn, event_bus=_event_bus
+        _init_task = asyncio.create_task(
+            _deferred_watcher_start(_config), name="rag-watcher-init"
         )
-        try:
-            await wait_until_healthy()
-        except TimeoutError:
-            logger.error(
-                "Embedding endpoint not healthy after timeout; "
-                "initial watcher sweep will be skipped for files requiring embedding"
-            )
-        await _watcher_manager.start(_config)
+
+
+async def _deferred_watcher_start(config: RagConfig) -> None:
+    """Start watchers after embedding endpoint is healthy.
+
+    Runs as a background task so uvicorn binds the UDS socket immediately
+    instead of blocking on the (potentially slow) initial reindex.
+    """
+    global _watcher_manager
+
+    async def _watcher_index_fn(
+        path: Path, chunk_tokens: int | None
+    ) -> IndexResult:
+        return await _index_file(path, chunk_tokens=chunk_tokens)
+
+    _watcher_manager = WatcherManager(
+        index_fn=_watcher_index_fn, event_bus=_event_bus
+    )
+    try:
+        await wait_until_healthy()
+    except TimeoutError:
+        logger.error(
+            "Embedding endpoint not healthy after timeout; "
+            "initial watcher sweep will be skipped for files requiring embedding"
+        )
+    await _watcher_manager.start(config)
 
 
 @app.on_event("shutdown")
@@ -193,12 +206,11 @@ async def _index_file_impl(
             if isinstance(chunk_hash, str) and isinstance(indexed_at, str):
                 existing_timestamps[chunk_hash] = indexed_at
 
-    if existing_ids:
-        collection.delete(ids=existing_ids)
-
     max_chunk_chars = chunk_tokens * _TOKEN_ESTIMATE if chunk_tokens else None
     chunks: list[Chunk] = chunk_file(file_path, max_chunk_chars=max_chunk_chars)
     if not chunks:
+        if existing_ids:
+            collection.delete(ids=existing_ids)
         logger.info(
             "Index complete: file=%s deleted=%d indexed=0", source, len(existing_ids)
         )
@@ -224,7 +236,11 @@ async def _index_file_impl(
         for metadata in metadatas:
             metadata.update(metadata_overrides)
 
+    # Embed before mutating: if embed raises, old chunks remain intact.
+    # ∀ failed embed → zero-chunk state is impossible.
     embeddings = await embed_chunks(texts)
+    if existing_ids:
+        collection.delete(ids=existing_ids)
     collection.upsert(
         ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
     )

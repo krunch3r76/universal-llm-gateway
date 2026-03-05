@@ -36,8 +36,68 @@ class Chunk:
     metadata: dict[str, str | int | float | bool]
 
 
+def _word_split(text: str, max_chars: int) -> list[str]:
+    """Split text at word boundaries up to max_chars per piece."""
+    words = text.split()
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for word in words:
+        if current_len + len(word) + 1 > max_chars and current:
+            chunks.append(" ".join(current))
+            current = []
+            current_len = 0
+        current.append(word)
+        current_len += len(word) + 1
+    if current:
+        chunks.append(" ".join(current))
+    # Hard-truncation last resort (no whitespace at all).
+    if not chunks:
+        return [text[i : i + max_chars] for i in range(0, len(text), max_chars)]
+    return chunks
+
+
+def _split_oversized(para: str, max_chars: int) -> list[str]:
+    """Split a single paragraph that individually exceeds max_chars.
+
+    Strategy (cascade):
+    1. Table rows: split at \\n boundaries for pipe-table content,
+       recursing into _word_split for any row that still exceeds max_chars.
+    2. Word-boundary split for prose.
+    3. Hard-truncation as final fallback.
+    """
+    if "|" in para and "\n" in para:
+        rows = para.split("\n")
+        sub_chunks: list[str] = []
+        current_rows: list[str] = []
+        current_len = 0
+        for row in rows:
+            if current_len + len(row) + 1 > max_chars and current_rows:
+                sub_chunks.append("\n".join(current_rows))
+                current_rows = []
+                current_len = 0
+            if len(row) > max_chars:
+                # Single row too large — word-split it, flush first
+                if current_rows:
+                    sub_chunks.append("\n".join(current_rows))
+                    current_rows = []
+                    current_len = 0
+                sub_chunks.extend(_word_split(row, max_chars))
+            else:
+                current_rows.append(row)
+                current_len += len(row) + 1
+        if current_rows:
+            sub_chunks.append("\n".join(current_rows))
+        return sub_chunks
+
+    return _word_split(para, max_chars)
+
+
 def _split_paragraphs(text: str, max_chars: int) -> list[str]:
-    """Split text into chunks at paragraph boundaries, capped at max_chars."""
+    """Split text into chunks at paragraph boundaries, capped at max_chars.
+
+    ∀ chunk in result: len(chunk) ≤ max_chars (enforced via _split_oversized).
+    """
     paragraphs = re.split(r"\n{2,}", text.strip())
     chunks: list[str] = []
     current: list[str] = []
@@ -47,12 +107,24 @@ def _split_paragraphs(text: str, max_chars: int) -> list[str]:
         para = para.strip()
         if not para:
             continue
-        if current_len + len(para) > max_chars and current:
+
+        if len(para) > max_chars:
+            if current:
+                chunks.append("\n\n".join(current))
+                current = []
+                current_len = 0
+            chunks.extend(_split_oversized(para, max_chars))
+            continue
+
+        # Account for the "\n\n" separator between paragraphs in the joined result.
+        new_len = current_len + (2 if current else 0) + len(para)
+        if new_len > max_chars and current:
             chunks.append("\n\n".join(current))
             current = []
             current_len = 0
+            new_len = len(para)
         current.append(para)
-        current_len += len(para)
+        current_len = new_len
 
     if current:
         chunks.append("\n\n".join(current))

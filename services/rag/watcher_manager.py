@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Protocol
 
@@ -110,6 +111,7 @@ class WatcherManager:
             debounce_ms=2000,
             recursive=watch_directory.recursive,
             patterns=watch_directory.extensions,
+            exclude=watch_directory.exclude,
         )
         started = await watcher.start()
         if started:
@@ -130,13 +132,20 @@ class WatcherManager:
         (single ChromaDB get). Files absent from the index are embedded and upserted.
         This covers files that failed indexing during startup (e.g. embedding race).
         """
+        # watch_configs is immutable after start(); precompute once.
+        ext_sets = [
+            frozenset(ext.lower() for ext in wd.extensions)
+            for wd in self._watch_configs
+        ]
         await asyncio.sleep(self._reconcile_interval_s)
         while True:
-            for watch_directory in self._watch_configs:
+            for watch_directory, extensions in zip(
+                self._watch_configs, ext_sets, strict=True
+            ):
                 watch_path = Path(watch_directory.path).expanduser().resolve()
                 if not watch_path.exists():
                     continue
-                extensions = {ext.lower() for ext in watch_directory.extensions}
+                exclude = watch_directory.exclude
                 walker = (
                     watch_path.rglob("*")
                     if watch_directory.recursive
@@ -149,6 +158,8 @@ class WatcherManager:
                         not file_path.is_file()
                         or file_path.suffix.lower() not in extensions
                     ):
+                        continue
+                    if any(fnmatch(file_path.name, pat) for pat in exclude):
                         continue
                     try:
                         result = await self._index_fn(
@@ -188,8 +199,11 @@ class WatcherManager:
             watch_path.rglob("*") if watch_directory.recursive else watch_path.glob("*")
         )
         extensions = {ext.lower() for ext in watch_directory.extensions}
+        exclude = watch_directory.exclude
         for file_path in walker:
             if not file_path.is_file() or file_path.suffix.lower() not in extensions:
+                continue
+            if any(fnmatch(file_path.name, pat) for pat in exclude):
                 continue
             try:
                 result = await self._index_fn(file_path, watch_directory.chunk_tokens)

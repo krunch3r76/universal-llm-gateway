@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from dataclasses import field as _field
 from pathlib import Path
 
 import yaml
@@ -17,6 +18,7 @@ class WatchDirectory:
     extensions: list[str]
     recursive: bool = True
     chunk_tokens: int | None = None
+    exclude: list[str] = _field(default_factory=list)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -36,11 +38,11 @@ class RagConfig:
 def _normalize_extensions(raw_extensions: object) -> list[str]:
     if not isinstance(raw_extensions, list):
         return []
-    normalized: list[str] = []
-    for item in raw_extensions:
-        if isinstance(item, str) and item.strip():
-            normalized.append(f".{item.strip().lstrip('.')}")
-    return normalized
+    return [
+        f".{item.strip().lstrip('.')}"
+        for item in raw_extensions
+        if isinstance(item, str) and item.strip()
+    ]
 
 
 def _parse_watch_directories(raw_watchers: object) -> list[WatchDirectory]:
@@ -64,12 +66,18 @@ def _parse_watch_directories(raw_watchers: object) -> list[WatchDirectory]:
         recursive = recursive_value if isinstance(recursive_value, bool) else True
         raw_chunk_tokens = item.get("chunk_tokens")
         chunk_tokens = raw_chunk_tokens if isinstance(raw_chunk_tokens, int) else None
+        raw_exclude = item.get("exclude")
+        exclude = [
+            e for e in (raw_exclude if isinstance(raw_exclude, list) else [])
+            if isinstance(e, str) and e.strip()
+        ]
         watch_directories.append(
             WatchDirectory(
                 path=path.strip(),
                 extensions=_normalize_extensions(item.get("extensions")),
                 recursive=recursive,
                 chunk_tokens=chunk_tokens,
+                exclude=exclude,
             )
         )
     return watch_directories
@@ -96,14 +104,14 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
         return {}
 
     scopes: dict[str, ScopeDefinition] = {}
-    union_scopes: list[str] = []
+    union_scopes: list[tuple[str, dict[str, object]]] = []
     for scope_name, scope_data in raw_scopes.items():
         if not isinstance(scope_name, str) or not isinstance(scope_data, dict):
             logger.warning("Skipping scope with invalid structure: %r", scope_name)
             continue
 
         if scope_data.get("union") is True:
-            union_scopes.append(scope_name)
+            union_scopes.append((scope_name, scope_data))
             continue
 
         prefixes = _normalize_scope_prefixes(scope_name, scope_data.get("prefixes"))
@@ -119,11 +127,8 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
     all_prefixes = sorted(
         {prefix for scope in scopes.values() for prefix in scope.prefixes}
     )
-    for union_name in union_scopes:
-        union_data = raw_scopes[union_name]
-        description = (
-            union_data.get("description", "") if isinstance(union_data, dict) else ""
-        )
+    for union_name, union_data in union_scopes:
+        description = union_data.get("description", "")
         scopes[union_name] = ScopeDefinition(
             prefixes=all_prefixes,
             description=description if isinstance(description, str) else "",

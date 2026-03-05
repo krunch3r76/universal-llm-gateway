@@ -55,20 +55,75 @@ async def wait_until_healthy(
 
 
 _EMBED_BATCH_SIZE = 64
+# Stay safely under llama.cpp's n_batch=8192; 4 chars ≈ 1 token for English text.
+_MAX_BATCH_TOKENS = 7000
+_CHARS_PER_TOKEN = 4
+
+_EMBED_RETRY_ATTEMPTS = 3
+_EMBED_RETRY_BACKOFF_S = 1.0
+
+
+async def _post_embeddings(batch: list[str]) -> list[list[float]]:
+    """POST a single batch to the embedding endpoint with retry on transient errors.
+
+    Retries on connection failures and 503 (service temporarily unavailable).
+    Does NOT retry on 500 — content errors (e.g. n_batch overflow) are permanent
+    and should surface immediately rather than spin.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(_EMBED_RETRY_ATTEMPTS):
+        try:
+            response = await _client.post(
+                f"{GATEWAY_URL}/v1/embeddings",
+                json={"model": EMBED_MODEL, "input": batch},
+            )
+            response.raise_for_status()
+            return [item["embedding"] for item in response.json()["data"]]
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 503:
+                raise
+            last_exc = exc
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            last_exc = exc
+        delay = _EMBED_RETRY_BACKOFF_S * (2**attempt)
+        logger.warning(
+            "Embedding request failed (attempt %d/%d, %s); retrying in %.1fs",
+            attempt + 1,
+            _EMBED_RETRY_ATTEMPTS,
+            type(last_exc).__name__,
+            delay,
+        )
+        await asyncio.sleep(delay)
+    raise last_exc  # type: ignore[misc]
 
 
 async def embed_chunks(texts: list[str]) -> list[list[float]]:
-    """Embed raw texts for indexing, batching to avoid overloading the endpoint."""
+    """Embed raw texts for indexing.
+
+    Splits into sub-batches bounded by both count and estimated token total.
+    ∀ batch: len ≤ _EMBED_BATCH_SIZE ∧ Σ(tokens) ≤ _MAX_BATCH_TOKENS.
+    Prevents llama.cpp n_batch overflow when the aggregate input token count
+    exceeds the physical batch size (8192 for bge-m3).
+    """
     all_embeddings: list[list[float]] = []
-    for start in range(0, len(texts), _EMBED_BATCH_SIZE):
-        batch = texts[start : start + _EMBED_BATCH_SIZE]
-        response = await _client.post(
-            f"{GATEWAY_URL}/v1/embeddings",
-            json={"model": EMBED_MODEL, "input": batch},
-        )
-        response.raise_for_status()
-        data = response.json()
-        all_embeddings.extend(item["embedding"] for item in data["data"])
+    batch: list[str] = []
+    batch_tokens = 0
+
+    for text in texts:
+        token_estimate = max(1, len(text) // _CHARS_PER_TOKEN)
+        if batch and (
+            len(batch) >= _EMBED_BATCH_SIZE
+            or batch_tokens + token_estimate > _MAX_BATCH_TOKENS
+        ):
+            all_embeddings.extend(await _post_embeddings(batch))
+            batch = []
+            batch_tokens = 0
+        batch.append(text)
+        batch_tokens += token_estimate
+
+    if batch:
+        all_embeddings.extend(await _post_embeddings(batch))
+
     return all_embeddings
 
 
