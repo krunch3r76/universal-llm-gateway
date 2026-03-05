@@ -80,7 +80,14 @@ _NO_RESULTS_SENTINEL = "No relevant documents found in the knowledge base."
 
 @dataclass(slots=True)
 class _RetrievedChunk:
-    """Single chunk from a RAG search result."""
+    """Single chunk from a RAG search result.
+
+    Attributes:
+        content: The text content of the chunk.
+        source: The original source of the chunk (e.g. file path, URL).
+        indexed_at: Timestamp when the chunk was indexed.
+        content_hash: MD5 hash of the content for deduplication across queries.
+    """
 
     content: str
     source: str
@@ -120,14 +127,107 @@ def _rrf_merge(
     return [chunks[cid] for cid in sorted_ids[:max_chunks]]
 
 
+_BINARY_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        # Model weights
+        ".bin",
+        ".gguf",
+        ".ggml",
+        ".pkl",
+        ".pickle",
+        ".pt",
+        ".pth",
+        ".ckpt",
+        ".safetensors",
+        ".npz",
+        ".npy",
+        # Archives
+        ".zip",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        # Images
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".ico",
+        ".tiff",
+        # Compiled / binary
+        ".so",
+        ".dylib",
+        ".dll",
+        ".exe",
+        ".whl",
+        ".pyc",
+        ".pyo",
+        # Office / binary docs
+        ".docx",
+        ".xlsx",
+        ".pptx",
+        ".odt",
+        ".ods",
+    }
+)
+
+
+def _normalize_source(source: str) -> str:
+    """Return a short human-readable label for a chunk source.
+
+    File paths → basename (e.g. 'pipeline-system.md').
+    URLs → path basename if present, else netloc (e.g. 'docs.example.com').
+    Empty or unparseable → 'unknown'.
+    """
+    if not source or source == "unknown":
+        return "unknown"
+    if "://" in source:
+        parsed = urlparse(source)
+        return Path(parsed.path).name or parsed.netloc or "unknown"
+    return Path(source).name or "unknown"
+
+
+def _source_is_binary(source: str) -> bool:
+    """Return True when the source extension is in the binary blocklist.
+
+    Sources with no extension (README, Makefile, Dockerfile) return False.
+    """
+    ext = Path(_normalize_source(source)).suffix.lower()
+    return bool(ext) and ext in _BINARY_EXTENSIONS
+
+
 def _format_context(chunks: list[_RetrievedChunk]) -> str:
-    """Format merged chunks for prompt injection."""
+    """Format merged chunks for prompt injection.
+
+    Source paths are normalized to filenames. Chunks whose source extension
+    is in _BINARY_EXTENSIONS are silently dropped — binary/model-weight files
+    add no retrieval value.
+
+    ∀ non-empty chunks list: returns non-empty string (sentinel or sections).
+    """
     if not chunks:
         return _NO_RESULTS_SENTINEL
 
+    accepted: list[tuple[str, _RetrievedChunk]] = []
+    for c in chunks:
+        if _source_is_binary(c.source):
+            logger.debug(
+                "_format_context: dropped binary source '%s'",
+                c.source,
+            )
+            continue
+        accepted.append((_normalize_source(c.source), c))
+
+    if not accepted:
+        return _NO_RESULTS_SENTINEL
+
     sections = [
-        f"[Source: {c.source} | Last changed: {c.indexed_at}]\n{c.content}"
-        for c in chunks
+        f"[Source: {label} | Last changed: {c.indexed_at}]\n{c.content}"
+        for label, c in accepted
     ]
     return "\n\n---\n\n".join(sections)
 
@@ -212,12 +312,15 @@ class RagMultiRetrieveHandler(BaseHandler):
 
         socket_path = step.get_domain_field("socket_path")
         if socket_path:
-            base_url = f"unix://{socket_path}" if not str(socket_path).startswith("unix://") else str(socket_path)
+            base_url = (
+                f"unix://{socket_path}"
+                if not str(socket_path).startswith("unix://")
+                else str(socket_path)
+            )
         else:
             base_url = resolve_rag_base_url()
         api_path = urlparse(endpoint).path or "/search"
-        if not api_path.startswith("/"):
-            api_path = f"/{api_path}"
+        api_path = api_path if api_path.startswith("/") else f"/{api_path}"
 
         resolver = NamespaceResolver(context)
         rewrite_data: dict[str, Any] = self._resolve_input(
@@ -259,13 +362,16 @@ class RagMultiRetrieveHandler(BaseHandler):
 
         # Class-based fallback: match consumer_model against model_classes patterns
         matched_class_name: str | None = None
-        if consumer_model and not profile:
+        resolved_profile = profile
+        if consumer_model and not resolved_profile:
             for class_name, class_config in profiles_data.get(
                 "model_classes", {}
             ).items():
                 pattern = class_config.get("match", "")
                 if pattern and pattern in consumer_model:
-                    profile = {k: v for k, v in class_config.items() if k != "match"}
+                    resolved_profile = {
+                        k: v for k, v in class_config.items() if k != "match"
+                    }
                     matched_class_name = class_name
                     logger.info(
                         "Step '%s': no exact profile for '%s', "
@@ -277,15 +383,15 @@ class RagMultiRetrieveHandler(BaseHandler):
                     )
                     break
 
-        if consumer_model and profile:
+        if consumer_model and resolved_profile:
             logger.info(
                 "Step '%s': applying retrieval profile for consumer '%s'",
                 step.id,
                 consumer_model,
             )
 
-        # Merge: yaml_defaults < profile < runtime (runtime always wins)
-        effective = {**yaml_defaults, **profile, **runtime}
+        # Merge: yaml_defaults < resolved_profile < runtime (runtime always wins)
+        effective = {**yaml_defaults, **resolved_profile, **runtime}
 
         top_k = int(effective.get("rag_top_k_per_query", 10))
         max_chunks = int(effective.get("rag_max_chunks", 20))
@@ -294,13 +400,21 @@ class RagMultiRetrieveHandler(BaseHandler):
         confidence_threshold = float(effective.get("scope_confidence_threshold", 0.7))
 
         # --- Scope resolution ---
-        explicit_prefixes: list[str] | None = effective.get("rag_source_prefixes")
-        if explicit_prefixes:
-            source_prefixes = explicit_prefixes
+        explicit_prefixes_raw = effective.get("rag_source_prefixes")
+        source_prefixes: list[str] | None = None
+        if isinstance(explicit_prefixes_raw, list) and all(
+            isinstance(x, str) for x in explicit_prefixes_raw
+        ):
+            source_prefixes = explicit_prefixes_raw
             scope = "custom"
             search_scope = None  # use raw prefixes
             retrieval_mode = "source_prefixes"
         else:
+            if explicit_prefixes_raw is not None:
+                logger.warning(
+                    "Step '%s': 'rag_source_prefixes' is not a list of strings, ignoring.",
+                    step.id,
+                )
             scope_override_val: str = effective.get("scope_override", "")
             if scope_override_val:
                 scope = scope_override_val

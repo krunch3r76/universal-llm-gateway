@@ -34,7 +34,7 @@ by the registry, and executed by the DAG executor with parallel step scheduling.
 
 All pipeline step handlers extend `BaseHandler`.
 
-**Source**: `services/universal-stargate/systems/pipeline/core/handlers/builtin.py`
+**Source**: `services/universal-stargate/systems/pipeline/core/handlers/builtin/base.py`
 
 | Method | Purpose |
 |---|---|
@@ -132,7 +132,7 @@ Exception: `assess_loop_v1` iteration events written to recorder only (intra-ste
 | `core/executor.py` | `PipelineExecutor` — entry point |
 | `core/execution/executor.py` | `DAGExecutor` — step scheduling |
 | `core/execution/proxy_client.py` | `ProxyClient` — internal HTTP calls |
-| `core/handlers/builtin.py` | `BaseHandler` — shared handler logic |
+| `core/handlers/builtin/base.py` | `BaseHandler` — shared handler logic |
 | `core/estimation.py` | Shared token estimation and batch packing helpers |
 | `core/handlers/protocol.py` | `PipelineContext` protocol |
 | `core/schemas.py` | `StepConfig`, `FragmentRef`, `SubPipelineSpec` |
