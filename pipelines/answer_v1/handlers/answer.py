@@ -11,6 +11,7 @@ import dataclasses
 import time
 from typing import TYPE_CHECKING, Any, override
 
+from systems.pipeline.core.constants import RAG_NO_RESULTS_SENTINEL
 from systems.pipeline.core.handlers.builtin import ModelCallResult
 from systems.pipeline.core.handlers.generate import GenericGenerateHandler
 from universal_logging import get_logger
@@ -36,26 +37,28 @@ def strip_leading_think_block(text: str) -> str:
     """
     if not text or THINK_OPEN not in text:
         return text
+
     lines = text.splitlines()
-    start_idx: int | None = None
+    start_idx = -1
     for i, line in enumerate(lines):
-        if not line.strip():
-            continue
-        if THINK_OPEN in line:
-            start_idx = i
-            break
-        return text  # First non-empty line does not contain <think>
-    if start_idx is None:
+        if line.strip():
+            if THINK_OPEN in line:
+                start_idx = i
+            break  # first non-empty line seen; stop regardless
+
+    if start_idx == -1:
         return text
-    end_idx: int | None = None
+
+    end_idx = -1
     for i in range(start_idx, len(lines)):
         if THINK_CLOSE in lines[i]:
             end_idx = i
             break
-    if end_idx is None:
+
+    if end_idx == -1:
         return text
-    after = lines[end_idx + 1 :]
-    remainder = "\n".join(after)
+
+    remainder = "\n".join(lines[end_idx + 1 :])
     return remainder.strip()
 
 
@@ -75,11 +78,36 @@ class AnswerGenerateHandler(GenericGenerateHandler):
         step: StepConfig,
         context: PipelineContext,
     ) -> StepOutput:
-        """Execute answer step, honouring pipeline_options.model when supplied."""
+        """Execute answer step, honouring pipeline_options.model when supplied.
+
+        Empty-context guard: if the upstream get_context step returned the
+        RAG_NO_RESULTS_SENTINEL, skip the LLM call and return a canned
+        not-grounded response. Coupling: depends on the step being named
+        'get_context' in answer-v1.yaml.
+
+        RAG_NO_RETRIEVAL_SENTINEL (needs_retrieval=false / conversational query)
+        is intentionally not blocked — conversational queries may still use
+        model knowledge.
+        """
+        get_context_out = context.get_output("get_context")
+        if (
+            get_context_out is not None
+            and get_context_out.raw == RAG_NO_RESULTS_SENTINEL
+        ):
+            return StepOutput(
+                raw=(
+                    "I don't have indexed documents covering this question. "
+                    "Try asking about topics covered in the project documentation."
+                ),
+                json={"fallback": True, "reason": "no_retrieved_documents"},
+            )
+
         override_model: str | None = (context.options or {}).get("model")
-        if not override_model:
-            return await super().execute(step, context)
-        return await self._execute_with_model_override(step, context, override_model)
+        if override_model:
+            return await self._execute_with_model_override(
+                step, context, override_model
+            )
+        return await super().execute(step, context)
 
     async def _execute_with_model_override(
         self,
@@ -103,12 +131,10 @@ class AnswerGenerateHandler(GenericGenerateHandler):
             "system_prompt": prompt_config.system_prompt or "",
             "temperature": step.generation_parameters.get("temperature"),
             "max_tokens": self._resolve_max_tokens(step, context),
-            "json_schema": None,
+            "json_schema": step.generation_parameters.get("response_format", {}).get(
+                "schema"
+            ),
         }
-        if step.generation_parameters.get("response_format"):
-            resolved_config["json_schema"] = step.generation_parameters[
-                "response_format"
-            ].get("schema")
 
         logger.debug("answer step: pipeline_options.model override → %s", model_id)
 
@@ -150,7 +176,9 @@ class AnswerGenerateHandler(GenericGenerateHandler):
                 len(call_result.content),
                 len(stripped),
             )
-        wrapped = dataclasses.replace(call_result, content=stripped)
+            wrapped = dataclasses.replace(call_result, content=stripped)
+        else:
+            wrapped = call_result
         return super()._build_step_output(
             wrapped,
             resolved_config,

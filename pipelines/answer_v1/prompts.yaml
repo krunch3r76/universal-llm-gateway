@@ -13,7 +13,7 @@ prompts:
 
       Rules:
       - Answer from the provided context when relevant; if the context doesn't cover the
-        question, say so and provide your best guidance
+        question, say so — do not generate an answer from your training knowledge
       - Cite sources by filename only (e.g. 'pipeline-system.md') — never full paths
       - Be practical: prefer actionable explanations over abstract descriptions
       - Structure complex answers with clear sections

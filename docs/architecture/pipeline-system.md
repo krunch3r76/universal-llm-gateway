@@ -136,7 +136,7 @@ Exception: `assess_loop_v1` iteration events written to recorder only (intra-ste
 | `core/estimation.py` | Shared token estimation and batch packing helpers |
 | `core/handlers/protocol.py` | `PipelineContext` protocol |
 | `core/schemas.py` | `StepConfig`, `FragmentRef`, `SubPipelineSpec` |
-| `core/registry.py` | `PipelineRegistry` — loading, resolution |
+| `registry/core.py` | `PipelineRegistry` — loading, resolution |
 | `core/events/recorder.py` | `EventRecorder` — per-execution JSONL |
 
 ## Pipeline File Structure

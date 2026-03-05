@@ -42,7 +42,7 @@ federation coordination, pipeline execution, and model profiles.
 | `RequestExecutor` | `systems/proxy/core/nonstreaming/executor/core.py` | Gateway selection, forwarding |
 | `RequestContext` | `systems/proxy/core/nonstreaming/context.py` | Per-request state |
 | `PipelineExecutor` | `systems/pipeline/core/executor.py` | DAG-based pipeline execution |
-| `PipelineRegistry` | `systems/pipeline/core/registry.py` | Pipeline loading and model resolution |
+| `PipelineRegistry` | `systems/pipeline/registry/core.py` | Pipeline loading and model resolution |
 
 ## Request Flow (Non-Streaming)
 

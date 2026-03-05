@@ -27,6 +27,12 @@ from urllib.parse import urlparse
 
 import httpx
 import yaml
+from systems.pipeline.core.constants import (
+    RAG_NO_RESULTS_SENTINEL as _NO_RESULTS_SENTINEL,
+)
+from systems.pipeline.core.constants import (
+    RAG_NO_RETRIEVAL_SENTINEL as _NO_RETRIEVAL_SENTINEL,
+)
 from systems.pipeline.core.events.step import RagRetrievalParamsResolved
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
@@ -43,7 +49,9 @@ logger = get_logger(__name__)
 _PROFILES_PATH = (
     Path(__file__).resolve().parent.parent.parent / "retrieval-profiles.yaml"
 )
+"""Absolute path to ``retrieval-profiles.yaml``, resolved relative to the rag_context_v1 package root."""
 _profiles_cache: dict[str, Any] | None = None
+"""In-process cache for the loaded retrieval profiles dict; ``None`` until first load."""
 
 
 def _load_retrieval_profiles() -> dict[str, Any]:
@@ -72,10 +80,6 @@ def _load_retrieval_profiles() -> dict[str, Any]:
         len(result.get("scope_defaults", {})),
     )
     return result
-
-
-_NO_RETRIEVAL_SENTINEL = "No retrieval needed — answering from model knowledge."
-_NO_RESULTS_SENTINEL = "No relevant documents found in the knowledge base."
 
 
 @dataclass(slots=True)
@@ -187,7 +191,9 @@ def _normalize_source(source: str) -> str:
         return "unknown"
     if "://" in source:
         parsed = urlparse(source)
-        return Path(parsed.path).name or parsed.netloc or "unknown"
+        if parsed.path and parsed.path != "/":
+            return Path(parsed.path).name
+        return parsed.netloc or "unknown"
     return Path(source).name or "unknown"
 
 
@@ -391,7 +397,7 @@ class RagMultiRetrieveHandler(BaseHandler):
             )
 
         # Merge: yaml_defaults < resolved_profile < runtime (runtime always wins)
-        effective = {**yaml_defaults, **resolved_profile, **runtime}
+        effective: dict[str, Any] = {**yaml_defaults, **resolved_profile, **runtime}
 
         top_k = int(effective.get("rag_top_k_per_query", 10))
         max_chunks = int(effective.get("rag_max_chunks", 20))
