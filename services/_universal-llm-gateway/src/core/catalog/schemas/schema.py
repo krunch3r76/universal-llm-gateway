@@ -39,25 +39,25 @@ class BaseEngineSchema(ABC):
         - named: Keys are descriptive names ('default', 'offload')
     """
 
-    # Engine dispatch type (used in model info, engine factory, config builder)
     engine: str
+    """Engine dispatch type (used in model info, engine factory, config builder)."""
 
-    # YAML schema: field value for registry lookup; defaults to engine
-    # Override when schema name differs from engine type
-    # (e.g., schema_name="llama-cpp" but engine="native")
     schema_name: str = ""
+    """YAML schema: field value for registry lookup; defaults to engine.
+    Override when schema name differs from engine type
+    (e.g., schema_name="llama-cpp" but engine="native")."""
 
-    # Supported model formats
     formats: frozenset[str]
+    """Supported model formats (e.g., 'gguf', 'safetensors')."""
 
-    # Supported device types
     supported_devices: frozenset[str]
+    """Supported device types (e.g., 'gpu', 'cpu', 'hybrid')."""
 
-    # Profile key type: "context_length" or "named"
     profile_type: str
+    """Profile key type: 'context_length' or 'named'."""
 
-    # Whether this engine supports vision models
     supports_vision: bool = False
+    """Whether this engine supports vision models."""
 
     @abstractmethod
     def validate(
@@ -336,11 +336,18 @@ class BaseEngineSchema(ABC):
         hf_info = download.get("huggingface", {})
         model_format = metadata.get("format", "")
 
-        # Determine path
-        if model_format == "gguf":
-            path = hf_info.get("file") or f"{model_id}.gguf"
-        elif model_format == "whisper":
-            path = hf_info.get("file") or f"{model_id}.pt"
+        # Determine path — for gguf/whisper, local_subdir is a schema-v3 field
+        # indicating the file lives under a named subdirectory of MODEL_PATH_ROOT.
+        # Schema v4+ encodes the subdir directly in `file` (e.g. "Subdir/model.gguf").
+        # Support both: if local_subdir is present and file has no directory component,
+        # prepend it so ConfigLoader resolves the correct absolute path.
+        local_subdir = hf_info.get("local_subdir", "")
+        if model_format in {"gguf", "whisper"}:
+            default_ext = ".gguf" if model_format == "gguf" else ".pt"
+            file = hf_info.get("file") or f"{model_id}{default_ext}"
+            path = (
+                f"{local_subdir}/{file}" if local_subdir and "/" not in file else file
+            )
         else:
             repo = hf_info.get("repo") or model_id
             path = repo.split("/")[-1] if "/" in repo else repo

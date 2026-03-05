@@ -495,6 +495,41 @@ def _auth_headers(api_key: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
+def _normalize_model_path(path: str) -> str:
+    """
+    Normalize an absolute model file path to be relative to MODEL_PATH_ROOT.
+
+    Strips MODEL_PATH_ROOT (or legacy roots) so the catalog stores a portable
+    relative path (e.g. "Subdir/mmproj.gguf") rather than a machine-specific
+    absolute one.  The registry then resolves it back via MODEL_PATH_ROOT at
+    runtime, making the catalog portable across host/container path differences.
+
+    If the path cannot be made relative (unrecognised root), it is returned
+    unchanged.
+    """
+    import os
+    from pathlib import Path
+
+    expanded = Path(os.path.expanduser(path))
+
+    # Try MODEL_PATH_ROOT first (highest priority)
+    model_root = os.getenv("MODEL_PATH_ROOT")
+    if model_root:
+        try:
+            return str(expanded.relative_to(model_root))
+        except ValueError:
+            pass
+
+    # Fall back to legacy roots recognised by ConfigLoader
+    for legacy in (Path("/mnt/torus/models"), Path.home() / ".models"):
+        try:
+            return str(expanded.relative_to(legacy))
+        except ValueError:
+            pass
+
+    return path
+
+
 def _detect_vision_architecture(model_id: str) -> str | None:
     """
     Detect vision architecture from model ID/name.
@@ -731,7 +766,7 @@ def _build_updated_catalog_entry(
         vision_arch = vision_architecture or _detect_vision_architecture(model_id)
         if vision_arch:
             loader["vision_architecture"] = vision_arch
-            loader["clip_model_path"] = mmproj_path
+            loader["clip_model_path"] = _normalize_model_path(mmproj_path)
             if tokens_per_image is not None:
                 loader["tokens_per_image"] = tokens_per_image
             print("   Adding vision parameters to loader")

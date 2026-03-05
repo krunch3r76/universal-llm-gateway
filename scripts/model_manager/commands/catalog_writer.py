@@ -23,7 +23,11 @@ logger = get_logger(__name__)
 _METADATA_STRIP_KEYS = frozenset({"activated_gpu_contexts", "activated_cpu_contexts"})
 
 # loader fields preserved in static entries (routing discriminants, not operational)
-_LOADER_STATIC_KEYS = frozenset({"embedding", "embedding_task_default"})
+# clip_model_path and vision_architecture are capability discriminants — needed in
+# static entries so the container can load vision models without a local override.
+_LOADER_STATIC_KEYS = frozenset(
+    {"embedding", "embedding_task_default", "clip_model_path", "vision_architecture"}
+)
 
 
 def get_static_models_dir() -> Path:

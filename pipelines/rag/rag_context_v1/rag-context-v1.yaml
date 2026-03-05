@@ -11,7 +11,14 @@ output: retrieve_assemble
 
 options:
   timeout_seconds: 60    # §4.2: raised from 30s; GPU contention headroom
-  scope_options: '"research", "project", or "all"'  # fallback when callers omit dynamic injection
+  scope_options: |
+    "project" — project architecture, vision, journal, engram
+    "research" — all research papers (prompting, RAG systems, workflows, code retrieval)
+    "prompting" — prompt engineering research specifically (small + large models)
+    "workflows" — pipeline architecture and agent orchestration patterns
+    "llm_foundations" — LLM reference ebooks and foundational texts
+    "both" — project + research combined (use when query spans both domains)
+    "all" — all indexed content (use when unclear or very broad)
   # --- Retrieval tunables (overridable via pipeline_options) ---
   rag_top_k_per_query: 10
   rag_max_chunks: 20

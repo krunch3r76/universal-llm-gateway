@@ -105,13 +105,18 @@ class ChatCompletionRequest(BaseModel):
     user: str | None = Field(None, description="User identifier")
 
     # Chat template control — forwarded verbatim to llama-server
-    # ∀ thinking-capable models: set {"enable_thinking": false} to suppress <think> tokens
-    # Default unset → model/server default applies (thinking on for Qwen3.5, etc.)
+    # ∀ thinking-capable models (supports_thinking: true): enable_thinking defaults to TRUE
+    # at the llama-server level via the model's Jinja chat template. No injection needed.
+    # To suppress: {"enable_thinking": false}. To force: {"enable_thinking": true}.
+    # Note: <think> block content is consumed internally and not returned in the response by default.
+    # To expose reasoning in message.reasoning_content, launch llama-server with
+    # --reasoning-format deepseek (set reasoning_format: deepseek in ServerConfig / catalog).
     chat_template_kwargs: dict[str, Any] | None = Field(
         None,
         description=(
             "Jinja template kwargs forwarded to llama-server. "
-            'Use {"enable_thinking": false} to disable thinking mode on supporting models.'
+            'Use {"enable_thinking": false} to disable thinking on supporting models. '
+            "Default: thinking ON for models with supports_thinking: true (llama-server default)."
         ),
     )
 

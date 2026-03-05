@@ -142,9 +142,9 @@ class LlamaCppSchema(BaseEngineSchema):
                     ValidationIssue(
                         model_id=model_id,
                         severity="warning",
-                        message="Vision model missing vision_architecture",
+                        message="Vision model missing vision_architecture in capabilities",
                         field="metadata.capabilities.modalities.vision_architecture",
-                        fix="Add vision_architecture (llava, minicpmv, etc.)",
+                        fix="Add vision_architecture (llava, minicpmv, etc.) to metadata.capabilities.modalities",
                     )
                 )
 
@@ -163,39 +163,41 @@ class LlamaCppSchema(BaseEngineSchema):
         # Merge default + model-specific loader
         base_loader = {**self.get_default_loader(), **loader}
 
-        # Build GPU profiles
-        profiles: dict[str, dict[str, Any]] = {}
-        gpu_device = devices.get("gpu", {})
-        for ctx, prof in gpu_device.get("profiles", {}).items():
-            # Merge profile-specific loader config (e.g., parallel_slots, n_batch)
-            profile_loader = prof.get("loader", {})
-            profiles[str(ctx)] = {
-                "loader": {
-                    "n_ctx": int(ctx),
-                    "n_gpu_layers": prof.get("n_gpu_layers", -1),
-                    **profile_loader,  # Include profile-specific overrides
-                },
-                "resources": {
-                    "vram_mb": prof.get("vram_mb", 0),
-                    "ram_mb": prof.get("ram_mb", 0),
-                },
-            }
+        # Schema v3 compat: if local_subdir is set and clip_model_path is a bare
+        # filename, prepend the subdir so the registry resolves the correct path.
+        hf_info = download.get("huggingface", {})
+        local_subdir = hf_info.get("local_subdir", "")
+        if local_subdir and "clip_model_path" in base_loader:
+            clip = base_loader["clip_model_path"]
+            if clip and "/" not in clip:
+                base_loader = {
+                    **base_loader,
+                    "clip_model_path": f"{local_subdir}/{clip}",
+                }
 
-        # Build hybrid profiles (numeric keys, same as GPU — n_gpu_layers distinguishes)
-        hybrid_device = devices.get("hybrid", {})
-        for ctx, prof in hybrid_device.get("profiles", {}).items():
-            profile_loader = prof.get("loader", {})
-            profiles[str(ctx)] = {
-                "loader": {
-                    "n_ctx": int(ctx),
-                    "n_gpu_layers": prof.get("n_gpu_layers", 0),
-                    **profile_loader,  # Include profile-specific overrides
-                },
-                "resources": {
-                    "vram_mb": prof.get("vram_mb", 0),
-                    "ram_mb": prof.get("ram_mb", 0),
-                },
-            }
+        profiles: dict[str, dict[str, Any]] = {}
+
+        def _build_device_profiles(
+            device_config: dict[str, Any],
+            default_n_gpu_layers: int,
+        ) -> None:
+            for ctx, prof in device_config.get("profiles", {}).items():
+                profile_loader = prof.get("loader", {})
+                profiles[str(ctx)] = {
+                    "loader": {
+                        "n_ctx": int(ctx),
+                        "n_gpu_layers": prof.get("n_gpu_layers", default_n_gpu_layers),
+                        **profile_loader,
+                    },
+                    "resources": {
+                        "vram_mb": prof.get("vram_mb", 0),
+                        "ram_mb": prof.get("ram_mb", 0),
+                    },
+                }
+
+        # GPU: n_gpu_layers=-1 (all layers on GPU); hybrid: partial offload (>0 explicit)
+        _build_device_profiles(devices.get("gpu", {}), default_n_gpu_layers=-1)
+        _build_device_profiles(devices.get("hybrid", {}), default_n_gpu_layers=0)
 
         # Build CPU profiles
         cpu_profiles: dict[str, dict[str, Any]] = {}

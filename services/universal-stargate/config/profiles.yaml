@@ -70,7 +70,7 @@ profiles:
       frequency_penalty: 0.1  # Additional penalty to reduce repetition in factual content
   code-generation:
     description: Tight structure, deterministic-ish - best for code generation tasks
-    system_prompt: "You are an expert Python engineer. Output only valid, self-documenting code for the described class or method — no explanations, no markdown, no commentary."
+    system_prompt: ""
     temperature: 0.2
     top_p: 0.9
     top_k: 50
@@ -329,6 +329,62 @@ profiles:
     vllm:
       presence_penalty: 0.0
       frequency_penalty: 0.1
+  qwen3-5-thinking:
+    description: "Qwen3.5 thinking — general tasks (model card)"
+    system_prompt: ""
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 20
+    presence_penalty: 1.5
+    llama_cpp:
+      min_p: 0.0
+      repeat_penalty: 1.0
+    vllm:
+      presence_penalty: 1.5
+      frequency_penalty: 0.0
+
+  qwen3-5-thinking-coding:
+    description: "Qwen3.5 thinking — precise coding/WebDev tasks (model card)"
+    system_prompt: ""
+    temperature: 0.6
+    top_p: 0.95
+    top_k: 20
+    presence_penalty: 0.0
+    llama_cpp:
+      min_p: 0.0
+      repeat_penalty: 1.0
+    vllm:
+      presence_penalty: 0.0
+      frequency_penalty: 0.0
+
+  qwen3-5-instruct:
+    description: "Qwen3.5 instruct/non-thinking — general tasks (model card)"
+    system_prompt: ""
+    temperature: 0.7
+    top_p: 0.8
+    top_k: 20
+    presence_penalty: 1.5
+    llama_cpp:
+      min_p: 0.0
+      repeat_penalty: 1.0
+    vllm:
+      presence_penalty: 1.5
+      frequency_penalty: 0.0
+
+  qwen3-5-instruct-reasoning:
+    description: "Qwen3.5 instruct/non-thinking — reasoning tasks (model card)"
+    system_prompt: ""
+    temperature: 1.0
+    top_p: 1.0
+    top_k: 40
+    presence_penalty: 2.0
+    llama_cpp:
+      min_p: 0.0
+      repeat_penalty: 1.0
+    vllm:
+      presence_penalty: 2.0
+      frequency_penalty: 0.0
+
   cursorcore:
     description: CursorCore AI-assisted programming - optimized for code editing and inline chat
     system_prompt: "You are a helpful programming assistant."
