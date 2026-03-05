@@ -1,0 +1,86 @@
+schema_version: 6
+id: doc-generate
+version: "1"
+type: doc_generate
+description: "Generate architecture docs from Python docstrings with verification"
+output: review
+
+options:
+  timeout_seconds: 480
+
+steps:
+  - name: extract
+    type: doc_generate_extract_docstrings
+    handler_inputs:
+      subsystem_path: sourceNs.text
+    timeout_seconds: 45
+
+  - name: draft
+    type: generate
+    model_ref: draft_model
+    prompt_ref: doc_generate.draft
+    handler_inputs:
+      subsystem_path: sourceNs.text
+      inventory_json: extract.raw
+      existing_doc: extract.json.existing_doc
+    generation_parameters:
+      temperature: 0.2
+    timeout_seconds: 240
+    retry_policy:
+      max_attempts: 3
+      backoff_strategy: exponential
+      initial_interval_seconds: 3.0
+      max_interval_seconds: 15.0
+      retry_on: ["ProxyClientError"]
+
+  - name: review
+    type: generate
+    model_ref: review_model
+    prompt_ref: doc_generate.review
+    handler_inputs:
+      subsystem_path: sourceNs.text
+      inventory_json: extract.raw
+      draft_doc: draft.raw
+    generation_parameters:
+      temperature: 0.1
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            doc_markdown:
+              type: string
+              description: "Verified architecture document markdown"
+            unsupported_claims:
+              type: array
+              items:
+                type: string
+              description: "Claims in draft_doc not supported by extracted inventory"
+            missing_coverage:
+              type: array
+              items:
+                type: string
+              description: "Missing modules/functions/classes that should be documented"
+            human_markers:
+              type: array
+              items:
+                type: string
+              description: "All HUMAN markers that require manual synthesis"
+            review_notes:
+              type: array
+              items:
+                type: string
+              description: "Verifier notes about scope limits and provenance"
+          required:
+            - doc_markdown
+            - unsupported_claims
+            - missing_coverage
+            - human_markers
+            - review_notes
+    timeout_seconds: 240
+    retry_policy:
+      max_attempts: 3
+      backoff_strategy: exponential
+      initial_interval_seconds: 3.0
+      max_interval_seconds: 15.0
+      retry_on: ["ProxyClientError"]
