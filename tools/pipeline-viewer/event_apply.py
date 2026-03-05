@@ -53,9 +53,19 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
             if isinstance(jd, dict):
                 _auto_enrich_from_json(sd, jd)
 
+        case "step_model_resolved":
+            sd["model"] = ev["model_id"]
+            sd["model_ref"] = ev["model_id"]
+            sd["model_selection_source"] = ev.get("selection_source")
+
         case "step_completed":
             if ev.get("duration_ms"):
                 sd["latency_ms"] = ev["duration_ms"]
+            # Overwrite model from the resolved invocation ID (StepStarted carries
+            # the static models.yaml default; StepCompleted carries the actual model).
+            if ev.get("model_id"):
+                sd["model"] = ev["model_id"]
+                sd["model_ref"] = ev["model_id"]
             prompt_tokens = ev.get("prompt_tokens")
             if prompt_tokens is not None:
                 if "tokens" not in sd:

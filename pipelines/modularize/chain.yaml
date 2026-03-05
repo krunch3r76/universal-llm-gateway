@@ -1,45 +1,306 @@
 schema_version: 6
 id: modularize
-version: "2"
+version: "4"
 type: modularize
-description: "Modularize a Python file: analyze -> critique -> finalize (structural plan)"
-output: finalize
+description: "Modularize a Python file: plan → execute (linear, no loops)"
+output: result
 
 options:
-  timeout_seconds: 360
+  timeout_seconds: 480
+  max_sloc_per_module: 500
 
 steps:
-  - name: analyze
+  # Step 1: Analyze source and produce split instructions (or decline)
+  - name: plan_split
     type: generate
-    model_ref: analyze_model
-    prompt_ref: modularize.analyze
+    model_ref: plan_model
+    model_requirements:
+      task: code_architecture
+      min_score: good
+      count: 3
+      source: cloud
+    prompt_ref: modularize.plan_split
     handler_inputs:
       source_code: sourceNs.text
     generation_parameters:
-      temperature: 0.3
-      max_tokens: 4096
-    timeout_seconds: 60
-
-  - name: critique
-    type: generate
-    model_ref: critique_model
-    prompt_ref: modularize.critique
-    handler_inputs:
-      source_code: sourceNs.text
-      domain_analysis: analyze.raw
-    generation_parameters:
-      temperature: 0.3
-      max_tokens: 8192
+      temperature: 0.4
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            can_split:
+              type: boolean
+              description: "True if the file can be split into 2+ modules each under max_sloc_per_module"
+            reasoning:
+              type: string
+              description: "Evidence-based analysis: SLOC counts, class structure, domain boundaries, why split is/isn't feasible"
+            instructions:
+              type: string
+              description: "Step-by-step instructions for the split. Empty string if can_split is false."
+          required: [can_split, reasoning, instructions]
     timeout_seconds: 120
+    retry_policy:
+      max_attempts: 3
+      backoff_strategy: exponential
+      initial_interval_seconds: 3.0
+      max_interval_seconds: 15.0
+      retry_on: ["ProxyClientError"]
 
-  - name: finalize
+  # Step 2: Follow split instructions to produce formal plan (happy path)
+  - name: execute_split
     type: generate
-    model_ref: finalize_model
-    prompt_ref: modularize.finalize
+    model_ref: execute_model
+    model_requirements:
+      task: code_architecture
+      min_score: good
+      count: 3
+      source: cloud
+    prompt_ref: modularize.execute_split
+    condition: "plan_split.json.get('can_split') == True"
     handler_inputs:
       source_code: sourceNs.text
-      verified_grouping: critique.raw
+      instructions: plan_split.json.instructions
     generation_parameters:
-      temperature: 0.3
-      max_tokens: 8192
+      temperature: 0.2
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            reasoning:
+              type: string
+              description: "How the instructions were applied and any trade-offs noted"
+            improvements:
+              type: object
+              properties:
+                delete:
+                  type: array
+                  items:
+                    type: string
+                deduplicate:
+                  type: array
+                  items:
+                    type: string
+                simplify:
+                  type: array
+                  items:
+                    type: string
+                standardize:
+                  type: array
+                  items:
+                    type: string
+              required: [delete, deduplicate, simplify, standardize]
+            modules:
+              type: array
+              items:
+                type: object
+                properties:
+                  file_path:
+                    type: string
+                  description:
+                    type: string
+                  definitions:
+                    type: array
+                    items:
+                      type: string
+                  estimated_sloc:
+                    type: integer
+                  constructor_signature:
+                    type: string
+                    description: "Constructor signature for the primary class, e.g. '(step, runtime)'. Empty string if no class or no injection."
+                  injected_state:
+                    type: array
+                    items:
+                      type: string
+                    description: "Instance attributes stored by the primary class (from __init__ params), e.g. ['_step', '_runtime']"
+                  imports_from_siblings:
+                    type: array
+                    items:
+                      type: string
+                    description: "Other modules in this subpackage this module imports from (relative names, e.g. ['events', 'state'])"
+                  import_depth_delta:
+                    type: integer
+                    description: "Extra dots to add to existing relative imports due to subpackage nesting. 0 = same depth, 1 = moved one level deeper."
+                  compatibility_note:
+                    type: string
+                    description: "How to handle the original file: 'delete original (shadowed by new package)' or 'create __init__.py wrapper re-exporting public names'"
+                  init_reexports:
+                    type: array
+                    items:
+                      type: string
+                    description: "Public names from this module to include in the package __init__.py"
+                required: [file_path, description, definitions, estimated_sloc, constructor_signature, injected_state, imports_from_siblings, import_depth_delta, compatibility_note, init_reexports]
+              minItems: 2
+            implementation_guide:
+              type: string
+              description: "Step-by-step mechanical instructions for a cursor agent: file creation order, which definitions move where, exact import adjustments, __init__.py construction, original file disposition."
+            deduplication_opportunities:
+              type: array
+              items:
+                type: string
+              description: "Concrete duplicated patterns to consolidate: pattern description, where it appears, suggested extraction name, and destination module."
+          required: [reasoning, improvements, modules, implementation_guide, deduplication_opportunities]
+    timeout_seconds: 180
+    retry_policy:
+      max_attempts: 3
+      backoff_strategy: exponential
+      initial_interval_seconds: 3.0
+      max_interval_seconds: 15.0
+      retry_on: ["ProxyClientError"]
+
+  # Step 3: Fallback — analyze if refactoring (optionally + split) can meet SLOC target
+  - name: plan_refactor
+    type: generate
+    model_ref: plan_model
+    model_requirements:
+      task: code_architecture
+      min_score: good
+      count: 3
+      source: cloud
+    prompt_ref: modularize.plan_refactor
+    condition: "plan_split.json.get('can_split') == False"
+    handler_inputs:
+      source_code: sourceNs.text
+      split_reasoning: plan_split.json.reasoning
+    generation_parameters:
+      temperature: 0.4
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            can_refactor:
+              type: boolean
+              description: "True if refactoring (and optionally splitting) can bring the file under max_sloc_per_module"
+            reasoning:
+              type: string
+              description: "Analysis of what refactors are possible and whether a subsequent split is also needed"
+            instructions:
+              type: string
+              description: "Step-by-step instructions covering refactors and any subsequent split. Empty if can_refactor is false."
+          required: [can_refactor, reasoning, instructions]
     timeout_seconds: 120
+    retry_policy:
+      max_attempts: 3
+      backoff_strategy: exponential
+      initial_interval_seconds: 3.0
+      max_interval_seconds: 15.0
+      retry_on: ["ProxyClientError"]
+
+  # Step 4: Follow refactor instructions to produce formal plan
+  - name: execute_refactor
+    type: generate
+    model_ref: execute_model
+    model_requirements:
+      task: code_architecture
+      min_score: good
+      count: 3
+      source: cloud
+    prompt_ref: modularize.execute_refactor
+    condition: "plan_refactor.json.get('can_refactor') == True"
+    handler_inputs:
+      source_code: sourceNs.text
+      instructions: plan_refactor.json.instructions
+    generation_parameters:
+      temperature: 0.2
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            reasoning:
+              type: string
+              description: "How the refactoring instructions were applied, SLOC math, trade-offs"
+            refactors:
+              type: array
+              items:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum: [extract_class, extract_function, extract_protocol, extract_dataclass]
+                  name:
+                    type: string
+                    description: "New class/function/protocol name (PEP 8)"
+                  original_location:
+                    type: string
+                    description: "Exact class or function being extracted from"
+                  members:
+                    type: array
+                    items:
+                      type: string
+                    description: "Exact method/attribute names from original_location"
+                  target_file:
+                    type: string
+                    description: "Subdirectory convention: name/module.py"
+                  estimated_sloc:
+                    type: integer
+                  rationale:
+                    type: string
+                required: [type, name, original_location, members, target_file, estimated_sloc, rationale]
+              minItems: 1
+            resulting_split:
+              type: array
+              description: "Final file layout after refactors. 1 module = refactor-only; 2+ = refactor then split."
+              items:
+                type: object
+                properties:
+                  file_path:
+                    type: string
+                  description:
+                    type: string
+                  definitions:
+                    type: array
+                    items:
+                      type: string
+                  estimated_sloc:
+                    type: integer
+                  constructor_signature:
+                    type: string
+                    description: "Constructor signature for the primary class, e.g. '(step, runtime)'. Empty string if no class or no injection."
+                  injected_state:
+                    type: array
+                    items:
+                      type: string
+                    description: "Instance attributes stored by the primary class (from __init__ params)"
+                  imports_from_siblings:
+                    type: array
+                    items:
+                      type: string
+                    description: "Other modules in this subpackage this module imports from"
+                  import_depth_delta:
+                    type: integer
+                    description: "Extra dots to add to existing relative imports. 0 = same depth, 1 = moved one level deeper."
+                  compatibility_note:
+                    type: string
+                    description: "How to handle the original file: 'delete original (shadowed by new package)' or 'create __init__.py wrapper re-exporting public names'"
+                  init_reexports:
+                    type: array
+                    items:
+                      type: string
+                    description: "Public names from this module to include in the package __init__.py"
+                required: [file_path, description, definitions, estimated_sloc, constructor_signature, injected_state, imports_from_siblings, import_depth_delta, compatibility_note, init_reexports]
+              minItems: 1
+          required: [reasoning, refactors, resulting_split]
+    timeout_seconds: 180
+    retry_policy:
+      max_attempts: 3
+      backoff_strategy: exponential
+      initial_interval_seconds: 3.0
+      max_interval_seconds: 15.0
+      retry_on: ["ProxyClientError"]
+
+  # Step 5: Merge — pick the first non-skipped execution result.
+  # handler_inputs create DAG dependency edges so result waits for all candidates.
+  # The bound values are not used by the handler; it reads context.get_output() directly.
+  - name: result
+    type: select_output
+    candidates:
+      - execute_split
+      - execute_refactor
+      - plan_split
+    handler_inputs:
+      split_out: execute_split.raw
+      refactor_out: execute_refactor.raw
+      plan_out: plan_split.raw

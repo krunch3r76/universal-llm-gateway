@@ -4,6 +4,9 @@ Generic generate handler.
 Domain-agnostic handler that works for any pipeline type using structured
 PromptConfig for configuration. Domains can override _build_prompt_context()
 for custom context building.
+
+Model resolution: primary model from model_ref (models.yaml), with automatic
+fallback to model_requirements-resolved alternatives on ProxyClientError.
 """
 
 from __future__ import annotations
@@ -43,40 +46,107 @@ class GenericGenerateHandler(BaseHandler):
         step: StepConfig,
         context: PipelineContext,
     ) -> StepOutput:
-        """Execute generate step using structured prompt configuration."""
-        start_time = time.time()
+        """Execute generate step with model fallback on failure.
 
-        # Load configurations
+        Model resolution order:
+        1. Executor-level override via context._step_model_override (full ID,
+           set by DAGExecutor during step-level fallback for timeout/any error)
+        2. Primary model from model_ref (models.yaml)
+        3. On ProxyClientError, handler-level fallback via model_requirements
+        """
+        from ..execution.proxy_client import ProxyClientError
+
         registry = context._registry
         prompt_config = registry.get_prompt(step.prompt_ref)
-
-        model_config = registry.get_model_config(
-            step.model_ref,
-            domain=context.pipeline.domain,
-            search_path=context.pipeline.source_search_path,
-        )
-
-        # Resolve configuration hierarchy (includes dynamic token adjustment)
-        resolved = self._resolve_execution_config(
-            step, prompt_config, model_config, context
-        )
-
-        # Render user prompt
         user_prompt = self._render_user_prompt(prompt_config, step, context)
-
-        logger.debug(
-            f"Generate step '{step.id}': "
-            f"model={resolved['model_id']}, "
-            f"temp={resolved['temperature']}, "
-            f"max_tokens={resolved['max_tokens']}"
-        )
-
-        # Extract source provenance (for map steps processing answers)
         source_provenance = self._extract_source_provenance(step, context)
 
-        # Invoke model - returns ModelCallResult (concurrency safety)
-        # Handler uses return value, not instance fields (safe for map iterations)
-        # Pre-2026-01-31: used self._last_* (race condition in parallel map steps)
+        executor_override = context._step_model_override.get(step.name)
+        if executor_override:
+            model_id = executor_override
+            model_system_prompt = None
+        else:
+            model_config = registry.get_model_config(
+                step.model_ref,
+                domain=context.pipeline.domain,
+                search_path=context.pipeline.source_search_path,
+            )
+            model_id = model_config.model
+            model_system_prompt = model_config.system_prompt
+
+        try:
+            return await self._invoke_model(
+                step,
+                context,
+                prompt_config,
+                model_id,
+                model_system_prompt,
+                user_prompt,
+                source_provenance,
+            )
+        except ProxyClientError as primary_err:
+            if executor_override or not step.model_requirements:
+                raise
+
+            from .model_fallback import resolve_fallback_models, try_fallbacks
+
+            fallback_ids = resolve_fallback_models(
+                step,
+                context,
+                exclude=model_id,
+            )
+            if not fallback_ids:
+                raise
+
+            logger.warning(
+                "[%s] Primary model '%s' failed (%s), trying %d fallback(s)",
+                step.name,
+                model_id,
+                primary_err,
+                len(fallback_ids),
+            )
+            return await try_fallbacks(
+                self,
+                step,
+                context,
+                prompt_config,
+                user_prompt,
+                source_provenance,
+                fallback_ids,
+                primary_model=model_id,
+                primary_error=str(primary_err),
+                last_error=primary_err,
+            )
+
+    async def _invoke_model(
+        self,
+        step: StepConfig,
+        context: PipelineContext,
+        prompt_config: PromptConfig,
+        model_id: str,
+        model_system_prompt: str | None,
+        user_prompt: str,
+        source_provenance: dict[str, Any] | None,
+    ) -> StepOutput:
+        """Invoke a single model and build the StepOutput."""
+        start_time = time.time()
+
+        resolved = self._resolve_execution_config_for_model(
+            step,
+            prompt_config,
+            model_id,
+            model_system_prompt,
+            context,
+        )
+
+        logger.debug(
+            "Generate step '%s': model=%s, temp=%s, max_tokens=%s",
+            step.id,
+            resolved["model_id"],
+            resolved["temperature"],
+            resolved["max_tokens"],
+        )
+
         call_result = await self._call_model(
             resolved["model_id"],
             user_prompt,
@@ -89,7 +159,6 @@ class GenericGenerateHandler(BaseHandler):
             model_id_is_resolved=True,
         )
 
-        # Build output from result
         latency_ms = (time.time() - start_time) * 1000
         return self._build_step_output(
             call_result,
@@ -99,31 +168,23 @@ class GenericGenerateHandler(BaseHandler):
             source_provenance=source_provenance,
         )
 
-    def _resolve_execution_config(
+    def _resolve_execution_config_for_model(
         self,
         step: StepConfig,
         prompt_config: PromptConfig,
-        model_config: Any,
+        model_id: str,
+        model_system_prompt: str | None,
         context: PipelineContext,
     ) -> dict[str, Any]:
+        """Resolve execution configuration for a specific model.
+
+        System prompt hierarchy: prompt > model > "".
+        Generation parameters hierarchy: step > token_defaults > dynamic.
         """
-        Resolve execution configuration.
-
-        Generation parameters hierarchy:
-        1. Step generation_parameters (explicit)
-        2. Pipeline token_defaults (fallback)
-        3. Dynamic adjustment based on expansion_safe
-
-        System prompt uses hierarchy: prompt > model > "".
-        """
-        # System prompt hierarchy (unchanged)
-        system_prompt = prompt_config.system_prompt or model_config.system_prompt or ""
-
-        # Generation parameters: step config with token_defaults fallback
+        system_prompt = prompt_config.system_prompt or model_system_prompt or ""
         temperature = step.generation_parameters.get("temperature")
         max_tokens = self._resolve_max_tokens(step, context)
 
-        # JSON schema: step response_format OR prompt json_schema (compatibility)
         json_schema = None
         if step.generation_parameters.get("response_format"):
             json_schema = step.generation_parameters["response_format"].get("schema")
@@ -131,7 +192,7 @@ class GenericGenerateHandler(BaseHandler):
             json_schema = prompt_config.json_schema
 
         return {
-            "model_id": model_config.model,
+            "model_id": model_id,
             "system_prompt": system_prompt,
             "temperature": temperature,
             "max_tokens": max_tokens,

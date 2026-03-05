@@ -4,7 +4,7 @@ import asyncio
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
@@ -125,17 +125,17 @@ def create_token_allocation_policy(proxy: StargateProxy):
         return policy
 
 
+def _get_config_dir(config: Any) -> Path:
+    """Resolve config directory from config_path."""
+    return Path(config.config_path).parent if config.config_path else Path("config")
+
+
 def initialize_request_components(proxy: StargateProxy) -> None:
     """Initialize modular request handling components."""
     if proxy.gateway_manager is None:  # pragma: no cover - defensive
         raise RuntimeError("Gateway manager must be initialized before requests")
 
-    # Get config directory
-    config_dir = (
-        Path(proxy.config.config_path).parent
-        if proxy.config.config_path
-        else Path("config")
-    )
+    config_dir = _get_config_dir(proxy.config)
 
     # Initialize transformation engine (startup I/O)
     transformation_engine = initialize_transformation_engine(config_dir)
@@ -228,12 +228,7 @@ def initialize_master_request_components(proxy: StargateProxy) -> None:
             execution_target = selected_remote_stargate.gateway
             ¬∃ local_gateway ⟹ token_counting via federation_forwarder ONLY
     """
-    # Get config directory
-    config_dir = (
-        Path(proxy.config.config_path).parent
-        if proxy.config.config_path
-        else Path("config")
-    )
+    config_dir = _get_config_dir(proxy.config)
 
     # Initialize transformation engine (startup I/O)
     transformation_engine = initialize_transformation_engine(config_dir)
@@ -314,7 +309,10 @@ async def initialize_hot_reload(proxy: StargateProxy) -> None:
     async def reload_profiles(_file_path: str):
         """Reload profiles when config file changes (non-blocking)."""
         # CRITICAL: Use to_thread to avoid blocking event loop with sync I/O
-        await asyncio.to_thread(profile_manager.reload_profiles)
+        try:
+            await asyncio.to_thread(profile_manager.reload_profiles)
+        except Exception as e:
+            logger.error("Failed to hot-reload profiles: %s", e)
 
     proxy.profile_watcher = HotReloadWatcher(
         name="profiles",
@@ -376,7 +374,14 @@ async def _emit_pipeline_unavailable_events(proxy: StargateProxy) -> None:
             pipeline_id=pipeline_id,
             missing_models=missing_models,
         )
-        await proxy.event_bus.publish_async_nowait(event)
+        try:
+            await proxy.event_bus.publish_async_nowait(event)
+        except Exception as e:
+            logger.error(
+                "Failed to publish pipeline unavailable event for %s: %s",
+                pipeline_id,
+                e,
+            )
 
 
 def _subscribe_pipeline_reload_on_catalog_change(proxy: StargateProxy) -> None:
@@ -421,6 +426,94 @@ def _subscribe_pipeline_reload_on_catalog_change(proxy: StargateProxy) -> None:
         FEDERATION_GATEWAY_CATALOG_CHANGED, on_catalog_changed
     )
     logger.info("📦 Subscribed to federation catalog changes for pipeline reload")
+
+
+async def initialize_intelligence_profiles(proxy: StargateProxy) -> None:
+    """Initialize the intelligence profile store and derive cloud profiles.
+
+    Creates the IntelligenceProfileStore, loads any curated YAML profiles,
+    then fetches the enriched cloud catalog and derives profiles for each
+    cloud model. Subscribes to catalog changes for automatic refresh.
+    """
+    from intelligence_profiles import IntelligenceProfileStore
+
+    store = IntelligenceProfileStore()
+
+    config_dir = _get_config_dir(proxy.config)
+    curated_dir = config_dir / "intelligence_profiles"
+    if curated_dir.is_dir():
+        store.load_curated(curated_dir)
+
+    cloud_client = _get_cloud_proxy_client(proxy)
+    if cloud_client is not None:
+        try:
+            catalog_data = await cloud_client.get_models()
+            models = catalog_data.get("models", [])
+            if models:
+                from systems.profiles.intelligence.deriver import derive_bulk
+
+                profiles = derive_bulk(models)
+                store.set_derived_bulk(profiles)
+                logger.info(
+                    "Intelligence profiles: %d derived from cloud catalog",
+                    len(profiles),
+                )
+        except Exception as e:
+            logger.exception(
+                "Failed to derive intelligence profiles from cloud catalog: %s", e
+            )
+
+    proxy.intelligence_profile_store = store
+    logger.info("Intelligence profile store initialized (%d profiles)", store.count)
+
+    _subscribe_profile_refresh_on_catalog_change(proxy)
+
+
+def _get_cloud_proxy_client(proxy: StargateProxy) -> object | None:
+    """Extract CloudProxyClient from federation integration if available."""
+    fed = getattr(proxy, "federation_integration", None)
+    if fed is None:
+        return None
+    forwarder = getattr(fed, "forwarder", None)
+    if forwarder is None:
+        return None
+    client = getattr(forwarder, "cloud_forwarder", None)
+    if client is None or not hasattr(client, "get_models"):
+        return None
+    return client
+
+
+def _subscribe_profile_refresh_on_catalog_change(proxy: StargateProxy) -> None:
+    """Refresh derived profiles when the cloud proxy catalog changes."""
+    if proxy.event_bus is None:
+        return
+
+    from src.scheduling.events import CLOUD_PROXY_CATALOG_UPDATED
+
+    async def on_catalog_updated(event) -> None:
+        store = proxy.intelligence_profile_store
+        if store is None:
+            return
+        client = _get_cloud_proxy_client(proxy)
+        if client is None:
+            return
+        try:
+            catalog_data = await client.get_models()
+            models = catalog_data.get("models", [])
+            if models:
+                from systems.profiles.intelligence.deriver import derive_bulk
+
+                profiles = derive_bulk(models)
+                store.set_derived_bulk(profiles)
+                logger.info(
+                    "Intelligence profiles refreshed: %d from catalog update",
+                    len(profiles),
+                )
+        except Exception as e:
+            logger.exception("Failed to refresh intelligence profiles: %s", e)
+
+    proxy.event_bus.subscribe_async(CLOUD_PROXY_CATALOG_UPDATED, on_catalog_updated)
+    logger.info("Subscribed to catalog updates for intelligence profile refresh")
 
 
 async def initialize_pipeline_system(proxy: StargateProxy) -> None:
@@ -539,7 +632,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
             "✅ Pipeline execution system initialized from paths: %s", search_paths
         )
     except Exception as exc:  # pragma: no cover - defensive logging
-        logger.warning("Pipeline system not available: %s", exc)
+        logger.warning("Pipeline system not available: %s", exc, exc_info=True)
         proxy.pipeline_registry = None
         proxy.pipeline_executor = None
         proxy.pipeline_hot_reload = None

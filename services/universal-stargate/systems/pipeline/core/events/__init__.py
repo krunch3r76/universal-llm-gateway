@@ -29,6 +29,7 @@ from .lifecycle import (
     StepConditionEvaluated,
     StepFailed,
     StepInputsCaptured,
+    StepModelResolved,
     StepOutputCaptured,
     StepProgress,
     StepSkipped,
@@ -75,6 +76,7 @@ __all__ = [
     "StepSkipped",
     "StepConditionEvaluated",
     "StepInputsCaptured",
+    "StepModelResolved",
     "StepOutputCaptured",
     "MapIterationCompleted",
     # Inference

@@ -1,319 +1,328 @@
 prompts:
-  analyze:
-    description: "Analyze Python file structure and group definitions by domain responsibility"
+  plan_split:
+    description: "Analyze a Python file and produce modularization instructions or decline"
     system_prompt: |
-      You are a code structure analyst specializing in Python modularization.
-      Your task is to analyze a Python source file and group its functions, classes,
-      and constants by domain responsibility.
+      You are a Python modularization architect. You receive a source file and a
+      SLOC-per-module target. Your job: determine whether the file can be cleanly
+      split into 2 or more modules where every module stays under the target, and
+      if so, provide step-by-step instructions for how to do it.
 
-      Rules:
-      - Every function, class, and module-level constant must be assigned to exactly one domain
-      - Domain names should be clear and reflect the responsibility (e.g., "routing", "telemetry", "lifecycle")
-      - Estimate SLOC for each group based on the definitions and their supporting code
-      - List ungrouped items only if they truly don't fit any domain
-      - Consumer information is provided in the input — include it in your analysis
-      - Respond with valid JSON only
+      ## SLOC definition (CRITICAL — use this exact rule for all counts)
+
+      SLOC = every line that is not blank AND does not start with #.
+
+      This INCLUDES: class/def lines, import lines, docstring delimiter lines
+      (the """ lines), every line of docstring body text, return/raise/pass
+      lines, inline code with trailing comments.
+      This EXCLUDES: blank lines, lines where the first non-whitespace
+      character is #.
+
+      Measurement command: grep -cvE '^\s*(#|$)' <file>
+
+      Count every line by this rule before estimating module sizes. Docstring
+      bodies count — a class with 10 methods each having a 5-line docstring
+      has ~50 SLOC just from docstrings.
+
+      ## Analysis checklist
+
+      Before deciding, count and record:
+      1. Total SLOC (by the definition above)
+      2. Top-level classes (names, SLOC each including their docstrings)
+      3. Top-level free functions and constants
+      4. For each class: public methods vs private helpers, coupling to other
+         definitions in the file
+
+      ## Decision criteria
+
+      Answer can_split = true when ALL of the following hold:
+      - The file exceeds max_sloc_per_module
+      - There exist genuine domain boundaries — definitions that serve different
+        responsibilities and do not heavily cross-reference each other
+      - A class and ALL its methods stay together in one module (never split a
+        class across files)
+      - Every proposed module carries meaningful weight (no nano-modules under
+        ~50 SLOC unless semantically complete, e.g. a protocol + its types)
+
+      Answer can_split = false when ANY of the following hold:
+      - The file is dominated by a single tightly-cohesive class with no
+        extractable standalone concerns
+      - Every possible split would create heavy circular imports between modules
+      - The file is already under max_sloc_per_module
+
+      ## Instructions format (when can_split = true)
+
+      Provide numbered step-by-step instructions that name:
+      - Each target module file path (MUST use subdirectory convention:
+        original filename without .py becomes the directory name, e.g.
+        generate.py → generate/handler.py + generate/utils.py)
+      - Which definitions (functions, classes, constants) go into each module
+      - Which imports each module will need from the others
+      - Estimated SLOC for each module
+
+      ## When can_split = false
+
+      Set instructions to an empty string. The reasoning field must explain
+      specifically why a clean split is not feasible (name the blocking class,
+      its method count, the coupling pattern, etc.).
+
+      Respond with valid JSON only. No markdown fences.
     template: |
-      Analyze the following Python source file and group its definitions by domain responsibility.
+      Analyze this Python source file for modularization.
 
-      {source_code}
-    json_schema:
-      type: object
-      properties:
-        domains:
-          type: array
-          items:
-            type: object
-            properties:
-              name:
-                type: string
-                description: "Domain responsibility name"
-              functions:
-                type: array
-                items:
-                  type: string
-                description: "Function, class, and constant names belonging to this domain"
-              estimated_sloc:
-                type: integer
-                description: "Estimated source lines of code for this domain group"
-            required: [name, functions, estimated_sloc]
-        consumers:
-          type: array
-          items:
-            type: object
-            properties:
-              path:
-                type: string
-              imports:
-                type: array
-                items:
-                  type: string
-              import_style:
-                type: string
-                description: "Import style used, e.g. 'from X import Y' or 'import X'"
-            required: [path, imports, import_style]
-        ungrouped:
-          type: array
-          items:
-            type: string
-          description: "Definitions that don't clearly belong to any domain"
-      required: [domains, consumers, ungrouped]
+      ## Parameters
 
-  critique:
-    description: "Verify grouping AND perform deep architectural analysis of the source code"
-    system_prompt: |
-      You are a senior code reviewer analyzing a Python file for modularization.
-      You have two tasks: verify the proposed domain grouping, and perform a deep
-      architectural analysis of the source code itself.
+      - max_sloc_per_module: {max_sloc_per_module}
 
-      ## Task 1: Verify Grouping
-
-      First, identify all definitions (constants, functions, classes) in the source
-      code. Then verify the provided Domain Analysis by checking for these specific issues:
-
-      - **Unassigned Definitions**: Any definition from the source that does not
-        appear in any domain's definition list or in the ungrouped list.
-      - **Duplicate Assignments**: Any definition that appears in more than one domain.
-      - **Misplaced Definitions**: Based on naming conventions (e.g., a FEDERATION_
-        prefix) and context, any definition assigned to a domain where it clearly
-        does not belong.
-      - **Circular Imports**: Whether the proposed domains as Python modules would
-        create circular import dependencies.
-      - **Low Cohesion**: Whether a domain's definitions are unrelated and do not
-        share a single clear responsibility.
-
-      ## Task 2: Architectural Analysis
-
-      Study the actual code and identify concrete improvement opportunities.
-      Be specific — name the functions, patterns, and lines involved.
-
-      Look for:
-      - Dead code: imports not used, functions never called, unreachable branches
-      - Repeated patterns: similar logic appearing in multiple functions that could
-        be extracted into a shared helper or parameterized
-      - Verbose constructions: manual dict building, conditional payload assembly,
-        or boilerplate that a factory/builder pattern would eliminate
-      - Type issues: missing type hints, overly broad types (Any where a union would do),
-        unused type imports
-      - API inconsistencies: similar functions with different signatures for no reason
-        (e.g., some use keyword-only args, others don't; some include optional fields
-        conditionally, others always include them as None)
-      - Naming: constants/functions that don't follow the file's own conventions
-      - Missing docstrings: module-level, class-level, or public function
-        docstrings that are absent or trivially unhelpful (e.g., just repeating
-        the function name). Flag the specific definition.
-
-      Each observation must be actionable — something a code agent can implement.
-      Do not list observations that amount to "this is fine as-is."
-
-      Respond with valid JSON only.
-    template: |
-      Verify the domain analysis AND analyze the source code for improvement opportunities.
-
-      ## Domain Analysis (from previous step)
-
-      {domain_analysis}
-
-      ## Original Source
-
-      {source_code}
-    json_schema:
-      type: object
-      properties:
-        verified_domains:
-          type: array
-          items:
-            type: object
-            properties:
-              name:
-                type: string
-              functions:
-                type: array
-                items:
-                  type: string
-              estimated_sloc:
-                type: integer
-              status:
-                type: string
-                enum: [approved, modified, merged]
-            required: [name, functions, estimated_sloc, status]
-        grouping_issues:
-          type: array
-          description: "Problems with the domain grouping itself"
-          items:
-            type: object
-            properties:
-              type:
-                type: string
-                enum: [unassigned, duplicate, misplaced, circular_risk, low_cohesion]
-              definition:
-                type: string
-                description: "The specific definition involved (if applicable)"
-              suggestion:
-                type: string
-            required: [type, suggestion]
-        improvements:
-          type: array
-          description: "Architectural improvements to the source code. Each must be concrete and actionable."
-          items:
-            type: object
-            properties:
-              category:
-                type: string
-                enum: [dead_code, duplication, verbose_pattern, type_issue, api_inconsistency, naming, simplification, documentation]
-              target:
-                type: string
-                description: "The specific function(s), constant(s), or pattern involved"
-              observation:
-                type: string
-                description: "What the issue is, with specific details"
-              action:
-                type: string
-                description: "Exactly what the agent should do to fix it"
-            required: [category, target, observation, action]
-        circular_dependency_risk:
-          type: boolean
-      required: [verified_domains, grouping_issues, improvements, circular_dependency_risk]
-
-  finalize:
-    description: "Produce structural plan: improvements + module manifest"
-    system_prompt: |
-      You are a modularization architect for Python codebases. Given a verified
-      domain grouping WITH architectural improvement observations, produce a
-      concrete plan that a code agent will implement.
-
-      Your output has two sections (but do not create "part1"/"part2" JSON keys):
-
-      ## Improvements (REQUIRED)
-
-      The critique step identified specific code improvements. Synthesize these
-      into clear, actionable instructions grouped by category. Each instruction
-      must tell the agent exactly what to change — not vague advice.
-
-      Categories:
-      - delete: Remove dead code, unused imports, unreachable branches
-      - deduplicate: Extract repeated patterns into shared helpers
-      - simplify: Replace verbose constructions with cleaner alternatives
-      - standardize: Fix API inconsistencies (signatures, naming, patterns)
-
-      If the critique found no improvements in a category, use an empty array.
-      Do NOT invent improvements that weren't in the critique.
-
-      ## Modules (REQUIRED)
-
-      For each new module, list:
-      - File path relative to the original file's parent directory
-      - One-line description of the module's responsibility
-      - Every function, class, and constant to extract into it
-      - Estimated SLOC
-
-      Rules:
-      - Every definition from the original must appear in exactly one module
-      - Each module must be ≤300 estimated SLOC
-      - The agent creates __init__.py automatically — do not list it
-      - Respond with valid JSON only
-
-      **BEGIN OUTPUT SCHEMA CONTRACT (MUST FOLLOW)**
-      Output MUST be a single JSON object with EXACTLY these two top-level keys (no others):
-      - "improvements"
-      - "modules"
-
-      Do NOT use keys like "part1_improvements", "part2_module_manifest", "path", or any other variations.
-
-      "improvements" MUST be an object with EXACTLY these keys (no others):
-      - "delete": array of strings
-      - "deduplicate": array of strings
-      - "simplify": array of strings
-      - "standardize": array of strings
-
-      "modules" MUST be an array of objects. Each module object MUST have EXACTLY these keys (no others):
-      - "file_path": string
-      - "description": string
-      - "definitions": array of strings
-      - "estimated_sloc": integer
-
-      If you are about to output any key not listed above, rename it to the exact required key or omit it.
-      **END OUTPUT SCHEMA CONTRACT**
-    template: |
-      Create a modularization plan from the verified grouping and improvement analysis.
-
-      The critique step produced both a verified grouping and specific code
-      improvement observations. Incorporate both into the plan.
-
-      ## Verified Grouping + Improvements
-
-      {verified_grouping}
-
-      ## Original Source
+      ## Source Code
 
       {source_code}
 
-      Output JSON MUST match this exact skeleton (keys must match exactly):
-      ```json
-      {{
-        "improvements": {{
-          "delete": [],
-          "deduplicate": [],
-          "simplify": [],
-          "standardize": []
-        }},
-        "modules": [
-          {{
-            "file_path": "",
-            "description": "",
-            "definitions": [],
-            "estimated_sloc": 0
-          }}
-        ]
-      }}
-      ```
-    json_schema:
-      type: object
-      properties:
-        improvements:
-          type: object
-          description: "Code improvements to apply during modularization"
-          properties:
-            delete:
-              type: array
-              items:
-                type: string
-              description: "Specific dead code, unused imports, unreachable branches to remove. Name the exact symbols."
-            deduplicate:
-              type: array
-              items:
-                type: string
-              description: "Repeated patterns to extract into shared helpers. Describe the pattern and which functions share it."
-            simplify:
-              type: array
-              items:
-                type: string
-              description: "Verbose constructions to replace with cleaner alternatives. Name the function and the change."
-            standardize:
-              type: array
-              items:
-                type: string
-              description: "API inconsistencies to fix. Name the functions and what should be made consistent."
-          required: [delete, deduplicate, simplify, standardize]
-        modules:
-          type: array
-          description: "New module files to create by extracting definitions from original"
-          items:
-            type: object
-            properties:
-              file_path:
-                type: string
-                description: "File path relative to original file's directory"
-              description:
-                type: string
-                description: "One-line description of this module's responsibility"
-              definitions:
-                type: array
-                items:
-                  type: string
-                description: "Names of functions, classes, and constants to move into this module"
-              estimated_sloc:
-                type: integer
-                description: "Estimated SLOC for this module after extraction"
-            required: [file_path, description, definitions, estimated_sloc]
-      required: [improvements, modules]
+  execute_split:
+    description: "Follow split instructions to produce a formal modularization plan"
+    system_prompt: |
+      You are a code restructuring agent. You receive step-by-step modularization
+      instructions and the original Python source code. Your job: follow the
+      instructions precisely and produce a formal, structured split plan.
+
+      ## SLOC definition (use this for estimated_sloc)
+
+      SLOC = every line that is not blank AND does not start with #.
+      Includes docstring delimiter lines and all docstring body lines.
+      Excludes blank lines and lines where the first non-whitespace char is #.
+      Command: grep -cvE '^\s*(#|$)' <file>
+
+      ## Rules
+
+      - Every definition from the source must appear in exactly one module
+      - Each module must have estimated_sloc ≤ max_sloc_per_module (using the
+        SLOC definition above — count docstrings)
+      - A class and ALL its methods stay in one module — never split a class
+      - File paths MUST use subdirectory convention (e.g. generate/handler.py)
+      - Do not list __init__.py — the agent creates it automatically
+      - The improvements section should list concrete cleanup actions observed
+        in the source (dead code, duplication, verbose patterns, type issues).
+        Map to: delete / deduplicate / simplify / standardize. Use [] for
+        empty buckets.
+
+      ## Per-module implementation fields (fill for EVERY module)
+
+      - `constructor_signature`: The constructor signature of the primary class
+        being moved into this module, e.g. "(step, runtime, resolver)". Write
+        exactly what the __init__ parameter list looks like (excluding `self`).
+        Empty string if this module contains no class or the class needs no
+        injected dependencies.
+
+      - `injected_state`: Instance attributes stored by the primary class from
+        its __init__ parameters. E.g. ["_step", "_runtime", "_resolver"]. Empty
+        list if not applicable.
+
+      - `imports_from_siblings`: Other modules in this same subpackage that this
+        module will import from. Use relative module names only (e.g. ["events",
+        "state"]). Empty list if none.
+
+      - `import_depth_delta`: Count how many additional directory levels deep the
+        new file is compared to the original source file. If the original file is
+        generate.py and the new file is generate/handler.py, the delta is 1 — every
+        existing relative import in the original file needs one extra leading dot in
+        the new file. If the file stays at the same depth, delta is 0. Never negative.
+
+      - `compatibility_note`: Exactly one of:
+        - "delete original (shadowed by new package)" — when the original .py file
+          would be shadowed by the new directory (e.g. generate.py vs generate/)
+          and should be deleted. Python will use the package, not the file.
+        - "create __init__.py wrapper re-exporting public names" — when the original
+          path needs to remain importable via the same import statement.
+        Write one of these two strings verbatim. Do not invent other values.
+
+      - `init_reexports`: The public names (functions, classes, constants) this
+        module contributes to the package __init__.py. These are the names that
+        must remain importable under the original module's import path.
+
+      ## Top-level implementation fields
+
+      - `implementation_guide`: Write step-by-step instructions that a cursor
+        agent can execute mechanically without reading the source file. Include:
+        1. Files to create and in what order
+        2. For each file: which definitions to copy (exactly as named in definitions[])
+        3. Import adjustments: apply import_depth_delta to all relative imports in
+           each module (add that many extra dots to every from . / from .. / etc.)
+        4. Cross-module imports: where to add imports_from_siblings
+        5. How to build __init__.py (list what to re-export from which submodule)
+        6. What to do with the original file (per compatibility_note)
+        7. Which imports in consumer files need updating (if any)
+        The guide must be self-contained. Assume the agent has the source code
+        but has not analyzed it — every action must be explicit.
+
+      - `deduplication_opportunities`: Identify concrete patterns that appear more
+        than once in the source and should be consolidated during the split. For each
+        one: describe the pattern, name the methods or lines where it appears, suggest
+        an extraction name and destination module. Use [] if no duplication exists.
+
+      ## Output
+
+      Follow the instructions. Cross-check every definition against the source
+      to ensure nothing is missed or duplicated. Produce valid JSON only.
+    template: |
+      Follow the instructions below to produce a modularization plan.
+
+      ## Parameters
+
+      - max_sloc_per_module: {max_sloc_per_module}
+
+      ## Instructions
+
+      {instructions}
+
+      ## Source Code
+
+      {source_code}
+
+  plan_refactor:
+    description: "Analyze if refactoring (optionally + split) can meet the SLOC target"
+    system_prompt: |
+      You are a Python refactoring architect. A prior analysis determined that the
+      source file cannot be cleanly split into 2+ modules by simple regrouping.
+      You receive the file, the prior reasoning explaining why, and the SLOC target.
+
+      ## SLOC definition (CRITICAL — use this exact rule for all counts)
+
+      SLOC = every line that is not blank AND does not start with #.
+      Includes docstring delimiter lines and all docstring body lines.
+      Excludes blank lines and lines where the first non-whitespace char is #.
+      Command: grep -cvE '^\s*(#|$)' <file>
+
+      Your job: determine whether structural refactoring can bring the file under
+      the SLOC target. Refactoring options include:
+
+      1. **Extract standalone helpers** — free functions that don't access `self`
+         and have independent utility
+      2. **Extract protocols / ABCs** — abstract interfaces used by the class
+      3. **Extract data classes / TypedDicts** — data containers used across
+         multiple contexts
+      4. **Extract constants / configuration** — module-level constants that form
+         a coherent group
+
+      If refactoring alone is insufficient (the dominant class is still over the
+      limit after extractions), you MAY also propose splitting into 2+ modules
+      after the refactors. The instructions should cover both the refactoring
+      steps and any subsequent split.
+
+      ## Cohesion rule (STRICT)
+
+      You MUST NOT:
+      - Extract a subset of a class's private methods (breaks encapsulation)
+      - Split a class's internal helpers into a separate file
+      - Propose changes that alter the public API
+
+      ## Decision criteria
+
+      Answer can_refactor = true when:
+      - Concrete extractions exist that reduce the file below max_sloc_per_module,
+        OR extractions + a subsequent split achieve it
+      - The extractions preserve class cohesion
+      - The extractions produce meaningful modules (not just moving 20 lines)
+
+      Answer can_refactor = false when:
+      - The class is monolithic with no extractable standalone concerns
+      - Any extraction would break encapsulation or create circular dependencies
+      - The file is already near the limit and no meaningful extraction exists
+
+      ## Instructions format (when can_refactor = true)
+
+      Provide numbered instructions covering:
+      1. What to extract (exact names from the source)
+      2. Where each extraction goes (subdirectory convention)
+      3. If a subsequent split is also needed: which definitions go where
+      4. Estimated SLOC for each resulting file
+
+      Respond with valid JSON only. No markdown fences.
+    template: |
+      The file could not be directly split. Analyze if refactoring can meet the target.
+
+      ## Parameters
+
+      - max_sloc_per_module: {max_sloc_per_module}
+
+      ## Why direct split failed
+
+      {split_reasoning}
+
+      ## Source Code
+
+      {source_code}
+
+  execute_refactor:
+    description: "Follow refactor instructions to produce a formal refactoring plan"
+    system_prompt: |
+      You are a code restructuring agent. You receive step-by-step refactoring
+      instructions and the original Python source code. Your job: follow the
+      instructions precisely and produce a formal, structured plan.
+
+      ## SLOC definition (use this for estimated_sloc)
+
+      SLOC = every line that is not blank AND does not start with #.
+      Includes docstring delimiter lines and all docstring body lines.
+      Excludes blank lines and lines where the first non-whitespace char is #.
+      Command: grep -cvE '^\s*(#|$)' <file>
+
+      The plan has two parts:
+      1. **refactors** — what to extract and where (each extraction is one item)
+      2. **resulting_split** — what the file layout looks like after all refactors
+         are applied
+
+      ## Rules
+
+      - Every name in "members" must exactly match a definition in the source
+      - File paths MUST use subdirectory convention
+      - If refactoring alone brings the file under the SLOC limit,
+        resulting_split may contain a single module (preferred over unnecessary splits)
+      - If a split is also needed, resulting_split contains 2+ modules
+      - Show SLOC math in reasoning: current → after extraction → per module
+        (use grep -cvE '^\s*(#|$)' counts; include docstrings)
+
+      ## Cohesion check
+
+      Before producing output, verify:
+      - No private instance methods are moved away from their class
+      - Each extraction targets standalone functions, protocols, or data classes
+      - The public API is unchanged
+
+      ## Per-module implementation fields for resulting_split[] (fill for EVERY module)
+
+      - `constructor_signature`: The constructor signature of the primary class in
+        this module, e.g. "(step, runtime)". Empty string if no class or no injection.
+
+      - `injected_state`: Instance attributes stored by the primary class from its
+        __init__ parameters, e.g. ["_step", "_runtime"]. Empty list if not applicable.
+
+      - `imports_from_siblings`: Other modules in this same subpackage this module
+        imports from (relative module names, e.g. ["events"]). Empty list if none.
+
+      - `import_depth_delta`: Additional dots to add to existing relative imports.
+        0 if file stays at same directory depth, 1 if moved into a new subdirectory.
+
+      - `compatibility_note`: Exactly one of:
+        - "delete original (shadowed by new package)" — original .py shadowed by
+          new directory, should be deleted
+        - "create __init__.py wrapper re-exporting public names" — original import
+          path must remain importable
+        - "no change needed" — file stays in place (refactor-only, single module)
+
+      - `init_reexports`: Public names this module contributes to __init__.py.
+        Empty list if this is a refactor-only result (single module, no split).
+
+      Produce valid JSON only.
+    template: |
+      Follow the instructions below to produce a refactoring plan.
+
+      ## Parameters
+
+      - max_sloc_per_module: {max_sloc_per_module}
+
+      ## Instructions
+
+      {instructions}
+
+      ## Source Code
+
+      {source_code}

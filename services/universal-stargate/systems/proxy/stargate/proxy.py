@@ -25,6 +25,7 @@ from .runtime import shutdown_proxy, startup_proxy
 
 if TYPE_CHECKING:  # pragma: no cover - type checking only imports
     from fastapi import FastAPI
+    from intelligence_profiles import IntelligenceProfileStore
 
     from systems.federation import FederationIntegration
     from systems.federation.master.orchestration import FederatedLoadOrchestrator
@@ -235,6 +236,7 @@ class StargateProxy:
         self.pipeline_executor = None
         self.pipeline_hot_reload = None
         self.profile_watcher = None
+        self.intelligence_profile_store: IntelligenceProfileStore | None = None
         self.federation_integration: FederationIntegration | None = None
 
         # Federation orchestrator (set by startup, Master mode only)

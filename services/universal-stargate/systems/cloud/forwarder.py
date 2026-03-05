@@ -195,3 +195,22 @@ class CloudProxyClient:
         )
         response.raise_for_status()
         return response.json()
+
+    async def proxy_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        content: bytes | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        """Raw HTTP passthrough to the cloud proxy for UI and metadata endpoints.
+
+        ∀ path: routed over the same transport (UDS or TCP) as inference requests.
+        """
+        return await self._client.request(
+            method,
+            path,
+            content=content,
+            headers=headers or {},
+        )

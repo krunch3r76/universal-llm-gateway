@@ -65,6 +65,18 @@ class StepStarted(PipelineEvent):
 
 
 @dataclass(slots=True, kw_only=True)
+class StepModelResolved(PipelineEvent):
+    """Emitted after model selection, before inference begins.
+
+    Corrects the static default in StepStarted.model_id with the concrete
+    model that will be invoked (post profile/requirements resolution).
+    model_id (inherited from PipelineEvent) carries the resolved model.
+    """
+
+    selection_source: str = ""
+
+
+@dataclass(slots=True, kw_only=True)
 class StepCompleted(PipelineEvent):
     """Emitted when step completes successfully."""
 

@@ -78,6 +78,58 @@ class CloudModelResolutionFailed(PipelineEvent):
 
 
 @dataclass(slots=True, kw_only=True)
+class ModelFallbackResolved(PipelineEvent):
+    """Emitted when a fallback model succeeds after the primary model failed.
+
+    The primary model (from model_ref / models.yaml) raised ProxyClientError;
+    model_requirements was resolved to find alternatives, and fallback_model
+    produced a successful result.
+    """
+
+    primary_model: str = ""
+    fallback_model: str = ""
+    primary_error: str = ""
+    fallback_attempt: int = 0
+
+
+@dataclass(slots=True, kw_only=True)
+class StepModelFallbackAttempted(PipelineEvent):
+    """Emitted when the executor retries a step with a different model.
+
+    Distinct from ModelFallbackResolved (handler-level, ProxyClientError only).
+    This fires at the executor level after the full retry chain exhausts,
+    covering timeouts, handler errors, and any other exception type.
+    """
+
+    primary_model: str = ""
+    fallback_model: str = ""
+    primary_error: str = ""
+    primary_error_type: str = ""
+    fallback_attempt: int = 0
+    total_fallbacks: int = 0
+
+
+@dataclass(slots=True, kw_only=True)
+class StepModelFallbackSucceeded(PipelineEvent):
+    """Emitted when a step-level fallback model succeeds."""
+
+    primary_model: str = ""
+    fallback_model: str = ""
+    primary_error: str = ""
+    fallback_attempt: int = 0
+
+
+@dataclass(slots=True, kw_only=True)
+class StepModelFallbackExhausted(PipelineEvent):
+    """Emitted when all step-level fallback models fail."""
+
+    primary_model: str = ""
+    fallback_models_tried: list[str] = dataclass_field(default_factory=list)
+    primary_error: str = ""
+    final_error: str = ""
+
+
+@dataclass(slots=True, kw_only=True)
 class GenerationParamsFiltered(PipelineEvent):
     """Emitted when unsupported generation parameters are removed."""
 

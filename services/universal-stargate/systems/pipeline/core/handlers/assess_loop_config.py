@@ -3,6 +3,10 @@ Configuration and loop utilities for assess_loop_v1 handler.
 
 Parses domain fields from StepConfig into a typed structure and provides
 loop utility functions, keeping the handler free of repetitive boilerplate.
+
+Action dispatch supports both single-step (dict) and multi-step (list[dict])
+forms. ∀ action: get_action_steps() returns list[ActionStep]; single-step
+configs are wrapped for uniform dispatch in the handler loop.
 """
 
 from __future__ import annotations
@@ -30,6 +34,28 @@ _RENAMED_FIELDS: dict[str, str] = {
 
 
 @dataclass(slots=True, kw_only=True)
+class ActionStep:
+    """Single execution step within an action dispatch sequence.
+
+    ∀ action: steps = get_action_steps(action)
+    Single-step actions are wrapped in a 1-element list for uniform dispatch.
+    """
+
+    prompt_ref: str
+    model_ref: str | None = None
+    schema: dict[str, Any] | None = None
+
+    @classmethod
+    def from_config(cls, d: dict[str, Any]) -> ActionStep:
+        rf = d.get("response_format") or {}
+        return cls(
+            prompt_ref=d["prompt_ref"],
+            model_ref=d.get("model_ref"),
+            schema=rf.get("schema"),
+        )
+
+
+@dataclass(slots=True, kw_only=True)
 class AssessLoopConfig:
     """
     Typed configuration for a single assess_loop_v1 step execution.
@@ -51,6 +77,8 @@ class AssessLoopConfig:
     initial_action: str | None
     strip_xml_tags: list[str]
     pre_label_paragraphs: bool
+    # ∀ a ∈ exit_actions: a ∈ actions ∧ after running a the loop exits immediately
+    exit_actions: frozenset[str]
 
     @classmethod
     def from_step(cls, step: StepConfig) -> AssessLoopConfig:
@@ -76,23 +104,44 @@ class AssessLoopConfig:
             initial_action=step.get_domain_field("initial_action"),
             strip_xml_tags=step.get_domain_field("strip_xml_tags") or [],
             pre_label_paragraphs=bool(step.get_domain_field("pre_label_paragraphs")),
+            exit_actions=frozenset(step.get_domain_field("exit_actions") or []),
         )
 
     @property
     def action_names(self) -> list[str]:
         return list(self.actions.keys())
 
+    def get_action_steps(self, action: str) -> list[ActionStep]:
+        """Ordered execution steps for a named action.
+
+        Supports both single-step (dict) and multi-step (list[dict]) YAML forms:
+          single:  revise: {prompt_ref: ..., model_ref: ...}
+          multi:   revise: [{prompt_ref: ...}, {prompt_ref: ...}]
+
+        ∀ action: returns list[ActionStep] with len >= 1.
+        Each step runs sequentially; artifact output of step N feeds step N+1.
+        """
+        cfg = self.actions[action]
+        if isinstance(cfg, list):
+            return [ActionStep.from_config(s) for s in cfg]
+        return [ActionStep.from_config(cfg)]
+
     def get_action_prompt_ref(self, action: str) -> str:
-        """Get prompt_ref for a named action. Raises KeyError if unknown."""
-        return self.actions[action]["prompt_ref"]
+        """First step's prompt_ref — for single-step callers (e.g. initial_action)."""
+        return self.get_action_steps(action)[0].prompt_ref
 
     def get_action_model_ref(self, action: str, fallback: str) -> str:
-        """Get model_ref for a named action, falling back to step model_ref."""
-        return self.actions[action].get("model_ref") or fallback
+        """First step's model_ref or fallback — for single-step callers."""
+        return self.get_action_steps(action)[0].model_ref or fallback
+
+    def get_action_schema(self, action: str) -> dict[str, Any] | None:
+        """First step's JSON schema — for single-step callers."""
+        return self.get_action_steps(action)[0].schema
 
     def get_action_max_consecutive(self, action: str) -> int | None:
         """Get optional max_consecutive cap for a named action."""
-        cap = self.actions[action].get("max_consecutive")
+        cfg = self.actions[action]
+        cap = cfg.get("max_consecutive") if isinstance(cfg, dict) else None
         if cap is None:
             return None
         return int(cap)
@@ -111,19 +160,21 @@ class AssessLoopConfig:
         if not self.actions:
             errors.append(f"Step '{step_id}' missing actions")
         for action_name, action_cfg in self.actions.items():
-            if not isinstance(action_cfg, dict) or not action_cfg.get("prompt_ref"):
-                errors.append(
-                    f"Step '{step_id}' action '{action_name}' missing prompt_ref"
-                )
-                continue
-            cap = action_cfg.get("max_consecutive")
-            if cap is None:
-                continue
-            if not isinstance(cap, int) or cap < 1:
-                errors.append(
-                    f"Step '{step_id}' action '{action_name}' has invalid "
-                    "max_consecutive (must be integer >= 1)"
-                )
+            steps = action_cfg if isinstance(action_cfg, list) else [action_cfg]
+            for i, step_cfg in enumerate(steps):
+                if not isinstance(step_cfg, dict) or not step_cfg.get("prompt_ref"):
+                    label = f"step {i}" if len(steps) > 1 else "step"
+                    errors.append(
+                        f"Step '{step_id}' action '{action_name}' {label} "
+                        "missing prompt_ref"
+                    )
+            if isinstance(action_cfg, dict):
+                cap = action_cfg.get("max_consecutive")
+                if cap is not None and (not isinstance(cap, int) or cap < 1):
+                    errors.append(
+                        f"Step '{step_id}' action '{action_name}' has invalid "
+                        "max_consecutive (must be integer >= 1)"
+                    )
         if (
             self.assess_handler is not None
             and self.assess_handler not in PROGRAMMATIC_ASSESS_HANDLERS
@@ -135,6 +186,12 @@ class AssessLoopConfig:
         if self.initial_action is not None and self.initial_action not in self.actions:
             errors.append(
                 f"Step '{step_id}' initial_action '{self.initial_action}' "
+                "not defined in actions"
+            )
+        unknown_exits = self.exit_actions - set(self.actions)
+        if unknown_exits:
+            errors.append(
+                f"Step '{step_id}' exit_actions {sorted(unknown_exits)} "
                 "not defined in actions"
             )
         return errors

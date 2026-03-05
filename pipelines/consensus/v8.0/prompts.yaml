@@ -788,42 +788,12 @@ prompts:
     description: "System instructions for post-synthesis answer reorganization."
     system_prompt: ""
     template: |
-      You are an editor reorganizing a draft answer for thematic coherence.
-
-      RULES:
-      - If a MERGE PLAN is provided, execute it first: for each group, locate all
-        sentences containing those citation indices and combine them into a single
-        sentence that cites ALL indices from the group
-      - Group paragraphs by topic: merge all paragraphs that address the same topic
-        into a single block; split any paragraph that covers multiple distinct
-        sub-topics so that each paragraph has a single coherent theme
-      - Restriction consolidation: do not mention the same restriction domain
-        in more than one paragraph — all content sharing a mechanism or subsystem
-        (e.g. all security content: authentication, authorization, access thresholds)
-        must appear in one paragraph
-      - Each paragraph must open with a clear topic sentence that announces its theme
-      - Reorder paragraphs using logical dependency: definitions and background first,
-        then causal mechanisms, then consequences and outcomes, then risks and
-        limitations, then any remaining caveats or qualifications
-      - When two sentences or clauses make the same factual claim — even if worded
-        differently — combine them into one sentence citing all relevant indices
-      - Each [N] index must appear at most once in the ENTIRE output (global uniqueness);
-        if the same index appears in multiple draft sentences, keep it only in the single
-        most relevant sentence and remove it from all others
-      - Fold orphan sentences (isolated single-sentence paragraphs) into the
-        nearest thematically related paragraph
-      - Preserve every UNIQUE [N] citation index at least once in the output — do not
-        renumber or invent indices; if an index appears multiple times in the draft,
-        keep it exactly once (global deduplication)
-      - Do not add claims, opinions, or information not present in the draft
-      - Every sentence in the output must end with at least one [N] citation marker —
-        sentences without citations are hallucinations and must be deleted
-      - Final pass (silent mental check only — do not write this as output prose):
-        verify each [N] appears no more than once in the entire output and every
-        sentence ends with at least one [N]
-      - Output only the reorganized prose — no preamble, no commentary, no status
-        summaries, no section headers, no DROPPED FACTS section, no sentence
-        summarizing citation coverage or confirming the final pass
+      You are an editor improving thematic coherence.
+      - First execute MERGE PLAN: for each group, write ONE sentence combining those claims and citing exactly that group's indices.
+      - Then reorganize: merge same-topic paragraphs, split mixed-topic paragraphs, reorder by dependency (background→mechanism→outcomes→risks/caveats).
+      - Fold orphan one-sentence paragraphs into the nearest related paragraph.
+      - Preserve all draft claims and all [N] indices (repeats allowed); do not renumber, delete, or invent citations or facts.
+      Output only revised prose.
 
   reorganize_initial:
     description: "Reorganize a batched synthesis draft for thematic coherence."
@@ -840,7 +810,30 @@ prompts:
       Execute the MERGE PLAN first, then reorganize the draft for thematic coherence:
       apply topical grouping (merge same-topic paragraphs, split multi-topic paragraphs),
       reorder by logical dependency, fold orphan sentences.
-      Preserve every [N] citation exactly; each index appears at most once per sentence.
+      Keep all [N] indices from the draft and MERGE PLAN; repeats across sentences are allowed. Do not renumber, delete, or invent indices.
+
+  citation_repair:
+    description: "Ensure every sentence ends with a trailing [N] citation. Single-objective pass — no reorganization."
+    system_prompt: |
+      You are a citation formatter. Do NOT change facts, sentence order, paragraph structure, or non-citation wording.
+      Preserve markdown/text exactly (including **, headings, punctuation, spaces, and line breaks); only move citation bracket groups.
+
+      RULES (deterministic):
+      - Every sentence must end with exactly one citation bracket group immediately before the final period.
+      - No citation bracket groups may appear earlier in the same sentence.
+      - Citation brackets must contain digits only (examples: [12], [3, 7, 21]). Placeholder brackets like [N] are forbidden.
+      - If a sentence has one or more citation bracket groups but none at the end, move the rightmost existing bracket group unchanged to immediately before the final period (cut-paste, do not duplicate).
+      - If a sentence has no citation anywhere, copy the citation bracket from the nearest preceding sentence in the same paragraph; if none exists, use the nearest following sentence.
+      - If no citation bracket can be located in the same paragraph, leave the sentence unchanged.
+      - Never merge, split, reorder, expand, compress, add, or delete sentences.
+      - Do not invent, renumber, or delete citation indices.
+      - Output only the corrected prose — no preamble, no explanation, no notes, no section labels.
+    template: |
+      IMPORTANT: Preserve markdown, wording, spacing, and line breaks exactly as written; only add the minimum trailing citations required.
+
+      {artifact}
+
+      Corrected draft (every sentence must end with a numeric citation bracket like [12] or [3, 7] immediately before the period; never output [N]):
 
   classify_restrictions:
     description: "Identify restriction language in the draft to guide the coherence assessor."
@@ -1069,67 +1062,78 @@ prompts:
   #       upstream label and re-check yourself" instruction. Upstream F1 fix also
   #       eliminates the false positive that triggered C4 in the first place.
   review_coherence_assess:
-    description: "Assess draft for five specific structural criteria; return revise or accept with issues."
+    description: "Assess draft for four structural criteria; return revise or accept with issues."
     system_prompt: |
-      You are a structural checker verifying that a draft satisfies five specific criteria listed below. Output exactly one JSON object with no other text.
+      You are a structural checker verifying that a draft satisfies four criteria. Output exactly one JSON object.
+
+      C1 PROCEDURE — restriction ordering (complete all steps before writing action):
+      Step 1 (CUE SCAN): For EACH cue in restriction_analysis, write one line:
+        "CUE i: \"<cue>\" | FOUND = YES | SENTENCE: \"<full sentence containing the cue>\""
+        OR "CUE i: \"<cue>\" | FOUND = NO | SENTENCE: \"\""
+      After all cues write: FOUND_COUNT = K
+      If FOUND_COUNT = 0, also write: EARLY_EXIT = TRUE
+      Step 2 (EARLY EXIT): If EARLY_EXIT = TRUE, write EXACTLY: "C1 PASS" then STOP — skip Steps 3–5.
+      Step 3: For each FOUND = YES sentence — if its primary verb is recommend/advise/suggest/encourage, write SKIP.
+      Step 4: For each non-skipped sentence write CONDITIONAL or UNCONDITIONAL with a one-phrase reason.
+        CONDITIONAL: restriction limited to a group, situation, or threshold. Any "in [group/condition]",
+        "for [group]", "when [X]", "if [X]", "below/above [N]", "in these scenarios/cases/situations/
+        conditions/setting" makes it CONDITIONAL. Also CONDITIONAL: "X are absolute contraindications"
+        or "X should avoid Y" where X is a condition, patient group, or numeric threshold.
+        UNCONDITIONAL: no limiting clause of any kind.
+      Step 5: State which type appears first in the paragraph.
+      Step 6 (REQUIRED): End c1_analysis with EXACTLY "C1 PASS" or "C1 FAIL".
+        FAIL ONLY if a CONDITIONAL restriction sentence appears BEFORE an UNCONDITIONAL restriction
+        sentence in the SAME paragraph. Unconditional first, or all same type = PASS.
+        If you flag: target line MUST contain UNCONDITIONAL: "<full sentence>" / CONDITIONAL: "<full
+        sentence>" / Order: CONDITIONAL appears before UNCONDITIONAL in Paragraph N.
 
       OUTPUT SCHEMA:
       {
-        "c1_analysis": "<Mandatory C1 reasoning — complete this before writing action. Step 0 (GUARD — DO THIS FIRST): You are FORBIDDEN to write 'C1 PASS' or 'C1 FAIL' anywhere in c1_analysis until Step 6 (exception: the sanctioned early-exit phrase in Step 2). You are FORBIDDEN to conclude 'no cues found' unless Step 1 shows FOUND_COUNT = 0. Step 1 (CUE SCAN — MUST OUTPUT THESE LINES): For EACH cue in the Property 1 list output exactly one line in this format: 'CUE i: \"<cue>\" | FOUND = YES | SENTENCE: \"<full sentence containing the exact cue>\"' OR 'CUE i: \"<cue>\" | FOUND = NO | SENTENCE: \"\"'. FOUND = YES only if the sentence contains the cue as an exact contiguous substring (case-sensitive). After all cues write: FOUND_COUNT = K. If FOUND_COUNT = 0, also write: EARLY_EXIT = TRUE. Step 2 (EARLY EXIT): If you wrote EARLY_EXIT = TRUE in Step 1, write EXACTLY: 'C1 PASS' then STOP — do not continue to Steps 3-5. Step 3: for each FOUND = YES sentence, apply the advisory filter — if its primary verb is recommend/advise/suggest/encourage write SKIP. Step 4: for each non-skipped sentence write CONDITIONAL or UNCONDITIONAL with a one-phrase reason (e.g. 'has in-patients-with clause' or 'no limiting clause'). Step 5: state which type appears first in the paragraph. Step 5b (VERDICT — do NOT write C1 PASS/C1 FAIL here): set VERDICT = PASS if all are the same type, if only one sentence remains after filtering, or if UNCONDITIONAL appears first; set VERDICT = FAIL only if a CONDITIONAL sentence appears before an UNCONDITIONAL sentence in the same paragraph. Step 6 (REQUIRED LAST TOKEN): End c1_analysis with EXACTLY one of: 'C1 PASS' or 'C1 FAIL'.>",
-        "c4_check": "<Mandatory C4 reasoning — complete this before writing action. Follow these steps exactly. Step 1 (WRITE + COUNT): Rewrite the uncited_sentences list as ITEM lines, one per line, exactly like: ITEM 1: <full sentence text> / ITEM 2: <full sentence text>. After the last ITEM line, write: COUNT = N (N is the number of ITEM lines you wrote). Step 2 (EARLY EXIT GUARD): If COUNT = 0, write EXACTLY: 'C4 PASSES — uncited_sentences is empty.' Then STOP and write nothing else in c4_check. Do NOT scan the draft. IMPORTANT: You are FORBIDDEN to write the Step 2 sentence unless COUNT = 0. Step 3 (SCOPE): If COUNT > 0, ONLY evaluate the ITEM sentences you wrote in Step 1. Do NOT look for any other sentences. Step 4 (DEFINITION): A sentence HAS CITATION if it ends with EITHER (A) a bracket group of digits/commas/spaces — e.g. '...[14, 39]' — OR (B) a bracket group immediately followed by a period — e.g. '...[14, 39].' Both endings count as HAS CITATION. Treat the entire bracket group as ONE unit — do NOT split '[14, 39]' into separate items. Step 5A (ENDING CHECK): For each ITEM sentence, look ONLY at its final 2 characters. If they are '].' then write HAS CITATION. Otherwise, look at the final 1 character: if it is ']' then write HAS CITATION. Otherwise write NO CITATION. Step 5 (PER-ITEM CHECK): For EACH ITEM sentence, output exactly ONE new line containing only one of these tokens (no extra words): HAS CITATION or NO CITATION. Step 6 (CONCLUSION): After Step 5 — if ALL Step 5 lines are HAS CITATION, write EXACTLY: 'C4 PASSES — all listed sentences have trailing citations.' If ANY Step 5 line is NO CITATION, write EXACTLY: 'C4 FAILS — at least one listed sentence lacks a trailing citation.' Step 7 (TARGET RULE): Only sentences with NO CITATION may be added to target. FORBIDDEN: Do NOT write any 'Fix:' instruction inside c4_check — Fix instructions belong ONLY in the JSON 'target' field. WORKED EXAMPLE (non-empty list, all pass): ITEM 1: Because X ... causing systemic accumulation [18, 19]. COUNT = 1 Step 5A: last 2 chars are '].' → HAS CITATION C4 PASSES — all listed sentences have trailing citations.>",
+        "c1_analysis": "<Complete all six C1 steps above.>",
         "action": "revise" | "accept",
-        "reason": "<one-sentence summary>",
-        "target": "<when action is revise: list of specific issues, one per line, for the reviser; when accept: empty string>"
+        "reason": "<one sentence: 'All criteria pass.' OR 'Fails C1' / 'Fails C2' / 'Fails C3' / 'Fails C5' — no paragraph numbers>",
+        "target": "<when revise: failures one per line starting with criterion code; when accept: empty string>"
       }
 
-      GENERATION ORDER: You MUST fill c1_analysis and c4_check fully before writing action. These are mandatory reasoning steps — their conclusions determine what goes in target.
+      PARAGRAPH NUMBERING: Count paragraphs (text blocks separated by blank lines). Ignore blocks that
+      are ONLY citation markers (e.g. "[12, 13]" with no other text). Let total = N. All paragraph
+      references must be integers 1..N. Bracketed labels [P1] are NOT citations.
+      Do NOT treat single-newline line wrapping as paragraph breaks.
 
-      FAILURE CODE EXTRACTION (mandatory before writing action): After completing c1_analysis and c4_check, scan them for these exact substrings: "C1 FAIL" and "C4 FAILS". You may ONLY include a criterion code in "reason" and "target" if its FAIL substring is present in your scratchpad. If neither is found, action must be "accept" and target must be "".
+      FILL ORDER: Complete c1_analysis fully before writing action.
+      FAILURE CODE RULE: Scan c1_analysis for "C1 FAIL". Include C1 in reason/target ONLY if "C1 FAIL"
+      appears. For C2/C3/C5, include only if your evaluation confirmed a failure.
+      CONSISTENCY: target == "" → action = "accept", reason = "All criteria pass."
+                   target != "" → action = "revise", reason starts with "Fails ".
 
-      PARAGRAPH NUMBERING: Before you begin, count the total number of paragraphs in the draft. Let this be N. Before counting, you MUST ignore and discard any paragraphs that consist ONLY of citation markers (e.g., a block like "[12, 13, 14]" with no other text). Do not include these in the total paragraph count N, and do not refer to them anywhere in your output. Paragraphs are text blocks separated by one or more blank lines — do NOT treat single-newline line wrapping (sentences on separate lines within the same block) as paragraph breaks. Number paragraphs sequentially starting at 1. All paragraph references in your target field must be an integer from 1 to N (e.g. "Paragraph 2: ..."). If unsure, recount before writing your answer. Note: bracketed paragraph labels like [P1] are NOT citations and do not satisfy Criterion 4; only numeric citation markers like [16] count.
+      Check these four criteria:
 
-      You must evaluate and report failures for all five properties; do not stop after finding one failure.
+      1. RESTRICTION ORDERING: restriction_analysis = {restriction_analysis}
+      If the list is empty, C1 PASSES immediately — write "C1 PASS" in c1_analysis and do not run the steps.
+      Otherwise follow the C1 PROCEDURE above. You are FORBIDDEN to write "C1 PASS" or "C1 FAIL" before
+      Step 6 (except the sanctioned EARLY_EXIT in Step 2).
 
-      Output discipline:
-      - Fill "c1_analysis" and "c4_check" completely before writing "action" — they are mandatory reasoning fields.
-      - "reason" must be exactly ONE sentence. When action is "accept", write exactly: "All criteria pass." When action is "revise", summarise all failures by criterion number only (e.g., "Fails C1 and C4"). It must NOT contain the word "Paragraph" (in any capitalization) or any paragraph numbers. If you include "Paragraph" or paragraph numbers in reason, your output is invalid.
-      - "target" must only contain failures that your c1_analysis or c4_check reasoning steps concluded with FAIL or NO CITATION. Do not add a criterion to target if your own reasoning step concluded PASS or HAS CITATION.
-      - You are FORBIDDEN to include "C4" in "reason" or add any line starting with "C4:" to "target" if your "c4_check" contains the exact substring "C4 PASSES".
-      - You are FORBIDDEN to include "C1" in "reason" or add any line starting with "C1:" to "target" if your "c1_analysis" ends with "C1 PASS".
-      - ALL detected failures across the five properties must appear in "target" (one per line).
-      - Never reference a paragraph number greater than N; if unsure, recount before answering.
-      - Consistency check (mandatory before writing action): if target == "" then action MUST be "accept" AND reason MUST be "All criteria pass." If target != "" then action MUST be "revise" AND reason MUST start with "Fails " followed by the failing criterion codes.
+      2. PARAGRAPH TRANSITIONS: Paragraphs 2 and beyond must open with a transition referencing the
+      preceding paragraph's topic. Paragraph 1 is exempt.
+      If you flag: state the paragraph number and what transition is missing.
 
-      Check these five properties (all must pass for action "accept"):
+      3. SAME-CONCEPT DUPLICATION: Evaluate ONLY pairs in {duplicate_pairs}. If empty, C3 PASSES — do
+      not scan the draft for other duplicates. For each pair: verify both sentences express the same core
+      claim with the same scope — if so, flag the one that appears later.
+      If you flag: quote both sentences and state which paragraph contains the later one.
 
-      1. RESTRICTION ORDERING: A preceding step identified the following restriction cue words/phrases actually present in the draft: {restriction_analysis}
-      If the list is empty, Criterion 1 PASSES — stop here.
-      Otherwise, use those cues to locate sentences in the draft. Before classifying, apply this filter: if the sentence's primary verb is advisory ("recommend", "advise", "suggest", "encourage") the sentence is NOT a restriction regardless of the cue — skip it.
-      WORKED EXAMPLE (advisory filter): "The American Diabetes Association advises discontinuing metformin for patients with creatinine clearance below 30 mL/min." — SKIP (primary verb is "advises"). Do NOT classify this as UNCONDITIONAL or CONDITIONAL.
-      WORKED EXAMPLE (conditional clause at end): Any restriction sentence containing "for patients with...", "for those with...", or "in patients with..." is CONDITIONAL because the phrase limits scope to a specific group, even when that phrase appears at the end of the sentence.
-      For each remaining restriction sentence, classify as:
-      - CONDITIONAL: the restriction is limited to a group, situation, or threshold. A restriction is conditional if a limiting phrase or clause (e.g. "in [group/condition]", "for [group]", "when [X]", "if [X]", "below/above [number]") appears anywhere in the same sentence, even after the cue word. The phrase "in patients with X" or "in cases of X" is always conditional. Also treat anaphoric scope phrases as CONDITIONAL — they limit the restriction to a previously defined set of conditions: "in these scenarios", "in these cases", "in such situations", "under these conditions", "in this setting". Also treat sentences of the form "X are absolute contraindications" or "X should avoid Y" where X is a condition, severity grade, patient group, or numeric threshold (e.g. an eGFR range) as CONDITIONAL, even if the condition is the grammatical subject rather than a limiting clause.
-      - UNCONDITIONAL: no limiting clause of any kind — the restriction applies to everyone with no stated scope.
-      You may flag C1 ONLY if you can identify at least one CONDITIONAL restriction sentence AND at least one UNCONDITIONAL restriction sentence in the SAME paragraph. If you cannot find BOTH types in the same paragraph, C1 PASSES — do not flag.
-      Flag Criterion 1 ONLY if a CONDITIONAL restriction sentence appears EARLIER in the paragraph than an UNCONDITIONAL restriction sentence. The reverse — UNCONDITIONAL appearing before CONDITIONAL — is the CORRECT order and must NOT be flagged. If no CONDITIONAL-before-UNCONDITIONAL ordering violation exists, or if all found restrictions are of the same type, Criterion 1 PASSES.
-      Evidence requirement (STRICT): if you flag, your target line MUST label both sentences exactly as: UNCONDITIONAL: "<full sentence>" / CONDITIONAL: "<full sentence>" and state which appears earlier (e.g., "Order: CONDITIONAL appears before UNCONDITIONAL in Paragraph N").
+      5. FINAL SENTENCE: Evaluate only the last sentence of the last paragraph (ignore citation-only
+      blocks). Flag ONLY if it is meta-commentary ("more research is needed", "this review suggests",
+      "in conclusion", "overall the evidence is limited", etc.) with no substantive claim. Do not flag
+      a sentence that makes a substantive factual, mechanistic, or safety claim.
+      If you flag: quote the sentence and name the meta-commentary phrase.
 
-      2. PARAGRAPH TRANSITIONS: Paragraphs 2 and beyond each open with a transition that references the preceding paragraph's topic. Paragraph 1 is exempt — do not flag it for a missing transition.
-
-      3. SAME-CONCEPT DUPLICATION: You may ONLY evaluate duplication using the candidate pairs listed below; you are forbidden to search the draft for any other duplicates.
-      Candidate pairs: {duplicate_pairs}
-      If the list is empty, Criterion 3 PASSES — report no C3 issues.
-      If the list is non-empty, for each pair in the list, verify both sentences express the same core claim with the same scope — if so, flag the one that appears later in the draft. Two sentences on the same general topic but making different specific claims are NOT duplicates.
-      Evidence requirement: if you flag, quote both sentences and state which paragraph contains the later one.
-
-      4. CITATION COVERAGE: A preceding step identified the following sentences as potentially missing a trailing citation: {uncited_sentences}
-      If this list is empty, Criterion 4 PASSES.
-      Otherwise (list non-empty), you MUST evaluate Criterion 4 using ONLY the c4_check scratchpad steps and its citation definition (including the rule that a final period after the bracket still counts as a trailing citation). Do not apply any other citation definition here. If c4_check concludes C4 PASSES, do not flag C4. If it concludes C4 FAILS, only sentences with NO CITATION may be flagged.
-      Evidence requirement: quote the full uncited sentence in your target line and include the instruction: "Fix: append an existing numeric citation already present elsewhere in the draft that supports this sentence; if no existing citation applies, DELETE the sentence. Moving the sentence does NOT fix C4."
-
-      5. FINAL SENTENCE: The final sentence is the LAST sentence of the LAST paragraph (after discarding any citation-only paragraphs). Evaluate only that one sentence. It must be a substantive domain claim with at least one trailing [N] citation, not meta-commentary about evidence quality or the writing process (e.g., "more research is needed", "this review suggests", "overall, the evidence is limited", "in conclusion", "this highlights"). Do not flag a final sentence that makes a substantive factual, mechanistic, or safety claim and ends with a citation. If the final sentence is substantive but missing a trailing citation, flag only under Criterion 4 (citation coverage) — do not flag Criterion 5. Evidence requirement: if you flag Criterion 5, quote that single final sentence in your target line and state the meta-commentary phrase that makes it non-substantive.
-
-      If any property fails, set action to "revise". The "target" field must contain a list of all detected failures, one per line. Each line MUST begin with the criterion code that failed (e.g., "C1:", "C2:", "C3:", "C4:", or "C5:"), followed by a specific instruction for the reviser that adheres to that criterion's evidence requirement. Example: "C3: Paragraph 3: Merge duplicate claims into one sentence with combined citations." In target, request only structural fixes (reordering, transitions, deduplication, adding missing citations) — do not ask the reviser to introduce new claims or facts not already present in the draft. If all pass, set action to "accept" and target to "".
+      OUTPUT DISCIPLINE:
+      - reason: exactly ONE sentence. No "Paragraph" or paragraph numbers in reason.
+      - target: only failures your reasoning confirmed. Each line starts with C1:, C2:, C3:, or C5:.
+      - You are FORBIDDEN to include "C1" in reason or target if c1_analysis ends with "C1 PASS".
+      - ALL detected failures must appear in target (one per line).
+      - Never reference a paragraph number greater than N.
     template: |
       QUESTION: {question}
 
@@ -1158,6 +1162,61 @@ prompts:
       {assess_target}
 
       REASON: {assess_reason}
+
+      CURRENT DRAFT:
+      {artifact}
+
+      Revised draft (prose only):
+
+  review_coherence_revise_c1:
+    description: "First-pass revise: fix restriction-language ordering (C1) only. Touch nothing else."
+    system_prompt: |
+      You are a single-criterion fix applier. Your only job is to fix Criterion 1 (restriction ordering) violations. Output only the revised prose — no preamble, no explanation, no markdown fences.
+
+      YOUR SCOPE:
+      - Scan the ISSUES list for lines starting with "C1:".
+      - If NO C1 line is present: output the draft UNCHANGED.
+      - If C1 lines are present: for each violating paragraph, reorder restriction sentences so all UNCONDITIONAL restrictions appear before CONDITIONAL restrictions.
+
+      STRICT RULES:
+      - Do NOT change any sentence that is not part of a C1 violation.
+      - Do NOT change any [N] citation index values; move bracket groups with their sentence.
+      - Do NOT add or remove sentences. Do NOT add transitions or merge content.
+      - Do NOT fix any other criterion (C2, C3, C4, C5) — those are handled in a separate pass.
+      - Reordering must stay within the same paragraph — never move sentences to a different paragraph.
+    template: |
+      QUESTION: {question}
+
+      ISSUES TO FIX (C1 lines only — ignore all other criteria):
+      {assess_target}
+
+      CURRENT DRAFT:
+      {artifact}
+
+      Revised draft (prose only):
+
+  review_coherence_revise_structure:
+    description: "Second-pass revise: fix structural issues (C2 transitions, C3 duplicates, C4 citations, C5 final sentence). Do not touch restriction ordering."
+    system_prompt: |
+      You are a structural fix applier. You receive a draft that has already had restriction-language ordering fixed. Your job is to fix structural criteria (C2, C3, C4, C5). Output only the revised prose — no preamble, no explanation, no markdown fences.
+
+      YOUR SCOPE:
+      - C2 (transition): add a brief bridging phrase to the opening sentence of a paragraph that is missing one. Paragraph 1 is exempt.
+      - C3 (duplicate): delete the later-occurring duplicate sentence identified in the issues list.
+      - C4 (citation): for an uncited sentence — append an existing [N] citation already present elsewhere in the draft that supports it; if no existing citation applies, delete the sentence.
+      - C5 (final sentence): if the final sentence is meta-commentary ("more research is needed", "this review suggests", "in conclusion", etc.), replace it with the preceding substantive sentence reworded to include a citation. Do not write a new fact.
+
+      STRICT RULES:
+      - Do NOT change any restriction sentence ordering (C1 was already fixed).
+      - Do NOT change any [N] citation index values; preserve every number exactly.
+      - Do NOT introduce any new claim or fact not already present in the draft.
+      - Do NOT move sentences between paragraphs.
+      - Act only on criteria that appear in the ISSUES list; if a criterion code is absent, skip it.
+    template: |
+      QUESTION: {question}
+
+      ISSUES TO FIX (C2/C3/C4/C5 lines only — ignore C1):
+      {assess_target}
 
       CURRENT DRAFT:
       {artifact}

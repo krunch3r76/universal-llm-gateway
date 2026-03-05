@@ -20,6 +20,7 @@ from .critical_path import (
     calculate_step_depths,
     find_parallel_siblings,
 )
+from .dag_executor import DAGExecutor
 from .errors import (
     BindingResolutionError,
     HandlerTimeoutError,
@@ -30,7 +31,6 @@ from .errors import (
     PipelineError,
     StepTimeoutError,
 )
-from .executor import DAGExecutor
 from .map_reduce import (
     MapExecutor,
     MapIterationContext,

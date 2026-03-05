@@ -1,5 +1,7 @@
 """Step lifecycle events."""
 
+from typing import Any
+
 from universal_event_bus import Event, event_factory
 
 
@@ -37,6 +39,40 @@ def StepStarted(  # noqa: N802
 
 
 @event_factory
+def StepModelResolved(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    resolved_model_id: str,
+    selection_source: str,
+) -> Event:
+    """
+    Emitted immediately after model selection, before inference begins.
+
+    Corrects the static default carried by StepStarted with the actual model
+    that will be invoked (post profile/requirements resolution).
+
+    Payload:
+        pipeline_id: Pipeline identifier
+        execution_id: Current execution UUID
+        step_name: Step identifier
+        resolved_model_id: Concrete model ID selected for this invocation
+        selection_source: How the model was chosen (e.g. "runtime_override",
+                          "intelligence_profile", "model_ref")
+    """
+    return Event(
+        signal="pipeline.step.model.resolved",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "model_id": resolved_model_id,
+            "selection_source": selection_source,
+        },
+    )
+
+
+@event_factory
 def StepCompleted(  # noqa: N802
     pipeline_id: str,
     execution_id: str,
@@ -46,16 +82,19 @@ def StepCompleted(  # noqa: N802
     prompt_tokens: int,
     completion_tokens: int,
     model_call_count: int,
+    model_id: str | None = None,
     exit_code: int | None = None,
     json_output_keys: list[str] | None = None,
 ) -> Event:
     """Emitted when step completes successfully.
 
+    model_id: the resolved model actually invoked (overrides StepStarted's
+              static models.yaml default; None for non-generate steps).
     Optional exit_code: populated for shell_v1 steps (non-None even on rc=0).
     Enables event consumers to detect non-zero shell exits that produced output.
     Optional json_output_keys: top-level keys of JSON output (observability).
     """
-    payload: dict = {
+    payload: dict[str, Any] = {
         "pipeline_id": pipeline_id,
         "execution_id": execution_id,
         "step_name": step_name,
@@ -65,6 +104,8 @@ def StepCompleted(  # noqa: N802
         "completion_tokens": completion_tokens,
         "model_call_count": model_call_count,
     }
+    if model_id is not None:
+        payload["model_id"] = model_id
     if exit_code is not None:
         payload["exit_code"] = exit_code
     if json_output_keys is not None:
@@ -141,6 +182,40 @@ def StepContextExceeded(  # noqa: N802
             "context_length": context_length,
             "effective_context_per_slot": effective_context_per_slot,
             "prompt_chars": prompt_chars,
+        },
+    )
+
+
+@event_factory
+def StepModelFallback(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    primary_model: str,
+    fallback_model: str,
+    primary_error_type: str,
+    fallback_attempt: int,
+    total_fallbacks: int,
+    succeeded: bool,
+) -> Event:
+    """Emitted when step-level model fallback is attempted or resolves.
+
+    Fires at the executor level after the full retry chain exhausts
+    for the primary model. Covers all failure types: timeout, proxy error,
+    handler error.
+    """
+    return Event(
+        signal="pipeline.step.model.fallback",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "primary_model": primary_model,
+            "fallback_model": fallback_model,
+            "primary_error_type": primary_error_type,
+            "fallback_attempt": fallback_attempt,
+            "total_fallbacks": total_fallbacks,
+            "succeeded": succeeded,
         },
     )
 

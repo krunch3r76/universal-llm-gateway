@@ -29,20 +29,3 @@ prompts:
       - Respond with valid JSON only — no prose, no markdown fences
     template: |
       {text}
-    json_schema:
-      type: object
-      properties:
-        needs_retrieval:
-          type: boolean
-        scope:
-          type: string
-        scope_confidence:
-          type: number
-          minimum: 0
-          maximum: 1
-          description: "Confidence in the scope classification (0–1)"
-        rewritten_queries:
-          type: array
-          items:
-            type: string
-      required: ["needs_retrieval", "scope", "rewritten_queries"]

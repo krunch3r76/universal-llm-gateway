@@ -152,7 +152,7 @@ class BrowserCatalogCache:
 def _per_million(pricing: dict[str, Any], key: str) -> float:
     """Convert per-token string price to per-million-token float."""
     try:
-        return round(float(pricing.get(key, "0")) * 1_000_000, 4)
+        return round(float(pricing.get(key, "0.0")) * 1_000_000, 4)
     except (ValueError, TypeError):
         return 0.0
 
@@ -167,7 +167,8 @@ def _process_model(raw: dict[str, Any]) -> dict[str, Any]:
     pricing = raw.get("pricing") or {}
     model_id = raw.get("id", "")
     provider = model_id.split("/", 1)[0] if "/" in model_id else ""
-    modality = (raw.get("architecture") or {}).get("modality", "")
+    raw_architecture = raw.get("architecture") or {}
+    modality = raw_architecture.get("modality", "")
     completion_cost = _per_million(pricing, "completion")
     tags = derive_tags(model_id, modality)
 
@@ -182,6 +183,15 @@ def _process_model(raw: dict[str, Any]) -> dict[str, Any]:
         "request_cost": _per_million(pricing, "request"),
         "modality": modality,
         "description": raw.get("description", ""),
+        "architecture": {
+            "input_modalities": raw_architecture.get("input_modalities", []),
+            "output_modalities": raw_architecture.get("output_modalities", []),
+            "tokenizer": raw_architecture.get("tokenizer", ""),
+            "instruct_type": raw_architecture.get("instruct_type", ""),
+        },
+        "supported_parameters": raw.get("supported_parameters") or [],
+        "top_provider": raw.get("top_provider") or {},
+        "created": raw.get("created"),
         "tags": tags,
         "tier": derive_tier(model_id, completion_cost, "cloud"),
         "source": "cloud",

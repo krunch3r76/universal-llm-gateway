@@ -1,5 +1,6 @@
 """Main FastAPI application for Universal Stargate Proxy"""
 
+import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
@@ -23,7 +24,15 @@ from .core.common import ErrorNormalizer
 from .core.streaming import StreamingErrorHandler
 from .dependencies import get_proxy, init_proxy
 from .middleware.raw_body_cache import RawBodyCacheMiddleware
-from .routers import api, cloud_passthrough, forwarding, health, monitoring, schedule, v1
+from .routers import (
+    api,
+    cloud_passthrough,
+    forwarding,
+    health,
+    monitoring,
+    schedule,
+    v1,
+)
 
 logger = get_logger(__name__)
 
@@ -57,9 +66,15 @@ async def _check_if_streaming_request(request: Request) -> bool:
             request.state._json = body  # Cache for future use
 
         return body.get("stream", False) if isinstance(body, dict) else False
-    except Exception:
-        # If we can't read the body (already consumed, invalid JSON, etc.),
-        # assume non-streaming to be safe
+    except json.JSONDecodeError:
+        logger.debug("Could not decode request body as JSON, assuming non-streaming.")
+        return False
+    except Exception as e:
+        logger.warning(
+            "Unexpected error checking for streaming request: %s",
+            e,
+            exc_info=True,
+        )
         return False
 
 
@@ -137,8 +152,12 @@ async def lifespan(app: FastAPI):
                             f"{type(exc).__name__}: {exc}",
                             exc_info=(type(exc), exc, exc.__traceback__),
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(
+                        "Error processing task exception: %s",
+                        e,
+                        exc_info=True,
+                    )
 
             # Check for mode-specific critical tasks
             critical_tasks = ["HotReload-profiles"]  # Common to all modes
@@ -453,7 +472,12 @@ async def root():
 # Include all routers
 app.include_router(v1.router)  # /v1/* endpoints (OpenAI API compatible)
 app.include_router(api.router)  # /api/v1/* endpoints (administrative)
-app.include_router(cloud_passthrough.router)  # /api/models, /api/select (cloud passthrough)
+app.include_router(
+    cloud_passthrough.router
+)  # /api/models, /api/select, /api/refresh (cloud passthrough)
+app.include_router(
+    cloud_passthrough._ui_router
+)  # /cloud-ui, /cloud-ui/static/* (browser UI)
 app.include_router(health.router)  # /health
 app.include_router(schedule.router)  # /scheduler/* endpoints
 app.include_router(monitoring.router)  # /api/v1/monitoring/* endpoints (Phase 4)

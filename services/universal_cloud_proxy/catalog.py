@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def _per_million(pricing: dict[str, Any], key: str) -> float:
     """Convert per-token string price to per-million-token float."""
     try:
-        return round(float(pricing.get(key, "0")) * 1_000_000, 4)
+        return round(float(pricing.get(key, "0.0")) * 1_000_000, 4)
     except (ValueError, TypeError):
         return 0.0
 

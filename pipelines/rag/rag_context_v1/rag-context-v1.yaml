@@ -32,6 +32,25 @@ steps:
                          #        improves sub-query diversity 3–8% recall;
                          #        JSON schema constraint keeps output reliable
       max_tokens: 512
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            needs_retrieval:
+              type: boolean
+            scope:
+              type: string
+            scope_confidence:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: "Confidence in the scope classification (0–1)"
+            rewritten_queries:
+              type: array
+              items:
+                type: string
+          required: ["needs_retrieval", "scope", "rewritten_queries"]
 
   - name: retrieve_assemble
     type: rag_multi_retrieve_v1

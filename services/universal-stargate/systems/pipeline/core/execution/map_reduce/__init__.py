@@ -7,8 +7,9 @@ Provides concurrent map execution with partial success support:
 - MapIterationContext: Iteration metadata (mapNs.iteration.*)
 """
 
-from .collection import MapIterationContext, MapJsonAccessor, MapOutputCollection
-from .executor import MapExecutor
+from .collection import MapIterationContext
+from .map_executor import MapExecutor
+from .map_output_collection import MapJsonAccessor, MapOutputCollection
 
 __all__ = [
     "MapExecutor",

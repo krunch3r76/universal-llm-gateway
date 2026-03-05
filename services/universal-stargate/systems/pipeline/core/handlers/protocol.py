@@ -198,6 +198,12 @@ class PipelineContext:
     # Cleared per-key by DAGExecutor at each step boundary.
     _step_model_calls: dict[str, list[Any]] = field(default_factory=dict)
 
+    # Per-step model override for executor-level fallback.
+    # Keyed by step_name → full model ID. When set, the generate handler
+    # uses this model directly instead of resolving step.model_ref via registry.
+    # Parallel-step safe: each step writes to its own key.
+    _step_model_override: dict[str, str] = field(default_factory=dict)
+
     # Full conversation history (None for non-chat pipelines)
     _messages: list[dict[str, Any]] | None = None
 

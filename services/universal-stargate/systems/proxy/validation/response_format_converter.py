@@ -1,14 +1,17 @@
 """Response format converter for engine compatibility.
 
-GGUF/llama.cpp models use:
+Canonical internal format (llama-server / llama.cpp):
     {"type": "json_object", "schema": {...}}
 
-vLLM/OpenAI-compatible models use:
-    {"type": "json_schema", "json_schema": {"name": "...", "strict": true,
-     "schema": {...}}}
+vLLM and cloud OpenAI-compatible models expect:
+    {"type": "json_schema", "json_schema": {"name": "...", "schema": {...}}}
+
+Note: `strict: true` is intentionally omitted — vLLM does not support it
+and most cloud providers (OpenRouter etc.) return 400 when it is present.
+It is an OpenAI-native feature only.
 
 Heuristic: model IDs containing quantization markers (q4, q8, iq3, etc.)
-indicate GGUF; absence indicates vLLM.
+indicate GGUF; absence indicates vLLM/cloud.
 """
 
 import re
@@ -60,7 +63,15 @@ def convert_response_format_for_engine(
 
     fmt_type = response_format.get("type")
 
-    if fmt_type in ("json_schema", "text"):
+    if fmt_type == "text":
+        return response_format
+
+    if fmt_type == "json_schema":
+        inner = response_format.get("json_schema")
+        if isinstance(inner, dict) and "strict" in inner:
+            # strict: true is OpenAI-native only; vLLM and cloud providers 400 on it
+            inner = {k: v for k, v in inner.items() if k != "strict"}
+            return {"type": "json_schema", "json_schema": inner}
         return response_format
 
     if fmt_type == "json_object" and "schema" in response_format:
@@ -75,7 +86,6 @@ def convert_response_format_for_engine(
                 "type": "json_schema",
                 "json_schema": {
                     "name": "pipeline_response",
-                    "strict": True,
                     "schema": schema,
                 },
             }

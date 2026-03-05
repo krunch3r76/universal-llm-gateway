@@ -7,7 +7,7 @@ configurable role and optional RAG context + file injection.
 Usage:
   consult "How should we handle WebSocket reconnection?"
   consult -r architect "Should routing use events or polling?" -f systems/routing/
-  consult -r reviewer -f capacity/ledger.py "Check for race conditions"
+  consult -r reviewer -f capacity/ledger.py  # structured pipeline (default for reviewer)
   consult -r planner "Add per-model timeouts" -o plan.md
   consult --models qwen3-32b-awq-32768 google/gemini-2.5-pro "question"
   consult --chain -r planner --models local cloud "complex question"
@@ -18,722 +18,51 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import re
 import sys
 import textwrap
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
-import yaml
-from transport_utils.rag_client import DEFAULT_RAG_URL, make_sync_client
+# Ensure consult_lib is importable regardless of working directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-DEFAULT_STARGATE_URL = "http://localhost:9999"
-
-DEFAULT_MODELS: list[str] = [
-    "qwen3-32b-awq-32768",
-    "ernie-4-5-21b-a3b-pt-q8-0-65536",
-    "google/gemini-2.5-flash",
-]
-
-REVIEWER_DEFAULT_MODELS: list[str] = ["qwen/qwen3-coder"]
-
-_ROLES_PATH = Path(__file__).resolve().parent / "consult-roles.yaml"
-
-DEFAULT_ROLE = "researcher"
-
-DEFAULT_CHAIN_DIRECTIVE = (
-    "You are a reviewer in a chained consultation. The analysis above was "
-    "produced by a prior model. Evaluate whether you agree with its "
-    "recommendations, identify any gaps or risks it missed, and propose "
-    "additional changes if warranted. Do not re-derive what the prior "
-    "analysis already covers correctly — focus on validation and augmentation."
+from consult_lib.constants import (
+    DEFAULT_MODELS,
+    DEFAULT_ROLE,
+    DEFAULT_STARGATE_URL,
+    REVIEWER_DEFAULT_MODELS,
 )
-
-
-def _rag_socket_present(rag_url: str) -> bool:
-    """Return True if the RAG socket file exists (unix://) or URL is TCP.
-
-    Existence check only — not a full connectivity probe. A stale socket
-    (process crashed, file left behind) returns True here; the subsequent
-    fetch call will surface a ConnectError and continue gracefully. The
-    purpose is to suppress the noisy "No such file or directory" message
-    that fires when RAG is simply not configured/started.
-
-    For TCP URLs: always returns True (errors surface at connection time).
-    """
-    if not rag_url.startswith("unix://"):
-        return True
-    rest = rag_url[7:].lstrip("/")
-    socket_path = Path(f"/{rest}") if rest else Path("/tmp/universal-protocol/rag.sock")
-    return socket_path.exists()
-
-
-def _fetch_scope_choices(rag_url: str = DEFAULT_RAG_URL) -> list[str]:
-    """Fetch available scopes from RAG service for CLI choices."""
-    try:
-        with make_sync_client(rag_url, timeout=2.0) as client:
-            resp = client.get("/scopes")
-        resp.raise_for_status()
-        data = resp.json()
-        if isinstance(data, dict):
-            scopes = data.get("scopes", {})
-            if isinstance(scopes, dict) and scopes:
-                return list(scopes.keys())
-    except Exception as exc:
-        print(
-            f"RAG scope discovery failed ({type(exc).__name__}); using defaults",
-            file=sys.stderr,
-        )
-    return ["project", "research", "all"]
-
-
-def _fetch_scope_options_text(rag_url: str = DEFAULT_RAG_URL) -> str:
-    """Fetch and format scopes for rag-context prompt injection."""
-    try:
-        with make_sync_client(rag_url, timeout=2.0) as client:
-            resp = client.get("/scopes")
-        resp.raise_for_status()
-        data = resp.json()
-        scopes = data.get("scopes", {}) if isinstance(data, dict) else {}
-        if not isinstance(scopes, dict) or not scopes:
-            return '"research", "project", or "all"'
-        lines: list[str] = []
-        for name, info in scopes.items():
-            if name == "all":
-                continue
-            desc = ""
-            if isinstance(info, dict):
-                raw_desc = info.get("description", "")
-                if isinstance(raw_desc, str):
-                    desc = raw_desc
-            lines.append(f'"{name}" — {desc}' if desc else f'"{name}"')
-        lines.append('"all" — when unclear or mixed across multiple scopes')
-        return "\n        ".join(lines)
-    except Exception as exc:
-        print(
-            f"RAG scope option fetch failed ({type(exc).__name__}); using fallback text",
-            file=sys.stderr,
-        )
-        return '"research", "project", or "all"'
-
-
-# Cloud model selection via Stargate passthrough (sole endpoint invariant)
-STARGATE_URL = os.getenv("STARGATE_URL", DEFAULT_STARGATE_URL).rstrip("/")
-
-
-def _load_roles() -> dict[str, Any]:
-    """Load role prompt templates and select configs from the companion YAML file."""
-    return yaml.safe_load(_ROLES_PATH.read_text())
-
-
-def _split_role_config(
-    roles_data: dict[str, Any],
-) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
-    """Split YAML payload into role prompts and role selection configs."""
-    role_prompts: dict[str, str] = {}
-    role_select: dict[str, dict[str, Any]] = {}
-    for key, value in roles_data.items():
-        if key.endswith("_select"):
-            if isinstance(value, dict):
-                role_select[key[: -len("_select")]] = value
-            continue
-        if isinstance(value, str):
-            role_prompts[key] = value
-    return role_prompts, role_select
-
-
-def _select_models_for_role(
-    role: str,
-    role_select: dict[str, dict[str, Any]],
-    stargate_url: str = STARGATE_URL,
-    count: int = 2,
-) -> list[str] | None:
-    """Query cloud proxy /api/select using role's selection criteria.
-
-    Returns model IDs if the cloud proxy is available and the role has
-    a ``{role}_select`` config.  Returns None to signal "use defaults".
-    """
-    select_config = role_select.get(role)
-    if select_config is None:
-        return None
-
-    payload: dict[str, Any] = {"count": count}
-    for field in (
-        "tags",
-        "exclude_tags",
-        "min_context",
-        "modality_contains",
-        "providers",
-    ):
-        if field in select_config:
-            payload[field] = select_config[field]
-
-    try:
-        with httpx.Client(timeout=5.0) as client:
-            resp = client.post(f"{stargate_url.rstrip('/')}/api/select", json=payload)
-        resp.raise_for_status()
-        models = [m["id"] for m in resp.json().get("models", [])]
-        if models:
-            return models
-    except Exception as exc:
-        print(
-            f"Cloud proxy select unavailable ({exc}), using defaults", file=sys.stderr
-        )
-    return None
-
-
-def _is_local_model_id(model_id: str) -> bool:
-    """Heuristic: local models lack '/' (cloud IDs use provider/model format)."""
-    return "/" not in model_id
-
-
-def _warn_local_model_for_role(
-    role: str,
-    model_ids: list[str],
-    role_select: dict[str, dict[str, Any]],
-) -> None:
-    """Warn when --models includes local models for a role that excludes them."""
-    select_config = role_select.get(role)
-    if not select_config:
-        return
-    exclude_tags = select_config.get("exclude_tags", [])
-    if not isinstance(exclude_tags, list) or "local" not in exclude_tags:
-        return
-    local_models = [model_id for model_id in model_ids if _is_local_model_id(model_id)]
-    if not local_models:
-        return
-    print(
-        f"Warning: role '{role}' excludes local models in auto-selection, "
-        f"but --models includes: {', '.join(local_models)}",
-        file=sys.stderr,
-    )
-
-
-def _fetch_available_model_ids(
-    stargate_url: str,
-    *,
-    timeout: float = 5.0,
-) -> set[str] | None:
-    """Fetch currently exposed model IDs from Stargate /v1/models.
-
-    Returns None on transport/parse failure.
-    """
-    url = f"{stargate_url.rstrip('/')}/v1/models"
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.get(url)
-        resp.raise_for_status()
-        payload = resp.json()
-        data = payload.get("data", []) if isinstance(payload, dict) else []
-        if not isinstance(data, list):
-            return None
-        return {
-            model.get("id", "")
-            for model in data
-            if isinstance(model, dict) and isinstance(model.get("id"), str)
-        }
-    except Exception as exc:
-        print(
-            f"Failed to fetch available model IDs from Stargate ({exc})",
-            file=sys.stderr,
-        )
-        return None
-
-
-def _read_context_files(paths: list[str]) -> list[str]:
-    """Read files and return formatted content blocks."""
-    blocks: list[str] = []
-    for path_str in paths:
-        path = Path(path_str)
-        if path.is_dir():
-            for child in sorted(path.rglob("*.py"))[:20]:
-                try:
-                    content = child.read_text(errors="replace")
-                    if len(content) > 8000:
-                        content = content[:8000] + "\n[... truncated]"
-                    blocks.append(f"### {child}\n```\n{content}\n```")
-                except OSError:
-                    blocks.append(f"### {child}\n[Error: could not read file]")
-        elif path.is_file():
-            try:
-                content = path.read_text(errors="replace")
-                if len(content) > 12000:
-                    content = content[:12000] + "\n[... truncated]"
-                blocks.append(f"### {path}\n```\n{content}\n```")
-            except OSError:
-                blocks.append(f"### {path}\n[Error: could not read file]")
-        else:
-            blocks.append(f"### {path}\n[Error: file not found]")
-    return blocks
-
-
-def _collect_context_file_paths(paths: list[str]) -> list[str]:
-    """Expand context file arguments into concrete file paths."""
-    files: list[str] = []
-    for path_str in paths:
-        path = Path(path_str)
-        if path.is_dir():
-            files.extend(
-                str(child)
-                for child in sorted(path.rglob("*"))
-                if child.is_file() and ".git/" not in str(child)
-            )
-        elif path.is_file():
-            files.append(str(path))
-    # Preserve input order and remove duplicates.
-    return list(dict.fromkeys(files))
-
-
-def _fetch_pipeline_batches(
-    stargate_url: str,
-    files: list[str],
-    *,
-    pipeline: str = "code-review",
-    timeout: float = 30.0,
-) -> dict[str, Any]:
-    """Fetch token-budgeted batch plan from Stargate estimator endpoint."""
-    items = [{"name": path, "chars": Path(path).stat().st_size} for path in files]
-    payload = {"pipeline": pipeline, "items": items}
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(
-            f"{stargate_url.rstrip('/')}/v1/pipelines/estimate",
-            json=payload,
-            params={"disable_profile": "true"},
-        )
-    response.raise_for_status()
-    data = response.json()
-    if not isinstance(data, dict):
-        raise ValueError("Estimator response is not a JSON object")
-    return data
-
-
-def _query_code_review_batch(
-    *,
-    stargate_url: str,
-    batch: dict[str, Any],
-    timeout: float,
-) -> dict[str, Any]:
-    """Run a single code-review batch via pipeline model."""
-    batch_files = [str(path) for path in batch.get("items", [])]
-    parts: list[str] = []
-    for file_path in batch_files:
-        content = Path(file_path).read_text(errors="replace")
-        parts.append(f"### {file_path}\n{content}")
-    body = {
-        "model": "code-review",
-        "messages": [{"role": "user", "content": "\n\n".join(parts)}],
-        "stream": False,
-    }
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(
-            f"{stargate_url.rstrip('/')}/v1/chat/completions",
-            json=body,
-            params={"disable_profile": "true"},
-        )
-    response.raise_for_status()
-    data = response.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    try:
-        parsed = json.loads(content) if isinstance(content, str) else content
-    except Exception:
-        parsed = content
-    usage = data.get("usage", {}) if isinstance(data, dict) else {}
-    return {
-        "batch": batch,
-        "result": parsed,
-        "prompt_tokens": usage.get("prompt_tokens", 0),
-        "completion_tokens": usage.get("completion_tokens", 0),
-    }
-
-
-def _run_code_review_pipeline(
-    *,
-    stargate_url: str,
-    files: list[str],
-    timeout: float,
-) -> list[dict[str, Any]]:
-    """Estimate and execute code-review batches in parallel."""
-    estimate = _fetch_pipeline_batches(stargate_url, files, timeout=min(timeout, 30.0))
-    warnings = estimate.get("warnings", []) if isinstance(estimate, dict) else []
-    if warnings:
-        for warning in warnings:
-            print(
-                f"Estimator warning [{warning.get('code', 'unknown')}]: "
-                f"{warning.get('name', '?')} - {warning.get('message', '')}",
-                file=sys.stderr,
-            )
-
-    batches = estimate.get("batches", []) if isinstance(estimate, dict) else []
-    if not batches:
-        return [
-            {
-                "batch": {"items": files, "tokens": estimate.get("total_source_tokens", 0)},
-                "result": {"status": "no_batches", "message": "Estimator returned no batches"},
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-            }
-        ]
-
-    results: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=len(batches)) as pool:
-        futures = [
-            pool.submit(
-                _query_code_review_batch,
-                stargate_url=stargate_url,
-                batch=batch,
-                timeout=timeout,
-            )
-            for batch in batches
-        ]
-        for future in as_completed(futures):
-            results.append(future.result())
-    return results
-
-
-def _fetch_rag_pipeline(
-    query: str,
-    *,
-    pipeline_id: str = "rag-context",
-    stargate_url: str = DEFAULT_STARGATE_URL,
-    rag_url: str = DEFAULT_RAG_URL,
-    timeout: float = 70.0,
-    scope_override: str | None = None,
-) -> tuple[list[str], str | None]:
-    """Use the rag-context pipeline for intelligent RAG retrieval."""
-    url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
-    pipeline_options: dict[str, Any] = {
-        "scope_options": _fetch_scope_options_text(rag_url=rag_url),
-    }
-    if scope_override:
-        pipeline_options["scope_override"] = scope_override
-    body: dict[str, Any] = {
-        "model": pipeline_id,
-        "messages": [{"role": "user", "content": query}],
-        "stream": False,
-        "pipeline_options": pipeline_options,
-    }
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.post(url, json=body)
-        resp.raise_for_status()
-    except Exception as exc:
-        return [], str(exc)
-    data = resp.json()
-    content: str = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    if not content.strip():
-        return [], f"Pipeline '{pipeline_id}' returned empty context"
-    return [content], None
-
-
-def _fetch_rag_direct(
-    query: str,
-    *,
-    rag_url: str = DEFAULT_RAG_URL,
-    top_k: int = 5,
-    scope: str | None = None,
-    timeout: float = 10.0,
-) -> tuple[list[str], str | None]:
-    """Direct RAG search via the /search endpoint."""
-    body: dict[str, object] = {"query": query, "top_k": top_k}
-    if scope:
-        body["scope"] = scope
-    try:
-        with make_sync_client(rag_url, timeout=timeout) as client:
-            resp = client.post("/search", json=body)
-        resp.raise_for_status()
-    except Exception as exc:
-        reason = f"RAG service unreachable ({type(exc).__name__})"
-        return [], reason
-    data = resp.json()
-    if not isinstance(data, dict):
-        return [], "RAG response was not a JSON object"
-    chunks = data.get("chunks", [])
-    metadata = data.get("metadata", [])
-    findings: list[str] = []
-    for idx, chunk in enumerate(chunks):
-        if not isinstance(chunk, str):
-            continue
-        meta = (
-            metadata[idx]
-            if idx < len(metadata) and isinstance(metadata[idx], dict)
-            else {}
-        )
-        source = meta.get("source", "unknown") if isinstance(meta, dict) else "unknown"
-        findings.append(f"Source: {source}\n{chunk}")
-    return findings, None
-
-
-def _build_prompt(
-    question: str,
-    rag_findings: list[str] | None = None,
-    file_context: list[str] | None = None,
-) -> str:
-    """Assemble the user prompt from question + context."""
-    sections: list[str] = []
-    if file_context:
-        sections.append("## Code/Documentation Context\n" + "\n\n".join(file_context))
-    if rag_findings:
-        sections.append(
-            "## Retrieved Knowledge\n"
-            + "\n\n".join(
-                f"### Finding {i}\n{f}" for i, f in enumerate(rag_findings, 1)
-            )
-        )
-    sections.append(f"## Question\n{question}")
-    return "\n\n".join(sections)
-
-
-def _strip_think_blocks(text: str) -> str:
-    """Remove all <think>...</think> blocks from model output.
-
-    Handles leading blocks (reasoning models like Qwen3) and any embedded
-    blocks. Applied before chaining so thinking tokens never contaminate
-    the next model's context. Centralisation target: stargate-level stripping.
-    """
-    return re.sub(
-        r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE
-    ).strip()
-
-
-def _query_model(
-    model_id: str,
-    system_prompt: str,
-    user_prompt: str,
-    stargate_url: str,
-    timeout: float,
-) -> dict[str, Any]:
-    """Send consultation to a single model."""
-    url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
-    body: dict[str, Any] = {
-        "model": model_id,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "stream": False,
-        "temperature": 0.4,
-    }
-    start = time.monotonic()
-    with httpx.Client(timeout=timeout) as client:
-        resp = client.post(url, json=body, params={"disable_profile": "true"})
-    elapsed_ms = (time.monotonic() - start) * 1000
-    resp.raise_for_status()
-    data = resp.json()
-    choice = data.get("choices", [{}])[0]
-    usage = data.get("usage", {})
-    raw_response = choice.get("message", {}).get("content", "")
-    return {
-        "model_id": data.get("model", model_id),
-        "response": _strip_think_blocks(raw_response),
-        "prompt_tokens": usage.get("prompt_tokens", 0),
-        "completion_tokens": usage.get("completion_tokens", 0),
-        "latency_ms": round(elapsed_ms),
-    }
-
-
-def _augment_with_prior(
-    base_prompt: str,
-    prior_results: list[dict[str, Any]],
-    directive: str | None = None,
-) -> str:
-    """Append prior models' analyses and a reviewer directive to the prompt."""
-    sections: list[str] = [base_prompt]
-    for result in prior_results:
-        if "error" in result or not result.get("response"):
-            continue
-        sections.append(
-            f"## Prior Analysis (by {result['model_id']})\n{result['response']}"
-        )
-    sections.append(f"## Your Role\n{directive or DEFAULT_CHAIN_DIRECTIVE}")
-    return "\n\n".join(sections)
-
-
-_MAX_PRIOR_CHARS = 24_000
-
-
-def _query_chain(
-    models: list[str],
-    system_prompt: str,
-    user_prompt: str,
-    stargate_url: str,
-    timeout: float,
-    chain_directive: str | None = None,
-) -> list[dict[str, Any]]:
-    """Query models sequentially, each reviewing prior output.
-
-    Prior responses are capped at _MAX_PRIOR_CHARS to prevent unbounded
-    prompt growth across chain phases.
-    """
-    results: list[dict[str, Any]] = []
-    for idx, mid in enumerate(models):
-        if results:
-            # Cap prior responses to prevent payload ballooning across phases.
-            capped: list[dict[str, Any]] = []
-            for r in results:
-                if "response" in r and len(r["response"]) > _MAX_PRIOR_CHARS:
-                    r = dict(r)
-                    r["response"] = (
-                        r["response"][:_MAX_PRIOR_CHARS]
-                        + f"\n[... truncated to {_MAX_PRIOR_CHARS} chars]"
-                    )
-                capped.append(r)
-            prompt = _augment_with_prior(user_prompt, capped, chain_directive)
-        else:
-            prompt = user_prompt
-        phase = "analyst" if idx == 0 else "reviewer"
-        print(
-            f"  Phase {idx + 1} ({phase}): {mid} (timeout={timeout:.0f}s)...",
-            file=sys.stderr,
-        )
-        start = time.monotonic()
-        try:
-            result = _query_model(mid, system_prompt, prompt, stargate_url, timeout)
-            result["phase"] = phase
-        except Exception as exc:
-            elapsed = time.monotonic() - start
-            error_msg = str(exc)
-            if elapsed >= timeout * 0.95:
-                error_msg = f"timeout after {elapsed:.0f}s: {error_msg}"
-            elif "connect" in error_msg.lower() or "connection" in error_msg.lower():
-                error_msg = f"connection error: {error_msg}"
-            result = {"model_id": mid, "error": error_msg, "phase": phase}
-        results.append(result)
-    return results
-
-
-def _format_result_block(result: dict[str, Any]) -> list[str]:
-    """Format a single model result as markdown lines."""
-    lines: list[str] = []
-    if "error" in result:
-        lines.append(f"**Error**: {result['error']}")
-    else:
-        tokens = result.get("prompt_tokens", 0) + result.get("completion_tokens", 0)
-        lines.append(
-            f"*{result.get('latency_ms', 0)}ms, "
-            f"{tokens} tokens "
-            f"({result.get('prompt_tokens', 0)}+{result.get('completion_tokens', 0)})*\n"
-        )
-        lines.append(result.get("response", ""))
-    lines.append("")
-    return lines
-
-
-def _format_output(
-    question: str,
-    role: str,
-    results: list[dict[str, Any]],
-    rag_error: str | None,
-    file_paths: list[str],
-    *,
-    chained: bool = False,
-) -> str:
-    """Format consultation results as structured markdown."""
-    lines: list[str] = []
-    title = f"# Consultation: {role}" + (" (chained)" if chained else "")
-    lines.append(title)
-    lines.append(f"**Date**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
-    lines.append(f"**Question**: {question}")
-    if file_paths:
-        lines.append(f"**Context files**: {', '.join(file_paths)}")
-    if chained:
-        lines.append("**Mode**: analyst -> reviewer(s)")
-    if rag_error:
-        lines.append(f"**RAG**: failed ({rag_error})")
-    lines.append("")
-
-    for idx, result in enumerate(results):
-        model = result.get("model_id", "unknown")
-        if chained:
-            phase = result.get("phase", "analyst" if idx == 0 else "reviewer")
-            lines.append(f"## Phase {idx + 1}: {phase.title()} — {model}")
-        else:
-            lines.append(f"## {model}")
-        lines.extend(_format_result_block(result))
-
-    return "\n".join(lines)
-
-
-def _format_pipeline_review_output(
-    *,
-    question: str,
-    file_paths: list[str],
-    batches: list[dict[str, Any]],
-) -> str:
-    """Format code-review pipeline batch outputs as markdown."""
-    lines: list[str] = []
-    lines.append("# Consultation: reviewer (pipeline)")
-    lines.append(f"**Date**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
-    lines.append(f"**Question**: {question}")
-    lines.append(f"**Context files**: {', '.join(file_paths)}")
-    lines.append("**Mode**: estimator-driven parallel batches")
-    lines.append("")
-    for idx, batch_result in enumerate(batches, 1):
-        batch = batch_result.get("batch", {})
-        files = batch.get("items", [])
-        tokens = batch.get("tokens", 0)
-        prompt_tokens = batch_result.get("prompt_tokens", 0)
-        completion_tokens = batch_result.get("completion_tokens", 0)
-        total_tokens = prompt_tokens + completion_tokens
-        lines.append(
-            f"## Batch {idx} ({len(files)} files, estimate={tokens} tokens, actual={total_tokens} tokens)"
-        )
-        lines.append(f"**Files**: {', '.join(files)}")
-        lines.append("```json")
-        lines.append(json.dumps(batch_result.get("result", {}), indent=2))
-        lines.append("```")
-        lines.append("")
-    return "\n".join(lines)
-
-
-def _query_parallel(
-    models: list[str],
-    system_prompt: str,
-    user_prompt: str,
-    stargate_url: str,
-    timeout: float,
-) -> list[dict[str, Any]]:
-    """Query models in parallel, return results in original order."""
-    results: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=len(models)) as pool:
-        futures = {
-            pool.submit(
-                _query_model,
-                model_id=mid,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                stargate_url=stargate_url,
-                timeout=timeout,
-            ): mid
-            for mid in models
-        }
-        for future in as_completed(futures):
-            mid = futures[future]
-            try:
-                results.append(future.result())
-            except Exception as exc:
-                results.append({"model_id": mid, "error": str(exc)})
-    order = {m: i for i, m in enumerate(models)}
-    results.sort(key=lambda r: order.get(r.get("model_id", ""), 999))
-    return results
-
-
-def main() -> None:
-    raw_roles = _load_roles()
-    role_prompts, role_select = _split_role_config(raw_roles)
-
+from consult_lib.context import collect_context_file_paths, read_context_files
+from consult_lib.model_selection import (
+    fetch_available_model_ids,
+    load_roles,
+    select_models_for_role,
+    split_role_config,
+    warn_local_model_for_role,
+)
+from consult_lib.output import format_output, format_pipeline_review_output
+from consult_lib.pipeline import (
+    build_reviewer_pipeline_model_overrides,
+    run_code_review_pipeline,
+)
+from consult_lib.query import build_prompt, query_chain, query_parallel
+from consult_lib.rag import (
+    fetch_rag_direct,
+    fetch_rag_pipeline,
+    fetch_scope_choices,
+    rag_socket_present,
+)
+from transport_utils.rag_client import DEFAULT_RAG_URL
+
+
+def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Multi-model consultation with role templates and RAG",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             Roles:
               architect    Evaluate architecture, trade-offs, improvements
-              reviewer     Code review: correctness, races, leaks, patterns
+              reviewer     Code review via pipeline (structured findings, validated)
               planner      Implementation plan: files, steps, risks
               researcher   Research-grounded Q&A (default)
               modularizer  Split oversized files respecting SLOC and SRP
@@ -741,7 +70,7 @@ def main() -> None:
             Examples:
               consult "How should we handle reconnection?"
               consult -r architect "Event bus: pub/sub vs direct?" -f docs/event-contracts.md
-              consult -r reviewer -f capacity/ledger.py "Check for race conditions"
+              consult -r reviewer -f capacity/ledger.py  # structured pipeline (default for reviewer)
               consult -r planner "Add per-model timeouts" -o plan.md
               consult --chain -r planner --models local cloud "complex question"
               consult --models qwen3-32b-awq-32768 google/gemini-2.5-pro "question"
@@ -773,17 +102,10 @@ def main() -> None:
         help="Models to query (default: qwen3-32b + ernie + gemini-2.5-flash)",
     )
     parser.add_argument(
-        "-o",
-        "--output",
-        default=None,
-        metavar="FILE",
-        help="Save results to file",
+        "-o", "--output", default=None, metavar="FILE", help="Save results to file"
     )
     parser.add_argument(
-        "-u",
-        "--stargate-url",
-        default=DEFAULT_STARGATE_URL,
-        help="Stargate URL",
+        "-u", "--stargate-url", default=DEFAULT_STARGATE_URL, help="Stargate URL"
     )
     parser.add_argument(
         "--rag-url",
@@ -794,7 +116,8 @@ def main() -> None:
     parser.add_argument(
         "--scope",
         default="project",
-        help="RAG retrieval scope (default: project). Available scopes fetched from RAG service.",
+        help="RAG retrieval scope (default: project). "
+        "Available scopes fetched from RAG service.",
     )
     parser.add_argument(
         "--rag-pipeline",
@@ -805,10 +128,7 @@ def main() -> None:
         help="Use intelligent RAG pipeline (default: rag-context)",
     )
     parser.add_argument(
-        "--timeout",
-        type=float,
-        default=300.0,
-        help="Per-model timeout in seconds",
+        "--timeout", type=float, default=300.0, help="Per-model timeout in seconds"
     )
     parser.add_argument("--list-roles", action="store_true", help="List roles and exit")
     parser.add_argument(
@@ -831,16 +151,78 @@ def main() -> None:
             "rather than silently falling back to local GPU models."
         ),
     )
-    parser.add_argument(
-        "--pipeline",
-        action="store_true",
-        help=(
-            "Use estimator-driven parallel code-review pipeline batches "
-            "(reviewer role only)"
-        ),
-    )
+    parser.add_argument("--pipeline", action="store_true", help=argparse.SUPPRESS)
+    return parser
 
+
+def _resolve_target_models(
+    args: argparse.Namespace,
+    role_select: dict[str, dict[str, Any]],
+    parser: argparse.ArgumentParser,
+) -> list[str]:
+    """Resolve target models from explicit args, profile selection, or defaults."""
+    if args.models:
+        warn_local_model_for_role(args.role, args.models, role_select)
+        target_models = args.models
+    else:
+        selected = select_models_for_role(args.role, role_select, args.stargate_url)
+        if selected:
+            print(f"Models for '{args.role}': {', '.join(selected)}", file=sys.stderr)
+            target_models = selected
+        else:
+            defaults = (
+                REVIEWER_DEFAULT_MODELS if args.role == "reviewer" else DEFAULT_MODELS
+            )
+            print(
+                f"Selection path: static-defaults ({', '.join(defaults)})",
+                file=sys.stderr,
+            )
+            target_models = defaults
+
+    if not args.cloud_only:
+        return target_models
+
+    available_model_ids = fetch_available_model_ids(args.stargate_url)
+    if available_model_ids is None:
+        parser.error(
+            "--cloud-only: failed to fetch available models from Stargate.\n"
+            f"  Check: curl -s {args.stargate_url}/v1/models"
+        )
+    available_cloud_models = {m for m in available_model_ids if "/" in m}
+    if not available_cloud_models:
+        parser.error(
+            "--cloud-only: no cloud models currently exposed by Stargate.\n"
+            "  Cloud proxy may be down."
+        )
+    cloud_models = [m for m in target_models if "/" in m]
+    local_excluded = [m for m in target_models if "/" not in m]
+    if not cloud_models:
+        parser.error(
+            "--cloud-only: selected models do not contain cloud IDs ('/').\n"
+            "  Pass --models with cloud IDs or enable cloud auto-select."
+        )
+    missing = [m for m in cloud_models if m not in available_cloud_models]
+    if missing:
+        parser.error(
+            f"--cloud-only: selected cloud models are not currently available:\n"
+            f"  {', '.join(missing)}"
+        )
+    if local_excluded:
+        print(
+            f"--cloud-only: excluded local models: {', '.join(local_excluded)}",
+            file=sys.stderr,
+        )
+    return cloud_models
+
+
+def main() -> None:
+    raw_roles = load_roles()
+    role_prompts, role_select = split_role_config(raw_roles)
+    parser = _build_parser(role_prompts)
     args = parser.parse_args()
+
+    if args.role == "reviewer":
+        args.pipeline = True
 
     if args.list_roles:
         for name, prompt in role_prompts.items():
@@ -855,95 +237,54 @@ def main() -> None:
         if not args.question:
             parser.error("No question provided")
 
-    if args.pipeline and args.role != "reviewer":
-        parser.error("--pipeline is only supported with --role reviewer")
-
     if not args.no_rag:
-        if not _rag_socket_present(args.rag_url):
+        if not rag_socket_present(args.rag_url):
             print(
                 "RAG service not available (socket absent); running without context retrieval",
                 file=sys.stderr,
             )
             args.no_rag = True
         else:
-            available_scopes = _fetch_scope_choices(rag_url=args.rag_url)
+            available_scopes = fetch_scope_choices(rag_url=args.rag_url)
             if args.scope not in available_scopes:
                 parser.error(
                     f"Unknown --scope '{args.scope}'. Available scopes: "
                     f"{', '.join(sorted(available_scopes))}"
                 )
 
-    if args.models:
-        target_models = args.models
-        _warn_local_model_for_role(args.role, target_models, role_select)
-    else:
-        selected = _select_models_for_role(args.role, role_select, args.stargate_url)
-        if selected:
-            print(
-                f"Auto-selected for '{args.role}': {', '.join(selected)}",
-                file=sys.stderr,
-            )
-            target_models = selected
-        else:
-            target_models = (
-                REVIEWER_DEFAULT_MODELS if args.role == "reviewer" else DEFAULT_MODELS
-            )
-    if args.cloud_only:
-        available_model_ids = _fetch_available_model_ids(args.stargate_url)
-        if available_model_ids is None:
-            parser.error(
-                "--cloud-only: failed to fetch available models from Stargate.\n"
-                f"  Check: curl -s {args.stargate_url}/v1/models"
-            )
-        available_cloud_models = {m for m in available_model_ids if "/" in m}
-        if not available_cloud_models:
-            parser.error(
-                "--cloud-only: no cloud models currently exposed by Stargate.\n"
-                "  Cloud proxy may be down."
-            )
-
-        cloud_models = [m for m in target_models if "/" in m]
-        local_excluded = [m for m in target_models if "/" not in m]
-        if not cloud_models:
-            parser.error(
-                "--cloud-only: selected models do not contain cloud IDs ('/').\n"
-                "  Pass --models with cloud IDs or enable cloud auto-select."
-            )
-        missing_cloud_models = [
-            m for m in cloud_models if m not in available_cloud_models
-        ]
-        if missing_cloud_models:
-            parser.error(
-                "--cloud-only: selected cloud models are not currently available:\n"
-                f"  {', '.join(missing_cloud_models)}"
-            )
-        if local_excluded:
-            print(
-                f"--cloud-only: excluded local models: {', '.join(local_excluded)}",
-                file=sys.stderr,
-            )
-        target_models = cloud_models
+    target_models = _resolve_target_models(args, role_select, parser)
 
     if args.chain and len(target_models) < 2:
         parser.error("--chain requires at least 2 models")
 
     if args.pipeline:
-        context_file_paths = _collect_context_file_paths(args.context_files)
+        context_file_paths = collect_context_file_paths(args.context_files)
         if not context_file_paths:
             parser.error("--pipeline requires at least one --context-files path")
+        pipeline_options: dict[str, Any] | None = None
+        if args.role == "reviewer":
+            overrides = build_reviewer_pipeline_model_overrides(target_models)
+            if overrides:
+                pipeline_options = {"model_ref_overrides": overrides}
+                print(
+                    "Pipeline reviewer model overrides: "
+                    + ", ".join(f"{k}={v}" for k, v in overrides.items()),
+                    file=sys.stderr,
+                )
         print(
             f"Pipeline mode: estimating batches for {len(context_file_paths)} files",
             file=sys.stderr,
         )
         try:
-            batch_results = _run_code_review_pipeline(
+            batch_results = run_code_review_pipeline(
                 stargate_url=args.stargate_url,
                 files=context_file_paths,
                 timeout=args.timeout,
+                pipeline_options=pipeline_options,
             )
         except Exception as exc:
             parser.error(f"--pipeline failed: {exc}")
-        output = _format_pipeline_review_output(
+        output = format_pipeline_review_output(
             question=args.question,
             file_paths=context_file_paths,
             batches=batch_results,
@@ -957,10 +298,9 @@ def main() -> None:
         return
 
     system_prompt = role_prompts[args.role]
-
     file_context: list[str] | None = None
     if args.context_files:
-        file_context = _read_context_files(args.context_files)
+        file_context = read_context_files(args.context_files)
         if file_context:
             print(f"Read {len(file_context)} context blocks", file=sys.stderr)
 
@@ -969,7 +309,7 @@ def main() -> None:
     if not args.no_rag:
         print("Retrieving RAG context...", file=sys.stderr)
         if args.rag_pipeline:
-            rag_findings, rag_error = _fetch_rag_pipeline(
+            rag_findings, rag_error = fetch_rag_pipeline(
                 args.question,
                 pipeline_id=args.rag_pipeline,
                 stargate_url=args.stargate_url,
@@ -977,7 +317,7 @@ def main() -> None:
                 scope_override=args.scope,
             )
         else:
-            rag_findings, rag_error = _fetch_rag_direct(
+            rag_findings, rag_error = fetch_rag_direct(
                 args.question,
                 rag_url=args.rag_url,
                 scope=args.scope,
@@ -987,8 +327,7 @@ def main() -> None:
         elif rag_findings:
             print(f"RAG: {len(rag_findings)} findings", file=sys.stderr)
 
-    user_prompt = _build_prompt(args.question, rag_findings, file_context)
-
+    user_prompt = build_prompt(args.question, rag_findings, file_context)
     mode = "chained" if args.chain else "parallel"
     print(
         f"Consulting {len(target_models)} model(s) as {args.role} ({mode})...",
@@ -996,7 +335,7 @@ def main() -> None:
     )
 
     if args.chain:
-        results = _query_chain(
+        results = query_chain(
             models=target_models,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -1005,7 +344,7 @@ def main() -> None:
             chain_directive=args.chain_directive,
         )
     else:
-        results = _query_parallel(
+        results = query_parallel(
             models=target_models,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
@@ -1013,7 +352,7 @@ def main() -> None:
             timeout=args.timeout,
         )
 
-    output = _format_output(
+    output = format_output(
         args.question,
         args.role,
         results,

@@ -12,6 +12,7 @@ from systems.pipeline.execution_summary import get_summary_writer
 from .component_factory import (
     configure_token_and_parameter_managers,
     initialize_hot_reload,
+    initialize_intelligence_profiles,
     initialize_pipeline_system,
     initialize_request_components,
 )
@@ -110,7 +111,11 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
         summary_writer = get_summary_writer()
         summary_writer.cleanup_all_pipelines()
     except Exception as e:
-        logger.warning(f"Failed to cleanup pipeline summaries on startup: {e}")
+        logger.warning(
+            "Failed to cleanup pipeline summaries on startup: %s",
+            e,
+            exc_info=True,
+        )
 
     # Cleanup request snapshots on startup
     try:
@@ -120,7 +125,11 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
             _clear_snapshot_files_preserve_directories(snapshot_dir)
             logger.info(f"Cleared request snapshots: {snapshot_dir}")
     except Exception as e:
-        logger.warning(f"Failed to cleanup request snapshots on startup: {e}")
+        logger.warning(
+            "Failed to cleanup request snapshots on startup: %s",
+            e,
+            exc_info=True,
+        )
 
     # Cleanup pipeline failures on startup
     try:
@@ -133,7 +142,11 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
             failures_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Cleared pipeline failures: {failures_dir}")
     except Exception as e:
-        logger.warning(f"Failed to cleanup pipeline failures on startup: {e}")
+        logger.warning(
+            "Failed to cleanup pipeline failures on startup: %s",
+            e,
+            exc_info=True,
+        )
 
     # Skip gateway-specific initialization in router-only mode
     if gateway_name is not None:
@@ -243,6 +256,9 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
 
         initialize_master_request_components(proxy)
         logger.info("✅ Master request components initialized")
+
+    # Initialize intelligence profile store (depends on federation/cloud proxy)
+    await initialize_intelligence_profiles(proxy)
 
     # Initialize pipeline system (depends on request_executor)
     await initialize_pipeline_system(proxy)

@@ -161,7 +161,13 @@ class AssessLoopHandler(BaseHandler):
         artifact: str = str(resolved[cfg.artifact_key])
         artifact_raw: str = artifact  # unstripped; used by programmatic assess handlers
 
-        base_ctx: dict[str, Any] = {"text": context.source_text, **resolved}
+        # Pipeline options (e.g. max_sloc_per_module) injected so action prompts
+        # can reference them as {key} — consistent with generate handler behaviour.
+        base_ctx: dict[str, Any] = {
+            "text": context.source_text,
+            **context.options,
+            **resolved,
+        }
 
         # Render system_prompt_ref ONCE (outside loop) — stable KV-cache prefix
         # reused as the system prompt for every assess and action call.
@@ -424,28 +430,57 @@ class AssessLoopHandler(BaseHandler):
                     "assess_target": decision.get("target", ""),
                     "assess_reason": reason,
                 }
-                action_rendered = self._render_prompt(
-                    cfg.get_action_prompt_ref(action), action_ctx, context
-                )
-                action_model = await self._resolve_model_alias_async(
-                    cfg.get_action_model_ref(action, step.model_ref),
-                    context,
-                    step_name=step.name,
-                )
+                action_steps = cfg.get_action_steps(action)
                 t1 = time.monotonic()
-                action_r = await self._call_model(
-                    action_model,
-                    action_rendered.user_prompt,
-                    step,
-                    context,
-                    cached_sys or action_rendered.system_prompt,
-                    temperature=cfg.temperature,
-                    call_label=f"action_{action}_{iteration}",
-                )
+                action_total_pt = 0
+                action_total_ct = 0
+                action_model = step.model_ref
+                for sub_idx, action_step in enumerate(action_steps):
+                    sub_rendered = self._render_prompt(
+                        action_step.prompt_ref, action_ctx, context
+                    )
+                    action_model = await self._resolve_model_alias_async(
+                        action_step.model_ref or step.model_ref,
+                        context,
+                        step_name=step.name,
+                    )
+                    sub_r = await self._call_model(
+                        action_model,
+                        sub_rendered.user_prompt,
+                        step,
+                        context,
+                        cached_sys or sub_rendered.system_prompt,
+                        temperature=cfg.temperature,
+                        json_schema=action_step.schema,
+                        call_label=f"action_{action}_{iteration}_{sub_idx}",
+                    )
+                    state.add_tokens(sub_r.prompt_tokens, sub_r.completion_tokens)
+                    action_total_pt += sub_r.prompt_tokens
+                    action_total_ct += sub_r.completion_tokens
+                    artifact_raw = sub_r.content.strip()
+                    artifact = _strip_xml_tags(artifact_raw, cfg.strip_xml_tags)
+                    action_ctx = {**action_ctx, cfg.artifact_key: artifact}
                 action_ms = (time.monotonic() - t1) * 1000
-                state.add_tokens(action_r.prompt_tokens, action_r.completion_tokens)
-                artifact_raw = action_r.content.strip()
-                artifact = _strip_xml_tags(artifact_raw, cfg.strip_xml_tags)
+
+                if action in cfg.exit_actions:
+                    state.terminal_action_reached = True
+                    state.exit_reason = "exit_action"
+                    emit_iteration_completed(
+                        recorder,
+                        step.name,
+                        iteration,
+                        decision,
+                        action,
+                        reason,
+                        True,
+                        action_model,
+                        action_ms,
+                        assess_ms,
+                        iter_pt + action_total_pt,
+                        iter_ct + action_total_ct,
+                        state=state,
+                    )
+                    break
 
                 emit_iteration_completed(
                     recorder,
@@ -458,8 +493,8 @@ class AssessLoopHandler(BaseHandler):
                     action_model,
                     action_ms,
                     assess_ms,
-                    iter_pt + action_r.prompt_tokens,
-                    iter_ct + action_r.completion_tokens,
+                    iter_pt + action_total_pt,
+                    iter_ct + action_total_ct,
                     state=state,
                 )
 

@@ -10,6 +10,7 @@ from systems.graphics.api.generations import router as images_router
 
 from .chat_completion import router as chat_router
 from .embeddings import router as embeddings_router
+from .model_profiles import router as model_profiles_router
 from .models import router as models_router
 from .pipeline_estimate import router as pipeline_estimate_router
 
@@ -22,4 +23,5 @@ router.include_router(images_router)
 router.include_router(chat_router)
 router.include_router(embeddings_router)
 router.include_router(models_router)
+router.include_router(model_profiles_router)
 router.include_router(pipeline_estimate_router)
