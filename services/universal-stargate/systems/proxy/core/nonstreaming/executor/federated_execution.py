@@ -22,6 +22,12 @@ from fastapi.responses import Response
 from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope
 
+from src.scheduling.events import (
+    federated_request_prompt_transformation_applied,
+    federated_request_prompt_transformation_failed,
+    federated_request_prompt_transformation_skipped,
+)
+
 from ...endpoint_category import derive_endpoint_category
 from .token_capping import _cap_max_tokens_to_slot_context
 
@@ -112,6 +118,7 @@ async def execute_federated_request(
                 ),
             )
 
+    # context is per-request and not reused; modified_request is a one-time overlay
     request_body = context.original_request.copy()
     if context.modified_request:
         request_body.update(context.modified_request)
@@ -136,20 +143,57 @@ async def execute_federated_request(
         endpoint_category = derive_endpoint_category(request=context.http_request)
 
     model_id = context.selected_model
-    input_schema = "messages"
-    if fed_gateway.model_resources:
-        model_metadata = fed_gateway.model_resources.get(model_id)
-        if model_metadata:
-            input_schema = model_metadata.get("input_schema", "messages")
+    input_schema = (
+        fed_gateway.model_resources.get(model_id, {}).get("input_schema", "messages")
+        if fed_gateway.model_resources
+        else "messages"
+    )
 
     hints: dict[str, Any] = {"input_schema": input_schema}
     if context.request_timeout_hint:
         hints["timeout"] = context.request_timeout_hint
 
-    if transformation_engine and input_schema == "prompt":
+    if not transformation_engine or input_schema != "prompt":
+        reason = "no_engine" if not transformation_engine else "schema_not_prompt"
+        if event_bus:
+            event_bus.publish_async_nowait(
+                federated_request_prompt_transformation_skipped(
+                    request_id=request_id,
+                    model_id=model_id.routing_key,
+                    gateway_id=fed_gateway.gateway_id,
+                    reason=reason,
+                )
+            )
+    else:
+        original_body = request_body
         request_body = _apply_prompt_transformation(
             transformation_engine, request_body, model_id
         )
+        if request_body is not original_body:
+            prompt = request_body.get("prompt", "")
+            prompt_chars = len(prompt) if isinstance(prompt, str) else 0
+            if event_bus:
+                event_bus.publish_async_nowait(
+                    federated_request_prompt_transformation_applied(
+                        request_id=request_id,
+                        model_id=model_id.routing_key,
+                        gateway_id=fed_gateway.gateway_id,
+                        prompt_chars=prompt_chars,
+                    )
+                )
+        else:
+            if event_bus:
+                event_bus.publish_async_nowait(
+                    federated_request_prompt_transformation_failed(
+                        request_id=request_id,
+                        model_id=model_id.routing_key,
+                        gateway_id=fed_gateway.gateway_id,
+                        error=(
+                            "transformation returned original body "
+                            "(see logger.exception above)"
+                        ),
+                    )
+                )
 
     logger.info(f"📤 REQUEST BODY (to Federated Gateway): {json.dumps(request_body)}")
     logger.info(

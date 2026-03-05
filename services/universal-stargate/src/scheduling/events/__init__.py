@@ -30,6 +30,7 @@ Domain modules:
     federation_signaling — connection, telemetry, routing delegation
     federation_load     — catalog changes, VRAM drift, load orchestration
     cloud               — cloud proxy availability and catalog
+    proxy               — federated request proxy layer: transformation decisions
     pipeline            — registry, embedding steps, domain verification
     system              — startup and shutdown
 """
@@ -126,6 +127,14 @@ from .pipeline import (
     pipeline_registry_unavailable,
     pipeline_step_domain_verification_completed,
     pipeline_step_domain_verification_started,
+)
+from .proxy import (
+    FEDERATED_REQUEST_PROMPT_TRANSFORMATION_APPLIED,
+    FEDERATED_REQUEST_PROMPT_TRANSFORMATION_FAILED,
+    FEDERATED_REQUEST_PROMPT_TRANSFORMATION_SKIPPED,
+    federated_request_prompt_transformation_applied,
+    federated_request_prompt_transformation_failed,
+    federated_request_prompt_transformation_skipped,
 )
 from .queue import (
     QUEUE_MASTER_ENTERED,
@@ -329,6 +338,13 @@ __all__ = [
     "CloudProxyUnavailable",
     "CloudProxyCatalogUpdated",
     "CloudProxyCatalogFetchFailed",
+    # ── proxy ────────────────────────────────────────────────────────────────
+    "FEDERATED_REQUEST_PROMPT_TRANSFORMATION_APPLIED",
+    "FEDERATED_REQUEST_PROMPT_TRANSFORMATION_FAILED",
+    "FEDERATED_REQUEST_PROMPT_TRANSFORMATION_SKIPPED",
+    "federated_request_prompt_transformation_applied",
+    "federated_request_prompt_transformation_failed",
+    "federated_request_prompt_transformation_skipped",
     # ── pipeline ─────────────────────────────────────────────────────────────
     "PIPELINE_REGISTRY_UNAVAILABLE",
     "PIPELINE_STEP_EMBEDDING_STARTED",
