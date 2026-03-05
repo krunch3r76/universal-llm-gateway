@@ -25,6 +25,15 @@ steps:
       existing_doc: extract.json.existing_doc
     generation_parameters:
       temperature: 0.2
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            doc_markdown:
+              type: string
+              description: "Draft architecture document markdown"
+          required: [doc_markdown]
     timeout_seconds: 240
     retry_policy:
       max_attempts: 3
@@ -40,7 +49,7 @@ steps:
     handler_inputs:
       subsystem_path: sourceNs.text
       inventory_json: extract.raw
-      draft_doc: draft.raw
+      draft_doc: draft.json.doc_markdown
     generation_parameters:
       temperature: 0.1
       response_format:

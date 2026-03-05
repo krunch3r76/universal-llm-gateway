@@ -32,6 +32,12 @@ _STRING_NODE_TYPES = {"string", "concatenated_string"}
 _DEF_NODE_TYPES = {"function_definition", "async_function_definition"}
 
 
+def _repo_root() -> Path:
+    """Return repository root regardless of Stargate process cwd."""
+    # pipelines/doc_generate/handlers/extract_docstrings.py -> repo root
+    return Path(__file__).resolve().parents[3]
+
+
 def _decode(node: _ts.Node, source: bytes) -> str:
     return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
@@ -39,26 +45,25 @@ def _decode(node: _ts.Node, source: bytes) -> str:
 def _string_node_to_text(node: _ts.Node, source: bytes) -> str:
     literal = _decode(node, source)
     try:
-        value = ast.literal_eval(literal)
+        value: object = ast.literal_eval(literal)
     except (SyntaxError, ValueError):
         return literal.strip()
-    if isinstance(value, str):
-        return value
-    return str(value)
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    return str(value).strip()
 
 
 def _extract_docstring_from_block(block_node: _ts.Node | None, source: bytes) -> str:
     if block_node is None:
         return ""
-    for child in block_node.children:
-        if child.type != "expression_statement":
-            continue
-        if not child.children:
-            return ""
-        maybe_string = child.children[0]
-        if maybe_string.type in _STRING_NODE_TYPES:
-            return _string_node_to_text(maybe_string, source).strip()
+    if not block_node.children:
         return ""
+    first_child = block_node.children[0]
+    if first_child.type != "expression_statement" or not first_child.children:
+        return ""
+    maybe_string = first_child.children[0]
+    if maybe_string.type in _STRING_NODE_TYPES:
+        return _string_node_to_text(maybe_string, source).strip()
     return ""
 
 
@@ -66,8 +71,7 @@ def _signature(node: _ts.Node, source: bytes) -> str:
     body = node.child_by_field_name("body")
     end_byte = body.start_byte if body is not None else node.end_byte
     text = source[node.start_byte : end_byte].decode("utf-8", errors="replace").rstrip()
-    if text.endswith(":"):
-        text = text[:-1]
+    text = text.removesuffix(":")
     return " ".join(text.split())
 
 
@@ -134,8 +138,7 @@ def _extract_file_inventory(py_file: Path, workspace_root: Path) -> dict[str, An
                     "methods": _extract_class_methods(child, source),
                 }
             )
-            continue
-        if child.type in _DEF_NODE_TYPES:
+        elif child.type in _DEF_NODE_TYPES:
             fn_name_node = child.child_by_field_name("name")
             if fn_name_node is None:
                 continue
@@ -159,6 +162,15 @@ def _extract_file_inventory(py_file: Path, workspace_root: Path) -> dict[str, An
     }
 
 
+def _error_output(step_id: str, message: str) -> StepOutput:
+    return StepOutput(
+        raw=json.dumps({"error": message}),
+        json={"error": message},
+        step_id=step_id,
+        error=message,
+    )
+
+
 class ExtractDocstringsHandler(BaseHandler):
     """Extract docstring inventory for a subsystem directory."""
 
@@ -177,31 +189,34 @@ class ExtractDocstringsHandler(BaseHandler):
         subsystem_path_value = self._resolve_input(
             resolver, step, "subsystem_path", inputs
         )
-        subsystem_path_raw = str(subsystem_path_value).strip()
-        if not subsystem_path_raw:
-            return StepOutput(
-                raw=json.dumps({"error": "subsystem_path is empty"}),
-                json={"error": "subsystem_path is empty"},
-                step_id=step.id,
-                error="subsystem_path is empty",
+        if not isinstance(subsystem_path_value, str):
+            msg = (
+                "subsystem_path must be a string path, got "
+                f"{type(subsystem_path_value).__name__}"
             )
+            logger.error("Step '%s': %s", step.id, msg)
+            return _error_output(step.id, msg)
+        subsystem_path_raw = subsystem_path_value.strip()
+        if not subsystem_path_raw:
+            return _error_output(step.id, "subsystem_path is empty")
 
-        workspace_root = Path.cwd()
+        workspace_root = _repo_root()
         target_dir = Path(subsystem_path_raw)
         if not target_dir.is_absolute():
-            target_dir = (workspace_root / target_dir).resolve()
-        else:
-            target_dir = target_dir.resolve()
+            target_dir = workspace_root / target_dir
+        target_dir = target_dir.resolve()
+
+        try:
+            target_dir.relative_to(workspace_root)
+        except ValueError:
+            msg = f"subsystem_path outside repository root: {subsystem_path_raw}"
+            logger.error("Step '%s': %s", step.id, msg)
+            return _error_output(step.id, msg)
 
         if not target_dir.exists() or not target_dir.is_dir():
             msg = f"subsystem_path is not a directory: {subsystem_path_raw}"
             logger.error("Step '%s': %s", step.id, msg)
-            return StepOutput(
-                raw=json.dumps({"error": msg}),
-                json={"error": msg},
-                step_id=step.id,
-                error=msg,
-            )
+            return _error_output(step.id, msg)
 
         py_files = sorted(target_dir.rglob("*.py"))
         modules: list[dict[str, Any]] = []
@@ -217,22 +232,18 @@ class ExtractDocstringsHandler(BaseHandler):
                     "docstring": file_inventory["module_docstring"],
                 }
             )
-            for cls in file_inventory["classes"]:
-                classes.append(
-                    {
-                        "path": file_inventory["path"],
-                        **cls,
-                    }
-                )
-            for fn in file_inventory["functions"]:
-                functions.append(
-                    {
-                        "path": file_inventory["path"],
-                        **fn,
-                    }
-                )
-            for import_stmt in file_inventory["imports"]:
-                imports.append({"path": file_inventory["path"], "import": import_stmt})
+            classes.extend(
+                {"path": file_inventory["path"], **cls}
+                for cls in file_inventory["classes"]
+            )
+            functions.extend(
+                {"path": file_inventory["path"], **fn}
+                for fn in file_inventory["functions"]
+            )
+            imports.extend(
+                {"path": file_inventory["path"], "import": import_stmt}
+                for import_stmt in file_inventory["imports"]
+            )
 
         subsystem_name = target_dir.name
         arch_doc = (workspace_root / "docs" / "architecture" / f"{subsystem_name}.md").resolve()

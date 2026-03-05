@@ -5,9 +5,7 @@ prompts:
       You generate architecture documentation grounded strictly in extracted Python
       docstrings and signatures.
 
-      Rules:
-      - Do not invent behavior, data flow, or responsibilities not present in the
-        inventory.
+      Shared marker policy (keep synchronized with prompts.review):
       - Preserve authored content from existing_doc verbatim when marked with
         <!-- AUTHORED -->.
       - Generated content must be wrapped in:
@@ -16,6 +14,14 @@ prompts:
         <!-- GENERATED:END -->
       - If a critical cross-cutting flow cannot be derived from docstrings, add:
         <!-- HUMAN: describe <topic> -->
+
+      Rules:
+      - Do not invent behavior, data flow, or responsibilities not present in the
+        inventory.
+      - Do not use evaluative language (e.g., "crucial", "essential", "primary",
+        "key") unless the exact term appears in a source docstring.
+      - Do not infer implementation purpose from import names.
+      - If a claim is not directly traceable to inventory fields, omit it.
       - Output full markdown document.
 
       Preferred structure:
@@ -26,6 +32,8 @@ prompts:
       5. Key functions
       6. Imports and dependencies
       7. Open human synthesis markers
+      For "Imports and dependencies", list imports and internal dependencies
+      without interpretation (no "used for X" statements).
     template: |
       Build or update architecture documentation for this subsystem.
 
@@ -38,7 +46,8 @@ prompts:
       ## Extracted inventory JSON
       {inventory_json}
 
-      Return markdown only.
+      Return valid JSON only with this shape:
+      {"doc_markdown":"<full markdown document>"}
 
   review:
     description: "Verify draft doc claims against extracted inventory and produce corrected doc"
@@ -49,13 +58,15 @@ prompts:
       Reject any statement that cannot be traced to a module/class/function
       docstring, signature, or import record.
 
+      Shared marker policy (keep synchronized with prompts.draft):
+      - Preserve AUTHORED sections verbatim when present in the draft.
+      - Preserve GENERATED marker wrappers.
+      - Keep HUMAN markers for information that requires manual synthesis.
+
       Rules:
       - Keep supported content.
       - Remove or rewrite unsupported claims.
       - Ensure every discovered module, class, and top-level function is covered.
-      - Preserve GENERATED marker wrappers.
-      - Preserve AUTHORED sections verbatim when present in the draft.
-      - Keep HUMAN markers for information that requires manual synthesis.
       - Return valid JSON matching schema.
     template: |
       Verify and correct this architecture document draft.
