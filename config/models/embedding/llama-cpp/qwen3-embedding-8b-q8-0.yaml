@@ -3,11 +3,9 @@ schema: llama-cpp
 metadata:
   name: qwen3-embedding-8b-q8_0
   format: gguf
-  arch: qwen3
   quant: Q8_0
-  parameters_m: 8192
   capabilities:
-    input_schema: prompt
+    input_schema: messages
     modalities:
       input:
         - text
@@ -17,8 +15,7 @@ metadata:
       chat_template: false
     reasoning:
       supports_thinking: false
-    limits:
-      max_context_length: 8192
+    limits: {}
     provenance: {}
 loader:
   embedding: true

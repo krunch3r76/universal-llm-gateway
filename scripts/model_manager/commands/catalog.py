@@ -175,8 +175,8 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
             if args.repo and not network:
                 download = entry.setdefault("download", {})
                 hf = download.setdefault("huggingface", {})
-                hf.setdefault("repo", args.repo)
-                hf.setdefault("file", hf_file or discovered.filename)
+                hf["repo"] = args.repo
+                hf["file"] = hf_file or discovered.filename
                 hf.setdefault("verified", False)
 
             # Inject thinking capability if flagged
