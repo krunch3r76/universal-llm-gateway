@@ -16,7 +16,6 @@ from transport_utils.rag_client import DEFAULT_RAG_URL
 from .constants import DEFAULT_MODELS, DEFAULT_STARGATE_URL
 from .context import read_context_files
 from .model_selection import (
-    fetch_available_model_ids,
     load_roles,
     select_models_for_role,
     split_role_config,
@@ -61,47 +60,24 @@ def _resolve_models(
     *,
     models: list[str] | None,
     role: str,
-    role_select: dict[str, dict[str, Any]],
+    role_requirements: dict[str, dict[str, Any]],
     stargate_url: str,
-    cloud_only: bool,
 ) -> list[str]:
-    """Resolve target models from explicit list, role selection, or defaults, with cloud-only filtering."""
+    """Resolve target models from explicit list, role selection, or defaults."""
     if models:
-        warn_local_model_for_role(role, models, role_select)
-        target = models.copy()
-    else:
-        selected = select_models_for_role(role, role_select, stargate_url)
-        if selected:
-            print(f"Models for '{role}': {', '.join(selected)}", file=sys.stderr)
-            target = selected
-        else:
-            print(
-                f"Selection path: static-defaults ({', '.join(DEFAULT_MODELS)})",
-                file=sys.stderr,
-            )
-            target = DEFAULT_MODELS.copy()
+        warn_local_model_for_role(role, models, role_requirements)
+        return models.copy()
 
-    if not cloud_only:
-        return target
+    selected = select_models_for_role(role, role_requirements, stargate_url)
+    if selected:
+        print(f"Models for '{role}': {', '.join(selected)}", file=sys.stderr)
+        return selected
 
-    available = fetch_available_model_ids(stargate_url)
-    if available is None:
-        raise RuntimeError(
-            "--cloud-only: failed to fetch available models from Stargate"
-        )
-    cloud = [m for m in target if "/" in m and m in available]
-    if not cloud:
-        raise RuntimeError(
-            "--cloud-only: no matching cloud models available. "
-            f"Selected: {target}, available cloud: {sorted(m for m in available if '/' in m)}"
-        )
-    excluded = [m for m in target if "/" not in m]
-    if excluded:
-        print(
-            f"--cloud-only: excluded local models: {', '.join(excluded)}",
-            file=sys.stderr,
-        )
-    return cloud
+    print(
+        f"Selection path: static-defaults ({', '.join(DEFAULT_MODELS)})",
+        file=sys.stderr,
+    )
+    return DEFAULT_MODELS.copy()
 
 
 def _fetch_rag(
@@ -188,19 +164,27 @@ def execute_consult(
         List of ConsultResult, one per model queried.
     """
     raw_roles = load_roles()
-    role_prompts, role_select = split_role_config(raw_roles)
+    role_prompts, role_requirements = split_role_config(raw_roles)
 
     if role not in role_prompts:
         raise ValueError(f"Unknown role '{role}'. Available: {', '.join(role_prompts)}")
 
     system_prompt = role_prompts[role]
 
+    # --cloud-only overrides source in the requirements payload so the unified
+    # endpoint enforces it server-side rather than requiring client-side filtering.
+    effective_requirements = role_requirements
+    if cloud_only and role in role_requirements:
+        effective_requirements = {
+            **role_requirements,
+            role: {**role_requirements[role], "source": "cloud"},
+        }
+
     target_models = _resolve_models(
         models=models,
         role=role,
-        role_select=role_select,
+        role_requirements=effective_requirements,
         stargate_url=stargate_url,
-        cloud_only=cloud_only,
     )
 
     if chain and len(target_models) < 2:
@@ -215,7 +199,7 @@ def execute_consult(
             print(f"Read {len(file_context)} context blocks", file=sys.stderr)
 
     rag_findings: list[str] | None = None
-    scope_hint = role_select.get(role, {}).get("scope_hint")
+    scope_hint = role_requirements.get(role, {}).get("scope_hint")
     effective_scope = scope or scope_hint or "project"
     if scope_hint and not scope:
         print(
@@ -254,6 +238,7 @@ def execute_consult(
             stargate_url=stargate_url,
             timeout=timeout,
             chain_directive=chain_directive,
+            role=role,
         )
     else:
         raw_results = query_parallel(

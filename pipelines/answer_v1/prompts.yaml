@@ -38,3 +38,124 @@ prompts:
       ## Question
 
       {text}
+
+  relevance_check:
+    description: "CRAG-style relevance classifier for retrieved context"
+    system_prompt: |
+      You are a retrieval relevance assessor. Given a question and retrieved context,
+      determine whether the context contains information that directly addresses the question.
+
+      Rules:
+      - relevant=true ONLY if the context contains specific facts, definitions, or
+        explanations that answer or partially answer the question
+      - relevant=false if the context is tangential, about a different topic, or only
+        shares surface-level vocabulary with the question
+      - Do not use your training knowledge — assess only the provided context
+      - confidence: 0.0 (guessing) to 1.0 (certain)
+    template: |
+      ## Retrieved Context
+
+      {rag_context}
+
+      ## Question
+
+      {text}
+
+  deep_system:
+    description: "Shared system prompt for deep iterative retrieval assessor"
+    system_prompt: |
+      You are a retrieval coverage assessor. Your job is to determine whether
+      the current context is sufficient to comprehensively answer the question,
+      and if not, identify specific gaps and generate targeted queries to fill them.
+    template: ""
+
+  deep_assess:
+    description: "Assess coverage gaps in accumulated context"
+    system_prompt: ""
+    template: |
+      ## Current Context
+
+      {context}
+
+      ## Original Question
+
+      {text}
+
+      ## Task
+
+      Assess whether the current context is sufficient to comprehensively answer
+      the question. Consider:
+      1. Does the context address ALL aspects of the question?
+      2. Are there specific sub-topics or details that are missing?
+      3. Would additional retrieval meaningfully improve the answer?
+
+      If the context is sufficient, choose action "accept".
+      If specific gaps exist, choose action "retrieve" and provide targeted queries.
+      If the context is too long and contains redundant information, choose "compress".
+
+  deep_retrieve:
+    description: "Generate targeted query for a coverage gap"
+    system_prompt: ""
+    template: |
+      The following context has been retrieved so far:
+
+      {context}
+
+      The assessor identified these gaps: {assess_reason}
+
+      Generate a focused query that targets the missing information.
+      The query should be specific and different from what has already been retrieved.
+      Output ONLY the query text — no explanation.
+
+  deep_rag_query:
+    description: "Passthrough prompt to forward generated query to rag-context"
+    system_prompt: ""
+    template: |
+      {context}
+
+  deep_compress:
+    description: "Compress accumulated context to essential information"
+    system_prompt: ""
+    template: |
+      ## Accumulated Context (may contain redundancy)
+
+      {context}
+
+      ## Original Question
+
+      {text}
+
+      Compress the context above into a concise summary that preserves ALL
+      information relevant to answering the question. Remove redundancy,
+      merge overlapping sections, and drop tangential content. Preserve
+      source attributions (filenames) for traceability.
+
+  answer_gated:
+    description: "Grounded answer with relevance gate — falls back gracefully when context is irrelevant"
+    system_prompt: |
+      You are a knowledgeable assistant. Indexed documents from the knowledge base are
+      provided when available — ground your response in those documents.
+
+      Rules:
+      - If the relevance assessment says the context is NOT relevant (relevant=false),
+        respond with: "I don't have indexed documents that directly address this question."
+        Do not attempt to answer from the tangential context.
+      - If relevant=true, answer from the provided context as normal
+      - Cite sources by filename only (e.g. 'pipeline-system.md') — never full paths
+      - Be practical: prefer actionable explanations over abstract descriptions
+
+      At the END of your response, add a '## Sources' section listing only the filenames
+      you actually drew on. One filename per line, no paths, no chunk IDs, no metadata.
+      Omit '## Sources' entirely if you did not use the context.
+    template: |
+      ## Relevance Assessment
+
+      {relevance}
+
+      ## Research Context
+
+      {rag_context}
+
+      ## Question
+
+      {text}

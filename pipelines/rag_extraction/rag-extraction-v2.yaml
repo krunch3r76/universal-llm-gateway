@@ -1,0 +1,65 @@
+schema_version: 6
+id: rag-extraction
+version: "2.1"
+type: rag_extraction
+description: >
+  Extract structured knowledge (entities, topics, facets) from multiple text chunks
+  in parallel. Called by the RAG service at index time via virtual model ID.
+  Fans out over all file chunks concurrently using map step; partial success
+  allowed (min 50% of chunks must succeed).
+output: extract_batch
+output_format: json_array
+
+options:
+  timeout_seconds: 300
+
+steps:
+  - name: extract_batch
+    type: generate
+    model_ref: extraction
+    prompt_ref: rag_extraction.extract_batch
+    map_over:
+      chunk: optionsNs.chunks
+    map_inputs:
+      text: mapNs.iteration.value.text
+      chunk_id: mapNs.iteration.value.id
+    min_success_threshold: 0.1
+    timeout_seconds: 300
+    generation_parameters:
+      max_tokens: 8192
+      temperature: 0.3
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            entities:
+              type: array
+              items:
+                type: object
+                properties:
+                  name: { type: string }
+                  type: { type: array, items: { type: string } }
+                  facets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        value: { type: string }
+                      required: [name, value]
+                  relations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        predicate: { type: string }
+                        target: { type: string }
+                      required: [predicate, target]
+                required: [name, type]
+            topics:
+              type: array
+              items: { type: string }
+            chunk_id:
+              type: string
+          required: [entities, topics, chunk_id]

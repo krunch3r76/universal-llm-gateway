@@ -4,6 +4,7 @@ Helper functions for measurement job operations.
 Extracted from measurement.py to maintain SLOC under 300.
 """
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
@@ -77,15 +78,17 @@ async def update_catalog_with_results(
     model_id: str,
     mode: str,
     results: dict[str, dict[str, Any]],
-    emit_log: callable,
+    emit_log: Callable[[str], None],
     use_static: bool = False,
     loader_updates: dict[str, Any] | None = None,
 ) -> None:
     """
     Update local catalog (~/.gateway/catalog/) with measurement results.
 
-    use_static=True: Skip (CLI dual-writes to both catalogs on host)
-    use_static=False: Update local catalog via inference_djinn
+    Two write paths:
+    - use_static=True: Skip (CLI dual-writes to both catalogs on host)
+    - use_static=False: Update local catalog. Tries legacy inference_djinn catalog
+      first; falls back to per-file catalog for models added via the new system.
 
     Args:
         model_id: Model identifier
@@ -116,7 +119,12 @@ async def update_catalog_with_results(
         local_catalog = load_local_catalog()
         local_models = local_catalog.get("models", {})
         if model_id not in local_models:
-            emit_log("  → Model not in local catalog (static-only), skipping")
+            # Model is not in the legacy catalog — try the per-file catalog.
+            # ∀ model added via model_manager generate: lives in per-file catalog only.
+            emit_log("  → Not in legacy catalog; writing to per-file catalog")
+            await _write_per_file_catalog_results(
+                model_id, mode, results, emit_log, loader_updates
+            )
             return
 
         # Persist loader-level params (e.g. gpu_memory_utilization for vLLM)
@@ -162,3 +170,95 @@ async def update_catalog_with_results(
 
     except Exception as e:
         emit_log(f"  ⚠️ Catalog update failed: {e}")
+
+
+async def _write_per_file_catalog_results(
+    model_id: str,
+    mode: str,
+    results: dict[str, dict[str, Any]],
+    emit_log: Callable[[str], None],
+    loader_updates: dict[str, Any] | None,
+) -> None:
+    """
+    Write measurement results to the per-file local catalog (~/.gateway/catalog/).
+
+    Used for models added via the new per-file catalog system (not legacy inference_djinn).
+
+    Reads the existing raw catalog entry, merges in measured device profiles and
+    activated contexts, then writes back via CatalogManager.upsert_local_only.
+
+    ∀ write: catalog_schema = 3 ∧ devices populated from results.
+    """
+    import copy
+
+    from ..context_detection import determine_activated_contexts
+
+    try:
+        from ...core.catalog import get_catalog_loader
+        from ...core.catalog_manager import get_catalog_manager
+
+        entry = get_catalog_loader().get_model(model_id)
+        if not entry:
+            emit_log(f"  ⚠️ '{model_id}' not found in any catalog; cannot write results")
+            return
+
+        entry = copy.deepcopy(entry)
+
+        # Merge measured profiles into devices section
+        devices = entry.setdefault("devices", {})
+        schema_name = entry.get("schema", "")
+        success_count = 0
+
+        for ctx_str, profile in results.items():
+            if profile.get("error"):
+                continue
+
+            n_gpu_layers = profile.get("n_gpu_layers")
+            if n_gpu_layers is None or n_gpu_layers == 0:
+                device_key = "cpu"
+            elif n_gpu_layers == -1:
+                device_key = "gpu"
+            else:
+                device_key = "hybrid"
+
+            profile_entry: dict[str, Any] = {
+                "vram_mb": profile.get("vram_mb", 0),
+                "ram_mb": profile.get("ram_mb", 0),
+            }
+            # Native GGUF engine persists n_gpu_layers per-profile for hybrid support
+            if schema_name == "llama-cpp" and n_gpu_layers is not None:
+                profile_entry["n_gpu_layers"] = n_gpu_layers
+
+            devices.setdefault(device_key, {}).setdefault("profiles", {})[ctx_str] = (
+                profile_entry
+            )
+            success_count += 1
+
+        if not success_count:
+            emit_log("  ⚠️ No successful profiles in results; nothing written")
+            return
+
+        # Persist loader routing params (e.g. gpu_memory_utilization for vLLM)
+        if loader_updates:
+            loader = entry.setdefault("loader", {})
+            for key, value in loader_updates.items():
+                loader.setdefault(key, value)
+
+        # Activated contexts → metadata (stripped from static by _strip_measurement_data)
+        gpu_contexts, cpu_contexts, reason = determine_activated_contexts(results, mode)
+        if reason:
+            emit_log(f"  → Activating: {reason}")
+        metadata = entry.setdefault("metadata", {})
+        if gpu_contexts:
+            metadata["activated_gpu_contexts"] = gpu_contexts
+        if cpu_contexts:
+            metadata["activated_cpu_contexts"] = cpu_contexts
+
+        _ = get_catalog_manager().upsert_local_only(model_id, entry)
+        emit_log(
+            f"  ✅ Per-file catalog updated: {success_count} profile(s), "
+            f"devices={list(devices)}"
+        )
+
+    except Exception as e:
+        emit_log(f"  ⚠️ Per-file catalog write failed: {e}")

@@ -66,6 +66,24 @@ async def wait_until_healthy(
             await asyncio.sleep(min(interval_s, remaining))
 
 
+_SCOPE_INSTRUCTIONS: dict[str, str] = {
+    "project": "Find relevant architecture documentation about this topic",
+    "research": "Find relevant research papers and technical analysis about this topic",
+    "prompting": "Find relevant prompt engineering techniques and patterns",
+    "workflows": "Find relevant pipeline orchestration and agent coordination patterns",
+    "llm_foundations": "Find relevant LLM reference material about this topic",
+    "code_retrieval": "Find relevant code retrieval research about this topic",
+    "both": "Find relevant documentation or research about this topic",
+    "all": "Find relevant information about this topic",
+}
+_DEFAULT_INSTRUCTION = "Find relevant information about this topic"
+
+
+def _is_instruction_aware_model(model_id: str) -> bool:
+    """Detect whether the configured embedding model supports Instruct:/Query: format."""
+    return "qwen3-embedding" in model_id.lower()
+
+
 _EMBED_BATCH_SIZE = 64
 # Stay safely under llama.cpp's n_batch=8192; 4 chars ≈ 1 token for English text.
 _MAX_BATCH_TOKENS = 7000
@@ -106,7 +124,9 @@ async def _post_embeddings(batch: list[str]) -> list[list[float]]:
             delay,
         )
         await asyncio.sleep(delay)
-    raise last_exc  # type: ignore[misc]
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Embedding request failed without capturing an exception")
 
 
 async def embed_chunks(texts: list[str]) -> list[list[float]]:
@@ -139,11 +159,21 @@ async def embed_chunks(texts: list[str]) -> list[list[float]]:
     return all_embeddings
 
 
-async def embed_query(text: str) -> list[float]:
-    """Embed a search query. Prepends 'search_query: ' before sending to gateway."""
+async def embed_query(text: str, scope: str | None = None) -> list[float]:
+    """Embed a search query.
+
+    For instruction-aware models (Qwen3-Embedding): uses Instruct:/Query: format
+    with scope-specific instructions. For legacy models (bge-m3): uses search_query: prefix.
+    """
+    if _is_instruction_aware_model(_embed_model):
+        instruction = _SCOPE_INSTRUCTIONS.get(scope or "", _DEFAULT_INSTRUCTION)
+        formatted = f"Instruct: {instruction}\nQuery: {text}"
+    else:
+        formatted = f"search_query: {text}"
+
     response = await _client.post(
         f"{GATEWAY_URL}/v1/embeddings",
-        json={"model": _embed_model, "input": [f"search_query: {text}"]},
+        json={"model": _embed_model, "input": [formatted]},
     )
     response.raise_for_status()
     data = response.json()

@@ -11,6 +11,7 @@
 #   ask -M arcee-ai/trinity-large-preview:free "question"  # cloud model via rag-answer
 #   ask -o q1_gpt.txt "question"    # saves to ./tmp/ask/q1_gpt.txt by default
 #   ask -d ./tmp/my-run -o out.txt "question"
+#   ask --deep "Complex multi-faceted question"  # iterative retrieval via rag-answer-deep
 
 set -euo pipefail
 
@@ -22,10 +23,11 @@ OUT_FILE=""
 SCOPE=""
 SOURCE_PREFIXES=()
 ANSWER_MODEL=""
+DEEP=false
 
 usage() {
 	cat <<'EOF'
-Usage: ask [-m MODEL] [-M ANSWER_MODEL] [-u URL] [-r] [-s SCOPE] [-p PREFIX] [-d OUT_DIR] [-o OUT_FILE] [QUESTION]
+Usage: ask [-m MODEL] [-M ANSWER_MODEL] [-u URL] [-r] [-s SCOPE] [-p PREFIX] [-d OUT_DIR] [-o OUT_FILE] [--deep] [QUESTION]
 
   -m MODEL         Model or pipeline ID (default: rag-answer)
   -M ANSWER_MODEL  Override the answer model via pipeline_options.model
@@ -36,12 +38,23 @@ Usage: ask [-m MODEL] [-M ANSWER_MODEL] [-u URL] [-r] [-s SCOPE] [-p PREFIX] [-d
   -p PREFIX        RAG source prefix path (repeatable)
   -d OUT_DIR       Output directory for relative -o paths (default: $ASK_OUT_DIR or ./)
   -o OUT_FILE      Save output to file. If relative, saved under OUT_DIR.
+  --deep           Use rag-answer-deep (iterative retrieval for complex questions)
   -h               Show this help
 
 Question can be passed as argument or piped via stdin.
 EOF
 	exit 0
 }
+
+# Parse long options before getopts
+ARGS=()
+for arg in "$@"; do
+	case "$arg" in
+	--deep) DEEP=true ;;
+	*) ARGS+=("$arg") ;;
+	esac
+done
+set -- "${ARGS[@]}"
 
 while getopts "m:M:u:rs:p:o:d:h" opt; do
 	case "$opt" in
@@ -57,6 +70,10 @@ while getopts "m:M:u:rs:p:o:d:h" opt; do
 	*) usage ;;
 	esac
 done
+
+if [ "$DEEP" = true ] && [ "$MODEL" = "rag-answer" ]; then
+	MODEL="rag-answer-deep"
+fi
 shift $((OPTIND - 1))
 
 if [ $# -gt 0 ]; then

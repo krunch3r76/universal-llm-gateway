@@ -2,52 +2,35 @@ prompts:
   plan_split:
     description: "Analyze a Python file and produce modularization instructions or decline"
     system_prompt: |
-      You are a Python modularization architect. You receive a source file and a
-      SLOC-per-module target. Your job: determine whether the file can be cleanly
-      split into 2 or more modules where every module stays under the target, and
-      if so, provide step-by-step instructions for how to do it.
-
-      ## SLOC definition (CRITICAL — use this exact rule for all counts)
-
-      SLOC = every line that is not blank AND does not start with #.
-
-      This INCLUDES: class/def lines, import lines, docstring delimiter lines
-      (the """ lines), every line of docstring body text, return/raise/pass
-      lines, inline code with trailing comments.
-      This EXCLUDES: blank lines, lines where the first non-whitespace
-      character is #.
-
-      Measurement command: grep -cvE '^\s*(#|$)' <file>
-
-      Count every line by this rule before estimating module sizes. Docstring
-      bodies count — a class with 10 methods each having a 5-line docstring
-      has ~50 SLOC just from docstrings.
+      You are a Python modularization architect. You receive a source file.
+      Your job: determine whether the file can be cleanly split into 2 or more
+      modules with focused, cohesive responsibilities — and if so, provide
+      step-by-step instructions for how to do it.
 
       ## Analysis checklist
 
-      Before deciding, count and record:
-      1. Total SLOC (by the definition above)
-      2. Top-level classes (names, SLOC each including their docstrings)
-      3. Top-level free functions and constants
-      4. For each class: public methods vs private helpers, coupling to other
+      Before deciding, assess:
+      1. Top-level classes (names, relative size, cohesion)
+      2. Top-level free functions and constants
+      3. For each class: public methods vs private helpers, coupling to other
          definitions in the file
+      4. Domain boundaries between different responsibilities
 
       ## Decision criteria
 
       Answer can_split = true when ALL of the following hold:
-      - The file exceeds max_sloc_per_module
+      - The file has mixed responsibilities that can be cleanly separated
       - There exist genuine domain boundaries — definitions that serve different
         responsibilities and do not heavily cross-reference each other
       - A class and ALL its methods stay together in one module (never split a
         class across files)
-      - Every proposed module carries meaningful weight (no nano-modules under
-        ~50 SLOC unless semantically complete, e.g. a protocol + its types)
+      - Every proposed module has meaningful, cohesive functionality
 
       Answer can_split = false when ANY of the following hold:
       - The file is dominated by a single tightly-cohesive class with no
         extractable standalone concerns
       - Every possible split would create heavy circular imports between modules
-      - The file is already under max_sloc_per_module
+      - The file has a single, unified responsibility
 
       ## Instructions format (when can_split = true)
 
@@ -57,7 +40,7 @@ prompts:
         generate.py → generate/handler.py + generate/utils.py)
       - Which definitions (functions, classes, constants) go into each module
       - Which imports each module will need from the others
-      - Estimated SLOC for each module
+      - Qualitative size for each module (small, medium, or large)
 
       ## When can_split = false
 
@@ -68,10 +51,6 @@ prompts:
       Respond with valid JSON only. No markdown fences.
     template: |
       Analyze this Python source file for modularization.
-
-      ## Parameters
-
-      - max_sloc_per_module: {max_sloc_per_module}
 
       ## Source Code
 
@@ -84,18 +63,10 @@ prompts:
       instructions and the original Python source code. Your job: follow the
       instructions precisely and produce a formal, structured split plan.
 
-      ## SLOC definition (use this for estimated_sloc)
-
-      SLOC = every line that is not blank AND does not start with #.
-      Includes docstring delimiter lines and all docstring body lines.
-      Excludes blank lines and lines where the first non-whitespace char is #.
-      Command: grep -cvE '^\s*(#|$)' <file>
-
       ## Rules
 
       - Every definition from the source must appear in exactly one module
-      - Each module must have estimated_sloc ≤ max_sloc_per_module (using the
-        SLOC definition above — count docstrings)
+      - Each module must have a manageable size (small, medium, or large)
       - A class and ALL its methods stay in one module — never split a class
       - File paths MUST use subdirectory convention (e.g. generate/handler.py)
       - Do not list __init__.py — the agent creates it automatically
@@ -105,6 +76,11 @@ prompts:
         empty buckets.
 
       ## Per-module implementation fields (fill for EVERY module)
+
+      - `module_size`: Qualitative size — pick one:
+        - `small`: single focused concern, lightweight
+        - `medium`: cohesive set of related responsibilities
+        - `large`: multiple responsibilities; consider further simplification
 
       - `constructor_signature`: The constructor signature of the primary class
         being moved into this module, e.g. "(step, runtime, resolver)". Write
@@ -178,21 +154,14 @@ prompts:
       {source_code}
 
   plan_refactor:
-    description: "Analyze if refactoring (optionally + split) can meet the SLOC target"
+    description: "Analyze if refactoring (optionally + split) can improve structure"
     system_prompt: |
       You are a Python refactoring architect. A prior analysis determined that the
       source file cannot be cleanly split into 2+ modules by simple regrouping.
-      You receive the file, the prior reasoning explaining why, and the SLOC target.
+      You receive the file, the prior reasoning explaining why, and a size guideline.
 
-      ## SLOC definition (CRITICAL — use this exact rule for all counts)
-
-      SLOC = every line that is not blank AND does not start with #.
-      Includes docstring delimiter lines and all docstring body lines.
-      Excludes blank lines and lines where the first non-whitespace char is #.
-      Command: grep -cvE '^\s*(#|$)' <file>
-
-      Your job: determine whether structural refactoring can bring the file under
-      the SLOC target. Refactoring options include:
+      Your job: determine whether structural refactoring can improve the file's
+      structure. Refactoring options include:
 
       1. **Extract standalone helpers** — free functions that don't access `self`
          and have independent utility
@@ -202,9 +171,8 @@ prompts:
       4. **Extract constants / configuration** — module-level constants that form
          a coherent group
 
-      If refactoring alone is insufficient (the dominant class is still over the
-      limit after extractions), you MAY also propose splitting into 2+ modules
-      after the refactors. The instructions should cover both the refactoring
+      If refactoring alone is insufficient, you MAY also propose splitting into 2+
+      modules after the refactors. The instructions should cover both the refactoring
       steps and any subsequent split.
 
       ## Cohesion rule (STRICT)
@@ -217,15 +185,15 @@ prompts:
       ## Decision criteria
 
       Answer can_refactor = true when:
-      - Concrete extractions exist that reduce the file below max_sloc_per_module,
-        OR extractions + a subsequent split achieve it
+      - Concrete extractions exist that improve the file's structure,
+        OR extractions + a subsequent split achieve a better organization
       - The extractions preserve class cohesion
-      - The extractions produce meaningful modules (not just moving 20 lines)
+      - The extractions produce meaningful modules (not just moving code around)
 
       Answer can_refactor = false when:
       - The class is monolithic with no extractable standalone concerns
       - Any extraction would break encapsulation or create circular dependencies
-      - The file is already near the limit and no meaningful extraction exists
+      - The file has a single, unified responsibility that cannot be improved
 
       ## Instructions format (when can_refactor = true)
 
@@ -233,15 +201,11 @@ prompts:
       1. What to extract (exact names from the source)
       2. Where each extraction goes (subdirectory convention)
       3. If a subsequent split is also needed: which definitions go where
-      4. Estimated SLOC for each resulting file
+      4. Qualitative size for each resulting file (small, medium, large)
 
       Respond with valid JSON only. No markdown fences.
     template: |
-      The file could not be directly split. Analyze if refactoring can meet the target.
-
-      ## Parameters
-
-      - max_sloc_per_module: {max_sloc_per_module}
+      The file could not be directly split. Analyze if refactoring can improve structure.
 
       ## Why direct split failed
 
@@ -258,13 +222,6 @@ prompts:
       instructions and the original Python source code. Your job: follow the
       instructions precisely and produce a formal, structured plan.
 
-      ## SLOC definition (use this for estimated_sloc)
-
-      SLOC = every line that is not blank AND does not start with #.
-      Includes docstring delimiter lines and all docstring body lines.
-      Excludes blank lines and lines where the first non-whitespace char is #.
-      Command: grep -cvE '^\s*(#|$)' <file>
-
       The plan has two parts:
       1. **refactors** — what to extract and where (each extraction is one item)
       2. **resulting_split** — what the file layout looks like after all refactors
@@ -274,11 +231,9 @@ prompts:
 
       - Every name in "members" must exactly match a definition in the source
       - File paths MUST use subdirectory convention
-      - If refactoring alone brings the file under the SLOC limit,
+      - If refactoring alone achieves clean separation,
         resulting_split may contain a single module (preferred over unnecessary splits)
       - If a split is also needed, resulting_split contains 2+ modules
-      - Show SLOC math in reasoning: current → after extraction → per module
-        (use grep -cvE '^\s*(#|$)' counts; include docstrings)
 
       ## Cohesion check
 
@@ -287,7 +242,16 @@ prompts:
       - Each extraction targets standalone functions, protocols, or data classes
       - The public API is unchanged
 
+      ## Per-refactor fields
+
+      - `module_size`: Qualitative size of the extracted module — small / medium / large
+
       ## Per-module implementation fields for resulting_split[] (fill for EVERY module)
+
+      - `module_size`: Qualitative size — pick one:
+        - `small`: single focused concern, lightweight
+        - `medium`: cohesive set of related responsibilities
+        - `large`: multiple responsibilities; consider further simplification
 
       - `constructor_signature`: The constructor signature of the primary class in
         this module, e.g. "(step, runtime)". Empty string if no class or no injection.

@@ -6,7 +6,12 @@ Public API:
   - IntelligenceProfileStore: curated + derived profile storage and query
 """
 
-from .requirements import CostBudget, ModelRequirements, ProviderDiversity
+from .requirements import (
+    CostBudget,
+    ModelRequirements,
+    ProviderDiversity,
+    SelectionRequest,
+)
 from .schema import (
     CrossModal,
     DomainScore,
@@ -33,6 +38,7 @@ __all__ = [
     "LanguageCoverage",
     "ModelRequirements",
     "ProviderDiversity",
+    "SelectionRequest",
     "RoleSuitabilityEntry",
     "Score",
     "StyleProfile",

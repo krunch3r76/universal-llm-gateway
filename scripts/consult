@@ -203,7 +203,7 @@ def _run_reviewer_pipeline(
 
 def main() -> None:
     raw_roles = load_roles()
-    role_prompts, role_select = split_role_config(raw_roles)
+    role_prompts, role_requirements = split_role_config(raw_roles)
     parser = _build_parser(role_prompts)
     args = parser.parse_args()
 
@@ -225,7 +225,15 @@ def main() -> None:
 
     if args.pipeline:
         target_models = args.models or REVIEWER_DEFAULT_MODELS
-        selected = select_models_for_role("reviewer", role_select, args.stargate_url)
+        # --cloud-only overrides source in the requirements so the unified
+        # endpoint enforces cloud-only selection server-side.
+        reviewer_requirements = role_requirements
+        if args.cloud_only and "reviewer" in role_requirements:
+            reviewer_requirements = {
+                **role_requirements,
+                "reviewer": {**role_requirements["reviewer"], "source": "cloud"},
+            }
+        selected = select_models_for_role("reviewer", reviewer_requirements, args.stargate_url)
         if selected and not args.models:
             target_models = selected
         output = _run_reviewer_pipeline(args, parser, target_models)

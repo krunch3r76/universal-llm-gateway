@@ -2,6 +2,8 @@
 Pipeline schemas - exports from core.
 """
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict
 
 from .core.schemas import (
@@ -21,6 +23,12 @@ class ModelRef(BaseModel):
     Core fields:
         model: Model ID string
         system_prompt: Optional system prompt override
+        profile: Inference profile name to apply for this model (e.g.
+            "qwen3-5-instruct", "qwen3-5-instruct-reasoning"). Inserts between
+            step-level and pipeline-level profile in the resolution hierarchy.
+            Setting this implicitly enables profile application — no need to
+            set disable_profile: false separately, unless the step or pipeline
+            explicitly disables it.
 
     Extra fields (optional, read by handlers):
         execution: Execution hints for handlers that support ChunkedModelExecutor
@@ -37,6 +45,7 @@ class ModelRef(BaseModel):
 
     model: str
     system_prompt: str | None = None
+    profile: str | None = None
 
 
 class SharedModels(BaseModel):
@@ -48,7 +57,7 @@ class SharedModels(BaseModel):
 class SharedPrompts(BaseModel):
     """Collection of shared prompt templates."""
 
-    prompts: dict[str, object]  # Supports arbitrary nesting
+    prompts: dict[str, Any]  # Supports arbitrary nesting
 
 
 __all__ = [

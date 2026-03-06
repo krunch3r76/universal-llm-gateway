@@ -304,6 +304,8 @@ class StepObservability:
 
         import traceback as tb_mod
 
+        tb_str = "".join(tb_mod.format_exception(error))
+
         recorder = self._executor.context.recorder
         if recorder:
             recorder.emit(
@@ -311,7 +313,7 @@ class StepObservability:
                     step_name=node.step.name,
                     error=str(error),
                     duration_ms=duration * 1000,
-                    traceback="".join(tb_mod.format_exception(error)),
+                    traceback=tb_str,
                     model_calls=call_contexts,
                     prompt_tokens=total_prompt,
                     completion_tokens=total_completion,
@@ -328,6 +330,7 @@ class StepObservability:
                 prompt_tokens=total_prompt,
                 completion_tokens=total_completion,
                 model_call_count=len(all_calls),
+                traceback=tb_str,
             )
         )
 
@@ -360,7 +363,14 @@ class StepObservability:
                     "source": str(binding),
                     "value": value,
                 }
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    "Failed to capture input '%s' for step '%s' (binding=%s): %s",
+                    input_name,
+                    step.id,
+                    binding,
+                    e,
+                )
                 inputs[input_name] = {"source": str(binding), "value": None}
         return inputs
 

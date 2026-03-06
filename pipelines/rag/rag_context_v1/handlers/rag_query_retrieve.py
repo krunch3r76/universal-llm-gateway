@@ -40,6 +40,18 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from transport_utils.rag_client import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
 
+from services.rag.entity_merging import (
+    extract_entities_from_metadata,
+    extract_topics_from_metadata,
+    format_entity_context,
+    format_relation_context,
+    format_topic_context,
+    merge_entities,
+    merge_relations,
+    merge_topics,
+)
+from services.rag.knowledge_extractor import Entity
+
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
     from systems.pipeline.core.schemas import StepConfig
@@ -90,12 +102,14 @@ class _RetrievedChunk:
         content: The text content of the chunk.
         source: The original source of the chunk (e.g. file path, URL).
         indexed_at: Timestamp when the chunk was indexed.
+        metadata: Full metadata dict from the search response (includes extraction field).
         content_hash: MD5 hash of the content for deduplication across queries.
     """
 
     content: str
     source: str
     indexed_at: str
+    metadata: dict[str, object]
     content_hash: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -213,20 +227,25 @@ def _format_context(chunks: list[_RetrievedChunk]) -> str:
     is in _BINARY_EXTENSIONS are silently dropped — binary/model-weight files
     add no retrieval value.
 
+    When extraction metadata is present, merged entities, relations, and topics
+    are appended as structured sections after the source chunks.
+
     ∀ non-empty chunks list: returns non-empty string (sentinel or sections).
     """
     if not chunks:
         return _NO_RESULTS_SENTINEL
 
     accepted: list[tuple[str, _RetrievedChunk]] = []
+    all_entities: list[Entity] = []
+    all_topics: list[str] = []
+
     for c in chunks:
         if _source_is_binary(c.source):
-            logger.debug(
-                "_format_context: dropped binary source '%s'",
-                c.source,
-            )
+            logger.debug("_format_context: dropped binary source '%s'", c.source)
             continue
         accepted.append((_normalize_source(c.source), c))
+        all_entities.extend(extract_entities_from_metadata(c.metadata))
+        all_topics.extend(extract_topics_from_metadata(c.metadata))
 
     if not accepted:
         return _NO_RESULTS_SENTINEL
@@ -235,6 +254,27 @@ def _format_context(chunks: list[_RetrievedChunk]) -> str:
         f"[Source: {label} | Last changed: {c.indexed_at}]\n{c.content}"
         for label, c in accepted
     ]
+
+    if all_entities:
+        merged_entities = merge_entities(all_entities)
+        entity_section = format_entity_context(merged_entities)
+        if entity_section:
+            logger.debug(
+                "_format_context: appended %d merged entities", len(merged_entities)
+            )
+            sections.append(entity_section)
+
+        merged_relations = merge_relations(all_entities)
+        relation_section = format_relation_context(merged_relations)
+        if relation_section:
+            sections.append(relation_section)
+
+    if all_topics:
+        merged_topics = merge_topics(all_topics)
+        topic_section = format_topic_context(merged_topics)
+        if topic_section:
+            sections.append(topic_section)
+
     return "\n\n---\n\n".join(sections)
 
 
@@ -270,6 +310,7 @@ async def _execute_single_query(
             content=chunk,
             source=str(meta.get("source", "unknown")),
             indexed_at=str(meta.get("indexed_at", "unknown")),
+            metadata=meta,
         )
         for chunk, meta in zip(raw_chunks, metadata, strict=True)
     ]

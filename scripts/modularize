@@ -40,13 +40,41 @@ class ConsumerInfo:
 
 
 def _count_sloc(path: Path) -> int:
-    """Count non-blank, non-comment lines."""
+    """Count non-blank, non-comment, non-docstring lines.
+
+    Docstrings are excluded: they are documentation, not logic, and including
+    them penalises well-documented files. Uses AST to identify docstring line
+    ranges (first string literal in module/class/function bodies). Falls back
+    to comment-only exclusion if the file cannot be parsed.
+    """
     try:
         content = path.read_text(errors="replace")
     except OSError:
         return 0
+
+    docstring_lines: set[int] = set()
+    try:
+        tree = ast.parse(content)
+        for node in ast.walk(tree):
+            if isinstance(
+                node,
+                ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef,
+            ):
+                if (
+                    node.body
+                    and isinstance(node.body[0], ast.Expr)
+                    and isinstance(node.body[0].value, ast.Constant)
+                    and isinstance(node.body[0].value.value, str)
+                ):
+                    ds = node.body[0]
+                    docstring_lines.update(range(ds.lineno, ds.end_lineno + 1))
+    except SyntaxError:
+        pass
+
     count = 0
-    for line in content.splitlines():
+    for lineno, line in enumerate(content.splitlines(), start=1):
+        if lineno in docstring_lines:
+            continue
         stripped = line.strip()
         if stripped and not stripped.startswith("#"):
             count += 1

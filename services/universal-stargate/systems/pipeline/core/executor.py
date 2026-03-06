@@ -18,6 +18,7 @@ Invariants:
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -84,8 +85,8 @@ class PipelineExecutor:
     def __init__(
         self,
         registry: PipelineRegistry,
-        request_executor,
-        proxy,
+        request_executor: Any,
+        proxy: Any,
     ):
         self.registry = registry
         self.request_executor = request_executor
@@ -122,10 +123,7 @@ class PipelineExecutor:
         """
         from ..response_builder import ResponseBuilder
 
-        try:
-            pipeline = self.registry.get_pipeline(context.selected_model)
-        except Exception:
-            raise
+        pipeline = self.registry.get_pipeline(context.selected_model)
 
         logger.info(
             f"Executing pipeline '{pipeline.id}' "
@@ -423,10 +421,11 @@ class PipelineExecutor:
             f"duration={duration:.2f}s, steps={len(pipeline_context.outputs)}"
         )
 
-        # Close event recorder (flushes JSONL)
-        recorder.close()
-
-        return response
+        try:
+            return response
+        finally:
+            # Guaranteed flush even if response serialisation raises
+            recorder.close()
 
     def _expand_steps(
         self,
@@ -492,7 +491,14 @@ class PipelineExecutor:
         output = context.get_output(output_ref)
         if output:
             if isinstance(output, MapOutputCollection):
-                # No specific iteration requested, concatenate all
+                if pipeline.output_format == "json_array":
+                    results = []
+                    for item in output.all_outputs():
+                        if item.json is not None:
+                            results.append(item.json)
+                        else:
+                            results.append(item.raw)
+                    return json.dumps(results)
                 text_parts = [item.text for item in output.all_outputs()]
                 return "\n\n".join(text_parts)
             text = output.text
@@ -550,7 +556,7 @@ class PipelineExecutor:
                     return bt_output.json
         return None
 
-    def _extract_messages(self, context) -> list[dict[str, Any]] | None:
+    def _extract_messages(self, context: Any) -> list[dict[str, Any]] | None:
         """Extract full chat messages, preferring explicit pre-truncation capture."""
         if hasattr(context.http_request, "state") and hasattr(
             context.http_request.state, "pipeline_full_messages"
@@ -564,7 +570,7 @@ class PipelineExecutor:
                 return messages
         return None
 
-    def _extract_source_text(self, context) -> str:
+    def _extract_source_text(self, context: Any) -> str:
         """Extract source text from request context."""
         # From chat request
         if context.chat_request and context.chat_request.messages:

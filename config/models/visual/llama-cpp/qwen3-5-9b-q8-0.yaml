@@ -14,7 +14,7 @@ metadata:
         - text
       vision_architecture: qwen3_5
     interaction:
-      chat_template: false
+      chat_template: true
     reasoning:
       supports_thinking: true
     limits:

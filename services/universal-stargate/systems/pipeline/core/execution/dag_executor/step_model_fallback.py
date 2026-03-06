@@ -68,7 +68,7 @@ async def try_step_model_fallback(
 
     fallback_ids = [
         m
-        for m in resolve_model_requirements(step.model_requirements, context._proxy)
+        for m in resolve_model_requirements(step.model_requirements)
         if m != primary_model
     ]
 

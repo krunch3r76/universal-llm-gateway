@@ -34,7 +34,7 @@ steps:
               description: "True if the file can be split into 2+ modules each under max_sloc_per_module"
             reasoning:
               type: string
-              description: "Evidence-based analysis: SLOC counts, class structure, domain boundaries, why split is/isn't feasible"
+              description: "Evidence-based analysis: class structure, domain boundaries, coupling, why split is/isn't feasible"
             instructions:
               type: string
               description: "Step-by-step instructions for the split. Empty string if can_split is false."
@@ -104,8 +104,10 @@ steps:
                     type: array
                     items:
                       type: string
-                  estimated_sloc:
-                    type: integer
+                  module_size:
+                    type: string
+                    enum: [small, medium, large]
+                    description: "Qualitative size: small (single focused concern), medium (cohesive related concerns), large (approaching limit, consider simplification)"
                   constructor_signature:
                     type: string
                     description: "Constructor signature for the primary class, e.g. '(step, runtime)'. Empty string if no class or no injection."
@@ -130,7 +132,7 @@ steps:
                     items:
                       type: string
                     description: "Public names from this module to include in the package __init__.py"
-                required: [file_path, description, definitions, estimated_sloc, constructor_signature, injected_state, imports_from_siblings, import_depth_delta, compatibility_note, init_reexports]
+                required: [file_path, description, definitions, module_size, constructor_signature, injected_state, imports_from_siblings, import_depth_delta, compatibility_note, init_reexports]
               minItems: 2
             implementation_guide:
               type: string
@@ -211,7 +213,7 @@ steps:
           properties:
             reasoning:
               type: string
-              description: "How the refactoring instructions were applied, SLOC math, trade-offs"
+              description: "How the refactoring instructions were applied and any trade-offs noted"
             refactors:
               type: array
               items:
@@ -234,11 +236,13 @@ steps:
                   target_file:
                     type: string
                     description: "Subdirectory convention: name/module.py"
-                  estimated_sloc:
-                    type: integer
+                  module_size:
+                    type: string
+                    enum: [small, medium, large]
+                    description: "Qualitative size: small (single focused concern), medium (cohesive related concerns), large (approaching limit, consider simplification)"
                   rationale:
                     type: string
-                required: [type, name, original_location, members, target_file, estimated_sloc, rationale]
+                required: [type, name, original_location, members, target_file, module_size, rationale]
               minItems: 1
             resulting_split:
               type: array
@@ -254,8 +258,10 @@ steps:
                     type: array
                     items:
                       type: string
-                  estimated_sloc:
-                    type: integer
+                  module_size:
+                    type: string
+                    enum: [small, medium, large]
+                    description: "Qualitative size: small (single focused concern), medium (cohesive related concerns), large (approaching limit, consider simplification)"
                   constructor_signature:
                     type: string
                     description: "Constructor signature for the primary class, e.g. '(step, runtime)'. Empty string if no class or no injection."
@@ -280,7 +286,7 @@ steps:
                     items:
                       type: string
                     description: "Public names from this module to include in the package __init__.py"
-                required: [file_path, description, definitions, estimated_sloc, constructor_signature, injected_state, imports_from_siblings, import_depth_delta, compatibility_note, init_reexports]
+                required: [file_path, description, definitions, module_size, constructor_signature, injected_state, imports_from_siblings, import_depth_delta, compatibility_note, init_reexports]
               minItems: 1
           required: [reasoning, refactors, resulting_split]
     timeout_seconds: 180

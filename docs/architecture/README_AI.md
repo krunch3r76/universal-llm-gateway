@@ -17,7 +17,6 @@ Each file covers one subsystem and is self-contained for RAG consumption.
 | How does the event system work (signals, contracts)? | `event-system.md` |
 | What tools, scripts, and CLIs are available? | `tools.md` |
 | Where are config files, env vars, paths? | `configuration.md` |
-
 ## Supersedes
 
 These files consolidate and replace the following scattered README_AI.md files:

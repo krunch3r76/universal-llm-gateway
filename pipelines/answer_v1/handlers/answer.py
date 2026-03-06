@@ -14,10 +14,11 @@ from typing import TYPE_CHECKING, Any, override
 from systems.pipeline.core.constants import RAG_NO_RESULTS_SENTINEL
 from systems.pipeline.core.handlers.builtin import ModelCallResult
 from systems.pipeline.core.handlers.generate import GenericGenerateHandler
+from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
-    from systems.pipeline.core.handlers.protocol import PipelineContext, StepOutput
+    from systems.pipeline.core.handlers.protocol import PipelineContext
     from systems.pipeline.core.schemas import StepConfig
 
 logger = get_logger(__name__)
@@ -89,9 +90,12 @@ class AnswerGenerateHandler(GenericGenerateHandler):
         is intentionally not blocked — conversational queries may still use
         model knowledge.
         """
+        # Only bypass model call for the answer step — relevance_check must always
+        # run so it can classify the empty context as relevant=false.
         get_context_out = context.get_output("get_context")
         if (
-            get_context_out is not None
+            step.name != "relevance_check"
+            and get_context_out is not None
             and get_context_out.raw == RAG_NO_RESULTS_SENTINEL
         ):
             return StepOutput(

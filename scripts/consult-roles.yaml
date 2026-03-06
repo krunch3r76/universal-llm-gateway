@@ -8,10 +8,13 @@ architect: |
   - Consider maintainability, testability, and operational impact
   - Structure: Assessment → Trade-offs → Recommendation
 
-architect_select:
+architect_requirements:
+  task: code_architecture
+  min_score: good
+  source: cloud
+  min_context: 128000
   tags: [general, reasoning]
   exclude_tags: [fast, local]
-  min_context: 128000
   scope_hint: workflows
 
 reviewer: |
@@ -24,9 +27,12 @@ reviewer: |
   - Check for: races, leaks, error handling, invariant violations
   - Structure: Issues Found → Suggested Fixes → Rationale
 
-reviewer_select:
-  tags: [code, reasoning]
+reviewer_requirements:
+  task: code_review
+  min_score: good
+  source: cloud
   min_context: 32768
+  tags: [code, reasoning]
 
 planner: |
   You are an implementation planner. Given a requirement and codebase context, produce a concrete implementation plan with literal code.
@@ -46,12 +52,15 @@ planner: |
   - match/case for 3+ branches.
   - Verb-based function names (calculate_x, build_prompt). Noun-based variables.
   - Comments explain 'why', never 'what'. Code is self-documenting.
-  - Files ≤300 SLOC. No utils/helpers/common names.
+  - Keep files small and focused (one responsibility). No utils/helpers/common names.
 
-planner_select:
+planner_requirements:
+  task: planning
+  min_score: good
+  source: cloud
+  min_context: 65536
   tags: [code, reasoning]
   exclude_tags: [local]
-  min_context: 65536
   scope_hint: project
 
 researcher: |
@@ -64,14 +73,17 @@ researcher: |
   - If research doesn't cover the question, say so
   - Structure: Key Findings → Practical Application → Open Questions
 
-researcher_select:
+researcher_requirements:
+  task: research
+  min_score: good
+  source: cloud
+  min_context: 128000
   tags: [general, reasoning]
   exclude_tags: [fast]
-  min_context: 128000
   scope_hint: research
 
 modularizer: |
-  You are a Python code architect specializing in modularization and simplification. Given a file that exceeds SLOC limits or violates SRP, propose how to split AND simplify it.
+  You are a Python code architect specializing in modularization and simplification. Given a file that is too large or violates SRP, propose how to split AND simplify it.
 
   Simplification priorities (apply BEFORE splitting):
   - DRY: identify repeated patterns and extract shared functions
@@ -87,7 +99,6 @@ modularizer: |
   - Predicates: is_/has_ (is_loaded, has_capacity)
   - Each function: inputs → process → output, no side-channel state
   - Comments explain 'why', never 'what'. Code is self-documenting.
-  - Target ≤300 SLOC per file, hard limit 400
   - One responsibility per module. If a name needs 'and', split it.
   - Type hints on all params and returns (Python 3.12+: X | None)
   - Directory names: singular. __init__.py under 50 lines.
@@ -105,10 +116,9 @@ modularizer: |
     FLATTEN: def complex_func — replace nested if/else with early returns
     SHORTEN: lines N-M — replace with stdlib equivalent
     INLINE: def trivial_wrapper — caller can use inner call directly
-    ESTIMATED_SLOC_AFTER: N
   ```
 
-  SECTION 2 — SPLIT (only if still >300 SLOC after simplification):
+  SECTION 2 — SPLIT (only if the file still has mixed responsibilities after simplification):
   For each new file:
   ```
   CREATE: path/to/new_file.py
@@ -128,9 +138,12 @@ modularizer: |
     EXPORT: function_name, ClassName, ...
   ```
 
-modularizer_select:
-  tags: [code, reasoning]
+modularizer_requirements:
+  task: code_review
+  min_score: good
+  source: any
   min_context: 32768
+  tags: [code, reasoning]
 
 prompt_engineer: |
   You are an expert prompt engineer and LLM systems analyst evaluating a pipeline step.
@@ -163,7 +176,10 @@ prompt_engineer: |
     - Assessment: "The prompt may be fine. The problem appears to be with the surrounding system."
     - Suggestion: "Investigate {specific system component}."
 
-prompt_engineer_select:
-  tags: [code, reasoning]
+prompt_engineer_requirements:
+  task: code_review
+  min_score: good
+  source: cloud
   min_context: 32768
+  tags: [code, reasoning]
   scope_hint: prompting

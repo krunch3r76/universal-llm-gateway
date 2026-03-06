@@ -145,9 +145,8 @@ class MapIterationPreparer:
         if not self._map_config.model_pool and self._map_config.model_requirements:
             from ...requirements_resolver import resolve_model_requirements
 
-            proxy = getattr(runtime, "_proxy", None)
             resolved_ids = resolve_model_requirements(
-                self._map_config.model_requirements, proxy
+                self._map_config.model_requirements
             )
             if resolved_ids:
                 pool = resolved_ids

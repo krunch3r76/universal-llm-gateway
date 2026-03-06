@@ -1,3 +1,7 @@
 models:
   extraction:
-    model: qwen3-5-9b-q8-0-8192
+    model: qwen3-5-9b-q8-0-32768
+    # Structured extraction: instruct (non-thinking) is appropriate.
+    # Available profiles: qwen3-5-thinking, qwen3-5-thinking-coding,
+    #                     qwen3-5-instruct, qwen3-5-instruct-reasoning
+    profile: qwen3-5-instruct

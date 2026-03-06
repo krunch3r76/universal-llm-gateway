@@ -32,7 +32,10 @@ options:
 steps:
   - name: analyze_rewrite
     type: generate
-    model_ref: phi4
+    model_ref: qwen3_9b
+    model_requirements:
+      task: rag_rewrite
+      source: any       # local models qualify — enables laptop/CPU fallback
     prompt_ref: rag.rag_context_v1.analyze_rewrite
     generation_parameters:
       temperature: 0.4   # §4.1: T=0.1→0.4; all 4 sources agree moderate temp

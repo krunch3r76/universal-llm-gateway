@@ -153,6 +153,15 @@ class NativeGGUFEngine(BaseEngine):
         if "n_batch" in kwargs:
             batch_size = kwargs.pop("n_batch")
 
+        # Embedding models: llama.cpp rejects any input whose token count exceeds
+        # n_batch.  Per-profile loaders set n_batch = n_ctx (see _build_device_profiles).
+        if embedding and (batch_size is not None and batch_size < ctx_size):
+            raise ValueError(
+                f"Embedding model n_batch ({batch_size}) < ctx_size ({ctx_size}). "
+                f"llama.cpp requires n_batch >= ctx_size for embedding models. "
+                f"Re-run measurement to fix the catalog entry."
+            )
+
         # Extract KV cache clearing config from warmup settings.
         # Invariant: ∀ warmup config absent ⟹ default to False (rely on llama-server default behavior)
         warmup_dict: dict[str, Any] = kwargs.pop("warmup", {})
@@ -482,8 +491,12 @@ class NativeGGUFEngine(BaseEngine):
             if isinstance(messages_or_prompt, str):
                 text = messages_or_prompt
             else:
-                text = " ".join(
-                    msg.get("content", "")
+                # Include role labels so the tokenizer sees role token overhead.
+                # ∀ chat model: actual count also includes template special tokens
+                # (BOS/EOS, role markers) that require the model's chat template
+                # to reproduce exactly. This approximation is close in practice.
+                text = "\n".join(
+                    f"{msg.get('role', 'user')}: {msg.get('content', '')}"
                     for msg in messages_or_prompt
                     if isinstance(msg.get("content"), str)
                 )
@@ -615,11 +628,11 @@ class NativeGGUFEngine(BaseEngine):
                         timeout=float(self.config.timeout),
                     )
             else:
-                response = httpx.post(
-                    f"http://{self.config.host}:{self.config.port}/v1/embeddings",
-                    json={"input": texts},
-                    timeout=float(self.config.timeout),
-                )
+                with httpx.Client(timeout=float(self.config.timeout)) as client:
+                    response = client.post(
+                        f"http://{self.config.host}:{self.config.port}/v1/embeddings",
+                        json={"input": texts},
+                    )
 
             logger.debug(
                 f"[embedding] status={response.status_code}, "

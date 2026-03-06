@@ -53,11 +53,16 @@ def validate_models_file(yaml_path: Path) -> tuple[bool, list[str]]:
                     f"Should be 'model' (not 'model_id')"
                 )
 
-            # Validate allowed fields
+            # Validate allowed fields — mirrors ModelRef schema (schemas.py).
+            # ModelRef has extra="allow" for execution hints (chunk_size, etc.);
+            # only explicit schema fields are listed here.
             allowed_fields = {
                 "model",
                 "system_prompt",
                 "description",
+                "profile",
+                "execution",
+                "prompt_override",
             }
             unknown_fields = set(model_config.keys()) - allowed_fields
             if unknown_fields:

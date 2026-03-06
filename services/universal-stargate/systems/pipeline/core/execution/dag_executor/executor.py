@@ -7,9 +7,8 @@ Executes pipeline steps respecting dependencies with automatic parallelization.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from universal_event_bus import Event
 from universal_logging import get_logger
 
 from ...dag import PipelineExecutionError, StepState
@@ -130,6 +129,17 @@ class DAGExecutor:
             launched = await self._process_ready_steps()
             if self._pending_tasks:
                 await self._await_and_handle_completions()
+            elif not launched and not self._pending_tasks and not self._all_done():
+                incomplete = [
+                    n.step.id
+                    for n in self.nodes.values()
+                    if n.state
+                    not in (StepState.COMPLETED, StepState.SKIPPED, StepState.FAILED)
+                ]
+                raise PipelineExecutionError(
+                    "Deadlock detected: no runnable steps and no pending tasks. "
+                    f"Incomplete steps: {incomplete}"
+                )
             elif not launched:
                 await asyncio.sleep(0.1)
 
@@ -227,17 +237,6 @@ class DAGExecutor:
     async def _await_and_handle_completions(self) -> None:
         """Wait for tasks and handle completion/failure."""
         if not self._pending_tasks:
-            ready_steps = [
-                node for node in self.nodes.values() if node.state == StepState.READY
-            ]
-            if not ready_steps:
-                incomplete = [
-                    n.step.id
-                    for n in self.nodes.values()
-                    if n.state
-                    not in (StepState.COMPLETED, StepState.SKIPPED, StepState.FAILED)
-                ]
-                raise PipelineExecutionError(f"Deadlock: steps stuck: {incomplete}")
             return
 
         done, _ = await asyncio.wait(
@@ -258,7 +257,7 @@ class DAGExecutor:
             try:
                 task.result()
             except Exception as e:
-                logger.error(f"Step '{step_id}' failed: {e}")
+                logger.error(f"Step '{step_id}' failed: {e}", exc_info=True)
                 node.state = StepState.FAILED
                 node.error = e
 
@@ -429,46 +428,3 @@ class DAGExecutor:
             for node in self.nodes.values()
         )
 
-    # Compatibility wrappers for existing private method call sites.
-    def _get_event_context(self) -> tuple[str, str]:
-        return self._observability.get_event_context()
-
-    def _publish_event(self, event: Event) -> None:
-        self._observability.publish_event(event)
-
-    def _capture_step_inputs(self, step: StepConfig) -> dict[str, Any]:
-        return self._observability.capture_step_inputs(step)
-
-    def _log_step_model_calls(
-        self,
-        step_name: str,
-        calls: list[Any],
-        duration: float,
-        *,
-        success: bool,
-    ) -> None:
-        self._observability.log_step_model_calls(
-            step_name, calls, duration, success=success
-        )
-
-    def _record_success(
-        self,
-        node: StepNode,
-        output: StepOutput,
-        duration: float,
-    ) -> None:
-        self._observability.record_success(node, output, duration)
-
-    def _record_failure(
-        self,
-        node: StepNode,
-        error: Exception,
-        duration: float,
-    ) -> None:
-        self._observability.record_failure(node, error, duration)
-
-    def _register_global_tracking(self, model_id: str, step_id: str) -> None:
-        self._model_coordination.register_global_tracking(model_id, step_id)
-
-    def _unregister_global_tracking(self, model_id: str, step_id: str) -> None:
-        self._model_coordination.unregister_global_tracking(model_id, step_id)

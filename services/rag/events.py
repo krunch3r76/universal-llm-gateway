@@ -144,6 +144,37 @@ def RagExtractionFailed(  # noqa: N802
 
 
 @event_factory
+def RagExtractionBatchStarted(  # noqa: N802
+    *,
+    file: str,
+    chunk_count: int,
+) -> Event:
+    return Event(
+        signal="rag.extraction.batch.started",
+        payload={"file": file, "chunk_count": chunk_count},
+    )
+
+
+@event_factory
+def RagExtractionBatchCompleted(  # noqa: N802
+    *,
+    file: str,
+    chunk_count: int,
+    successful: int,
+    duration_seconds: float,
+) -> Event:
+    return Event(
+        signal="rag.extraction.batch.completed",
+        payload={
+            "file": file,
+            "chunk_count": chunk_count,
+            "successful": successful,
+            "duration_seconds": duration_seconds,
+        },
+    )
+
+
+@event_factory
 def RagPropertyIndexRebuilt(  # noqa: N802
     *,
     collection: str,

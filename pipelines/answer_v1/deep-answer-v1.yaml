@@ -1,0 +1,79 @@
+# Supported pipeline_options:
+#   model: <full model ID>  — override the answer model; bypasses models.yaml lookup.
+#                             Defaults to the `answer` alias in models.yaml.
+schema_version: 6
+id: rag-answer-deep
+version: "1.0"
+type: answer_v1
+description: >
+  Deep iterative RAG answer pipeline. Performs initial retrieval, then
+  iteratively assesses coverage gaps and retrieves more context until
+  sufficient or budget exhausted. For complex multi-faceted questions.
+output: answer
+
+options:
+  timeout_seconds: 180
+
+steps:
+  - name: get_context
+    type: pipeline_call_v1
+    pipeline_id: "rag-context"
+    consumer_model_ref: answer
+    timeout_seconds: 70
+
+  - name: iterative_refine
+    type: assess_loop_v1
+    model_ref: answer
+    model_requirements:
+      task: rag_relevance
+      source: any
+    prompt_ref: answer_v1.deep_assess
+    system_prompt_ref: answer_v1.deep_system
+    artifact_key: context
+    handler_inputs:
+      context: "get_context.raw"
+    terminal_action: accept
+    max_iterations: 2
+    assess_schema:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: ["accept", "retrieve", "compress"]
+        gaps:
+          type: array
+          items:
+            type: string
+          description: "Specific information gaps in the current context"
+        queries:
+          type: array
+          items:
+            type: string
+          description: "Targeted queries to fill identified gaps"
+        reason:
+          type: string
+      required: ["action", "reason"]
+    actions:
+      retrieve:
+        - prompt_ref: answer_v1.deep_retrieve       # step 1: generate focused query
+        - prompt_ref: answer_v1.deep_rag_query      # step 2: call rag-context with query
+          model_ref: rag-context
+      compress:
+        prompt_ref: answer_v1.deep_compress
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 512
+      response_format:
+        type: json_object
+
+  - name: answer
+    type: generate
+    model_ref: answer
+    model_requirements:
+      task: rag_answer
+      source: any
+    prompt_ref: answer_v1.answer
+    handler_inputs:
+      rag_context: "iterative_refine.raw"
+    generation_parameters:
+      temperature: 0.3

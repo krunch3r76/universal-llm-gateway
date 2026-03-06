@@ -1,18 +1,24 @@
 """
-Catalog Constants - V3 Schema Definitions.
+Catalog Constants - Schema Definitions.
 
-V3 Schema:
-    - Schema-per-engine pattern
-    - Static catalog (config/models/): metadata-only, version-controlled
-    - Local catalog (~/.gateway/catalog/): full operational entry, per-install
-    - catalog_schema: 3 in every file (per-file field, not catalog-level)
-    - NO backward compatibility (fail fast on V1 patterns)
+Two-track catalog_schema versioning:
+    - CATALOG_SCHEMA_VERSION = 3: local/operational catalog (~/.gateway/catalog/)
+    - CATALOG_STATIC_SCHEMA_VERSION = 4: static catalog (config/models/)
+
+Both tracks share the schema-per-engine pattern and per-file catalog_schema field.
+Runtime validation uses >= 3 and handles both values correctly.
+
+    - Static catalog (config/models/): metadata-only, version-controlled, catalog_schema: 4
+    - Local catalog (~/.gateway/catalog/): full operational entry, per-install, catalog_schema: 3
+    - NO backward compatibility (fail fast on V1/V2 patterns)
 
 Invariants:
     ∀ model: model.schema ∈ VALID_SCHEMAS
     ∀ model: model.metadata.format ∈ VALID_FORMATS
-    ∀ static_entry: ¬loader ∧ ¬devices ∧ ¬activated_*_contexts
-    ∀ local_entry: full operational entry (metadata + loader + devices)
+    ∀ static_entry: catalog_schema = 4 ∧ ¬devices ∧ ¬activated_*_contexts
+                    ∧ loader ⊆ {embedding, embedding_task_default, clip_model_path, vision_architecture}
+                    (routing discriminants only — present so gateway dispatches correctly without a full local entry)
+    ∀ local_entry: catalog_schema = 3 ∧ devices ≠ ∅ ∧ loader present
     ¬∃ metadata.engine  (removed in V2)
     ¬∃ configurations  (renamed to devices)
 """
@@ -21,7 +27,11 @@ Invariants:
 # SCHEMA VERSION
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Local/operational catalog (~/.gateway/catalog/) — full entries with devices + loader
 CATALOG_SCHEMA_VERSION = 3
+
+# Static catalog (config/models/) — metadata-only, version-controlled
+CATALOG_STATIC_SCHEMA_VERSION = 4
 
 # Per-file schema version key (present in every catalog YAML file)
 CATALOG_FILE_SCHEMA_KEY = "catalog_schema"

@@ -66,11 +66,21 @@ def add_generate_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Overwrite existing verified registry entry",
     )
 
-    # Thinking / reasoning model options
-    p.add_argument(
+    # Reasoning model options
+    reasoning_group = p.add_argument_group("Reasoning Model Options")
+    reasoning_group.add_argument(
         "--thinking",
         action="store_true",
-        help="Mark model as supporting extended thinking (chat_template_kwargs enable_thinking)",
+        help="Mark model as supporting extended thinking (sets capabilities.reasoning.supports_thinking: true)",
+    )
+    reasoning_group.add_argument(
+        "--reasoning-parser",
+        metavar="PARSER",
+        help=(
+            "vLLM reasoning parser for server-side <think> extraction "
+            "(e.g. deepseek_r1, granite). Adds reasoning_parser to loader section. "
+            "Required to surface reasoning in message.reasoning_content on vLLM models."
+        ),
     )
 
     # Vision model options

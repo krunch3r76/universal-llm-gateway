@@ -109,10 +109,12 @@ async def _startup() -> None:
     configure_embeddings(_config.embedding_model)
     _property_index = PropertyIndex()
     await _property_index.start()
-    if _config.watch_directories:
+    if _config.automatic_indexing_enabled and _config.watch_directories:
         _init_task = asyncio.create_task(
             _deferred_watcher_start(_config), name="rag-watcher-init"
         )
+    elif not _config.automatic_indexing_enabled:
+        logger.info("Automatic indexing disabled (automatic_indexing_enabled: false) — watcher not started")
 
 
 async def _deferred_watcher_start(config: RagConfig) -> None:
@@ -162,6 +164,7 @@ async def _shutdown() -> None:
 _TOKEN_ESTIMATE = 4
 
 
+
 async def _index_file(
     file_path: Path,
     metadata_overrides: dict[str, str | int | float | bool] | None = None,
@@ -185,9 +188,7 @@ async def _index_file_impl(
     """Inner implementation of file indexing (called with lock held)."""
     raw = file_path.read_bytes()
     schema_version = (
-        _config.extraction.schema_version
-        if _config is not None and _config.extraction.enabled
-        else 0
+        _config.knowledge_extraction.schema_version if _config is not None else 0
     )
     content_hash = file_hash(raw, schema_version=schema_version)
     prefix = content_hash[:16]
@@ -219,8 +220,8 @@ async def _index_file_impl(
             if isinstance(chunk_hash, str) and isinstance(indexed_at, str):
                 existing_timestamps[chunk_hash] = indexed_at
 
-    max_chunk_chars = chunk_tokens * _TOKEN_ESTIMATE if chunk_tokens else None
-    chunks: list[Chunk] = chunk_file(file_path, max_chunk_chars=max_chunk_chars)
+    target_chars = chunk_tokens * _TOKEN_ESTIMATE if chunk_tokens else None
+    chunks: list[Chunk] = chunk_file(file_path, target_chars=target_chars)
     if not chunks:
         if existing_ids:
             collection.delete(ids=existing_ids)
@@ -252,16 +253,13 @@ async def _index_file_impl(
 
     extraction_entities = 0
     extraction_topics = 0
-    if (
-        _config is not None
-        and _config.extraction.enabled
-        and _property_index is not None
-    ):
+    if _config is not None and _property_index is not None:
         ext_result = await run_extraction(
+            file=source,
             ids=ids,
             chunks=chunks,
             metadatas=metadatas,
-            config=_config.extraction,
+            config=_config.knowledge_extraction,
             property_index=_property_index,
             event_bus=_event_bus,
         )
@@ -335,7 +333,7 @@ async def search(request: SearchRequest) -> SearchResponse:
         )
 
     collection = _get_collection()
-    query_embedding = await embed_query(request.query)
+    query_embedding = await embed_query(request.query, scope=request.scope)
 
     # ChromaDB >=1.0 dropped $regex on metadata and $contains is array-only,
     # so source_prefixes filtering is done in Python after the query.
@@ -364,11 +362,7 @@ async def search(request: SearchRequest) -> SearchResponse:
     )
 
     property_hits = 0
-    if (
-        _property_index is not None
-        and _config is not None
-        and _config.extraction.enabled
-    ):
+    if _property_index is not None and _config is not None:
         result_ids, chunks, metadatas, distances, property_hits = apply_property_boost(
             ids=result_ids,
             chunks=chunks,
@@ -376,7 +370,7 @@ async def search(request: SearchRequest) -> SearchResponse:
             distances=distances,
             query=request.query,
             property_index=_property_index,
-            boost_factor=_config.extraction.property_boost_factor,
+            boost_factor=_config.knowledge_extraction.property_boost_factor,
         )
 
     chunks, metadatas, distances = apply_max_distance_filter(

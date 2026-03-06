@@ -39,6 +39,7 @@ async def call_model(
     call_label: str = "",
     metadata: dict[str, Any] | None = None,
     model_id_is_resolved: bool = False,
+    model_profile: str | None = None,
     publish_event: Callable[[PipelineContext, Any], None] | None = None,
 ) -> ModelCallResult:
     """
@@ -69,6 +70,11 @@ async def call_model(
             passes model_config.model directly to avoid a second round-trip).
             Pipeline-as-service IDs must be pre-resolved by the caller or
             resolved via _resolve_model_alias first; they are not re-entered here.
+        model_profile: Profile name from the ModelRef definition (models.yaml).
+            Sits between step-level and pipeline-level in the resolution hierarchy:
+            step.profile > model_profile > pipeline.options.profile.
+            When set and step.disable_profile is not explicitly True, also
+            overrides the default disable_profile=True so the profile is applied.
         publish_event: Optional callback ``(context, event) → None`` for
             publishing bus-level events. Pass ``handler._publish_bus_event``.
 
@@ -150,25 +156,34 @@ async def call_model(
     }
 
     # Determine HTTP timeout from step config
+    # Extra 30s buffer for network latency and server processing above step timeout
+    _http_timeout_buffer = 30
     http_timeout = None
     if step.handler_timeout_seconds:
-        http_timeout = step.handler_timeout_seconds + 30
+        http_timeout = step.handler_timeout_seconds + _http_timeout_buffer
     elif step.timeout_seconds:
-        http_timeout = step.timeout_seconds + 30
+        http_timeout = step.timeout_seconds + _http_timeout_buffer
 
     # Resolve skip_token_counting: step overrides pipeline options
     skip_tc = step.skip_token_counting
     if skip_tc is None:
         skip_tc = context.pipeline.options.skip_token_counting
 
-    # Resolve profile control: step overrides pipeline options.
+    # Resolve profile control.
+    # Resolution order: step → model (ModelRef.profile) → pipeline options.
     # disable_profile defaults True in PipelineOptions — pipelines own their params.
+    # Exception: when model_profile is set and the step doesn't explicitly
+    # disable profiles, override the default so the model-level profile is applied.
     effective_disable_profile = step.disable_profile
     if effective_disable_profile is None:
         effective_disable_profile = context.pipeline.options.disable_profile
     effective_profile = step.profile
     if effective_profile is None:
+        effective_profile = model_profile
+    if effective_profile is None:
         effective_profile = context.pipeline.options.profile
+    if model_profile and step.disable_profile is not True:
+        effective_disable_profile = False
 
     recorder = context.recorder
     call_start = _time.monotonic()

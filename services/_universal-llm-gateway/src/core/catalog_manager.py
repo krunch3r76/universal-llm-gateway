@@ -24,9 +24,17 @@ from typing import Any, Literal
 from universal_logging import get_logger
 
 from .catalog import CatalogLoader, get_catalog_loader
+from .catalog.constants import CATALOG_SCHEMA_VERSION, CATALOG_STATIC_SCHEMA_VERSION
 from .catalog.schemas import SchemaRegistry
 from .catalog.split import determine_model_path, write_model_file
 from .file_locker import FileLock
+
+# Loader fields retained in static entries — routing discriminants, not operational params.
+# ∀ k ∈ _LOADER_STATIC_KEYS: present in static entry so gateway can dispatch correctly
+# without loading the full local entry (e.g., embedding detection for measurement jobs).
+_LOADER_STATIC_KEYS = frozenset(
+    {"embedding", "embedding_task_default", "clip_model_path", "vision_architecture"}
+)
 
 logger = get_logger(__name__)
 
@@ -111,8 +119,12 @@ class CatalogManager:
         """
         Produce static entry from full entry.
 
-        Strips loader, devices, and activated_*_contexts from metadata.
-        Preserves catalog_schema: 3 as first key.
+        Strips devices, operational loader keys, and activated_*_contexts from metadata.
+        Preserves routing-only loader fields (embedding, embedding_task_default, etc.)
+        so the gateway can dispatch correctly without loading the full local entry.
+
+        ∀ static_entry: catalog_schema = CATALOG_STATIC_SCHEMA_VERSION (4)
+        ∀ static_entry: ¬devices ∧ ¬activated_*_contexts ∧ loader ⊆ _LOADER_STATIC_KEYS
         """
         metadata = {
             k: v
@@ -120,18 +132,31 @@ class CatalogManager:
             if k not in _METADATA_STRIP_KEYS
         }
 
-        static: dict[str, Any] = {"catalog_schema": 3}
+        static: dict[str, Any] = {"catalog_schema": CATALOG_STATIC_SCHEMA_VERSION}
         static["schema"] = entry["schema"]
         static["metadata"] = metadata
+
+        loader_static = {
+            k: v
+            for k, v in entry.get("loader", {}).items()
+            if k in _LOADER_STATIC_KEYS
+        }
+        if loader_static:
+            static["loader"] = loader_static
+
         if "download" in entry:
             static["download"] = entry["download"]
         return static
 
     def _ensure_local_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
-        """Ensure local entry has catalog_schema: 3 as first key."""
-        if entry.get("catalog_schema") == 3:
+        """
+        Ensure local entry has catalog_schema: CATALOG_SCHEMA_VERSION (3) as first key.
+
+        ∀ local_entry: catalog_schema = 3 ∧ devices present (enforcement is caller's responsibility)
+        """
+        if entry.get("catalog_schema") == CATALOG_SCHEMA_VERSION:
             return entry
-        result: dict[str, Any] = {"catalog_schema": 3}
+        result: dict[str, Any] = {"catalog_schema": CATALOG_SCHEMA_VERSION}
         for k, v in entry.items():
             if k != "catalog_schema":
                 result[k] = v
@@ -270,6 +295,44 @@ class CatalogManager:
             operation=operation, model_id=model_id, file_path=local_path
         )
 
+    def upsert_local_only(
+        self,
+        model_id: str,
+        entry: dict[str, Any],
+    ) -> CatalogOperationResult:
+        """
+        Write full entry to local catalog only — no static write.
+
+        Used by gateway-side measurement to persist device profiles without
+        touching the static catalog (which is version-controlled on the host).
+
+        ∀ caller: entry must include devices section before calling.
+
+        Args:
+            model_id: Model identifier
+            entry: Full model entry dict (must include devices)
+
+        Returns:
+            CatalogOperationResult with local file_path
+        """
+        self._validate_entry(model_id, entry)
+
+        local_entry = self._ensure_local_entry(entry)
+        local_path = self._get_model_file_path(
+            model_id, entry, base_dir=self.local_catalog_dir
+        )
+
+        existing = local_path.exists()
+        self._write_model_file_atomic(local_path, local_entry)
+        self._loader.reload()
+
+        operation: Literal["created", "updated"] = "updated" if existing else "created"
+        logger.info(f"{operation.title()} local-only catalog entry for '{model_id}': {local_path}")
+
+        return CatalogOperationResult(
+            operation=operation, model_id=model_id, file_path=local_path
+        )
+
     def delete_model(self, model_id: str) -> CatalogOperationResult:
         """
         Delete model files from both local and static catalogs.
@@ -300,23 +363,29 @@ class CatalogManager:
                 f"Model '{model_id}' not found in catalog"
             )
 
-        deleted_path = local_file or static_file
-
+        deleted_paths: list[Path] = []
         if local_file and local_file.exists():
             local_file.unlink()
             logger.info(f"Deleted local catalog entry: {local_file}")
+            deleted_paths.append(local_file)
 
         if static_file and static_file.exists():
             static_file.unlink()
             logger.info(f"Deleted static catalog entry: {static_file}")
+            deleted_paths.append(static_file)
+
+        if not deleted_paths:
+            raise CatalogValidationError(
+                f"Model '{model_id}' not found in catalog"
+            )
 
         self._loader.reload()
 
         return CatalogOperationResult(
             operation="deleted",
             model_id=model_id,
-            file_path=deleted_path,
-            message=f"Deleted model '{model_id}' from catalog",
+            file_path=deleted_paths[0] if len(deleted_paths) == 1 else None,
+            message=f"Deleted model '{model_id}' from catalog ({len(deleted_paths)} file(s))",
         )
 
 

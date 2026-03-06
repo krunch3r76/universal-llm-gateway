@@ -65,6 +65,7 @@ class GenericGenerateHandler(BaseHandler):
         if executor_override:
             model_id = executor_override
             model_system_prompt = None
+            model_profile = None
         else:
             model_config = registry.get_model_config(
                 step.model_ref,
@@ -73,6 +74,7 @@ class GenericGenerateHandler(BaseHandler):
             )
             model_id = model_config.model
             model_system_prompt = model_config.system_prompt
+            model_profile = model_config.profile
 
         try:
             return await self._invoke_model(
@@ -83,6 +85,7 @@ class GenericGenerateHandler(BaseHandler):
                 model_system_prompt,
                 user_prompt,
                 source_provenance,
+                model_profile=model_profile,
             )
         except ProxyClientError as primary_err:
             if executor_override or not step.model_requirements:
@@ -127,6 +130,8 @@ class GenericGenerateHandler(BaseHandler):
         model_system_prompt: str | None,
         user_prompt: str,
         source_provenance: dict[str, Any] | None,
+        *,
+        model_profile: str | None = None,
     ) -> StepOutput:
         """Invoke a single model and build the StepOutput."""
         start_time = time.time()
@@ -157,6 +162,7 @@ class GenericGenerateHandler(BaseHandler):
             max_tokens=resolved["max_tokens"],
             json_schema=resolved["json_schema"],
             model_id_is_resolved=True,
+            model_profile=model_profile,
         )
 
         latency_ms = (time.time() - start_time) * 1000
@@ -329,7 +335,7 @@ class GenericGenerateHandler(BaseHandler):
                 except Exception as e:
                     logger.error(
                         f"Step '{step.id}': Failed to resolve handler_input "
-                        f"'{field_name}': {e}",
+                        f"'{field_name}': {e}. Input absent from prompt context.",
                         exc_info=True,
                     )
                     # Continue with other inputs rather than failing

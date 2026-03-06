@@ -58,6 +58,46 @@ class LlamaCppSchema(BaseEngineSchema):
             }
         return {}
 
+    def _validate_parallel_slots(
+        self,
+        model_id: str,
+        device_name: str,
+        profile_key: str,
+        profile: dict[str, Any],
+        issues: list[ValidationIssue],
+    ) -> None:
+        """Validate parallel_slots type and range for a profile."""
+        parallel_slots = profile.get("parallel_slots")
+        if parallel_slots is None:
+            return
+        if not isinstance(parallel_slots, int):
+            issues.append(
+                ValidationIssue(
+                    model_id=model_id,
+                    severity="error",
+                    message=(
+                        f"Profile '{profile_key}' has invalid parallel_slots type: "
+                        f"{type(parallel_slots).__name__}"
+                    ),
+                    field=f"devices.{device_name}.profiles.{profile_key}.parallel_slots",
+                    fix="Set parallel_slots to a positive integer",
+                )
+            )
+            return
+        if parallel_slots <= 0:
+            issues.append(
+                ValidationIssue(
+                    model_id=model_id,
+                    severity="error",
+                    message=(
+                        f"Profile '{profile_key}' has invalid parallel_slots value: "
+                        f"{parallel_slots}"
+                    ),
+                    field=f"devices.{device_name}.profiles.{profile_key}.parallel_slots",
+                    fix="Set parallel_slots to a positive integer (≥ 1)",
+                )
+            )
+
     def validate(
         self,
         model_id: str,
@@ -120,6 +160,12 @@ class LlamaCppSchema(BaseEngineSchema):
                             )
                         )
 
+            # Validate parallel_slots for all device profiles
+            for profile_key, profile in device_config.get("profiles", {}).items():
+                self._validate_parallel_slots(
+                    model_id, device_name, profile_key, profile, issues
+                )
+
         # Vision model validation (from capabilities.modalities)
         capabilities = metadata.get("capabilities", {})
         modalities = capabilities.get("modalities", {})
@@ -177,18 +223,29 @@ class LlamaCppSchema(BaseEngineSchema):
 
         profiles: dict[str, dict[str, Any]] = {}
 
+        is_embedding = base_loader.get("embedding", False)
+
         def _build_device_profiles(
             device_config: dict[str, Any],
             default_n_gpu_layers: int,
         ) -> None:
             for ctx, prof in device_config.get("profiles", {}).items():
                 profile_loader = prof.get("loader", {})
+                loader_entry: dict[str, Any] = {
+                    "n_ctx": int(ctx),
+                    "n_gpu_layers": prof.get("n_gpu_layers", default_n_gpu_layers),
+                    **profile_loader,
+                }
+                # Embedding models: n_batch must equal n_ctx (hard llama.cpp
+                # constraint — each input is processed up to n_ctx tokens).
+                # Set per-profile so it overrides any base_loader value when
+                # merged in the registry. Profile-explicit loader.n_batch wins.
+                if is_embedding and "n_batch" not in profile_loader:
+                    loader_entry["n_batch"] = loader_entry["n_ctx"]
+                if "parallel_slots" in prof:
+                    loader_entry["parallel_slots"] = prof["parallel_slots"]
                 profiles[str(ctx)] = {
-                    "loader": {
-                        "n_ctx": int(ctx),
-                        "n_gpu_layers": prof.get("n_gpu_layers", default_n_gpu_layers),
-                        **profile_loader,
-                    },
+                    "loader": loader_entry,
                     "resources": {
                         "vram_mb": prof.get("vram_mb", 0),
                         "ram_mb": prof.get("ram_mb", 0),
@@ -204,15 +261,19 @@ class LlamaCppSchema(BaseEngineSchema):
         cpu_device = devices.get("cpu", {})
         cpu_loader_defaults = self.get_device_loader_defaults("cpu")
         for ctx, prof in cpu_device.get("profiles", {}).items():
-            # Merge profile-specific loader config
             profile_loader = prof.get("loader", {})
+            cpu_loader_entry: dict[str, Any] = {
+                "n_ctx": int(ctx),
+                "n_gpu_layers": 0,
+                **cpu_loader_defaults,
+                **profile_loader,
+            }
+            if is_embedding and "n_batch" not in profile_loader:
+                cpu_loader_entry["n_batch"] = cpu_loader_entry["n_ctx"]
+            if "parallel_slots" in prof:
+                cpu_loader_entry["parallel_slots"] = prof["parallel_slots"]
             cpu_profiles[str(ctx)] = {
-                "loader": {
-                    "n_ctx": int(ctx),
-                    "n_gpu_layers": 0,
-                    **cpu_loader_defaults,
-                    **profile_loader,  # Profile overrides take precedence
-                },
+                "loader": cpu_loader_entry,
                 "resources": {
                     "ram_mb": prof.get("ram_mb", 0),
                     "vram_mb": 0,

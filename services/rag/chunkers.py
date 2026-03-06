@@ -13,13 +13,17 @@ from services.rag.chunker_ast_metadata import (
 
 _TOKEN_ESTIMATE = 4  # chars per token approximation
 
-_CHUNK_TOKENS_LARGE = 512
+_CHUNK_TOKENS_TARGET = 1024
+_CHUNK_TOKENS_PAD = 256
 _CHUNK_TOKENS_CODE = 256
 _CHUNK_TOKENS_EBOOK = 1024
+_CHUNK_TOKENS_EBOOK_PAD = 256
 
-_CHUNK_CHARS_LARGE = _CHUNK_TOKENS_LARGE * _TOKEN_ESTIMATE
+_CHUNK_CHARS_TARGET = _CHUNK_TOKENS_TARGET * _TOKEN_ESTIMATE   # 4096
+_CHUNK_CHARS_PAD = _CHUNK_TOKENS_PAD * _TOKEN_ESTIMATE         # 1024
 _CHUNK_CHARS_CODE = _CHUNK_TOKENS_CODE * _TOKEN_ESTIMATE
-_CHUNK_CHARS_EBOOK = _CHUNK_TOKENS_EBOOK * _TOKEN_ESTIMATE
+_CHUNK_CHARS_EBOOK = _CHUNK_TOKENS_EBOOK * _TOKEN_ESTIMATE     # 4096
+_CHUNK_CHARS_EBOOK_PAD = _CHUNK_TOKENS_EBOOK_PAD * _TOKEN_ESTIMATE  # 1024
 
 _CODE_EXTENSIONS = {".py", ".js", ".ts", ".go", ".rs", ".sh", ".yaml", ".toml"}
 
@@ -93,43 +97,88 @@ def _split_oversized(para: str, max_chars: int) -> list[str]:
     return _word_split(para, max_chars)
 
 
-def _split_paragraphs(text: str, max_chars: int) -> list[str]:
-    """Split text into chunks at paragraph boundaries, capped at max_chars.
+def _overlap_prefix_len(carry: list[str]) -> int:
+    """Char count of carry paragraphs joined with '\\n\\n' (no trailing separator)."""
+    if not carry:
+        return 0
+    return sum(len(p) for p in carry) + max(0, (len(carry) - 1) * 2)
 
-    ∀ chunk in result: len(chunk) ≤ max_chars (enforced via _split_oversized).
+
+def _paras_len(paras: list[str]) -> int:
+    return sum(len(p) for p in paras) + max(0, (len(paras) - 1) * 2)
+
+
+def _split_paragraphs(
+    text: str,
+    target_chars: int,
+    pad_chars: int,
+    overlap_paragraphs: int = 2,
+) -> list[tuple[str, int]]:
+    """Split text into chunks with soft target, pad zone, and paragraph overlap.
+
+    Returns (chunk_text, overlap_prefix_len) pairs.
+    - Below target: keep accumulating paragraphs
+    - In pad zone (target..target+pad): emit at next paragraph boundary
+    - Above target+pad: force split via _split_oversized (overlap_prefix_len=0)
+
+    ∀ chunk after first: starts with last `overlap_paragraphs` paragraphs from
+    the previous chunk. overlap_prefix_len = char count of that carried-forward
+    text (0 for first chunk and oversized fallback chunks).
     """
+    hard_max = target_chars + pad_chars
     paragraphs = re.split(r"\n{2,}", text.strip())
-    chunks: list[str] = []
+    results: list[tuple[str, int]] = []
     current: list[str] = []
     current_len = 0
+    carry: list[str] = []  # overlap paragraphs carried from the previous chunk
 
     for para in paragraphs:
         para = para.strip()
         if not para:
             continue
 
-        if len(para) > max_chars:
+        if len(para) > hard_max:
             if current:
-                chunks.append("\n\n".join(current))
-                current = []
-                current_len = 0
-            chunks.extend(_split_oversized(para, max_chars))
-            continue
-
-        # Account for the "\n\n" separator between paragraphs in the joined result.
-        new_len = current_len + (2 if current else 0) + len(para)
-        if new_len > max_chars and current:
-            chunks.append("\n\n".join(current))
+                results.append(("\n\n".join(current), _overlap_prefix_len(carry)))
+            for piece in _split_oversized(para, hard_max):
+                results.append((piece, 0))
             current = []
             current_len = 0
-            new_len = len(para)
-        current.append(para)
-        current_len = new_len
+            carry = []
+            continue
+
+        new_len = current_len + (2 if current else 0) + len(para)
+
+        if new_len > target_chars and current:
+            if new_len <= hard_max:
+                # In pad zone — include this paragraph, then emit.
+                current.append(para)
+                results.append(("\n\n".join(current), _overlap_prefix_len(carry)))
+                carry = (
+                    current[-overlap_paragraphs:]
+                    if len(current) > overlap_paragraphs
+                    else list(current)
+                )
+                current = list(carry)
+                current_len = _paras_len(current)
+            else:
+                # Past pad zone — emit without this paragraph, then start new window.
+                results.append(("\n\n".join(current), _overlap_prefix_len(carry)))
+                carry = (
+                    current[-overlap_paragraphs:]
+                    if len(current) > overlap_paragraphs
+                    else list(current)
+                )
+                current = list(carry) + [para]
+                current_len = _paras_len(current)
+        else:
+            current.append(para)
+            current_len = new_len
 
     if current:
-        chunks.append("\n\n".join(current))
+        results.append(("\n\n".join(current), _overlap_prefix_len(carry)))
 
-    return chunks
+    return results
 
 
 def _annotate_chunk_indices(chunks: list[Chunk]) -> list[Chunk]:
@@ -142,9 +191,15 @@ def chunk_markdown(
     path: str,
     content: str,
     *,
-    max_chunk_chars: int = _CHUNK_CHARS_LARGE,
+    target_chars: int = _CHUNK_CHARS_TARGET,
+    pad_chars: int = _CHUNK_CHARS_PAD,
+    overlap_paragraphs: int = 2,
 ) -> list[Chunk]:
-    """Split markdown by headers, then paragraph-split within each section."""
+    """Split markdown by headers, then paragraph-split within each section.
+
+    Heading is prepended to every chunk in its section for extraction context;
+    the heading prefix does not count toward the target/pad budget.
+    """
     chunks: list[Chunk] = []
     source = str(path)
 
@@ -152,14 +207,31 @@ def chunk_markdown(
     headers = _HEADER_RE.findall(content)
 
     if sections[0].strip():
-        for text in _split_paragraphs(sections[0], max_chunk_chars):
-            chunks.append(Chunk(text=text, metadata={"source": source, "heading": ""}))
+        for text, overlap_len in _split_paragraphs(
+            sections[0], target_chars, pad_chars, overlap_paragraphs
+        ):
+            chunks.append(
+                Chunk(
+                    text=text,
+                    metadata={"source": source, "heading": "", "overlap_prefix_len": overlap_len},
+                )
+            )
 
     for header, section_body in zip(headers, sections[1:], strict=False):
         heading = header.lstrip("#").strip()
-        for text in _split_paragraphs(section_body, max_chunk_chars):
+        for text, overlap_len in _split_paragraphs(
+            section_body, target_chars, pad_chars, overlap_paragraphs
+        ):
+            full_text = f"## {heading}\n\n{text}" if heading else text
             chunks.append(
-                Chunk(text=text, metadata={"source": source, "heading": heading})
+                Chunk(
+                    text=full_text,
+                    metadata={
+                        "source": source,
+                        "heading": heading,
+                        "overlap_prefix_len": overlap_len,
+                    },
+                )
             )
 
     return _annotate_chunk_indices(chunks)
@@ -168,7 +240,8 @@ def chunk_markdown(
 def chunk_pdf(
     path: str,
     *,
-    max_chunk_chars: int = _CHUNK_CHARS_LARGE,
+    target_chars: int = _CHUNK_CHARS_TARGET,
+    pad_chars: int = _CHUNK_CHARS_PAD,
 ) -> list[Chunk]:
     """Convert PDF to markdown via pymupdf4llm, then chunk as markdown."""
     try:
@@ -183,13 +256,14 @@ def chunk_pdf(
     if isinstance(markdown_text, list):
         markdown_text = "\n\n".join(str(item) for item in markdown_text)
 
-    return chunk_markdown(path, markdown_text, max_chunk_chars=max_chunk_chars)
+    return chunk_markdown(path, markdown_text, target_chars=target_chars, pad_chars=pad_chars)
 
 
 def chunk_epub(
     path: str,
     *,
-    max_chunk_chars: int = _CHUNK_CHARS_EBOOK,
+    target_chars: int = _CHUNK_CHARS_EBOOK,
+    pad_chars: int = _CHUNK_CHARS_EBOOK_PAD,
 ) -> list[Chunk]:
     """Extract EPUB chapters via ebooklib, convert to text, chunk as markdown."""
     try:
@@ -222,7 +296,7 @@ def chunk_epub(
         return []
 
     combined = "\n\n".join(sections)
-    return chunk_markdown(path, combined, max_chunk_chars=max_chunk_chars)
+    return chunk_markdown(path, combined, target_chars=target_chars, pad_chars=pad_chars)
 
 
 # ---------------------------------------------------------------------------
@@ -460,24 +534,29 @@ def chunk_code(
 def chunk_file(
     path: Path,
     *,
-    max_chunk_chars: int | None = None,
+    target_chars: int | None = None,
+    pad_chars: int | None = None,
 ) -> list[Chunk]:
     """Dispatch to the correct chunker based on file extension."""
     suffix = path.suffix.lower()
+    kwargs: dict[str, int] = {
+        k: v
+        for k, v in [("target_chars", target_chars), ("pad_chars", pad_chars)]
+        if v is not None
+    }
 
     if suffix in {".md", ".mdc", ".txt"}:
-        kwargs = {"max_chunk_chars": max_chunk_chars} if max_chunk_chars else {}
         return chunk_markdown(str(path), path.read_text(errors="replace"), **kwargs)
 
     if suffix == ".pdf":
-        kwargs = {"max_chunk_chars": max_chunk_chars} if max_chunk_chars else {}
         return chunk_pdf(str(path), **kwargs)
 
     if suffix == ".epub":
-        kwargs = {"max_chunk_chars": max_chunk_chars} if max_chunk_chars else {}
         return chunk_epub(str(path), **kwargs)
 
     if suffix in _CODE_EXTENSIONS:
+        # Code chunkers use a single max_chars value; translate target to that.
+        max_chunk_chars = target_chars
         return chunk_code(
             str(path), path.read_text(errors="replace"), max_chunk_chars=max_chunk_chars
         )

@@ -61,8 +61,16 @@ def infer_embedding_loader(
         return
 
     loader.setdefault("embedding", True)
-    training_ctx = metadata.get("training_context_length")
-    loader.setdefault("n_ctx", training_ctx or 2048)
+
+    # n_ctx and n_batch are per-context values — they do NOT belong in the
+    # base loader.  The schema's per-profile loader sets both:
+    #   n_ctx  = int(profile_key)
+    #   n_batch = n_ctx  (llama.cpp hard constraint for embedding mode)
+    # See LlamaCppSchema._build_device_profiles.
+    # Remove stale values left by earlier catalog versions.
+    loader.pop("n_ctx", None)
+    loader.pop("n_batch", None)
+
     loader.setdefault("embedding_task_default", "search_document")
     if "nomic" in arch:
         loader.setdefault("embedding_task_prefixes", dict(NOMIC_TASK_PREFIXES))

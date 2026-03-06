@@ -75,6 +75,7 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
 
     # Thinking model flag
     thinking = getattr(args, "thinking", False)
+    reasoning_parser = getattr(args, "reasoning_parser", None)
 
     # Validate vision model flags
     mmproj = getattr(args, "mmproj", None)
@@ -149,6 +150,11 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
                 reasoning = capabilities.setdefault("reasoning", {})
                 reasoning["supports_thinking"] = True
 
+        # Inject reasoning_parser into loader for all entries if specified
+        if reasoning_parser:
+            for entry in entries.values():
+                entry.setdefault("loader", {})["reasoning_parser"] = reasoning_parser
+
         # Inject vision metadata into all entries if provided
         if mmproj and vision_arch:
             for entry in entries.values():
@@ -185,6 +191,10 @@ def cmd_generate(args: argparse.Namespace, config: Config) -> int:
                 capabilities = metadata.setdefault("capabilities", {})
                 reasoning = capabilities.setdefault("reasoning", {})
                 reasoning["supports_thinking"] = True
+
+            # Inject reasoning_parser into loader if specified
+            if reasoning_parser:
+                entry.setdefault("loader", {})["reasoning_parser"] = reasoning_parser
 
             # Inject vision metadata if provided
             if mmproj and vision_arch:
@@ -426,8 +436,8 @@ def _info_from_api(detail: ModelDetail, config: Config, full: bool = False) -> i
     print("=" * 60)
 
     print("\n[Catalog Entry]")
-    print(yaml.dump({"metadata": detail.metadata}, default_flow_style=False))
-    print(yaml.dump({"download": detail.download}, default_flow_style=False))
+    print(yaml.dump(detail.metadata, default_flow_style=False))
+    print(yaml.dump(detail.download, default_flow_style=False))
 
     if full:
         # Show complete devices with loader and profiles (V2)
@@ -477,8 +487,8 @@ def _info_from_files(
 
     if cat_model:
         print("\n[Catalog Entry]")
-        print(yaml.dump({"metadata": cat_model.metadata}, default_flow_style=False))
-        print(yaml.dump({"download": cat_model.download}, default_flow_style=False))
+        print(yaml.dump(cat_model.metadata, default_flow_style=False))
+        print(yaml.dump(cat_model.download, default_flow_style=False))
 
         if full:
             # Show complete devices with loader and profiles (V2)

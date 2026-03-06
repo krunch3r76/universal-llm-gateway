@@ -30,10 +30,13 @@ class ScopeDefinition:
 
 
 @dataclass(slots=True, kw_only=True)
-class ExtractionConfig:
-    """LLM-based knowledge extraction at index time."""
+class KnowledgeExtractionConfig:
+    """LLM-based knowledge extraction at index time.
 
-    enabled: bool = False
+    Extraction is integral to indexing — ∀ indexed file: extraction runs.
+    To skip extraction entirely, disable indexing (automatic_indexing_enabled: false).
+    """
+
     pipeline: str = "rag-extraction"
     schema_version: int = 1
     property_boost_factor: float = 0.5
@@ -46,7 +49,8 @@ DEFAULT_EMBEDDING_MODEL = "bge-m3-q8-0-8192-cpu"
 class RagConfig:
     watch_directories: list[WatchDirectory]
     scopes: dict[str, ScopeDefinition]
-    extraction: ExtractionConfig = _field(default_factory=ExtractionConfig)
+    automatic_indexing_enabled: bool = True
+    knowledge_extraction: KnowledgeExtractionConfig = _field(default_factory=KnowledgeExtractionConfig)
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
 
 
@@ -152,15 +156,13 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
     return scopes
 
 
-def _parse_extraction(raw: object) -> ExtractionConfig:
+def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
     if not isinstance(raw, dict):
-        return ExtractionConfig()
-    enabled = raw.get("enabled", False)
+        return KnowledgeExtractionConfig()
     pipeline = raw.get("pipeline", "rag-extraction")
     schema_version = raw.get("schema_version", 1)
     boost = raw.get("property_boost_factor", 0.5)
-    return ExtractionConfig(
-        enabled=bool(enabled),
+    return KnowledgeExtractionConfig(
         pipeline=str(pipeline) if isinstance(pipeline, str) else "rag-extraction",
         schema_version=int(schema_version) if isinstance(schema_version, int) else 1,
         property_boost_factor=float(boost) if isinstance(boost, int | float) else 0.5,
@@ -189,16 +191,21 @@ def load_config() -> RagConfig:
         parsed_root.get("watch_directories", [])
     )
     scopes = _parse_scopes(parsed_root.get("scopes", {}))
-    extraction = _parse_extraction(parsed_root.get("extraction", {}))
+    knowledge_extraction = _parse_knowledge_extraction(
+        parsed_root.get("knowledge_extraction", {})
+    )
     raw_model = parsed_root.get("embedding_model", DEFAULT_EMBEDDING_MODEL)
     embedding_model = (
         raw_model.strip()
         if isinstance(raw_model, str) and raw_model.strip()
         else DEFAULT_EMBEDDING_MODEL
     )
+    raw_indexing = parsed_root.get("automatic_indexing_enabled", True)
+    automatic_indexing_enabled = raw_indexing if isinstance(raw_indexing, bool) else True
     return RagConfig(
         watch_directories=watch_directories,
         scopes=scopes,
-        extraction=extraction,
+        automatic_indexing_enabled=automatic_indexing_enabled,
+        knowledge_extraction=knowledge_extraction,
         embedding_model=embedding_model,
     )

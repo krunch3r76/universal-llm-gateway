@@ -25,8 +25,16 @@ _METADATA_STRIP_KEYS = frozenset({"activated_gpu_contexts", "activated_cpu_conte
 # loader fields preserved in static entries (routing discriminants, not operational)
 # clip_model_path and vision_architecture are capability discriminants — needed in
 # static entries so the container can load vision models without a local override.
+# reasoning_parser is a server-launch discriminant for vLLM: controls whether
+# <think> blocks are extracted into reasoning_content (e.g. deepseek_r1, granite).
 _LOADER_STATIC_KEYS = frozenset(
-    {"embedding", "embedding_task_default", "clip_model_path", "vision_architecture"}
+    {
+        "embedding",
+        "embedding_task_default",
+        "clip_model_path",
+        "vision_architecture",
+        "reasoning_parser",
+    }
 )
 
 
@@ -58,14 +66,14 @@ def strip_measurement_data(entry: dict[str, Any]) -> dict[str, Any]:
 
     Strips: devices, operational loader keys, activated_*_contexts from metadata.
     Preserves: loader routing fields (embedding, embedding_task_default).
-    Adds catalog_schema: 3 as first key.
+    Adds catalog_schema: 4 as first key (static catalog version).
     """
     metadata = {
         k: v
         for k, v in entry.get("metadata", {}).items()
         if k not in _METADATA_STRIP_KEYS
     }
-    static: dict[str, Any] = {"catalog_schema": 3}
+    static: dict[str, Any] = {"catalog_schema": 4}
     static["schema"] = entry["schema"]
     static["metadata"] = metadata
 
@@ -80,15 +88,11 @@ def strip_measurement_data(entry: dict[str, Any]) -> dict[str, Any]:
     return static
 
 
-def _ensure_catalog_schema(entry: dict[str, Any]) -> dict[str, Any]:
-    """Ensure catalog_schema: 3 is the first key in the entry."""
-    if list(entry.keys())[:1] == ["catalog_schema"] and entry["catalog_schema"] == 3:
+def _ensure_catalog_schema(entry: dict[str, Any], *, schema_version: int) -> dict[str, Any]:
+    """Ensure catalog_schema is the first key in the entry with the given version."""
+    if list(entry.keys())[:1] == ["catalog_schema"] and entry["catalog_schema"] == schema_version:
         return entry
-    result: dict[str, Any] = {"catalog_schema": 3}
-    for k, v in entry.items():
-        if k != "catalog_schema":
-            result[k] = v
-    return result
+    return {"catalog_schema": schema_version, **{k: v for k, v in entry.items() if k != "catalog_schema"}}
 
 
 def _remove_stale_model_files(root: Path, model_id: str, canonical: Path) -> list[Path]:
@@ -131,7 +135,7 @@ def write_local_catalog_entry(
     if "schema" not in entry:
         raise ValueError(f"Entry for '{model_id}' missing required 'schema' field")
 
-    local_entry = _ensure_catalog_schema(entry)
+    local_entry = _ensure_catalog_schema(entry, schema_version=3)
     domain_engine = determine_model_path(model_id, entry)
     local_dir = get_local_catalog_dir()
     file_path = local_dir / domain_engine / f"{model_id}.yaml"

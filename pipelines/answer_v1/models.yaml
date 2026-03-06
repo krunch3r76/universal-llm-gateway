@@ -3,3 +3,4 @@ models:
     model: phi-4-q4-k-m-16384
   answer:
     model: qwen3-32b-awq-32768
+    profile: general-chat

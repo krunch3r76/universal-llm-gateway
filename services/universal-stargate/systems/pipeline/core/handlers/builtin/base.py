@@ -349,6 +349,7 @@ class BaseHandler(AbstractStepHandler):
         call_label: str = "",
         metadata: dict[str, Any] | None = None,
         model_id_is_resolved: bool = False,
+        model_profile: str | None = None,
     ) -> ModelCallResult:
         """Invoke model and return complete result. See call_model.py for full docs."""
         return await call_model(
@@ -364,5 +365,6 @@ class BaseHandler(AbstractStepHandler):
             call_label=call_label,
             metadata=metadata,
             model_id_is_resolved=model_id_is_resolved,
+            model_profile=model_profile,
             publish_event=self._publish_bus_event,
         )

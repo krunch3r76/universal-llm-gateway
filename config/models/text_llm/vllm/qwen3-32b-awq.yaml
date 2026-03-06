@@ -16,10 +16,12 @@ metadata:
     interaction:
       chat_template: true
     reasoning:
-      supports_thinking: false
+      supports_thinking: true
     limits:
       max_context_length: 40960
     provenance: {}
+loader:
+  reasoning_parser: deepseek_r1
 download:
   huggingface:
     repo: Qwen/Qwen3-32B-AWQ

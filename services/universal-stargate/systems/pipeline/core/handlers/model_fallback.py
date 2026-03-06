@@ -27,10 +27,7 @@ def resolve_fallback_models(
     """Resolve model_requirements to a ranked fallback list, excluding primary."""
     from ..execution.requirements_resolver import resolve_model_requirements
 
-    model_ids = resolve_model_requirements(
-        step.model_requirements,
-        context._proxy,
-    )
+    model_ids = resolve_model_requirements(step.model_requirements)
     return [m for m in model_ids if m != exclude]
 
 

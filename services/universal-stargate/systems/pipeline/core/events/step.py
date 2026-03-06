@@ -126,6 +126,7 @@ def StepFailed(  # noqa: N802
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
     model_call_count: int = 0,
+    traceback: str | None = None,
 ) -> Event:
     """
     Emitted when step execution fails.
@@ -139,19 +140,23 @@ def StepFailed(  # noqa: N802
         prompt_tokens: Prompt tokens consumed before failure
         completion_tokens: Completion tokens consumed before failure
         model_call_count: Total model calls attempted before failure
+        traceback: Full Python traceback (omitted when None)
     """
+    payload: dict[str, Any] = {
+        "pipeline_id": pipeline_id,
+        "execution_id": execution_id,
+        "step_name": step_name,
+        "duration_seconds": duration_seconds,
+        "error": error,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "model_call_count": model_call_count,
+    }
+    if traceback is not None:
+        payload["traceback"] = traceback
     return Event(
         signal="pipeline.step.failed",
-        payload={
-            "pipeline_id": pipeline_id,
-            "execution_id": execution_id,
-            "step_name": step_name,
-            "duration_seconds": duration_seconds,
-            "error": error,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "model_call_count": model_call_count,
-        },
+        payload=payload,
     )
 
 

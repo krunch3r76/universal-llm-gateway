@@ -46,9 +46,14 @@ class PropertyIndex:
 
     async def start(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        self._conn.executescript(_SCHEMA_SQL)
-        await self._seq.start()
+        conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        try:
+            conn.executescript(_SCHEMA_SQL)
+            await self._seq.start()
+        except Exception:
+            conn.close()
+            raise
+        self._conn = conn
         logger.info("PropertyIndex started: %s", self._db_path)
 
     async def stop(self) -> None:
@@ -153,6 +158,24 @@ class PropertyIndex:
     def lookup_entity(self, name: str) -> list[str]:
         """Look up chunk IDs by entity name (prop.name@@{name})."""
         return self.lookup(f"prop.name@@{name}")
+
+    def lookup_relations_for(self, entity_name: str) -> list[str]:
+        """Look up chunk IDs containing relations where entity_name is subject."""
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT chunk_id FROM properties WHERE key LIKE ?",
+            (f"prop.rel@@{entity_name.lower()}>%",),
+        ).fetchall()
+        return [row[0] for row in rows]
+
+    def lookup_relations_to(self, entity_name: str) -> list[str]:
+        """Look up chunk IDs containing relations where entity_name is target."""
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT chunk_id FROM properties WHERE key LIKE ?",
+            (f"%>{entity_name.lower()}",),
+        ).fetchall()
+        return [row[0] for row in rows]
 
     def get_stats(self) -> dict[str, int]:
         """Return property index statistics."""

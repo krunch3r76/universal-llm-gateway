@@ -352,7 +352,7 @@ class MeasurementJob(Job):
                         "Update the catalog and restart the gateway."
                     )
             except Exception as e:
-                logger.debug(
+                logger.warning(
                     "Catalog access failed during context detection for '%s'",
                     model_id,
                     exc_info=True,
@@ -430,7 +430,7 @@ class MeasurementJob(Job):
                 "  Chat model: probing each context for minimum gpu_memory_utilization"
             )
             results: dict[str, dict[str, Any]] = {}
-            gpu_mem_util = 0.95  # fallback; overwritten by first (largest) context
+            gpu_mem_util: float | None = None
             for ctx in contexts_to_measure:
                 self.emit_log(f"  Context {ctx}:")
                 try:
@@ -452,6 +452,13 @@ class MeasurementJob(Job):
                 except RuntimeError as e:
                     self.emit_log(f"  ❌ {ctx}: {e}")
                     results[str(ctx)] = {"error": str(e)}
+            if gpu_mem_util is None:
+                logger.warning(
+                    "All GPU measurements failed for '%s'; "
+                    "falling back to gpu_memory_utilization=0.95",
+                    self.request.model_id,
+                )
+                gpu_mem_util = 0.95
 
         loader_updates: dict[str, Any] = {
             "gpu_memory_utilization": gpu_mem_util,
@@ -461,16 +468,9 @@ class MeasurementJob(Job):
         }
         if is_embedding:
             loader_updates["embedding"] = True
-            task_default = loader_config.get("embedding_task_default")
-            if task_default is None:
-                logger.warning(
-                    "Embedding model '%s' missing loader.embedding_task_default; "
-                    "falling back to 'search_document'. "
-                    "Add embedding_task_default to the catalog loader config.",
-                    self.request.model_id,
-                )
-                task_default = "search_document"
-            loader_updates["embedding_task_default"] = task_default
+            loader_updates["embedding_task_default"] = self._resolve_embedding_task_default(
+                loader_config
+            )
         return results, loader_updates
 
     async def _measure_gguf_embedding(
@@ -488,17 +488,15 @@ class MeasurementJob(Job):
         loader_config = (entry or {}).get("loader", {})
 
         training_ctx = self.request.training_context_length
-        if not training_ctx:
+        contexts = self.request.contexts or (
+            get_embedding_contexts(training_ctx) if training_ctx else None
+        )
+        if not contexts:
             raise RuntimeError(
                 f"Embedding model '{self.request.model_id}' has no "
                 "training_context_length; cannot determine contexts to probe."
             )
 
-        # ∀ embedding model: physical batch must equal context window so the
-        # single-pass forward pass never rejects inputs within the context limit.
-        n_batch = training_ctx
-
-        contexts = self.request.contexts or get_embedding_contexts(training_ctx)
         n_layers = 0 if self.request.mode == "cpu" else -1
         mode_label = "CPU" if self.request.mode == "cpu" else "GPU"
 
@@ -517,11 +515,12 @@ class MeasurementJob(Job):
         results: dict[str, dict[str, Any]] = {}
         for ctx in contexts:
             self.emit_log(f"  Probing context {ctx}...")
+            # n_batch = ctx: matches runtime (per-profile sets n_batch = n_ctx)
             profile = await run_layer_test(
                 model_path,
                 n_layers=n_layers,
                 context=ctx,
-                n_batch=n_batch,
+                n_batch=ctx,
                 gpu_index=self.request.gpu_index,
                 mmproj_path=None,
                 tracker=tracker,
@@ -541,6 +540,18 @@ class MeasurementJob(Job):
                 self.emit_log(f"  ❌ {ctx}: {error}")
                 results[str(ctx)] = {"error": error}
 
+        loader_updates: dict[str, Any] = {
+            "embedding": True,
+            "embedding_task_default": self._resolve_embedding_task_default(loader_config),
+        }
+        if pooling is not None:
+            loader_updates["pooling"] = pooling
+        if ubatch_size is not None:
+            loader_updates["ubatch_size"] = ubatch_size
+        return results, loader_updates
+
+    def _resolve_embedding_task_default(self, loader_config: dict[str, Any]) -> str:
+        """Return embedding_task_default from loader config, with fallback and warning."""
         task_default = loader_config.get("embedding_task_default")
         if task_default is None:
             logger.warning(
@@ -549,18 +560,8 @@ class MeasurementJob(Job):
                 "Add embedding_task_default to the catalog loader config.",
                 self.request.model_id,
             )
-            task_default = "search_document"
-
-        loader_updates: dict[str, Any] = {
-            "embedding": True,
-            "embedding_task_default": task_default,
-            "n_batch": n_batch,
-        }
-        if pooling is not None:
-            loader_updates["pooling"] = pooling
-        if ubatch_size is not None:
-            loader_updates["ubatch_size"] = ubatch_size
-        return results, loader_updates
+            return "search_document"
+        return task_default
 
     async def _resolve_model_path(self) -> Path | None:
         """Resolve model ID to file path (GGUF) or directory (vLLM)."""

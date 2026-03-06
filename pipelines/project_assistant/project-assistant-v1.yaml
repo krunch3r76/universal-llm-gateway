@@ -1,14 +1,15 @@
 schema_version: 6
 id: project-assistant
-version: "1.0"
+version: "1.1"
 type: answer_v1
 description: >
-  Project knowledge assistant. Delegates to rag-answer with project scope
-  hardcoded for architecture, vision, journal, and FAQ queries.
+  Project knowledge assistant with relevance gate. Delegates to rag-context with
+  project scope, checks context relevance via a lightweight classifier, then
+  generates a grounded answer or returns a "not grounded" response.
 output: answer
 
 options:
-  timeout_seconds: 120
+  timeout_seconds: 140
   default_scope: "project"
 
 steps:
@@ -20,11 +21,45 @@ steps:
     pipeline_options:
       scope: "project"
 
+  - name: relevance_check
+    type: generate
+    model_ref: answer
+    model_requirements:
+      task: rag_relevance
+      source: any
+    prompt_ref: answer_v1.relevance_check
+    handler_inputs:
+      rag_context: "get_context.raw"
+    generation_parameters:
+      temperature: 0.1
+      max_tokens: 1024
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            relevant:
+              type: boolean
+              description: "true if the retrieved context contains information that directly addresses the question"
+            confidence:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: "confidence in the relevance assessment"
+            reason:
+              type: string
+              description: "one-sentence explanation"
+          required: ["relevant", "confidence", "reason"]
+
   - name: answer
     type: generate
     model_ref: answer
-    prompt_ref: answer_v1.answer
+    model_requirements:
+      task: rag_answer
+      source: any       # local models qualify — enables laptop/CPU fallback
+    prompt_ref: answer_v1.answer_gated
     handler_inputs:
       rag_context: "get_context.raw"
+      relevance: "relevance_check.json"
     generation_parameters:
       temperature: 0.3

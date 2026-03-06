@@ -9,9 +9,37 @@ prompts:
       - name: the entity's canonical name
       - type: one or more type labels (single words)
       - facets: key properties as name/value pairs (optional)
+      - relations: directed relationships to other entities (optional)
+        Each relation has a predicate (verb phrase: "routes_to", "depends_on",
+        "contains", "exposes", "connects_via") and a target (another entity name).
+        Only extract relations explicitly stated in the text.
 
       For topics: descriptive keywords capturing the subject matter.
 
       Do not invent information not present in the text.
     template: |
+      {text}
+
+  extract_batch:
+    description: "Extract structured knowledge from a text chunk (batch variant with chunk_id)"
+    system_prompt: |
+      Extract structured knowledge from the following text.
+
+      For each concrete entity (service, component, port, config, protocol,
+      library, tool, concept, person, institution), provide:
+      - name: the entity's canonical name
+      - type: one or more type labels (single words)
+      - facets: key properties as name/value pairs (optional)
+      - relations: directed relationships to other entities (optional)
+        Each relation has a predicate (verb phrase: "routes_to", "depends_on",
+        "contains", "exposes", "connects_via") and a target (another entity name).
+        Only extract relations explicitly stated in the text.
+
+      For topics: descriptive keywords capturing the subject matter.
+
+      Include the chunk_id exactly as provided — do not modify it.
+      Do not invent information not present in the text.
+    template: |
+      chunk_id: {chunk_id}
+
       {text}

@@ -8,9 +8,9 @@ Step-level schemas live in `step_config.py`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .step_config import StepConfig
 
@@ -89,12 +89,15 @@ class PipelineSpec(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
+    _VALID_OUTPUT_FORMATS: ClassVar[frozenset[str]] = frozenset({"json_array"})
+
     id: str
     version: str
     type: str  # Open - "translation", "code_review", "multimodal", etc.
     options: PipelineOptions = Field(default_factory=PipelineOptions)
     steps: list[StepConfig]
     output: str
+    output_format: str | None = None
 
     # Fragment definitions within this pipeline
     fragments: dict[str, list[dict]] | None = None
@@ -109,6 +112,16 @@ class PipelineSpec(BaseModel):
     # Which variant directory this pipeline was loaded from (e.g. "v6.0")
     # Used for variant-scoped handler dispatch (isolation semantics)
     source_variant: str = ""
+
+    @field_validator("output_format")
+    @classmethod
+    def validate_output_format(cls, v: str | None) -> str | None:
+        if v is not None and v not in cls._VALID_OUTPUT_FORMATS:
+            raise ValueError(
+                f"Unknown output_format {v!r}. "
+                f"Valid values: {', '.join(sorted(cls._VALID_OUTPUT_FORMATS))}"
+            )
+        return v
 
     @property
     def domain(self) -> str:

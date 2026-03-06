@@ -104,19 +104,21 @@ class ChatCompletionRequest(BaseModel):
     )
     user: str | None = Field(None, description="User identifier")
 
-    # Chat template control — forwarded verbatim to llama-server
+    # Chat template control — forwarded verbatim to the inference engine (llama-server + vLLM).
+    # Both engines support chat_template_kwargs identically: forwarded to their Jinja2 template.
     # ∀ thinking-capable models (supports_thinking: true): enable_thinking defaults to TRUE
-    # at the llama-server level via the model's Jinja chat template. No injection needed.
+    # at the engine level via the model's Jinja chat template. No injection needed.
     # To suppress: {"enable_thinking": false}. To force: {"enable_thinking": true}.
     # Note: <think> block content is consumed internally and not returned in the response by default.
-    # To expose reasoning in message.reasoning_content, launch llama-server with
-    # --reasoning-format deepseek (set reasoning_format: deepseek in ServerConfig / catalog).
+    # To expose reasoning in message.reasoning_content:
+    #   llama-server: launch with --reasoning-format deepseek (reasoning_format: deepseek in catalog)
+    #   vLLM: launch with --reasoning-parser deepseek_r1 (reasoning_parser: deepseek_r1 in catalog)
     chat_template_kwargs: dict[str, Any] | None = Field(
         None,
         description=(
-            "Jinja template kwargs forwarded to llama-server. "
+            "Jinja template kwargs forwarded to the inference engine (llama-server, vLLM). "
             'Use {"enable_thinking": false} to disable thinking on supporting models. '
-            "Default: thinking ON for models with supports_thinking: true (llama-server default)."
+            "Default: thinking ON for models with supports_thinking: true (engine default)."
         ),
     )
 

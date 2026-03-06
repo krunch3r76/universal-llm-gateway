@@ -90,3 +90,57 @@ class ModelRequirements(BaseModel):
             "Source-token count above which large_payload_latency_bucket is activated."
         ),
     )
+
+
+class SelectionRequest(BaseModel):
+    """Unified model selection request — superset of ModelRequirements.
+
+    Covers both intelligence-profile-based and tag-based selection.
+    The cascade handler uses profile fields first, falls back to tag fields
+    for cloud proxy selection.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    task: str = Field(description="Task name matching profile tasks key")
+    min_score: Literal["strong", "good", "neutral"] | None = Field(
+        default=None,
+        description="Minimum acceptable score for the task",
+    )
+    count: int = Field(default=2, ge=1, le=20)
+    source: Literal["cloud", "local", "any"] = Field(default="cloud")
+    min_context: int | None = Field(default=None, ge=0)
+    require_tools: bool | None = None
+    provider_diversity: ProviderDiversity | None = None
+    cost_budget: CostBudget | None = None
+    max_latency_bucket: Literal["fast", "medium", "slow"] | None = None
+
+    # Tag-based fields (cloud proxy fallback tier)
+    tags: list[str] | None = Field(
+        default=None,
+        description="Capability tags for cloud proxy selection fallback",
+    )
+    exclude_tags: list[str] | None = Field(
+        default=None,
+        description="Tags to exclude in cloud proxy selection fallback",
+    )
+
+    # Soft exclusion — deprioritize these model IDs (e.g. timed-out models)
+    avoid_models: list[str] | None = Field(
+        default=None,
+        description="Model IDs to exclude from results (used for fallback retry)",
+    )
+
+    def to_model_requirements(self) -> ModelRequirements:
+        """Extract the ModelRequirements-compatible subset."""
+        return ModelRequirements(
+            task=self.task,
+            min_score=self.min_score,
+            count=self.count,
+            source=self.source,
+            min_context=self.min_context,
+            require_tools=self.require_tools,
+            provider_diversity=self.provider_diversity,
+            cost_budget=self.cost_budget,
+            max_latency_bucket=self.max_latency_bucket,
+        )
