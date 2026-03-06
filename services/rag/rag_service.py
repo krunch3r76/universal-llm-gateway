@@ -13,6 +13,7 @@ from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 from services.rag.admin_routes import register_admin_routes
 from services.rag.chunkers import Chunk, chunk_file
 from services.rag.config import RagConfig, load_config
+from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import embed_chunks, embed_query, wait_until_healthy
 from services.rag.events import (
     RagScopeRejected,
@@ -105,6 +106,7 @@ async def _startup() -> None:
     await _broadcaster.start_debug_server()
     await _event_bus.publish_async(RagStarted())
     _config = load_config()
+    configure_embeddings(_config.embedding_model)
     _property_index = PropertyIndex()
     await _property_index.start()
     if _config.watch_directories:

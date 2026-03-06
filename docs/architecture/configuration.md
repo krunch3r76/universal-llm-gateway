@@ -83,6 +83,9 @@ pipelines:
 
 `WatchDirectory` fields: `path`, `extensions`, `recursive` (default `true`), `chunk_tokens` (optional int — overrides default 512-token chunk size for that directory; use 1024 for ebooks), `exclude` (optional filename globs matched with `fnmatch`; excluded files are skipped by startup, reconcile, and hot-reload indexing).
 
+Top-level field: `embedding_model` (model ID used for all `/v1/embeddings`
+requests from RAG; defaults to `bge-m3-q8-0-8192-cpu`).
+
 `extraction` fields: `enabled` (toggle index-time structured extraction), `pipeline`
 (virtual pipeline/model ID; default `rag-extraction`), `schema_version`
 (integer to force re-extraction by hash invalidation), `property_boost_factor`
@@ -107,6 +110,7 @@ watch_directories:
     chunk_tokens: 1024
     exclude: [CORPUS_MANIFEST.md]
     recursive: true
+embedding_model: bge-m3-q8-0-8192-cpu
 extraction:
   enabled: true
   pipeline: rag-extraction

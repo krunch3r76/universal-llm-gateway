@@ -39,11 +39,15 @@ class ExtractionConfig:
     property_boost_factor: float = 0.5
 
 
+DEFAULT_EMBEDDING_MODEL = "bge-m3-q8-0-8192-cpu"
+
+
 @dataclass(slots=True, kw_only=True)
 class RagConfig:
     watch_directories: list[WatchDirectory]
     scopes: dict[str, ScopeDefinition]
     extraction: ExtractionConfig = _field(default_factory=ExtractionConfig)
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL
 
 
 def _normalize_extensions(raw_extensions: object) -> list[str]:
@@ -186,6 +190,15 @@ def load_config() -> RagConfig:
     )
     scopes = _parse_scopes(parsed_root.get("scopes", {}))
     extraction = _parse_extraction(parsed_root.get("extraction", {}))
+    raw_model = parsed_root.get("embedding_model", DEFAULT_EMBEDDING_MODEL)
+    embedding_model = (
+        raw_model.strip()
+        if isinstance(raw_model, str) and raw_model.strip()
+        else DEFAULT_EMBEDDING_MODEL
+    )
     return RagConfig(
-        watch_directories=watch_directories, scopes=scopes, extraction=extraction
+        watch_directories=watch_directories,
+        scopes=scopes,
+        extraction=extraction,
+        embedding_model=embedding_model,
     )

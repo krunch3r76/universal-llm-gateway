@@ -6,12 +6,24 @@ import logging
 import httpx
 
 GATEWAY_URL = "http://localhost:9999"
-EMBED_MODEL = "bge-m3-q8-0-8192-cpu"
 
 _client = httpx.AsyncClient(timeout=60.0)
 logger = logging.getLogger(__name__)
 
-_PROBE_PAYLOAD = {"model": EMBED_MODEL, "input": ["probe"]}
+_embed_model: str = "bge-m3-q8-0-8192-cpu"
+_probe_payload: dict[str, object] = {"model": _embed_model, "input": ["probe"]}
+
+
+def configure(model_id: str) -> None:
+    """Set the embedding model ID from config. Call once at startup before any embed calls."""
+    global _embed_model, _probe_payload
+    if not model_id or not model_id.strip():
+        raise ValueError(f"configure() received blank model_id: {model_id!r}")
+    _embed_model = model_id
+    _probe_payload = {"model": _embed_model, "input": ["probe"]}
+    logger.info("Embedding model configured: %s", _embed_model)
+
+
 _PROBE_INTERVAL_S = 2.0
 _PROBE_TIMEOUT_S = 120.0
 
@@ -32,7 +44,7 @@ async def wait_until_healthy(
         try:
             response = await _client.post(
                 f"{GATEWAY_URL}/v1/embeddings",
-                json=_PROBE_PAYLOAD,
+                json=_probe_payload,
                 timeout=5.0,
             )
             response.raise_for_status()
@@ -75,7 +87,7 @@ async def _post_embeddings(batch: list[str]) -> list[list[float]]:
         try:
             response = await _client.post(
                 f"{GATEWAY_URL}/v1/embeddings",
-                json={"model": EMBED_MODEL, "input": batch},
+                json={"model": _embed_model, "input": batch},
             )
             response.raise_for_status()
             return [item["embedding"] for item in response.json()["data"]]
@@ -131,7 +143,7 @@ async def embed_query(text: str) -> list[float]:
     """Embed a search query. Prepends 'search_query: ' before sending to gateway."""
     response = await _client.post(
         f"{GATEWAY_URL}/v1/embeddings",
-        json={"model": EMBED_MODEL, "input": [f"search_query: {text}"]},
+        json={"model": _embed_model, "input": [f"search_query: {text}"]},
     )
     response.raise_for_status()
     data = response.json()
