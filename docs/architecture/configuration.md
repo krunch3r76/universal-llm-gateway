@@ -83,6 +83,11 @@ pipelines:
 
 `WatchDirectory` fields: `path`, `extensions`, `recursive` (default `true`), `chunk_tokens` (optional int — overrides default 512-token chunk size for that directory; use 1024 for ebooks), `exclude` (optional filename globs matched with `fnmatch`; excluded files are skipped by startup, reconcile, and hot-reload indexing).
 
+`extraction` fields: `enabled` (toggle index-time structured extraction), `pipeline`
+(virtual pipeline/model ID; default `rag-extraction`), `schema_version`
+(integer to force re-extraction by hash invalidation), `property_boost_factor`
+(hybrid search distance multiplier for chunks matching extracted properties).
+
 ```yaml
 watch_directories:
   - path: /mnt/torus/projects/universal-llm-gateway/docs/architecture
@@ -102,6 +107,11 @@ watch_directories:
     chunk_tokens: 1024
     exclude: [CORPUS_MANIFEST.md]
     recursive: true
+extraction:
+  enabled: true
+  pipeline: rag-extraction
+  schema_version: 1
+  property_boost_factor: 0.5
 ```
 
 Ebook files (PDF, EPUB) belong in `docs/reference/`. They are indexed at 1024 tokens/chunk and retrieved via `--scope ebooks` in `scripts/consult`. EPUB extraction uses `ebooklib` + `BeautifulSoup`; PDF uses `pymupdf4llm`.

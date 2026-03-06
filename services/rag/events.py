@@ -116,3 +116,40 @@ def RagScopeRejected(  # noqa: N802
 @event_factory
 def RagScopesListed(*, count: int) -> Event:  # noqa: N802
     return Event(signal="rag.scopes.listed", payload={"count": count})
+
+
+@event_factory
+def RagExtractionCompleted(  # noqa: N802
+    *,
+    chunk_id: str,
+    entities: int,
+    topics: int,
+) -> Event:
+    return Event(
+        signal="rag.extraction.completed",
+        payload={"chunk_id": chunk_id, "entities": entities, "topics": topics},
+    )
+
+
+@event_factory
+def RagExtractionFailed(  # noqa: N802
+    *,
+    chunk_id: str,
+    error: str,
+) -> Event:
+    return Event(
+        signal="rag.extraction.failed",
+        payload={"chunk_id": chunk_id, "error": error},
+    )
+
+
+@event_factory
+def RagPropertyIndexRebuilt(  # noqa: N802
+    *,
+    collection: str,
+    count: int,
+) -> Event:
+    return Event(
+        signal="rag.property.index.rebuilt",
+        payload={"collection": collection, "count": count},
+    )

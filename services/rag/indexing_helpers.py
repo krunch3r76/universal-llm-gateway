@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 
 import chromadb
 
 from services.rag.models import IndexResult
 
+logger = logging.getLogger(__name__)
 
-def file_hash(data: bytes) -> str:
+
+def file_hash(data: bytes, schema_version: int = 0) -> str:
+    """Hash file content, incorporating extraction schema version when > 0.
+
+    A schema_version bump makes all existing hashes stale, forcing
+    re-extraction without manual reindex.
+    """
+    if schema_version > 0:
+        data = data + f"__extraction_v{schema_version}".encode()
     return hashlib.sha256(data).hexdigest()
 
 
@@ -27,8 +37,13 @@ def check_pdf_duplicate(
             limit=1,
         )
     except Exception:
+        logger.warning(
+            "Failed to query ChromaDB for PDF duplicate check", exc_info=True
+        )
         return None
-    for metadata in existing.get("metadatas") or []:
+    raw_metadatas = existing.get("metadatas")
+    metadatas = raw_metadatas if isinstance(raw_metadatas, list) else []
+    for metadata in metadatas:
         if isinstance(metadata, dict):
             existing_source = metadata.get("source")
             if isinstance(existing_source, str) and existing_source != source:

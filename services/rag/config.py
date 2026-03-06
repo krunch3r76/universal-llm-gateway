@@ -30,9 +30,20 @@ class ScopeDefinition:
 
 
 @dataclass(slots=True, kw_only=True)
+class ExtractionConfig:
+    """LLM-based knowledge extraction at index time."""
+
+    enabled: bool = False
+    pipeline: str = "rag-extraction"
+    schema_version: int = 1
+    property_boost_factor: float = 0.5
+
+
+@dataclass(slots=True, kw_only=True)
 class RagConfig:
     watch_directories: list[WatchDirectory]
     scopes: dict[str, ScopeDefinition]
+    extraction: ExtractionConfig = _field(default_factory=ExtractionConfig)
 
 
 def _normalize_extensions(raw_extensions: object) -> list[str]:
@@ -68,7 +79,8 @@ def _parse_watch_directories(raw_watchers: object) -> list[WatchDirectory]:
         chunk_tokens = raw_chunk_tokens if isinstance(raw_chunk_tokens, int) else None
         raw_exclude = item.get("exclude")
         exclude = [
-            e for e in (raw_exclude if isinstance(raw_exclude, list) else [])
+            e
+            for e in (raw_exclude if isinstance(raw_exclude, list) else [])
             if isinstance(e, str) and e.strip()
         ]
         watch_directories.append(
@@ -136,6 +148,21 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
     return scopes
 
 
+def _parse_extraction(raw: object) -> ExtractionConfig:
+    if not isinstance(raw, dict):
+        return ExtractionConfig()
+    enabled = raw.get("enabled", False)
+    pipeline = raw.get("pipeline", "rag-extraction")
+    schema_version = raw.get("schema_version", 1)
+    boost = raw.get("property_boost_factor", 0.5)
+    return ExtractionConfig(
+        enabled=bool(enabled),
+        pipeline=str(pipeline) if isinstance(pipeline, str) else "rag-extraction",
+        schema_version=int(schema_version) if isinstance(schema_version, int) else 1,
+        property_boost_factor=float(boost) if isinstance(boost, int | float) else 0.5,
+    )
+
+
 def load_config() -> RagConfig:
     """Load ~/.rag/config.yaml and return parsed watcher configuration."""
     if not _CONFIG_PATH.exists():
@@ -158,4 +185,7 @@ def load_config() -> RagConfig:
         parsed_root.get("watch_directories", [])
     )
     scopes = _parse_scopes(parsed_root.get("scopes", {}))
-    return RagConfig(watch_directories=watch_directories, scopes=scopes)
+    extraction = _parse_extraction(parsed_root.get("extraction", {}))
+    return RagConfig(
+        watch_directories=watch_directories, scopes=scopes, extraction=extraction
+    )

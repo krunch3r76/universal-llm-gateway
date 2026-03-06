@@ -72,6 +72,8 @@ Stargate detects the ID and routes to `PipelineExecutor` transparently.
 |---|---|---|
 | `rag-context` | Query rewrite → parallel RAG + RRF merge → context | `pipelines/rag/rag_context_v1/` |
 | `rag-answer` | Calls `rag-context` → grounded answer via phi4 | `pipelines/answer_v1/` |
+| `rag-extraction` | Structured entity/topic/facet extraction used during RAG indexing | `pipelines/rag_extraction/` |
+| `project-assistant` | Project-scoped assistant flow that pins RAG context scope to project docs | `pipelines/project_assistant/` |
 | `code-review` | Structured review → validation → deterministic merged findings | `pipelines/code_review/` |
 
 ### Pipeline Estimation Metadata

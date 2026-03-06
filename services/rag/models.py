@@ -20,6 +20,7 @@ class SearchResponse(BaseModel):
     chunks: list[str]
     metadata: list[dict[str, str | int | float | bool]]
     distances: list[float]
+    property_hits: int = 0
 
 
 class IndexRequest(BaseModel):
@@ -34,6 +35,8 @@ class IndexResult(BaseModel):
     file: str
     duplicate: bool = False
     duplicate_of: str | None = None
+    extraction_entities: int = 0
+    extraction_topics: int = 0
 
 
 class IndexDirectoryRequest(BaseModel):

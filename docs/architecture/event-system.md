@@ -66,6 +66,19 @@ Published to EventBus as `pipeline.*` signals. Persisted to
 `pipeline.step.failed` payload includes `prompt_tokens`, `completion_tokens`,
 `model_call_count` — populated even on timeout.
 
+## RAG Events
+
+Published to EventBus as `rag.*` signals. Persisted to
+`/tmp/rag-events/current.jsonl`.
+
+| Signal | Trigger |
+|---|---|
+| `rag.started` / `rag.shutdown` | RAG lifecycle |
+| `rag.watch.started` / `rag.watch.initial.complete` / `rag.watch.reindex.complete` | Watcher lifecycle and file reindex activity |
+| `rag.search.scope.rejected` / `rag.scopes.listed` | Scope validation and scope discovery API |
+| `rag.extraction.completed` / `rag.extraction.failed` | Index-time structured extraction outcome per chunk |
+| `rag.property.index.rebuilt` | Property inverted index rebuild from stored extraction metadata |
+
 ## Routing Events
 
 | Signal | Trigger |

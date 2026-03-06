@@ -1,0 +1,30 @@
+schema_version: 6
+id: project-assistant
+version: "1.0"
+type: answer_v1
+description: >
+  Project knowledge assistant. Delegates to rag-answer with project scope
+  hardcoded for architecture, vision, journal, and FAQ queries.
+output: answer
+
+options:
+  timeout_seconds: 120
+  default_scope: "project"
+
+steps:
+  - name: get_context
+    type: pipeline_call_v1
+    pipeline_id: "rag-context"
+    consumer_model_ref: answer
+    timeout_seconds: 70
+    pipeline_options:
+      scope: "project"
+
+  - name: answer
+    type: generate
+    model_ref: answer
+    prompt_ref: answer_v1.answer
+    handler_inputs:
+      rag_context: "get_context.raw"
+    generation_parameters:
+      temperature: 0.3

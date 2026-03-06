@@ -1,0 +1,45 @@
+schema_version: 6
+id: rag-extraction
+version: "1.0"
+type: extraction
+description: >
+  Extract structured knowledge (entities, topics, facets) from text chunks.
+  Called by the RAG service at index time via virtual model ID.
+output: extract
+
+options:
+  timeout_seconds: 60
+
+steps:
+  - name: extract
+    type: generate
+    model_ref: extraction
+    profile: "qwen3-5-thinking"
+    prompt_ref: rag_extraction.extract
+    generation_parameters:
+      max_tokens: 2048
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            entities:
+              type: array
+              items:
+                type: object
+                properties:
+                  name: { type: string }
+                  type: { type: array, items: { type: string } }
+                  facets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        value: { type: string }
+                      required: [name, value]
+                required: [name, type]
+            topics:
+              type: array
+              items: { type: string }
+          required: [entities, topics]

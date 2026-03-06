@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
 
 from services.rag.config import RagConfig
 from services.rag.models import DECAY_LAMBDA, SearchRequest
+from services.rag.property_index import PropertyIndex
 
 
 def require_loaded_config(config: RagConfig | None) -> RagConfig:
@@ -57,6 +59,37 @@ def apply_source_prefix_filter(
         [item[0] for item in filtered][:top_k],
         [item[1] for item in filtered][:top_k],
         [item[2] for item in filtered][:top_k],
+    )
+
+
+def apply_source_prefix_filter_with_ids(
+    ids: list[str],
+    chunks: list[str],
+    metadatas: list[dict[str, str | int | float | bool]],
+    distances: list[float],
+    source_prefixes: list[str] | None,
+    top_k: int,
+) -> tuple[
+    list[str],
+    list[str],
+    list[dict[str, str | int | float | bool]],
+    list[float],
+]:
+    """Source prefix filter that keeps chunk IDs in sync."""
+    if not source_prefixes:
+        return ids, chunks, metadatas, distances
+    filtered = [
+        (rid, chunk, metadata, distance)
+        for rid, chunk, metadata, distance in zip(
+            ids, chunks, metadatas, distances, strict=True
+        )
+        if _matches_source_prefix(str(metadata.get("source", "")), source_prefixes)
+    ][:top_k]
+    return (
+        [t[0] for t in filtered],
+        [t[1] for t in filtered],
+        [t[2] for t in filtered],
+        [t[3] for t in filtered],
     )
 
 
@@ -130,3 +163,88 @@ def _apply_recency(
         )
         result.append(adjusted_distance)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Hybrid search: property index boost
+# ---------------------------------------------------------------------------
+
+_CAPITALIZED_RE = re.compile(r"\b[A-Z][A-Za-z0-9_]+\b")
+_PORT_RE = re.compile(r"\b\d{4,5}\b")
+_STOP_WORDS = frozenset(
+    {
+        "The",
+        "This",
+        "That",
+        "What",
+        "Where",
+        "When",
+        "Which",
+        "How",
+        "Does",
+        "Should",
+        "Could",
+        "Would",
+        "About",
+        "From",
+        "With",
+        "Into",
+        "Each",
+        "Every",
+        "Also",
+        "Many",
+        "Some",
+        "Other",
+    }
+)
+
+
+def extract_entity_terms(query: str) -> list[str]:
+    """Extract likely entity terms from a query via lightweight regex."""
+    capitalized = _CAPITALIZED_RE.findall(query)
+    ports = _PORT_RE.findall(query)
+    terms = [t for t in capitalized if t not in _STOP_WORDS] + ports
+    return list(dict.fromkeys(terms))
+
+
+def apply_property_boost(
+    ids: list[str],
+    chunks: list[str],
+    metadatas: list[dict[str, str | int | float | bool]],
+    distances: list[float],
+    query: str,
+    property_index: PropertyIndex,
+    boost_factor: float,
+) -> tuple[
+    list[str],
+    list[str],
+    list[dict[str, str | int | float | bool]],
+    list[float],
+    int,
+]:
+    """Apply distance boost to chunks that match property index entries.
+
+    Returns (ids, chunks, metadatas, distances, property_hit_count).
+    If no property hits, returns inputs unchanged with hit_count=0.
+    """
+    terms = extract_entity_terms(query)
+    if not terms:
+        return ids, chunks, metadatas, distances, 0
+
+    hit_chunk_ids: set[str] = set()
+    for term in terms:
+        hit_chunk_ids.update(property_index.lookup(f"prop.name@@{term}"))
+
+    if not hit_chunk_ids:
+        return ids, chunks, metadatas, distances, 0
+
+    boosted_distances: list[float] = []
+    hit_count = 0
+    for chunk_id, dist in zip(ids, distances, strict=True):
+        if chunk_id in hit_chunk_ids:
+            boosted_distances.append(dist * boost_factor)
+            hit_count += 1
+        else:
+            boosted_distances.append(dist)
+
+    return ids, chunks, metadatas, boosted_distances, hit_count

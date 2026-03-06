@@ -1,0 +1,17 @@
+prompts:
+  extract:
+    description: "Extract structured knowledge from a text chunk"
+    system_prompt: |
+      Extract structured knowledge from the following text.
+
+      For each concrete entity (service, component, port, config, protocol,
+      library, tool, concept, person, institution), provide:
+      - name: the entity's canonical name
+      - type: one or more type labels (single words)
+      - facets: key properties as name/value pairs (optional)
+
+      For topics: descriptive keywords capturing the subject matter.
+
+      Do not invent information not present in the text.
+    template: |
+      {text}
