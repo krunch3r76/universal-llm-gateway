@@ -1,0 +1,32 @@
+catalog_schema: 3
+schema: llama-cpp
+metadata:
+  name: qwen3-embedding-8b-q8_0
+  format: gguf
+  arch: qwen3
+  quant: Q8_0
+  parameters_m: 8192
+  capabilities:
+    input_schema: prompt
+    modalities:
+      input:
+        - text
+      output:
+        - text
+    interaction:
+      chat_template: false
+    reasoning:
+      supports_thinking: false
+    limits:
+      max_context_length: 8192
+    provenance: {}
+loader:
+  embedding: true
+  embedding_task_default: search_document
+download:
+  huggingface:
+    repo: hugger7326/Qwen3-Embedding-8B-Q8_0-GGUF
+    file: qwen3-embedding-8b-q8_0.gguf
+    verified: false
+  size_bytes: 8047105824
+  sha256: d20ddc71e8a5c4344f2343481e242233a997dc5eaff442427a945836c97b4deb

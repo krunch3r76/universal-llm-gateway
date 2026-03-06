@@ -56,25 +56,42 @@ def _lookup_catalog_entry(model_id: str) -> dict[str, Any] | None:
 
 @dataclass
 class MeasureJobRequest:
-    """Request parameters for measurement job."""
+    """Request parameters for measurement job.
+
+    Fields:
+        model_id: Catalog model identifier.
+        contexts: Explicit context sizes to probe; None → auto-detected from
+            training_context_length in the catalog or GGUF metadata.
+        mode: Measurement mode — "gpu" (GPU only), "cpu" (CPU only), or "auto"
+            (GPU with step-down fallback to CPU).
+        n_batch: Batch size forwarded to the subprocess runner.
+        gpu_index: Zero-based GPU device index.
+        vram_cap_mb: Treat profiles exceeding this VRAM as not fitting. None =
+            no cap (use actual hardware capacity).
+        ram_cap_mb: Same cap semantics for RAM. None = uncapped.
+        training_context_length: Populated by the job during auto-detection;
+            not normally set by callers.
+        enable_hybrid: When full GPU offload fails, retry with partial offload.
+        safety_margin: Subtract this many layers from the discovered maximum
+            when writing hybrid profiles (guards against OOM edge cases).
+            None uses the runner default (2).
+        mmproj_path: Absolute path to the mmproj/CLIP projection file for
+            vision models. None for text-only models.
+        use_static_catalog: True → write results to the static (shared) catalog;
+            False → write to the local (per-node) catalog.
+    """
 
     model_id: str
-    contexts: list[int] | None = None  # None = auto-detect from metadata
+    contexts: list[int] | None = None
     mode: Literal["gpu", "cpu", "auto"] = "auto"
     n_batch: int = 512
     gpu_index: int = 0
-    # Resource caps (None = use actual hardware capacity)
-    vram_cap_mb: int | None = None  # Max VRAM for "fits" determination
-    ram_cap_mb: int | None = None  # Max RAM for "fits" determination
-    # Set by job when auto-detecting
+    vram_cap_mb: int | None = None
+    ram_cap_mb: int | None = None
     training_context_length: int | None = None
-    # Hybrid mode: when full GPU offload fails, try partial offload
     enable_hybrid: bool = True
-    # Hybrid safety margin: subtract N layers from max found (default: 2)
     safety_margin: int | None = None
-    # Vision model support: path to mmproj/CLIP file
     mmproj_path: str | None = None
-    # Catalog selection: True = update static catalog, False = update local catalog
     use_static_catalog: bool = False
 
 
@@ -135,6 +152,7 @@ class MeasurementJob(Job):
         for warning in mem_info.get("warnings", []):
             self.emit_log(f"  ⚠️  {warning}")
 
+        cleanup_completed = False
         try:
             # Check resources before attempting measurement
             can_proceed, error = await check_measurement_resources(
@@ -170,6 +188,44 @@ class MeasurementJob(Job):
                 results, loader_updates = await self._measure_gguf_embedding(
                     model_path, tracker, entry
                 )
+            elif schema == "llama-cpp":
+                # Non-embedding GGUF text/vision models: use the standard
+                # step-down path, which handles n_batch and layer probing correctly.
+                if self.request.mode == "gpu":
+                    results = await measure_gpu_with_stepdown(
+                        model_path,
+                        self.request.contexts or [32768, 16384, 8192, 4096],
+                        self.request.n_batch,
+                        self.request.gpu_index,
+                        self.request.mmproj_path,
+                        self.request.enable_hybrid,
+                        self.emit_log,
+                        tracker,
+                        self.request.safety_margin,
+                    )
+                elif self.request.mode == "cpu":
+                    contexts = self._get_cpu_contexts()
+                    results = await measure_cpu_contexts(
+                        model_path,
+                        contexts,
+                        self.request.n_batch,
+                        self.request.gpu_index,
+                        self.request.mmproj_path,
+                        self.emit_log,
+                        tracker,
+                    )
+                else:
+                    results = await measure_auto_mode(
+                        model_path,
+                        self.request.contexts or [32768, 16384, 8192, 4096],
+                        self.request.n_batch,
+                        self.request.gpu_index,
+                        self.request.mmproj_path,
+                        self.request.enable_hybrid,
+                        self.emit_log,
+                        tracker,
+                        self.request.safety_margin,
+                    )
             elif self.request.mode == "gpu":
                 results = await measure_gpu_with_stepdown(
                     model_path,
@@ -228,28 +284,35 @@ class MeasurementJob(Job):
         except asyncio.CancelledError:
             logger.info("MeasurementJob._run() received CancelledError, cleaning up...")
             self.emit_log("⚠️ Measurement cancelled, cleaning up subprocesses...")
+            await tracker.kill_all()
+            cleanup_completed = True
             raise
         finally:
-            logger.info(
-                "MeasurementJob._run() finally block: calling tracker.kill_all()"
-            )
-            await tracker.kill_all()
-            logger.info(
-                "MeasurementJob._run() finally block: tracker.kill_all() completed"
-            )
+            if not cleanup_completed:
+                logger.info(
+                    "MeasurementJob._run() finally block: calling tracker.kill_all()"
+                )
+                await tracker.kill_all()
+                logger.info(
+                    "MeasurementJob._run() finally block: tracker.kill_all() completed"
+                )
 
     def _get_cpu_contexts(self) -> list[int]:
         """Get context list for CPU measurement mode."""
         if self.request.contexts:
             return self.request.contexts
-        elif self.request.training_context_length:
-            return [self.request.training_context_length]
-        else:
-            return [8192, 4096, 2048]
+        return (
+            [self.request.training_context_length]
+            if self.request.training_context_length
+            else [8192, 4096, 2048]
+        )
 
     async def _detect_contexts_from_metadata(self) -> None:
         """
         Detect contexts from model's training_context_length.
+
+        Embedding models use get_embedding_contexts (2-point probe);
+        text/vision models use get_step_down_contexts (full sweep).
 
         Raises RuntimeError if training context cannot be determined.
         """
@@ -258,7 +321,12 @@ class MeasurementJob(Job):
 
         if training_ctx:
             self.emit_log(f"  Training context: {training_ctx}")
-            self.request.contexts = get_step_down_contexts(training_ctx)
+            entry = _lookup_catalog_entry(self.request.model_id)
+            is_embedding = (entry or {}).get("loader", {}).get("embedding") is True
+            if is_embedding:
+                self.request.contexts = get_embedding_contexts(training_ctx)
+            else:
+                self.request.contexts = get_step_down_contexts(training_ctx)
         else:
             # Training context is REQUIRED - fail with actionable message
             model_id = self.request.model_id
@@ -283,12 +351,19 @@ class MeasurementJob(Job):
                         "required field 'metadata.training_context_length'. "
                         "Update the catalog and restart the gateway."
                     )
-            except Exception:
+            except Exception as e:
+                logger.debug(
+                    "Catalog access failed during context detection for '%s'",
+                    model_id,
+                    exc_info=True,
+                )
                 error_msg = (
                     f"Failed to determine training_context_length for {model_id}. "
                     "The model may not be in the catalog, or the catalog entry "
                     "may be missing required metadata."
                 )
+                self.emit_log(f"  ❌ {error_msg}")
+                raise RuntimeError(error_msg) from e
 
             self.emit_log(f"  ❌ {error_msg}")
             raise RuntimeError(error_msg)
@@ -371,7 +446,7 @@ class MeasurementJob(Job):
                     )
                     profile["gpu_memory_utilization"] = util
                     results[str(ctx)] = profile
-                    if not results or ctx == contexts_to_measure[0]:
+                    if ctx == contexts_to_measure[0]:
                         # Largest context sets the runtime catalog value.
                         gpu_mem_util = util
                 except RuntimeError as e:
@@ -388,9 +463,10 @@ class MeasurementJob(Job):
             loader_updates["embedding"] = True
             task_default = loader_config.get("embedding_task_default")
             if task_default is None:
-                logger.error(
+                logger.warning(
                     "Embedding model '%s' missing loader.embedding_task_default; "
-                    "falling back to 'search_document'",
+                    "falling back to 'search_document'. "
+                    "Add embedding_task_default to the catalog loader config.",
                     self.request.model_id,
                 )
                 task_default = "search_document"
@@ -467,9 +543,10 @@ class MeasurementJob(Job):
 
         task_default = loader_config.get("embedding_task_default")
         if task_default is None:
-            logger.error(
+            logger.warning(
                 "Embedding model '%s' missing loader.embedding_task_default; "
-                "falling back to 'search_document'",
+                "falling back to 'search_document'. "
+                "Add embedding_task_default to the catalog loader config.",
                 self.request.model_id,
             )
             task_default = "search_document"

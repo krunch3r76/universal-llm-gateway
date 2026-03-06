@@ -233,6 +233,11 @@ async def _index_file_impl(
     metadatas = [c.metadata for c in chunks]
     ids = [f"{prefix}-{i}" for i in range(len(chunks))]
 
+    # Apply caller overrides first; reserved keys below always win.
+    if metadata_overrides is not None:
+        for metadata in metadatas:
+            metadata.update(metadata_overrides)
+
     now = datetime.now(UTC).isoformat()
     for metadata, chunk in zip(metadatas, chunks, strict=True):
         chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()[:16]
@@ -242,10 +247,6 @@ async def _index_file_impl(
     if file_path.suffix.lower() == ".pdf":
         for metadata in metadatas:
             metadata["pdf_hash"] = content_hash
-
-    if metadata_overrides is not None:
-        for metadata in metadatas:
-            metadata.update(metadata_overrides)
 
     extraction_entities = 0
     extraction_topics = 0
@@ -270,6 +271,9 @@ async def _index_file_impl(
     embeddings = await embed_chunks(texts)
     if existing_ids:
         collection.delete(ids=existing_ids)
+        if _property_index is not None:
+            for old_id in existing_ids:
+                await _property_index.remove_chunk(old_id)
     collection.upsert(
         ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
     )
@@ -427,5 +431,6 @@ _admin_router = register_admin_routes(
     get_chroma_fn=lambda: _chroma,
     set_collection_fn=_set_collection,
     collection_name=COLLECTION_NAME,
+    get_property_index_fn=lambda: _property_index,
 )
 app.include_router(_admin_router)

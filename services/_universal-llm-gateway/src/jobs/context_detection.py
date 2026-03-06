@@ -35,7 +35,7 @@ def catalog_write_lock(catalog_path: Path):
     Acquire exclusive write lock on catalog file.
 
     Prevents concurrent measurements from corrupting the catalog.
-    Uses fcntl (Unix) for file-level locking.
+    Uses fcntl for file-level locking. Unix-only — not portable to Windows.
     """
     lock_file = catalog_path.parent / f".{catalog_path.name}.lock"
     lock_file.touch(exist_ok=True)
@@ -55,11 +55,11 @@ def get_step_down_contexts(training_ctx: int) -> list[int]:
     Returns contexts in descending order, starting from the largest
     standard context <= training_ctx.
     """
+    # STANDARD_CONTEXTS is already sorted descending; filter preserves that order.
     contexts = [c for c in STANDARD_CONTEXTS if c <= training_ctx]
-    # Include training_ctx itself if it's not a standard size
     if training_ctx not in contexts and training_ctx > 0:
-        contexts = [training_ctx] + contexts
-    return sorted(contexts, reverse=True)
+        contexts.insert(0, training_ctx)
+    return contexts
 
 
 def get_embedding_contexts(training_ctx: int) -> list[int]:
@@ -71,11 +71,9 @@ def get_embedding_contexts(training_ctx: int) -> list[int]:
     - one step down to the next standard size below training_ctx
       so callers have a lower-VRAM option without a full sweep
     """
-    below = [c for c in STANDARD_CONTEXTS if c < training_ctx]
-    if below:
-        return [training_ctx, max(below)]
-    return [training_ctx]
-
+    # STANDARD_CONTEXTS is descending; first match is the largest value below.
+    next_below = next((c for c in STANDARD_CONTEXTS if c < training_ctx), None)
+    return [training_ctx, next_below] if next_below is not None else [training_ctx]
 
 
 def extract_training_context_from_gguf(file_path: Path) -> int | None:
@@ -148,7 +146,12 @@ def extract_training_context_from_gguf(file_path: Path) -> int | None:
         )
         return None
     except Exception as e:
-        logger.warning(f"Failed to extract training context from GGUF: {e}")
+        logger.warning(
+            "Failed to extract training context from GGUF %s: %s",
+            file_path,
+            e,
+            exc_info=True,
+        )
         return None
 
 
@@ -198,13 +201,24 @@ async def get_training_context(model_id: str) -> int | None:
             training_ctx = metadata.get("training_context_length")
             if training_ctx:
                 return training_ctx
+            # Embedding models store context in capabilities.limits.max_context_length
+            max_ctx = (
+                metadata.get("capabilities", {})
+                .get("limits", {})
+                .get("max_context_length")
+            )
+            if max_ctx:
+                return max_ctx
             logger.warning(
-                f"Catalog entry for '{model_id}' missing training_context_length; "
+                f"Catalog entry for '{model_id}' missing training_context_length "
+                "and capabilities.limits.max_context_length; "
                 "attempting GGUF extraction as fallback."
             )
 
     except Exception as e:
-        logger.error(f"Failed to access catalog for model '{model_id}': {e}")
+        logger.error(
+            "Failed to access catalog for model '%s': %s", model_id, e, exc_info=True
+        )
 
     # Fallback: extract directly from GGUF file metadata
     model_path = resolve_model_path(model_id)
@@ -244,7 +258,11 @@ def resolve_model_path(model_id: str) -> Path | None:
 
             if filename:
                 # local_subdir places the file in a named subdirectory under model_root
-                path = model_root / local_subdir / filename if local_subdir else model_root / filename
+                path = (
+                    model_root / local_subdir / filename
+                    if local_subdir
+                    else model_root / filename
+                )
                 if path.exists():
                     return path
             else:
@@ -260,7 +278,9 @@ def resolve_model_path(model_id: str) -> Path | None:
                     if path.exists() and path.is_dir():
                         return path
     except Exception as e:
-        logger.debug(f"Catalog lookup failed: {e}")
+        logger.warning(
+            "Catalog lookup failed for model '%s': %s", model_id, e, exc_info=True
+        )
 
     return _find_model_by_pattern(model_id)
 
@@ -444,7 +464,9 @@ def update_local_catalog_profile(
         logger.warning("Local catalog module not available")
         return False
     except Exception as e:
-        logger.warning(f"Failed to update profile: {e}")
+        logger.warning(
+            "Failed to update profile for '%s': %s", model_id, e, exc_info=True
+        )
         return False
 
 
@@ -487,7 +509,12 @@ def update_local_catalog_contexts(
         logger.warning("Local catalog module not available")
         return False
     except Exception as e:
-        logger.warning(f"Failed to update activated contexts: {e}")
+        logger.warning(
+            "Failed to update activated contexts for '%s': %s",
+            model_id,
+            e,
+            exc_info=True,
+        )
         return False
 
 

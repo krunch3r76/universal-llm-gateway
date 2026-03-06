@@ -7,9 +7,17 @@ Handles index, reindex, source, stats, watch status, and clear endpoints.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException
+
+if TYPE_CHECKING:
+    import chromadb
+
+    from services.rag.property_index import PropertyIndex
+    from services.rag.watcher_manager import WatcherManager
 
 from services.rag.directory_ops import (
     IndexFileFn,
@@ -54,11 +62,12 @@ def _validate_directory(path: str) -> Path:
 def register_admin_routes(
     *,
     index_file_fn: IndexFileFn,
-    get_collection_fn: object,
-    get_watcher_manager_fn: object,
-    get_chroma_fn: object,
-    set_collection_fn: object,
+    get_collection_fn: Callable[[], chromadb.Collection],
+    get_watcher_manager_fn: Callable[[], WatcherManager | None],
+    get_chroma_fn: Callable[[], chromadb.PersistentClient | None],
+    set_collection_fn: Callable[[chromadb.Collection], None],
     collection_name: str,
+    get_property_index_fn: Callable[[], PropertyIndex | None],
 ) -> APIRouter:
     """Register admin routes with the shared service state via closures."""
 
@@ -149,7 +158,7 @@ def register_admin_routes(
         documents = results.get("documents") or []
         metadatas_list = results.get("metadatas") or []
         pairs = sorted(
-            zip(documents, metadatas_list, strict=False),
+            zip(documents, metadatas_list, strict=True),
             key=lambda pair: pair[1].get("chunk_index", 0),
         )
         return SourceResponse(
@@ -169,7 +178,7 @@ def register_admin_routes(
         return wm.get_status()
 
     @router.post("/clear", response_model=ClearResponse)
-    def clear() -> ClearResponse:
+    async def clear() -> ClearResponse:
         chroma = get_chroma_fn()
         assert chroma is not None, "ChromaDB client not initialized"
         collection = get_collection_fn()
@@ -180,6 +189,10 @@ def register_admin_routes(
             metadata={"hnsw:space": "cosine"},
         )
         set_collection_fn(new_collection)
+        prop_idx = get_property_index_fn()
+        if prop_idx is not None:
+            await prop_idx.clear()
+            logger.info("Property index cleared alongside ChromaDB collection")
         return ClearResponse(deleted=deleted, collection=collection_name)
 
     return router
