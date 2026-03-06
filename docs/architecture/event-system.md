@@ -74,10 +74,13 @@ Published to EventBus as `rag.*` signals. Persisted to
 | Signal | Trigger |
 |---|---|
 | `rag.started` / `rag.shutdown` | RAG lifecycle |
-| `rag.watch.started` / `rag.watch.initial.complete` / `rag.watch.reindex.complete` | Watcher lifecycle and file reindex activity |
-| `rag.search.scope.rejected` / `rag.scopes.listed` | Scope validation and scope discovery API |
+| `rag.watch.started` / `rag.watch.directory.missing` / `rag.watch.initial.complete` / `rag.watch.reindex.complete` / `rag.watch.reconcile.complete` / `rag.watch.stopped` | Watcher lifecycle, missing-path detection, initial/reconcile progress, and live reindex activity |
+| `rag.scope.resolved` / `rag.scope.rejected` / `rag.scopes.listed` | Scope resolution, validation, and scope discovery API |
 | `rag.extraction.completed` / `rag.extraction.failed` | Index-time structured extraction outcome per chunk |
-| `rag.property.index.rebuilt` | Property inverted index rebuild from stored extraction metadata |
+| `rag.extraction.batch.started` / `rag.extraction.batch.completed` | File-level extraction batch lifecycle |
+| `rag.property.index.rebuilt` / `rag.pending.reconciled` | Property index rebuilds and startup recovery of interrupted indexing |
+| `rag.file.indexed` / `rag.file.deleted` / `rag.file.skipped` / `rag.file.indexing.failed` | File-level indexing outcomes (success, deletion, skip reason, failure) |
+| `rag.search.executed` / `rag.search.no_results` | Search completion telemetry and zero-result visibility |
 
 ## Routing Events
 

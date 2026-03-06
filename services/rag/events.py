@@ -4,17 +4,17 @@ from universal_event_bus import Event, event_factory
 
 
 @event_factory
-def RagStarted() -> Event:  # noqa: N802
+def rag_started() -> Event:
     return Event(signal="rag.started", payload={})
 
 
 @event_factory
-def RagShutdown() -> Event:  # noqa: N802
+def rag_shutdown() -> Event:
     return Event(signal="rag.shutdown", payload={})
 
 
 @event_factory
-def RagWatchStarted(  # noqa: N802
+def rag_watch_started(
     *,
     path: str,
     extensions: list[str],
@@ -27,12 +27,12 @@ def RagWatchStarted(  # noqa: N802
 
 
 @event_factory
-def RagWatchDirectoryMissing(*, path: str) -> Event:  # noqa: N802
+def rag_watch_directory_missing(*, path: str) -> Event:
     return Event(signal="rag.watch.directory.missing", payload={"path": path})
 
 
 @event_factory
-def RagWatchInitialComplete(  # noqa: N802
+def rag_watch_initial_complete(
     *,
     path: str,
     files: int,
@@ -51,7 +51,7 @@ def RagWatchInitialComplete(  # noqa: N802
 
 
 @event_factory
-def RagWatchReindexComplete(  # noqa: N802
+def rag_watch_reindex_complete(
     *,
     file: str,
     deleted: int,
@@ -70,7 +70,7 @@ def RagWatchReindexComplete(  # noqa: N802
 
 
 @event_factory
-def RagWatchReconcileComplete(  # noqa: N802
+def rag_watch_reconcile_complete(
     *,
     path: str,
     recovered: int,
@@ -84,12 +84,12 @@ def RagWatchReconcileComplete(  # noqa: N802
 
 
 @event_factory
-def RagWatchStopped(*, watchers: int) -> Event:  # noqa: N802
+def rag_watch_stopped(*, watchers: int) -> Event:
     return Event(signal="rag.watch.stopped", payload={"watchers": watchers})
 
 
 @event_factory
-def RagScopeResolved(  # noqa: N802
+def rag_scope_resolved(
     *,
     scope: str,
     prefix_count: int,
@@ -101,7 +101,7 @@ def RagScopeResolved(  # noqa: N802
 
 
 @event_factory
-def RagScopeRejected(  # noqa: N802
+def rag_scope_rejected(
     *,
     scope: str,
     reason: str,
@@ -114,12 +114,12 @@ def RagScopeRejected(  # noqa: N802
 
 
 @event_factory
-def RagScopesListed(*, count: int) -> Event:  # noqa: N802
+def rag_scopes_listed(*, count: int) -> Event:
     return Event(signal="rag.scopes.listed", payload={"count": count})
 
 
 @event_factory
-def RagExtractionCompleted(  # noqa: N802
+def rag_extraction_completed(
     *,
     chunk_id: str,
     entities: int,
@@ -132,7 +132,7 @@ def RagExtractionCompleted(  # noqa: N802
 
 
 @event_factory
-def RagExtractionFailed(  # noqa: N802
+def rag_extraction_failed(
     *,
     chunk_id: str,
     error: str,
@@ -144,7 +144,7 @@ def RagExtractionFailed(  # noqa: N802
 
 
 @event_factory
-def RagExtractionBatchStarted(  # noqa: N802
+def rag_extraction_batch_started(
     *,
     file: str,
     chunk_count: int,
@@ -156,7 +156,7 @@ def RagExtractionBatchStarted(  # noqa: N802
 
 
 @event_factory
-def RagExtractionBatchCompleted(  # noqa: N802
+def rag_extraction_batch_completed(
     *,
     file: str,
     chunk_count: int,
@@ -175,7 +175,7 @@ def RagExtractionBatchCompleted(  # noqa: N802
 
 
 @event_factory
-def RagPropertyIndexRebuilt(  # noqa: N802
+def rag_property_index_rebuilt(
     *,
     collection: str,
     count: int,
@@ -183,4 +183,110 @@ def RagPropertyIndexRebuilt(  # noqa: N802
     return Event(
         signal="rag.property.index.rebuilt",
         payload={"collection": collection, "count": count},
+    )
+
+
+@event_factory
+def rag_pending_reconciled(
+    *,
+    reconciled: int,
+    cleared: int,
+    failed_transient: int,
+    failed_permanent: int,
+) -> Event:
+    """Emitted after startup reconciliation of files interrupted mid-index."""
+    return Event(
+        signal="rag.pending.reconciled",
+        payload={
+            "reconciled": reconciled,
+            "cleared": cleared,
+            "failed_transient": failed_transient,
+            "failed_permanent": failed_permanent,
+        },
+    )
+
+
+@event_factory
+def rag_file_indexed(
+    *,
+    file: str,
+    deleted: int,
+    indexed: int,
+) -> Event:
+    """Emitted after a file is fully indexed into both ChromaDB and the property index."""
+    return Event(
+        signal="rag.file.indexed",
+        payload={"file": file, "deleted": deleted, "indexed": indexed},
+    )
+
+
+@event_factory
+def rag_file_deleted(
+    *,
+    file: str,
+    deleted: int,
+) -> Event:
+    """Emitted when all chunks for a file are deleted with no replacement (empty file)."""
+    return Event(
+        signal="rag.file.deleted",
+        payload={"file": file, "deleted": deleted},
+    )
+
+
+@event_factory
+def rag_file_skipped(
+    *,
+    file: str,
+    reason: str,
+) -> Event:
+    """Emitted when a file is skipped during indexing (unchanged or duplicate PDF)."""
+    return Event(
+        signal="rag.file.skipped",
+        payload={"file": file, "reason": reason},
+    )
+
+
+@event_factory
+def rag_file_indexing_failed(
+    *,
+    file: str,
+    error: str,
+) -> Event:
+    """Emitted when an unhandled error aborts file indexing."""
+    return Event(
+        signal="rag.file.indexing.failed",
+        payload={"file": file, "error": error},
+    )
+
+
+@event_factory
+def rag_search_executed(
+    *,
+    query_len: int,
+    top_k: int,
+    results: int,
+    scope: str | None,
+) -> Event:
+    """Emitted after a search query completes."""
+    return Event(
+        signal="rag.search.executed",
+        payload={
+            "query_len": query_len,
+            "top_k": top_k,
+            "results": results,
+            "scope": scope,
+        },
+    )
+
+
+@event_factory
+def rag_search_no_results(
+    *,
+    query_len: int,
+    scope: str | None,
+) -> Event:
+    """Emitted when a search returns zero results."""
+    return Event(
+        signal="rag.search.no_results",
+        payload={"query_len": query_len, "scope": scope},
     )

@@ -19,10 +19,10 @@ from universal_event_bus import EventBus
 from services.rag.chunkers import Chunk
 from services.rag.config import KnowledgeExtractionConfig
 from services.rag.events import (
-    RagExtractionBatchCompleted,
-    RagExtractionBatchStarted,
-    RagExtractionCompleted,
-    RagExtractionFailed,
+    rag_extraction_batch_completed,
+    rag_extraction_batch_started,
+    rag_extraction_completed,
+    rag_extraction_failed,
 )
 from services.rag.knowledge_extractor import ExtractedKnowledge, extract_knowledge_batch
 from services.rag.property_index import PropertyIndex
@@ -49,7 +49,10 @@ def build_property_entries(
             entries.append((f"prop.facet@@{facet.name}:{facet.value}", chunk_id))
         for relation in entity.relations:
             entries.append(
-                (f"prop.rel@@{entity.name}>{relation.predicate}>{relation.target}", chunk_id)
+                (
+                    f"prop.rel@@{entity.name}>{relation.predicate}>{relation.target}",
+                    chunk_id,
+                )
             )
     for topic in knowledge.topics:
         entries.append((f"prop.topic@@{topic}", chunk_id))
@@ -82,7 +85,7 @@ async def run_extraction(
     if event_bus is not None:
         asyncio.create_task(
             event_bus.publish_async_nowait(
-                RagExtractionBatchStarted(file=file, chunk_count=len(ids))
+                rag_extraction_batch_started(file=file, chunk_count=len(ids))
             )
         )
 
@@ -109,13 +112,17 @@ async def run_extraction(
     if failed_ids:
         logger.warning(
             "Extraction skipped for %s: %d/%d chunks failed — will retry on next sweep",
-            file, len(failed_ids), len(ids),
+            file,
+            len(failed_ids),
+            len(ids),
         )
         for chunk_id in failed_ids:
             if event_bus is not None:
                 asyncio.create_task(
                     event_bus.publish_async_nowait(
-                        RagExtractionFailed(chunk_id=chunk_id, error="no result from pipeline")
+                        rag_extraction_failed(
+                            chunk_id=chunk_id, error="no result from pipeline"
+                        )
                     )
                 )
         successful = 0
@@ -131,7 +138,7 @@ async def run_extraction(
             if event_bus is not None:
                 asyncio.create_task(
                     event_bus.publish_async_nowait(
-                        RagExtractionCompleted(
+                        rag_extraction_completed(
                             chunk_id=chunk_id,
                             entities=len(knowledge.entities),
                             topics=len(knowledge.topics),
@@ -143,7 +150,7 @@ async def run_extraction(
     if event_bus is not None:
         asyncio.create_task(
             event_bus.publish_async_nowait(
-                RagExtractionBatchCompleted(
+                rag_extraction_batch_completed(
                     file=file,
                     chunk_count=len(ids),
                     successful=successful,

@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS properties (
 );
 CREATE INDEX IF NOT EXISTS idx_key ON properties(key);
 CREATE INDEX IF NOT EXISTS idx_chunk ON properties(chunk_id);
+CREATE TABLE IF NOT EXISTS pending (
+    file TEXT NOT NULL PRIMARY KEY
+);
 """
 
 
@@ -121,6 +124,39 @@ class PropertyIndex:
             conn.commit()
 
         await self._seq.run(_write())
+
+    async def mark_pending(self, file: str) -> None:
+        """Mark a file as having an in-flight indexing operation."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute(
+                "INSERT OR IGNORE INTO pending (file) VALUES (?)", (file,)
+            )
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    async def clear_pending(self, file: str) -> None:
+        """Clear the pending mark after successful indexing."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute("DELETE FROM pending WHERE file = ?", (file,))
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    def get_pending_files(self) -> list[str]:
+        """Return all files with in-flight or interrupted indexing.
+
+        Read method — safe to call without SequentialExecutor (single writer).
+        Called once at startup before the watcher starts, so no concurrent
+        writes are possible.
+        """
+        conn = self._ensure_conn()
+        rows = conn.execute("SELECT file FROM pending").fetchall()
+        return [row[0] for row in rows]
 
     async def rebuild_from_metadata(
         self, metadata_entries: list[tuple[str, str]]

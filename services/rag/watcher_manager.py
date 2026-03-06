@@ -12,12 +12,12 @@ from universal_hot_reload.watcher import HotReloadWatcher
 
 from services.rag.config import RagConfig, WatchDirectory
 from services.rag.events import (
-    RagWatchDirectoryMissing,
-    RagWatchInitialComplete,
-    RagWatchReconcileComplete,
-    RagWatchReindexComplete,
-    RagWatchStarted,
-    RagWatchStopped,
+    rag_watch_directory_missing,
+    rag_watch_initial_complete,
+    rag_watch_reconcile_complete,
+    rag_watch_reindex_complete,
+    rag_watch_started,
+    rag_watch_stopped,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,13 +84,13 @@ class WatcherManager:
             await watcher.stop()
         self._watchers = []
         self._watch_configs = []
-        await self._emit(RagWatchStopped(watchers=count))
+        await self._emit(rag_watch_stopped(watchers=count))
 
     async def _start_one(self, watch_directory: WatchDirectory) -> None:
         watch_path = Path(watch_directory.path).expanduser().resolve()
         if not watch_path.exists() or not watch_path.is_dir():
             logger.warning("Watch directory missing; skipping: %s", watch_path)
-            await self._emit(RagWatchDirectoryMissing(path=str(watch_path)))
+            await self._emit(rag_watch_directory_missing(path=str(watch_path)))
             return
         if not watch_directory.extensions:
             logger.warning(
@@ -118,7 +118,7 @@ class WatcherManager:
             self._watchers.append(watcher)
             self._watch_configs.append(watch_directory)
             await self._emit(
-                RagWatchStarted(
+                rag_watch_started(
                     path=str(watch_path),
                     extensions=watch_directory.extensions,
                     recursive=watch_directory.recursive,
@@ -178,7 +178,7 @@ class WatcherManager:
                         logger.warning("Reconcile skipped %s: %s", file_path, exc)
                 if recovered:
                     await self._emit(
-                        RagWatchReconcileComplete(
+                        rag_watch_reconcile_complete(
                             path=str(watch_path),
                             recovered=recovered,
                             unchanged=unchanged,
@@ -223,7 +223,7 @@ class WatcherManager:
             unchanged_total,
         )
         await self._emit(
-            RagWatchInitialComplete(
+            rag_watch_initial_complete(
                 path=str(watch_path),
                 files=file_total,
                 reindexed=reindexed_total,
@@ -248,7 +248,7 @@ class WatcherManager:
             result.unchanged,
         )
         await self._emit(
-            RagWatchReindexComplete(
+            rag_watch_reindex_complete(
                 file=result.file,
                 deleted=result.deleted,
                 indexed=result.indexed,

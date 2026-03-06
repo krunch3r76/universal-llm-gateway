@@ -16,11 +16,18 @@ from services.rag.config import RagConfig, load_config
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import embed_chunks, embed_query, wait_until_healthy
 from services.rag.events import (
-    RagScopeRejected,
-    RagScopeResolved,
-    RagScopesListed,
-    RagShutdown,
-    RagStarted,
+    rag_file_deleted,
+    rag_file_indexed,
+    rag_file_indexing_failed,
+    rag_file_skipped,
+    rag_pending_reconciled,
+    rag_scope_rejected,
+    rag_scope_resolved,
+    rag_scopes_listed,
+    rag_search_executed,
+    rag_search_no_results,
+    rag_shutdown,
+    rag_started,
 )
 from services.rag.extraction_wiring import run_extraction
 from services.rag.indexing_helpers import (
@@ -104,7 +111,7 @@ async def _startup() -> None:
     )
     _event_bus.set_debug_broadcaster(_broadcaster)
     await _broadcaster.start_debug_server()
-    await _event_bus.publish_async(RagStarted())
+    await _event_bus.publish_async(rag_started())
     _config = load_config()
     configure_embeddings(_config.embedding_model)
     _property_index = PropertyIndex()
@@ -114,7 +121,9 @@ async def _startup() -> None:
             _deferred_watcher_start(_config), name="rag-watcher-init"
         )
     elif not _config.automatic_indexing_enabled:
-        logger.info("Automatic indexing disabled (automatic_indexing_enabled: false) — watcher not started")
+        logger.info(
+            "Automatic indexing disabled (automatic_indexing_enabled: false) — watcher not started"
+        )
 
 
 async def _deferred_watcher_start(config: RagConfig) -> None:
@@ -136,6 +145,52 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
             "Embedding endpoint not healthy after timeout; "
             "initial watcher sweep will be skipped for files requiring embedding"
         )
+
+    # Reconcile files that were mid-index when the service was interrupted.
+    # Runs after health check so embeddings are available; runs before the
+    # watcher sweep so pending files are consistent before it sees them.
+    if _property_index is not None:
+        pending_files = _property_index.get_pending_files()
+        if pending_files:
+            logger.warning(
+                "Reconciling %d files pending from interrupted indexing",
+                len(pending_files),
+            )
+            reconciled = cleared = failed_transient = failed_permanent = 0
+            for source in pending_files:
+                file_path = Path(source)
+                if not file_path.exists():
+                    await _property_index.clear_pending(source)
+                    logger.info("Pending file removed (deleted): %s", source)
+                    cleared += 1
+                    continue
+                try:
+                    await _index_file(file_path)
+                    reconciled += 1
+                except (TimeoutError, ConnectionError) as e:
+                    logger.warning(
+                        "Transient error reconciling %s; will retry on next sweep: %s",
+                        source,
+                        e,
+                    )
+                    failed_transient += 1
+                except Exception:
+                    logger.error(
+                        "Permanent error reconciling %s; requires manual intervention",
+                        source,
+                        exc_info=True,
+                    )
+                    failed_permanent += 1
+            if _event_bus is not None:
+                await _event_bus.publish_async(
+                    rag_pending_reconciled(
+                        reconciled=reconciled,
+                        cleared=cleared,
+                        failed_transient=failed_transient,
+                        failed_permanent=failed_permanent,
+                    )
+                )
+
     await _watcher_manager.start(config)
 
 
@@ -143,7 +198,7 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
 async def _shutdown() -> None:
     global _watcher_manager, _event_bus, _broadcaster, _property_index
     if _event_bus is not None:
-        await _event_bus.publish_async(RagShutdown())
+        await _event_bus.publish_async(rag_shutdown())
     if _broadcaster is not None:
         await _broadcaster.stop_debug_server()
         _broadcaster = None
@@ -162,7 +217,6 @@ async def _shutdown() -> None:
 
 
 _TOKEN_ESTIMATE = 4
-
 
 
 async def _index_file(
@@ -204,12 +258,24 @@ async def _index_file_impl(
                     source,
                     dup_result.duplicate_of,
                 )
+            if _event_bus is not None:
+                asyncio.create_task(
+                    _event_bus.publish_async_nowait(
+                        rag_file_skipped(file=source, reason="duplicate_pdf")
+                    )
+                )
             return dup_result
 
     existing = collection.get(where={"source": source}, include=["metadatas"])
     existing_ids: list[str] = existing.get("ids", [])
 
     if all_ids_match_prefix(existing_ids, prefix):
+        if _event_bus is not None:
+            asyncio.create_task(
+                _event_bus.publish_async_nowait(
+                    rag_file_skipped(file=source, reason="unchanged")
+                )
+            )
         return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
 
     existing_timestamps: dict[str, str] = {}
@@ -228,6 +294,12 @@ async def _index_file_impl(
         logger.info(
             "Index complete: file=%s deleted=%d indexed=0", source, len(existing_ids)
         )
+        if _event_bus is not None:
+            asyncio.create_task(
+                _event_bus.publish_async_nowait(
+                    rag_file_deleted(file=source, deleted=len(existing_ids))
+                )
+            )
         return IndexResult(
             deleted=len(existing_ids), indexed=0, unchanged=False, file=source
         )
@@ -251,32 +323,48 @@ async def _index_file_impl(
         for metadata in metadatas:
             metadata["pdf_hash"] = content_hash
 
-    extraction_entities = 0
-    extraction_topics = 0
-    if _config is not None and _property_index is not None:
-        ext_result = await run_extraction(
-            file=source,
-            ids=ids,
-            chunks=chunks,
-            metadatas=metadatas,
-            config=_config.knowledge_extraction,
-            property_index=_property_index,
-            event_bus=_event_bus,
-        )
-        extraction_entities = ext_result.entities
-        extraction_topics = ext_result.topics
+    # Mark file as in-flight before any store mutation.
+    if _property_index is not None:
+        await _property_index.mark_pending(source)
 
-    # Embed before mutating: if embed raises, old chunks remain intact.
-    # ∀ failed embed → zero-chunk state is impossible.
-    embeddings = await embed_chunks(texts)
-    if existing_ids:
-        collection.delete(ids=existing_ids)
+    try:
+        extraction_entities = 0
+        extraction_topics = 0
+        if _config is not None and _property_index is not None:
+            ext_result = await run_extraction(
+                file=source,
+                ids=ids,
+                chunks=chunks,
+                metadatas=metadatas,
+                config=_config.knowledge_extraction,
+                property_index=_property_index,
+                event_bus=_event_bus,
+            )
+            extraction_entities = ext_result.entities
+            extraction_topics = ext_result.topics
+
+        # Embed before mutating: if embed raises, old chunks remain intact.
+        embeddings = await embed_chunks(texts)
+        if existing_ids:
+            collection.delete(ids=existing_ids)
+            if _property_index is not None:
+                for old_id in existing_ids:
+                    await _property_index.remove_chunk(old_id)
+        collection.upsert(
+            ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
+        )
+    except Exception as exc:
+        if _event_bus is not None:
+            asyncio.create_task(
+                _event_bus.publish_async_nowait(
+                    rag_file_indexing_failed(file=source, error=str(exc))
+                )
+            )
+        raise
+    finally:
+        # Clear in-flight mark regardless of outcome so reconciliation can retry.
         if _property_index is not None:
-            for old_id in existing_ids:
-                await _property_index.remove_chunk(old_id)
-    collection.upsert(
-        ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
-    )
+            await _property_index.clear_pending(source)
 
     logger.info(
         "Index complete: file=%s deleted=%d indexed=%d",
@@ -284,6 +372,16 @@ async def _index_file_impl(
         len(existing_ids),
         len(chunks),
     )
+    if _event_bus is not None:
+        asyncio.create_task(
+            _event_bus.publish_async_nowait(
+                rag_file_indexed(
+                    file=source,
+                    deleted=len(existing_ids),
+                    indexed=len(chunks),
+                )
+            )
+        )
     return IndexResult(
         deleted=len(existing_ids),
         indexed=len(chunks),
@@ -313,7 +411,7 @@ async def search(request: SearchRequest) -> SearchResponse:
             available_scopes = sorted(_config.scopes) if _config is not None else []
             asyncio.create_task(
                 _event_bus.publish_async_nowait(
-                    RagScopeRejected(
+                    rag_scope_rejected(
                         scope=original_scope,
                         reason="validation_error",
                         available=available_scopes,
@@ -326,7 +424,7 @@ async def search(request: SearchRequest) -> SearchResponse:
         resolved_prefixes = request.source_prefixes or []
         asyncio.create_task(
             _event_bus.publish_async_nowait(
-                RagScopeResolved(
+                rag_scope_resolved(
                     scope=original_scope, prefix_count=len(resolved_prefixes)
                 )
             )
@@ -386,6 +484,29 @@ async def search(request: SearchRequest) -> SearchResponse:
         recency_weight=request.recency_weight,
     )
 
+    if _event_bus is not None:
+        result_count = len(chunks)
+        if result_count == 0:
+            asyncio.create_task(
+                _event_bus.publish_async_nowait(
+                    rag_search_no_results(
+                        query_len=len(request.query),
+                        scope=request.scope,
+                    )
+                )
+            )
+        else:
+            asyncio.create_task(
+                _event_bus.publish_async_nowait(
+                    rag_search_executed(
+                        query_len=len(request.query),
+                        top_k=request.top_k,
+                        results=result_count,
+                        scope=request.scope,
+                    )
+                )
+            )
+
     return SearchResponse(
         chunks=chunks,
         metadata=metadatas,
@@ -402,7 +523,7 @@ def get_scopes() -> ScopesResponse:
             loop = asyncio.get_running_loop()
             loop.create_task(
                 _event_bus.publish_async_nowait(
-                    RagScopesListed(count=len(loaded_config.scopes))
+                    rag_scopes_listed(count=len(loaded_config.scopes))
                 )
             )
         except RuntimeError:
