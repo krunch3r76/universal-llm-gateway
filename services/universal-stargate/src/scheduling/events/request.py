@@ -6,6 +6,7 @@ plus the federation snapshot emitted by Edge Stargate.
 Signals:
     request.queued — request added to queue
     request.processing — request started processing on gateway
+    request.inference.started — request began downstream runtime execution
     request.profile.resolved — profile auto-assigned for request
     request.completed — request completed successfully
     request.failed — request failed
@@ -38,6 +39,17 @@ Payload: {
     "request_id": str,
     "gateway_url": str,
     "model_id": str
+}
+"""
+
+REQUEST_INFERENCE_STARTED = "request.inference.started"
+"""
+Request began inference at downstream runtime boundary.
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_url": str,
+    "correlation_id": Optional[str]
 }
 """
 
@@ -220,6 +232,39 @@ def RequestProfileResolved(
             "request_id": request_id,
             "model_id": model_id,
             "profile_name": profile_name,
+        },
+    )
+
+
+@event_factory
+def RequestInferenceStarted(
+    request_id: str,
+    model_id: str,
+    gateway_url: str,
+    correlation_id: str | None = None,
+) -> Event:
+    """
+    Create REQUEST_INFERENCE_STARTED event.
+
+    Emitted when Stargate receives downstream-confirmed runtime start telemetry.
+    This boundary is later than request admission (request.processing).
+
+    Args:
+        request_id: Proxy request ID for tracking and tracing
+        model_id: Model selected for execution
+        gateway_url: Gateway runtime endpoint reporting start
+        correlation_id: Federated request chain correlation (optional)
+
+    Returns:
+        Event with RequestInferenceStarted signal
+    """
+    return Event(
+        signal=REQUEST_INFERENCE_STARTED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_url": gateway_url,
+            "correlation_id": correlation_id,
         },
     )
 

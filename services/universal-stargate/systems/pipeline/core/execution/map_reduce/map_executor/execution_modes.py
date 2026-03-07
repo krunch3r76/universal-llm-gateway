@@ -55,6 +55,19 @@ class MapExecutionModes:
             return threshold
         return math.ceil(total * threshold)
 
+    @staticmethod
+    def _serialized_gateways(
+        iteration_results: list[IterationResult],
+    ) -> tuple[str, ...] | None:
+        """Return gateways with repeated failures/timeouts (contention signal)."""
+        gateway_counts = Counter(
+            r.gateway_id for r in iteration_results if r.gateway_id
+        )
+        serialized_gateways = tuple(
+            gw for gw, count in gateway_counts.items() if count > 1
+        )
+        return serialized_gateways if serialized_gateways else None
+
     def collect_iteration_results(
         self,
         done: set[asyncio.Task[Any]],
@@ -70,7 +83,7 @@ class MapExecutionModes:
         cancelled tasks are assigned timeout_status (TIMEOUT or CANCELLED).
         """
         iteration_results: list[IterationResult] = []
-        results_by_index: dict[int, Any] = {}
+        results_by_index: dict[int, StepOutput] = {}
 
         for task in done:
             idx = tasks[task]
@@ -126,6 +139,46 @@ class MapExecutionModes:
 
         return iteration_results, results_by_index
 
+    async def _inference_timeout_monitor(
+        self,
+        tasks: dict[asyncio.Task[Any], int],
+        iteration_context: dict[int, dict[str, Any]],
+        inference_timeout: float,
+    ) -> None:
+        """
+        Background monitor that cancels iterations exceeding inference timeout.
+
+        Only cancels iterations where inference has started (inference_started_at
+        is set). Queued iterations (no inference_started_at) are exempt — queue
+        wait is unbounded within the outer wall-clock guard.
+        """
+        task_by_idx: dict[int, asyncio.Task[Any]] = {
+            idx: task for task, idx in tasks.items()
+        }
+        check_interval = min(inference_timeout / 4, 5.0)
+        while True:
+            await asyncio.sleep(check_interval)
+            now = time.monotonic()
+            for idx, ctx in iteration_context.items():
+                inference_started = ctx.get("inference_started_at")
+                if inference_started is None:
+                    continue
+                if "completed_at" in ctx:
+                    continue
+                elapsed = now - inference_started
+                if elapsed <= inference_timeout:
+                    continue
+                task = task_by_idx.get(idx)
+                if task and not task.done():
+                    logger.warning(
+                        "[%s] Iteration %d inference timeout: %.1fs > %.1fs",
+                        self._step.name,
+                        idx,
+                        elapsed,
+                        inference_timeout,
+                    )
+                    task.cancel()
+
     async def execute_with_timeout(
         self,
         tasks: dict[asyncio.Task[Any], int],
@@ -134,9 +187,14 @@ class MapExecutionModes:
         threshold: int | float | None,
         iteration_metadata: list[tuple[int, str | None]],
         iteration_context: dict[int, dict[str, Any]],
+        inference_timeout_seconds: float | None = None,
     ) -> tuple[list[StepOutput], list[str | None]]:
         """
         Execute with timeout and optional partial success.
+
+        Two timeout layers:
+        - timeout_seconds: outer wall-clock guard for the entire map step
+        - inference_timeout_seconds: per-iteration guard from inference start
 
         On CancelledError (client disconnect), cancels all pending federation
         requests before propagating the exception.
@@ -150,6 +208,14 @@ class MapExecutionModes:
                 timeout_seconds, tasks, start_time
             )
         )
+
+        inference_monitor: asyncio.Task[None] | None = None
+        if inference_timeout_seconds is not None:
+            inference_monitor = asyncio.create_task(
+                self._inference_timeout_monitor(
+                    tasks, iteration_context, inference_timeout_seconds
+                )
+            )
 
         try:
             done, pending = await asyncio.wait(
@@ -172,16 +238,31 @@ class MapExecutionModes:
             raise
         finally:
             monitor_task.cancel()
-            try:
-                await monitor_task
-            except asyncio.CancelledError:
-                pass
+            if inference_monitor:
+                inference_monitor.cancel()
+            monitors = [monitor_task]
+            if inference_monitor:
+                monitors.append(inference_monitor)
+            for m in monitors:
+                try:
+                    await m
+                except asyncio.CancelledError:
+                    pass
 
         for task in pending:
             task.cancel()
         await self._concurrency_manager.cancel_pending_iterations(
             pending, tasks, iteration_context
         )
+
+        # Distinguish inference timeout from outer wall-clock timeout
+        inference_timed_out: set[int] = set()
+        if inference_timeout_seconds is not None:
+            for task in pending:
+                idx = tasks[task]
+                ctx = iteration_context.get(idx, {})
+                if ctx.get("inference_started_at") is not None:
+                    inference_timed_out.add(idx)
 
         iteration_results, results_by_index = self.collect_iteration_results(
             done=done,
@@ -192,7 +273,16 @@ class MapExecutionModes:
             timeout_duration=timeout_seconds,
         )
         for task in pending:
-            logger.warning("[%s] Iteration %d timed out", self._step.name, tasks[task])
+            idx = tasks[task]
+            failure_type = (
+                "inference_timeout" if idx in inference_timed_out else "timeout"
+            )
+            logger.warning(
+                "[%s] Iteration %d timed out (%s)",
+                self._step.name,
+                idx,
+                failure_type,
+            )
         iteration_results.sort(key=lambda r: r.index)
 
         key_by_idx = dict(iteration_metadata)
@@ -211,12 +301,6 @@ class MapExecutionModes:
         )
 
         if not self.success_count_meets_threshold(completed, total, threshold):
-            gateway_counts = Counter(
-                r.gateway_id for r in iteration_results if r.gateway_id
-            )
-            serialized_gateways = tuple(
-                gw for gw, count in gateway_counts.items() if count > 1
-            )
             raise MapPartialFailureError(
                 step_name=self._step.name,
                 completed_count=completed,
@@ -225,9 +309,7 @@ class MapExecutionModes:
                 threshold=threshold if threshold is not None else total,
                 timeout_seconds=timeout_seconds,
                 iteration_results=tuple(iteration_results),
-                gateway_serialization=(
-                    serialized_gateways if serialized_gateways else None
-                ),
+                gateway_serialization=self._serialized_gateways(iteration_results),
             )
 
         outputs = []
@@ -296,12 +378,6 @@ class MapExecutionModes:
                     iteration_results, ff_results, key_by_idx
                 )
 
-                gateway_counts = Counter(
-                    r.gateway_id for r in iteration_results if r.gateway_id
-                )
-                serialized_gateways = tuple(
-                    gw for gw, count in gateway_counts.items() if count > 1
-                )
                 raise MapPartialFailureError(
                     step_name=self._step.name,
                     completed_count=success_count,
@@ -310,9 +386,7 @@ class MapExecutionModes:
                     threshold=threshold if threshold is not None else total,
                     timeout_seconds=None,
                     iteration_results=tuple(iteration_results),
-                    gateway_serialization=(
-                        serialized_gateways if serialized_gateways else None
-                    ),
+                    gateway_serialization=self._serialized_gateways(iteration_results),
                 )
 
         # All completed normally
@@ -339,12 +413,6 @@ class MapExecutionModes:
         )
 
         if not self.success_count_meets_threshold(success_count, total, threshold):
-            gateway_counts = Counter(
-                r.gateway_id for r in iteration_results if r.gateway_id
-            )
-            serialized_gateways = tuple(
-                gw for gw, count in gateway_counts.items() if count > 1
-            )
             raise MapPartialFailureError(
                 step_name=self._step.name,
                 completed_count=success_count,
@@ -353,9 +421,7 @@ class MapExecutionModes:
                 threshold=threshold if threshold is not None else total,
                 timeout_seconds=None,
                 iteration_results=tuple(iteration_results),
-                gateway_serialization=(
-                    serialized_gateways if serialized_gateways else None
-                ),
+                gateway_serialization=self._serialized_gateways(iteration_results),
             )
 
         outputs = []

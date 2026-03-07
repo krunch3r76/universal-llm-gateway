@@ -18,6 +18,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import json
 import logging
@@ -33,19 +34,23 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
+from .adapters.base import ProviderAdapter
+from .adapters.factory import create_provider_adapter
 from .browser import BrowserCatalogCache
 from .browser_routes import register_browser_routes
 from .catalog import CatalogManager
-from .config import CloudProxyConfig, load_config
+from .config import load_config
 from .events import (
     CloudProxyBrowserCatalogRefreshed,
     CloudProxyBrowserCatalogRefreshFailed,
     CloudProxyBrowserUiUnavailable,
     CloudProxyCatalogRefreshed,
+    CloudProxyCatalogRefreshFailed,
     CloudProxyLocalCatalogRefreshed,
     CloudProxyLocalCatalogUnavailable,
     CloudProxyRequestFailed,
     CloudProxyRequestForwarded,
+    CloudProxyRequestTranslationFailed,
     CloudProxyShutdown,
     CloudProxyStarted,
 )
@@ -57,15 +62,7 @@ logger = logging.getLogger(__name__)
 _STATIC_DIR = Path(__file__).parent / "static"
 _REQUIRED_BROWSER_ASSETS = ("index.html", "app.js", "style.css")
 
-_config: CloudProxyConfig | None = None
-_catalog: CatalogManager | None = None
-_forwarder: ProviderForwarder | None = None
-_event_bus: EventBus | None = None
-_broadcaster: MinimalEventDebugBroadcaster | None = None
-_browser_cache: BrowserCatalogCache | None = None
-_local_cache: LocalCatalogCache | None = None
-_browser_ui_ready = False
-_browser_ui_error = "Browser UI not initialized"
+_atexit_event_bus: EventBus | None = None
 
 # ∀ process exit: _shutdown_clean is set iff lifespan shutdown handler ran.
 # atexit fires on clean Python exit (crash, sys.exit) but NOT on SIGKILL.
@@ -75,6 +72,13 @@ _shutdown_clean: bool = False
 
 def _atexit_handler() -> None:
     if not _shutdown_clean:
+        if _atexit_event_bus is not None:
+            try:
+                asyncio.run(
+                    _atexit_event_bus.publish_async(CloudProxyShutdown(reason="crash"))
+                )
+            except Exception:
+                logger.debug("Failed to publish crash shutdown event", exc_info=True)
         logger.warning(
             "Cloud proxy (PID %d) exited without clean shutdown — "
             "lifespan shutdown handler did not run (crash or unhandled exception). "
@@ -84,14 +88,15 @@ def _atexit_handler() -> None:
 
 
 @asynccontextmanager
-async def _lifespan(application: FastAPI):  # noqa: ANN201, ARG001
-    global _config, _catalog, _forwarder, _event_bus, _broadcaster, _browser_cache
-    global _local_cache, _browser_ui_ready, _browser_ui_error, _shutdown_clean
+async def _lifespan(_application: Any):  # FastAPI lifespan signature.
+    """Manage cloud proxy startup and shutdown resource lifecycle."""
+    global _shutdown_clean, _atexit_event_bus
 
-    atexit.register(_atexit_handler)
+    _ = atexit.register(_atexit_handler)
 
-    _event_bus = EventBus()
-    _broadcaster = MinimalEventDebugBroadcaster(
+    event_bus = EventBus()
+    _atexit_event_bus = event_bus
+    broadcaster = MinimalEventDebugBroadcaster(
         persistence_config={
             "enabled": True,
             "directory": "/tmp/cloud-proxy-events",
@@ -100,72 +105,82 @@ async def _lifespan(application: FastAPI):  # noqa: ANN201, ARG001
             "flush_interval_seconds": 1.0,
         },
     )
-    _event_bus.set_debug_broadcaster(_broadcaster)
-    await _broadcaster.start_debug_server()
+    event_bus.set_debug_broadcaster(broadcaster)
+    await broadcaster.start_debug_server()
 
-    _config = load_config()
-    if not _config.providers:
+    config = load_config()
+    if not config.providers:
         logger.warning("No cloud providers configured — proxy will serve empty catalog")
 
-    _forwarder = ProviderForwarder()
-    _catalog = CatalogManager(_config.providers)
-    await _catalog.startup()
+    shared_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=15.0, read=300.0, write=15.0, pool=15.0),
+        limits=httpx.Limits(max_connections=40, max_keepalive_connections=20),
+        http2=False,
+    )
+    adapters: dict[str, ProviderAdapter] = {
+        cfg.provider: create_provider_adapter(cfg, shared_client)
+        for cfg in config.providers
+    }
+    forwarder = ProviderForwarder(adapters=adapters)
 
-    for provider_cfg in _config.providers:
-        catalog_models = _catalog.get_all_models()
-        provider_count = sum(
-            1 for m in catalog_models if m["provider"] == provider_cfg.provider
-        )
-        await _event_bus.publish_async(
-            CloudProxyCatalogRefreshed(
-                provider=provider_cfg.provider, model_count=provider_count
-            )
+    async def _emit_catalog_refreshed(provider: str, model_count: int) -> None:
+        await event_bus.publish_async(
+            CloudProxyCatalogRefreshed(provider=provider, model_count=model_count)
         )
 
-    _browser_cache = BrowserCatalogCache()
+    async def _emit_catalog_refresh_failed(provider: str, error: str) -> None:
+        await event_bus.publish_async(
+            CloudProxyCatalogRefreshFailed(provider=provider, error=error[:300])
+        )
+
+    catalog = CatalogManager(
+        config.providers,
+        adapters,
+        on_provider_catalog_refreshed=_emit_catalog_refreshed,
+        on_provider_catalog_refresh_failed=_emit_catalog_refresh_failed,
+    )
+    await catalog.startup()
+
+    browser_cache = BrowserCatalogCache()
     try:
-        model_count = await _browser_cache.refresh()
-        if _event_bus is not None:
-            await _event_bus.publish_async(
-                CloudProxyBrowserCatalogRefreshed(
-                    trigger="startup",
-                    model_count=model_count,
-                )
+        model_count = await browser_cache.refresh()
+        await event_bus.publish_async(
+            CloudProxyBrowserCatalogRefreshed(
+                trigger="startup",
+                model_count=model_count,
             )
+        )
     except Exception as exc:
         logger.warning(
             "Browser catalog initial fetch failed — will retry on first request"
         )
-        if _event_bus is not None:
-            await _event_bus.publish_async(
-                CloudProxyBrowserCatalogRefreshFailed(
-                    trigger="startup",
-                    error=str(exc)[:300],
-                )
+        await event_bus.publish_async(
+            CloudProxyBrowserCatalogRefreshFailed(
+                trigger="startup",
+                error=str(exc)[:300],
             )
+        )
 
-    _local_cache = LocalCatalogCache(stargate_url=_config.stargate_url)
+    local_cache = LocalCatalogCache(stargate_url=config.stargate_url)
     try:
-        local_count = await _local_cache.refresh()
-        if _event_bus is not None:
-            await _event_bus.publish_async(
-                CloudProxyLocalCatalogRefreshed(
-                    stargate_url=_config.stargate_url,
-                    model_count=local_count,
-                )
+        local_count = await local_cache.refresh()
+        await event_bus.publish_async(
+            CloudProxyLocalCatalogRefreshed(
+                stargate_url=config.stargate_url,
+                model_count=local_count,
             )
+        )
     except Exception as exc:
         logger.info(
             "Local catalog unavailable at startup (Stargate may not be running): %s",
             exc,
         )
-        if _event_bus is not None:
-            await _event_bus.publish_async(
-                CloudProxyLocalCatalogUnavailable(
-                    stargate_url=_config.stargate_url,
-                    error=str(exc)[:300],
-                )
+        await event_bus.publish_async(
+            CloudProxyLocalCatalogUnavailable(
+                stargate_url=config.stargate_url,
+                error=str(exc)[:300],
             )
+        )
 
     missing_assets = [
         asset
@@ -173,50 +188,137 @@ async def _lifespan(application: FastAPI):  # noqa: ANN201, ARG001
         if not (_STATIC_DIR / asset).exists()
     ]
     if missing_assets:
-        _browser_ui_ready = False
-        _browser_ui_error = f"Missing browser assets: {', '.join(missing_assets)}"
-        logger.error(_browser_ui_error)
-        if _event_bus is not None:
-            await _event_bus.publish_async(
-                CloudProxyBrowserUiUnavailable(missing_files=missing_assets)
-            )
+        browser_ui_ready = False
+        browser_ui_error = f"Missing browser assets: {', '.join(missing_assets)}"
+        logger.error(browser_ui_error)
+        await event_bus.publish_async(
+            CloudProxyBrowserUiUnavailable(missing_files=missing_assets)
+        )
     else:
-        _browser_ui_ready = True
-        _browser_ui_error = ""
+        browser_ui_ready = True
+        browser_ui_error = ""
 
-    _proxy_mode = "uds" if _config.socket_path else "tcp"
-    _socket_path_str = str(_config.socket_path) if _config.socket_path else None
-    await _event_bus.publish_async(
+    await event_bus.publish_async(
         CloudProxyStarted(
-            pid=os.getpid(), mode=_proxy_mode, socket_path=_socket_path_str
+            pid=os.getpid(),
+            mode="uds" if config.socket_path else "tcp",
+            socket_path=str(config.socket_path) if config.socket_path else None,
         )
     )
     logger.info(
         "Cloud proxy started: %d provider(s), %d models, browser catalog: %d, mode: %s",
-        len(_config.providers),
-        len(_catalog.get_all_models()),
-        _browser_cache.model_count,
-        _proxy_mode,
+        len(config.providers),
+        len(catalog.get_all_models()),
+        browser_cache.model_count,
+        "uds" if config.socket_path else "tcp",
     )
+
+    _application.state.config = config
+    _application.state.catalog = catalog
+    _application.state.forwarder = forwarder
+    _application.state.shared_client = shared_client
+    _application.state.event_bus = event_bus
+    _application.state.broadcaster = broadcaster
+    _application.state.browser_cache = browser_cache
+    _application.state.local_cache = local_cache
+    _application.state.browser_ui_ready = browser_ui_ready
+    _application.state.browser_ui_error = browser_ui_error
 
     yield
 
     _shutdown_clean = True
-    await _event_bus.publish_async(CloudProxyShutdown(reason="clean"))
-    await _catalog.shutdown()
-    await _forwarder.close()
-    if _broadcaster:
-        await _broadcaster.stop_debug_server()
+    await event_bus.publish_async(CloudProxyShutdown(reason="clean"))
+    await catalog.shutdown()
+    await shared_client.aclose()
+    await broadcaster.stop_debug_server()
     logger.info("Cloud proxy shut down")
 
 
 app = FastAPI(title="Cloud Proxy", lifespan=_lifespan)
 
 
+async def _publish_request_failed_event(
+    *,
+    event_bus: EventBus | None,
+    provider: str,
+    model: str,
+    status_code: int,
+    error: str,
+    adapter_type: str,
+) -> None:
+    if event_bus is None:
+        return
+    await event_bus.publish_async(
+        CloudProxyRequestFailed(
+            provider=provider,
+            model=model,
+            status_code=status_code,
+            error=error,
+            adapter_type=adapter_type,
+        )
+    )
+
+
+async def _publish_translation_failed_event(
+    *,
+    event_bus: EventBus | None,
+    provider: str,
+    model: str,
+    error: str,
+    direction: str,
+    adapter_type: str,
+) -> None:
+    if event_bus is None:
+        return
+    await event_bus.publish_async(
+        CloudProxyRequestTranslationFailed(
+            provider=provider,
+            model=model,
+            error=error,
+            direction=direction,
+            adapter_type=adapter_type,
+        )
+    )
+
+
+async def _read_json_object_body(
+    *, request: Request, event_bus: EventBus | None, endpoint_name: str
+) -> dict[str, Any]:
+    try:
+        request_body = await request.json()
+    except json.JSONDecodeError as exc:
+        error_msg = f"Invalid JSON body: {exc.msg}"
+        logger.error("%s request failed: %s", endpoint_name, error_msg)
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider="unknown",
+            model="",
+            status_code=400,
+            error=error_msg,
+            adapter_type="unknown",
+        )
+        raise HTTPException(status_code=400, detail=error_msg) from exc
+    if isinstance(request_body, dict):
+        return request_body
+
+    error_msg = "Invalid request body: expected a JSON object"
+    logger.error("%s request failed: %s", endpoint_name, error_msg)
+    await _publish_request_failed_event(
+        event_bus=event_bus,
+        provider="unknown",
+        model="",
+        status_code=400,
+        error=error_msg,
+        adapter_type="unknown",
+    )
+    raise HTTPException(status_code=400, detail=error_msg)
+
+
 async def _relay_stream_safe(
     chunks: AsyncIterator[bytes],
     provider: str,
     model_id: str,
+    adapter_type: str,
     event_bus: EventBus | None = None,
 ) -> AsyncIterator[bytes]:
     """Relay SSE chunks, converting upstream errors to SSE error events.
@@ -230,29 +332,30 @@ async def _relay_stream_safe(
             yield chunk
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code if exc.response else 502
-        error_text = str(exc)[:300]
+        full_error_text = str(exc)
+        error_text = full_error_text[:300]
         logger.error(
             "Streaming %d from provider %s model=%s: %s",
             status,
             provider,
             model_id,
-            error_text,
+            full_error_text,
         )
-        if event_bus is not None:
-            await event_bus.publish_async(
-                CloudProxyRequestFailed(
-                    provider=provider,
-                    model=model_id,
-                    status_code=status,
-                    error=error_text,
-                )
-            )
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider,
+            model=model_id,
+            status_code=status,
+            error=error_text,
+            adapter_type=adapter_type,
+        )
         # Avoid duplicating prefix from forwarder errors that already start with
         # "Provider returned <status>: ..."
-        if error_text.startswith(f"Provider returned {status}: "):
-            message = error_text
-        else:
-            message = f"Provider returned {status}: {error_text[:200]}"
+        message = (
+            error_text
+            if error_text.startswith(f"Provider returned {status}: ")
+            else f"Provider returned {status}: {error_text[:200]}"
+        )
         error_dict = {
             "error": {
                 "message": message,
@@ -262,23 +365,56 @@ async def _relay_stream_safe(
         }
         yield f"data: {json.dumps(error_dict)}\n\n".encode()
         yield b"data: [DONE]\n\n"
-    except Exception as exc:
+    except ValueError as exc:
         error_text = str(exc)[:300]
         logger.error(
-            "Streaming error from provider %s model=%s: %s",
+            "Streaming translation error from provider %s model=%s: %s",
             provider,
             model_id,
             error_text,
         )
-        if event_bus is not None:
-            await event_bus.publish_async(
-                CloudProxyRequestFailed(
-                    provider=provider,
-                    model=model_id,
-                    status_code=502,
-                    error=error_text,
-                )
-            )
+        await _publish_translation_failed_event(
+            event_bus=event_bus,
+            provider=provider,
+            model=model_id,
+            error=error_text,
+            direction="stream_chunk",
+            adapter_type=adapter_type,
+        )
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider,
+            model=model_id,
+            status_code=502,
+            error=error_text,
+            adapter_type=adapter_type,
+        )
+        error_dict = {
+            "error": {
+                "message": error_text,
+                "type": "translation_error",
+                "code": "stream_translation_error",
+            }
+        }
+        yield f"data: {json.dumps(error_dict)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+    except Exception as exc:
+        full_error_text = str(exc)
+        error_text = full_error_text[:300]
+        logger.error(
+            "Streaming error from provider %s model=%s: %s",
+            provider,
+            model_id,
+            full_error_text,
+        )
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider,
+            model=model_id,
+            status_code=502,
+            error=error_text,
+            adapter_type=adapter_type,
+        )
         error_dict = {
             "error": {
                 "message": error_text,
@@ -291,23 +427,30 @@ async def _relay_stream_safe(
 
 
 def _get_browser_cache() -> BrowserCatalogCache | None:
-    return _browser_cache
+    return getattr(app.state, "browser_cache", None)
 
 
 def _get_local_cache() -> LocalCatalogCache | None:
-    return _local_cache
+    return getattr(app.state, "local_cache", None)
 
 
 def _get_catalog() -> CatalogManager | None:
-    return _catalog
+    return getattr(app.state, "catalog", None)
+
+
+def _get_forwarder() -> ProviderForwarder | None:
+    return getattr(app.state, "forwarder", None)
 
 
 def _get_event_bus() -> EventBus | None:
-    return _event_bus
+    return getattr(app.state, "event_bus", None)
 
 
 def _get_ui_status() -> tuple[bool, str]:
-    return _browser_ui_ready, _browser_ui_error
+    return (
+        bool(getattr(app.state, "browser_ui_ready", False)),
+        str(getattr(app.state, "browser_ui_error", "Browser UI not initialized")),
+    )
 
 
 register_browser_routes(
@@ -324,8 +467,9 @@ register_browser_routes(
 @app.get("/health")
 async def health() -> dict[str, Any]:
     """Liveness check with provider summary."""
-    assert _catalog is not None
-    models = _catalog.get_all_models()
+    catalog = _get_catalog()
+    assert catalog is not None
+    models = catalog.get_all_models()
     providers = {m["provider"] for m in models}
     return {
         "status": "ok",
@@ -337,109 +481,263 @@ async def health() -> dict[str, Any]:
 @app.get("/catalog")
 async def catalog() -> list[dict[str, Any]]:
     """Return the cached model catalog for Stargate consumption."""
-    assert _catalog is not None
-    return _catalog.get_all_models()
+    catalog_manager = _get_catalog()
+    assert catalog_manager is not None
+    return catalog_manager.get_all_models()
 
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request) -> Response:
-    """Forward chat completion request to the appropriate provider."""
-    assert _catalog is not None
-    assert _forwarder is not None
+    """Forward chat completion requests to the resolved cloud provider.
 
-    body: dict[str, Any] = await request.json()
-    model_id = body.get("model", "")
+    Handles both streaming and non-streaming OpenAI-compatible chat requests.
+    The provider is resolved from the incoming `model` field, and the request
+    is relayed through the provider adapter with auth injection handled by the
+    cloud proxy internals.
+    """
+    catalog = _get_catalog()
+    forwarder = _get_forwarder()
+    event_bus = _get_event_bus()
+    assert catalog is not None
+    assert forwarder is not None
+
+    body = await _read_json_object_body(
+        request=request,
+        event_bus=event_bus,
+        endpoint_name="Chat completions",
+    )
+    model_id = str(body.get("model", ""))
     streaming = body.get("stream", False)
 
-    provider_catalog = _catalog.resolve_provider(model_id)
+    provider_catalog = catalog.resolve_provider(model_id)
     if provider_catalog is None:
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider="unknown",
+            model=model_id,
+            status_code=404,
+            error=f"Model not found: {model_id}",
+            adapter_type="unknown",
+        )
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    try:
+        adapter = forwarder.adapter_type(provider_catalog.provider)
+    except ValueError as exc:
+        error_text = str(exc)[:300]
+        await _publish_translation_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            error=error_text,
+            direction="request",
+            adapter_type="unknown",
+        )
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            status_code=500,
+            error=error_text,
+            adapter_type="unknown",
+        )
+        raise HTTPException(status_code=500, detail=error_text) from exc
 
     if streaming:
-        chunks = _forwarder.forward_request_stream(
-            base_url=provider_catalog.base_url,
-            api_key=provider_catalog.api_key,
+        chunks = forwarder.forward_request_stream(
+            provider=provider_catalog.provider,
             request_body=body,
         )
-        if _event_bus:
-            await _event_bus.publish_async(
+        if event_bus:
+            await event_bus.publish_async(
                 CloudProxyRequestForwarded(
                     provider=provider_catalog.provider,
                     model=model_id,
                     streaming=True,
+                    adapter_type=adapter,
                 )
             )
         return StreamingResponse(
             _relay_stream_safe(
-                chunks, provider_catalog.provider, model_id, event_bus=_event_bus
+                chunks,
+                provider_catalog.provider,
+                model_id,
+                adapter,
+                event_bus=event_bus,
             ),
             media_type="text/event-stream",
         )
 
     try:
-        response = await _forwarder.forward_request(
-            base_url=provider_catalog.base_url,
-            api_key=provider_catalog.api_key,
+        response_json = await forwarder.forward_chat_request(
+            provider=provider_catalog.provider,
             request_body=body,
         )
-        if _event_bus:
-            await _event_bus.publish_async(
+        if event_bus:
+            await event_bus.publish_async(
                 CloudProxyRequestForwarded(
                     provider=provider_catalog.provider,
                     model=model_id,
                     streaming=False,
+                    adapter_type=adapter,
                 )
             )
-        return JSONResponse(content=response.json())
+        return JSONResponse(content=response_json)
 
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code if exc.response else 502
         error_text = str(exc)[:300]
-        if _event_bus:
-            await _event_bus.publish_async(
-                CloudProxyRequestFailed(
-                    provider=provider_catalog.provider,
-                    model=model_id,
-                    status_code=status,
-                    error=error_text,
-                )
-            )
-        raise HTTPException(status_code=status, detail=error_text) from exc
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            status_code=status,
+            error=error_text,
+            adapter_type=adapter,
+        )
+        raise HTTPException(
+            status_code=status, detail=f"Upstream provider error: {error_text}"
+        ) from exc
     except httpx.HTTPError as exc:
-        if _event_bus:
-            await _event_bus.publish_async(
-                CloudProxyRequestFailed(
-                    provider=provider_catalog.provider,
-                    model=model_id,
-                    status_code=502,
-                    error=str(exc)[:300],
-                )
-            )
-        raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
+        error_text = str(exc)[:300]
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            status_code=502,
+            error=error_text,
+            adapter_type=adapter,
+        )
+        raise HTTPException(status_code=502, detail=error_text) from exc
+    except ValueError as exc:
+        error_text = str(exc)[:300]
+        await _publish_translation_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            error=error_text,
+            direction="request",
+            adapter_type=adapter,
+        )
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            status_code=422,
+            error=error_text,
+            adapter_type=adapter,
+        )
+        raise HTTPException(status_code=422, detail=error_text) from exc
 
 
 @app.post("/v1/embeddings")
 async def embeddings(request: Request) -> JSONResponse:
-    """Forward embedding request to the appropriate provider."""
-    assert _catalog is not None
-    assert _forwarder is not None
+    """Forward embedding requests to the resolved cloud provider.
 
-    body: dict[str, Any] = await request.json()
-    model_id = body.get("model", "")
+    The provider is resolved from the incoming `model` field in the request
+    body. The request is then relayed through the configured provider adapter.
+    """
+    catalog = _get_catalog()
+    forwarder = _get_forwarder()
+    event_bus = _get_event_bus()
+    assert catalog is not None
+    assert forwarder is not None
 
-    provider_catalog = _catalog.resolve_provider(model_id)
+    body = await _read_json_object_body(
+        request=request,
+        event_bus=event_bus,
+        endpoint_name="Embeddings",
+    )
+    model_id = str(body.get("model", ""))
+
+    provider_catalog = catalog.resolve_provider(model_id)
     if provider_catalog is None:
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider="unknown",
+            model=model_id,
+            status_code=404,
+            error=f"Model not found: {model_id}",
+            adapter_type="unknown",
+        )
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    try:
+        adapter = forwarder.adapter_type(provider_catalog.provider)
+    except ValueError as exc:
+        error_text = str(exc)[:300]
+        await _publish_translation_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            error=error_text,
+            direction="request",
+            adapter_type="unknown",
+        )
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            status_code=500,
+            error=error_text,
+            adapter_type="unknown",
+        )
+        raise HTTPException(status_code=500, detail=error_text) from exc
 
     try:
-        result = await _forwarder.forward_embedding_request(
-            base_url=provider_catalog.base_url,
-            api_key=provider_catalog.api_key,
+        result = await forwarder.forward_embedding_request(
+            provider=provider_catalog.provider,
             request_body=body,
         )
+        if event_bus:
+            await event_bus.publish_async(
+                CloudProxyRequestForwarded(
+                    provider=provider_catalog.provider,
+                    model=model_id,
+                    streaming=False,
+                    adapter_type=adapter,
+                )
+            )
         return JSONResponse(content=result)
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code if exc.response else 502
-        raise HTTPException(status_code=status, detail=str(exc)[:300]) from exc
+        error_text = str(exc)[:300]
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            status_code=status,
+            error=error_text,
+            adapter_type=adapter,
+        )
+        raise HTTPException(
+            status_code=status, detail=f"Upstream provider error: {error_text}"
+        ) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
+        error_text = str(exc)[:300]
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            status_code=502,
+            error=error_text,
+            adapter_type=adapter,
+        )
+        raise HTTPException(status_code=502, detail=error_text) from exc
+    except ValueError as exc:
+        error_text = str(exc)[:300]
+        await _publish_translation_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            error=error_text,
+            direction="request",
+            adapter_type=adapter,
+        )
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            status_code=422,
+            error=error_text,
+            adapter_type=adapter,
+        )
+        raise HTTPException(status_code=422, detail=error_text) from exc

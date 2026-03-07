@@ -1,9 +1,29 @@
-"""LLM-based knowledge extraction via the rag-extraction pipeline.
+"""LLM-based structured knowledge extraction via the rag-extraction pipeline.
 
-Calls the extraction pipeline as a virtual model ID through Stargate.
-The pipeline handles prompt, JSON schema, profile, and generation params —
-this module is a thin client that sends all file chunks in one call and
-parses the map step output.
+At index time, this module calls the ``rag-extraction`` pipeline (via Stargate)
+to extract structured knowledge from each document chunk.  The extraction schema
+captures:
+
+  Entities:    named concepts with typed categories (component, protocol, config key, …)
+               and key-value facets (e.g. port: 9999, role: master).
+  Relations:   directed edges scoped to an entity (subject → predicate → target),
+               recording how components interact (e.g. Stargate → routes_to → Edge).
+  Topics:      free-form thematic labels for the chunk (federation, routing, telemetry).
+
+The pipeline uses a MapExecutor to extract all chunks of a file in one call,
+ensuring consistent entity naming across chunks (same model state, same session).
+Results are returned as a list of ``ExtractedKnowledge`` objects, one per chunk.
+
+Parsed results flow to two destinations:
+  1. ``extraction_wiring.py`` writes property index entries (``prop.name@@``,
+     ``prop.type@@``, ``prop.facet@@``, ``prop.rel@@``, ``prop.topic@@``) to the
+     SQLite property inverted index for hybrid search at query time.
+  2. The ``extraction`` and ``extraction_schema_version`` fields are stored in
+     ChromaDB chunk metadata for cross-chunk merging at query time
+     (``entity_merging.py``).
+
+Invariant: ∀ file: (∀ chunk extracted in one call) ∨ (∀ chunk unextracted).
+Partial writes were implemented twice and reverted twice — see lessons.
 """
 
 from __future__ import annotations

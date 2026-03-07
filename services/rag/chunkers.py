@@ -1,3 +1,33 @@
+"""Document chunking for RAG indexing.
+
+Splits files into chunks suitable for embedding and LLM-based knowledge extraction.
+Two chunking strategies are implemented — non-code and code — with distinct goals:
+
+  Non-code (markdown, PDF, EPUB):
+    Uses adaptive target+pad sizing rather than a hard maximum.  A chunk grows
+    until it reaches ``target_chars``; the pad zone (``pad_chars``) allows it to
+    absorb an additional partial paragraph rather than orphaning it.  Two-paragraph
+    overlap between adjacent chunks prevents concept fragmentation at boundaries.
+    Each chunk is prefixed with its nearest parent heading so extraction models
+    have section context even when the heading fell in the previous chunk.
+
+    The larger target (≈1024 tokens / 4096 chars) is sized to match the context
+    window of the qwen3-embedding-8b-q8-0 model and to give the extraction LLM
+    enough surrounding text to reliably identify entities, relations, and topics.
+
+  Code (Python via tree-sitter):
+    Splits at AST node boundaries (functions, classes) to preserve syntactic
+    completeness.  Smaller target (≈256 tokens) keeps embedding granularity tight.
+    AST metadata (complexity, node type, symbol name) is stored in chunk metadata
+    for future code-specific retrieval enhancements.
+
+Chunk IDs are deterministic: ``{content_hash_prefix}-{i}`` where the hash
+incorporates file bytes and the extraction schema version.  A schema version bump
+invalidates all existing hashes, forcing a full re-index without manual intervention.
+
+Entry point: ``chunk_file(path, target_chars=None)`` dispatches by file extension.
+"""
+
 import re
 from dataclasses import dataclass
 from hashlib import sha256

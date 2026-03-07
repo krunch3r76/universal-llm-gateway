@@ -1,9 +1,43 @@
+"""RAG service — FastAPI application for indexing, search, and structured knowledge retrieval.
+
+Architecture layers (index time):
+  1. Chunking       — ``chunkers.py`` splits files into semantically coherent chunks using
+                      target+pad sizing with paragraph overlap and heading injection.
+  2. Embedding      — chunks are embedded via the configured embedding model (e.g.
+                      qwen3-embedding-8b-q8-0) and stored in ChromaDB with cosine space.
+  3. Extraction     — ``extraction_wiring.py`` calls the rag-extraction LLM pipeline to
+                      extract entities, types, facets, topics, and relations from each chunk.
+                      Results are stored both in ChromaDB chunk metadata and in the
+                      SQLite-backed property inverted index (``property_index.py``).
+  4. Pending journal — ``property_index.pending`` tracks in-flight indexing operations.
+                      On restart, interrupted files are re-indexed before the watcher starts,
+                      eliminating the window where the property index can hold dangling pointers.
+
+Architecture layers (search time):
+  5. Vector search  — ChromaDB cosine similarity retrieves the top-k candidate chunks.
+  6. Property boost — ``search_scope.py`` queries the property index for entity/topic/relation
+                      matches and applies a configurable score boost to matching chunks,
+                      implementing hybrid structured+vector search.
+  7. Recency sort   — ``search_scope.py`` applies an additive recency weight based on
+                      ``indexed_at`` timestamps, favouring recently changed documents.
+
+These layers are composed in ``_index_file_impl`` (index path) and ``search`` (query path).
+The pipeline layer (``rag-context-v1``, ``project-assistant-v1``) handles query rewriting,
+RRF multi-query merge, and answer generation on top of this service.
+
+Invariants:
+  ∀ upsert: all chunks of a file are committed in one batch (all-or-nothing extraction coherence).
+  ∀ file ∈ pending: property index may be ahead of ChromaDB — re-index on next startup.
+  ∀ file ∉ pending ∧ all_ids_match_prefix: both stores are consistent.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import logging
 from datetime import UTC, datetime
+from fnmatch import fnmatch
 from pathlib import Path
 
 import chromadb
@@ -29,7 +63,7 @@ from services.rag.events import (
     rag_shutdown,
     rag_started,
 )
-from services.rag.extraction_wiring import run_extraction
+from services.rag.extraction_wiring import recover_missing_extraction, run_extraction
 from services.rag.indexing_helpers import (
     all_ids_match_prefix,
     check_pdf_duplicate,
@@ -73,11 +107,13 @@ _file_index_locks: dict[str, asyncio.Lock] = {}
 
 
 def _get_collection() -> chromadb.Collection:
+    """Return initialized ChromaDB collection."""
     assert _collection is not None, "Collection not initialized"
     return _collection
 
 
 def get_event_bus() -> EventBus | None:
+    """Return initialized event bus, if available."""
     return _event_bus
 
 
@@ -165,7 +201,8 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
                     cleared += 1
                     continue
                 try:
-                    await _index_file(file_path)
+                    chunk_tokens = _resolve_chunk_tokens_for_file(file_path, config)
+                    await _index_file(file_path, chunk_tokens=chunk_tokens)
                     reconciled += 1
                 except (TimeoutError, ConnectionError) as e:
                     logger.warning(
@@ -194,8 +231,34 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
     await _watcher_manager.start(config)
 
 
+def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | None:
+    """
+    Resolve chunk_tokens for a file using the same watch-directory rules.
+
+    This preserves chunking consistency when reconciling pending files after
+    interrupted indexing.
+    """
+    resolved_file = file_path.expanduser().resolve()
+    for watch_directory in config.watch_directories:
+        watch_path = Path(watch_directory.path).expanduser().resolve()
+        if not resolved_file.is_relative_to(watch_path):
+            continue
+        if not watch_directory.recursive and resolved_file.parent != watch_path:
+            continue
+        if watch_directory.extensions and (
+            resolved_file.suffix.lower()
+            not in {ext.lower() for ext in watch_directory.extensions}
+        ):
+            continue
+        if any(fnmatch(resolved_file.name, pat) for pat in watch_directory.exclude):
+            continue
+        return watch_directory.chunk_tokens
+    return None
+
+
 @app.on_event("shutdown")
 async def _shutdown() -> None:
+    """Shutdown RAG resources and stop background services."""
     global _watcher_manager, _event_bus, _broadcaster, _property_index
     if _event_bus is not None:
         await _event_bus.publish_async(rag_shutdown())
@@ -259,22 +322,46 @@ async def _index_file_impl(
                     dup_result.duplicate_of,
                 )
             if _event_bus is not None:
-                asyncio.create_task(
-                    _event_bus.publish_async_nowait(
-                        rag_file_skipped(file=source, reason="duplicate_pdf")
-                    )
+                await _event_bus.publish_async_nowait(
+                    rag_file_skipped(file=source, reason="duplicate_pdf")
                 )
             return dup_result
 
     existing = collection.get(where={"source": source}, include=["metadatas"])
     existing_ids: list[str] = existing.get("ids", [])
 
-    if all_ids_match_prefix(existing_ids, prefix):
-        if _event_bus is not None:
-            asyncio.create_task(
-                _event_bus.publish_async_nowait(
-                    rag_file_skipped(file=source, reason="unchanged")
+    if existing_ids and all_ids_match_prefix(existing_ids, prefix):
+        # Chunks are current — check if extraction metadata is also present.
+        # Missing extraction_schema_version means extraction timed out on a prior run;
+        # the file is in ChromaDB but the property index is unpopulated.
+        if _config is not None and _property_index is not None:
+            ext_result = await recover_missing_extraction(
+                collection=collection,
+                source=source,
+                existing_ids=existing_ids,
+                existing_metadatas=[
+                    m for m in (existing.get("metadatas") or []) if isinstance(m, dict)
+                ],
+                config=_config.knowledge_extraction,
+                property_index=_property_index,
+                event_bus=_event_bus,
+            )
+            if ext_result is not None and ext_result.success:
+                if _event_bus is not None:
+                    await _event_bus.publish_async_nowait(
+                        rag_file_indexed(file=source, deleted=0, indexed=0)
+                    )
+                return IndexResult(
+                    deleted=0,
+                    indexed=0,
+                    unchanged=False,
+                    file=source,
+                    extraction_entities=ext_result.entities,
+                    extraction_topics=ext_result.topics,
                 )
+        if _event_bus is not None:
+            await _event_bus.publish_async_nowait(
+                rag_file_skipped(file=source, reason="unchanged")
             )
         return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
 
@@ -295,10 +382,8 @@ async def _index_file_impl(
             "Index complete: file=%s deleted=%d indexed=0", source, len(existing_ids)
         )
         if _event_bus is not None:
-            asyncio.create_task(
-                _event_bus.publish_async_nowait(
-                    rag_file_deleted(file=source, deleted=len(existing_ids))
-                )
+            await _event_bus.publish_async_nowait(
+                rag_file_deleted(file=source, deleted=len(existing_ids))
             )
         return IndexResult(
             deleted=len(existing_ids), indexed=0, unchanged=False, file=source
@@ -327,9 +412,11 @@ async def _index_file_impl(
     if _property_index is not None:
         await _property_index.mark_pending(source)
 
+    clear_pending_on_success = False
     try:
         extraction_entities = 0
         extraction_topics = 0
+        extraction_property_entries: list[tuple[str, str]] = []
         if _config is not None and _property_index is not None:
             ext_result = await run_extraction(
                 file=source,
@@ -339,32 +426,39 @@ async def _index_file_impl(
                 config=_config.knowledge_extraction,
                 property_index=_property_index,
                 event_bus=_event_bus,
+                apply_property_index=False,
             )
             extraction_entities = ext_result.entities
             extraction_topics = ext_result.topics
+            extraction_property_entries = ext_result.property_entries
 
         # Embed before mutating: if embed raises, old chunks remain intact.
         embeddings = await embed_chunks(texts)
+        collection.upsert(
+            ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
+        )
+        if _property_index is not None and extraction_property_entries:
+            try:
+                await _property_index.add_batch(extraction_property_entries)
+            except Exception:
+                # Compensation: keep old chunks untouched by rolling back new upsert.
+                collection.delete(ids=ids)
+                raise
         if existing_ids:
             collection.delete(ids=existing_ids)
             if _property_index is not None:
                 for old_id in existing_ids:
                     await _property_index.remove_chunk(old_id)
-        collection.upsert(
-            ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
-        )
+        clear_pending_on_success = True
     except Exception as exc:
         if _event_bus is not None:
-            asyncio.create_task(
-                _event_bus.publish_async_nowait(
-                    rag_file_indexing_failed(file=source, error=str(exc))
-                )
+            await _event_bus.publish_async_nowait(
+                rag_file_indexing_failed(file=source, error=str(exc))
             )
         raise
-    finally:
-        # Clear in-flight mark regardless of outcome so reconciliation can retry.
-        if _property_index is not None:
-            await _property_index.clear_pending(source)
+
+    if clear_pending_on_success and _property_index is not None:
+        await _property_index.clear_pending(source)
 
     logger.info(
         "Index complete: file=%s deleted=%d indexed=%d",
@@ -373,13 +467,11 @@ async def _index_file_impl(
         len(chunks),
     )
     if _event_bus is not None:
-        asyncio.create_task(
-            _event_bus.publish_async_nowait(
-                rag_file_indexed(
-                    file=source,
-                    deleted=len(existing_ids),
-                    indexed=len(chunks),
-                )
+        await _event_bus.publish_async_nowait(
+            rag_file_indexed(
+                file=source,
+                deleted=len(existing_ids),
+                indexed=len(chunks),
             )
         )
     return IndexResult(
@@ -409,13 +501,11 @@ async def search(request: SearchRequest) -> SearchResponse:
             and exc.status_code == 400
         ):
             available_scopes = sorted(_config.scopes) if _config is not None else []
-            asyncio.create_task(
-                _event_bus.publish_async_nowait(
-                    rag_scope_rejected(
-                        scope=original_scope,
-                        reason="validation_error",
-                        available=available_scopes,
-                    )
+            await _event_bus.publish_async_nowait(
+                rag_scope_rejected(
+                    scope=original_scope,
+                    reason="validation_error",
+                    available=available_scopes,
                 )
             )
         raise
@@ -537,6 +627,7 @@ def get_scopes() -> ScopesResponse:
 
 
 def _set_collection(col: chromadb.Collection) -> None:
+    """Set global ChromaDB collection instance."""
     global _collection
     _collection = col
 

@@ -11,10 +11,13 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
-from universal_event_bus import EventBus
+from universal_event_bus import Event, EventBus
+
+if TYPE_CHECKING:
+    import chromadb
 
 from services.rag.chunkers import Chunk
 from services.rag.config import KnowledgeExtractionConfig
@@ -34,29 +37,53 @@ logger = logging.getLogger(__name__)
 class ExtractionResult:
     entities: int = 0
     topics: int = 0
+    property_entries: list[tuple[str, str]] = field(default_factory=list)
+    # True when extraction was written — ∃ chunk with extraction_schema_version in metadata.
+    # False on soft failure (timeout, partial result): all-or-nothing rule fired, nothing written.
+    success: bool = field(default=False)
 
 
 def build_property_entries(
     knowledge: ExtractedKnowledge, chunk_id: str
 ) -> list[tuple[str, str]]:
     """Build (key, chunk_id) pairs from extracted knowledge for the property index."""
-    entries: list[tuple[str, str]] = []
-    for entity in knowledge.entities:
-        entries.append((f"prop.name@@{entity.name}", chunk_id))
-        for etype in entity.type:
-            entries.append((f"prop.type@@{etype}", chunk_id))
-        for facet in entity.facets:
-            entries.append((f"prop.facet@@{facet.name}:{facet.value}", chunk_id))
-        for relation in entity.relations:
-            entries.append(
-                (
-                    f"prop.rel@@{entity.name}>{relation.predicate}>{relation.target}",
-                    chunk_id,
-                )
-            )
-    for topic in knowledge.topics:
-        entries.append((f"prop.topic@@{topic}", chunk_id))
+    entries = [
+        (f"prop.name@@{entity.name}", chunk_id) for entity in knowledge.entities
+    ]
+    entries.extend(
+        (f"prop.type@@{etype}", chunk_id)
+        for entity in knowledge.entities
+        for etype in entity.type
+    )
+    entries.extend(
+        (f"prop.facet@@{facet.name}:{facet.value}", chunk_id)
+        for entity in knowledge.entities
+        for facet in entity.facets
+    )
+    entries.extend(
+        (
+            f"prop.rel@@{entity.name}>{relation.predicate}>{relation.target}",
+            chunk_id,
+        )
+        for entity in knowledge.entities
+        for relation in entity.relations
+    )
+    entries.extend((f"prop.topic@@{topic}", chunk_id) for topic in knowledge.topics)
     return entries
+
+
+def _publish_event_nonblocking(event_bus: EventBus, event: Event) -> None:
+    """Publish event in background and surface task failures in logs."""
+    task: asyncio.Task[None] = asyncio.create_task(event_bus.publish_async_nowait(event))
+
+    def _on_done(done_task: asyncio.Task[None]) -> None:
+        if done_task.cancelled():
+            return
+        exc = done_task.exception()
+        if exc is not None:
+            logger.warning("Non-blocking event publish failed: %s", exc, exc_info=True)
+
+    task.add_done_callback(_on_done)
 
 
 async def run_extraction(
@@ -68,6 +95,7 @@ async def run_extraction(
     config: KnowledgeExtractionConfig,
     property_index: PropertyIndex,
     event_bus: EventBus | None,
+    apply_property_index: bool = True,
 ) -> ExtractionResult:
     """Run knowledge extraction on all chunks and populate the property index.
 
@@ -83,10 +111,9 @@ async def run_extraction(
     id_to_idx = {chunk_id: i for i, chunk_id in enumerate(ids)}
 
     if event_bus is not None:
-        asyncio.create_task(
-            event_bus.publish_async_nowait(
-                rag_extraction_batch_started(file=file, chunk_count=len(ids))
-            )
+        _publish_event_nonblocking(
+            event_bus,
+            rag_extraction_batch_started(file=file, chunk_count=len(ids)),
         )
 
     start = time.monotonic()
@@ -118,45 +145,122 @@ async def run_extraction(
         )
         for chunk_id in failed_ids:
             if event_bus is not None:
-                asyncio.create_task(
-                    event_bus.publish_async_nowait(
-                        rag_extraction_failed(
-                            chunk_id=chunk_id, error="no result from pipeline"
-                        )
-                    )
+                _publish_event_nonblocking(
+                    event_bus,
+                    rag_extraction_failed(
+                        chunk_id=chunk_id, error="no result from pipeline"
+                    ),
                 )
         successful = 0
     else:
+        all_property_entries: list[tuple[str, str]] = []
         for chunk_id, knowledge in staged.items():
             idx = id_to_idx[chunk_id]
             result.entities += len(knowledge.entities)
             result.topics += len(knowledge.topics)
             prop_entries = build_property_entries(knowledge, chunk_id)
-            await property_index.add_batch(prop_entries)
+            all_property_entries.extend(prop_entries)
             metadatas[idx]["extraction"] = json.dumps(knowledge.to_dict())
             metadatas[idx]["extraction_schema_version"] = config.schema_version
             if event_bus is not None:
-                asyncio.create_task(
-                    event_bus.publish_async_nowait(
-                        rag_extraction_completed(
-                            chunk_id=chunk_id,
-                            entities=len(knowledge.entities),
-                            topics=len(knowledge.topics),
-                        )
-                    )
+                _publish_event_nonblocking(
+                    event_bus,
+                    rag_extraction_completed(
+                        chunk_id=chunk_id,
+                        entities=len(knowledge.entities),
+                        topics=len(knowledge.topics),
+                    ),
                 )
+        if apply_property_index and all_property_entries:
+            await property_index.add_batch(all_property_entries)
+        result.property_entries = all_property_entries
         successful = len(staged)
+        result.success = True
 
     if event_bus is not None:
-        asyncio.create_task(
-            event_bus.publish_async_nowait(
-                rag_extraction_batch_completed(
-                    file=file,
-                    chunk_count=len(ids),
-                    successful=successful,
-                    duration_seconds=duration,
-                )
-            )
+        _publish_event_nonblocking(
+            event_bus,
+            rag_extraction_batch_completed(
+                file=file,
+                chunk_count=len(ids),
+                successful=successful,
+                duration_seconds=duration,
+            ),
         )
 
     return result
+
+
+async def recover_missing_extraction(
+    *,
+    collection: chromadb.Collection,
+    source: str,
+    existing_ids: list[str],
+    existing_metadatas: list[dict[str, Any]],
+    config: KnowledgeExtractionConfig,
+    property_index: PropertyIndex,
+    event_bus: EventBus | None,
+) -> ExtractionResult | None:
+    """Re-run extraction for chunks that are indexed but missing extraction metadata.
+
+    Called when all_ids_match_prefix is True but extraction_schema_version is absent
+    from one or more chunks — the file was indexed successfully but extraction timed out.
+
+    Fetches documents from ChromaDB, re-runs extraction (all-or-nothing), and patches
+    chunk metadata via collection.update(). Property index is also populated.
+
+    Returns ExtractionResult if recovery was attempted, None if no recovery needed.
+    ∀ chunk ∈ existing_ids: extraction_schema_version present ⟹ return None.
+    """
+    needs_recovery = any("extraction_schema_version" not in m for m in existing_metadatas)
+    if not needs_recovery:
+        return None
+
+    with_docs = collection.get(ids=existing_ids, include=["documents", "metadatas"])
+    docs: list[str] = with_docs.get("documents") or []
+    metadatas: list[dict[str, Any]] = [
+        m for m in (with_docs.get("metadatas") or []) if isinstance(m, dict)
+    ]
+    ids: list[str] = with_docs.get("ids") or []
+
+    if not docs:
+        logger.warning("Recovery: no documents found in ChromaDB for %s", source)
+        return ExtractionResult()
+
+    # run_extraction only uses chunk.text — minimal Chunk objects are sufficient.
+    chunks = [Chunk(text=doc, metadata={}) for doc in docs]
+
+    await property_index.mark_pending(source)
+
+    ext_result = await run_extraction(
+        file=source,
+        ids=ids,
+        chunks=chunks,
+        metadatas=metadatas,
+        config=config,
+        property_index=property_index,
+        event_bus=event_bus,
+        apply_property_index=False,
+    )
+
+    if not ext_result.success:
+        # Soft failure — all-or-nothing fired, property index untouched, safe to clear.
+        await property_index.clear_pending(source)
+        logger.warning(
+            "Recovery extraction failed for %s; will retry on next sweep", source
+        )
+        return ext_result
+
+    # Patch ChromaDB metadata in-place — embeddings and documents are unchanged.
+    collection.update(ids=ids, metadatas=metadatas)
+    if ext_result.property_entries:
+        await property_index.add_batch(ext_result.property_entries)
+    await property_index.clear_pending(source)
+
+    logger.info(
+        "Recovery complete: file=%s entities=%d topics=%d",
+        source,
+        ext_result.entities,
+        ext_result.topics,
+    )
+    return ext_result

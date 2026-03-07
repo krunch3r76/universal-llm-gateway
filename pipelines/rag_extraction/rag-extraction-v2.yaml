@@ -11,7 +11,7 @@ output: extract_batch
 output_format: json_array
 
 options:
-  timeout_seconds: 300
+  timeout_seconds: 3600
 
 steps:
   - name: extract_batch
@@ -24,7 +24,6 @@ steps:
       text: mapNs.iteration.value.text
       chunk_id: mapNs.iteration.value.id
     min_success_threshold: 0.1
-    timeout_seconds: 300
     generation_parameters:
       max_tokens: 8192
       temperature: 0.3

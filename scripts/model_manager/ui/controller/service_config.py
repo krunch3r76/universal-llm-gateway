@@ -10,6 +10,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
 GATEWAY_DIR = Path.home() / ".gateway"
 NODES_DIR = GATEWAY_DIR / "nodes"
 
@@ -88,7 +89,7 @@ _GATEWAY_SEED_FALLBACK: dict[str, str] = {
 }
 
 # ∀ file ∈ _GATEWAY_SEED_FALLBACK: if content == fallback, file was never populated
-_SERVICE_CONFIG_DIR = Path(__file__).parents[4] / "services/universal-stargate/config"
+_SERVICE_CONFIG_DIR = WORKSPACE_ROOT / "services/universal-stargate/config"
 
 
 def _gateway_seed_content(name: str) -> str:
@@ -111,11 +112,18 @@ def load_env_file(path: Path) -> dict[str, str]:
     entries: dict[str, str] = {}
     if not path.exists():
         return entries
-    for line in path.read_text().splitlines():
+    try:
+        lines = path.read_text().splitlines()
+    except OSError as exc:
+        logger.warning("Could not read env file %s: %s", path, exc)
+        return entries
+    for line in lines:
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             key, value = line.split("=", 1)
-            entries[key.strip()] = os.path.expandvars(value.strip())
+            key = key.strip()
+            if key:
+                entries[key] = os.path.expandvars(value.strip())
     return entries
 
 
@@ -140,7 +148,10 @@ def ensure_stargate_config() -> Path:
     Also ensures sibling files that Stargate requires at startup
     (profiles.yaml, model_transformations.yaml) exist.
     """
-    GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(f"Failed to create gateway directory {GATEWAY_DIR}: {exc}") from exc
 
     config_path = GATEWAY_DIR / "stargate.yaml"
     if config_path.exists() and is_relay_config(config_path):
@@ -148,9 +159,17 @@ def ensure_stargate_config() -> Path:
             "Existing %s is a relay config — regenerating master config",
             config_path,
         )
-        config_path.unlink()
+        try:
+            config_path.unlink()
+        except OSError as exc:
+            raise RuntimeError(
+                f"Failed to remove relay config {config_path}: {exc}"
+            ) from exc
     if not config_path.exists():
-        config_path.write_text(_STARGATE_CONFIG_TEMPLATE)
+        try:
+            config_path.write_text(_STARGATE_CONFIG_TEMPLATE)
+        except OSError as exc:
+            raise RuntimeError(f"Failed to write stargate config {config_path}: {exc}") from exc
         logger.info("Generated stargate config: %s", config_path)
 
     for name, fallback in _GATEWAY_SEED_FALLBACK.items():
@@ -162,11 +181,17 @@ def ensure_stargate_config() -> Path:
 def _ensure_seeded_gateway_file(*, name: str, fallback: str) -> None:
     """Generate or reseed a gateway sibling config file when needed."""
     path = GATEWAY_DIR / name
-    existing = path.read_text() if path.exists() else None
+    try:
+        existing = path.read_text() if path.exists() else None
+    except OSError as exc:
+        raise RuntimeError(f"Failed to read gateway config {path}: {exc}") from exc
     if existing is not None and existing != fallback:
         return
     content = _gateway_seed_content(name)
-    path.write_text(content)
+    try:
+        path.write_text(content)
+    except OSError as exc:
+        raise RuntimeError(f"Failed to write gateway config {path}: {exc}") from exc
     action = "Reseeded" if existing == fallback else "Generated"
     logger.info("%s %s", action, path)
 
@@ -177,7 +202,10 @@ def ensure_node_env(workspace_root: Path, node_id: str) -> Path:
     Seeds MODEL_PATH from .env.local (MODEL_PATH_ROOT) as a one-time
     migration for existing installs, then generates a federation key.
     """
-    NODES_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        NODES_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(f"Failed to create node env directory {NODES_DIR}: {exc}") from exc
     node_env = NODES_DIR / f"{node_id}.env"
     if node_env.exists():
         return node_env
@@ -191,7 +219,10 @@ def ensure_node_env(workspace_root: Path, node_id: str) -> Path:
         f"MODEL_PATH={model_path}",
         f"FEDERATION_KEY_EDGE={federation_key}",
     ]
-    node_env.write_text("\n".join(lines) + "\n")
+    try:
+        node_env.write_text("\n".join(lines) + "\n")
+    except OSError as exc:
+        raise RuntimeError(f"Failed to write node env {node_env}: {exc}") from exc
     logger.info("Generated node env: %s", node_env)
     return node_env
 
@@ -268,13 +299,17 @@ def ensure_socket_dir() -> str | None:
             socket_dir,
             socket_dir.stat().st_uid,
         )
-    mode = stat_mod.S_IMODE(socket_dir.stat().st_mode)
+    try:
+        stat_result = socket_dir.stat()
+    except OSError as exc:
+        return f"Socket directory {socket_dir} is not accessible: {exc}"
+    mode = stat_mod.S_IMODE(stat_result.st_mode)
     world_writable = bool(mode & stat_mod.S_IWOTH)
     world_executable = bool(mode & stat_mod.S_IXOTH)
     if not (world_writable and world_executable):
         return (
             f"Socket directory {socket_dir} is not writable/traversable "
-            f"(owned by uid={socket_dir.stat().st_uid}, mode={oct(mode)}). "
+            f"(owned by uid={stat_result.st_uid}, mode={oct(mode)}). "
             f"Fix with: sudo chmod 777 {socket_dir}"
         )
     return None
@@ -328,8 +363,7 @@ def _stop_edge_container_for_socket_recovery() -> None:
     """Best-effort compose down to release /tmp/universal-protocol bind mount."""
     import subprocess
 
-    workspace_root = Path(__file__).parents[4]
-    compose_file = workspace_root / "docker" / "compose" / "gpu-edge.yml"
+    compose_file = WORKSPACE_ROOT / "docker" / "compose" / "gpu-edge.yml"
     if not compose_file.exists():
         return
     result = subprocess.run(
@@ -342,7 +376,7 @@ def _stop_edge_container_for_socket_recovery() -> None:
             "--timeout",
             "10",
         ],
-        cwd=str(workspace_root),
+        cwd=str(WORKSPACE_ROOT),
         capture_output=True,
         text=True,
     )
@@ -381,24 +415,38 @@ socket_path: "/tmp/universal-protocol/cloud-proxy.sock"
 # port: 8200
 
 # providers:
-#   - provider: openrouter
-#     api_key_env: OPENROUTER_API_KEY
-#     base_url: https://openrouter.ai/api/v1
+#   - provider: anthropic
+#     api_key_env: ANTHROPIC_API_KEY
+#     base_url: https://api.anthropic.com/v1
 #     max_concurrent: 20
 #     refresh_interval_hours: 6
 #     allow_prefixes:
 #       - "anthropic/"
+#
+#   - provider: openai
+#     api_key_env: OPENAI_API_KEY
+#     base_url: https://api.openai.com/v1
+#     max_concurrent: 20
+#     refresh_interval_hours: 6
+#     allow_prefixes:
 #       - "openai/"
-#       - "google/"
 """
 
 
 def ensure_cloud_proxy_config() -> Path:
     """Return path to ~/.gateway/cloud-proxy.yaml, generating if absent."""
-    GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(f"Failed to create gateway directory {GATEWAY_DIR}: {exc}") from exc
     config_path = GATEWAY_DIR / "cloud-proxy.yaml"
     if not config_path.exists():
-        config_path.write_text(_CLOUD_PROXY_CONFIG_TEMPLATE)
+        try:
+            config_path.write_text(_CLOUD_PROXY_CONFIG_TEMPLATE)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Failed to write cloud proxy config {config_path}: {exc}"
+            ) from exc
         logger.info("Generated cloud proxy config: %s", config_path)
     return config_path
 
@@ -538,7 +586,11 @@ def write_cloud_proxy_url_to_stargate(proxy_url: str) -> None:
     Merges cloud_proxy section; preserves rest of config. Creates file if absent.
     """
     config_path = GATEWAY_DIR / "stargate.yaml"
-    GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.error("Could not create gateway directory %s: %s", GATEWAY_DIR, exc)
+        return
     data: Any = {}
     if config_path.exists():
         try:
@@ -553,13 +605,26 @@ def write_cloud_proxy_url_to_stargate(proxy_url: str) -> None:
     if "cloud_proxy" not in data:
         data["cloud_proxy"] = {}
     data["cloud_proxy"]["url"] = proxy_url.rstrip("/")
-    config_path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
+    try:
+        config_path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
+    except OSError as exc:
+        logger.error("Could not write cloud proxy URL to %s: %s", config_path, exc)
 
 
 def is_relay_config(config_path: Path) -> bool:
     """Detect whether stargate.yaml was generated by the relay template."""
-    try:
-        text = config_path.read_text()
-    except OSError:
+    if not config_path.exists():
         return False
-    return "mode: remote" in text or "mode: relay" in text
+    try:
+        data = yaml.safe_load(config_path.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    federation = data.get("federation")
+    if not isinstance(federation, dict):
+        return False
+    mode = federation.get("mode")
+    if not isinstance(mode, str):
+        return False
+    return mode.strip().lower() in {"remote", "relay"}

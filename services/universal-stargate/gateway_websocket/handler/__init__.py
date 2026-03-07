@@ -13,6 +13,7 @@ from .model_loading import (
 )
 from .query import QueryResponseHandler
 from .registry import HandlerRegistry
+from .request_inference import RequestInferenceStartedHandler
 from .system import (
     ErrorHandler,
     GatewayDrainingHandler,
@@ -46,6 +47,7 @@ __all__ = [
     "CatalogUpdateHandler",
     "QueryResponseHandler",
     "TelemetryHeartbeatHandler",
+    "RequestInferenceStartedHandler",
     "ComputeCapacityTelemetryHandler",
     "ComputeQueueWaitHandler",
     "ComputeQueueAcquiredHandler",

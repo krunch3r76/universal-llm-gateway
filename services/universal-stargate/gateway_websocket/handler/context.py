@@ -4,12 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..messages import ResourcesData
-
-if TYPE_CHECKING:
-    from .telemetry import ComputeCapacityTelemetryHandler
 
 
 @dataclass
@@ -45,18 +42,16 @@ class HandlerContext:
 
     # Resources state (read-only, updated via reservation-aware setter)
     _resources: ResourcesData = field(default_factory=ResourcesData)
-    _resources_from_gateway_setter: Callable[[int | None, int | None], None] | None = (
-        None
-    )
+    _resources_from_gateway_setter: Callable[..., None] | None = None
 
     # Metadata
     gateway_name: str = ""
     gateway_http_url: str = ""
 
     # Side-effect schedulers (fire-and-forget)
-    schedule_callback: Callable[[Callable, tuple], None] = field(
-        default=lambda cb, args: None
-    )
+    schedule_callback: Callable[
+        [Callable[..., Awaitable[None]], tuple[Any, ...]], None
+    ] = field(default=lambda cb, args: None)
     schedule_capacity_freed: Callable[[str], None] = field(default=lambda m: None)
 
     # I/O (for async handlers only - PING)
@@ -68,16 +63,19 @@ class HandlerContext:
     # Callbacks (scheduled fire-and-forget, never awaited in handlers)
     # Global callbacks - called for ALL models
     on_model_loading_started: Callable[[str], Awaitable[None]] | None = None
-    on_model_loaded: Callable[[str, dict], Awaitable[None]] | None = None
+    on_model_loaded: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
     on_model_unloaded: Callable[[str], Awaitable[None]] | None = None
     on_model_load_failed: Callable[[str, str], Awaitable[None]] | None = None
     on_model_busy: Callable[[str], Awaitable[None]] | None = None
-    on_model_idle: Callable[[str, dict], Awaitable[None]] | None = None
-    on_resource_update: Callable[[dict], Awaitable[None]] | None = None
-    on_catalog_update: Callable[[dict], Awaitable[None]] | None = None
+    on_model_idle: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
+    on_resource_update: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+    on_catalog_update: Callable[[dict[str, Any]], Awaitable[None]] | None = None
     on_heartbeat: Callable[[], Awaitable[None]] | None = None
     on_resource_change: Callable[[], Awaitable[None]] | None = None
-    on_telemetry_heartbeat: Callable[[dict], Awaitable[None]] | None = None
+    on_telemetry_heartbeat: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+    on_request_inference_started: (
+        Callable[[str, str, str, str | None], Awaitable[None]] | None
+    ) = None
     on_vram_drift: Callable[[str, int, int, float], None] | None = None
     """Callback(model_id_str, measured_mb, catalog_mb, drift_pct) on >5% VRAM drift."""
     can_report_vram_drift: Callable[[str], bool] = field(default=lambda _: True)
@@ -86,15 +84,15 @@ class HandlerContext:
     # Model-specific callbacks (keyed by routing_key, multiple callbacks per key)
     # Used by LoadOutcomeTracker for concurrent load tracking without race conditions
     # Stores sets to support multiple trackers waiting for the same model
-    model_loaded_callbacks: dict[str, set[Callable[[str, dict], Awaitable[None]]]] = (
-        field(default_factory=dict)
-    )
+    model_loaded_callbacks: dict[
+        str, set[Callable[[str, dict[str, Any]], Awaitable[None]]]
+    ] = field(default_factory=dict)
     model_load_failed_callbacks: dict[
         str, set[Callable[[str, str], Awaitable[None]]]
     ] = field(default_factory=dict)
 
     # Telemetry handler (per-gateway capacity telemetry)
-    _capacity_telemetry_handler: ComputeCapacityTelemetryHandler | None = None
+    _capacity_telemetry_handler: Any | None = None
 
     @property
     def resources(self) -> ResourcesData:
@@ -123,12 +121,10 @@ class HandlerContext:
                 available_ram_mb=available_ram_mb,
             )
 
-    def get_capacity_telemetry_handler(self) -> ComputeCapacityTelemetryHandler | None:
+    def get_capacity_telemetry_handler(self) -> Any | None:
         """Get capacity telemetry handler for this gateway."""
         return self._capacity_telemetry_handler
 
-    def set_capacity_telemetry_handler(
-        self, handler: ComputeCapacityTelemetryHandler
-    ) -> None:
+    def set_capacity_telemetry_handler(self, handler: Any) -> None:
         """Set capacity telemetry handler for this gateway."""
         self._capacity_telemetry_handler = handler

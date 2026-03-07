@@ -10,7 +10,7 @@ An OpenAI-compatible inference stack where nothing leaves your hardware. Models 
 - **Secure tool-like capabilities**: pipelines perform actions (search, shell, verification) on behalf of models — models never get direct system access
 - **Optional cloud routing**: a separate, opt-in cloud proxy service isolates all outbound internet access to a single process — if it's not running, outbound traffic is impossible by construction
 
-## Status: Alpha (v0.1.0)
+## Status: Alpha (v0.0.0)
 
 Production-used on single-GPU and multi-node federated deployments. Under active development.
 

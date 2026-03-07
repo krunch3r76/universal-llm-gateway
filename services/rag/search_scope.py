@@ -1,3 +1,29 @@
+"""Search scope resolution, property boost, and recency sort for structured RAG.
+
+This module implements the query-time enhancements applied to ChromaDB vector
+search results before they are returned to the retrieval pipeline:
+
+  Property boost (hybrid search):
+    Queries the SQLite property inverted index for entity names, types, facets,
+    topics, and relations extracted at index time.  Chunks appearing in both the
+    vector results and the property index receive a configurable distance discount
+    (``property_boost_factor``), surfacing structurally relevant chunks that rank
+    below top-k on cosine alone.  Applied by ``apply_property_boost()``.
+
+  Recency sort:
+    Adds an additive bonus to chunks based on ``indexed_at`` timestamp using
+    exponential decay (``DECAY_LAMBDA``).  Controlled per-request via
+    ``recency_weight`` (0 = pure cosine, 1 = recency-dominant).
+    Applied by ``apply_recency_sort()``.
+
+  Scope resolution:
+    Maps a named scope (e.g. ``"project"``, ``"research"``) to ``source_prefixes``
+    defined in the RAG config.  Enables per-collection retrieval without exposing
+    raw filesystem paths to callers.  Applied by ``resolve_scope_request()``.
+
+These are pure functions; state lives in ``rag_service.py`` globals.
+"""
+
 from __future__ import annotations
 
 import math

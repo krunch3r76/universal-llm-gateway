@@ -108,6 +108,9 @@ class GatewayWebSocketClient:
         self._on_resource_update: Callable[[dict], Awaitable[None]] | None = None
         self._on_catalog_update: Callable[[dict], Awaitable[None]] | None = None
         self._on_telemetry_heartbeat: Callable[[dict], Awaitable[None]] | None = None
+        self._on_request_inference_started: (
+            Callable[[str, str, str, str | None], Awaitable[None]] | None
+        ) = None
 
         # Model-specific callbacks (keyed by routing_key, multiple per key)
         # Used by LoadOutcomeTracker for concurrent load tracking
@@ -364,6 +367,7 @@ class GatewayWebSocketClient:
             on_resource_update=self._on_resource_update,
             on_catalog_update=self._on_catalog_update,
             on_telemetry_heartbeat=self._on_telemetry_heartbeat,
+            on_request_inference_started=self._on_request_inference_started,
             # Model-specific callbacks for concurrent load tracking
             model_loaded_callbacks=self._model_loaded_callbacks,
             model_load_failed_callbacks=self._model_load_failed_callbacks,
@@ -596,6 +600,13 @@ class GatewayWebSocketClient:
     ) -> None:
         """Set callback for telemetry heartbeat event."""
         self._on_telemetry_heartbeat = callback
+
+    def on_request_inference_started(
+        self,
+        callback: Callable[[str, str, str, str | None], Awaitable[None]],
+    ) -> None:
+        """Set callback for request-scoped inference start telemetry."""
+        self._on_request_inference_started = callback
 
     # =========================================================================
     # Model-Specific Callback Registration (for LoadOutcomeTracker)

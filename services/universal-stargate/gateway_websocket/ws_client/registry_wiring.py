@@ -1,6 +1,7 @@
 """Handler registry wiring for WebSocket message dispatch."""
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from universal_logging import get_logger
 
@@ -23,6 +24,7 @@ from ..handler import (
     ModelUnloadedHandler,
     PingHandler,
     QueryResponseHandler,
+    RequestInferenceStartedHandler,
     ResourceUpdateHandler,
     TelemetryHeartbeatHandler,
 )
@@ -77,6 +79,9 @@ def create_handler_registry() -> HandlerRegistry:
     registry.register_sync(
         MessageType.COMPUTE_QUEUE_ACQUIRED, ComputeQueueAcquiredHandler()
     )
+    registry.register_sync(
+        MessageType.REQUEST_INFERENCE_STARTED, RequestInferenceStartedHandler()
+    )
 
     # Verify coverage (log warning on startup if missing handlers)
     expected = {
@@ -96,6 +101,7 @@ def create_handler_registry() -> HandlerRegistry:
         MessageType.TELEMETRY_HEARTBEAT,
         MessageType.COMPUTE_QUEUE_WAIT,
         MessageType.COMPUTE_QUEUE_ACQUIRED,
+        MessageType.REQUEST_INFERENCE_STARTED,
     }
     missing = registry.verify_coverage(expected)
     if missing:
@@ -111,17 +117,25 @@ def build_handler_context(
     ws_url: str,
     gateway_name: str,
     send_message: Callable[[str], Awaitable[None]] | None,
-    schedule_callback: Callable[[Callable, tuple], None],
+    schedule_callback: Callable[
+        [Callable[..., Awaitable[None]], tuple[object, ...]],
+        None,
+    ],
     on_model_loading_started: Callable[[str], Awaitable[None]] | None,
-    on_model_loaded: Callable[[str, dict], Awaitable[None]] | None,
+    on_model_loaded: Callable[[str, dict[str, Any]], Awaitable[None]] | None,
     on_model_unloaded: Callable[[str], Awaitable[None]] | None,
     on_model_load_failed: Callable[[str, str], Awaitable[None]] | None,
     on_model_busy: Callable[[str], Awaitable[None]] | None,
-    on_model_idle: Callable[[str, dict], Awaitable[None]] | None,
-    on_resource_update: Callable[[dict], Awaitable[None]] | None,
-    on_catalog_update: Callable[[dict], Awaitable[None]] | None,
-    on_telemetry_heartbeat: Callable[[dict], Awaitable[None]] | None,
-    model_loaded_callbacks: dict[str, set[Callable[[str, dict], Awaitable[None]]]]
+    on_model_idle: Callable[[str, dict[str, Any]], Awaitable[None]] | None,
+    on_resource_update: Callable[[dict[str, Any]], Awaitable[None]] | None,
+    on_catalog_update: Callable[[dict[str, Any]], Awaitable[None]] | None,
+    on_telemetry_heartbeat: Callable[[dict[str, Any]], Awaitable[None]] | None,
+    on_request_inference_started: (
+        Callable[[str, str, str, str | None], Awaitable[None]] | None
+    ),
+    model_loaded_callbacks: dict[
+        str, set[Callable[[str, dict[str, Any]], Awaitable[None]]]
+    ]
     | None = None,
     model_load_failed_callbacks: dict[str, set[Callable[[str, str], Awaitable[None]]]]
     | None = None,
@@ -146,8 +160,14 @@ def build_handler_context(
         on_model_loaded: Callback for MODEL_LOADED
         on_model_unloaded: Callback for MODEL_UNLOADED
         on_model_load_failed: Callback for MODEL_LOAD_FAILED
+        on_model_busy: Callback for MODEL_BUSY
+        on_model_idle: Callback for MODEL_IDLE
         on_resource_update: Callback for RESOURCE_UPDATE
         on_catalog_update: Callback for CATALOG_UPDATE
+        on_telemetry_heartbeat: Callback for TELEMETRY_HEARTBEAT
+        on_request_inference_started: Callback for REQUEST_INFERENCE_STARTED
+        model_loaded_callbacks: Per-model loaded callbacks for load trackers
+        model_load_failed_callbacks: Per-model load-failed callbacks for trackers
 
     Returns:
         HandlerContext configured with all capabilities
@@ -204,6 +224,7 @@ def build_handler_context(
         on_heartbeat=on_heartbeat,
         on_resource_change=on_resource_change,
         on_telemetry_heartbeat=on_telemetry_heartbeat,
+        on_request_inference_started=on_request_inference_started,
         on_vram_drift=event_publisher.schedule_vram_drift,
         can_report_vram_drift=state.can_report_vram_drift,
         # Model-specific callbacks (for concurrent load tracking)

@@ -44,6 +44,22 @@ DEFAULT_STARGATE_URL = "http://localhost:9999"
 DEFAULT_SOCKET_PATH = "/tmp/universal-protocol/cloud-proxy.sock"
 
 
+def _default_base_url(provider: str) -> str:
+    normalized = provider.strip().lower()
+    if normalized == "anthropic":
+        return "https://api.anthropic.com/v1"
+    if normalized == "openai":
+        return "https://api.openai.com/v1"
+    return DEFAULT_BASE_URL
+
+
+def _normalized_provider(value: str) -> str:
+    provider = value.strip().lower()
+    if not provider:
+        raise ValueError("providers[].provider must be non-empty")
+    return provider
+
+
 @dataclass(slots=True, kw_only=True)
 class CloudProxyConfig:
     """Top-level cloud proxy configuration."""
@@ -56,9 +72,19 @@ class CloudProxyConfig:
 
 
 def _validate_base_url(provider: str, url: str) -> None:
-    if not isinstance(url, str) or not url.startswith("https://"):
+    if not isinstance(url, str):
         raise ValueError(
-            f"providers[{provider}].base_url must be an https:// URL, got: {url!r}"
+            f"providers[{provider}].base_url must be a URL string, got: {url!r}"
+        )
+    if url.startswith("https://"):
+        return
+    is_local_http = url.startswith("http://localhost") or url.startswith(
+        "http://127.0.0.1"
+    )
+    if not is_local_http:
+        raise ValueError(
+            f"providers[{provider}].base_url must be an https:// URL "
+            f"(or local http://localhost/127.0.0.1), got: {url!r}"
         )
 
 
@@ -84,14 +110,16 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
             f"Provider entry must be a mapping, got {type(entry).__name__}"
         )
 
-    provider = entry.get("provider")
-    if not provider or not isinstance(provider, str):
+    raw_provider = entry.get("provider")
+    if not isinstance(raw_provider, str):
         raise ValueError("Provider entry missing 'provider' string")
+    provider = _normalized_provider(raw_provider)
 
+    api_key = ""
     raw_key = entry.get("api_key")
-    if isinstance(raw_key, str) and raw_key.strip():
-        api_key = raw_key.strip()
-    else:
+    if raw_key is not None:
+        api_key = str(raw_key).strip()
+    if not api_key:
         api_key_env = entry.get("api_key_env", "")
         if not api_key_env or not isinstance(api_key_env, str):
             raise ValueError(
@@ -123,7 +151,7 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
             f"got: {refresh_interval_hours}"
         )
 
-    base_url = entry.get("base_url", DEFAULT_BASE_URL)
+    base_url = entry.get("base_url", _default_base_url(provider))
     _validate_base_url(provider, base_url)
 
     allow_prefixes = _validate_allow_prefixes(provider, entry.get("allow_prefixes", []))
@@ -173,20 +201,18 @@ def load_config(config_path: Path | None = None) -> CloudProxyConfig:
 
     host_val = raw.get("host")
     port_val = raw.get("port")
-    has_tcp = (
+    has_tcp = False
+    if (
         host_val is not None
         and isinstance(host_val, str)
         and host_val.strip()
         and port_val is not None
-    )
-    try:
-        has_tcp = (
-            has_tcp
-            and isinstance(port_val, int | float)
-            and 1 <= int(port_val) <= 65535
-        )
-    except (TypeError, ValueError):
-        has_tcp = False
+    ):
+        try:
+            tcp_port = int(str(port_val).strip())
+            has_tcp = 1 <= tcp_port <= 65535
+        except (TypeError, ValueError):
+            has_tcp = False
     if socket_path and has_tcp:
         raise ValueError(
             "cloud-proxy.yaml: cannot set both socket_path and host+port; "
@@ -214,9 +240,16 @@ def load_config(config_path: Path | None = None) -> CloudProxyConfig:
     if host_val and isinstance(host_val, str) and host_val.strip():
         host = host_val.strip()
 
-    stargate_url = raw.get("stargate_url", DEFAULT_STARGATE_URL)
-    if not isinstance(stargate_url, str) or not stargate_url.strip():
-        stargate_url = DEFAULT_STARGATE_URL
+    stargate_url = DEFAULT_STARGATE_URL
+    stargate_url_val = raw.get("stargate_url")
+    if stargate_url_val is not None:
+        if isinstance(stargate_url_val, str) and stargate_url_val.strip():
+            stargate_url = stargate_url_val.strip()
+        else:
+            logger.error(
+                "Invalid stargate_url in cloud proxy config: %r, using default",
+                stargate_url_val,
+            )
 
     raw_providers = raw.get("providers", [])
     if not isinstance(raw_providers, list):

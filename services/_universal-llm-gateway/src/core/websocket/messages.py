@@ -7,7 +7,7 @@ from typing import Any
 
 
 class MessageType(str, Enum):
-    """WebSocket message types (dot-notation per EVENTS.md)."""
+    """WebSocket message types (actual string values)."""
 
     # Gateway → Stargate (telemetry)
     INIT = "gateway.init"
@@ -27,6 +27,7 @@ class MessageType(str, Enum):
     # Compute capacity telemetry (for orchestration observability)
     COMPUTE_QUEUE_WAIT = "telemetry.compute.queue.wait"
     COMPUTE_QUEUE_ACQUIRED = "telemetry.compute.queue.acquired"
+    REQUEST_INFERENCE_STARTED = "telemetry.request.inference.started"
 
     # Stargate → Gateway
     PONG = "gateway.pong"
@@ -278,5 +279,23 @@ def create_compute_queue_acquired_message(
             "wait_duration_ms": wait_duration_ms,
             "queue_position_at_enqueue": queue_position_at_enqueue,
             "timestamp_ms": timestamp_ms,
+        },
+    )
+
+
+def create_request_inference_started_message(
+    request_id: str,
+    model_id: str,
+    gateway_url: str,
+    correlation_id: str | None = None,
+) -> WebSocketMessage:
+    """Create REQUEST_INFERENCE_STARTED telemetry message."""
+    return WebSocketMessage(
+        type=MessageType.REQUEST_INFERENCE_STARTED,
+        data={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_url": gateway_url,
+            "correlation_id": correlation_id,
         },
     )

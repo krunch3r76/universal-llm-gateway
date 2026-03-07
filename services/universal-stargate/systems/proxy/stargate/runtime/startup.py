@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import os
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -86,16 +88,66 @@ def _require_config_dict(proxy: StargateProxy) -> dict[str, Any]:
     return proxy.config.config
 
 
+def _run_startup_cleanup(name: str, cleanup_func: Callable[[], None]) -> None:
+    """Run startup cleanup with consistent logging and failure visibility."""
+    try:
+        cleanup_func()
+        logger.info("Cleared %s on startup", name)
+    except Exception as e:
+        logger.warning(
+            "Failed to cleanup %s on startup: %s",
+            name,
+            e,
+            exc_info=True,
+        )
+
+
+def _schedule_supervised_task(coro: Coroutine[Any, Any, object], name: str) -> None:
+    """
+    Schedule a background task and surface exceptions in logs.
+
+    Used when wiring callbacks asynchronously so startup and event handlers remain
+    non-blocking while task failures remain diagnosable.
+    """
+    task = asyncio.create_task(coro, name=name)
+
+    def _on_done(done_task: asyncio.Task[Any]) -> None:
+        if done_task.cancelled():
+            logger.debug("Background task cancelled: %s", name)
+            return
+        exc = done_task.exception()
+        if exc is not None:
+            logger.error(
+                "Background task failed: %s: %s",
+                name,
+                exc,
+                exc_info=True,
+            )
+
+    task.add_done_callback(_on_done)
+
+
 async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> None:
-    """Initialize all runtime components."""
+    """
+    Initialize all runtime components for the Stargate proxy.
+
+    Startup order is deliberate because multiple subsystems depend on each other:
+    cleanup -> gateway bootstrap -> federation -> request components -> intelligence
+    profiles -> pipelines -> event consumers. Federation wiring precedes request
+    component initialization so routing and token accounting dependencies are ready.
+
+    Args:
+        proxy: Initialized proxy instance to wire and bootstrap.
+        app: Optional FastAPI app, required for federation HTTP integration.
+    """
+    gateway_config = proxy._gateway_config  # noqa: SLF001
+    gateway_name = gateway_config.name if gateway_config else None
+    gateway_socket_path = gateway_config.socket_path if gateway_config else None
+
     # Router-only mode: no local gateway
-    if proxy._gateway_config is None:  # noqa: SLF001
+    if gateway_name is None:
         logger.info("Starting Stargate Proxy in router-only mode (no local gateway)")
-        gateway_name = None
-        gateway_socket_path = None
     else:
-        gateway_name = proxy._gateway_config.name  # noqa: SLF001
-        gateway_socket_path = proxy._gateway_config.socket_path  # noqa: SLF001
         logger.info("Starting Stargate Proxy with single gateway: %s", gateway_name)
 
     # Start debug event broadcaster if configured (early - want to capture all events)
@@ -107,52 +159,38 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
             logger.info(f"Debug event server started: {socket_path}")
 
     # Cleanup old pipeline summaries on startup
-    try:
-        summary_writer = get_summary_writer()
-        summary_writer.cleanup_all_pipelines()
-    except Exception as e:
-        logger.warning(
-            "Failed to cleanup pipeline summaries on startup: %s",
-            e,
-            exc_info=True,
-        )
+    _run_startup_cleanup(
+        "pipeline summaries",
+        lambda: get_summary_writer().cleanup_all_pipelines(),
+    )
 
     # Cleanup request snapshots on startup
-    try:
-        data_dir = os.getenv("DATA_DIR", "/tmp")
-        snapshot_dir = Path(data_dir) / "stargate-request-snapshots"
-        if snapshot_dir.exists():
-            _clear_snapshot_files_preserve_directories(snapshot_dir)
-            logger.info(f"Cleared request snapshots: {snapshot_dir}")
-    except Exception as e:
-        logger.warning(
-            "Failed to cleanup request snapshots on startup: %s",
-            e,
-            exc_info=True,
+    data_dir = os.getenv("DATA_DIR", "/tmp")
+    snapshot_dir = Path(data_dir) / "stargate-request-snapshots"
+    if snapshot_dir.exists():
+        _run_startup_cleanup(
+            "request snapshots",
+            lambda: _clear_snapshot_files_preserve_directories(snapshot_dir),
         )
 
     # Cleanup pipeline failures on startup
-    try:
-        log_dir = os.getenv("LOG_DIR", "/tmp/logs/universal-stargate")
-        failures_dir = Path(log_dir) / "pipeline_failures"
-        if failures_dir.exists():
-            import shutil
+    log_dir = os.getenv("LOG_DIR", "/tmp/logs/universal-stargate")
+    failures_dir = Path(log_dir) / "pipeline_failures"
+    if failures_dir.exists():
+        import shutil
 
+        def _cleanup_failures_dir() -> None:
             shutil.rmtree(failures_dir)
             failures_dir.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Cleared pipeline failures: {failures_dir}")
-    except Exception as e:
-        logger.warning(
-            "Failed to cleanup pipeline failures on startup: %s",
-            e,
-            exc_info=True,
-        )
+
+        _run_startup_cleanup("pipeline failures", _cleanup_failures_dir)
 
     # Skip gateway-specific initialization in router-only mode
     if gateway_name is not None:
         await initialize_http_client(proxy)
         await initialize_gateway_manager(proxy)
         await initialize_resource_manager(proxy)
+        _wire_request_inference_started_event(proxy)
 
         await configure_token_and_parameter_managers(proxy)
     else:
@@ -171,7 +209,7 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
     # CRITICAL: Remote mode needs model_manager for token counting orchestration
     # CRITICAL: Remote mode needs gateway_manager for telemetry endpoint
     # CRITICAL: Edge mode needs gateway_manager for federation server
-    if app:
+    if app is not None:
         from systems.federation import init_federation
 
         # Get gateway socket path for token counting (Master/Standalone modes)
@@ -432,10 +470,9 @@ def _wire_federation_telemetry(proxy: StargateProxy) -> None:
     # Also wire immediately if Gateway already connected (rare, but handle it)
     gateway = proxy.gateway_manager.get_gateway()
     if gateway:
-        import asyncio
-
-        asyncio.create_task(
-            wire_on_gateway_connect(), name="wire-federation-telemetry-immediate"
+        _schedule_supervised_task(
+            wire_on_gateway_connect(),
+            name="wire-federation-telemetry-immediate",
         )
         logger.info("Gateway already connected - wiring telemetry immediately")
 
@@ -448,6 +485,7 @@ def _start_relay_periodic_telemetry(proxy: StargateProxy) -> None:
     connection fresh and prevent staleness warnings.
 
     Uses RemoteIntegration's method to start the task.
+    Expected mode integration type is RemoteIntegration in relay deployments.
     """
     import asyncio
 
@@ -479,7 +517,8 @@ def _wire_federated_load_orchestrator(proxy: StargateProxy) -> None:
     Post: proxy.federated_load_orchestrator = FederationIntegration.load_orchestrator
           proxy.resource_aware_model_manager wired with orchestrator (if exists)
 
-    INVARIANT: Master mode ⟹ orchestrator wired
+    INVARIANT: Master mode ⟹ orchestrator wired.
+    If a local Gateway is present, model manager wiring is also mandatory.
     FAIL-FAST: Raises RuntimeError if Master mode but load_orchestrator is None
     """
     if not proxy.federation_integration:
@@ -506,6 +545,12 @@ def _wire_federated_load_orchestrator(proxy: StargateProxy) -> None:
 
     # Wire into model manager (only if local gateway exists)
     # Router-only masters don't have local model manager, which is fine
+    if proxy.gateway_manager and proxy.resource_aware_model_manager is None:
+        raise RuntimeError(
+            "STARTUP FAILURE: Master mode with local gateway requires "
+            "resource_aware_model_manager for orchestrator wiring. "
+            "This indicates an internal setup error."
+        )
     if proxy.resource_aware_model_manager:
         proxy.resource_aware_model_manager.set_federated_load_orchestrator(orchestrator)
         logger.info("✅ Federated load orchestrator wired to model manager")
@@ -524,7 +569,7 @@ def _wire_forwarder_to_model_router(proxy: StargateProxy) -> None:
     Pre: proxy.federation_integration initialized (Master mode)
     Post: proxy.gateway_manager.model_router._forwarder = forwarder
 
-    INVARIANT: Master mode ⟹ forwarder wired to model_router
+    INVARIANT: Master mode with local gateway ⟹ forwarder wired to model_router.
     """
     if not proxy.federation_integration:
         return
@@ -543,6 +588,63 @@ def _wire_forwarder_to_model_router(proxy: StargateProxy) -> None:
         logger.error("❌ Master mode but forwarder is None - eviction disabled")
         return
 
-    # Ensure model_router exists
-    proxy.gateway_manager._ensure_model_router()  # noqa: SLF001
+    # Require model router from gateway manager's public startup contract.
+    if proxy.gateway_manager.model_router is None:
+        raise RuntimeError(
+            "STARTUP FAILURE: gateway_manager.model_router is unavailable for "
+            "forwarder wiring. initialize_gateway_manager must initialize model_router."
+        )
     proxy.gateway_manager.model_router.set_forwarder(forwarder)
+
+
+def _wire_request_inference_started_event(proxy: StargateProxy) -> None:
+    """Bridge Gateway runtime-start telemetry into Stargate request events."""
+    if proxy.event_bus is None:
+        logger.warning(
+            "Cannot wire request inference start callback: event_bus not available"
+        )
+        return
+    if proxy.gateway_manager is None:
+        logger.warning(
+            "Cannot wire request inference start callback: "
+            "gateway_manager not available"
+        )
+        return
+
+    gateway = proxy.gateway_manager.gateway
+    if gateway is None:
+        logger.warning(
+            "Cannot wire request inference start callback: gateway not initialized"
+        )
+        return
+
+    ws_client = gateway.client.ws_client
+
+    from src.scheduling.events import RequestInferenceStarted
+
+    async def _on_request_inference_started(
+        request_id: str,
+        model_id: str,
+        gateway_url: str,
+        correlation_id: str | None,
+    ) -> None:
+        try:
+            await proxy.event_bus.publish_async_nowait(
+                RequestInferenceStarted(
+                    request_id=request_id,
+                    model_id=model_id,
+                    gateway_url=gateway_url,
+                    correlation_id=correlation_id,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Failed to publish request.inference.started from gateway telemetry: "
+                "request_id=%s model_id=%s gateway_url=%s",
+                request_id,
+                model_id,
+                gateway_url,
+            )
+
+    ws_client.on_request_inference_started(_on_request_inference_started)
+    logger.info("Registered request.inference.started callback from Gateway telemetry")

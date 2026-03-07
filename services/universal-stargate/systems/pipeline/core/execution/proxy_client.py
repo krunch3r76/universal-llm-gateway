@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, NoReturn
 
 import httpx
 from universal_logging import get_logger
@@ -27,7 +31,7 @@ class ProxyClientConfig:
     # Timeouts
     connect_timeout: float = 5.0
     request_timeout: float = (
-        300.0  # Match stargate_config.yaml → request_queue.default_timeout
+        3600.0  # Safety-net ceiling; real per-iteration timeout enforced by MapExecutor
     )
 
     @classmethod
@@ -102,6 +106,121 @@ class ProxyClient:
         self._config = config or ProxyClientConfig.from_environment()
         self._client: httpx.AsyncClient | None = None
         self._active_requests: int = 0
+
+    async def _write_timeout_diagnostic(
+        self,
+        *,
+        endpoint: str,
+        timeout_seconds: float,
+        request_body: dict[str, Any],
+        request_headers: dict[str, str],
+        execution_id: str | None,
+        step_id: str | None,
+        detail: str,
+        queue_wait_seconds: float | None = None,
+        inference_elapsed_seconds: float | None = None,
+        timeout_type: str | None = None,
+    ) -> str | None:
+        """Persist timeout diagnostic report for forensic debugging."""
+        data_dir = Path(os.getenv("DATA_DIR", "/tmp"))
+        report_dir = data_dir / "pipeline-timeout-diagnostics"
+        request_id = request_headers.get("X-Internal-Request-ID", "")
+        safe_request_id = request_id.replace("/", "-")[:32] or "unknown"
+        timestamp = datetime.now(UTC).isoformat(timespec="milliseconds").replace(
+            "+00:00", "Z"
+        )
+        filename = f"{timestamp}_{endpoint.strip('/').replace('/', '-')}_{safe_request_id}.json"
+        report_path = report_dir / filename
+
+        report_payload: dict[str, Any] = {
+            "timestamp": timestamp,
+            "endpoint": endpoint,
+            "timeout_seconds": timeout_seconds,
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "request_id": request_id or None,
+            "cancel_group": request_headers.get("X-Pipeline-Cancel-Group"),
+            "queue_wait_seconds": queue_wait_seconds,
+            "inference_elapsed_seconds": inference_elapsed_seconds,
+            "timeout_type": timeout_type,
+            "request_headers": request_headers,
+            "request_body": request_body,
+            "error_detail": detail,
+            "transport": {
+                "unix_socket_path": self._config.unix_socket_path,
+                "host": self._config.host,
+                "port": self._config.port,
+            },
+        }
+
+        try:
+            report_dir.mkdir(parents=True, exist_ok=True)
+            json_payload = json.dumps(report_payload, indent=2, ensure_ascii=False)
+            await asyncio.to_thread(report_path.write_text, json_payload, "utf-8")
+            return str(report_path)
+        except Exception as dump_error:  # pragma: no cover - diagnostic-only best effort
+            logger.warning("Failed to write timeout diagnostic report: %s", dump_error)
+            return None
+
+    async def _raise_timeout_error(
+        self,
+        *,
+        endpoint: str,
+        request_timeout: float,
+        request_body: dict[str, Any],
+        request_headers: dict[str, str],
+        execution_id: str | None,
+        step_id: str | None,
+        exception: httpx.TimeoutException,
+        request_kind: str,
+    ) -> NoReturn:
+        """Write diagnostic report and raise standardized timeout error."""
+        report_path = await self._write_timeout_diagnostic(
+            endpoint=endpoint,
+            timeout_seconds=request_timeout,
+            request_body=request_body,
+            request_headers=request_headers,
+            execution_id=execution_id,
+            step_id=step_id,
+            detail=str(exception),
+        )
+        if report_path:
+            logger.error(
+                "Pipeline %s request timed out after %.1fs; diagnostic=%s",
+                request_kind,
+                request_timeout,
+                report_path,
+            )
+        raise ProxyClientError(
+            f"Request timeout after {request_timeout}s",
+            status_code=504,
+            detail=str(exception),
+        ) from exception
+
+    @staticmethod
+    def _raise_httpx_transport_error(exception: httpx.HTTPError) -> NoReturn:
+        """Normalize httpx transport errors to ProxyClientError."""
+        if isinstance(exception, httpx.ConnectError):
+            raise ProxyClientError(
+                f"Failed to connect to Stargate: {exception}",
+                status_code=503,
+                detail=str(exception),
+            ) from exception
+        if isinstance(exception, httpx.RemoteProtocolError):
+            raise ProxyClientError(
+                (
+                    "HTTP protocol error (connection closed or invalid response): "
+                    f"{exception}"
+                ),
+                status_code=502,
+                detail=str(exception),
+            ) from exception
+
+        error_msg = str(exception) if str(exception) else exception.__class__.__name__
+        raise ProxyClientError(
+            f"HTTP error: {error_msg}",
+            detail=str(exception),
+        ) from exception
 
     @classmethod
     def from_environment(cls) -> ProxyClient:
@@ -218,6 +337,7 @@ class ProxyClient:
         profile: str | None = None,
         timeout: float | None = None,
         map_iteration_request_id: str | None = None,
+        request_id: str | None = None,
         **params: Any,
     ) -> tuple[dict[str, Any], str, str]:
         """
@@ -239,6 +359,10 @@ class ProxyClient:
             timeout: Request timeout (overrides default)
             map_iteration_request_id: Pre-generated per-iteration request ID
                 for cancellation tracking. If None, generates new UUID.
+            request_id: Pre-generated unique request ID for capacity tracking.
+                Becomes X-Internal-Request-ID and context.request_id in Stargate.
+                If None, generates new UUID. Used by MapExecutor to correlate
+                request.processing events before the HTTP call completes.
             **params: Additional OpenAI-compatible parameters
                 (temperature, max_tokens, response_format, etc.)
 
@@ -257,14 +381,13 @@ class ProxyClient:
         if map_iteration_request_id is None:
             map_iteration_request_id = str(uuid.uuid4())
 
-        # CRITICAL: Generate unique request_id for THIS call's capacity tracking.
-        # map_iteration_request_id is for iteration-level cancellation, but each
-        # internal LLM call within the iteration needs its own capacity slot.
-        # Handlers like sub_decompose_individual make N parallel calls per iteration
-        # (asyncio.gather), and if they share the same request_id, each completion
-        # emits MODEL_EXECUTION_COMPLETED with the same ID → N capacity releases
-        # for 1 acquisition → double-wake → livelock.
-        unique_request_id = str(uuid.uuid4())
+        # CRITICAL: Each call needs its own capacity slot. Handlers like
+        # sub_decompose_individual make N parallel calls per iteration; shared
+        # request_id → N capacity releases for 1 acquisition → livelock.
+        # Pre-generated request_id is only used for the first call of an
+        # iteration (for request.processing event correlation); subsequent
+        # calls in the same iteration generate fresh UUIDs.
+        unique_request_id = request_id or str(uuid.uuid4())
 
         # Build request body (stream=False enforced after merge — pipeline invariant)
         request_body: dict[str, Any] = {
@@ -325,32 +448,18 @@ class ProxyClient:
             return response.json(), map_iteration_request_id, unique_request_id
 
         except httpx.TimeoutException as e:
-            raise ProxyClientError(
-                f"Request timeout after {request_timeout}s",
-                status_code=504,
-                detail=str(e),
-            ) from e
-
-        except httpx.ConnectError as e:
-            raise ProxyClientError(
-                f"Failed to connect to Stargate: {e}",
-                status_code=503,
-                detail=str(e),
-            ) from e
-
-        except httpx.RemoteProtocolError as e:
-            raise ProxyClientError(
-                f"HTTP protocol error (connection closed or invalid response): {e}",
-                status_code=502,
-                detail=str(e),
-            ) from e
-
+            await self._raise_timeout_error(
+                endpoint="/v1/chat/completions",
+                request_timeout=request_timeout,
+                request_body=request_body,
+                request_headers=request_headers,
+                execution_id=execution_id,
+                step_id=step_id,
+                exception=e,
+                request_kind="chat",
+            )
         except httpx.HTTPError as e:
-            error_msg = str(e) if str(e) else f"{e.__class__.__name__}"
-            raise ProxyClientError(
-                f"HTTP error: {error_msg}",
-                detail=str(e),
-            ) from e
+            self._raise_httpx_transport_error(e)
 
         finally:
             self._active_requests -= 1
@@ -468,32 +577,18 @@ class ProxyClient:
             return response.json()
 
         except httpx.TimeoutException as e:
-            raise ProxyClientError(
-                f"Request timeout after {request_timeout}s",
-                status_code=504,
-                detail=str(e),
-            ) from e
-
-        except httpx.ConnectError as e:
-            raise ProxyClientError(
-                f"Failed to connect to Stargate: {e}",
-                status_code=503,
-                detail=str(e),
-            ) from e
-
-        except httpx.RemoteProtocolError as e:
-            raise ProxyClientError(
-                f"HTTP protocol error (connection closed or invalid response): {e}",
-                status_code=502,
-                detail=str(e),
-            ) from e
-
+            await self._raise_timeout_error(
+                endpoint="/v1/embeddings",
+                request_timeout=request_timeout,
+                request_body=request_body,
+                request_headers=request_headers,
+                execution_id=execution_id,
+                step_id=step_id,
+                exception=e,
+                request_kind="embedding",
+            )
         except httpx.HTTPError as e:
-            error_msg = str(e) if str(e) else f"{e.__class__.__name__}"
-            raise ProxyClientError(
-                f"HTTP error: {error_msg}",
-                detail=str(e),
-            ) from e
+            self._raise_httpx_transport_error(e)
 
         finally:
             self._active_requests -= 1

@@ -188,6 +188,13 @@ async def call_model(
     recorder = context.recorder
     call_start = _time.monotonic()
 
+    # Consume pre-generated request ID (if available) for the first call
+    # of a map iteration — enables request.processing event correlation.
+    # Subsequent calls within the same iteration get fresh UUIDs.
+    inference_request_id = context.inference_request_id
+    if inference_request_id:
+        context.inference_request_id = None
+
     # Invoke via Stargate
     client = context.get_proxy_client()
     try:
@@ -205,6 +212,7 @@ async def call_model(
             profile=effective_profile,
             timeout=http_timeout,
             map_iteration_request_id=context.map_iteration_request_id,
+            request_id=inference_request_id,
             **params,
         )
     except ProxyClientError as e:
@@ -227,11 +235,7 @@ async def call_model(
                     system_prompt=system_prompt,
                     user_prompt=prompt,
                     request_body=request_body,
-                    error=(
-                        f"{e.status_code} {e.detail}"
-                        if hasattr(e, "status_code")
-                        else str(e)
-                    ),
+                    error=f"{e.status_code} {e.detail}",
                     latency_ms=call_duration_ms,
                     success=False,
                     metadata=metadata,

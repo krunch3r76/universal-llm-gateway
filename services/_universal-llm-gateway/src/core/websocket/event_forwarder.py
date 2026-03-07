@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
@@ -19,6 +21,7 @@ from ..events.types import (
     MODEL_LOADED,
     MODEL_LOADING_STARTED,
     MODEL_UNLOADED,
+    REQUEST_INFERENCE_STARTED,
     SYSTEM_RESOURCES_UPDATED,
 )
 from .connection_manager import StargateConnectionManager
@@ -35,6 +38,7 @@ from .messages import (
     create_model_loaded_message,
     create_model_loading_started_message,
     create_model_unloaded_message,
+    create_request_inference_started_message,
     create_resource_update_message,
 )
 
@@ -45,7 +49,16 @@ logger = get_logger(__name__)
 
 
 class WebSocketEventForwarder:
-    """Forwards EventBus events to WebSocket clients."""
+    """
+    Forward gateway EventBus signals to Stargate WebSocket clients.
+
+    Responsibilities:
+    - Subscribe to the gateway event bus for selected signals.
+    - Convert events into wire-format WebSocket messages.
+    - Broadcast converted messages to connected Stargate clients.
+    - Keep forwarding non-blocking while surfacing malformed payloads and
+      unexpected runtime failures through structured logs.
+    """
 
     # Events to forward to Stargate
     FORWARDED_EVENTS = [
@@ -55,6 +68,7 @@ class WebSocketEventForwarder:
         MODEL_UNLOADED,
         INFERENCE_STARTED,
         INFERENCE_COMPLETED,
+        REQUEST_INFERENCE_STARTED,
         SYSTEM_RESOURCES_UPDATED,
         CATALOG_RELOADED,
         GATEWAY_SHUTDOWN,
@@ -107,14 +121,12 @@ class WebSocketEventForwarder:
         Fire-and-forget: broadcasts asynchronously without blocking the event bus.
         Errors are logged but don't propagate to prevent event handler failures.
         """
-        import asyncio
-
         # Skip if stopped (handlers can't be unsubscribed in EventBus v0.2.0+)
         if not self._subscribed:
             return
 
         # Create task for async message conversion and broadcast
-        asyncio.create_task(self._process_and_broadcast(event))
+        _ = asyncio.create_task(self._process_and_broadcast(event))
 
     async def _process_and_broadcast(self, event: Event) -> None:
         """Convert event to message and broadcast."""
@@ -129,8 +141,16 @@ class WebSocketEventForwarder:
             message = await self._event_to_message(event)
             if message:
                 await self._broadcast_with_logging(message, event.signal)
-        except Exception as e:
-            logger.error(f"Failed to process event {event.signal}: {e}")
+        except (KeyError, TypeError, ValueError) as e:
+            logger.error(
+                "Failed to process malformed event %s: %s",
+                event.signal,
+                e,
+                exc_info=True,
+            )
+        except Exception:
+            logger.exception("Unexpected failure processing event %s", event.signal)
+            raise
 
     async def _broadcast_with_logging(
         self, message: WebSocketMessage, signal: str
@@ -172,125 +192,154 @@ class WebSocketEventForwarder:
                 # logger.debug(f"Forwarded {signal} to {count} WebSocket client(s)")
                 pass
         except Exception as e:
-            logger.error(f"WebSocket broadcast failed for {signal}: {e}")
+            logger.error(
+                "WebSocket broadcast failed for %s: %s",
+                signal,
+                e,
+                exc_info=True,
+            )
+            raise
 
     async def _event_to_message(self, event: Event) -> WebSocketMessage | None:
         """Convert EventBus event to WebSocket message."""
         payload = event.payload
-
-        if event.signal == MODEL_LOADING_STARTED:
-            return create_model_loading_started_message(
-                model_id=payload.get("model_id", "unknown")
+        if not isinstance(payload, dict):
+            logger.error(
+                "Invalid event payload type in forwarder: signal=%s type=%s",
+                event.signal,
+                type(payload).__name__,
             )
+            return None
 
-        elif event.signal == MODEL_LOADED:
-            return create_model_loaded_message(
-                model_id=payload.get("model_id", "unknown"),
-                vram_mb=payload.get("vram_usage_mb", 0),
-                ram_mb=payload.get("ram_usage_mb", 0),
-                context_length=payload.get("context_length"),
-            )
+        sync_builders: dict[str, Callable[[dict[str, Any]], WebSocketMessage | None]] = {
+            MODEL_LOADING_STARTED: lambda p: create_model_loading_started_message(
+                model_id=p.get("model_id", "unknown")
+            ),
+            MODEL_LOADED: lambda p: create_model_loaded_message(
+                model_id=p.get("model_id", "unknown"),
+                vram_mb=p.get("vram_usage_mb", 0),
+                ram_mb=p.get("ram_usage_mb", 0),
+                context_length=p.get("context_length"),
+            ),
+            MODEL_LOAD_FAILED: lambda p: create_model_load_failed_message(
+                model_id=p.get("model_id", "unknown"),
+                error_message=p.get("error_message", "Unknown error"),
+            ),
+            MODEL_UNLOADED: lambda p: create_model_unloaded_message(
+                model_id=p.get("model_id", "unknown")
+            ),
+            INFERENCE_STARTED: lambda p: create_model_busy_message(
+                model_id=p.get("model_id", "unknown")
+            ),
+            INFERENCE_COMPLETED: lambda p: create_model_idle_message(
+                model_id=p.get("model_id", "unknown"),
+                last_inference_time=p.get("last_inference_time", 0.0),
+            ),
+            REQUEST_INFERENCE_STARTED: self._build_request_inference_started_message,
+            SYSTEM_RESOURCES_UPDATED: self._build_system_resources_update_message,
+            GATEWAY_SHUTDOWN: lambda p: create_gateway_shutdown_message(
+                gateway_id=p.get("gateway_id", "unknown"),
+                reason=p.get("reason", "unknown"),
+                timestamp=p.get("timestamp", 0),
+            ),
+            GATEWAY_DRAINING: lambda p: create_gateway_draining_message(
+                gateway_id=p.get("gateway_id", "unknown"),
+                reason=p.get("reason", "unknown"),
+                timeout=p.get("timeout", 30),
+                timestamp=p.get("timestamp", 0),
+            ),
+            COMPUTE_CAPACITY_QUEUE_WAIT: lambda p: create_compute_queue_wait_message(
+                request_id=p["request_id"],
+                model_id=p["model_id"],
+                compute_type=p["compute_type"],
+                queue_position=p["queue_position"],
+                active_count=p["active_count"],
+                limit=p["limit"],
+                timestamp_ms=p["timestamp_ms"],
+            ),
+            COMPUTE_CAPACITY_QUEUE_ACQUIRED: lambda p: create_compute_queue_acquired_message(
+                request_id=p["request_id"],
+                model_id=p["model_id"],
+                compute_type=p["compute_type"],
+                wait_duration_ms=p["wait_duration_ms"],
+                queue_position_at_enqueue=p["queue_position_at_enqueue"],
+                timestamp_ms=p["timestamp_ms"],
+            ),
+        }
+        async_builders: dict[
+            str, Callable[[dict[str, Any]], Awaitable[WebSocketMessage | None]]
+        ] = {
+            CATALOG_RELOADED: self._build_catalog_update_message,
+        }
 
-        elif event.signal == MODEL_LOAD_FAILED:
-            return create_model_load_failed_message(
-                model_id=payload.get("model_id", "unknown"),
-                error_message=payload.get("error_message", "Unknown error"),
-            )
-
-        elif event.signal == MODEL_UNLOADED:
-            return create_model_unloaded_message(
-                model_id=payload.get("model_id", "unknown")
-            )
-
-        elif event.signal == INFERENCE_STARTED:
-            return create_model_busy_message(
-                model_id=payload.get("model_id", "unknown")
-            )
-
-        elif event.signal == INFERENCE_COMPLETED:
-            return create_model_idle_message(
-                model_id=payload.get("model_id", "unknown"),
-                last_inference_time=payload.get("last_inference_time", 0.0),
-            )
-
-        elif event.signal == SYSTEM_RESOURCES_UPDATED:
-            logger.info(
-                f"📡 Forwarding SYSTEM_RESOURCES_UPDATED to Stargate: "
-                f"available_vram={payload.get('available_vram_mb', 0)}MB, "
-                f"available_ram={payload.get('available_ram_mb', 0)}MB, "
-                f"loaded_models={payload.get('loaded_models', [])}"
-            )
-            return create_resource_update_message(
-                available_vram_mb=payload.get("available_vram_mb", 0),
-                available_ram_mb=payload.get("available_ram_mb", 0),
-                total_vram_mb=payload.get("total_vram_mb"),
-                total_ram_mb=payload.get("total_ram_mb"),
-                loaded_models=payload.get("loaded_models"),
-                model_vram=payload.get("model_vram"),
-            )
-
-        elif event.signal == CATALOG_RELOADED:
-            # Catalog update with fresh models list for Stargate
-            reason = payload.get("reason", "reload")
-            models = None
-            catalog = None
-
-            if self._init_cache:
-                # Get fresh data from init_cache (now async)
-                init_data = await self._init_cache.get_init_data()
-                models = init_data.get("models", [])
-                catalog = init_data.get("catalog", {})
-                logger.info(
-                    f"🔔 Creating CATALOG_UPDATE message: "
-                    f"{len(models) if models else 0} models, reason={reason}"
-                )
-            else:
-                logger.warning(
-                    "⚠️ CATALOG_RELOADED but init_cache is None - cannot send model list"
-                )
-
-            return create_catalog_update_message(
-                reason=reason,
-                models=models,
-                catalog=catalog,
-            )
-
-        elif event.signal == GATEWAY_SHUTDOWN:
-            return create_gateway_shutdown_message(
-                gateway_id=payload.get("gateway_id", "unknown"),
-                reason=payload.get("reason", "unknown"),
-                timestamp=payload.get("timestamp", 0),
-            )
-
-        elif event.signal == GATEWAY_DRAINING:
-            return create_gateway_draining_message(
-                gateway_id=payload.get("gateway_id", "unknown"),
-                reason=payload.get("reason", "unknown"),
-                timeout=payload.get("timeout", 30),
-                timestamp=payload.get("timestamp", 0),
-            )
-
-        elif event.signal == COMPUTE_CAPACITY_QUEUE_WAIT:
-            # Strict field access — missing fields indicate broken wire protocol
-            return create_compute_queue_wait_message(
-                request_id=payload["request_id"],
-                model_id=payload["model_id"],
-                compute_type=payload["compute_type"],
-                queue_position=payload["queue_position"],
-                active_count=payload["active_count"],
-                limit=payload["limit"],
-                timestamp_ms=payload["timestamp_ms"],
-            )
-
-        elif event.signal == COMPUTE_CAPACITY_QUEUE_ACQUIRED:
-            # Strict field access — missing fields indicate broken wire protocol
-            return create_compute_queue_acquired_message(
-                request_id=payload["request_id"],
-                model_id=payload["model_id"],
-                compute_type=payload["compute_type"],
-                wait_duration_ms=payload["wait_duration_ms"],
-                queue_position_at_enqueue=payload["queue_position_at_enqueue"],
-                timestamp_ms=payload["timestamp_ms"],
-            )
-
+        if builder := sync_builders.get(event.signal):
+            return builder(payload)
+        if async_builder := async_builders.get(event.signal):
+            return await async_builder(payload)
         return None
+
+    def _build_request_inference_started_message(
+        self, payload: dict[str, Any]
+    ) -> WebSocketMessage | None:
+        """Build request-scoped runtime-start message with strict payload checks."""
+        try:
+            return create_request_inference_started_message(
+                request_id=payload["request_id"],
+                model_id=payload["model_id"],
+                gateway_url=payload["gateway_url"],
+                correlation_id=payload.get("correlation_id"),
+            )
+        except KeyError:
+            logger.exception(
+                "Malformed request.inference.started payload in event_forwarder: "
+                "keys=%s payload=%s",
+                list(payload.keys()),
+                payload,
+            )
+            return None
+
+    def _build_system_resources_update_message(
+        self, payload: dict[str, Any]
+    ) -> WebSocketMessage:
+        """Build resource update message with forwarding diagnostics."""
+        logger.info(
+            f"📡 Forwarding SYSTEM_RESOURCES_UPDATED to Stargate: "
+            f"available_vram={payload.get('available_vram_mb', 0)}MB, "
+            f"available_ram={payload.get('available_ram_mb', 0)}MB, "
+            f"loaded_models={payload.get('loaded_models', [])}"
+        )
+        return create_resource_update_message(
+            available_vram_mb=payload.get("available_vram_mb", 0),
+            available_ram_mb=payload.get("available_ram_mb", 0),
+            total_vram_mb=payload.get("total_vram_mb"),
+            total_ram_mb=payload.get("total_ram_mb"),
+            loaded_models=payload.get("loaded_models"),
+            model_vram=payload.get("model_vram"),
+        )
+
+    async def _build_catalog_update_message(
+        self, payload: dict[str, Any]
+    ) -> WebSocketMessage:
+        """Build catalog update message with fresh cache data when available."""
+        reason = payload.get("reason", "reload")
+        models = None
+        catalog = None
+
+        if self._init_cache:
+            init_data = await self._init_cache.get_init_data()
+            models = init_data.get("models", [])
+            catalog = init_data.get("catalog", {})
+            logger.info(
+                f"🔔 Creating CATALOG_UPDATE message: "
+                f"{len(models) if models else 0} models, reason={reason}"
+            )
+        else:
+            logger.warning(
+                "⚠️ CATALOG_RELOADED but init_cache is None - cannot send model list"
+            )
+
+        return create_catalog_update_message(
+            reason=reason,
+            models=models,
+            catalog=catalog,
+        )

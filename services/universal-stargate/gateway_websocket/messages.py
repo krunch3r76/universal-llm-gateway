@@ -17,6 +17,7 @@ class MessageType(str, Enum):
     MODEL_UNLOADED = "telemetry.model.unloaded"
     MODEL_BUSY = "telemetry.model.busy"
     MODEL_IDLE = "telemetry.model.idle"
+    REQUEST_INFERENCE_STARTED = "telemetry.request.inference.started"
     RESOURCE_UPDATE = "telemetry.resource.updated"
     CATALOG_UPDATE = "gateway.catalog.updated"
     GATEWAY_SHUTDOWN = "gateway.shutdown"
@@ -81,15 +82,40 @@ class ResourcesData:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ResourcesData":
         """Create from dict (HTTP response or WebSocket message)."""
+        raw_loaded = data.get("loaded_models", [])
+        raw_busy = data.get("busy_models", [])
+        loaded_models = (
+            frozenset(str(item) for item in raw_loaded)
+            if isinstance(raw_loaded, list)
+            else frozenset()
+        )
+        busy_models = (
+            frozenset(str(item) for item in raw_busy)
+            if isinstance(raw_busy, list)
+            else frozenset()
+        )
+        raw_model_last_inference = data.get("model_last_inference", {})
+        model_last_inference = (
+            {
+                str(model_id): float(ts)
+                for model_id, ts in raw_model_last_inference.items()
+                if isinstance(model_id, str) and isinstance(ts, int | float)
+            }
+            if isinstance(raw_model_last_inference, dict)
+            else {}
+        )
+        model_details = data.get("model_details", {})
+        if not isinstance(model_details, dict):
+            model_details = {}
         return cls(
             total_ram_mb=data.get("total_ram_mb", 0),
             available_ram_mb=data.get("available_ram_mb", 0),
             total_vram_mb=data.get("total_vram_mb", 0),
             available_vram_mb=data.get("available_vram_mb", 0),
-            loaded_models=frozenset(data.get("loaded_models", [])),
-            busy_models=frozenset(data.get("busy_models", [])),
-            model_details=data.get("model_details", {}),
-            model_last_inference=data.get("model_last_inference", {}),
+            loaded_models=loaded_models,
+            busy_models=busy_models,
+            model_details=model_details,
+            model_last_inference=model_last_inference,
         )
 
 

@@ -196,6 +196,7 @@ class MapConfig:
     timeout_seconds: float | None = None
     min_success_threshold: int | float | None = None
     fail_fast: bool = False
+    inference_timeout_seconds: float | None = 300.0
     model_pool: InputBinding | None = None
     model_requirements: dict[str, Any] | None = None
     exclude_self: bool = False

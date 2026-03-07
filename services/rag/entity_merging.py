@@ -1,8 +1,31 @@
-"""Cross-chunk entity merging for structured RAG context.
+"""Cross-chunk merging of entities, relations, and topics for structured RAG context.
 
-Merges entities with the same name (case-insensitive) across retrieved chunks,
-unioning their types and facets. Produces a structured entity summary for
-inclusion in the answer pipeline's context.
+At query time, multiple chunks are retrieved and their extraction metadata is
+aggregated here before being injected into the LLM answer prompt.  Three merge
+techniques are applied:
+
+  Entity merging:
+    Entities with the same name (case-insensitive) across chunks are unified —
+    their types and facets are unioned.  Prevents the same architectural concept
+    from appearing as duplicate entries in the context (e.g. "Stargate" from five
+    chunks becomes one merged entry listing all observed types and facets).
+    Implemented by ``merge_entities()`` / ``format_entity_context()``.
+
+  Relation merging:
+    Directed edges (subject → predicate → target) extracted from entities are
+    deduplicated by identity and counted by occurrence frequency.  The merged
+    relation list forms a ``## Key Relationships`` section in the context,
+    giving the answer LLM an explicit structural map of how components interact.
+    Implemented by ``merge_relations()`` / ``format_relation_context()``.
+
+  Topic merging:
+    Free-form topic strings are normalised, deduplicated case-insensitively, and
+    sorted by frequency.  Forms a ``## Key Topics`` section that surfaces the
+    dominant themes across retrieved chunks.
+    Implemented by ``merge_topics()`` / ``format_topic_context()``.
+
+Called exclusively from ``rag_query_retrieve.py → _format_context()``.
+Extraction data originates from ``knowledge_extractor.py`` at index time.
 
 Technique adapted from Microsoft typeagent-py (MIT license).
 """

@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 
     from ..execution.proxy_client import ProxyClient
     from ..schemas import PipelineSpec, SourceInput, StepConfig
+    from .builtin.types import ModelCallResult
+    from .events.recorder import EventRecorder
 
 
 @dataclass
@@ -172,12 +174,12 @@ class PipelineContext:
     runtime_options: dict[str, Any] = field(default_factory=dict)
 
     # Injected dependencies (set by executor, not handlers)
-    _registry: Any = None
-    _request_executor: Any = None
-    _proxy: Any = None
+    _registry: object | None = None
+    _request_executor: object | None = None
+    _proxy: object | None = None
 
     # Model invocation client (replaces ModelInvoker)
-    proxy_client: Any = None  # ProxyClient instance
+    proxy_client: ProxyClient | None = None
 
     # Gateway tracking (for eviction protection)
     selected_gateway_instance: str | None = None  # Gateway name from parent request
@@ -186,17 +188,22 @@ class PipelineContext:
     # Becomes proxy request_id via X-Internal-Request-ID header
     map_iteration_request_id: str | None = None
 
+    # Pre-generated request ID for the first model call of a map iteration.
+    # Consumed once by call_model → proxy_client for request.processing correlation.
+    # Subsequent calls within the same iteration generate fresh UUIDs.
+    inference_request_id: str | None = None
+
     # Map iteration state (set by MapExecutor for provenance tracking)
     _map_state: MapIterationState | None = None
 
     # Event recorder for pipeline observability (set by executor)
-    _recorder: Any = None  # EventRecorder instance
+    _recorder: EventRecorder | None = None
 
     # Auto-tracking: model calls made during current step, keyed by step name.
     # Using a dict prevents concurrent steps from contaminating each other's
     # call lists: step A draining its own key does not remove step B's entries.
     # Cleared per-key by DAGExecutor at each step boundary.
-    _step_model_calls: dict[str, list[Any]] = field(default_factory=dict)
+    _step_model_calls: dict[str, list[ModelCallResult]] = field(default_factory=dict)
 
     # Per-step model override for executor-level fallback.
     # Keyed by step_name → full model ID. When set, the generate handler
@@ -212,11 +219,11 @@ class PipelineContext:
         """Event recorder for pipeline observability. May be None if not configured."""
         return self._recorder
 
-    def record_model_call(self, call_result: Any, step_name: str) -> None:
+    def record_model_call(self, call_result: ModelCallResult, step_name: str) -> None:
         """Record a model call for automatic token aggregation."""
         self._step_model_calls.setdefault(step_name, []).append(call_result)
 
-    def drain_step_calls(self, step_name: str) -> list[Any]:
+    def drain_step_calls(self, step_name: str) -> list[ModelCallResult]:
         """Return and clear calls recorded for step_name. DAGExecutor only."""
         return self._step_model_calls.pop(step_name, [])
 
@@ -240,6 +247,18 @@ class PipelineContext:
             self,
             map_iteration_request_id=map_iteration_request_id,
         )
+
+    def with_inference_request_id(
+        self, inference_request_id: str
+    ) -> PipelineContext:
+        """
+        Return context copy with pre-generated inference request ID.
+
+        Used by MapExecutor so call_model can pass the ID to proxy_client,
+        enabling request.processing event correlation before the HTTP call.
+        Consumed once by call_model; subsequent calls generate fresh UUIDs.
+        """
+        return dataclasses.replace(self, inference_request_id=inference_request_id)
 
     def with_map_state(self, map_state: MapIterationState) -> PipelineContext:
         """
@@ -444,9 +463,7 @@ class AbstractStepHandler(ABC):
 
     See Also:
     ---------
-    - `BaseHandler` - Adds utility methods (_call_model, _build_generation_params)
     - `StepHandler` (Protocol) - Duck-typing alternative
-    - `GenericGenerateHandler` - Reference implementation
     """
 
     # Required class attribute - subclasses MUST set this

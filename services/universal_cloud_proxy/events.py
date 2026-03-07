@@ -10,6 +10,7 @@ def CloudProxyStarted(  # noqa: N802
     mode: str,
     socket_path: str | None,
 ) -> Event:
+    """Emit cloud proxy startup lifecycle event."""
     return Event(
         signal="cloud.proxy.started",
         payload={"pid": pid, "mode": mode, "socket_path": socket_path},
@@ -28,9 +29,23 @@ def CloudProxyCatalogRefreshed(  # noqa: N802
     provider: str,
     model_count: int,
 ) -> Event:
+    """Emit successful provider catalog refresh event."""
     return Event(
         signal="cloud.proxy.catalog.refreshed",
         payload={"provider": provider, "model_count": model_count},
+    )
+
+
+@event_factory
+def CloudProxyCatalogRefreshFailed(  # noqa: N802
+    *,
+    provider: str,
+    error: str,
+) -> Event:
+    """Emit failed provider catalog refresh event."""
+    return Event(
+        signal="cloud.proxy.catalog.refresh.failed",
+        payload={"provider": provider, "error": error},
     )
 
 
@@ -40,10 +55,17 @@ def CloudProxyRequestForwarded(  # noqa: N802
     provider: str,
     model: str,
     streaming: bool,
+    adapter_type: str,
 ) -> Event:
+    """Emit request forwarded event for cloud provider calls."""
     return Event(
         signal="cloud.proxy.request.forwarded",
-        payload={"provider": provider, "model": model, "streaming": streaming},
+        payload={
+            "provider": provider,
+            "model": model,
+            "streaming": streaming,
+            "adapter_type": adapter_type,
+        },
     )
 
 
@@ -54,7 +76,9 @@ def CloudProxyRequestFailed(  # noqa: N802
     model: str,
     status_code: int,
     error: str,
+    adapter_type: str,
 ) -> Event:
+    """Emit request failure event for cloud provider calls."""
     return Event(
         signal="cloud.proxy.request.failed",
         payload={
@@ -62,6 +86,29 @@ def CloudProxyRequestFailed(  # noqa: N802
             "model": model,
             "status_code": status_code,
             "error": error,
+            "adapter_type": adapter_type,
+        },
+    )
+
+
+@event_factory
+def CloudProxyRequestTranslationFailed(  # noqa: N802
+    *,
+    provider: str,
+    model: str,
+    error: str,
+    direction: str,
+    adapter_type: str,
+) -> Event:
+    """Emit request/response translation failures from provider adapters."""
+    return Event(
+        signal="cloud.proxy.request.translation.failed",
+        payload={
+            "provider": provider,
+            "model": model,
+            "error": error,
+            "direction": direction,
+            "adapter_type": adapter_type,
         },
     )
 
@@ -72,6 +119,7 @@ def CloudProxyBrowserCatalogRefreshed(  # noqa: N802
     trigger: str,
     model_count: int,
 ) -> Event:
+    """Emit successful browser catalog refresh event."""
     return Event(
         signal="cloud.proxy.browser.catalog.refreshed",
         payload={
@@ -87,8 +135,9 @@ def CloudProxyBrowserCatalogRefreshFailed(  # noqa: N802
     trigger: str,
     error: str,
 ) -> Event:
+    """Emit failed browser catalog refresh event."""
     return Event(
-        signal="cloud.proxy.browser.refresh.failed",
+        signal="cloud.proxy.browser.catalog.refresh.failed",
         payload={
             "trigger": trigger,
             "error": error,
@@ -101,6 +150,7 @@ def CloudProxyBrowserModelLookupMiss(  # noqa: N802
     *,
     model_id: str,
 ) -> Event:
+    """Emit browser lookup miss event for model IDs."""
     return Event(
         signal="cloud.proxy.browser.lookup.miss",
         payload={"model_id": model_id},
@@ -112,6 +162,7 @@ def CloudProxyBrowserUiUnavailable(  # noqa: N802
     *,
     missing_files: list[str],
 ) -> Event:
+    """Emit browser UI unavailable event for missing assets."""
     return Event(
         signal="cloud.proxy.browser.ui.unavailable",
         payload={"missing_files": missing_files},
@@ -130,6 +181,7 @@ def CloudProxyBrowserSelectCompleted(  # noqa: N802
     max_completion_cost: float | None,
     auto_excluded_multimodal: bool = False,
 ) -> Event:
+    """Emit successful browser model selection event."""
     return Event(
         signal="cloud.proxy.browser.select.completed",
         payload={
@@ -150,6 +202,7 @@ def CloudProxyBrowserSelectFailed(  # noqa: N802
     *,
     error: str,
 ) -> Event:
+    """Emit failed browser model selection event."""
     return Event(
         signal="cloud.proxy.browser.select.failed",
         payload={"error": error},
@@ -162,6 +215,7 @@ def CloudProxyLocalCatalogRefreshed(  # noqa: N802
     stargate_url: str,
     model_count: int,
 ) -> Event:
+    """Emit successful local catalog refresh event."""
     return Event(
         signal="cloud.proxy.local.catalog.refreshed",
         payload={"stargate_url": stargate_url, "model_count": model_count},
@@ -174,6 +228,7 @@ def CloudProxyLocalCatalogUnavailable(  # noqa: N802
     stargate_url: str,
     error: str,
 ) -> Event:
+    """Emit local catalog unavailable event."""
     return Event(
         signal="cloud.proxy.local.catalog.unavailable",
         payload={"stargate_url": stargate_url, "error": error},

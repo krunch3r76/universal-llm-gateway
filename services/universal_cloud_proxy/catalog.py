@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
+from .adapters.base import ProviderAdapter
 from .config import ProviderConfig
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,7 @@ class ProviderCatalog:
     models: list[CatalogModel] = field(default_factory=list)
     base_url: str = ""
     api_key: str = ""
+    adapter_type: str = ""
 
 
 class CatalogManager:
@@ -77,12 +80,21 @@ class CatalogManager:
     Lifecycle:
         1. ``await startup()`` — initial fetch for all providers
         2. Background refresh loop re-fetches periodically
-        3. ``await shutdown()`` — cancel refresh + close client
+        3. ``await shutdown()`` — cancel refresh loop
     """
 
-    def __init__(self, providers: list[ProviderConfig]) -> None:
+    def __init__(
+        self,
+        providers: list[ProviderConfig],
+        adapters: dict[str, ProviderAdapter],
+        on_provider_catalog_refreshed: Callable[[str, int], Awaitable[None]] | None = None,
+        on_provider_catalog_refresh_failed: Callable[[str, str], Awaitable[None]]
+        | None = None,
+    ) -> None:
         self._providers = providers
-        self._client = httpx.AsyncClient(timeout=30.0)
+        self._adapters = adapters
+        self._on_provider_catalog_refreshed = on_provider_catalog_refreshed
+        self._on_provider_catalog_refresh_failed = on_provider_catalog_refresh_failed
         self._catalogs: dict[str, ProviderCatalog] = {}
         self._refresh_task: asyncio.Task[None] | None = None
 
@@ -104,14 +116,13 @@ class CatalogManager:
         )
 
     async def shutdown(self) -> None:
-        """Cancel background refresh and close HTTP client."""
+        """Cancel background refresh task."""
         if self._refresh_task and not self._refresh_task.done():
             self._refresh_task.cancel()
             try:
                 await self._refresh_task
             except asyncio.CancelledError:
                 pass
-        await self._client.aclose()
         logger.debug("CatalogManager shut down")
 
     def get_all_models(self) -> list[dict[str, Any]]:
@@ -131,30 +142,36 @@ class CatalogManager:
     def resolve_provider(self, model_id: str) -> ProviderCatalog | None:
         """Find the provider catalog that contains the given model ID."""
         for catalog in self._catalogs.values():
-            if any(m.id == model_id for m in catalog.models):
-                return catalog
+            for model in catalog.models:
+                if model.id == model_id:
+                    return catalog
         return None
 
     async def _fetch_provider(self, config: ProviderConfig) -> None:
         """Fetch model list from a single provider and cache it."""
-        url = f"{config.base_url}/models"
-        headers = {"Authorization": f"Bearer {config.api_key}"}
-
-        try:
-            response = await self._client.get(url, headers=headers)
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            logger.error("Failed to fetch models from %s: %s", config.provider, exc)
+        adapter = self._adapters.get(config.provider)
+        if adapter is None:
+            logger.error("No adapter for provider '%s'", config.provider)
+            if self._on_provider_catalog_refresh_failed is not None:
+                await self._on_provider_catalog_refresh_failed(
+                    config.provider, "No adapter configured"
+                )
             return
 
-        body: dict[str, Any] = response.json()
-        raw_models: list[dict[str, Any]] = body.get("data", [])
+        try:
+            raw_models = await adapter.fetch_catalog()
+        except httpx.HTTPError as exc:
+            logger.error("Failed to fetch models from %s: %s", config.provider, exc)
+            if self._on_provider_catalog_refresh_failed is not None:
+                await self._on_provider_catalog_refresh_failed(config.provider, str(exc))
+            return
 
         models: list[CatalogModel] = []
         for entry in raw_models:
-            mid = entry.get("id", "")
-            if not mid or "/" not in mid:
+            raw_mid = str(entry.get("id", "")).strip()
+            if not raw_mid:
                 continue
+            mid = adapter.normalize_catalog_model_id(raw_mid)
 
             if config.allow_prefixes:
                 if not any(mid.startswith(p) for p in config.allow_prefixes):
@@ -168,8 +185,11 @@ class CatalogManager:
                     max_concurrent=config.max_concurrent,
                     prompt_cost_per_m=_per_million(pricing, "prompt"),
                     completion_cost_per_m=_per_million(pricing, "completion"),
-                    context_length=entry.get("context_length", 0),
-                    name=entry.get("name", mid),
+                    context_length=int(
+                        entry.get("context_length", entry.get("max_context_tokens", 0))
+                        or 0
+                    ),
+                    name=str(entry.get("name", entry.get("display_name", mid))),
                 )
             )
 
@@ -178,7 +198,10 @@ class CatalogManager:
             models=models,
             base_url=config.base_url,
             api_key=config.api_key,
+            adapter_type=adapter.adapter_type,
         )
+        if self._on_provider_catalog_refreshed is not None:
+            await self._on_provider_catalog_refreshed(config.provider, len(models))
 
         logger.debug(
             "Fetched %d models from %s (%d after prefix filter)",

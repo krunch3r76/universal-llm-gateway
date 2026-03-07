@@ -31,6 +31,7 @@ from src.core.errors import (
     is_connection_error,
     is_crash_error,
 )
+from src.core.events.types import RequestInferenceStarted
 from src.core.gateway_config import GatewayConfig
 from src.core.model_registry import ModelRegistry
 from src.routers.dependencies import (
@@ -48,8 +49,6 @@ from src.schemas.chat_completion import (
 )
 
 from .disconnect import inference_with_disconnect_watch
-
-# Remove import - truncation now automatic
 from .events import emit_inference_failed_nowait, emit_request_queued_nowait
 from .model_resolution import resolve_model_id
 from .openai_errors import (
@@ -211,8 +210,8 @@ def _build_completion_response(
     content = completion_result.get("content", "")
     finish_reason = completion_result.get("finish_reason", "stop")
     message_kw: dict = {"role": "assistant", "content": content}
-    if "tool_calls" in completion_result:
-        message_kw["tool_calls"] = completion_result["tool_calls"]
+    if tool_calls := completion_result.get("tool_calls"):
+        message_kw["tool_calls"] = tool_calls
     response_message = ChatMessage(**message_kw)
     choice = ChatCompletionChoice(
         index=0, message=response_message, finish_reason=finish_reason
@@ -228,6 +227,14 @@ def _build_completion_response(
         usage=usage,
         timings=completion_result.get("timings"),
     )
+
+
+def _resolve_gateway_url(request: Request | None) -> str:
+    """Resolve gateway URL/identity for request-scoped runtime telemetry."""
+    if request is None:
+        return "unknown"
+    base_url = str(request.base_url).rstrip("/")
+    return base_url or "unknown"
 
 
 async def _generate_non_streaming_response(
@@ -273,7 +280,20 @@ async def _generate_non_streaming_response(
                     context = {"request_id": request_id, "model_id": model_id}
                     raise ModelLoadingError(f"Model failed: {error_msg}", context)
 
-                raise RuntimeError(f"Failed to load model {model_id}")
+                raise ModelLoadingError(
+                    f"Model '{model_id}' is not available after auto-load attempt.",
+                    {"request_id": request_id, "model_id": model_id},
+                )
+
+        # Request-scoped runtime-start boundary (execution handoff begins here)
+        await event_bus.publish_async_nowait(
+            RequestInferenceStarted(
+                request_id=request_id,
+                model_id=model_id,
+                gateway_url=_resolve_gateway_url(request),
+                correlation_id=correlation_id,
+            )
+        )
 
         inference_coro = worker_controller.generate_chat_completion(
             model_id=model_id,
@@ -307,7 +327,7 @@ async def _generate_non_streaming_response(
         SyntaxErrorException,
     ) as e:
         response_time_ms = (time.time() - start_time) * 1000
-        return _handle_known_error(e, request_id, response_time_ms)
+        raise _handle_known_error(e, request_id, response_time_ms)
 
     except RuntimeError as e:
         response_time_ms = (time.time() - start_time) * 1000
@@ -329,10 +349,12 @@ async def _generate_non_streaming_response(
         )
 
 
-def _handle_known_error(e, request_id: str, response_time_ms: float):
+def _handle_known_error(
+    e, request_id: str, response_time_ms: float
+) -> HTTPException:
     """Handle ModelLoadingError, WorkerInitializationError, etc."""
     error_message = str(e)
-    logger.warning(f"Gateway error: {error_message}")
+    logger.error(f"Gateway error: {error_message}")
     context = {"request_id": request_id}
     return create_error_response(e, 500, context)
 
@@ -349,7 +371,7 @@ def _handle_runtime_error(
 
     # Timeout handling
     if "timed out" in error_message.lower() or "timeout" in error_message.lower():
-        logger.warning(f"Request timeout for {model_id}: {error_message}")
+        logger.error(f"Request timeout for {model_id}: {error_message}")
         return create_openai_error_response(
             status_code=504,
             message="Request timed out",

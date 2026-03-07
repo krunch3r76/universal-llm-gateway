@@ -102,6 +102,17 @@ Payload:
     stream: bool - Whether this is a streaming request
 """
 
+REQUEST_INFERENCE_STARTED = "request.inference.started"
+"""
+Emitted when gateway runtime execution begins for a specific request.
+
+Payload:
+    request_id: str - Unique identifier for this request
+    model_id: str - Unique identifier for the model handling the request
+    gateway_url: str - Gateway URL/identity where runtime execution starts
+    correlation_id: Optional[str] - Cross-service trace correlation identifier
+"""
+
 INFERENCE_STARTED = "inference.started"
 """
 Emitted when a model transitions to BUSY state (inference begins).
@@ -497,6 +508,38 @@ def RequestQueued(
             "messages": messages,
             "parameters": parameters,
             "stream": stream,
+        },
+    )
+
+
+@event_factory
+def RequestInferenceStarted(
+    request_id: str,
+    model_id: str,
+    gateway_url: str,
+    correlation_id: str | None = None,
+) -> Event:
+    """
+    Create REQUEST_INFERENCE_STARTED event.
+
+    Request-scoped runtime boundary event emitted at execution handoff.
+
+    Args:
+        request_id: Unique identifier for this request
+        model_id: Model handling the request
+        gateway_url: Gateway URL/identity for runtime start
+        correlation_id: Optional cross-service trace correlation ID
+
+    Returns:
+        Event with RequestInferenceStarted signal
+    """
+    return Event(
+        signal=REQUEST_INFERENCE_STARTED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_url": gateway_url,
+            "correlation_id": correlation_id,
         },
     )
 
