@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import socket
 import subprocess
+import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -100,13 +102,15 @@ class ServiceState:
             )
         if pid and self._pid_alive(pid):
             healthy = self._rag_probe_uds(socket_path)
+            uptime = self._proc_uptime_str(pid)
+            uptime_str = f" ({uptime})" if uptime else ""
             return ServiceInfo(
                 name="RAG",
                 status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
                 port=None,
                 pid=pid,
                 health_url=f"unix://{socket_path}/stats",
-                detail=f"PID {pid}" + ("" if healthy else ", probe failed"),
+                detail=f"PID {pid}{uptime_str}" + ("" if healthy else ", probe failed"),
             )
         healthy = self._rag_probe_uds(socket_path)
         return ServiceInfo(
@@ -135,13 +139,16 @@ class ServiceState:
         host, port = tcp_config
         if pid and self._pid_alive(pid):
             healthy = self._port_open(port, host)
+            uptime = self._proc_uptime_str(pid)
+            uptime_str = f" ({uptime})" if uptime else ""
             return ServiceInfo(
                 name="RAG",
                 status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
                 port=port,
                 pid=pid,
                 health_url=f"http://{host}:{port}/stats",
-                detail=f"PID {pid}" + ("" if healthy else ", port not responding"),
+                detail=f"PID {pid}{uptime_str}"
+                + ("" if healthy else ", port not responding"),
             )
         if self._port_open(port, host):
             return ServiceInfo(
@@ -194,13 +201,15 @@ class ServiceState:
             )
         if pid and self._pid_alive(pid):
             healthy = self._cloud_proxy_probe_uds(socket_path)
+            uptime = self._proc_uptime_str(pid)
+            uptime_str = f" ({uptime})" if uptime else ""
             return ServiceInfo(
                 name="Cloud Proxy",
                 status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
                 port=None,
                 pid=pid,
                 health_url=f"unix://{socket_path}/health",
-                detail=f"PID {pid}" + ("" if healthy else ", probe failed"),
+                detail=f"PID {pid}{uptime_str}" + ("" if healthy else ", probe failed"),
             )
         healthy = self._cloud_proxy_probe_uds(socket_path)
         return ServiceInfo(
@@ -228,13 +237,16 @@ class ServiceState:
         pid = self._read_pid(self.CLOUD_PROXY_PID_FILE)
         if pid and self._pid_alive(pid):
             healthy = self._port_open(port, host)
+            uptime = self._proc_uptime_str(pid)
+            uptime_str = f" ({uptime})" if uptime else ""
             return ServiceInfo(
                 name="Cloud Proxy",
                 status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
                 port=port,
                 pid=pid,
                 health_url=f"http://{host}:{port}/health",
-                detail=f"PID {pid}" + ("" if healthy else ", port not responding"),
+                detail=f"PID {pid}{uptime_str}"
+                + ("" if healthy else ", port not responding"),
             )
         if self._port_open(port, host):
             return ServiceInfo(
@@ -259,13 +271,16 @@ class ServiceState:
         pid = self._read_pid(self.STARGATE_PID_FILE)
         if pid and self._pid_alive(pid):
             healthy = self._port_open(self.STARGATE_PORT)
+            uptime = self._proc_uptime_str(pid)
+            uptime_str = f" ({uptime})" if uptime else ""
             return ServiceInfo(
                 name="Stargate",
                 status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
                 port=self.STARGATE_PORT,
                 pid=pid,
                 health_url=f"http://localhost:{self.STARGATE_PORT}/health",
-                detail=f"PID {pid}" + ("" if healthy else ", port not responding"),
+                detail=f"PID {pid}{uptime_str}"
+                + ("" if healthy else ", port not responding"),
             )
         if self._port_open(self.STARGATE_PORT):
             return ServiceInfo(
@@ -292,39 +307,58 @@ class ServiceState:
             status=ServiceStatus.STOPPED,
         )
 
+    def check_mcp(self) -> ServiceInfo:
+        """Check MCP server container status."""
+        info = self._check_named_container("mcp-server", service_name="MCP")
+        if info:
+            return info
+        return ServiceInfo(
+            name="MCP",
+            status=ServiceStatus.STOPPED,
+        )
+
     def _check_named_container(
         self, name: str, *, service_name: str = "Gateway"
     ) -> ServiceInfo | None:
-        """Check a container by exact name. Returns None if not found."""
+        """Check a container by exact name using docker ps (includes uptime in Status).
+
+        Uses docker ps --filter name=... which returns the same 'Up X minutes (healthy)'
+        string as _check_container, giving uptime visibility at no extra cost.
+        Also appends the last start time (wall clock) so rebuilds are visible.
+        """
         if not shutil.which("docker"):
             return None
         try:
             result = subprocess.run(
                 [
                     "docker",
-                    "inspect",
+                    "ps",
+                    "-a",
+                    "--filter",
+                    f"name=^/{name}$",
                     "--format",
-                    "{{.Name}}\t{{.State.Status}}",
-                    name,
+                    "{{.Names}}\t{{.Status}}",
                 ],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
             if result.returncode == 0:
-                parts = result.stdout.strip().split("\t", 1)
-                if len(parts) == 2:
-                    cname = parts[0].lstrip("/")
-                    cstatus = parts[1]
-                    running = cstatus == "running"
-                    return ServiceInfo(
-                        name=service_name,
-                        status=ServiceStatus.RUNNING
-                        if running
-                        else ServiceStatus.UNHEALTHY,
-                        container_name=cname,
-                        detail=cstatus,
-                    )
+                for line in result.stdout.strip().splitlines():
+                    parts = line.split("\t", 1)
+                    if len(parts) == 2 and parts[0] == name:
+                        cname, cstatus = parts
+                        running = cstatus.startswith("Up")
+                        built = self._container_image_built_at(name)
+                        detail = f"{cstatus}, built {built}" if built else cstatus
+                        return ServiceInfo(
+                            name=service_name,
+                            status=ServiceStatus.RUNNING
+                            if running
+                            else ServiceStatus.UNHEALTHY,
+                            container_name=cname,
+                            detail=detail,
+                        )
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
             logger.warning("Docker check failed for %s: %s", name, e)
         return None
@@ -351,17 +385,61 @@ class ServiceState:
                 if len(parts) == 2:
                     cname, cstatus = parts
                     running = "Up" in cstatus
+                    built = self._container_image_built_at(cname)
+                    detail = f"{cstatus}, built {built}" if built else cstatus
                     return ServiceInfo(
                         name="Gateway",
                         status=ServiceStatus.RUNNING
                         if running
                         else ServiceStatus.UNHEALTHY,
                         container_name=cname,
-                        detail=cstatus,
+                        detail=detail,
                     )
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
             logger.warning("Docker check failed: %s", e)
         return None
+
+    @staticmethod
+    def _container_image_built_at(name: str) -> str:
+        """Return local HH:MM:SS when the container's image was built, or ''.
+
+        Two inspect calls: container → image SHA, image SHA → Created timestamp.
+        Returns '' on any error so callers degrade gracefully.
+        """
+        import re
+        from datetime import datetime
+
+        try:
+            # Step 1: get image SHA from container
+            r1 = subprocess.run(
+                ["docker", "inspect", "--format", "{{.Image}}", name],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if r1.returncode != 0:
+                return ""
+            image_sha = r1.stdout.strip()
+            if not image_sha:
+                return ""
+
+            # Step 2: get Created timestamp from image
+            r2 = subprocess.run(
+                ["docker", "inspect", "--format", "{{.Created}}", image_sha],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if r2.returncode != 0:
+                return ""
+            raw = r2.stdout.strip()
+            raw = re.sub(r"(\.\d{6})\d+", r"\1", raw)
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.year < 2000:
+                return ""
+            return dt.astimezone().strftime("%H:%M:%S")
+        except Exception:
+            return ""
 
     def _check_container_pattern(self, pattern: str) -> ServiceInfo:
         info = self._check_container(pattern)
@@ -400,12 +478,39 @@ class ServiceState:
     @staticmethod
     def _pid_alive(pid: int) -> bool:
         try:
-            import os
-
             os.kill(pid, 0)
             return True
         except OSError:
             return False
+
+    @staticmethod
+    def _proc_uptime_str(pid: int) -> str:
+        """Return human-readable uptime for a PID using /proc/{pid}/stat.
+
+        ∀ pid alive: returns e.g. '2h 15m', '45m 3s', '12s'.
+        Falls back to '' on any error (permission denied, proc gone, etc.).
+        """
+        try:
+            with open(f"/proc/{pid}/stat") as f:
+                stat = f.read().split()
+            starttime_ticks = int(stat[21])
+            clk_tck = os.sysconf("SC_CLK_TCK")
+            with open("/proc/uptime") as f:
+                uptime_s = float(f.read().split()[0])
+            boot_time = time.time() - uptime_s
+            elapsed = time.time() - (boot_time + starttime_ticks / clk_tck)
+            if elapsed < 0:
+                return ""
+            hours = int(elapsed // 3600)
+            minutes = int((elapsed % 3600) // 60)
+            seconds = int(elapsed % 60)
+            if hours > 0:
+                return f"{hours}h {minutes}m"
+            if minutes > 0:
+                return f"{minutes}m {seconds}s"
+            return f"{seconds}s"
+        except Exception:
+            return ""
 
     @staticmethod
     def _find_listener_pid(port: int) -> int | None:

@@ -4,8 +4,9 @@ All paths are resolved relative to _PROJECT_ROOT. Traversal attempts
 (../) are rejected. The volume mount is :ro but code-level enforcement
 provides defense in depth — no write functions exist.
 
-Excluded from listing: .git, __pycache__, node_modules, .venv, *.pyc, etc.
-Binary files are rejected from reading.
+File listing uses `git ls-files` so only tracked files appear — .gitignore
+is the single source of truth for what's visible. Binary files are excluded
+from listing and rejected from reading.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,26 +25,50 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
 
-_EXCLUDED_DIRS = {
-    ".git",
-    "__pycache__",
-    "node_modules",
-    ".venv",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".pytest_cache",
-    "egg-info",
-}
-
 _BINARY_SUFFIXES = {
-    ".pyc", ".pyo", ".so", ".dll", ".dylib", ".o", ".a",
-    ".whl", ".egg", ".gz", ".tar", ".zip", ".bz2", ".xz",
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg",
-    ".mp3", ".mp4", ".wav", ".avi", ".mov",
-    ".bin", ".dat", ".db", ".sqlite", ".sqlite3",
-    ".pkl", ".pickle", ".npy", ".npz",
-    ".gguf", ".ggml", ".safetensors",
-    ".ttf", ".otf", ".woff", ".woff2",
+    ".pyc",
+    ".pyo",
+    ".so",
+    ".dll",
+    ".dylib",
+    ".o",
+    ".a",
+    ".whl",
+    ".egg",
+    ".gz",
+    ".tar",
+    ".zip",
+    ".bz2",
+    ".xz",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".ico",
+    ".webp",
+    ".svg",
+    ".mp3",
+    ".mp4",
+    ".wav",
+    ".avi",
+    ".mov",
+    ".bin",
+    ".dat",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".pkl",
+    ".pickle",
+    ".npy",
+    ".npz",
+    ".gguf",
+    ".ggml",
+    ".safetensors",
+    ".ttf",
+    ".otf",
+    ".woff",
+    ".woff2",
     ".pdf",
 }
 
@@ -50,10 +76,10 @@ _BINARY_SUFFIXES = {
 def _safe_project_path(relative: str) -> Path:
     """Resolve *relative* inside the project root, rejecting traversal."""
     clean = relative.lstrip("/")
-    resolved_project_root = _PROJECT_ROOT.resolve()
-    candidate = (resolved_project_root / clean).resolve()
+    resolved_root = _PROJECT_ROOT.resolve()
+    candidate = (resolved_root / clean).resolve()
     try:
-        candidate.relative_to(resolved_project_root)
+        candidate.relative_to(resolved_root)
     except ValueError:
         raise ValueError(
             f"Path {relative!r} resolves outside project root; traversal rejected"
@@ -61,17 +87,46 @@ def _safe_project_path(relative: str) -> Path:
     return candidate
 
 
-def _is_excluded_dir(path: Path) -> bool:
-    """Return True if any component of *path* is in the exclusion set."""
-    def _excluded(part: str) -> bool:
-        return part in _EXCLUDED_DIRS or part.endswith(".egg-info")
-
-    return any(_excluded(part) for part in path.parts)
-
-
 def _is_binary(path: Path) -> bool:
     """Return True if the file's suffix indicates binary content."""
     return path.suffix.lower() in _BINARY_SUFFIXES
+
+
+def _git_tracked_files(directory: str = "") -> list[str]:
+    """Return git-tracked file paths relative to PROJECT_ROOT.
+
+    Uses ``git -C <root> ls-files`` so the .git directory must be
+    accessible inside the container mount.  GIT_OPTIONAL_LOCKS=0
+    prevents lock-file creation on the read-only mount.
+    Falls back to an empty list on failure.
+    """
+    resolved = str(_PROJECT_ROOT.resolve())
+    cmd = ["git", "-C", resolved, "ls-files"]
+    if directory:
+        cmd.extend(["--", directory])
+
+    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=env,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        logger.warning("git ls-files unavailable: %s", e)
+        return []
+
+    if result.returncode != 0:
+        logger.warning(
+            "git ls-files failed (rc=%d): %s",
+            result.returncode,
+            result.stderr.strip(),
+        )
+        return []
+
+    return [f for f in result.stdout.splitlines() if f]
 
 
 def register_project_tools(mcp: FastMCP) -> None:
@@ -111,10 +166,11 @@ def register_project_tools(mcp: FastMCP) -> None:
         directory: str = "",
         max_depth: int = 3,
     ) -> dict[str, list[str] | bool]:
-        """List files in the project directory with depth limiting.
+        """List git-tracked files in the project directory.
 
-        Excludes .git, __pycache__, node_modules, .venv, and binary files.
-        Use max_depth to control how deep the listing goes (default 3).
+        Only files tracked by git are shown — .gitignore is respected.
+        Binary files are excluded. Use max_depth to limit how deep the
+        listing goes (default 3).
 
         Args:
             directory: Relative directory path. Empty string lists the project root.
@@ -123,30 +179,25 @@ def register_project_tools(mcp: FastMCP) -> None:
         Returns:
             {"files": ["<relative paths>", ...], "truncated": false}
         """
-        target = _safe_project_path(directory) if directory else _PROJECT_ROOT
-        if not target.exists():
-            return {"files": [], "truncated": False}
-        if not target.is_dir():
-            raise ValueError(f"Path is not a directory: {directory!r}")
+        if directory:
+            target = _safe_project_path(directory)
+            if not target.is_dir():
+                raise ValueError(f"Path is not a directory: {directory!r}")
 
-        resolved_root = _PROJECT_ROOT.resolve()
-        resolved_target = target.resolve()
-        base_depth = len(resolved_target.relative_to(resolved_root).parts)
-
-        files: list[str] = []
+        tracked = _git_tracked_files(directory)
+        base_parts = len(Path(directory).parts) if directory else 0
         cap = 2000
 
-        for item in sorted(resolved_target.rglob("*")):
-            rel = item.relative_to(resolved_root)
-            depth = len(rel.parts) - base_depth
+        files: list[str] = []
+        for f in tracked:
+            depth = len(Path(f).parts) - base_parts
             if depth > max_depth:
                 continue
-            if _is_excluded_dir(rel):
+            if _is_binary(Path(f)):
                 continue
-            if item.is_file() and not _is_binary(item):
-                files.append(str(rel))
-                if len(files) >= cap:
-                    break
+            files.append(f)
+            if len(files) >= cap:
+                break
 
         truncated = len(files) >= cap
         logger.info(
@@ -164,10 +215,10 @@ def register_project_tools(mcp: FastMCP) -> None:
         directory: str = "",
         max_results: int = 50,
     ) -> dict[str, list[dict[str, str | int]] | bool]:
-        """Search for a regex pattern across project text files.
+        """Search for a regex pattern across git-tracked project files.
 
-        Searches line-by-line through text files, skipping binary files
-        and excluded directories.
+        Only files tracked by git are searched — .gitignore is respected.
+        Binary files are skipped.
 
         Args:
             pattern: Regex pattern to search for (case-sensitive).
@@ -178,11 +229,10 @@ def register_project_tools(mcp: FastMCP) -> None:
             {"matches": [{"file": "...", "line": N, "text": "..."}, ...],
              "truncated": false}
         """
-        target = _safe_project_path(directory) if directory else _PROJECT_ROOT
-        if not target.exists():
-            return {"matches": [], "truncated": False}
-        if not target.is_dir():
-            raise ValueError(f"Path is not a directory: {directory!r}")
+        if directory:
+            target = _safe_project_path(directory)
+            if not target.is_dir():
+                raise ValueError(f"Path is not a directory: {directory!r}")
 
         try:
             compiled = re.compile(pattern)
@@ -190,28 +240,27 @@ def register_project_tools(mcp: FastMCP) -> None:
             raise ValueError(f"Invalid regex pattern: {e}")
 
         resolved_root = _PROJECT_ROOT.resolve()
+        tracked = _git_tracked_files(directory)
         matches: list[dict[str, str | int]] = []
 
-        for filepath in sorted(target.resolve().rglob("*")):
-            if not filepath.is_file():
+        for rel_path in tracked:
+            if _is_binary(Path(rel_path)):
                 continue
-            rel = filepath.relative_to(resolved_root)
-            if _is_excluded_dir(rel) or _is_binary(filepath):
-                continue
-
+            abs_path = resolved_root / rel_path
             try:
-                text = filepath.read_text(encoding="utf-8", errors="replace")
-            except (OSError, PermissionError) as e:
-                logger.debug("Skipping unreadable file %s: %s", filepath, e)
+                text = abs_path.read_text(encoding="utf-8", errors="replace")
+            except (OSError, PermissionError):
                 continue
 
             for line_num, line in enumerate(text.splitlines(), start=1):
                 if compiled.search(line):
-                    matches.append({
-                        "file": str(rel),
-                        "line": line_num,
-                        "text": line.rstrip(),
-                    })
+                    matches.append(
+                        {
+                            "file": rel_path,
+                            "line": line_num,
+                            "text": line.rstrip(),
+                        }
+                    )
                     if len(matches) >= max_results:
                         break
             if len(matches) >= max_results:

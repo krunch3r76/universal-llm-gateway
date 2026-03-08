@@ -187,7 +187,7 @@ The `rag-context` pipeline layers "Advanced RAG" on top: a small model (phi4) re
 - **File watching**: Automatic reindexing via inotify with periodic reconciliation
 - **Embeddings**: Uses a local embedding model (`bge-m3`) via the Gateway — no external API calls
 
-Config: `~/.rag/config.yaml`. Store: `~/.rag/store/` (ChromaDB persistent data).
+Config: `~/.gateway/rag.yaml`. Store: `~/.rag/store/` (ChromaDB persistent data).
 
 ## Cloud Proxy (Experimental)
 

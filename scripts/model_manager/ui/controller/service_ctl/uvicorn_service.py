@@ -100,7 +100,7 @@ async def _start_uvicorn_service(
             host, port = tcp_config
             uvicorn_args.extend(["--host", host, "--port", str(port)])
 
-        with log_file.open("a") as log_fh:
+        with log_file.open("w") as log_fh:
             process = await asyncio.create_subprocess_exec(
                 python,
                 *uvicorn_args,

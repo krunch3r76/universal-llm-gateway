@@ -18,6 +18,7 @@ from ...model.service_state import ServiceState
 from ..service_config import (
     GATEWAY_DIR,
     NODES_DIR,
+    build_mcp_env,
     build_service_env,
     ensure_bind_mount_dirs,
     ensure_node_env,
@@ -286,20 +287,27 @@ class ServiceController:
             self._service_state, self._root, self._kill_and_wait
         )
 
-    async def start_mcp(self) -> str:
-        """Start MCP server container via docker compose."""
+    def _mcp_compose_args(self) -> tuple[list[str], Path] | None:
+        """Return (base docker compose args, compose_path) or None if missing."""
         compose_path = self._root / "docker" / "compose" / "mcp-server.yml"
         if not compose_path.exists():
-            return f"Compose file not found: {compose_path}"
+            return None
+        return ["docker", "compose", "-f", str(compose_path)], compose_path
+
+    async def start_mcp(self) -> str:
+        """Start MCP server container via docker compose."""
+        base = self._mcp_compose_args()
+        if base is None:
+            return "Compose file not found: docker/compose/mcp-server.yml"
+        args, _ = base
+        env = build_mcp_env(self._root)
 
         result = await asyncio.create_subprocess_exec(
-            "docker",
-            "compose",
-            "-f",
-            str(compose_path),
+            *args,
             "up",
             "-d",
             "--force-recreate",
+            env=env,
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -315,15 +323,13 @@ class ServiceController:
 
     async def stop_mcp(self) -> str:
         """Stop and remove MCP server container."""
-        compose_path = self._root / "docker" / "compose" / "mcp-server.yml"
-        if not compose_path.exists():
-            return f"Compose file not found: {compose_path}"
+        base = self._mcp_compose_args()
+        if base is None:
+            return "Compose file not found: docker/compose/mcp-server.yml"
+        args, _ = base
 
         result = await asyncio.create_subprocess_exec(
-            "docker",
-            "compose",
-            "-f",
-            str(compose_path),
+            *args,
             "down",
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
@@ -340,17 +346,17 @@ class ServiceController:
 
     async def rebuild_mcp(self) -> str:
         """Rebuild MCP server image without cache and restart."""
-        compose_path = self._root / "docker" / "compose" / "mcp-server.yml"
-        if not compose_path.exists():
-            return f"Compose file not found: {compose_path}"
+        base = self._mcp_compose_args()
+        if base is None:
+            return "Compose file not found: docker/compose/mcp-server.yml"
+        args, _ = base
+        env = build_mcp_env(self._root)
 
         build = await asyncio.create_subprocess_exec(
-            "docker",
-            "compose",
-            "-f",
-            str(compose_path),
+            *args,
             "build",
             "--no-cache",
+            env=env,
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,

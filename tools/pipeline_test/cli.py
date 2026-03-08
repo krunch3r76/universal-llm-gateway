@@ -427,7 +427,7 @@ def _add_consult_parser(sub: Any) -> None:
         default=None,
         help=(
             "RAG scope override (default: auto-detected from model tier). "
-            "See ~/.rag/config.yaml for available scopes."
+            "See ~/.gateway/rag.yaml for available scopes."
         ),
     )
     p.add_argument(
@@ -586,7 +586,7 @@ def _cmd_ingest_papers(args: argparse.Namespace) -> None:
         if str(corpus_dir) not in watched_paths:
             print(
                 "RAG watcher does not include corpus directory. "
-                "Add it to ~/.rag/config.yaml watch_directories."
+                "Add it to ~/.gateway/rag.yaml watch_directories."
             )
 
     index_result, index_error = ingest_svc.index_corpus_directory(

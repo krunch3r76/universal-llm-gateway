@@ -38,7 +38,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request, ssl; urllib.request.urlopen('https://localhost/mcp', context=ssl._create_unverified_context())",
+          "import urllib.request, ssl; urllib.request.urlopen('https://localhost/health', context=ssl._create_unverified_context())",
         ]
       interval: 30s
       timeout: 10s

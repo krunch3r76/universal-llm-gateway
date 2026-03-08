@@ -13,6 +13,7 @@ from textual.timer import Timer
 from textual.widgets import Button, Footer, Header, Select, Static
 
 from ...controller.operation_log import tee_with_summary
+from ...controller.service_config import is_mcp_configured
 from ..widgets.log_stream import LogStream
 
 _SCOPE_FLAGS: dict[str, list[str]] = {
@@ -29,7 +30,7 @@ class ServicesScreen(Screen):
     ]
 
     _poll_timer: Timer | None = None
-    _POLL_INTERVAL = 5.0
+    _POLL_INTERVAL = 2.0
 
     def action_pop_screen(self) -> None:
         self.app.pop_screen()
@@ -86,6 +87,7 @@ class ServicesScreen(Screen):
             yield Static("  RAG failed chunks: —", id="svc-rag-failed")
             yield Static("  Cloud Px: checking...", id="svc-cp")
             yield Static("  Sidecar:  checking...", id="svc-sidecar")
+            yield Static("  MCP:      —", id="svc-mcp")
 
         with Vertical(id="build-options"):
             yield Select(
@@ -249,15 +251,30 @@ class ServicesScreen(Screen):
             + (f"  ID: {build.image_id}" if build.image_id else "")
             + config_text
         )
-        self.query_one("#svc-gw", Static).update(f"  Gateway:  {gw.status} {gw.detail}")
-        self.query_one("#svc-sg", Static).update(f"  Stargate: {sg.status} {sg.detail}")
+        self.query_one("#svc-gw", Static).update(
+            f"  Gateway:  {gw.detail or gw.status}"
+        )
+        self.query_one("#svc-sg", Static).update(
+            f"  Stargate: {sg.detail or sg.status}"
+        )
         self.query_one("#svc-rag", Static).update(
-            f"  RAG:      {rag.status} {rag.detail}"
+            f"  RAG:      {rag.detail or rag.status}"
         )
-        self.query_one("#svc-cp", Static).update(f"  Cloud Px: {cp.status} {cp.detail}")
+        self.query_one("#svc-cp", Static).update(
+            f"  Cloud Px: {cp.detail or cp.status}"
+        )
         self.query_one("#svc-sidecar", Static).update(
-            f"  Sidecar:  {sidecar.status} {sidecar.detail}"
+            f"  Sidecar:  {sidecar.detail or sidecar.status}"
         )
+
+        workspace_root = svc._root  # type: ignore[attr-defined]
+        if is_mcp_configured(workspace_root):
+            mcp = svc.service_state.check_mcp()
+            self.query_one("#svc-mcp", Static).update(
+                f"  MCP:      {mcp.detail or mcp.status}"
+            )
+        else:
+            self.query_one("#svc-mcp", Static).update("  MCP:      (not configured)")
 
         gw_exists = gw.status.value != "stopped"
         sg_up = sg.status.value == "running"

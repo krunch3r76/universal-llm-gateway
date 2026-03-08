@@ -8,10 +8,11 @@ Provides BaseEngine-compatible interface wrapping llama-server for:
 - Production-ready server lifecycle management
 
 ARCHITECTURE NOTES (embedding mode):
-- When embedding=True: server starts with --embedding --pooling cls
+- When embedding=True: server starts with --embedding --pooling <from catalog, default cls>
 - create_embedding() is SYNC (not async) — called via run_in_executor by RPC handler
 - Task prefixes (Nomic) applied client-side — llama-server doesn't support them
 - Flash attention auto-disabled for BERT/embedding architectures
+- IMPORTANT: Qwen3-Embedding and last-token-pooled models require pooling: last in catalog
 """
 
 import asyncio

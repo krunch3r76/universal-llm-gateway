@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 from scripts.model_manager.topology import TopologySnapshot
 
 from ...controller.operation_log import tee_with_summary
+from ...controller.service_config import is_mcp_configured
 from ...controller.topology import deploy_remote, list_remotes, wait_for_relay_connected
 from .log_stream import LogStream
 
@@ -269,11 +270,13 @@ class TopologyPanel(Widget):
         self._append_line(mk, "Restarting local services...")
         self._append_line(mk, await svc.stop_stargate())
         self._append_line(mk, await svc.stop_rag())
+        self._append_line(mk, await svc.stop_cloud_proxy())
         self._append_line(mk, await svc.stop_gateway())
         await asyncio.sleep(1)
         self._append_line(mk, await svc.start_gateway())
         await asyncio.sleep(0.5)
         self._append_line(mk, await svc.start_rag())
+        self._append_line(mk, await svc.start_cloud_proxy())
         result = await svc.start_stargate()
         self._append_line(mk, result)
         if not result.startswith("Stargate starting"):
@@ -284,6 +287,11 @@ class TopologyPanel(Widget):
             )
             return
         self._set_node_status(mk, "● running")
+
+        assert self._workspace_root is not None
+        if is_mcp_configured(self._workspace_root):
+            self._append_line(mk, "Rebuilding MCP server...")
+            self._append_line(mk, await svc.rebuild_mcp())
 
     async def _deploy_remotes_parallel(self, *, build: bool, scope: str) -> None:
         """Deploy all remotes in parallel via TaskGroup."""

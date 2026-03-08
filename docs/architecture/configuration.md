@@ -9,7 +9,8 @@ All configuration files, environment variables, and paths.
 | `~/.gateway/stargate.yaml` | Master Stargate config | `./manage` (first start, never overwritten) |
 | `~/.gateway/nodes/<host>.env` | Per-node: NODE_ID, MODEL_PATH, federation keys | `./manage` |
 | `.env.local` | Local env: MODEL_PATH_ROOT | Manual |
-| `~/.rag/config.yaml` | RAG service watcher config | Manual |
+| `~/.gateway/rag.yaml` | RAG service watcher/scope config | Manual (legacy: `~/.rag/config.yaml`) |
+| `~/.gateway/mcp.yaml` | MCP server config (auth, data dir, TLS) | `./manage` template, then manual |
 | `config/stargate_config.yaml` | Default Stargate config template | Source |
 
 ## Environment Variables
@@ -79,7 +80,7 @@ pipelines:
   output_dir: /tmp/logs/universal-stargate/pipeline_summaries
 ```
 
-## RAG Config (~/.rag/config.yaml)
+## RAG Config (~/.gateway/rag.yaml)
 
 `WatchDirectory` fields: `path`, `extensions`, `recursive` (default `true`), `chunk_tokens` (optional int — overrides default 512-token chunk size for that directory; use 1024 for ebooks), `exclude` (optional filename globs matched with `fnmatch`; excluded files are skipped by startup, reconcile, and hot-reload indexing).
 
@@ -119,6 +120,12 @@ extraction:
 ```
 
 Ebook files (PDF, EPUB) belong in `docs/reference/`. They are indexed at 1024 tokens/chunk and retrieved via `--scope ebooks` in `scripts/consult`. EPUB extraction uses `ebooklib` + `BeautifulSoup`; PDF uses `pymupdf4llm`.
+
+## MCP Config (~/.gateway/mcp.yaml)
+
+Optional. Controls the internet-facing MCP server container. If absent or `auth_token` is empty, the TUI treats MCP as unconfigured and skips it during fleet deploys.
+
+Fields: `auth_token` (bearer token for client auth), `data_dir` (host path mounted as `/data/files`, default `~/mcp-data`), `project_dir` (host path mounted read-only as `/data/project`, defaults to workspace root), `tls_cert_dir` (host path containing `fullchain.pem`/`privkey.pem`, default `/etc/letsencrypt/live/mcp.k-1.me`).
 
 ## Log Paths
 
