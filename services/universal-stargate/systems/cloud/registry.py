@@ -174,7 +174,7 @@ class CloudProxyCatalogPoller:
         current_ids: set[str] = set()
         for provider, entries in by_provider.items():
             model_ids: list[ModelId] = []
-            max_concurrent = 5
+            max_concurrent = 12
             for entry in entries:
                 mid_str = entry.get("id", "")
                 if mid_str and "/" in mid_str:

@@ -70,6 +70,8 @@ from services.rag.indexing_helpers import (
     file_hash,
 )
 from services.rag.models import (
+    FailedChunkItem,
+    FailedExtractionResponse,
     IndexResult,
     ScopeInfo,
     ScopesResponse,
@@ -623,6 +625,27 @@ def get_scopes() -> ScopesResponse:
             name: ScopeInfo(prefixes=scope.prefixes, description=scope.description)
             for name, scope in loaded_config.scopes.items()
         },
+    )
+
+
+@app.get("/extraction/failed", response_model=FailedExtractionResponse)
+def get_failed_extractions(source: str | None = None) -> FailedExtractionResponse:
+    """Return chunks whose extraction failed, optionally filtered by source file path."""
+    if _property_index is None:
+        return FailedExtractionResponse(total=0, chunks=[])
+    records = _property_index.get_failed_chunks(source=source)
+    return FailedExtractionResponse(
+        total=len(records),
+        chunks=[
+            FailedChunkItem(
+                chunk_id=r.chunk_id,
+                source=r.source,
+                error=r.error,
+                attempt_count=r.attempt_count,
+                recorded_at=r.recorded_at,
+            )
+            for r in records
+        ],
     )
 
 

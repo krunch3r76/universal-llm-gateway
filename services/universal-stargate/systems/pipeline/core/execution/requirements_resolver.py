@@ -2,26 +2,34 @@
 
 Called at step init time. Results are cached for the execution lifetime.
 Falls back gracefully when the endpoint is unavailable.
+
+∀ async callers: use `async_resolve_model_requirements` — it uses httpx.AsyncClient
+so the event loop is never blocked. The sync variant exists only for non-async call
+sites (DAG pre-analysis, step config introspection).
 """
 
 from __future__ import annotations
 
 import logging
+from time import monotonic
 from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TIMEOUT = 5.0
+# 15s was still too tight under concurrent pipeline load.
+_DEFAULT_TIMEOUT = 45.0
 _LOOPBACK_URL = "http://localhost:9999"
 
 
-def resolve_model_requirements(
+async def async_resolve_model_requirements(
     requirements_dict: dict[str, Any],
     estimated_source_tokens: int | None = None,
 ) -> list[str]:
     """Resolve a model_requirements dict to a ranked list of model IDs.
+
+    Non-blocking: uses httpx.AsyncClient so the event loop is never held.
 
     Args:
         requirements_dict: Raw dict from pipeline YAML (SelectionRequest shape).
@@ -36,6 +44,88 @@ def resolve_model_requirements(
     payload = _apply_payload_latency_constraint(
         dict(requirements_dict), estimated_source_tokens
     )
+    started_at = monotonic()
+
+    try:
+        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
+            resp = await client.post(f"{_LOOPBACK_URL}/v1/models/select", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        model_ids = [m["id"] for m in data.get("models", []) if isinstance(m, dict)]
+        if not model_ids:
+            logger.warning(
+                "No models matched requirements: %s (path=%s)",
+                requirements_dict,
+                data.get("selection_path"),
+            )
+        else:
+            logger.info(
+                "Resolved requirements (task=%s path=%s): %s",
+                requirements_dict.get("task"),
+                data.get("selection_path"),
+                model_ids,
+            )
+        return model_ids
+    except httpx.TimeoutException as exc:
+        logger.error(
+            "model_requirements resolution timed out after %.2fs "
+            "for task=%s payload=%s: %s",
+            monotonic() - started_at,
+            requirements_dict.get("task"),
+            payload,
+            exc,
+        )
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "model_requirements resolution HTTP %d after %.2fs "
+            "for task=%s payload=%s: %s",
+            exc.response.status_code,
+            monotonic() - started_at,
+            requirements_dict.get("task"),
+            payload,
+            exc.response.text[:200],
+        )
+    except httpx.RequestError as exc:
+        logger.error(
+            "model_requirements resolution network error after %.2fs "
+            "for task=%s payload=%s: %s",
+            monotonic() - started_at,
+            requirements_dict.get("task"),
+            payload,
+            exc,
+        )
+    except Exception as exc:
+        logger.exception(
+            "model_requirements resolution unexpected error after %.2fs "
+            "for task=%s payload=%s: %s",
+            monotonic() - started_at,
+            requirements_dict.get("task"),
+            payload,
+            exc,
+        )
+    return []
+
+
+def resolve_model_requirements(
+    requirements_dict: dict[str, Any],
+    estimated_source_tokens: int | None = None,
+) -> list[str]:
+    """Resolve a model_requirements dict to a ranked list of model IDs.
+
+    Synchronous variant for non-async call sites (DAG pre-analysis, step config
+    introspection). Blocks the calling thread for the duration of the HTTP call.
+
+    ∀ async callers: use async_resolve_model_requirements instead — it is
+    non-blocking and will not stall the event loop.
+
+    Returns:
+        List of routable model IDs, ordered by suitability.
+        Empty list if endpoint is unavailable or no matches found.
+    """
+    payload = _apply_payload_latency_constraint(
+        dict(requirements_dict), estimated_source_tokens
+    )
+    started_at = monotonic()
 
     try:
         with httpx.Client(timeout=_DEFAULT_TIMEOUT) as client:
@@ -57,16 +147,43 @@ def resolve_model_requirements(
                 model_ids,
             )
         return model_ids
+    except httpx.TimeoutException as exc:
+        logger.error(
+            "model_requirements resolution timed out after %.2fs "
+            "for task=%s payload=%s: %s",
+            monotonic() - started_at,
+            requirements_dict.get("task"),
+            payload,
+            exc,
+        )
     except httpx.HTTPStatusError as exc:
         logger.error(
-            "model_requirements resolution HTTP %d: %s",
+            "model_requirements resolution HTTP %d after %.2fs "
+            "for task=%s payload=%s: %s",
             exc.response.status_code,
+            monotonic() - started_at,
+            requirements_dict.get("task"),
+            payload,
             exc.response.text[:200],
         )
     except httpx.RequestError as exc:
-        logger.error("model_requirements resolution network error: %s", exc)
+        logger.error(
+            "model_requirements resolution network error after %.2fs "
+            "for task=%s payload=%s: %s",
+            monotonic() - started_at,
+            requirements_dict.get("task"),
+            payload,
+            exc,
+        )
     except Exception as exc:
-        logger.exception("model_requirements resolution unexpected error: %s", exc)
+        logger.exception(
+            "model_requirements resolution unexpected error after %.2fs "
+            "for task=%s payload=%s: %s",
+            monotonic() - started_at,
+            requirements_dict.get("task"),
+            payload,
+            exc,
+        )
     return []
 
 

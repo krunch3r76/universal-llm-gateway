@@ -22,11 +22,11 @@ steps:
       chunk: optionsNs.chunks
     map_inputs:
       text: mapNs.iteration.value.text
-      chunk_id: mapNs.iteration.value.id
     min_success_threshold: 0.1
     generation_parameters:
       max_tokens: 8192
-      temperature: 0.3
+      temperature: 0.2
+      frequency_penalty: 0.3
       response_format:
         type: json_object
         schema:
@@ -34,6 +34,7 @@ steps:
           properties:
             entities:
               type: array
+              maxItems: 12
               items:
                 type: object
                 properties:
@@ -58,7 +59,6 @@ steps:
                 required: [name, type]
             topics:
               type: array
+              maxItems: 10
               items: { type: string }
-            chunk_id:
-              type: string
-          required: [entities, topics, chunk_id]
+          required: [entities, topics]

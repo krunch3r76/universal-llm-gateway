@@ -70,21 +70,43 @@ class MapOutputCollection:
     """
 
     def __init__(
-        self, outputs: list["StepOutput"], keys: list[str | None] | None = None
+        self,
+        outputs: list["StepOutput"],
+        keys: list[str | None] | None = None,
+        *,
+        output_positions: list[int] | None = None,
+        total_count: int | None = None,
     ) -> None:
         """
         Args:
-            outputs: List of step outputs
+            outputs: List of step outputs (compacted — only successes)
             keys: Optional list of iteration keys (same length as outputs)
+            output_positions: Original iteration indices for each output
+            total_count: Total number of iterations (including failures)
         """
         self._outputs = tuple(outputs)  # Immutable
         self._keys = tuple(keys) if keys else tuple([None] * len(outputs))
         # Build key-to-index mapping for O(1) lookups
         self._key_map = {k: i for i, k in enumerate(self._keys) if k is not None}
+        self._output_positions = tuple(output_positions) if output_positions else None
+        self._total_count = total_count
 
     def all_outputs(self) -> list["StepOutput"]:
         """Return all outputs as list."""
         return list(self._outputs)
+
+    def outputs_aligned(self) -> "list[StepOutput | None]":
+        """Return full-length list with None at positions where iterations failed.
+
+        ∀ i ∈ [0, total_count): aligned[i] corresponds to input[i].
+        Used by json_array serialization to preserve positional binding.
+        """
+        if self._output_positions is None or self._total_count is None:
+            return list(self._outputs)
+        aligned: list[StepOutput | None] = [None] * self._total_count
+        for pos, output in zip(self._output_positions, self._outputs, strict=True):
+            aligned[pos] = output
+        return aligned
 
     def get_output(self, index: int) -> "StepOutput":
         """Get output by index (supports negative)."""

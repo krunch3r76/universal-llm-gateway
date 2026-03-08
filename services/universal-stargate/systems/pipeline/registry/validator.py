@@ -127,7 +127,11 @@ class PipelineValidator:
 
             if step.model_ref:
                 model_ref_to_check = step.model_ref
-                if model_ref_to_check.startswith("optionsNs."):
+                # "auto" is a runtime sentinel: model selected dynamically via
+                # model_requirements at execution time — not a static registry key.
+                if model_ref_to_check == "auto":
+                    pass
+                elif model_ref_to_check.startswith("optionsNs."):
                     option_key = model_ref_to_check[len("optionsNs.") :]
                     resolved = pipeline.options.get(option_key)
                     if resolved and isinstance(resolved, str):
@@ -138,16 +142,27 @@ class PipelineValidator:
                             f"(option '{option_key}' not found in pipeline options)"
                         )
                         continue
-                try:
-                    self._registry.get_model_config(
-                        model_ref_to_check,
-                        domain=pipeline.domain,
-                        search_path=pipeline.source_search_path,
-                    )
-                except KeyError:
-                    errors.append(
-                        f"Step '{step.id}': Unknown model_ref '{step.model_ref}'"
-                    )
+                    try:
+                        self._registry.get_model_config(
+                            model_ref_to_check,
+                            domain=pipeline.domain,
+                            search_path=pipeline.source_search_path,
+                        )
+                    except KeyError:
+                        errors.append(
+                            f"Step '{step.id}': Unknown model_ref '{step.model_ref}'"
+                        )
+                else:
+                    try:
+                        self._registry.get_model_config(
+                            model_ref_to_check,
+                            domain=pipeline.domain,
+                            search_path=pipeline.source_search_path,
+                        )
+                    except KeyError:
+                        errors.append(
+                            f"Step '{step.id}': Unknown model_ref '{step.model_ref}'"
+                        )
 
             if step.prompt_ref:
                 if not ("{{" in step.prompt_ref and "}}" in step.prompt_ref):

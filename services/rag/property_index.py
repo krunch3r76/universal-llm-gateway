@@ -7,12 +7,16 @@ Concurrency: all writes serialized via SequentialExecutor (no locks).
 Reads go directly to SQLite — safe with a single writer.
 
 Key format: prop.{category}@@{value} (case-normalized via .lower()).
+
+Failed extractions are recorded in the ``failed_extractions`` table so callers
+can inspect structural failures (e.g. max_tokens exceeded) without tailing logs.
 """
 
 from __future__ import annotations
 
 import logging
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 
 from universal_event_bus.actor.sequential import SequentialExecutor
@@ -32,7 +36,27 @@ CREATE INDEX IF NOT EXISTS idx_chunk ON properties(chunk_id);
 CREATE TABLE IF NOT EXISTS pending (
     file TEXT NOT NULL PRIMARY KEY
 );
+CREATE TABLE IF NOT EXISTS failed_extractions (
+    chunk_id TEXT NOT NULL PRIMARY KEY,
+    source TEXT NOT NULL,
+    error TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 1,
+    permanent INTEGER NOT NULL DEFAULT 0,
+    recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_failed_source ON failed_extractions(source);
+CREATE INDEX IF NOT EXISTS idx_failed_permanent ON failed_extractions(permanent);
 """
+
+
+@dataclass(slots=True, kw_only=True)
+class FailedChunk:
+    chunk_id: str
+    source: str
+    error: str
+    attempt_count: int
+    permanent: bool
+    recorded_at: str
 
 
 class PropertyIndex:
@@ -52,6 +76,22 @@ class PropertyIndex:
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         try:
             conn.executescript(_SCHEMA_SQL)
+            # Migrate: add attempt_count if absent (existing DBs from before this change)
+            cols = {
+                row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")
+            }
+            if "attempt_count" not in cols:
+                conn.execute(
+                    "ALTER TABLE failed_extractions"
+                    " ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 1"
+                )
+                conn.commit()
+            if "permanent" not in cols:
+                conn.execute(
+                    "ALTER TABLE failed_extractions"
+                    " ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0"
+                )
+                conn.commit()
             await self._seq.start()
         except Exception:
             conn.close()
@@ -130,9 +170,7 @@ class PropertyIndex:
 
         async def _write() -> None:
             conn = self._ensure_conn()
-            conn.execute(
-                "INSERT OR IGNORE INTO pending (file) VALUES (?)", (file,)
-            )
+            conn.execute("INSERT OR IGNORE INTO pending (file) VALUES (?)", (file,))
             conn.commit()
 
         await self._seq.run(_write())
@@ -143,6 +181,42 @@ class PropertyIndex:
         async def _write() -> None:
             conn = self._ensure_conn()
             conn.execute("DELETE FROM pending WHERE file = ?", (file,))
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    async def record_failure(
+        self, chunk_id: str, source: str, error: str, *, permanent: bool = False
+    ) -> None:
+        """Record an extraction failure; increment attempt_count on repeated failure.
+
+        ∀ chunk_id: attempt_count monotonically increases with each recorded failure.
+        permanent=True marks the chunk as permanently abandoned (attempt_count >= max_attempts).
+        Once permanent=1, it is never reset to 0.
+        """
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute(
+                "INSERT INTO failed_extractions (chunk_id, source, error, attempt_count, permanent)"
+                " VALUES (?, ?, ?, 1, ?)"
+                " ON CONFLICT(chunk_id) DO UPDATE SET"
+                "   error = excluded.error,"
+                "   attempt_count = attempt_count + 1,"
+                "   permanent = MAX(permanent, excluded.permanent),"
+                "   recorded_at = datetime('now')",
+                (chunk_id, source, error, int(permanent)),
+            )
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    async def clear_failures_for(self, source: str) -> None:
+        """Remove all failure records for a source file (e.g. after successful recovery)."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute("DELETE FROM failed_extractions WHERE source = ?", (source,))
             conn.commit()
 
         await self._seq.run(_write())
@@ -228,3 +302,76 @@ class PropertyIndex:
             "unique_keys": unique_keys,
             "unique_chunks": unique_chunks,
         }
+
+    def get_failed_chunks(self, source: str | None = None) -> list[FailedChunk]:
+        """Return failed extraction records, optionally filtered by source."""
+        conn = self._ensure_conn()
+        if source is not None:
+            rows = conn.execute(
+                "SELECT chunk_id, source, error, attempt_count, permanent, recorded_at"
+                " FROM failed_extractions WHERE source = ?"
+                " ORDER BY recorded_at DESC",
+                (source,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT chunk_id, source, error, attempt_count, permanent, recorded_at"
+                " FROM failed_extractions ORDER BY recorded_at DESC"
+            ).fetchall()
+        return [
+            FailedChunk(
+                chunk_id=r[0],
+                source=r[1],
+                error=r[2],
+                attempt_count=r[3],
+                permanent=bool(r[4]),
+                recorded_at=r[5],
+            )
+            for r in rows
+        ]
+
+    def get_permanent_failures(self, source: str, max_attempts: int) -> set[str]:
+        """Return chunk IDs that have exceeded max_attempts for source.
+
+        ∀ chunk_id ∈ result: attempt_count >= max_attempts ∨ permanent = 1.
+        """
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT chunk_id FROM failed_extractions"
+            " WHERE source = ? AND (attempt_count >= ? OR permanent = 1)",
+            (source, max_attempts),
+        ).fetchall()
+        return {row[0] for row in rows}
+
+    def get_failure_counts(self, source: str) -> dict[str, int]:
+        """Return {chunk_id: attempt_count} for source. Diagnostic use."""
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT chunk_id, attempt_count FROM failed_extractions WHERE source = ?",
+            (source,),
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    def get_failed_count(self) -> int:
+        """Return total number of chunks with recorded extraction failures."""
+        conn = self._ensure_conn()
+        return conn.execute("SELECT COUNT(*) FROM failed_extractions").fetchone()[0]
+
+    def get_permanent_count(self) -> int:
+        """Return total number of permanently abandoned chunks."""
+        conn = self._ensure_conn()
+        return conn.execute(
+            "SELECT COUNT(*) FROM failed_extractions WHERE permanent = 1"
+        ).fetchone()[0]
+
+    def get_permanent_chunks_by_file(self) -> dict[str, list[str]]:
+        """Return {source: [chunk_id, ...]} for all permanently failed chunks."""
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT source, chunk_id FROM failed_extractions WHERE permanent = 1"
+            " ORDER BY source, chunk_id"
+        ).fetchall()
+        result: dict[str, list[str]] = {}
+        for source, chunk_id in rows:
+            result.setdefault(source, []).append(chunk_id)
+        return result

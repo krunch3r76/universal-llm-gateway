@@ -1,8 +1,11 @@
-# ruff: noqa: N999
+# ruff: noqa: N999, F401
+# pyright: reportUnusedImport=false, reportUnsupportedDunderAll=false
 """
 Scheduling system for Universal Stargate.
 
 Architecture: WebSocket-first control plane with event-driven consumers.
+This package re-exports gateway state types, event utilities, error classes,
+and consumer implementations used by higher-level scheduling/routing systems.
 
 Event-Driven Architecture (Phase 2 Complete):
 - No polling loops - all state changes emitted from WebSocket callbacks
@@ -10,23 +13,36 @@ Event-Driven Architecture (Phase 2 Complete):
   on connect/disconnect (not from polling loop)
 - Cache refresh via reconnection callbacks in GatewayInitializer
 
-Consumers react to events:
-- RoutingConsumer: Gateway availability for routing decisions
+Event consumers:
 - MetricsConsumer: Performance and reliability statistics
-- MonitoringConsumer: Uptime/downtime tracking, WebSocket push
+- ModelCacheConsumer: Cache synchronization for model availability snapshots
+- ModelLoadingConsumer: Model load lifecycle updates
+- MonitoringConsumer: Uptime/downtime tracking and status push
+- ResourceUpdateConsumer: Resource and capacity state updates
+- RoutingConsumer: Gateway availability for routing decisions
+- RoutingDecisionConsumer: Routing decision stream processing
+- RoutingMetricsConsumer: Routing performance metrics aggregation
+
+Event utilities:
+- StateTransitionDebugger: Structured state transition debugging support
+- EventRateLimiter: Per-signal/event throttling
+- format_state_transition_for_logging: Canonical transition log formatting
+- validate_state_change_payload: Payload validation helpers
+
+Gateway state and errors:
+- ConnectivityState, HealthState, GatewayState
+- ConnectivityError, HealthError, GatewayError, GatewayTimeoutError,
+  ModelLoadError, ModelUnloadError, NoHealthyGatewaysError
 """
 
-from .consumers import (
-    MetricsConsumer,
-    ModelCacheConsumer,
-    ModelExecutionTracker,
-    ModelLoadingConsumer,
-    MonitoringConsumer,
-    ResourceUpdateConsumer,
-    RoutingConsumer,
-    RoutingDecisionConsumer,
-    RoutingMetricsConsumer,
-)
+from .consumers.metrics_consumer import MetricsConsumer
+from .consumers.model_cache_consumer import ModelCacheConsumer
+from .consumers.model_loading_consumer import ModelLoadingConsumer
+from .consumers.monitoring_consumer import MonitoringConsumer
+from .consumers.resource_consumer import ResourceUpdateConsumer
+from .consumers.routing_consumer import RoutingConsumer
+from .consumers.routing_decision_consumer import RoutingDecisionConsumer
+from .consumers.routing_metrics_consumer import RoutingMetricsConsumer
 from .event_utils import (
     EventRateLimiter,
     StateTransitionDebugger,
@@ -52,37 +68,7 @@ from .gateway_logging import GatewayLogger
 from .gateway_state import ConnectivityState, GatewayState, HealthState
 
 __all__ = [
-    # Gateway state types (used by consumers for event payload comparison)
-    "GatewayState",
-    "ConnectivityState",
-    "HealthState",
-    # Event utilities
-    "StateTransitionDebugger",
-    "EventRateLimiter",
-    "format_state_transition_for_logging",
-    "validate_state_change_payload",
-    # Logging and errors
-    "GatewayLogger",
-    "GatewayError",
-    "ConnectivityError",
-    "HealthError",
-    "GatewayTimeoutError",
-    "ModelLoadError",
-    "ModelUnloadError",
-    "NoHealthyGatewaysError",
-    # Event consumers
-    "ModelExecutionTracker",
-    "MetricsConsumer",
-    "ModelCacheConsumer",
-    "ModelLoadingConsumer",
-    "MonitoringConsumer",
-    "ResourceUpdateConsumer",
-    "RoutingConsumer",
-    "RoutingDecisionConsumer",
-    "RoutingMetricsConsumer",
-    # Routing metric events
-    "REQUEST_ROUTED",
-    "MODEL_LOAD_INITIATED",
-    "MODEL_LOAD_COMPLETED",
-    "TOKEN_COUNT_COMPLETED",
+    name
+    for name in globals()
+    if not name.startswith("_") and name not in {"annotations"}
 ]

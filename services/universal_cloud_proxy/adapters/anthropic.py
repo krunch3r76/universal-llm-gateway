@@ -9,11 +9,22 @@ from typing import Any
 import httpx
 
 from ..config import ProviderConfig
+from .anthropic_format import (
+    build_native_tools,
+    convert_messages,
+    convert_tool_choice,
+    convert_tools,
+    dedupe_tools,
+    extract_system_text,
+)
+from .anthropic_response import convert_response_content
+from .anthropic_stream import StreamTranslator
 
 logger = logging.getLogger(__name__)
 
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_DEFAULT_MAX_TOKENS = 4096
+_ANTHROPIC_BETA_MCP = "mcp-client-2025-04-04"
 
 
 class AnthropicAdapter:
@@ -51,86 +62,16 @@ class AnthropicAdapter:
             return catalog_model_id.removeprefix("anthropic/")
         return catalog_model_id
 
-    @staticmethod
-    def _coerce_content_to_text(content: Any) -> str:
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for block in content:
-                if isinstance(block, str):
-                    parts.append(block)
-                elif isinstance(block, dict):
-                    if block.get("type") == "text" and isinstance(block.get("text"), str):
-                        parts.append(block["text"])
-                    elif isinstance(block.get("content"), str):
-                        parts.append(block["content"])
-            return "\n".join(part for part in parts if part)
-        return str(content) if content is not None else ""
-
-    def _openai_to_anthropic(self, request_body: dict[str, Any]) -> dict[str, Any]:
-        model_id = str(request_body.get("model", "")).strip()
-        anthropic_model = self.to_upstream_model_id(model_id)
-
-        raw_messages = request_body.get("messages")
-        messages: list[dict[str, Any]] = []
-        system_parts: list[str] = []
-        if isinstance(raw_messages, list):
-            for item in raw_messages:
-                if not isinstance(item, dict):
-                    continue
-                role = str(item.get("role", "user"))
-                content = self._coerce_content_to_text(item.get("content", ""))
-                if role == "system":
-                    if content:
-                        system_parts.append(content)
-                    continue
-                if role not in {"user", "assistant"}:
-                    role = "user"
-                messages.append({"role": role, "content": content})
-
-        max_tokens = request_body.get("max_tokens")
-        if not isinstance(max_tokens, int):
-            max_tokens = request_body.get("max_completion_tokens")
-        if not isinstance(max_tokens, int):
-            max_tokens = _ANTHROPIC_DEFAULT_MAX_TOKENS
-            logger.warning(
-                "Anthropic request missing max_tokens/max_completion_tokens; "
-                "using default %d",
-                _ANTHROPIC_DEFAULT_MAX_TOKENS,
-            )
-
-        payload: dict[str, Any] = {
-            "model": anthropic_model,
-            "messages": messages,
-            "max_tokens": max_tokens,
+    def _headers(self) -> dict[str, str]:
+        headers = {
+            "x-api-key": self._config.api_key,
+            "anthropic-version": _ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
         }
-        if system_parts:
-            payload["system"] = "\n\n".join(system_parts)
-        for key in ("temperature", "top_p", "top_k"):
-            value = request_body.get(key)
-            if value is not None:
-                payload[key] = value
-        stop = request_body.get("stop")
-        if isinstance(stop, str):
-            payload["stop_sequences"] = [stop]
-        elif isinstance(stop, list):
-            payload["stop_sequences"] = [s for s in stop if isinstance(s, str)]
-        if bool(request_body.get("stream", False)):
-            payload["stream"] = True
-        return payload
-
-    @staticmethod
-    def _anthropic_text(content: Any) -> str:
-        if not isinstance(content, list):
-            return ""
-        return "".join(
-            item["text"]
-            for item in content
-            if isinstance(item, dict)
-            and item.get("type") == "text"
-            and isinstance(item.get("text"), str)
-        )
+        if self._config.mcp_server_url:
+            # MCP server access requires the mcp-client beta header
+            headers["anthropic-beta"] = _ANTHROPIC_BETA_MCP
+        return headers
 
     @staticmethod
     def _finish_reason(stop_reason: str | None) -> str | None:
@@ -151,6 +92,94 @@ class AnthropicAdapter:
         except (TypeError, ValueError):
             return 0
 
+    @staticmethod
+    def _sse_data(payload: dict[str, Any]) -> bytes:
+        return f"data: {json.dumps(payload)}\n\n".encode()
+
+    def _openai_to_anthropic(self, request_body: dict[str, Any]) -> dict[str, Any]:
+        model_id = str(request_body.get("model", "")).strip()
+        anthropic_model = self.to_upstream_model_id(model_id)
+
+        raw_messages = request_body.get("messages")
+        openai_messages: list[dict[str, Any]] = (
+            raw_messages if isinstance(raw_messages, list) else []
+        )
+
+        system_text = extract_system_text(openai_messages)
+        anthropic_messages = convert_messages(openai_messages)
+
+        max_tokens = request_body.get("max_tokens")
+        if not isinstance(max_tokens, int):
+            max_tokens = request_body.get("max_completion_tokens")
+        if not isinstance(max_tokens, int):
+            max_tokens = _ANTHROPIC_DEFAULT_MAX_TOKENS
+            logger.warning(
+                "Anthropic request missing max_tokens/max_completion_tokens; "
+                "using default %d",
+                _ANTHROPIC_DEFAULT_MAX_TOKENS,
+            )
+
+        payload: dict[str, Any] = {
+            "model": anthropic_model,
+            "messages": anthropic_messages,
+            "max_tokens": max_tokens,
+        }
+        if system_text:
+            payload["system"] = system_text
+
+        for key in ("temperature", "top_p", "top_k"):
+            value = request_body.get(key)
+            if value is not None:
+                payload[key] = value
+
+        stop = request_body.get("stop")
+        if isinstance(stop, str):
+            payload["stop_sequences"] = [stop]
+        elif isinstance(stop, list):
+            payload["stop_sequences"] = [s for s in stop if isinstance(s, str)]
+
+        tools_out: list[dict[str, Any]] = []
+        tools_in = request_body.get("tools")
+        if isinstance(tools_in, list):
+            tools_out.extend(
+                convert_tools([t for t in tools_in if isinstance(t, dict)])
+            )
+
+        native_tool_ids = getattr(self._config, "native_tools", []) or []
+        if isinstance(native_tool_ids, list) and native_tool_ids:
+            tools_out.extend(
+                build_native_tools([t for t in native_tool_ids if isinstance(t, str)])
+            )
+
+        tools_out = dedupe_tools(tools_out)
+
+        tool_choice_in = request_body.get("tool_choice")
+        tool_choice_out = convert_tool_choice(tool_choice_in)
+
+        if tool_choice_in == "none":
+            tools_out = []
+            tool_choice_out = None
+
+        if tools_out:
+            payload["tools"] = tools_out
+        if tool_choice_out is not None and tools_out:
+            payload["tool_choice"] = tool_choice_out
+
+        if bool(request_body.get("stream", False)):
+            payload["stream"] = True
+
+        if self._config.mcp_server_url:
+            payload["mcp_servers"] = [
+                {
+                    "type": "url",
+                    "name": "gateway-tools",
+                    "url": self._config.mcp_server_url,
+                    "authorization_token": self._config.mcp_auth_token,
+                }
+            ]
+
+        return payload
+
     def _anthropic_to_openai_response(
         self,
         response_json: dict[str, Any],
@@ -160,11 +189,19 @@ class AnthropicAdapter:
         usage: dict[str, Any] = raw_usage if isinstance(raw_usage, dict) else {}
         prompt_tokens = self._to_int(usage.get("input_tokens", 0))
         completion_tokens = self._to_int(usage.get("output_tokens", 0))
+
         stop_reason = response_json.get("stop_reason")
         finish_reason = self._finish_reason(
             stop_reason if isinstance(stop_reason, str) else None
         )
-        return {
+
+        message, finish_override, citations = convert_response_content(
+            response_json.get("content")
+        )
+        if finish_override is not None:
+            finish_reason = finish_override
+
+        result: dict[str, Any] = {
             "id": response_json.get("id", f"chatcmpl-{int(time.time() * 1000)}"),
             "object": "chat.completion",
             "created": int(time.time()),
@@ -172,10 +209,7 @@ class AnthropicAdapter:
             "choices": [
                 {
                     "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": self._anthropic_text(response_json.get("content")),
-                    },
+                    "message": message,
                     "finish_reason": finish_reason,
                 }
             ],
@@ -186,16 +220,10 @@ class AnthropicAdapter:
             },
         }
 
-    @staticmethod
-    def _sse_data(payload: dict[str, Any]) -> bytes:
-        return f"data: {json.dumps(payload)}\n\n".encode()
+        if citations:
+            result["citations"] = citations
 
-    def _headers(self) -> dict[str, str]:
-        return {
-            "x-api-key": self._config.api_key,
-            "anthropic-version": _ANTHROPIC_VERSION,
-            "Content-Type": "application/json",
-        }
+        return result
 
     async def fetch_catalog(self) -> list[dict[str, Any]]:
         response = await self._client.get(
@@ -238,135 +266,20 @@ class AnthropicAdapter:
                     response=response,
                 )
 
-            created = int(time.time())
-            completion_id = f"chatcmpl-anthropic-{int(time.time() * 1000)}"
-            finish_emitted = False
-            current_event = ""
+            translator = StreamTranslator(str(request_body.get("model", "")))
             async for line in response.aiter_lines():
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                if stripped.startswith("event:"):
-                    current_event = stripped.split(":", 1)[1].strip()
-                    continue
-                if not stripped.startswith("data:"):
-                    continue
-                payload_raw = stripped.split(":", 1)[1].strip()
-                if payload_raw == "[DONE]":
-                    yield b"data: [DONE]\n\n"
-                    return
-                payload_json = json.loads(payload_raw)
-                event_type = current_event or str(payload_json.get("type", ""))
-                delta_payload = payload_json.get("delta", {})
+                chunks = translator.process_line(
+                    line,
+                    request=response.request,
+                    response=response,
+                )
+                for chunk in chunks:
+                    yield chunk
+                    if chunk == b"data: [DONE]\n\n":
+                        return
 
-                if event_type == "message_start":
-                    message = payload_json.get("message", {})
-                    if isinstance(message, dict):
-                        completion_id = str(message.get("id", completion_id))
-                    yield self._sse_data(
-                        {
-                            "id": completion_id,
-                            "object": "chat.completion.chunk",
-                            "created": created,
-                            "model": request_body.get("model", ""),
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "delta": {"role": "assistant"},
-                                    "finish_reason": None,
-                                }
-                            ],
-                        }
-                    )
-                    continue
-
-                if event_type == "content_block_delta":
-                    text = None
-                    if isinstance(delta_payload, dict):
-                        text = delta_payload.get("text")
-                    if text is None:
-                        text = payload_json.get("text")
-                    if isinstance(text, str) and text:
-                        yield self._sse_data(
-                            {
-                                "id": completion_id,
-                                "object": "chat.completion.chunk",
-                                "created": created,
-                                "model": request_body.get("model", ""),
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {"content": text},
-                                        "finish_reason": None,
-                                    }
-                                ],
-                            }
-                        )
-                    continue
-
-                if event_type == "message_delta":
-                    stop_reason = (
-                        delta_payload.get("stop_reason")
-                        if isinstance(delta_payload, dict)
-                        else None
-                    )
-                    stop_reason = (
-                        stop_reason
-                        if stop_reason is not None
-                        else payload_json.get("stop_reason")
-                    )
-                    finish_reason = self._finish_reason(
-                        stop_reason
-                        if isinstance(stop_reason, str) or stop_reason is None
-                        else None
-                    )
-                    if finish_reason is not None:
-                        finish_emitted = True
-                        yield self._sse_data(
-                            {
-                                "id": completion_id,
-                                "object": "chat.completion.chunk",
-                                "created": created,
-                                "model": request_body.get("model", ""),
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {},
-                                        "finish_reason": finish_reason,
-                                    }
-                                ],
-                            }
-                        )
-                    continue
-
-                if event_type == "error":
-                    message = payload_json.get("error", payload_json)
-                    raise httpx.HTTPStatusError(
-                        f"Provider returned streaming error: {message}",
-                        request=response.request,
-                        response=response,
-                    )
-
-                if event_type == "message_stop":
-                    if not finish_emitted:
-                        yield self._sse_data(
-                            {
-                                "id": completion_id,
-                                "object": "chat.completion.chunk",
-                                "created": created,
-                                "model": request_body.get("model", ""),
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "delta": {},
-                                        "finish_reason": "stop",
-                                    }
-                                ],
-                            }
-                        )
-                    yield b"data: [DONE]\n\n"
-                    return
-            yield b"data: [DONE]\n\n"
+            for chunk in translator.finalize():
+                yield chunk
 
     async def forward_embeddings(self, request_body: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(

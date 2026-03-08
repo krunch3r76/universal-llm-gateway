@@ -14,6 +14,9 @@ from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
+from ..fallback_eligibility import classify_fallback_error
+from ..resolved_candidates import get_ranked_candidates
+
 if TYPE_CHECKING:
     from ...handlers.protocol import PipelineContext, StepOutput
     from ...step_config import StepConfig
@@ -50,15 +53,16 @@ async def try_step_model_fallback(
         StepModelFallbackAttempted,
         StepModelFallbackExhausted,
         StepModelFallbackSucceeded,
+        StepModelFallbackSuppressed,
     )
     from ...events.step import StepModelFallback
-    from ..requirements_resolver import resolve_model_requirements
 
-    primary_model = step.get_target_model_id(
+    primary_model = await step.get_target_model_id_async(
         registry=context._registry,
         domain=context.pipeline.domain,
         search_path=context.pipeline.source_search_path,
         model_ref_overrides=context.options.get("model_ref_overrides"),
+        context=context,
     )
     if not primary_model:
         raise primary_err
@@ -68,7 +72,11 @@ async def try_step_model_fallback(
 
     fallback_ids = [
         m
-        for m in resolve_model_requirements(step.model_requirements)
+        for m in await get_ranked_candidates(
+            context=context,
+            step_name=step.name,
+            requirements=dict(step.model_requirements or {}),
+        )
         if m != primary_model
     ]
 
@@ -149,6 +157,27 @@ async def try_step_model_fallback(
             return result
 
         except Exception as e:
+            eligibility = classify_fallback_error(e)
+            if not eligibility.should_fallback:
+                if recorder:
+                    recorder.emit(
+                        StepModelFallbackSuppressed(
+                            step_name=step.name,
+                            model_id=fallback_id,
+                            primary_error_type=eligibility.error_type,
+                            suppression_reason=eligibility.reason,
+                        )
+                    )
+                publish_event(
+                    StepModelFallbackSuppressed(
+                        pipeline_id=pipeline_id,
+                        execution_id=execution_id,
+                        step_name=step.name,
+                        primary_error_type=eligibility.error_type,
+                        suppression_reason=eligibility.reason,
+                    )
+                )
+                raise
             logger.warning(
                 "[%s] Fallback model '%s' failed: %s: %s",
                 step.name,

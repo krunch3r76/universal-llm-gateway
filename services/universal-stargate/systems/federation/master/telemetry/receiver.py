@@ -10,9 +10,11 @@ INVARIANT: Non-telemetry types are logged and dropped
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from universal_event_bus import EventBus
 from universal_logging import get_logger
 
 from ...common.protocol import is_telemetry_type
+from ...common.protocol.message import FederationMessageType
 
 logger = get_logger(__name__)
 
@@ -34,7 +36,7 @@ class MasterTelemetryReceiver:
     def __init__(
         self,
         on_telemetry: Callable[[str, str, dict[str, Any]], Awaitable[None]],
-        event_bus: Any | None = None,
+        event_bus: EventBus | None = None,
     ):
         """
         Initialize telemetry receiver.
@@ -43,8 +45,10 @@ class MasterTelemetryReceiver:
             on_telemetry: Callback(remote_id, msg_type, data)
             event_bus: Optional event bus for telemetry received events
         """
-        self._on_telemetry = on_telemetry
-        self._event_bus = event_bus
+        self._on_telemetry: Callable[[str, str, dict[str, Any]], Awaitable[None]] = (
+            on_telemetry
+        )
+        self._event_bus: EventBus | None = event_bus
 
     async def handle_message(
         self,
@@ -70,6 +74,28 @@ class MasterTelemetryReceiver:
             logger.debug(f"Non-telemetry message from {remote_id}: {msg_type}")
             return
 
+        # Request-scoped telemetry: publish to event bus, not gateway manager
+        if msg_type == FederationMessageType.REQUEST_INFERENCE_STARTED.value:
+            if self._event_bus is not None:
+                import asyncio
+
+                from src.scheduling.events import RequestInferenceStarted
+
+                request_id = data.get("request_id")
+                model_id = data.get("model_id")
+                if request_id and model_id:
+                    asyncio.create_task(
+                        self._event_bus.publish_async_nowait(
+                            RequestInferenceStarted(
+                                request_id=request_id,
+                                model_id=model_id,
+                                gateway_url=data.get("gateway_url", "unknown"),
+                                correlation_id=data.get("correlation_id"),
+                            )
+                        )
+                    )
+            return
+
         logger.info(f"Processing telemetry from {remote_id}: {msg_type}")
 
         # Emit telemetry received event
@@ -79,8 +105,6 @@ class MasterTelemetryReceiver:
             from src.scheduling.events import FederationTelemetryReceived
 
             # Extract model count and resource summary from telemetry data
-            from ...common.protocol.message import FederationMessageType
-
             model_count = 0
             resource_summary: dict[str, Any] = {}
 

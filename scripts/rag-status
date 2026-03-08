@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+"""RAG indexing status — snapshot and live tail modes.
+
+Usage:
+    rag-status            # snapshot: current state
+    rag-status --watch    # live tail: stream events as they arrive
+    rag-status --summary  # compact one-liner (for scripting)
+    rag-status --failures # permanently skipped chunks (from property index DB)
+"""
+
+import argparse
+import json
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any
+
+EVENT_FILE = Path("/tmp/rag-events/current.jsonl")
+DB_PATH = Path.home() / ".rag" / "store" / "property_index.db"
+WATCH_INTERVAL = 1.5  # seconds between tail polls in --watch mode
+
+
+def _load_events() -> list[dict[str, Any]]:
+    if not EVENT_FILE.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    for line in EVENT_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+    return events
+
+
+def _basename(path: str) -> str:
+    return Path(path).name
+
+
+def _build_state(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Derive current indexing state from the full event log."""
+    started = False
+    in_progress: dict[str, dict[str, Any]] = {}
+    completed_files: list[dict[str, Any]] = []
+    indexed_files: list[dict[str, Any]] = []
+    current_batch: str | None = None
+
+    for ev in events:
+        sig: str = ev.get("signal", "")
+        p: dict[str, Any] = ev.get("payload", {})
+        ts: str = ev.get("timestamp", "")
+
+        match sig:
+            case "rag.started":
+                started = True
+                in_progress = {}
+                completed_files = []
+                indexed_files = []
+
+            case "rag.extraction.batch.started":
+                f: str = p.get("file", "")
+                in_progress[f] = {
+                    "file": f,
+                    "chunk_count": p.get("chunk_count", 0),
+                    "completed": 0,
+                    "written": 0,
+                    "started_ts": ts,
+                }
+                current_batch = f
+
+            case "rag.extraction.completed":
+                if current_batch and current_batch in in_progress:
+                    in_progress[current_batch]["completed"] += 1
+
+            case "rag.extraction.batch.completed":
+                fname: str = p.get("file", "")
+                entry: dict[str, Any] = {
+                    "file": fname,
+                    "chunk_count": p.get("chunk_count", 0),
+                    "successful": p.get("successful", 0),
+                    "written": p.get("written", 0),
+                    "duration_seconds": p.get("duration_seconds", 0.0),
+                    "ts": ts,
+                }
+                completed_files.append(entry)
+                in_progress.pop(fname, None)
+
+            case "rag.file.indexed":
+                indexed_files.append(
+                    {
+                        "file": p.get("file", ""),
+                        "indexed": p.get("indexed", 0),
+                        "deleted": p.get("deleted", 0),
+                        "ts": ts,
+                    }
+                )
+
+            case _:
+                pass
+
+    return {
+        "started": started,
+        "in_progress": in_progress,
+        "completed_files": completed_files,
+        "indexed_files": indexed_files,
+        "current_batch": current_batch,
+    }
+
+
+def _fmt_duration(secs: float) -> str:
+    if secs < 60:
+        return f"{secs:.1f}s"
+    m, s = divmod(int(secs), 60)
+    return f"{m}m{s:02d}s"
+
+
+def _print_snapshot(state: dict[str, Any]) -> None:
+    if not state["started"]:
+        print("RAG service not started (no rag.started event found)")
+        return
+
+    completed = state["completed_files"]
+    in_prog = state["in_progress"]
+
+    total_chunks = sum(f["chunk_count"] for f in completed)
+    total_written = sum(f["written"] for f in completed)
+    total_duration = sum(f["duration_seconds"] for f in completed)
+
+    # --- Summary line ---
+    status = "indexing" if in_prog else "idle"
+    print(f"Status : {status}")
+    print(f"Files  : {len(completed)} completed  |  {len(in_prog)} in progress")
+    print(f"Chunks : {total_written}/{total_chunks} written")
+    if total_duration > 0:
+        print(f"Time   : {_fmt_duration(total_duration)} total extraction time")
+    print()
+
+    # --- In-progress ---
+    if in_prog:
+        print("In progress:")
+        for f, info in in_prog.items():
+            done = info["completed"]
+            total = info["chunk_count"]
+            bar_width = 20
+            filled = int(bar_width * done / total) if total else 0
+            bar = "█" * filled + "░" * (bar_width - filled)
+            print(f"  [{bar}] {done}/{total}  {_basename(f)}")
+        print()
+
+    # --- Completed files ---
+    if completed:
+        print("Completed files:")
+        for f in completed:
+            ok = f["written"] == f["chunk_count"]
+            mark = "✓" if ok else "!"
+            line = (
+                f"  {mark} {_basename(f['file']):50s}"
+                f"  {f['written']:>3}/{f['chunk_count']:<3} chunks"
+                f"  {_fmt_duration(f['duration_seconds'])}"
+            )
+            print(line)
+
+
+def _print_summary(state: dict[str, Any]) -> None:
+    """Single-line summary for scripting."""
+    if not state["started"]:
+        print("not_started")
+        return
+    completed = state["completed_files"]
+    in_prog = state["in_progress"]
+    total_written = sum(f["written"] for f in completed)
+    total_chunks = sum(f["chunk_count"] for f in completed)
+    status = "indexing" if in_prog else "idle"
+    print(
+        f"{status} files={len(completed)} chunks={total_written}/{total_chunks} in_progress={len(in_prog)}"
+    )
+
+
+def _print_failures() -> None:
+    """Query the property index DB for permanently skipped chunks."""
+    if not DB_PATH.exists():
+        print(f"Property index DB not found: {DB_PATH}")
+        print("RAG service may not have run yet.")
+        return
+
+    conn = sqlite3.connect(str(DB_PATH))
+    try:
+        # Check columns — handle DBs that predate the permanent column
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")}
+        has_permanent = "permanent" in cols
+
+        if has_permanent:
+            perm_rows = conn.execute(
+                "SELECT source, chunk_id, attempt_count, recorded_at"
+                " FROM failed_extractions WHERE permanent = 1"
+                " ORDER BY source, chunk_id"
+            ).fetchall()
+            transient_rows = conn.execute(
+                "SELECT source, COUNT(*) FROM failed_extractions"
+                " WHERE permanent = 0 GROUP BY source ORDER BY source"
+            ).fetchall()
+        else:
+            # Fallback: no permanent column — show all failures with counts
+            perm_rows = []
+            transient_rows = conn.execute(
+                "SELECT source, COUNT(*) FROM failed_extractions"
+                " GROUP BY source ORDER BY source"
+            ).fetchall()
+
+        total_perm = len(perm_rows)
+        total_transient = sum(r[1] for r in transient_rows)
+
+        print(f"Permanently skipped : {total_perm} chunks")
+        print(f"Transient failures  : {total_transient} chunks (will retry)")
+        if not has_permanent:
+            print(
+                "  (note: DB predates permanent column — retry vs permanent distinction unavailable)"
+            )
+        print()
+
+        if perm_rows:
+            # Group by source file
+            by_file: dict[str, list[tuple[str, int, str]]] = {}
+            for source, chunk_id, attempt_count, recorded_at in perm_rows:
+                by_file.setdefault(source, []).append(
+                    (chunk_id, attempt_count, recorded_at)
+                )
+
+            print("Permanently skipped by file:")
+            for source, chunks in by_file.items():
+                print(f"  {_basename(source)}  ({len(chunks)} chunks)")
+                for chunk_id, attempt_count, recorded_at in chunks:
+                    ts = recorded_at[:16] if recorded_at else "?"
+                    print(f"    {chunk_id}  attempts={attempt_count}  last={ts}")
+            print()
+
+        if transient_rows:
+            print("Files with transient failures (retrying):")
+            for source, count in transient_rows:
+                print(f"  {_basename(source):50s}  {count} chunk(s)")
+    finally:
+        conn.close()
+
+
+def _watch_mode() -> None:
+    """Stream new events as they arrive, formatted."""
+    if not EVENT_FILE.exists():
+        print(f"Waiting for {EVENT_FILE} ...", flush=True)
+
+    seen = 0
+    try:
+        while True:
+            if EVENT_FILE.exists():
+                lines = EVENT_FILE.read_text().splitlines()
+                new_lines = lines[seen:]
+                for line in new_lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    sig = ev.get("signal", "")
+                    p = ev.get("payload", {})
+                    ts = ev.get("timestamp", "")[:19].replace("T", " ")
+
+                    match sig:
+                        case "rag.started":
+                            print(f"{ts}  [START   ]  RAG service started")
+                        case "rag.extraction.batch.started":
+                            n = p.get("chunk_count", 0)
+                            print(
+                                f"{ts}  [BATCH   ]  {_basename(p.get('file', ''))}  ({n} chunks)"
+                            )
+                        case "rag.extraction.batch.completed":
+                            w = p.get("written", 0)
+                            n = p.get("chunk_count", 0)
+                            d = _fmt_duration(p.get("duration_seconds", 0))
+                            mark = "✓" if w == n else "!"
+                            print(
+                                f"{ts}  [{mark} DONE  ]  {_basename(p.get('file', ''))}  {w}/{n} chunks  {d}"
+                            )
+                        case "rag.file.indexed":
+                            idx = p.get("indexed", 0)
+                            print(
+                                f"{ts}  [INDEXED ]  {_basename(p.get('file', ''))}  ({idx} chunks stored)"
+                            )
+                        case "rag.extraction.permanently.skipped":
+                            cid = p.get("chunk_id", "?")
+                            src = _basename(p.get("source", "?"))
+                            att = p.get("attempt_count", "?")
+                            print(
+                                f"{ts}  [PERM ✗  ]  {src}  chunk={cid}  attempts={att}"
+                            )
+                        case "rag.extraction.completed":
+                            pass  # too noisy — skip per-chunk events in watch mode
+                        case _:
+                            if sig.startswith("rag."):
+                                print(f"{ts}  [{sig:<10}]  {json.dumps(p)}")
+
+                seen = len(lines)
+            time.sleep(WATCH_INTERVAL)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="RAG indexing status",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    group = parser.add_mutually_exclusive_group()
+    _ = group.add_argument(
+        "--watch",
+        "-w",
+        action="store_true",
+        help="live tail — stream events as they arrive",
+    )
+    _ = group.add_argument(
+        "--summary", "-s", action="store_true", help="compact one-liner for scripting"
+    )
+    _ = group.add_argument(
+        "--failures",
+        "-f",
+        action="store_true",
+        help="show permanently skipped chunks from the property index DB",
+    )
+    args = parser.parse_args()
+
+    if args.watch:
+        _watch_mode()
+        return
+
+    if args.failures:
+        _print_failures()
+        return
+
+    events = _load_events()
+    state = _build_state(events)
+
+    if args.summary:
+        _print_summary(state)
+    else:
+        _print_snapshot(state)
+
+
+if __name__ == "__main__":
+    main()

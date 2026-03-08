@@ -1,0 +1,4 @@
+fastmcp>=2.0
+python-docx>=1.1
+fpdf2>=2.7
+uvicorn>=0.30

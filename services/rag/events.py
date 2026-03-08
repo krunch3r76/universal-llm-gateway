@@ -144,6 +144,28 @@ def rag_extraction_failed(
 
 
 @event_factory
+def rag_extraction_permanently_skipped(
+    *,
+    chunk_id: str,
+    source: str,
+    attempt_count: int,
+) -> Event:
+    """Emitted when a chunk crosses max_extraction_attempts and is permanently abandoned.
+
+    ∀ chunk_id: emitted exactly once, on the attempt that causes attempt_count >= max_attempts.
+    Persisted in failed_extractions.permanent = 1.
+    """
+    return Event(
+        signal="rag.extraction.permanently.skipped",
+        payload={
+            "chunk_id": chunk_id,
+            "source": source,
+            "attempt_count": attempt_count,
+        },
+    )
+
+
+@event_factory
 def rag_extraction_batch_started(
     *,
     file: str,
@@ -161,15 +183,49 @@ def rag_extraction_batch_completed(
     file: str,
     chunk_count: int,
     successful: int,
+    written: int,
     duration_seconds: float,
 ) -> Event:
+    """Emitted after an extraction batch finishes.
+
+    successful: chunks for which the pipeline returned a valid result (may be
+        less than chunk_count on partial pipeline failure).
+    written: chunks whose extraction metadata was committed (0 when the
+        all-or-nothing rule fires due to partial failure; equals successful
+        when all chunks succeed).
+    """
     return Event(
         signal="rag.extraction.batch.completed",
         payload={
             "file": file,
             "chunk_count": chunk_count,
             "successful": successful,
+            "written": written,
             "duration_seconds": duration_seconds,
+        },
+    )
+
+
+@event_factory
+def rag_extraction_batch_skipped(
+    *,
+    file: str,
+    chunk_count: int,
+    skipped_count: int,
+    max_attempts: int,
+) -> Event:
+    """Emitted when all chunks in a batch have exceeded max_extraction_attempts.
+
+    ∀ chunk_id ∈ batch: attempt_count >= max_attempts ⟹ batch skipped entirely.
+    No pipeline call is made; extraction is permanently abandoned for these chunks.
+    """
+    return Event(
+        signal="rag.extraction.batch.skipped",
+        payload={
+            "file": file,
+            "chunk_count": chunk_count,
+            "skipped_count": skipped_count,
+            "max_attempts": max_attempts,
         },
     )
 

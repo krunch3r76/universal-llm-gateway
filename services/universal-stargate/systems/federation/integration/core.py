@@ -4,6 +4,7 @@ Federation integration dispatcher.
 Mode-specific setup delegated to domain modules.
 """
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
@@ -42,11 +43,15 @@ class FederationIntegration:
     """
 
     def __init__(
-        self, config: FederationConfig | None = None, event_bus: Any | None = None
+        self,
+        config: FederationConfig | None = None,
+        event_bus: Any | None = None,
+        health_observer: Callable[..., None] | None = None,
     ):
         self._config: FederationConfig = config or load_federation_config()
         self._started: bool = False
         self._event_bus: Any | None = event_bus
+        self._health_observer: Callable[..., None] | None = health_observer
 
         # Mode-specific integration objects
         self._mode_integration: MasterIntegration | RemoteIntegration | None = None
@@ -142,6 +147,7 @@ class FederationIntegration:
                 self._config,
                 event_bus=self._event_bus,
                 stargate_config=stargate_config,
+                health_observer=self._health_observer,
             )
             self._health_handler = await self._mode_integration.setup(
                 app,
@@ -253,10 +259,8 @@ class FederationIntegration:
         # CRITICAL: Use 'is not None' check, not truthiness check
         # SingleGatewayManager.__bool__ returns False if gateway not connected,
         # but we need the config even before connection
-        has_gateway_config = (
-            hasattr(gateway_manager, "gateway_config")
-            if gateway_manager is not None
-            else False
+        has_gateway_config = bool(
+            gateway_manager is not None and hasattr(gateway_manager, "gateway_config")
         )
         logger.info(
             f"🔍 Edge mode token router: gateway_manager={gateway_manager}, "
@@ -376,3 +380,31 @@ class FederationIntegration:
             return
 
         self._edge_server.wire_gateway_telemetry(ws_client, gateway_url)
+
+    def can_start_relay_periodic_telemetry(self) -> bool:
+        """Whether the active mode integration supports relay periodic telemetry."""
+        if self._mode_integration is None:
+            return False
+        starter = getattr(
+            self._mode_integration,
+            "start_relay_periodic_telemetry",
+            None,
+        )
+        return callable(starter)
+
+    async def start_relay_periodic_telemetry(self) -> None:
+        """Start relay periodic telemetry via the active mode integration."""
+        if self._mode_integration is None:
+            raise RuntimeError(
+                "Relay periodic telemetry unavailable: mode not initialized"
+            )
+        starter = getattr(
+            self._mode_integration,
+            "start_relay_periodic_telemetry",
+            None,
+        )
+        if not callable(starter):
+            raise RuntimeError(
+                "Relay periodic telemetry unavailable: method not supported"
+            )
+        await starter()

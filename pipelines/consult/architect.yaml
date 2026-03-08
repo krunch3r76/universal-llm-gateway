@@ -1,0 +1,22 @@
+schema_version: 6
+id: consult-architect
+version: "1"
+type: consult
+
+output: consult
+options:
+  timeout_seconds: 300
+
+steps:
+  - name: consult
+    type: generate
+    model_ref: auto
+    prompt_ref: consult.architect
+    model_requirements:
+      task: code_architecture
+      min_score: good
+      source: cloud
+      min_context: 128000
+      tags: [general, reasoning, strong_planner]
+      exclude_tags: [fast, local, weak_grounding]
+      health_scoring: true

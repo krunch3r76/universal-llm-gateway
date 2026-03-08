@@ -751,7 +751,15 @@ class RequestPreparer:
             if context.chat_request and context.chat_request.messages
             else []
         )
-        return [{"role": msg.role, "content": msg.content} for msg in messages_list]
+        result: list[dict[str, Any]] = []
+        for msg in messages_list:
+            d: dict[str, Any] = {"role": msg.role, "content": msg.content}
+            extras = msg.model_extra or {}
+            for key in ("tool_calls", "tool_call_id", "name"):
+                if key in extras:
+                    d[key] = extras[key]
+            result.append(d)
+        return result
 
     def _inject_profile_system_prompt(
         self,

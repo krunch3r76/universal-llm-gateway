@@ -195,10 +195,13 @@ class ResourceTracker:
             if process_pid and key in self._models:
                 self._models[key].process_pid = process_pid
 
-    async def set_model_busy(self, model_id: str | ModelId) -> None:
+    async def set_model_busy(
+        self, model_id: str | ModelId, request_id: str = ""
+    ) -> None:
         """Mark a model as busy (processing inference).
 
-        Emits INFERENCE_STARTED event to notify Stargate.
+        Emits INFERENCE_STARTED (model-scoped) and REQUEST_INFERENCE_STARTED
+        (request-scoped, when request_id provided) to notify Stargate.
         """
         key = _normalize_key(model_id)
         model_str = str(model_id) if isinstance(model_id, str) else str(model_id)
@@ -219,7 +222,7 @@ class ResourceTracker:
             self._models[key].current_inference_start = time.time()
             self._models[key].last_updated = time.time()
             self.logger.debug(f"Model {model_id} marked as busy")
-            await emit_inference_started(self.event_bus, model_str)
+            await emit_inference_started(self.event_bus, model_str, request_id)
 
     async def set_model_idle(self, model_id: str | ModelId) -> None:
         """Mark a model as idle (finished inference or cancelled).
@@ -320,10 +323,17 @@ class ResourceTracker:
     # -------------------------------------------------------------------------
 
     @asynccontextmanager
-    async def track_inference(self, model_id: str | ModelId):
-        """Context manager to track inference lifecycle."""
+    async def track_inference(self, model_id: str | ModelId, request_id: str = ""):
+        """Context manager to track inference lifecycle.
+
+        Args:
+            model_id: Model performing inference.
+            request_id: Request identifier — when provided, emits
+                REQUEST_INFERENCE_STARTED so Stargate can distinguish
+                queued-vs-executing.
+        """
         try:
-            await self.set_model_busy(model_id)
+            await self.set_model_busy(model_id, request_id)
             self.logger.debug(f"Model {model_id} busy for inference")
             yield
         finally:

@@ -233,3 +233,16 @@ def CloudProxyLocalCatalogUnavailable(  # noqa: N802
         signal="cloud.proxy.local.catalog.unavailable",
         payload={"stargate_url": stargate_url, "error": error},
     )
+
+
+@event_factory
+def CloudProxyMcpConfigured(  # noqa: N802
+    *,
+    provider: str,
+    mcp_server_url: str,
+) -> Event:
+    """Emit MCP server configured event at startup for providers with mcp_server_url set."""
+    return Event(
+        signal="cloud.proxy.mcp.configured",
+        payload={"provider": provider, "mcp_server_url": mcp_server_url},
+    )

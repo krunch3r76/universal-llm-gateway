@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .orchestration.load_orchestrator import FederatedLoadOrchestrator
     from .orchestration.metrics import OrchestrationMetrics
     from .routing.orchestrator import MasterRequestTracker
+    from .telemetry.receiver import MasterTelemetryReceiver
 
 logger = get_logger(__name__)
 
@@ -46,10 +47,12 @@ class MasterIntegration:
         config: "FederationConfig",
         event_bus: object | None = None,
         stargate_config: object | None = None,
+        health_observer: Callable[..., None] | None = None,
     ) -> None:
         self._config = config
         self._event_bus = event_bus
         self._stargate_config = stargate_config
+        self._health_observer = health_observer
         self._federated_manager: FederatedGatewayManager | None = None
         self._connection_manager: ConnectionManager | None = None
         self._http_pollers: dict[str, HTTPPollingReceiver] = {}
@@ -59,6 +62,9 @@ class MasterIntegration:
         self._load_orchestrator: FederatedLoadOrchestrator | None = None
         self._orchestration_metrics: OrchestrationMetrics | None = None
         self._local_edge_client: LocalEdgeClient | None = None
+        # Initialized in _create_federated_manager; routes local-edge telemetry
+        # through MasterTelemetryReceiver so REQUEST_INFERENCE_STARTED reaches the bus
+        self._telemetry_receiver: MasterTelemetryReceiver | None = None
         # Set in _setup_master_forwarding_and_orchestration
         self._request_tracker: MasterRequestTracker | None = None
         # Cloud backend integration
@@ -154,9 +160,11 @@ class MasterIntegration:
     def _register_master_routers(
         self, app: FastAPI, gateway_socket_path: str | None
     ) -> None:
-        """Register HTTP routers for Master mode."""
-        # Note: Master mode doesn't register token counting router
-        # Token counting delegated to execution target (Remote Stargate)
+        """Register HTTP routers for Master mode.
+
+        Master does not register a token-counting router; token counting is
+        delegated to the execution target (Remote Stargate).
+        """
         pass
 
     async def _create_federated_manager(self) -> FederatedGatewayManager:
@@ -173,6 +181,13 @@ class MasterIntegration:
             raise RuntimeError("EventBus required for FederatedGatewayManager")
         manager = FederatedGatewayManager(event_bus=self._event_bus)
         await manager.start()
+
+        from .telemetry.receiver import MasterTelemetryReceiver
+
+        self._telemetry_receiver = MasterTelemetryReceiver(
+            on_telemetry=manager.update_from_event,
+            event_bus=self._event_bus,
+        )
         return manager
 
     def _register_remotes(self) -> None:
@@ -242,9 +257,8 @@ class MasterIntegration:
         """Process Edge telemetry locally (Master is final destination)."""
         if not self._federated_manager:
             return
-
-        # Process telemetry directly (unlike Remote which forwards to Master)
-        await self._federated_manager.update_from_event(peer_id, msg_type, data)
+        assert self._telemetry_receiver is not None
+        await self._telemetry_receiver.handle_message(peer_id, msg_type, data)
 
     async def _handle_vram_measurement(
         self, data: dict[str, object]
@@ -273,13 +287,10 @@ class MasterIntegration:
 
     def _create_circuit_breaker(self) -> FederationCircuitBreaker:
         """
-        Create circuit breaker with explicit config.
+        Create circuit breaker with explicit configuration.
 
-        Returns:
-            Configured FederationCircuitBreaker
-
-        Note:
-            NO hasattr fallbacks - fail-fast on missing config
+        Expects self._config.circuit_breaker to be fully populated.
+        Fail-fast: missing cb_config raises AttributeError.
         """
         cb_config = self._config.circuit_breaker
         return FederationCircuitBreaker(
@@ -394,7 +405,7 @@ class MasterIntegration:
 
         self._edge_ws_clients = MasterEdgeWSClients(
             config=self._config,
-            on_telemetry=self._federated_manager.update_from_event,
+            on_telemetry=self._process_edge_telemetry,
             event_bus=self._event_bus,
         )
         await self._edge_ws_clients.start()
@@ -413,7 +424,10 @@ class MasterIntegration:
         if not proxy_config:
             return
 
-        self._cloud_forwarder = CloudProxyClient(proxy_config.url)
+        self._cloud_forwarder = CloudProxyClient(
+            proxy_config.url,
+            health_observer=self._health_observer,
+        )
 
         self._cloud_registry = CloudProxyCatalogPoller(
             proxy_config=proxy_config,
@@ -427,8 +441,8 @@ class MasterIntegration:
     async def shutdown(self) -> None:
         """Shutdown Master mode components.
 
-        Cloud proxy client lifecycle owned by FederatedRequestForwarder —
-        closed via forwarder.close() below; not duplicated here.
+        _cloud_registry is shut down directly; _cloud_forwarder (client) is
+        closed via forwarder.close().
         """
         if self._cloud_registry:
             await self._cloud_registry.shutdown()

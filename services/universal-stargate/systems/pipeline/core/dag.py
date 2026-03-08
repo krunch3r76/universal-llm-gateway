@@ -384,7 +384,7 @@ class ResponseTruncatedError(PipelineExecutionError):
         self.step_id = step_id
         self.completion_tokens = completion_tokens
         self.max_tokens = max_tokens
-        self.response_preview = response_preview
+        self.response_preview = response_preview  # full response text despite the name
 
         token_info = (
             f"{completion_tokens}/{max_tokens} tokens used"

@@ -1,0 +1,27 @@
+basename: claude-opus-4
+full_model_id: anthropic/claude-opus-4
+source: cloud
+latency_bucket: slow
+cost_bucket: expensive
+reasoning_depth: strong
+tasks:
+  planning:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Highest-capability Anthropic model; deep multi-step planning
+  code_architecture:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Best-in-class for complex system design
+  code_review:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Highly precise, catches subtle issues
+  research:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Thorough and well-grounded analysis

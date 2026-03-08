@@ -3,6 +3,10 @@
 Extracted from rag_service.py to keep that module under the SLOC limit.
 Called between chunk_file() and embed_chunks() when extraction is enabled.
 One pipeline call per file — MapExecutor fans out over all chunks in parallel.
+
+Partial-write threshold: when ≥90% of chunks succeed, extraction metadata
+is written for the successful chunks; the remainder retry on the next sweep.
+This matches the pipeline MapExecutor's failure_threshold=0.1 convention.
 """
 
 from __future__ import annotations
@@ -23,14 +27,19 @@ from services.rag.chunkers import Chunk
 from services.rag.config import KnowledgeExtractionConfig
 from services.rag.events import (
     rag_extraction_batch_completed,
+    rag_extraction_batch_skipped,
     rag_extraction_batch_started,
     rag_extraction_completed,
     rag_extraction_failed,
+    rag_extraction_permanently_skipped,
 )
 from services.rag.knowledge_extractor import ExtractedKnowledge, extract_knowledge_batch
 from services.rag.property_index import PropertyIndex
 
 logger = logging.getLogger(__name__)
+
+# ≥90% success → write partial results (matches MapExecutor failure_threshold=0.1)
+_FAILURE_THRESHOLD = 0.1
 
 
 @dataclass(slots=True, kw_only=True)
@@ -47,9 +56,7 @@ def build_property_entries(
     knowledge: ExtractedKnowledge, chunk_id: str
 ) -> list[tuple[str, str]]:
     """Build (key, chunk_id) pairs from extracted knowledge for the property index."""
-    entries = [
-        (f"prop.name@@{entity.name}", chunk_id) for entity in knowledge.entities
-    ]
+    entries = [(f"prop.name@@{entity.name}", chunk_id) for entity in knowledge.entities]
     entries.extend(
         (f"prop.type@@{etype}", chunk_id)
         for entity in knowledge.entities
@@ -74,7 +81,9 @@ def build_property_entries(
 
 def _publish_event_nonblocking(event_bus: EventBus, event: Event) -> None:
     """Publish event in background and surface task failures in logs."""
-    task: asyncio.Task[None] = asyncio.create_task(event_bus.publish_async_nowait(event))
+    task: asyncio.Task[None] = asyncio.create_task(
+        event_bus.publish_async_nowait(event)
+    )
 
     def _on_done(done_task: asyncio.Task[None]) -> None:
         if done_task.cancelled():
@@ -102,13 +111,53 @@ async def run_extraction(
     Makes one pipeline call per file; MapExecutor fans out over chunks in parallel.
     Modifies metadatas in-place: adds 'extraction' and 'extraction_schema_version'.
 
-    All-or-nothing per file: if any chunk fails, nothing is written. This ensures
-    all chunks of a file are always extracted in a single pipeline call, keeping
-    entity representations consistent across chunks (same model state, same session).
-    ∀ file: (∀ chunk: extracted) ∨ (∀ chunk: unextracted)
+    Write policy: when failure_ratio ≤ _FAILURE_THRESHOLD (10%), successful
+    chunks are written and failures retry on the next sweep. Above threshold,
+    nothing is written (full retry). This aligns with the MapExecutor's own
+    failure_threshold=0.1 convention.
+    ∀ file: (successful/total ≥ 0.9 ⟹ write successful) ∨ (write nothing)
     """
     result = ExtractionResult()
     id_to_idx = {chunk_id: i for i, chunk_id in enumerate(ids)}
+
+    # --- Permanent failure gate ---
+    max_attempts = config.max_extraction_attempts
+    permanent = property_index.get_permanent_failures(file, max_attempts)
+    if permanent:
+        active_ids = [cid for cid in ids if cid not in permanent]
+        skipped_count = len(ids) - len(active_ids)
+        if not active_ids:
+            logger.warning(
+                "Extraction permanently skipped for %s: all %d chunks exceeded"
+                " max_attempts=%d",
+                file,
+                skipped_count,
+                max_attempts,
+            )
+            if event_bus is not None:
+                _publish_event_nonblocking(
+                    event_bus,
+                    rag_extraction_batch_skipped(
+                        file=file,
+                        chunk_count=len(ids),
+                        skipped_count=skipped_count,
+                        max_attempts=max_attempts,
+                    ),
+                )
+            return result
+        logger.warning(
+            "Extraction for %s: skipping %d permanently-failed chunks"
+            " (attempt_count >= %d); running %d remaining",
+            file,
+            skipped_count,
+            max_attempts,
+            len(active_ids),
+        )
+        active_chunks = [chunks[id_to_idx[cid]] for cid in active_ids]
+        ids = active_ids
+        chunks = active_chunks
+        id_to_idx = {cid: i for i, cid in enumerate(ids)}
+    # --- end permanent failure gate ---
 
     if event_bus is not None:
         _publish_event_nonblocking(
@@ -135,24 +184,59 @@ async def run_extraction(
         staged[chunk_id] = knowledge
 
     failed_ids = [cid for cid in ids if cid not in staged]
+    successful = len(staged)
+    failure_ratio = len(failed_ids) / len(ids) if ids else 0.0
+    accept_partial = bool(failed_ids) and failure_ratio <= _FAILURE_THRESHOLD
 
     if failed_ids:
-        logger.warning(
-            "Extraction skipped for %s: %d/%d chunks failed — will retry on next sweep",
-            file,
-            len(failed_ids),
-            len(ids),
-        )
+        if accept_partial:
+            logger.info(
+                "Partial extraction for %s: %d/%d chunks failed (within threshold)"
+                " — writing %d successful",
+                file,
+                len(failed_ids),
+                len(ids),
+                successful,
+            )
+        else:
+            logger.warning(
+                "Extraction skipped for %s: %d/%d chunks failed"
+                " — will retry on next sweep",
+                file,
+                len(failed_ids),
+                len(ids),
+            )
         for chunk_id in failed_ids:
+            new_attempt_count = (
+                property_index.get_failure_counts(file).get(chunk_id, 0) + 1
+            )
+            is_permanent = new_attempt_count >= config.max_extraction_attempts
+            await property_index.record_failure(
+                chunk_id=chunk_id,
+                source=file,
+                error="missing or invalid result after batch parsing",
+                permanent=is_permanent,
+            )
             if event_bus is not None:
                 _publish_event_nonblocking(
                     event_bus,
                     rag_extraction_failed(
-                        chunk_id=chunk_id, error="no result from pipeline"
+                        chunk_id=chunk_id,
+                        error="missing or invalid result after batch parsing",
                     ),
                 )
-        successful = 0
-    else:
+                if is_permanent:
+                    _publish_event_nonblocking(
+                        event_bus,
+                        rag_extraction_permanently_skipped(
+                            chunk_id=chunk_id,
+                            source=file,
+                            attempt_count=new_attempt_count,
+                        ),
+                    )
+
+    should_write = not failed_ids or accept_partial
+    if should_write and staged:
         all_property_entries: list[tuple[str, str]] = []
         for chunk_id, knowledge in staged.items():
             idx = id_to_idx[chunk_id]
@@ -174,8 +258,12 @@ async def run_extraction(
         if apply_property_index and all_property_entries:
             await property_index.add_batch(all_property_entries)
         result.property_entries = all_property_entries
-        successful = len(staged)
+        written = len(staged)
         result.success = True
+        # Clear failure records for this file — successful extraction supersedes them.
+        await property_index.clear_failures_for(file)
+    else:
+        written = 0
 
     if event_bus is not None:
         _publish_event_nonblocking(
@@ -184,6 +272,7 @@ async def run_extraction(
                 file=file,
                 chunk_count=len(ids),
                 successful=successful,
+                written=written,
                 duration_seconds=duration,
             ),
         )
@@ -206,15 +295,41 @@ async def recover_missing_extraction(
     Called when all_ids_match_prefix is True but extraction_schema_version is absent
     from one or more chunks — the file was indexed successfully but extraction timed out.
 
-    Fetches documents from ChromaDB, re-runs extraction (all-or-nothing), and patches
-    chunk metadata via collection.update(). Property index is also populated.
+    Fetches documents from ChromaDB, re-runs extraction (partial writes accepted
+    per _FAILURE_THRESHOLD), and patches chunk metadata via collection.update().
+    Property index is also populated for successful chunks.
 
     Returns ExtractionResult if recovery was attempted, None if no recovery needed.
     ∀ chunk ∈ existing_ids: extraction_schema_version present ⟹ return None.
     """
-    needs_recovery = any("extraction_schema_version" not in m for m in existing_metadatas)
+    needs_recovery = any(
+        "extraction_schema_version" not in m for m in existing_metadatas
+    )
     if not needs_recovery:
         return None
+
+    # Gate: if all chunks are permanently failed, skip recovery entirely.
+    max_attempts = config.max_extraction_attempts
+    permanent = property_index.get_permanent_failures(source, max_attempts)
+    if permanent.issuperset(set(existing_ids)):
+        logger.warning(
+            "Recovery skipped for %s: all %d chunks permanently failed"
+            " (attempt_count >= %d)",
+            source,
+            len(existing_ids),
+            max_attempts,
+        )
+        if event_bus is not None:
+            _publish_event_nonblocking(
+                event_bus,
+                rag_extraction_batch_skipped(
+                    file=source,
+                    chunk_count=len(existing_ids),
+                    skipped_count=len(existing_ids),
+                    max_attempts=max_attempts,
+                ),
+            )
+        return ExtractionResult()
 
     with_docs = collection.get(ids=existing_ids, include=["documents", "metadatas"])
     docs: list[str] = with_docs.get("documents") or []

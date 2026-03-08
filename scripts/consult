@@ -13,6 +13,7 @@ Usage:
   consult --chain -r planner --models local cloud "complex question"
   consult --no-rag "question"
   consult --rag-pipeline "complex multi-faceted question"
+  consult -r architect --validate-files "scope a feature"  # validate FILE: lines
 """
 
 from __future__ import annotations
@@ -20,8 +21,10 @@ from __future__ import annotations
 import argparse
 import sys
 import textwrap
+import time
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -32,7 +35,14 @@ from consult_lib.constants import (
 )
 from consult_lib.context import collect_context_file_paths
 from consult_lib.core import ConsultResult, execute_consult
+from consult_lib.history import (
+    extract_pipeline_step_records,
+    resolve_pipeline_models,
+    write_consult_call_event,
+    write_consult_call_started_event,
+)
 from consult_lib.model_selection import (
+    SelectionFailure,
     load_roles,
     select_models_for_role,
     split_role_config,
@@ -40,7 +50,18 @@ from consult_lib.model_selection import (
 from consult_lib.output import format_output, format_pipeline_review_output
 from consult_lib.pipeline import (
     build_reviewer_pipeline_model_overrides,
+    get_pipeline_id,
     run_code_review_pipeline,
+)
+from consult_lib.run_artifact import (
+    STATUS_PARTIAL_OUTPUT_AVAILABLE,
+    STATUS_PIPELINE_FAILED,
+    STATUS_SELECTION_FAILED,
+    STATUS_SUCCESS,
+    RunArtifact,
+    validate_file_lines,
+    write_failure_marker,
+    write_output_safe,
 )
 from transport_utils.rag_client import DEFAULT_RAG_URL
 
@@ -67,6 +88,7 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
               consult --models qwen3-32b-awq-32768 google/gemini-2.5-pro "question"
               consult --cloud-only -r reviewer -f myfile.py "question"
               consult --cloud-only --models google/gemini-2.5-pro "question"
+              consult -r architect --validate-files "scope a refactor"
         """),
     )
     parser.add_argument("question", nargs="?", help="Question to consult on")
@@ -142,6 +164,34 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--pipeline", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--exclude",
+        nargs=2,
+        metavar=("TASK", "MODEL"),
+        help="Add model to exclusion list (e.g. --exclude code_review bad-model)",
+    )
+    parser.add_argument(
+        "--unexclude",
+        nargs=2,
+        metavar=("TASK", "MODEL"),
+        help="Remove model from exclusion list",
+    )
+    parser.add_argument(
+        "--show-exclusions",
+        action="store_true",
+        help="Show current model exclusions and exit",
+    )
+    parser.add_argument(
+        "--rankings",
+        metavar="TASK",
+        help="Show model rankings for a task and exit",
+    )
+    parser.add_argument(
+        "--validate-files",
+        action="store_true",
+        help="After output is produced, validate FILE: lines against the repo. "
+        "Reports valid/invalid paths. Appended to run artifact metadata.",
+    )
     return parser
 
 
@@ -159,15 +209,53 @@ def _results_to_dicts(results: list[ConsultResult]) -> list[dict[str, Any]]:
             d["latency_ms"] = r.latency_ms
         if r.phase:
             d["phase"] = r.phase
+        if r.phase_index is not None:
+            d["phase_index"] = r.phase_index
+        if r.started_at is not None:
+            d["started_at"] = r.started_at
+        if r.finished_at is not None:
+            d["finished_at"] = r.finished_at
+        if r.duration_ms is not None:
+            d["duration_ms"] = r.duration_ms
+        if r.input_prompt_preview is not None:
+            d["input_prompt_preview"] = r.input_prompt_preview
+        if r.response_preview is not None:
+            d["response_preview"] = r.response_preview
         out.append(d)
     return out
+
+
+def _handle_admin_flags(args: argparse.Namespace) -> bool:
+    """Handle --exclude, --unexclude, --show-exclusions, --rankings. Returns True if handled."""
+    if args.show_exclusions:
+        from consult_lib.exclusion_cli import show_exclusions
+
+        show_exclusions()
+        return True
+    if args.exclude:
+        from consult_lib.exclusion_cli import add_exclusion_cli
+
+        add_exclusion_cli(args.exclude[0], args.exclude[1])
+        return True
+    if args.unexclude:
+        from consult_lib.exclusion_cli import remove_exclusion_cli
+
+        remove_exclusion_cli(args.unexclude[0], args.unexclude[1])
+        return True
+    if args.rankings:
+        from consult_lib.exclusion_cli import show_rankings
+
+        show_rankings(args.rankings, args.stargate_url)
+        return True
+    return False
 
 
 def _run_reviewer_pipeline(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
     target_models: list[str],
-) -> str:
+    artifact: RunArtifact,
+) -> tuple[str, list[dict[str, Any]]]:
     """Handle reviewer pipeline mode (separate from execute_consult)."""
     context_file_paths = collect_context_file_paths(args.context_files)
     if not context_file_paths:
@@ -176,15 +264,15 @@ def _run_reviewer_pipeline(
     overrides = build_reviewer_pipeline_model_overrides(target_models)
     if overrides:
         pipeline_options = {"model_ref_overrides": overrides}
-        print(
-            "Pipeline reviewer model overrides: "
-            + ", ".join(f"{k}={v}" for k, v in overrides.items()),
-            file=sys.stderr,
+        msg = "Pipeline reviewer model overrides: " + ", ".join(
+            f"{k}={v}" for k, v in overrides.items()
         )
-    print(
-        f"Pipeline mode: estimating batches for {len(context_file_paths)} files",
-        file=sys.stderr,
-    )
+        print(msg, file=sys.stderr)
+        artifact.record_stderr(msg)
+    msg2 = f"Pipeline mode: estimating batches for {len(context_file_paths)} files"
+    print(msg2, file=sys.stderr)
+    artifact.record_stderr(msg2)
+    artifact.checkpoint()
     try:
         batch_results = run_code_review_pipeline(
             stargate_url=args.stargate_url,
@@ -194,57 +282,367 @@ def _run_reviewer_pipeline(
         )
     except Exception as exc:
         parser.error(f"--pipeline failed: {exc}")
-    return format_pipeline_review_output(
+    for batch in batch_results:
+        artifact.record_partial(
+            step="batch",
+            model_id=batch.get("model_id", "code-review"),
+            content=str(batch.get("result", "")),
+            execution_id=batch.get("execution_id"),
+        )
+    output = format_pipeline_review_output(
         question=args.question,
         file_paths=context_file_paths,
         batches=batch_results,
+        selected_models=target_models,
+        pipeline_virtual_model="code-review",
+        call_id=artifact.call_id,
+        run_dir=str(artifact.run_dir),
+    )
+    return output, batch_results
+
+
+def _resolve_used_models_for_pipeline(
+    *,
+    role_pipeline_id: str | None,
+    results: list[ConsultResult],
+    args_models: list[str] | None,
+    execution_id: str | None,
+    started_wall: float,
+    finished_wall: float,
+) -> tuple[list[str], list[str]]:
+    """Derive selected/used model lists for pipeline or direct roles."""
+    selected_models = args_models[:] if args_models else []
+    if not selected_models:
+        if role_pipeline_id:
+            selected_models = resolve_pipeline_models(execution_id=execution_id)
+        if not selected_models:
+            selected_models = [str(r.model_id) for r in results if r.model_id]
+    used_models = [str(r.model_id) for r in results if not r.error and r.model_id]
+    if role_pipeline_id and not used_models:
+        used_models = selected_models if all(not r.error for r in results) else []
+    return selected_models, used_models
+
+
+def _finalize_output(
+    *,
+    output: str,
+    args: argparse.Namespace,
+    artifact: RunArtifact,
+    status: str,
+    used_models: list[str],
+    execution_id: str | None,
+    duration_seconds: float,
+) -> None:
+    """Write run artifact, optionally write -o file, print file validation."""
+    run_dir = artifact.finalize(
+        status=status,
+        output_text=output,
+        used_models=used_models,
+        execution_id=execution_id,
+        duration_seconds=duration_seconds,
+    )
+    if args.output:
+        out_path = Path(args.output)
+        write_output_safe(path=out_path, content=output, artifact=artifact)
+        # Re-flush metadata so output_path is persisted
+        artifact.checkpoint()
+        print(f"Saved: {out_path}", file=sys.stderr)
+    print(f"Run artifacts: {run_dir}/metadata.json", file=sys.stderr)
+    if args.validate_files:
+        import json as _json
+
+        result = validate_file_lines(output)
+        if result["valid"]:
+            print(
+                "FILE validation — valid paths: " + ", ".join(result["normalized"]),
+                file=sys.stderr,
+            )
+        if result["invalid"]:
+            print(
+                "FILE validation — INVALID paths (hallucinated or moved): "
+                + ", ".join(result["invalid"]),
+                file=sys.stderr,
+            )
+        (run_dir / "file_validation.json").write_text(
+            _json.dumps(result, indent=2), encoding="utf-8"
+        )
+
+
+def _fail_with_artifact(
+    *,
+    parser: argparse.ArgumentParser,
+    artifact: RunArtifact,
+    status: str,
+    error: str,
+    args: argparse.Namespace,
+    duration_seconds: float,
+    raise_sys_exit: bool = True,
+) -> None:
+    """Finalize artifact as failed, overwrite -o with failure marker, then error."""
+    artifact.finalize(
+        status=status,
+        error_summary=error,
+        duration_seconds=duration_seconds,
+    )
+    if args.output:
+        write_failure_marker(
+            path=Path(args.output),
+            call_id=artifact.call_id,
+            status=status,
+            error_summary=error,
+            run_dir=str(artifact.run_dir),
+        )
+    if raise_sys_exit:
+        parser.error(error)
+
+
+def _run_pipeline_branch(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    role_requirements: dict[str, Any],
+    started_at: float,
+    call_id: str,
+) -> None:
+    """Execute reviewer pipeline branch with full artifact capture."""
+    role_pipeline_id = get_pipeline_id(args.role)
+    started_selected_models = args.models or []
+    target_models = args.models or REVIEWER_DEFAULT_MODELS
+    reviewer_selection_path: str | None = None
+    artifact = RunArtifact(
+        call_id=call_id,
+        role=args.role,
+        mode="pipeline",
+        question=args.question,
+        pipeline_id=role_pipeline_id,
+        pipeline_virtual_model="code-review",
+        selected_models=started_selected_models,
+    )
+    reviewer_requirements = role_requirements
+    if args.cloud_only and "reviewer" in role_requirements:
+        reviewer_requirements = {
+            **role_requirements,
+            "reviewer": {**role_requirements["reviewer"], "source": "cloud"},
+        }
+    try:
+        if not args.models:
+            selected_models_list, reviewer_selection_path = select_models_for_role(
+                "reviewer", reviewer_requirements, args.stargate_url
+            )
+            started_selected_models = selected_models_list
+            target_models = selected_models_list
+            artifact.selected_models = selected_models_list
+    except SelectionFailure as exc:
+        write_consult_call_event(
+            role=args.role,
+            mode="pipeline",
+            question=args.question,
+            selected_models=started_selected_models,
+            used_models=[],
+            selection_path=reviewer_selection_path,
+            pipeline_id=role_pipeline_id,
+            context_files=args.context_files or [],
+            output_file=args.output,
+            cloud_only=bool(args.cloud_only),
+            success=False,
+            error=str(exc),
+            duration_seconds=time.monotonic() - started_at,
+            call_id=call_id,
+            status=STATUS_SELECTION_FAILED,
+            artifact_dir=str(artifact.run_dir),
+            failure_kind=exc.failure_kind,
+        )
+        _fail_with_artifact(
+            parser=parser,
+            artifact=artifact,
+            status=STATUS_SELECTION_FAILED,
+            error=str(exc),
+            args=args,
+            duration_seconds=time.monotonic() - started_at,
+        )
+        return
+    except Exception as exc:
+        write_consult_call_event(
+            role=args.role,
+            mode="pipeline",
+            question=args.question,
+            selected_models=started_selected_models,
+            used_models=[],
+            selection_path=reviewer_selection_path,
+            pipeline_id=role_pipeline_id,
+            context_files=args.context_files or [],
+            output_file=args.output,
+            cloud_only=bool(args.cloud_only),
+            success=False,
+            error=f"Model selection failed: {exc}",
+            duration_seconds=time.monotonic() - started_at,
+            call_id=call_id,
+            status=STATUS_SELECTION_FAILED,
+            artifact_dir=str(artifact.run_dir),
+        )
+        _fail_with_artifact(
+            parser=parser,
+            artifact=artifact,
+            status=STATUS_SELECTION_FAILED,
+            error=f"Model selection failed: {exc}",
+            args=args,
+            duration_seconds=time.monotonic() - started_at,
+        )
+        return
+    write_consult_call_started_event(
+        role=args.role,
+        mode="pipeline",
+        question=args.question,
+        selected_models=started_selected_models,
+        pipeline_id=role_pipeline_id,
+        context_files=args.context_files or [],
+        cloud_only=bool(args.cloud_only),
+        call_id=call_id,
+        artifact_dir=str(artifact.run_dir),
+    )
+
+    started_wall = time.time()
+    try:
+        output, batch_results = _run_reviewer_pipeline(
+            args, parser, target_models, artifact
+        )
+    except SystemExit:
+        fail_status = (
+            STATUS_PARTIAL_OUTPUT_AVAILABLE
+            if artifact.partial_outputs
+            else STATUS_PIPELINE_FAILED
+        )
+        write_consult_call_event(
+            role=args.role,
+            mode="pipeline",
+            question=args.question,
+            selected_models=target_models,
+            used_models=[],
+            selection_path=reviewer_selection_path,
+            pipeline_id=role_pipeline_id,
+            context_files=args.context_files or [],
+            output_file=args.output,
+            cloud_only=bool(args.cloud_only),
+            success=False,
+            error="pipeline mode failed",
+            duration_seconds=time.monotonic() - started_at,
+            call_id=call_id,
+            status=fail_status,
+            artifact_dir=str(artifact.run_dir),
+            partial_output_available=bool(artifact.partial_outputs),
+        )
+        status = fail_status
+        artifact.finalize(
+            status=status,
+            error_summary="pipeline mode failed",
+            duration_seconds=time.monotonic() - started_at,
+        )
+        if args.output:
+            write_failure_marker(
+                path=Path(args.output),
+                call_id=call_id,
+                status=status,
+                error_summary="pipeline mode failed",
+                run_dir=str(artifact.run_dir),
+            )
+        raise
+
+    print(output)
+    finished_wall = time.time()
+    batch_exec_ids = [
+        str(eid)
+        for result in batch_results
+        for eid in [result.get("execution_id")]
+        if eid
+    ]
+    actual_models: list[str] = []
+    for eid in batch_exec_ids:
+        for model in resolve_pipeline_models(execution_id=eid):
+            if model not in actual_models:
+                actual_models.append(model)
+    if not actual_models:
+        actual_models = resolve_pipeline_models(
+            started_at=started_wall,
+            finished_at=finished_wall,
+        )
+    _finalize_output(
+        output=output,
+        args=args,
+        artifact=artifact,
+        status=STATUS_SUCCESS,
+        used_models=actual_models or target_models,
+        execution_id=batch_exec_ids[0] if batch_exec_ids else None,
+        duration_seconds=time.monotonic() - started_at,
+    )
+    write_consult_call_event(
+        role=args.role,
+        mode="pipeline",
+        question=args.question,
+        selected_models=actual_models or target_models,
+        used_models=actual_models or target_models,
+        selection_path=reviewer_selection_path,
+        pipeline_id=role_pipeline_id,
+        context_files=args.context_files or [],
+        output_file=args.output,
+        cloud_only=bool(args.cloud_only),
+        success=True,
+        error=None,
+        duration_seconds=time.monotonic() - started_at,
+        call_id=call_id,
+        status=STATUS_SUCCESS,
+        artifact_dir=str(artifact.run_dir),
     )
 
 
-def main() -> None:
-    raw_roles = load_roles()
-    role_prompts, role_requirements = split_role_config(raw_roles)
-    parser = _build_parser(role_prompts)
-    args = parser.parse_args()
-
-    if args.role == "reviewer":
-        args.pipeline = True
-
-    if args.list_roles:
-        for name, prompt in role_prompts.items():
-            marker = " (default)" if name == DEFAULT_ROLE else ""
-            print(f"\n=== {name}{marker} ===")
-            print(prompt)
-        sys.exit(0)
-
-    if not args.question:
-        if not sys.stdin.isatty():
-            args.question = sys.stdin.read().strip()
-        if not args.question:
-            parser.error("No question provided")
-
-    if args.pipeline:
-        target_models = args.models or REVIEWER_DEFAULT_MODELS
-        # --cloud-only overrides source in the requirements so the unified
-        # endpoint enforces cloud-only selection server-side.
-        reviewer_requirements = role_requirements
-        if args.cloud_only and "reviewer" in role_requirements:
-            reviewer_requirements = {
+def _run_direct_branch(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    role_requirements: dict[str, dict[str, Any]],
+    started_at: float,
+    call_id: str,
+) -> None:
+    """Execute direct (non-reviewer-pipeline) consultation branch with artifact capture."""
+    role_pipeline_id = get_pipeline_id(args.role)
+    mode = "pipeline" if role_pipeline_id else ("chained" if args.chain else "parallel")
+    preview_models = args.models or []
+    if role_pipeline_id and not args.models:
+        effective_requirements = role_requirements
+        if args.cloud_only and args.role in role_requirements:
+            effective_requirements = {
                 **role_requirements,
-                "reviewer": {**role_requirements["reviewer"], "source": "cloud"},
+                args.role: {**role_requirements[args.role], "source": "cloud"},
             }
-        selected = select_models_for_role("reviewer", reviewer_requirements, args.stargate_url)
-        if selected and not args.models:
-            target_models = selected
-        output = _run_reviewer_pipeline(args, parser, target_models)
-        print(output)
-        if args.output:
-            out_path = Path(args.output)
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_text(output)
-            print(f"Saved: {out_path}", file=sys.stderr)
-        return
-
+        try:
+            preview_models, _ = select_models_for_role(
+                args.role,
+                effective_requirements,
+                args.stargate_url,
+                count=1,
+            )
+        except SelectionFailure:
+            # Advisory only: pipeline execution remains the source of truth.
+            preview_models = []
+    artifact = RunArtifact(
+        call_id=call_id,
+        role=args.role,
+        mode=mode,
+        question=args.question,
+        pipeline_id=role_pipeline_id,
+        pipeline_virtual_model=role_pipeline_id,
+        selected_models=preview_models,
+    )
+    write_consult_call_started_event(
+        role=args.role,
+        mode=mode,
+        question=args.question,
+        selected_models=preview_models,
+        pipeline_id=role_pipeline_id,
+        context_files=args.context_files or [],
+        cloud_only=bool(args.cloud_only),
+        call_id=call_id,
+        artifact_dir=str(artifact.run_dir),
+    )
+    artifact.checkpoint()
+    started_wall = time.time()
     try:
         results = execute_consult(
             args.question,
@@ -263,10 +661,81 @@ def main() -> None:
             chain_directive=args.chain_directive,
             cloud_only=args.cloud_only,
         )
-    except (ValueError, RuntimeError) as exc:
-        parser.error(str(exc))
+    except ValueError as exc:
+        _fail_direct(
+            parser=parser,
+            artifact=artifact,
+            exc=exc,
+            args=args,
+            mode=mode,
+            role_pipeline_id=role_pipeline_id,
+            started_at=started_at,
+            started_wall=started_wall,
+            call_id=call_id,
+        )
+        return
+    except RuntimeError as exc:
+        _fail_direct(
+            parser=parser,
+            artifact=artifact,
+            exc=exc,
+            args=args,
+            mode=mode,
+            role_pipeline_id=role_pipeline_id,
+            started_at=started_at,
+            started_wall=started_wall,
+            call_id=call_id,
+        )
+        return
+    except Exception as exc:
+        _fail_direct(
+            parser=parser,
+            artifact=artifact,
+            exc=exc,
+            args=args,
+            mode=mode,
+            role_pipeline_id=role_pipeline_id,
+            started_at=started_at,
+            started_wall=started_wall,
+            call_id=call_id,
+            generic=True,
+        )
+        return
 
+    # Capture chain intermediate outputs as partials for later agents
     result_dicts = _results_to_dicts(results)
+    if args.chain:
+        for r_dict in result_dicts:
+            artifact.record_chain_phase(r_dict)
+
+    autoselect_path = next(
+        (r.selection_path for r in results if r.selection_path), None
+    )
+    exec_id = next((r.execution_id for r in results if r.execution_id), None)
+    finished_wall = time.time()
+
+    # Recover recorder-backed step outputs for pipeline-backed roles
+    result_pipeline_id = (
+        next((r.pipeline_id for r in results if r.pipeline_id), None)
+        or role_pipeline_id
+    )
+    if result_pipeline_id and exec_id:
+        for step_record in extract_pipeline_step_records(
+            execution_id=exec_id,
+            pipeline_id=result_pipeline_id,
+        ):
+            artifact.record_partial_step(step_record)
+
+    selected_models, used_models = _resolve_used_models_for_pipeline(
+        role_pipeline_id=role_pipeline_id,
+        results=results,
+        args_models=args.models,
+        execution_id=exec_id,
+        started_wall=started_wall,
+        finished_wall=finished_wall,
+    )
+    artifact.selected_models = selected_models
+
     output = format_output(
         args.question,
         args.role,
@@ -274,14 +743,145 @@ def main() -> None:
         None,
         args.context_files,
         chained=args.chain,
+        selected_models=args.models,
+        selection_path=autoselect_path,
+        pipeline_virtual_model=role_pipeline_id,
+        call_id=call_id,
+        run_dir=str(artifact.run_dir),
     )
     print(output)
 
-    if args.output:
-        out_path = Path(args.output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(output)
-        print(f"Saved: {out_path}", file=sys.stderr)
+    has_any_success = any(not r.error for r in results)
+    status = STATUS_SUCCESS if has_any_success else STATUS_PIPELINE_FAILED
+    _finalize_output(
+        output=output,
+        args=args,
+        artifact=artifact,
+        status=status,
+        used_models=used_models,
+        execution_id=exec_id,
+        duration_seconds=time.monotonic() - started_at,
+    )
+    write_consult_call_event(
+        role=args.role,
+        mode=mode,
+        question=args.question,
+        selected_models=selected_models,
+        used_models=used_models,
+        selection_path=autoselect_path,
+        pipeline_id=role_pipeline_id,
+        context_files=args.context_files or [],
+        output_file=args.output,
+        cloud_only=bool(args.cloud_only),
+        success=has_any_success,
+        error="; ".join(r.error for r in results if r.error) or None,
+        duration_seconds=time.monotonic() - started_at,
+        call_id=call_id,
+        execution_id=exec_id,
+        status=status,
+        artifact_dir=str(artifact.run_dir),
+        partial_output_available=bool(artifact.partial_outputs),
+        chain_phase_count=len(artifact.chain_trace) if artifact.chain_trace else None,
+    )
+
+
+def _fail_direct(
+    *,
+    parser: argparse.ArgumentParser,
+    artifact: RunArtifact,
+    exc: Exception,
+    args: argparse.Namespace,
+    mode: str,
+    role_pipeline_id: str | None,
+    started_at: float,
+    started_wall: float,
+    call_id: str,
+    generic: bool = False,
+) -> None:
+    """Shared failure handler for direct-branch exceptions."""
+    error_str = f"{type(exc).__name__}: {exc}" if generic else str(exc)
+    failure_kind: str | None = (
+        exc.failure_kind if isinstance(exc, SelectionFailure) else None
+    )
+    failed_models = args.models or []
+    if role_pipeline_id and not failed_models:
+        exc_eid = getattr(exc, "execution_id", None)
+        failed_models = resolve_pipeline_models(
+            execution_id=exc_eid,
+            started_at=started_wall if not exc_eid else None,
+            finished_at=time.time() if not exc_eid else None,
+        )
+    status = (
+        STATUS_SELECTION_FAILED
+        if isinstance(exc, SelectionFailure | ValueError)
+        and (isinstance(exc, SelectionFailure) or "No models selected" in str(exc))
+        else STATUS_PIPELINE_FAILED
+    )
+    write_consult_call_event(
+        role=args.role,
+        mode=mode,
+        question=args.question,
+        selected_models=failed_models,
+        used_models=[],
+        selection_path=None,
+        pipeline_id=role_pipeline_id,
+        context_files=args.context_files or [],
+        output_file=args.output,
+        cloud_only=bool(args.cloud_only),
+        success=False,
+        error=error_str,
+        duration_seconds=time.monotonic() - started_at,
+        call_id=call_id,
+        status=status,
+        artifact_dir=str(artifact.run_dir),
+        failure_kind=failure_kind,
+    )
+    _fail_with_artifact(
+        parser=parser,
+        artifact=artifact,
+        status=status,
+        error=error_str,
+        args=args,
+        duration_seconds=time.monotonic() - started_at,
+    )
+
+
+def main() -> None:
+    raw_roles = load_roles()
+    role_prompts, role_requirements = split_role_config(raw_roles)
+    parser = _build_parser(role_prompts)
+    args = parser.parse_args()
+    started_at = time.monotonic()
+
+    if _handle_admin_flags(args):
+        return
+
+    if args.role == "reviewer":
+        args.pipeline = True
+
+    if args.list_roles:
+        for name, prompt in role_prompts.items():
+            marker = " (default)" if name == DEFAULT_ROLE else ""
+            print(f"\n=== {name}{marker} ===")
+            print(prompt)
+            pipeline_id = get_pipeline_id(name)
+            if pipeline_id:
+                print(f"  Pipeline: {pipeline_id}")
+        sys.exit(0)
+
+    if not args.question:
+        if not sys.stdin.isatty():
+            args.question = sys.stdin.read().strip()
+        if not args.question:
+            parser.error("No question provided")
+
+    call_id = str(uuid4())
+
+    if args.pipeline:
+        _run_pipeline_branch(args, parser, role_requirements, started_at, call_id)
+        return
+
+    _run_direct_branch(args, parser, role_requirements, started_at, call_id)
 
 
 if __name__ == "__main__":

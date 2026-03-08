@@ -41,16 +41,39 @@ logger = logging.getLogger(__name__)
 
 STARGATE_URL = "http://localhost:9999"
 
-# Pipeline map step has timeout_seconds=120. After that fires, Stargate needs
-# a few seconds to cancel pending iterations and serialize the partial response.
-# Keeping the httpx timeout close to that ceiling (not 180s) ensures we retry
-# promptly rather than sitting idle while cancelled connections drain.
-_PIPELINE_TIMEOUT_S = 300.0
-_CLIENT_TIMEOUT_S = _PIPELINE_TIMEOUT_S + 15.0  # 315s: pipeline ceiling + drain buffer
+# Pipeline timeout is 3600s (rag-extraction-v2.yaml timeout_seconds: 3600).
+# The HTTP client must exceed that ceiling to avoid cutting the connection
+# before the pipeline finishes a large batch. Add 30s drain buffer.
+_PIPELINE_TIMEOUT_S = 3600.0
+_CLIENT_TIMEOUT_S = _PIPELINE_TIMEOUT_S + 30.0  # 3630s: pipeline ceiling + drain buffer
 _client = httpx.AsyncClient(timeout=_CLIENT_TIMEOUT_S)
 
 _MAX_RETRIES = 3
 _BACKOFF_BASE_S = 2.0
+
+# Pipeline registration window: pipelines register 5–10s after Stargate starts
+# accepting requests. MODEL_NOT_FOUND 404s during this window are transient.
+_PIPELINE_REGISTRATION_TIMEOUT_S = 60.0
+_PIPELINE_REGISTRATION_POLL_S = 3.0
+
+
+def _is_pipeline_not_registered(exc: Exception, pipeline_model: str) -> bool:
+    """Detect a transient MODEL_NOT_FOUND 404 for the configured pipeline model."""
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return False
+    if exc.response.status_code != 404:
+        return False
+    try:
+        body = exc.response.json()
+    except Exception:
+        return False
+    # OpenAI-compatible error shape: {"error": {"code": "MODEL_NOT_FOUND", "message": ...}}
+    error = body.get("error", {})
+    if isinstance(error, dict):
+        return error.get("code") == "MODEL_NOT_FOUND" and pipeline_model in error.get(
+            "message", ""
+        )
+    return False
 
 
 @dataclass(slots=True, kw_only=True)
@@ -97,12 +120,20 @@ class ExtractedKnowledge:
         }
 
 
-def _parse_one(data: dict[str, object]) -> ExtractedKnowledge | None:
-    """Parse a single extraction result dict into ExtractedKnowledge."""
-    chunk_id = data.get("chunk_id")
-    if not isinstance(chunk_id, str):
-        logger.warning("Extraction result missing chunk_id field")
-        return None
+def _parse_one(
+    data: dict[str, object],
+    *,
+    chunk_id: str,
+) -> ExtractedKnowledge | None:
+    """Parse a single extraction result dict using caller-owned chunk identity."""
+    returned_chunk_id = data.get("chunk_id")
+    if isinstance(returned_chunk_id, str) and returned_chunk_id != chunk_id:
+        logger.warning(
+            "Extraction result chunk_id mismatch: expected %s got %s; using expected id",
+            chunk_id,
+            returned_chunk_id,
+        )
+
     raw_entities = data.get("entities", [])
     entities: list[Entity] = []
     if isinstance(raw_entities, list):
@@ -148,10 +179,7 @@ def _parse_map_response(
     content: str,
     chunk_ids: list[str],
 ) -> list[ExtractedKnowledge | None]:
-    """Parse pipeline map step output (json_array format) into per-chunk results.
-
-    Returns list indexed to match input chunk_ids order; None for missing/failed chunks.
-    """
+    """Parse map output by iteration order instead of model-supplied chunk IDs."""
     try:
         items = json.loads(content)
     except (json.JSONDecodeError, TypeError):
@@ -164,12 +192,99 @@ def _parse_map_response(
         )
         return [None] * len(chunk_ids)
 
-    by_id: dict[str, dict[str, object]] = {}
-    for item in items:
-        if isinstance(item, dict) and isinstance(item.get("chunk_id"), str):
-            by_id[item["chunk_id"]] = item
+    if len(items) != len(chunk_ids):
+        logger.warning(
+            "Map response count mismatch: expected %d items, got %d",
+            len(chunk_ids),
+            len(items),
+        )
 
-    return [_parse_one(by_id[cid]) if cid in by_id else None for cid in chunk_ids]
+    parsed: list[ExtractedKnowledge | None] = []
+    for idx, chunk_id in enumerate(chunk_ids):
+        if idx >= len(items):
+            parsed.append(None)
+            continue
+        item = items[idx]
+        if not isinstance(item, dict):
+            logger.warning(
+                "Map response item %d for chunk %s is %s, expected object",
+                idx,
+                chunk_id,
+                type(item).__name__,
+            )
+            parsed.append(None)
+            continue
+        parsed.append(_parse_one(item, chunk_id=chunk_id))
+    return parsed
+
+
+async def _call_extraction(
+    chunks: list[dict[str, str]],
+    chunk_ids: list[str],
+    config: KnowledgeExtractionConfig,
+) -> list[ExtractedKnowledge | None]:
+    """Single extraction HTTP call. Raises on non-2xx."""
+    response = await _client.post(
+        f"{STARGATE_URL}/v1/chat/completions",
+        json={
+            "model": config.pipeline,
+            "messages": [{"role": "user", "content": "extract"}],
+            "pipeline_options": {"chunks": chunks},
+        },
+    )
+    response.raise_for_status()
+    body = response.json()
+    content = body["choices"][0]["message"]["content"]
+    return _parse_map_response(content, chunk_ids)
+
+
+async def _await_pipeline_registration(
+    chunks: list[dict[str, str]],
+    chunk_ids: list[str],
+    config: KnowledgeExtractionConfig,
+) -> list[ExtractedKnowledge | None]:
+    """Poll until the pipeline model registers or the deadline expires.
+
+    Called when the first MODEL_NOT_FOUND 404 is seen — the pipeline has not
+    yet registered with Stargate. This is transient at startup (5–10s typical).
+    """
+    deadline = asyncio.get_event_loop().time() + _PIPELINE_REGISTRATION_TIMEOUT_S
+    logger.info(
+        "Pipeline '%s' not yet registered; waiting up to %.0fs",
+        config.pipeline,
+        _PIPELINE_REGISTRATION_TIMEOUT_S,
+    )
+    while True:
+        await asyncio.sleep(_PIPELINE_REGISTRATION_POLL_S)
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            logger.error(
+                "Pipeline '%s' did not register within %.0fs",
+                config.pipeline,
+                _PIPELINE_REGISTRATION_TIMEOUT_S,
+            )
+            return [None] * len(chunk_ids)
+        try:
+            result = await _call_extraction(chunks, chunk_ids, config)
+            logger.info(
+                "Pipeline '%s' registered — extraction succeeded (%.0fs remaining)",
+                config.pipeline,
+                remaining,
+            )
+            return result
+        except Exception as exc:
+            if not _is_pipeline_not_registered(exc, config.pipeline):
+                logger.warning(
+                    "Non-registration error while waiting for pipeline: %s",
+                    exc,
+                    exc_info=True,
+                )
+                return [None] * len(chunk_ids)
+            logger.debug(
+                "Pipeline '%s' still not registered; %.0fs remaining",
+                config.pipeline,
+                remaining,
+            )
 
 
 async def extract_knowledge_batch(
@@ -192,19 +307,10 @@ async def extract_knowledge_batch(
     last_exc: Exception | None = None
     for attempt in range(_MAX_RETRIES):
         try:
-            response = await _client.post(
-                f"{STARGATE_URL}/v1/chat/completions",
-                json={
-                    "model": config.pipeline,
-                    "messages": [{"role": "user", "content": "extract"}],
-                    "pipeline_options": {"chunks": chunks},
-                },
-            )
-            response.raise_for_status()
-            body = response.json()
-            content = body["choices"][0]["message"]["content"]
-            return _parse_map_response(content, chunk_ids)
+            return await _call_extraction(chunks, chunk_ids, config)
         except Exception as exc:
+            if _is_pipeline_not_registered(exc, config.pipeline):
+                return await _await_pipeline_registration(chunks, chunk_ids, config)
             last_exc = exc
             if attempt < _MAX_RETRIES - 1:
                 delay = _BACKOFF_BASE_S ** (attempt + 1)

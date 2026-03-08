@@ -6,7 +6,7 @@ event publishing, and message handling.
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Protocol
 
 from universal_logging import get_logger
 
@@ -18,6 +18,12 @@ from .registry_wiring import build_handler_context, create_handler_registry
 from .state import GatewayState
 
 logger = get_logger(__name__)
+
+
+class _EventWithPayload(Protocol):
+    """Typed shape for events carrying dict payloads."""
+
+    payload: dict[str, Any]
 
 
 class GatewayWebSocketClient:
@@ -110,7 +116,7 @@ class GatewayWebSocketClient:
         self._on_telemetry_heartbeat: Callable[[dict], Awaitable[None]] | None = None
         self._on_request_inference_started: (
             Callable[[str, str, str, str | None], Awaitable[None]] | None
-        ) = None
+        ) = self._publish_request_inference_started
 
         # Model-specific callbacks (keyed by routing_key, multiple per key)
         # Used by LoadOutcomeTracker for concurrent load tracking
@@ -400,6 +406,35 @@ class GatewayWebSocketClient:
         except Exception as e:
             logger.error(f"Callback error: {e}", exc_info=True)
 
+    async def _publish_request_inference_started(
+        self,
+        request_id: str,
+        model_id: str,
+        gateway_url: str,
+        correlation_id: str | None,
+    ) -> None:
+        """Publish request runtime-start telemetry onto Stargate event bus."""
+        if self._event_bus is None:
+            logger.warning(
+                "request.inference.started dropped: event_bus unavailable "
+                "(request_id=%s model_id=%s gateway_url=%s)",
+                request_id,
+                model_id,
+                gateway_url,
+            )
+            return
+
+        from src.scheduling.events import RequestInferenceStarted
+
+        await self._event_bus.publish_async_nowait(
+            RequestInferenceStarted(
+                request_id=request_id,
+                model_id=model_id,
+                gateway_url=gateway_url,
+                correlation_id=correlation_id,
+            )
+        )
+
     def _subscribe_to_reservation_events(self) -> None:
         """Subscribe to RESOURCE_RESERVED and RESOURCE_RELEASED events."""
         if not self._event_bus:
@@ -426,7 +461,7 @@ class GatewayWebSocketClient:
             )
 
     def _parse_reservation_event(
-        self, event: Any
+        self, event: dict[str, Any] | _EventWithPayload
     ) -> tuple[str, str | None, int, int, str]:
         """
         Parse reservation event payload.
@@ -434,7 +469,11 @@ class GatewayWebSocketClient:
         Returns:
             (gateway_name, model_id, vram_mb, ram_mb, reason)
         """
-        payload = event.payload if hasattr(event, "payload") else event
+        payload: dict[str, Any]
+        if isinstance(event, dict):
+            payload = event
+        else:
+            payload = event.payload
         return (
             payload.get("gateway_name", ""),
             payload.get("model_id"),
@@ -464,8 +503,12 @@ class GatewayWebSocketClient:
             f"effective_ram={self._state.resources.available_ram_mb}MB"
         )
 
-    async def _on_resource_reserved(self, event: Any) -> None:
+    async def _on_resource_reserved(
+        self, event: dict[str, Any] | _EventWithPayload
+    ) -> None:
         """Handle RESOURCE_RESERVED event."""
+        gateway_name: str | None = None
+        model_id: str | None = None
         try:
             gateway_name, model_id, vram_mb, ram_mb, _ = self._parse_reservation_event(
                 event
@@ -476,15 +519,27 @@ class GatewayWebSocketClient:
             self._state.apply_reservation(vram_mb=vram_mb, ram_mb=ram_mb)
             self._log_reservation_event("resource_reserved", model_id, vram_mb, ram_mb)
         except Exception as e:
-            logger.error(f"Error handling RESOURCE_RESERVED event: {e}", exc_info=True)
+            logger.error(
+                "Error handling RESOURCE_RESERVED event for gateway=%s "
+                "model=%s: %s",
+                gateway_name,
+                model_id,
+                e,
+                exc_info=True,
+            )
+            # Keep event stream alive: this handler is best-effort telemetry.
 
-    async def _on_resource_released(self, event: Any) -> None:
+    async def _on_resource_released(
+        self, event: dict[str, Any] | _EventWithPayload
+    ) -> None:
         """
         Handle RESOURCE_RELEASED event.
 
         Always decrements reservation counter. Effective availability is derived:
         effective = gateway_reported - reserved
         """
+        gateway_name: str | None = None
+        model_id: str | None = None
         try:
             gateway_name, model_id, vram_mb, ram_mb, reason = (
                 self._parse_reservation_event(event)
@@ -497,7 +552,15 @@ class GatewayWebSocketClient:
                 "resource_released", model_id, vram_mb, ram_mb, reason
             )
         except Exception as e:
-            logger.error(f"Error handling RESOURCE_RELEASED event: {e}", exc_info=True)
+            logger.error(
+                "Error handling RESOURCE_RELEASED event for gateway=%s "
+                "model=%s: %s",
+                gateway_name,
+                model_id,
+                e,
+                exc_info=True,
+            )
+            # Keep event stream alive: this handler is best-effort telemetry.
 
     # =========================================================================
     # Queries (Rare, On-Demand)
@@ -551,11 +614,20 @@ class GatewayWebSocketClient:
     def on_model_loading_started(
         self, callback: Callable[[str], Awaitable[None]]
     ) -> None:
-        """Set callback for model loading started event."""
+        """
+        Set callback for the model-loading-started event.
+
+        The callback is invoked when a gateway reports that a model has begun
+        its loading lifecycle.
+        """
         self._on_model_loading_started = callback
 
     def on_model_loaded(self, callback: Callable[[str, dict], Awaitable[None]]) -> None:
-        """Set callback for model loaded event."""
+        """
+        Set callback for model-loaded events.
+
+        The callback receives `(model_id, data)` after a successful model load.
+        """
         logger.debug(
             f"🔔 GatewayWebSocketClient: Setting on_model_loaded callback to {callback}"
         )
@@ -566,17 +638,29 @@ class GatewayWebSocketClient:
         )
 
     def on_model_unloaded(self, callback: Callable[[str], Awaitable[None]]) -> None:
-        """Set callback for model unloaded event."""
+        """
+        Set callback for model-unloaded events.
+
+        The callback receives the unloaded `model_id`.
+        """
         self._on_model_unloaded = callback
 
     def on_model_load_failed(
         self, callback: Callable[[str, str], Awaitable[None]]
     ) -> None:
-        """Set callback for model load failed event."""
+        """
+        Set callback for model-load-failed events.
+
+        The callback receives `(model_id, error_message)` for failed loads.
+        """
         self._on_model_load_failed = callback
 
     def on_model_busy(self, callback: Callable[[str], Awaitable[None]]) -> None:
-        """Set callback for model busy event."""
+        """
+        Set callback for model-busy events.
+
+        The callback receives the busy `model_id`.
+        """
         self._on_model_busy = callback
 
     def on_model_idle(self, callback: Callable[[str, dict], Awaitable[None]]) -> None:
@@ -588,24 +672,41 @@ class GatewayWebSocketClient:
         self._on_model_idle = callback
 
     def on_resource_update(self, callback: Callable[[dict], Awaitable[None]]) -> None:
-        """Set callback for resource update event."""
+        """
+        Set callback for resource update events.
+
+        The callback receives gateway resource telemetry payloads.
+        """
         self._on_resource_update = callback
 
     def on_catalog_update(self, callback: Callable[[dict], Awaitable[None]]) -> None:
-        """Set callback for catalog update event."""
+        """
+        Set callback for catalog update events.
+
+        The callback receives gateway catalog snapshot/update payloads.
+        """
         self._on_catalog_update = callback
 
     def on_telemetry_heartbeat(
         self, callback: Callable[[dict], Awaitable[None]]
     ) -> None:
-        """Set callback for telemetry heartbeat event."""
+        """
+        Set callback for telemetry heartbeat events.
+
+        The callback receives periodic gateway telemetry heartbeat payloads.
+        """
         self._on_telemetry_heartbeat = callback
 
     def on_request_inference_started(
         self,
         callback: Callable[[str, str, str, str | None], Awaitable[None]],
     ) -> None:
-        """Set callback for request-scoped inference start telemetry."""
+        """
+        Set callback for request-scoped inference-start telemetry.
+
+        The callback receives
+        `(request_id, model_id, gateway_url, correlation_id)`.
+        """
         self._on_request_inference_started = callback
 
     # =========================================================================

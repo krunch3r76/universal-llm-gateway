@@ -15,6 +15,8 @@ import json
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from starlette.websockets import WebSocketDisconnect
+from universal_event_bus import EventBus
 from universal_logging import get_logger
 from universal_protocol.messages import TelemetrySource
 
@@ -33,6 +35,8 @@ from .telemetry import (
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
+
+    from gateway_websocket.ws_client.orchestrator import GatewayWebSocketClient
 
 logger = get_logger(__name__)
 
@@ -58,7 +62,12 @@ class EdgeFederationServer:
     INVARIANT: Edge never initiates outbound federation connections.
     """
 
-    def __init__(self, config: FederationConfig, gateway_manager: Any, event_bus: Any):
+    def __init__(
+        self,
+        config: FederationConfig,
+        gateway_manager: object,
+        event_bus: EventBus | None,
+    ):
         """
         Initialize Edge Federation Server.
 
@@ -69,7 +78,7 @@ class EdgeFederationServer:
         """
         self._config = config
         self._gateway_manager = gateway_manager
-        self._event_bus: Any = event_bus
+        self._event_bus: EventBus | None = event_bus
 
         # Build allowed peers lookup for O(1) auth
         self._allowed_peers: dict[str, str] = {}  # stargate_id → api_key
@@ -101,6 +110,12 @@ class EdgeFederationServer:
 
         # Pending measurement requests awaiting response from Master
         self._pending_requests: dict[str, asyncio.Future[dict[str, Any]]] = {}
+
+        if self._event_bus is not None:
+            self._event_bus.subscribe_async(
+                "request.inference.started",
+                self._forward_request_inference_started,
+            )
 
         logger.info(
             f"EdgeFederationServer initialized for {config.stargate_id} "
@@ -187,8 +202,14 @@ class EdgeFederationServer:
             logger.info(
                 f"📤 Sent GATEWAY_SNAPSHOT to {peer_id}: {model_count} available models"
             )
+        except WebSocketDisconnect:
+            logger.info(f"Peer {peer_id} disconnected while sending cached telemetry")
+            asyncio.create_task(self.handle_peer_disconnect(peer_id))
         except Exception as e:
-            logger.error(f"Failed to send cached telemetry to {peer_id}: {e}")
+            logger.error(
+                f"Failed to send cached telemetry to {peer_id}: "
+                f"{e.__class__.__name__} - {e}"
+            )
 
     # ─── Peer Lifecycle ────────────────────────────────────────────────────
 
@@ -325,8 +346,13 @@ class EdgeFederationServer:
         for peer_id, websocket in peers:
             try:
                 await websocket.send_text(message_json)
+            except WebSocketDisconnect:
+                logger.info(f"Peer {peer_id} disconnected during broadcast")
+                asyncio.create_task(self.handle_peer_disconnect(peer_id))
             except Exception as e:
-                logger.error(f"Failed to send to {peer_id}: {e}")
+                logger.error(
+                    f"Failed to send to {peer_id}: {e.__class__.__name__} - {e}"
+                )
                 # Will be cleaned up on next disconnect handler call
 
     # ─── Measurement Request/Response ──────────────────────────────────────
@@ -351,6 +377,8 @@ class EdgeFederationServer:
         try:
             async with self._peers_lock:
                 peers = list(self._authenticated_peers.values())
+                if not peers:
+                    raise RuntimeError("No peers connected for VRAM measurement")
             await peers[0].send_text(msg_json)
 
             return await asyncio.wait_for(future, timeout=VRAM_REQUEST_TIMEOUT)
@@ -369,7 +397,9 @@ class EdgeFederationServer:
 
     # ─── Gateway Telemetry Wiring ──────────────────────────────────────────
 
-    def wire_gateway_telemetry(self, ws_client: Any, gateway_url: str) -> None:
+    def wire_gateway_telemetry(
+        self, ws_client: GatewayWebSocketClient, gateway_url: str
+    ) -> None:
         """
         Wire local Gateway WebSocket callbacks to Edge telemetry forwarding.
 
@@ -420,7 +450,9 @@ class EdgeFederationServer:
             f"✅ Gateway telemetry wired for Edge forwarding (gateway={gateway_url})"
         )
 
-    def _send_initial_telemetry(self, ws_client: Any, gateway_url: str) -> None:
+    def _send_initial_telemetry(
+        self, ws_client: GatewayWebSocketClient, gateway_url: str
+    ) -> None:
         """
         Send initial telemetry snapshot and broadcast to connected peers.
 
@@ -461,16 +493,17 @@ class EdgeFederationServer:
 
         from src.scheduling.events import FederationSnapshotSent
 
-        asyncio.create_task(
-            self._event_bus.publish_async_nowait(
-                FederationSnapshotSent(
-                    gateway_id=self._source.gateway_id,
-                    all_models_count=all_models_count,
-                    available_models_count=model_count,
-                )
-            ),
-            name="emit-federation-snapshot-sent",
-        )
+        if self._event_bus is not None:
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    FederationSnapshotSent(
+                        gateway_id=self._source.gateway_id,
+                        all_models_count=all_models_count,
+                        available_models_count=model_count,
+                    )
+                ),
+                name="emit-federation-snapshot-sent",
+            )
 
         # Broadcast GATEWAY_SNAPSHOT to already-connected peers
         asyncio.create_task(
@@ -482,7 +515,7 @@ class EdgeFederationServer:
             f"📤 Broadcasting initial telemetry to {peer_count} connected peers"
         )
 
-    def _start_periodic_heartbeat(self, ws_client: Any) -> None:
+    def _start_periodic_heartbeat(self, ws_client: GatewayWebSocketClient) -> None:
         """
         Start periodic heartbeat task to prevent telemetry staleness.
 
@@ -496,3 +529,18 @@ class EdgeFederationServer:
             node_id=self._config.node_id,
             broadcast_callback=self._broadcast_to_peers,
         )
+
+    async def _forward_request_inference_started(self, event: Any) -> None:
+        """Forward request.inference.started to connected Master peers.
+
+        Transient per-request telemetry — not cached (unlike model/resource state).
+        """
+        payload = getattr(event, "payload", None)
+        if not isinstance(payload, dict):
+            return
+
+        message: dict[str, Any] = {
+            "type": FederationMessageType.REQUEST_INFERENCE_STARTED.value,
+            "data": payload,
+        }
+        await self._broadcast_to_peers(message)

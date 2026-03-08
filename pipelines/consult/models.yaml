@@ -1,0 +1,5 @@
+models:
+  consult_model:
+    model: google/gemini-2.5-flash
+  review_model:
+    model: anthropic/claude-sonnet-4

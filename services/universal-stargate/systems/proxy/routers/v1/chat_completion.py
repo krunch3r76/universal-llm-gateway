@@ -46,8 +46,8 @@ async def chat_completions(
     4. Return response
     """
     try:
-        logger.info("📨 ENDPOINT: Calling proxy.submit_chat_request")
-        response = await proxy.submit_chat_request(
+        logger.info("📨 ENDPOINT: Calling proxy.process_chat_completion")
+        response = await proxy.process_chat_completion(
             request, chat_request, model, profile, disable_profile, skip_token_counting
         )
         logger.info(f"✅ ENDPOINT: Got response from proxy: {type(response)}")
@@ -56,7 +56,9 @@ async def chat_completions(
     except HTTPException as e:
         # Log the final error that will be returned to client
         logger.error(
-            f"❌ ENDPOINT: HTTPException caught - status: {e.status_code}, detail: {e.detail}"
+            "❌ ENDPOINT: HTTPException caught - status: %s, detail: %s",
+            e.status_code,
+            e.detail,
         )
         logger.error(f"❌ ENDPOINT: HTTPException type: {type(e)}")
         logger.error("❌ ENDPOINT: Re-raising HTTPException to let FastAPI handle it")

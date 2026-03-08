@@ -1,0 +1,27 @@
+basename: deepseek-r1
+full_model_id: deepseek/deepseek-r1
+source: cloud
+latency_bucket: slow
+cost_bucket: cheap
+reasoning_depth: strong
+tasks:
+  planning:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Chain-of-thought reasoning, strong at multi-step planning
+  code_architecture:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Deep reasoning over code structure and dependencies
+  code_review:
+    score: good
+    evidence:
+      - source: curated
+        detail: Thorough analysis, slower due to thinking mode
+  research:
+    score: good
+    evidence:
+      - source: curated
+        detail: Analytical depth, good at synthesizing technical material

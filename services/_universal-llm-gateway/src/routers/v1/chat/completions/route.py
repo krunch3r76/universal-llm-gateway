@@ -62,6 +62,15 @@ logger = get_logger(__name__)
 api_logger = get_logger("universal_llm_gateway.api")
 
 
+def _extract_internal_request_id(request: Request) -> str | None:
+    """Prefer Stargate-provided identity so request-scoped telemetry correlates across hops."""
+    header_value = request.headers.get("X-Internal-Request-ID")
+    if header_value is None:
+        return None
+    stripped = header_value.strip()
+    return stripped or None
+
+
 @router.post(
     "/chat/completions",
     response_model=ChatCompletionResponse,
@@ -78,7 +87,7 @@ async def create_chat_completion(
 ):
     """OpenAI-compatible chat completion endpoint."""
     start_time = time.time()
-    request_id = str(uuid.uuid4())
+    request_id = _extract_internal_request_id(request) or str(uuid.uuid4())
     correlation_id = getattr(request.state, "correlation_id", None) or str(uuid.uuid4())
 
     # Extract timeout hint from upstream (federation/pipeline)
@@ -136,6 +145,7 @@ async def create_chat_completion(
 
     # Handle streaming vs non-streaming
     if stream:
+        gateway_url = _resolve_gateway_url(request)
         return StreamingResponse(
             generate_streaming_response(
                 worker_controller=worker_controller,
@@ -144,6 +154,8 @@ async def create_chat_completion(
                 event_bus=event_bus,
                 correlation_id=correlation_id,
                 timeout_hint=timeout_hint,
+                request_id=request_id,
+                gateway_url=gateway_url,
                 **generation_params,
             ),
             media_type="application/newline-delimited-json",
@@ -209,10 +221,10 @@ def _build_completion_response(
     """
     content = completion_result.get("content", "")
     finish_reason = completion_result.get("finish_reason", "stop")
-    message_kw: dict = {"role": "assistant", "content": content}
+    message_args: dict = {"role": "assistant", "content": content}
     if tool_calls := completion_result.get("tool_calls"):
-        message_kw["tool_calls"] = tool_calls
-    response_message = ChatMessage(**message_kw)
+        message_args["tool_calls"] = tool_calls
+    response_message = ChatMessage(**message_args)
     choice = ChatCompletionChoice(
         index=0, message=response_message, finish_reason=finish_reason
     )
@@ -326,8 +338,9 @@ async def _generate_non_streaming_response(
         GatewayError,
         SyntaxErrorException,
     ) as e:
-        response_time_ms = (time.time() - start_time) * 1000
-        raise _handle_known_error(e, request_id, response_time_ms)
+        logger.error(f"Gateway error: {e}")
+        context = {"request_id": request_id}
+        raise create_error_response(e, 500, context)
 
     except RuntimeError as e:
         response_time_ms = (time.time() - start_time) * 1000
@@ -347,16 +360,6 @@ async def _generate_non_streaming_response(
             error_type="server_error",
             error_code="unexpected_error",
         )
-
-
-def _handle_known_error(
-    e, request_id: str, response_time_ms: float
-) -> HTTPException:
-    """Handle ModelLoadingError, WorkerInitializationError, etc."""
-    error_message = str(e)
-    logger.error(f"Gateway error: {error_message}")
-    context = {"request_id": request_id}
-    return create_error_response(e, 500, context)
 
 
 def _handle_runtime_error(

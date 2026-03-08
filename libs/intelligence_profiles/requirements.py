@@ -124,11 +124,32 @@ class SelectionRequest(BaseModel):
         default=None,
         description="Tags to exclude in cloud proxy selection fallback",
     )
+    min_tier: int | None = Field(
+        default=None,
+        ge=0,
+        le=3,
+        description=(
+            "Minimum cloud proxy quality tier (0=all, 1=low+, 2=mid+, 3=high). "
+            "Only applied in tier-2 cloud proxy selection. None = no floor."
+        ),
+    )
 
     # Soft exclusion — deprioritize these model IDs (e.g. timed-out models)
     avoid_models: list[str] | None = Field(
         default=None,
         description="Model IDs to exclude from results (used for fallback retry)",
+    )
+    health_scoring: bool | None = Field(
+        default=None,
+        description="Enable health/reputation-aware ranking when supported",
+    )
+    include_health_scores: bool | None = Field(
+        default=None,
+        description="Include health score diagnostics in selection response",
+    )
+    selection_sticky_key: str | None = Field(
+        default=None,
+        description="Sticky selection key used to stabilize model choices",
     )
 
     def to_model_requirements(self) -> ModelRequirements:

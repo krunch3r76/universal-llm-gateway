@@ -426,8 +426,7 @@ class FederatedGatewayManager(Sequential):
             return None
         return time.time() - gateway.telemetry_timestamp
 
-    @sequential
-    async def is_telemetry_fresh(
+    def is_telemetry_fresh(
         self, gateway_id: str, threshold_seconds: float
     ) -> bool:
         """
@@ -441,7 +440,9 @@ class FederatedGatewayManager(Sequential):
             True if telemetry age <= threshold, False if stale or unknown
 
         Note:
-            @sequential required for safe _gateways dict access (line 321)
+            Pure read — no @sequential needed. asyncio is single-threaded;
+            dict reads are safe without serialisation. The only async work
+            (event emission) is fire-and-forget via asyncio.create_task.
         """
         age = self.get_telemetry_age_seconds(gateway_id)
 

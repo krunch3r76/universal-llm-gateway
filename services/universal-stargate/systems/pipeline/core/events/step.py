@@ -226,6 +226,27 @@ def StepModelFallback(  # noqa: N802
 
 
 @event_factory
+def StepModelFallbackSuppressed(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    primary_error_type: str,
+    suppression_reason: str,
+) -> Event:
+    """Emitted when step-level fallback is intentionally not attempted."""
+    return Event(
+        signal="pipeline.step.model.fallback.suppressed",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "primary_error_type": primary_error_type,
+            "suppression_reason": suppression_reason,
+        },
+    )
+
+
+@event_factory
 def StepSkipped(  # noqa: N802
     pipeline_id: str,
     execution_id: str,
@@ -401,6 +422,85 @@ def RagRetrievalParamsResolved(  # noqa: N802
             "scope": scope,
             "retrieval_mode": retrieval_mode,
             "uses_explicit_prefixes": uses_explicit_prefixes,
+        },
+    )
+
+
+@event_factory
+def RagRetrievalCompleted(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    predicted_scope: str,
+    scope_confidence: float,
+    fallback_triggered: bool,
+    chunks_per_query: list[int],
+    zero_result_queries: int,
+    rrf_score_min: float,
+    rrf_score_max: float,
+    rrf_score_mean: float,
+    chunks_after_merge: int,
+    total_retrieval_seconds: float,
+) -> Event:
+    """Emitted after successful RAG multi-query retrieval + RRF merge.
+
+    Captures scope prediction accuracy signals and retrieval quality metrics.
+    Paired with RagRetrievalParamsResolved (pre-retrieval) to give full lifecycle.
+
+    Payload:
+        predicted_scope: Scope label from the rewrite model (before fallback)
+        scope_confidence: Model's confidence in its scope prediction (0.0-1.0)
+        fallback_triggered: True if scope was overridden due to low confidence
+        chunks_per_query: Per-query chunk counts (length = successful query count)
+        zero_result_queries: Count of queries that returned 0 chunks
+        rrf_score_min: Minimum RRF score in merged result set
+        rrf_score_max: Maximum RRF score in merged result set
+        rrf_score_mean: Mean RRF score in merged result set
+        chunks_after_merge: Final chunk count after RRF deduplication
+        total_retrieval_seconds: Wall-clock time for all queries + merge
+    """
+    return Event(
+        signal="pipeline.rag.retrieval.completed",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "predicted_scope": predicted_scope,
+            "scope_confidence": scope_confidence,
+            "fallback_triggered": fallback_triggered,
+            "chunks_per_query": chunks_per_query,
+            "zero_result_queries": zero_result_queries,
+            "rrf_score_min": rrf_score_min,
+            "rrf_score_max": rrf_score_max,
+            "rrf_score_mean": rrf_score_mean,
+            "chunks_after_merge": chunks_after_merge,
+            "total_retrieval_seconds": total_retrieval_seconds,
+        },
+    )
+
+
+@event_factory
+def RagRetrievalFailed(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    error: str,
+    total_retrieval_seconds: float,
+) -> Event:
+    """Emitted when all RAG queries fail (no results to merge).
+
+    Payload:
+        error: Description of the failure
+        total_retrieval_seconds: Wall-clock time before failure determination
+    """
+    return Event(
+        signal="pipeline.rag.retrieval.failed",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "error": error,
+            "total_retrieval_seconds": total_retrieval_seconds,
         },
     )
 

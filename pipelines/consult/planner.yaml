@@ -1,0 +1,38 @@
+schema_version: 6
+id: consult-planner
+version: "1"
+type: consult
+
+output: review
+options:
+  timeout_seconds: 600
+
+steps:
+  - name: analyze
+    type: generate
+    model_ref: auto
+    prompt_ref: consult.planner
+    model_requirements:
+      task: planning
+      min_score: good
+      source: cloud
+      min_context: 65536
+      tags: [code, reasoning, strong_planner]
+      exclude_tags: [local, weak_grounding]
+      health_scoring: true
+
+  - name: review
+    type: generate
+    model_ref: auto
+    avoid_models_from: "analyze.model_id"
+    prompt_ref: consult.planner_review
+    handler_inputs:
+      prior_analysis: "analyze.raw"
+      prior_model_id: "analyze.model_id"
+    model_requirements:
+      task: planning
+      min_score: good
+      source: cloud
+      min_context: 65536
+      tags: [code, reasoning]
+      health_scoring: true

@@ -1,0 +1,47 @@
+# MCP server — internet-facing, TLS, bearer token auth
+#
+# Prerequisites (host):
+#   - /etc/letsencrypt/live/mcp.k-1.me/ populated by certbot
+#   - MCP_AUTH_TOKEN set in environment or .env.local
+#   - MCP_DATA_DIR defaults to ~/mcp-data
+#
+# Sophos: forward external :80 → host :80 (ACME renewal)
+#          forward external :443 → host :443 (MCP)
+#
+# Usage: docker compose -f docker/compose/mcp-server.yml up -d
+
+services:
+  mcp-server:
+    build:
+      context: ../../services/mcp-server
+      dockerfile: Dockerfile
+    container_name: mcp-server
+    user: "1000:1000"
+    ports:
+      - "443:443"
+    volumes:
+      # Mount entire letsencrypt dir so relative symlinks in live/ resolve correctly
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ${MCP_DATA_DIR:-~/mcp-data}/files:/data/files:rw
+      - ${MCP_PROJECT_DIR:-/mnt/torus/projects/universal-llm-gateway}:/data/project:ro
+    environment:
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
+      - PROJECT_ROOT=/data/project
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request, ssl; urllib.request.urlopen('https://localhost/mcp', context=ssl._create_unverified_context())",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped

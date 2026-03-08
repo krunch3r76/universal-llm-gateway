@@ -14,8 +14,8 @@ logger = get_logger(__name__)
 
 
 def apply_transformation_filters(
-    messages: list[dict[str, str]], settings: dict[str, Any]
-) -> list[dict[str, str]]:
+    messages: list[dict[str, Any]], settings: dict[str, Any]
+) -> list[dict[str, Any]]:
     """
     Apply transformation filters to messages WITHOUT converting format.
 
@@ -53,20 +53,35 @@ def apply_transformation_filters(
                 break
 
         if first_user_idx >= 0:
-            # Get template (default: "System: {system}\n\n")
             template = settings.get("system_prepend_template", "System: {system}\n\n")
-
-            # Prepend to user message content
             user_msg = filtered_messages[first_user_idx]
             original_content = user_msg.get("content", "")
 
-            # Format template with both system and prompt (user content)
-            # Some templates use only {system}, others use {system} and {prompt}
-            formatted_system = template.format(
-                system=system_content, prompt=original_content
-            )
-
-            user_msg["content"] = formatted_system
+            if isinstance(original_content, list):
+                # Multimodal content: extract text for template formatting,
+                # then prepend system as a text block — preserves image blocks.
+                user_text_parts: list[str] = []
+                for block in original_content:
+                    if (
+                        isinstance(block, dict)
+                        and block.get("type") == "text"
+                        and isinstance(block.get("text"), str)
+                    ):
+                        user_text_parts.append(block["text"])
+                user_text = "\n".join(user_text_parts)
+                formatted_system = template.format(
+                    system=system_content, prompt=user_text
+                )
+                user_msg["content"] = [{"type": "text", "text": formatted_system}] + [
+                    block
+                    for block in original_content
+                    if not (isinstance(block, dict) and block.get("type") == "text")
+                ]
+            else:
+                formatted_system = template.format(
+                    system=system_content, prompt=original_content
+                )
+                user_msg["content"] = formatted_system
 
             logger.info(
                 f"  → Prepended system to first user message "
@@ -134,7 +149,7 @@ def _derive_assistant_template(prompt_template: str) -> str:
 
 
 def apply_template_transformation(
-    messages: list[dict[str, str]], settings: dict[str, Any]
+    messages: list[dict[str, Any]], settings: dict[str, Any]
 ) -> str:
     """
     Template-based transformation for prompt formatting.

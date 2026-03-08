@@ -13,6 +13,11 @@ from gateway_client import GatewayConfig
 from gateways import SingleGatewayManager
 from monitoring import StargateMonitor
 from src.schemas.chat_completion import ChatCompletionRequest
+from systems.profiles.reputation_policy import (
+    DEFAULT_REPUTATION_POLICY,
+    ReputationPolicy,
+)
+from systems.profiles.reputation_store import TaskModelReputationStore
 from systems.routing.telemetry import TelemetryFreshnessWaiter
 
 from ..authorization import AuthorizationManager
@@ -43,6 +48,11 @@ PROXY_PORT = 9999
 class StargateProxy:
     """
     Orchestrates request preparation, execution, and lifecycle management for Stargate.
+
+    Central coordinator for incoming requests: routes to local gateway or federated
+    peers, manages token counting, authorization, and pipeline execution. Behavior
+    varies by federation mode: execution-capable (Edge/Standalone) vs router-only
+    (Master with no local gateway).
     """
 
     def __init__(
@@ -51,7 +61,17 @@ class StargateProxy:
         gateway_url: str | None = None,
         config_path: str = "config/stargate_config.yaml",
     ):
-        """Initialize StargateProxy with single gateway configuration."""
+        """Initialize StargateProxy with single gateway configuration.
+
+        Parameters:
+            gateway_config: Optional gateway config. None triggers config-file
+                detection.
+            gateway_url: Optional override for gateway base URL.
+            config_path: Path to stargate config (used when gateway_config is None).
+
+        Conditional setup: when _is_execution_capable is False (router-only Master),
+        gateway-dependent components (gateway_manager, token_manager, etc.) are None.
+        """
         # Detect execution capability early
         # INVARIANT: is_execution_capable = false ⟹ mode = MASTER ∧ ¬∃ local_gateway
         self._is_execution_capable = self._detect_execution_capability(
@@ -153,11 +173,11 @@ class StargateProxy:
         socket_path = debug_config.get("socket_path")
 
         # Create broadcaster if socket or persistence enabled
-        if (
-            socket_path
-            or persistence_config.get("enabled")
-            or pipeline_persistence_config.get("enabled")
-        ):
+        if any([
+            socket_path,
+            persistence_config.get("enabled"),
+            pipeline_persistence_config.get("enabled"),
+        ]):
             from universal_event_bus import MinimalEventDebugBroadcaster
 
             self._debug_broadcaster = MinimalEventDebugBroadcaster(
@@ -241,6 +261,12 @@ class StargateProxy:
 
         # Federation orchestrator (set by startup, Master mode only)
         self.federated_load_orchestrator: FederatedLoadOrchestrator | None = None
+        self.reputation_policy: ReputationPolicy = DEFAULT_REPUTATION_POLICY
+        self.model_health_store: TaskModelReputationStore = TaskModelReputationStore(
+            policy=self.reputation_policy,
+            event_bus=self.event_bus,
+        )
+        self.model_health_store.load()
 
     def _detect_execution_capability(
         self, gateway_config: GatewayConfig | None, config_path: str
@@ -308,6 +334,16 @@ class StargateProxy:
         """Whether this Stargate can execute inference locally."""
         return self._is_execution_capable
 
+    @property
+    def gateway_config(self) -> GatewayConfig | None:
+        """Normalized gateway config when execution-capable, else None."""
+        return self._gateway_config
+
+    @property
+    def debug_broadcaster(self) -> Any | None:
+        """Debug broadcaster instance when enabled, else None."""
+        return self._debug_broadcaster
+
     async def startup(self, app: FastAPI | None = None) -> None:
         """Initialize async components."""
         await startup_proxy(self, app)
@@ -369,25 +405,6 @@ class StargateProxy:
             routing_ops=self.resource_aware_model_manager._routing_ops,
         )
 
-    async def submit_chat_request(
-        self,
-        request: Request,
-        chat_request: ChatCompletionRequest,
-        model_override: str | None = None,
-        profile_override: str | None = None,
-        disable_profile: bool = False,
-        skip_token_counting: bool | None = None,
-    ) -> Response:
-        """Public API: Submit a chat completion request."""
-        return await self.process_chat_completion(
-            request,
-            chat_request,
-            model_override=model_override,
-            profile_override=profile_override,
-            disable_profile=disable_profile,
-            skip_token_counting=skip_token_counting,
-        )
-
     async def process_chat_completion(
         self,
         request: Request,
@@ -397,7 +414,11 @@ class StargateProxy:
         disable_profile: bool = False,
         skip_token_counting: bool | None = None,
     ) -> Response:
-        """Internal helper for processing chat completions."""
+        """Process a chat completion request through routing and execution.
+
+        Handles model selection, token counting, streaming vs non-streaming,
+        and federation forwarding. Parameters mirror the public API.
+        """
         return await process_chat_completion(
             proxy=self,
             request=request,
@@ -442,7 +463,11 @@ class StargateProxy:
         request: Request | None = None,
     ):
         """Forward a streaming request to the gateway."""
-        request_id = context.request_id[:8] if context else "unknown"
+        request_id = (
+            context.request_id[:8]
+            if context is not None and context.request_id
+            else "unknown"
+        )
         logger.info(
             "🌊 [REQ:%s] stargate_core.forward_streaming_request() called", request_id
         )
@@ -504,22 +529,10 @@ class StargateProxy:
 
     def cancel_request(self, request_id: str, model_id: str | None = None) -> bool:
         """
-        Cancel a pending request from all applicable queues.
+        Cancel a pending request (stub — queue-based cancellation removed).
 
-        Attempts cancellation from capacity and model queues.
-        Fire-and-forget: logs failures but doesn't raise.
-
-        Args:
-            request_id: The request ID to cancel (matches context.request_id)
-            model_id: Optional model ID for model-specific queues.
-                If None, skips model queues.
-
-        Returns:
-            True if cancelled from any queue, False if not found in any
-
-        Note:
-            Queue-based cancellation was removed with unified capacity tracking.
-            Remote cancellation (in-flight) is handled via MasterRequestTracker.
+        Returns False. Remote in-flight cancellation is handled by
+        MasterRequestTracker; local queues were removed with unified capacity.
         """
         logger.debug(
             "Queue cancellation disabled (no waiting queues): request=%s model=%s",

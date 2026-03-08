@@ -13,8 +13,8 @@ architect_requirements:
   min_score: good
   source: cloud
   min_context: 128000
-  tags: [general, reasoning]
-  exclude_tags: [fast, local]
+  tags: [general, reasoning, strong_planner]
+  exclude_tags: [fast, local, weak_grounding]
   scope_hint: workflows
 
 reviewer: |
@@ -59,8 +59,8 @@ planner_requirements:
   min_score: good
   source: cloud
   min_context: 65536
-  tags: [code, reasoning]
-  exclude_tags: [local]
+  tags: [code, reasoning, strong_planner]
+  exclude_tags: [local, weak_grounding]
   scope_hint: project
 
 researcher: |
@@ -80,6 +80,7 @@ researcher_requirements:
   min_context: 128000
   tags: [general, reasoning]
   exclude_tags: [fast]
+  min_tier: 2
   scope_hint: research
 
 modularizer: |

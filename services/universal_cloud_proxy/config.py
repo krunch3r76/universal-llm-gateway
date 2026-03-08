@@ -36,6 +36,9 @@ class ProviderConfig:
     max_concurrent: int = DEFAULT_MAX_CONCURRENT
     refresh_interval_hours: int = DEFAULT_REFRESH_INTERVAL_HOURS
     allow_prefixes: list[str] = field(default_factory=list)
+    native_tools: list[str] = field(default_factory=list)
+    mcp_server_url: str | None = None
+    mcp_auth_token: str | None = None
 
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
@@ -156,6 +159,35 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
 
     allow_prefixes = _validate_allow_prefixes(provider, entry.get("allow_prefixes", []))
 
+    native_tools: list[str] = []
+    raw_native = entry.get("native_tools")
+    if isinstance(raw_native, list):
+        native_tools = [str(t) for t in raw_native if isinstance(t, str) and t.strip()]
+
+    mcp_server_url: str | None = None
+    raw_mcp_url = entry.get("mcp_server_url")
+    if raw_mcp_url is not None:
+        if isinstance(raw_mcp_url, str) and raw_mcp_url.strip():
+            mcp_server_url = raw_mcp_url.strip()
+        else:
+            logger.error(
+                "providers[%s].mcp_server_url must be a non-empty string, got: %r",
+                provider,
+                raw_mcp_url,
+            )
+
+    mcp_auth_token: str | None = None
+    raw_mcp_token = entry.get("mcp_auth_token")
+    if raw_mcp_token is not None:
+        if isinstance(raw_mcp_token, str) and raw_mcp_token.strip():
+            mcp_auth_token = raw_mcp_token.strip()
+        else:
+            logger.error(
+                "providers[%s].mcp_auth_token must be a non-empty string, got: %r",
+                provider,
+                raw_mcp_token,
+            )
+
     return ProviderConfig(
         provider=provider,
         api_key=api_key,
@@ -163,6 +195,9 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
         max_concurrent=max_concurrent,
         refresh_interval_hours=refresh_interval_hours,
         allow_prefixes=allow_prefixes,
+        native_tools=native_tools,
+        mcp_server_url=mcp_server_url,
+        mcp_auth_token=mcp_auth_token,
     )
 
 

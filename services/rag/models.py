@@ -75,3 +75,16 @@ class ScopeInfo(BaseModel):
 
 class ScopesResponse(BaseModel):
     scopes: dict[str, ScopeInfo]
+
+
+class FailedChunkItem(BaseModel):
+    chunk_id: str
+    source: str
+    error: str
+    attempt_count: int
+    recorded_at: str
+
+
+class FailedExtractionResponse(BaseModel):
+    total: int
+    chunks: list[FailedChunkItem]

@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""Live watcher for in-flight consult-related model activity.
+
+This tails Stargate events and renders active requests + pipelines so users can
+observe which models are currently being exercised (including cloud models).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+DEFAULT_EVENTS_PATH = Path("/tmp/stargate-events/current.jsonl")
+
+REQUEST_START_SIGNALS = {"request.processing", "request.inference.started"}
+REQUEST_END_SIGNALS = {
+    "request.completed",
+    "request.failed",
+    "request.timed.out",
+    "request.removed",
+    "request.client.disconnected",
+}
+PIPELINE_START_SIGNAL = "pipeline.started"
+PIPELINE_END_SIGNALS = {"pipeline.completed", "pipeline.failed", "pipeline.cancelled"}
+PIPELINE_STEP_START = "pipeline.step.started"
+PIPELINE_STEP_END = {"pipeline.step.completed", "pipeline.step.failed", "pipeline.step.skipped"}
+
+
+def _is_cloud_model(model_id: str) -> bool:
+    return "/" in model_id
+
+
+def _now_utc() -> datetime:
+    return datetime.now(UTC)
+
+
+def _format_elapsed(seconds: float) -> str:
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    remainder = seconds % 60
+    return f"{minutes}m{remainder:04.1f}s"
+
+
+def _parse_timestamp(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+@dataclass(slots=True, kw_only=True)
+class ActiveRequest:
+    request_id: str
+    model_id: str
+    state: str
+    gateway_url: str | None
+    started_at: datetime
+    last_signal: str
+
+
+@dataclass(slots=True, kw_only=True)
+class ActivePipeline:
+    execution_id: str
+    pipeline_id: str
+    started_at: datetime
+    current_step: str | None = None
+    active_steps: set[str] = field(default_factory=set)
+    models_seen: set[str] = field(default_factory=set)
+    last_signal: str = PIPELINE_START_SIGNAL
+
+
+class ConsultWatchState:
+    """In-memory state built incrementally from event stream."""
+
+    def __init__(self) -> None:
+        self.active_requests: dict[str, ActiveRequest] = {}
+        self.active_pipelines: dict[str, ActivePipeline] = {}
+        self.total_events: int = 0
+        self.last_event_ts: datetime | None = None
+
+    def ingest(self, event: dict[str, Any]) -> None:
+        self.total_events += 1
+        signal = str(event.get("signal", ""))
+        payload = event.get("payload", {})
+        event_ts = _parse_timestamp(event.get("timestamp")) or _now_utc()
+        self.last_event_ts = event_ts
+
+        self._ingest_request(signal, payload, event_ts)
+        self._ingest_pipeline(signal, payload, event_ts)
+
+    def _ingest_request(
+        self,
+        signal: str,
+        payload: dict[str, Any],
+        event_ts: datetime,
+    ) -> None:
+        request_id = payload.get("request_id")
+        model_id = payload.get("model_id")
+        if not isinstance(request_id, str) or not request_id:
+            return
+
+        if signal in REQUEST_START_SIGNALS and isinstance(model_id, str):
+            existing = self.active_requests.get(request_id)
+            started_at = existing.started_at if existing else event_ts
+            self.active_requests[request_id] = ActiveRequest(
+                request_id=request_id,
+                model_id=model_id,
+                state="inference" if signal == "request.inference.started" else "processing",
+                gateway_url=payload.get("gateway_url")
+                if isinstance(payload.get("gateway_url"), str)
+                else None,
+                started_at=started_at,
+                last_signal=signal,
+            )
+            return
+
+        if signal in REQUEST_END_SIGNALS:
+            self.active_requests.pop(request_id, None)
+
+    def _ingest_pipeline(
+        self,
+        signal: str,
+        payload: dict[str, Any],
+        event_ts: datetime,
+    ) -> None:
+        execution_id = payload.get("execution_id")
+        if not isinstance(execution_id, str) or not execution_id:
+            return
+
+        if signal == PIPELINE_START_SIGNAL:
+            pipeline_id = payload.get("pipeline_id")
+            if not isinstance(pipeline_id, str):
+                pipeline_id = "unknown"
+            self.active_pipelines[execution_id] = ActivePipeline(
+                execution_id=execution_id,
+                pipeline_id=pipeline_id,
+                started_at=event_ts,
+            )
+            return
+
+        active = self.active_pipelines.get(execution_id)
+        if active is None:
+            return
+
+        active.last_signal = signal
+        if signal in PIPELINE_END_SIGNALS:
+            self.active_pipelines.pop(execution_id, None)
+            return
+
+        if signal == PIPELINE_STEP_START:
+            step_name = payload.get("step_name")
+            model_id = payload.get("model_id")
+            if isinstance(step_name, str):
+                active.current_step = step_name
+                active.active_steps.add(step_name)
+            if isinstance(model_id, str) and model_id:
+                active.models_seen.add(model_id)
+            return
+
+        if signal in PIPELINE_STEP_END:
+            step_name = payload.get("step_name")
+            if isinstance(step_name, str):
+                active.active_steps.discard(step_name)
+                if active.current_step == step_name:
+                    active.current_step = None
+
+
+def _format_requests(now: datetime, requests: dict[str, ActiveRequest]) -> list[str]:
+    lines = ["Active requests:"]
+    if not requests:
+        lines.append("  (none)")
+        return lines
+
+    for req in sorted(requests.values(), key=lambda r: r.started_at):
+        elapsed = _format_elapsed((now - req.started_at).total_seconds())
+        source = "cloud" if _is_cloud_model(req.model_id) else "local"
+        gateway = req.gateway_url or "-"
+        lines.append(
+            "  - "
+            f"{req.request_id} | {req.model_id} ({source}) | {req.state} | {elapsed} | {gateway}"
+        )
+    return lines
+
+
+def _format_pipelines(now: datetime, pipelines: dict[str, ActivePipeline]) -> list[str]:
+    lines = ["Active pipelines:"]
+    if not pipelines:
+        lines.append("  (none)")
+        return lines
+
+    for pipeline in sorted(pipelines.values(), key=lambda p: p.started_at):
+        elapsed = _format_elapsed((now - pipeline.started_at).total_seconds())
+        models = sorted(pipeline.models_seen)
+        cloud_models = [m for m in models if _is_cloud_model(m)]
+        model_summary = ", ".join(models) if models else "-"
+        cloud_summary = ", ".join(cloud_models) if cloud_models else "(none)"
+        current_step = pipeline.current_step or "-"
+        lines.append(
+            "  - "
+            f"{pipeline.execution_id} | {pipeline.pipeline_id} | step={current_step} | "
+            f"elapsed={elapsed} | models={model_summary} | cloud={cloud_summary}"
+        )
+    return lines
+
+
+def _render(state: ConsultWatchState, events_path: Path) -> str:
+    now = _now_utc()
+    lines: list[str] = []
+    lines.append("Consult Watch (live)")
+    lines.append(f"Events file: {events_path}")
+    lines.append(f"Now: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    lines.append(f"Events processed: {state.total_events}")
+    lines.append(
+        "Last event: "
+        + (state.last_event_ts.strftime("%Y-%m-%d %H:%M:%S UTC") if state.last_event_ts else "-")
+    )
+    lines.append("")
+    lines.extend(_format_requests(now, state.active_requests))
+    lines.append("")
+    lines.extend(_format_pipelines(now, state.active_pipelines))
+    lines.append("")
+    lines.append("Tip: press Ctrl+C to exit.")
+    return "\n".join(lines)
+
+
+def _iter_new_events(path: Path, start_offset: int) -> tuple[int, list[dict[str, Any]]]:
+    events: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        handle.seek(start_offset)
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                events.append(parsed)
+        next_offset = handle.tell()
+    return next_offset, events
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Watch in-flight request/pipeline model activity from events."
+    )
+    parser.add_argument(
+        "--events-file",
+        default=str(DEFAULT_EVENTS_PATH),
+        help=f"Event log path (default: {DEFAULT_EVENTS_PATH})",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=1.5,
+        help="Refresh interval in seconds (default: 1.5)",
+    )
+    parser.add_argument(
+        "--no-clear",
+        action="store_true",
+        help="Do not clear the terminal between refreshes",
+    )
+    return parser
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+    events_path = Path(args.events_file)
+    if not events_path.exists():
+        parser.error(f"Events file not found: {events_path}")
+
+    state = ConsultWatchState()
+    file_offset = 0
+
+    try:
+        while True:
+            file_offset, new_events = _iter_new_events(events_path, file_offset)
+            for event in new_events:
+                state.ingest(event)
+
+            if not args.no_clear:
+                print("\033[2J\033[H", end="")
+            print(_render(state, events_path))
+            time.sleep(max(args.interval, 0.1))
+    except KeyboardInterrupt:
+        return
+
+
+if __name__ == "__main__":
+    main()

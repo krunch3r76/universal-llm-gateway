@@ -12,13 +12,17 @@ output: retrieve_assemble
 options:
   timeout_seconds: 60    # §4.2: raised from 30s; GPU contention headroom
   scope_options: |
-    "project" — project architecture, vision, journal, engram
-    "research" — all research papers (prompting, RAG systems, workflows, code retrieval)
-    "prompting" — prompt engineering research specifically (small + large models)
-    "workflows" — pipeline architecture and agent orchestration patterns
+    "project" — Architecture docs, vision, engram, journal entries, and FAQ
+    "small_llm_prompting" — Prompt engineering research for small/local models
+    "llm_prompting" — Prompt engineering research for large/cloud models
+    "prompting" — All prompt engineering research (small + large model, tier-agnostic)
+    "workflows" — Pipeline architecture, agent workflows, and orchestration patterns
+    "research" — All research papers — prompting, RAG systems, workflows
+    "code_retrieval" — Code retrieval research — AST chunking, dependency retrieval, code embeddings
     "llm_foundations" — LLM reference ebooks and foundational texts
-    "both" — project + research combined (use when query spans both domains)
-    "all" — all indexed content (use when unclear or very broad)
+    "all_research" — All research papers and reference ebooks combined
+    "both" — Project knowledge + research papers — broad fallback for ambiguous queries
+    "all" — All indexed content — use when scope is unclear or spans multiple domains
   # --- Retrieval tunables (overridable via pipeline_options) ---
   rag_top_k_per_query: 10
   rag_max_chunks: 20

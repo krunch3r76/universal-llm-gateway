@@ -47,6 +47,9 @@ class FederationMessageType(str, Enum):
     TELEMETRY_HEARTBEAT = "telemetry.heartbeat"
     GATEWAY_SNAPSHOT = "telemetry.gateway.snapshot"
 
+    # Request-scoped telemetry (transient, not cached)
+    REQUEST_INFERENCE_STARTED = "telemetry.request.inference.started"
+
     # Measurement (Edge ↔ Master request/response)
     MEASUREMENT_VRAM_REQUEST = "measurement.vram.request"
     MEASUREMENT_VRAM_RESPONSE = "measurement.vram.response"
@@ -366,6 +369,7 @@ def is_telemetry_type(msg_type: str) -> bool:
         FederationMessageType.MODEL_LOAD_FAILED.value,
         FederationMessageType.TELEMETRY_HEARTBEAT.value,
         FederationMessageType.GATEWAY_SNAPSHOT.value,
+        FederationMessageType.REQUEST_INFERENCE_STARTED.value,
     }
 
 

@@ -286,6 +286,100 @@ class ServiceController:
             self._service_state, self._root, self._kill_and_wait
         )
 
+    async def start_mcp(self) -> str:
+        """Start MCP server container via docker compose."""
+        compose_path = self._root / "docker" / "compose" / "mcp-server.yml"
+        if not compose_path.exists():
+            return f"Compose file not found: {compose_path}"
+
+        result = await asyncio.create_subprocess_exec(
+            "docker",
+            "compose",
+            "-f",
+            str(compose_path),
+            "up",
+            "-d",
+            "--force-recreate",
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output = await result.communicate()
+        text = output[0].decode(errors="replace") if output[0] else ""
+        if result.returncode == 0:
+            return f"MCP server started.\n{text}"
+        logger.error(
+            "Failed to start MCP server (exit %d):\n%s", result.returncode, text
+        )
+        return f"Failed to start MCP server (exit {result.returncode}).\n{text}"
+
+    async def stop_mcp(self) -> str:
+        """Stop and remove MCP server container."""
+        compose_path = self._root / "docker" / "compose" / "mcp-server.yml"
+        if not compose_path.exists():
+            return f"Compose file not found: {compose_path}"
+
+        result = await asyncio.create_subprocess_exec(
+            "docker",
+            "compose",
+            "-f",
+            str(compose_path),
+            "down",
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output = await result.communicate()
+        text = output[0].decode(errors="replace") if output[0] else ""
+        if result.returncode == 0:
+            return f"MCP server stopped.\n{text}"
+        logger.error(
+            "Failed to stop MCP server (exit %d):\n%s", result.returncode, text
+        )
+        return f"Failed to stop MCP server (exit {result.returncode}).\n{text}"
+
+    async def rebuild_mcp(self) -> str:
+        """Rebuild MCP server image without cache and restart."""
+        compose_path = self._root / "docker" / "compose" / "mcp-server.yml"
+        if not compose_path.exists():
+            return f"Compose file not found: {compose_path}"
+
+        build = await asyncio.create_subprocess_exec(
+            "docker",
+            "compose",
+            "-f",
+            str(compose_path),
+            "build",
+            "--no-cache",
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        build_out = await build.communicate()
+        build_text = build_out[0].decode(errors="replace") if build_out[0] else ""
+        if build.returncode != 0:
+            logger.error(
+                "MCP rebuild failed (exit %d):\n%s", build.returncode, build_text
+            )
+            return f"MCP rebuild failed (exit {build.returncode}).\n{build_text}"
+
+        return await self.start_mcp()
+
+    async def check_mcp(self) -> str:
+        """Return docker ps output for the mcp-server container."""
+        result = await asyncio.create_subprocess_exec(
+            "docker",
+            "ps",
+            "--filter",
+            "name=mcp-server",
+            "--format",
+            "table {{.Names}}\t{{.Status}}\t{{.Ports}}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output = await result.communicate()
+        return output[0].decode(errors="replace") if output[0] else "No output."
+
     @property
     def sidecar(self) -> SidecarController:
         return self._sidecar

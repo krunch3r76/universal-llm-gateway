@@ -190,6 +190,7 @@ async def forward_to_gateway_streaming(
         headers = {
             "Content-Type": "application/json",
             "X-Request-ID": request_id,
+            "X-Internal-Request-ID": request_id,
         }
         if timeout_hint is not None:
             headers["X-Request-Timeout"] = str(timeout_hint)
@@ -265,6 +266,7 @@ async def forward_to_gateway_nonstreaming(
         headers = {
             "Content-Type": "application/json",
             "X-Request-ID": request_id,
+            "X-Internal-Request-ID": request_id,
         }
         if timeout_hint is not None:
             headers["X-Request-Timeout"] = str(timeout_hint)

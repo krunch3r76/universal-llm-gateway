@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 from universal_logging import get_logger
 
 from ...dag import PipelineExecutionError, StepState
+from ...events.step import StepModelFallbackSuppressed
+from ..fallback_eligibility import classify_fallback_error
 from ..proxy_client import ProxyClient
 from .model_coordination import StepModelCoordinator
 from .observability import StepObservability
@@ -91,7 +93,7 @@ class DAGExecutor:
 
             node = self.nodes.get(step_id)
             if node:
-                target_model = self._model_coordination.resolve_target_model(node)
+                target_model = await self._model_coordination.resolve_target_model(node)
                 if target_model:
                     self._model_coordination.on_cancelled_step(
                         step_id=step_id, target_model=target_model
@@ -155,15 +157,15 @@ class DAGExecutor:
         if not steps_to_launch:
             return False
 
-        return self._launch_steps(steps_to_launch)
+        return await self._launch_steps(steps_to_launch)
 
-    def _launch_steps(self, steps_to_launch: list[StepNode]) -> bool:
+    async def _launch_steps(self, steps_to_launch: list[StepNode]) -> bool:
         """Launch selected steps as asyncio tasks."""
         launched_any = False
         models_in_use_this_iteration: set[str] = set()
 
         for node in steps_to_launch:
-            target_model = self._model_coordination.resolve_target_model(node)
+            target_model = await self._model_coordination.resolve_target_model(node)
             lock_model = self._model_coordination.get_lock_model(node, target_model)
 
             if lock_model:
@@ -222,7 +224,7 @@ class DAGExecutor:
                 self._propagate_completion(node.step.id)
                 continue
 
-            target_model = self._model_coordination.resolve_target_model(node)
+            target_model = await self._model_coordination.resolve_target_model(node)
             lock_model = self._model_coordination.get_lock_model(node, target_model)
             if lock_model and not self._model_coordination.can_launch_with_lock(
                 lock_model
@@ -249,7 +251,7 @@ class DAGExecutor:
             del self._pending_tasks[step_id]
 
             node = self.nodes[step_id]
-            target_model = self._model_coordination.resolve_target_model(node)
+            target_model = await self._model_coordination.resolve_target_model(node)
             self._model_coordination.on_step_finished(
                 step_id=step_id, target_model=target_model
             )
@@ -291,8 +293,11 @@ class DAGExecutor:
         model_ref_overrides: dict[str, str] | None = self.context.options.get(
             "model_ref_overrides"
         )
-        target_model = self._model_coordination.resolve_target_model_for_execution(
-            node, model_ref_overrides
+        target_model = (
+            await self._model_coordination.resolve_target_model_for_execution(
+                node,
+                model_ref_overrides,
+            )
         )
 
         self._observability.emit_step_started(node=node, target_model=target_model)
@@ -309,7 +314,7 @@ class DAGExecutor:
             raise
 
     async def _run_step(self, node: StepNode) -> StepOutput:
-        """Execute step, falling back to alternative models on failure.
+        """Execute step, falling back to alternative models on eligible failures.
 
         After the primary model exhausts its full retry chain (including
         handler-level ProxyClientError fallback), the executor resolves
@@ -327,6 +332,18 @@ class DAGExecutor:
             return await self._run_step_inner(step)
         except Exception as primary_err:
             if not step.model_ref or not step.model_requirements:
+                raise
+            eligibility = classify_fallback_error(primary_err)
+            if not eligibility.should_fallback:
+                self._observability.publish_event(
+                    StepModelFallbackSuppressed(
+                        pipeline_id=self.context.pipeline.id,
+                        execution_id=self.context.execution_id,
+                        step_name=step.name,
+                        primary_error_type=eligibility.error_type,
+                        suppression_reason=eligibility.reason,
+                    )
+                )
                 raise
             return await self._try_step_model_fallback(
                 step,
@@ -360,8 +377,8 @@ class DAGExecutor:
             primary_err,
             run_step_fn=self._run_step_inner,
             context=self.context,
-            get_event_context=self._get_event_context,
-            publish_event=self._publish_event,
+            get_event_context=self._observability.get_event_context,
+            publish_event=self._observability.publish_event,
         )
 
     async def _execute_map_step(self, node: StepNode) -> StepOutput:

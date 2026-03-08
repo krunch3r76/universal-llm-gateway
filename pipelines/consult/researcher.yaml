@@ -1,0 +1,22 @@
+schema_version: 6
+id: consult-researcher
+version: "1"
+type: consult
+
+output: consult
+options:
+  timeout_seconds: 300
+
+steps:
+  - name: consult
+    type: generate
+    model_ref: auto
+    prompt_ref: consult.researcher
+    model_requirements:
+      task: research
+      min_score: good
+      source: cloud
+      min_context: 128000
+      tags: [general, reasoning]
+      exclude_tags: [fast]
+      health_scoring: true

@@ -78,6 +78,7 @@ class BrowserCatalogCache:
         tags: list[str] | None = None,
         exclude_tags: list[str] | None = None,
         min_context: int = 0,
+        min_tier: int = 0,
         min_prompt_cost: float | None = None,
         max_prompt_cost: float | None = None,
         min_completion_cost: float | None = None,
@@ -113,6 +114,8 @@ class BrowserCatalogCache:
             if _excl and _excl & model_tags:
                 continue
             if m.get("context_length", 0) < min_context:
+                continue
+            if m.get("tier", 0) < min_tier:
                 continue
 
             is_free_local = m.get("source") == "local" and m["prompt_cost"] == 0

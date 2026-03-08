@@ -1,0 +1,38 @@
+# Curated intelligence profiles for strong planning + architecture models.
+#
+# These models are explicitly preferred for planning, code_architecture,
+# and code_review tasks. Without curation the deriver assigns planning:good to
+# any model with "thinking" in its name (e.g. vision-language models), which
+# produces poor selections for text planning work.
+#
+# Score vocabulary: strong | good | neutral | weak | exclude
+
+# --- Anthropic ---
+
+basename: claude-sonnet-4
+full_model_id: anthropic/claude-sonnet-4
+source: cloud
+latency_bucket: medium
+cost_bucket: medium
+reasoning_depth: strong
+tasks:
+  planning:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Strong instruction following and structured planning output
+  code_architecture:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Excellent system design reasoning across large codebases
+  code_review:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Precise bug identification and fix suggestions
+  research:
+    score: good
+    evidence:
+      - source: curated
+        detail: Strong synthesis and grounded analysis

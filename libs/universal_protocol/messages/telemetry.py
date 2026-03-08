@@ -36,6 +36,7 @@ TELEMETRY_MODEL_LOADING_STARTED = "telemetry.model.loading.started"
 TELEMETRY_MODEL_LOADING_FAILED = "telemetry.model.loading.failed"
 TELEMETRY_HEARTBEAT = "telemetry.heartbeat"
 TELEMETRY_GATEWAY_SNAPSHOT = "telemetry.gateway.snapshot"
+TELEMETRY_REQUEST_INFERENCE_STARTED = "telemetry.request.inference.started"
 
 
 def telemetry_factory[F: Callable[..., Any]](func: F) -> F:
@@ -680,6 +681,73 @@ def GatewaySnapshot(  # noqa: N802
     )
 
 
+# ─── Request Inference Started ───────────────────────────────────────────────
+
+
+@dataclass(slots=True, kw_only=True)
+class RequestInferenceStartedPayload(TelemetryPayload):
+    """
+    Payload for REQUEST_INFERENCE_STARTED telemetry.
+
+    Emitted by Gateway when inference for a specific client request actually
+    begins (model lock acquired, first token generation starts). Provides the
+    request-scoped counterpart to model-scoped InferenceStarted, allowing
+    Stargate to distinguish queue-wait time from true GPU execution time.
+    """
+
+    request_id: str
+    model_id: str
+    gateway_url: str
+    correlation_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        result = TelemetryPayload.to_dict(self)
+        result["request_id"] = self.request_id
+        result["model_id"] = self.model_id
+        result["gateway_url"] = self.gateway_url
+        if self.correlation_id:
+            result["correlation_id"] = self.correlation_id
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RequestInferenceStartedPayload:
+        source = None
+        if "source" in data and data["source"]:
+            source = TelemetrySource.from_dict(data["source"])
+        return RequestInferenceStarted(
+            request_id=data["request_id"],
+            model_id=data["model_id"],
+            gateway_url=data.get("gateway_url", ""),
+            correlation_id=data.get("correlation_id", ""),
+            source=source,
+        )
+
+
+@telemetry_factory
+def RequestInferenceStarted(  # noqa: N802
+    request_id: str,
+    model_id: str,
+    gateway_url: str,
+    correlation_id: str = "",
+    source: TelemetrySource | None = None,
+) -> RequestInferenceStartedPayload:
+    """
+    Create telemetry.request.inference.started payload.
+
+    Signal: TELEMETRY_REQUEST_INFERENCE_STARTED
+
+    Emitted by Gateway at the moment inference begins for a specific request.
+    Forwarded via WebSocket telemetry to Edge Stargate → Master Stargate.
+    """
+    return RequestInferenceStartedPayload(
+        request_id=request_id,
+        model_id=model_id,
+        gateway_url=gateway_url,
+        correlation_id=correlation_id,
+        source=source,
+    )
+
+
 # ─── Payload Registry ────────────────────────────────────────────────────────
 
 TELEMETRY_PAYLOAD_TYPES: dict[str, type[TelemetryPayload]] = {
@@ -692,6 +760,7 @@ TELEMETRY_PAYLOAD_TYPES: dict[str, type[TelemetryPayload]] = {
     TELEMETRY_MODEL_LOADING_FAILED: ModelLoadFailedPayload,
     TELEMETRY_HEARTBEAT: TelemetryHeartbeatPayload,
     TELEMETRY_GATEWAY_SNAPSHOT: GatewaySnapshotPayload,
+    TELEMETRY_REQUEST_INFERENCE_STARTED: RequestInferenceStartedPayload,
 }
 
 

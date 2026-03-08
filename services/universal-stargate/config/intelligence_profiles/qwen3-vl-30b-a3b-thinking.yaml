@@ -1,0 +1,29 @@
+basename: qwen3-vl-30b-a3b-thinking
+full_model_id: qwen/qwen3-vl-30b-a3b-thinking
+source: cloud
+latency_bucket: slow
+cost_bucket: cheap
+reasoning_depth: good
+tasks:
+  # Vision-language model. Planning/architecture tasks are weak matches —
+  # this model shines on multimodal and visual reasoning, not text planning.
+  planning:
+    score: neutral
+    evidence:
+      - source: curated
+        detail: Vision-language model; text-only planning is not a primary strength
+  code_architecture:
+    score: neutral
+    evidence:
+      - source: curated
+        detail: VL model; prefer text-specialist models for architecture review
+  code_review:
+    score: neutral
+    evidence:
+      - source: curated
+        detail: Capable but not optimised for pure code review
+  research:
+    score: good
+    evidence:
+      - source: curated
+        detail: Solid multimodal research synthesis

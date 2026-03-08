@@ -18,16 +18,20 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def resolve_fallback_models(
+async def resolve_fallback_models(
     step: StepConfig,
     context: PipelineContext,
     *,
     exclude: str,
 ) -> list[str]:
     """Resolve model_requirements to a ranked fallback list, excluding primary."""
-    from ..execution.requirements_resolver import resolve_model_requirements
+    from ..execution.resolved_candidates import get_ranked_candidates
 
-    model_ids = resolve_model_requirements(step.model_requirements)
+    model_ids = await get_ranked_candidates(
+        context=context,
+        step_name=step.name,
+        requirements=dict(step.model_requirements or {}),
+    )
     return [m for m in model_ids if m != exclude]
 
 

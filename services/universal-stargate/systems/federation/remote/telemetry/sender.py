@@ -283,7 +283,10 @@ class RemoteTelemetrySender:
             return
 
         # Rewrite source.stargate_id to Relay's identity
-        payload.source.stargate_id = self._source.stargate_id
+        # source may be None for request-scoped telemetry (e.g. request.inference.started)
+        # that originates from the edge Stargate event bus rather than the Gateway.
+        if payload.source is not None:
+            payload.source.stargate_id = self._source.stargate_id
 
         # Create envelope and enqueue (use rate limiter)
         msg = MessageEnvelope(type=msg_type, data=payload.to_dict())

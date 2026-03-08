@@ -5,7 +5,6 @@ worker iteration, exception dispatch). Error classification delegated to error_m
 """
 
 import asyncio
-import uuid
 
 from process_ipc.core.exceptions import ProcessError
 from universal_event_bus import EventBus
@@ -13,6 +12,7 @@ from universal_logging import get_logger
 from universal_protocol.errors import StreamError
 
 from src.core.errors import ErrorCode
+from src.core.events.types import RequestInferenceStarted
 
 from ..events import emit_request_queued_nowait
 from .error_mapping import (
@@ -37,6 +37,8 @@ async def generate_streaming_response(
     event_bus: EventBus,
     correlation_id: str | None = None,
     timeout_hint: float | None = None,
+    request_id: str | None = None,
+    gateway_url: str = "unknown",
     **kwargs,
 ):
     """
@@ -52,6 +54,8 @@ async def generate_streaming_response(
         event_bus: Event bus for publishing events (required)
         correlation_id: Optional correlation ID for tracing
         timeout_hint: Optional timeout hint from upstream (federation/pipeline)
+        request_id: Optional request ID from upstream (prefers Stargate-provided identity)
+        gateway_url: Gateway URL for telemetry (resolved from request by caller)
         **kwargs: Additional generation parameters
 
     Yields:
@@ -63,7 +67,9 @@ async def generate_streaming_response(
     if event_bus is None:
         raise ValueError("event_bus is required for streaming responses")
 
-    request_id = str(uuid.uuid4())
+    if request_id is None:
+        import uuid
+        request_id = str(uuid.uuid4())
 
     # Emit REQUEST_QUEUED event
     await emit_request_queued_nowait(
@@ -87,6 +93,16 @@ async def generate_streaming_response(
             else:
                 raise RuntimeError(f"Failed to load model {model_id}")
 
+        # Request-scoped runtime-start boundary (execution handoff begins here)
+        await event_bus.publish_async_nowait(
+            RequestInferenceStarted(
+                request_id=request_id,
+                model_id=model_id,
+                gateway_url=gateway_url,
+                correlation_id=correlation_id,
+            )
+        )
+
         logger.info(f"🚀 [REQ:{request_id[:8]}] Starting stream for {model_id}")
         chunk_count = 0
 
@@ -94,6 +110,7 @@ async def generate_streaming_response(
             model_id=model_id,
             messages=messages,
             correlation_id=correlation_id,
+            _request_id=request_id,
             _timeout_hint=timeout_hint,  # Pass timeout hint from upstream
             **kwargs,
         ):

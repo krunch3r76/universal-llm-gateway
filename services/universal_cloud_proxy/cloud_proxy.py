@@ -48,6 +48,7 @@ from .events import (
     CloudProxyCatalogRefreshFailed,
     CloudProxyLocalCatalogRefreshed,
     CloudProxyLocalCatalogUnavailable,
+    CloudProxyMcpConfigured,
     CloudProxyRequestFailed,
     CloudProxyRequestForwarded,
     CloudProxyRequestTranslationFailed,
@@ -113,7 +114,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
         logger.warning("No cloud providers configured — proxy will serve empty catalog")
 
     shared_client = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=15.0, read=300.0, write=15.0, pool=15.0),
+        timeout=httpx.Timeout(connect=15.0, read=1800.0, write=15.0, pool=15.0),
         limits=httpx.Limits(max_connections=40, max_keepalive_connections=20),
         http2=False,
     )
@@ -205,6 +206,14 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
             socket_path=str(config.socket_path) if config.socket_path else None,
         )
     )
+    for provider_cfg in config.providers:
+        if provider_cfg.mcp_server_url:
+            await event_bus.publish_async(
+                CloudProxyMcpConfigured(
+                    provider=provider_cfg.provider,
+                    mcp_server_url=provider_cfg.mcp_server_url,
+                )
+            )
     logger.info(
         "Cloud proxy started: %d provider(s), %d models, browser catalog: %d, mode: %s",
         len(config.providers),

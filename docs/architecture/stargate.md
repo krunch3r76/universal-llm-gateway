@@ -49,7 +49,7 @@ federation coordination, pipeline execution, and model profiles.
 ```
 POST /v1/chat/completions
   → chat_completions() (routers/v1/chat_completion.py)
-  → StargateProxy.submit_chat_request()
+  → StargateProxy.process_chat_completion()
   → process_chat_completion() (stargate/requests/chat.py)
     ├─ RequestPreparer.prepare_request()
     ├─ Pipeline? → PipelineExecutor.execute()

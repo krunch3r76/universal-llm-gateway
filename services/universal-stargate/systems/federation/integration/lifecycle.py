@@ -4,6 +4,7 @@ Federation integration lifecycle management.
 Module-level functions for managing the global FederationIntegration instance.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import FastAPI
@@ -14,16 +15,23 @@ from .core import FederationIntegration
 _integration: FederationIntegration | None = None
 
 
-def get_federation_integration(event_bus: Any | None = None) -> FederationIntegration:
+def get_federation_integration(
+    event_bus: Any | None = None,
+    health_observer: Callable[..., None] | None = None,
+) -> FederationIntegration:
     """
     Get or create federation integration.
 
     Args:
         event_bus: Optional event bus for critical events (required for HTTP polling)
+        health_observer: Optional callback for cloud proxy health observations
     """
     global _integration
     if _integration is None:
-        _integration = FederationIntegration(event_bus=event_bus)
+        _integration = FederationIntegration(
+            event_bus=event_bus,
+            health_observer=health_observer,
+        )
     return _integration
 
 
@@ -34,6 +42,7 @@ async def init_federation(
     event_bus: Any | None = None,
     gateway_manager: Any | None = None,
     stargate_config: Any | None = None,
+    health_observer: Callable[..., None] | None = None,
 ) -> FederationIntegration:
     """
     Initialize federation for app.
@@ -52,7 +61,10 @@ async def init_federation(
     Returns:
         Initialized FederationIntegration instance
     """
-    integration = get_federation_integration(event_bus=event_bus)
+    integration = get_federation_integration(
+        event_bus=event_bus,
+        health_observer=health_observer,
+    )
     await integration.startup(
         app,
         gateway_socket_path=gateway_socket_path,

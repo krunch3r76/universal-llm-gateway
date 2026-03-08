@@ -130,6 +130,14 @@ class StepModelFallbackExhausted(PipelineEvent):
 
 
 @dataclass(slots=True, kw_only=True)
+class StepModelFallbackSuppressed(PipelineEvent):
+    """Emitted when step-level fallback is intentionally not attempted."""
+
+    primary_error_type: str = ""
+    suppression_reason: str = ""
+
+
+@dataclass(slots=True, kw_only=True)
 class GenerationParamsFiltered(PipelineEvent):
     """Emitted when unsupported generation parameters are removed."""
 

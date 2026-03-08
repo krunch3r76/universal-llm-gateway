@@ -1,5 +1,7 @@
 """Map step progress events."""
 
+from typing import Any
+
 from universal_event_bus import Event, event_factory
 
 
@@ -112,7 +114,7 @@ def MapIterationInferenceStarted(  # noqa: N802
 
 
 @event_factory
-def MapIterationInferenceFallbackUsed(  # noqa: N802
+def MapIterationInferenceFallback(  # noqa: N802
     pipeline_id: str,
     execution_id: str,
     step_name: str,
@@ -130,7 +132,7 @@ def MapIterationInferenceFallbackUsed(  # noqa: N802
     arrived before iteration completion.
     """
     return Event(
-        signal="pipeline.map.iteration.inference.fallback.used",
+        signal="pipeline.map.iteration.inference.fallback",
         payload={
             "pipeline_id": pipeline_id,
             "execution_id": execution_id,
@@ -144,7 +146,7 @@ def MapIterationInferenceFallbackUsed(  # noqa: N802
 
 
 @event_factory
-def MapIterationInferenceSignalLost(  # noqa: N802
+def MapIterationInferenceLost(  # noqa: N802
     pipeline_id: str,
     execution_id: str,
     step_name: str,
@@ -160,7 +162,7 @@ def MapIterationInferenceSignalLost(  # noqa: N802
     boundary.
     """
     return Event(
-        signal="pipeline.map.iteration.inference.signal.lost",
+        signal="pipeline.map.iteration.inference.lost",
         payload={
             "pipeline_id": pipeline_id,
             "execution_id": execution_id,
@@ -177,7 +179,10 @@ def MapIterationCompleted(  # noqa: N802
     execution_id: str,
     step_name: str,
     iteration_index: int,
-    duration_seconds: float,
+    elapsed_seconds: float,
+    inference_seconds: float | None = None,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
 ) -> Event:
     """
     Event factory for when one map iteration completes successfully.
@@ -194,7 +199,10 @@ def MapIterationCompleted(  # noqa: N802
             "execution_id": execution_id,
             "step_name": step_name,
             "iteration_index": iteration_index,
-            "duration_seconds": duration_seconds,
+            "elapsed_seconds": elapsed_seconds,
+            "inference_seconds": inference_seconds,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
         },
     )
 
@@ -208,6 +216,8 @@ def MapIterationFailed(  # noqa: N802
     error: str,
     duration_seconds: float | None,
     failure_type: str,
+    truncated_response: str | None = None,
+    truncation_tokens: int | None = None,
 ) -> Event:
     """
     Event factory for when one map iteration fails.
@@ -219,19 +229,24 @@ def MapIterationFailed(  # noqa: N802
     - "timeout": outer map timeout
     - "inference_timeout": per-iteration timeout after inference started
     - "cancelled": cancellation by fail-fast or external cancellation
+
+    When failure_type is "error" and the cause is response truncation,
+    truncated_response contains the partial model output and truncation_tokens
+    the completion token count at the point of truncation.
     """
-    return Event(
-        signal="pipeline.map.iteration.failed",
-        payload={
-            "pipeline_id": pipeline_id,
-            "execution_id": execution_id,
-            "step_name": step_name,
-            "iteration_index": iteration_index,
-            "error": error,
-            "duration_seconds": duration_seconds,
-            "failure_type": failure_type,
-        },
-    )
+    payload: dict[str, Any] = {
+        "pipeline_id": pipeline_id,
+        "execution_id": execution_id,
+        "step_name": step_name,
+        "iteration_index": iteration_index,
+        "error": error,
+        "duration_seconds": duration_seconds,
+        "failure_type": failure_type,
+    }
+    if truncated_response is not None:
+        payload["truncated_response_path"] = truncated_response
+        payload["truncation_tokens"] = truncation_tokens
+    return Event(signal="pipeline.map.iteration.failed", payload=payload)
 
 
 @event_factory
@@ -277,7 +292,22 @@ def MapStepCompleted(  # noqa: N802
     duration_seconds: float,
     met_threshold: bool,
 ) -> Event:
-    """Event factory for when a map step finishes (success or failure)."""
+    """
+    Event factory for when a map step finishes (success or failure).
+
+    Emitted when all map iterations have reached a terminal state and the step
+    can report aggregate outcomes.
+
+    Payload:
+        pipeline_id: Pipeline identifier
+        execution_id: Current execution UUID
+        step_name: Map step name
+        succeeded_count: Number of iterations completed successfully
+        failed_count: Number of iterations that failed
+        total_count: Total iterations launched for this step
+        duration_seconds: End-to-end map-step wall-clock duration
+        met_threshold: Whether configured success threshold was satisfied
+    """
     return Event(
         signal="pipeline.map.completed",
         payload={

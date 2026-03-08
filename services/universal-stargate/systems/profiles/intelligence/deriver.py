@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from intelligence_profiles import DomainScore, Evidence, IntelligenceProfile
+from intelligence_profiles import DomainScore, Evidence, IntelligenceProfile, Score
 
 _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "code": ["code", "programming", "developer", "software", "coding", "coder"],
@@ -36,6 +36,13 @@ _LATENCY_PATTERNS: dict[str, re.Pattern[str]] = {
 }
 
 _META_ROUTER_IDS: frozenset[str] = frozenset({"openrouter/auto"})
+_TEXT_ONLY_TASKS: frozenset[str] = frozenset(
+    {
+        "planning",
+        "code_architecture",
+        "code_review",
+    }
+)
 
 
 def _is_excluded_entry(entry: dict[str, Any]) -> bool:
@@ -64,7 +71,8 @@ def derive_from_cloud_entry(entry: dict[str, Any]) -> IntelligenceProfile:
     basename = model_id.split("/", 1)[-1] if "/" in model_id else model_id
 
     domains = _derive_domains(entry)
-    tasks = _derive_tasks(entry, domains)
+    modality = _classify_modality(entry)
+    tasks = _derive_tasks(entry, domains, modality=modality)
 
     completion_cost: float = entry.get("completion_cost", 0.0)
     supported_params: list[str] = entry.get("supported_parameters") or []
@@ -135,6 +143,8 @@ def _derive_domains(entry: dict[str, Any]) -> dict[str, DomainScore]:
 def _derive_tasks(
     entry: dict[str, Any],
     domains: dict[str, DomainScore],
+    *,
+    modality: str,
 ) -> dict[str, DomainScore]:
     """Map domains to pipeline/consult task scores.
 
@@ -226,7 +236,7 @@ def _derive_tasks(
                     evidence=[Evidence(source="curated", detail=f"tier {tier} model")],
                 )
 
-    if tier >= 2:
+    elif tier >= 2:
         for task_name in all_tasks:
             if task_name not in tasks:
                 tasks[task_name] = DomainScore(
@@ -234,6 +244,7 @@ def _derive_tasks(
                     evidence=[Evidence(source="curated", detail=f"tier {tier} model")],
                 )
 
+    _cap_text_only_task_scores(tasks, modality=modality)
     return tasks
 
 
@@ -275,3 +286,50 @@ def _derive_reasoning_depth(model_id: str, entry: dict[str, Any]) -> str | None:
     if re.search(r"\b(?:pro|expert)\b", model_id, re.IGNORECASE):
         return "good"
     return None
+
+
+def _classify_modality(entry: dict[str, Any]) -> str:
+    """Classify model modality from catalog metadata.
+
+    Uses tags (vision/audio/video) and the modality field
+    already present in enriched catalog entries.
+    """
+    tags = set(entry.get("tags") or [])
+    modality_field = (entry.get("modality") or "").lower()
+
+    if tags & {"vision", "audio", "video"}:
+        return "multimodal"
+    if any(keyword in modality_field for keyword in ("image", "audio", "video")):
+        return "multimodal"
+    return "text"
+
+
+def _cap_text_only_task_scores(
+    tasks: dict[str, DomainScore],
+    *,
+    modality: str,
+) -> None:
+    """Cap text-only task scores to neutral for multimodal models."""
+    if modality != "multimodal":
+        return
+
+    for task_name in _TEXT_ONLY_TASKS:
+        task_entry = tasks.get(task_name)
+        if task_entry is None:
+            continue
+        capped = _cap_score(task_entry.score)
+        if capped == task_entry.score:
+            continue
+        task_entry.score = capped
+        task_entry.evidence.append(
+            Evidence(source="curated", detail="capped for multimodal model")
+        )
+
+
+def _cap_score(score: Score | None) -> Score | None:
+    """Reduce strong/good to neutral; leave neutral/weak/exclude unchanged."""
+    match score:
+        case "strong" | "good":
+            return "neutral"
+        case _:
+            return score

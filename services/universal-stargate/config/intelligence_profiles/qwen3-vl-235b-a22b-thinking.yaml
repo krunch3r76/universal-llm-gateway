@@ -1,0 +1,27 @@
+basename: qwen3-vl-235b-a22b-thinking
+full_model_id: qwen/qwen3-vl-235b-a22b-thinking
+source: cloud
+latency_bucket: slow
+cost_bucket: medium
+reasoning_depth: good
+tasks:
+  planning:
+    score: neutral
+    evidence:
+      - source: curated
+        detail: Vision-language model; prefer text-specialist models for planning
+  code_architecture:
+    score: neutral
+    evidence:
+      - source: curated
+        detail: VL model; not optimised for text-only architecture review
+  code_review:
+    score: neutral
+    evidence:
+      - source: curated
+        detail: Capable but not a primary code review model
+  research:
+    score: good
+    evidence:
+      - source: curated
+        detail: Strong at multimodal research synthesis

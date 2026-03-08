@@ -128,7 +128,7 @@ class MapIterationPreparer:
                 f"MapOutputCollection, got {type(value).__name__}"
             )
 
-    def build_pool_assignments(
+    async def build_pool_assignments(
         self,
         iteration_items: list[tuple[int, Any, str | None]],
         runtime: Any,
@@ -143,9 +143,9 @@ class MapIterationPreparer:
         pool_assignments: dict[int, str] = {}
 
         if not self._map_config.model_pool and self._map_config.model_requirements:
-            from ...requirements_resolver import resolve_model_requirements
+            from ...requirements_resolver import async_resolve_model_requirements
 
-            resolved_ids = resolve_model_requirements(
+            resolved_ids = await async_resolve_model_requirements(
                 self._map_config.model_requirements
             )
             if resolved_ids:

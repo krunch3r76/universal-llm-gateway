@@ -83,6 +83,7 @@ class ServicesScreen(Screen):
             yield Static("  Gateway:  checking...", id="svc-gw")
             yield Static("  Stargate: checking...", id="svc-sg")
             yield Static("  RAG:      checking...", id="svc-rag")
+            yield Static("  RAG failed chunks: —", id="svc-rag-failed")
             yield Static("  Cloud Px: checking...", id="svc-cp")
             yield Static("  Sidecar:  checking...", id="svc-sidecar")
 
@@ -127,6 +128,7 @@ class ServicesScreen(Screen):
         self._refresh_status()
         self._update_build_flags()
         self._poll_timer = self.set_interval(self._POLL_INTERVAL, self._refresh_status)
+        self.run_worker(self._poll_rag_failed(), exclusive=False)
 
     def on_screen_suspend(self) -> None:
         if self._poll_timer is not None:
@@ -195,6 +197,43 @@ class ServicesScreen(Screen):
                 self._refresh_status()
             case "btn-back":
                 self.app.pop_screen()
+
+    async def _poll_rag_failed(self) -> None:
+        """Poll the RAG service for failed extraction chunk count and update display."""
+        from transport_utils.rag_client import make_async_client
+
+        from ...controller.service_config import (
+            read_rag_socket_path,
+            read_rag_tcp_config,
+        )
+
+        while self.is_attached:
+            try:
+                try:
+                    tcp_config = read_rag_tcp_config()
+                except ValueError:
+                    tcp_config = None
+
+                if tcp_config is not None:
+                    host, port = tcp_config
+                    base_url = f"http://{host}:{port}"
+                else:
+                    socket_path = read_rag_socket_path()
+                    base_url = f"unix://{socket_path}"
+
+                async with make_async_client(base_url, timeout=3.0) as client:
+                    resp = await client.get("/extraction/failed")
+                    if resp.status_code == 200:
+                        total = resp.json().get("total", 0)
+                        label = (
+                            f"  RAG failed chunks: [bold red]{total}[/bold red]"
+                            if total > 0
+                            else "  RAG failed chunks: 0"
+                        )
+                        self.query_one("#svc-rag-failed", Static).update(label)
+            except Exception:
+                pass
+            await asyncio.sleep(self._POLL_INTERVAL)
 
     def _refresh_status(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]

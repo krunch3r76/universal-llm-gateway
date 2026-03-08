@@ -22,10 +22,51 @@ from .protocol import StepOutput
 from .registry import register_handler
 
 if TYPE_CHECKING:
+    from ..execution.resolver import NamespaceResolver
     from ..schemas import PromptConfig, StepConfig
     from .protocol import PipelineContext
 
 logger = get_logger(__name__)
+
+
+def _resolve_avoid_models(
+    binding_path: str,
+    resolver: NamespaceResolver,
+    step_name: str,
+) -> list[str]:
+    """Resolve avoid_models_from binding path to model IDs to exclude."""
+    parts = binding_path.split(".", 1)
+    step_ref = parts[0]
+    field_path = parts[1] if len(parts) > 1 else "model_id"
+
+    from ..execution.resolver import traverse_path
+    from ..schemas import InputBinding
+
+    binding = InputBinding(
+        namespace="step",
+        step_name=step_ref,
+        field_path=field_path,
+    )
+    try:
+        root = resolver.resolve(binding)
+        value = traverse_path(
+            root,
+            field_path,
+            step_name=step_name,
+            field_name="avoid_models_from",
+            binding_repr=binding_path,
+            resolver=resolver,
+        )
+    except Exception:
+        return []
+
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(v) for v in value if v]
+    return []
 
 
 @register_handler
@@ -51,8 +92,10 @@ class GenericGenerateHandler(BaseHandler):
         Model resolution order:
         1. Executor-level override via context._step_model_override (full ID,
            set by DAGExecutor during step-level fallback for timeout/any error)
-        2. Primary model from model_ref (models.yaml)
-        3. On ProxyClientError, handler-level fallback via model_requirements
+        2. model_ref_overrides (explicit caller choice, e.g. --models flag)
+        3. model_ref "auto" or absent + model_requirements → /v1/models/select
+        4. model_ref → models.yaml registry lookup
+        5. On ProxyClientError, handler-level fallback via model_requirements
         """
         from ..execution.proxy_client import ProxyClientError
 
@@ -62,10 +105,84 @@ class GenericGenerateHandler(BaseHandler):
         source_provenance = self._extract_source_provenance(step, context)
 
         executor_override = context._step_model_override.get(step.name)
+        model_ref_overrides = context.options.get("model_ref_overrides")
+        runtime_override: str | None = None
+        if model_ref_overrides and step.model_ref:
+            override = model_ref_overrides.get(step.name) or model_ref_overrides.get(
+                step.model_ref
+            )
+            if isinstance(override, str) and override.strip():
+                runtime_override = override.strip()
+
         if executor_override:
             model_id = executor_override
             model_system_prompt = None
             model_profile = None
+        elif runtime_override:
+            model_id = runtime_override
+            model_system_prompt = None
+            model_profile = None
+            logger.info("[%s] Using runtime model override: %s", step.name, model_id)
+        elif step.model_ref == "auto" or (
+            not step.model_ref and step.model_requirements
+        ):
+            from ..execution.resolved_candidates import get_ranked_candidates
+            from ..execution.resolver import NamespaceResolver
+
+            requirements = dict(step.model_requirements or {})
+            if step.avoid_models_from:
+                try:
+                    resolver = NamespaceResolver(context)
+                    avoided = _resolve_avoid_models(
+                        step.avoid_models_from,
+                        resolver,
+                        step.name,
+                    )
+                    if avoided:
+                        existing = requirements.get("avoid_models")
+                        if isinstance(existing, list):
+                            merged = list(existing)
+                        elif isinstance(existing, str) and existing:
+                            merged = [existing]
+                        else:
+                            merged = []
+                        requirements["avoid_models"] = merged + avoided
+                except Exception as exc:
+                    logger.warning(
+                        "[%s] avoid_models_from resolution failed (%s): %s"
+                        " - proceeding without exclusion",
+                        step.name,
+                        step.avoid_models_from,
+                        exc,
+                    )
+
+            candidates = await get_ranked_candidates(
+                context=context,
+                step_name=step.name,
+                requirements=requirements,
+            )
+            if not candidates:
+                logger.warning(
+                    "[%s] Auto model resolution returned no candidates "
+                    "for requirements=%s",
+                    step.name,
+                    requirements,
+                )
+                raise ValueError(
+                    f"Step '{step.name}': auto model resolution found no candidates "
+                    f"for requirements {requirements}. "
+                    f"Check that models matching the requirements are available "
+                    f"(source/task/min_score filters may be too restrictive, or "
+                    f"the /v1/models/select endpoint may be temporarily unavailable)."
+                )
+            model_id = candidates[0]
+            model_system_prompt = None
+            model_profile = None
+            logger.info(
+                "[%s] Auto-resolved model from requirements: %s",
+                step.name,
+                model_id,
+            )
         else:
             model_config = registry.get_model_config(
                 step.model_ref,
@@ -93,7 +210,7 @@ class GenericGenerateHandler(BaseHandler):
 
             from .model_fallback import resolve_fallback_models, try_fallbacks
 
-            fallback_ids = resolve_fallback_models(
+            fallback_ids = await resolve_fallback_models(
                 step,
                 context,
                 exclude=model_id,
@@ -194,8 +311,6 @@ class GenericGenerateHandler(BaseHandler):
         json_schema = None
         if step.generation_parameters.get("response_format"):
             json_schema = step.generation_parameters["response_format"].get("schema")
-        elif prompt_config.json_schema:
-            json_schema = prompt_config.json_schema
 
         return {
             "model_id": model_id,
@@ -560,8 +675,8 @@ class GenericGenerateHandler(BaseHandler):
 
     def validate(self, step: StepConfig) -> list[str]:
         errors = []
-        if not step.model_ref:
-            errors.append(f"Step '{step.id}' missing model_ref")
+        if not step.model_ref and not step.model_requirements:
+            errors.append(f"Step '{step.id}' needs model_ref or model_requirements")
         if not step.prompt_ref:
             errors.append(f"Step '{step.id}' missing prompt_ref")
         return errors

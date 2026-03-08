@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, override
@@ -33,7 +34,11 @@ from systems.pipeline.core.constants import (
 from systems.pipeline.core.constants import (
     RAG_NO_RETRIEVAL_SENTINEL as _NO_RETRIEVAL_SENTINEL,
 )
-from systems.pipeline.core.events.step import RagRetrievalParamsResolved
+from systems.pipeline.core.events.step import (
+    RagRetrievalCompleted,
+    RagRetrievalFailed,
+    RagRetrievalParamsResolved,
+)
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -122,14 +127,17 @@ def _rrf_merge(
     results_per_query: list[list[_RetrievedChunk]],
     k: int = 60,
     max_chunks: int = 20,
-) -> list[_RetrievedChunk]:
+) -> tuple[list[_RetrievedChunk], dict[str, float]]:
     """Reciprocal rank fusion across multiple query result sets.
 
     RRF score: score(chunk) = Σ 1/(k + rank_i + 1), summed across queries
     where rank_i is the 0-based position in query i's results.
 
-    Cosine distances from different queries are incomparable —
-    RRF uses rank order only.
+    Cosine distances from different queries are incomparable - RRF uses rank
+    order only.
+
+    Returns (merged_chunks, scores_by_hash) where scores_by_hash maps
+    content_hash -> RRF score for the returned chunks only.
     """
     scores: dict[str, float] = {}
     chunks: dict[str, _RetrievedChunk] = {}
@@ -142,7 +150,8 @@ def _rrf_merge(
                 chunks[cid] = chunk
 
     sorted_ids = sorted(scores, key=lambda cid: scores[cid], reverse=True)
-    return [chunks[cid] for cid in sorted_ids[:max_chunks]]
+    selected = sorted_ids[:max_chunks]
+    return [chunks[cid] for cid in selected], {cid: scores[cid] for cid in selected}
 
 
 _BINARY_EXTENSIONS: frozenset[str] = frozenset(
@@ -521,6 +530,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 uses_explicit_prefixes=bool(source_prefixes),
             ),
         )
+        _retrieval_start = _time.monotonic()
 
         async with make_async_client(base_url, timeout=30.0) as client:
             tasks = [
@@ -545,13 +555,24 @@ class RagMultiRetrieveHandler(BaseHandler):
                 successful.append(result)
 
         if not successful:
+            _retrieval_seconds = _time.monotonic() - _retrieval_start
             logger.warning("Step '%s': all queries failed", step.id)
+            self._publish_bus_event(
+                context,
+                RagRetrievalFailed(
+                    pipeline_id=context.pipeline.id,
+                    execution_id=context.execution_id,
+                    step_name=step.name,
+                    error=f"all {len(queries)} queries failed",
+                    total_retrieval_seconds=_retrieval_seconds,
+                ),
+            )
             return StepOutput(
                 raw=_NO_RESULTS_SENTINEL,
                 json={"chunks_found": 0, "queries_executed": len(queries)},
             )
 
-        merged = _rrf_merge(successful, k=rrf_k, max_chunks=max_chunks)
+        merged, merged_scores = _rrf_merge(successful, k=rrf_k, max_chunks=max_chunks)
         context_text = _format_context(merged)
 
         total_raw = sum(len(r) for r in successful)
@@ -560,6 +581,33 @@ class RagMultiRetrieveHandler(BaseHandler):
             step.id,
             total_raw,
             len(merged),
+        )
+        _retrieval_seconds = _time.monotonic() - _retrieval_start
+        chunks_per_query = [len(r) for r in successful]
+        rrf_scores_list = list(merged_scores.values())
+        predicted_scope_for_event = str(rewrite_data.get("scope", "unknown"))
+        fallback_triggered = scope != predicted_scope_for_event
+        self._publish_bus_event(
+            context,
+            RagRetrievalCompleted(
+                pipeline_id=context.pipeline.id,
+                execution_id=context.execution_id,
+                step_name=step.name,
+                predicted_scope=predicted_scope_for_event,
+                scope_confidence=float(rewrite_data.get("scope_confidence", 1.0)),
+                fallback_triggered=fallback_triggered,
+                chunks_per_query=chunks_per_query,
+                zero_result_queries=sum(1 for c in chunks_per_query if c == 0),
+                rrf_score_min=min(rrf_scores_list) if rrf_scores_list else 0.0,
+                rrf_score_max=max(rrf_scores_list) if rrf_scores_list else 0.0,
+                rrf_score_mean=(
+                    sum(rrf_scores_list) / len(rrf_scores_list)
+                    if rrf_scores_list
+                    else 0.0
+                ),
+                chunks_after_merge=len(merged),
+                total_retrieval_seconds=_retrieval_seconds,
+            ),
         )
 
         return StepOutput(

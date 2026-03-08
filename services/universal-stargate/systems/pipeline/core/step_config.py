@@ -32,6 +32,15 @@ class StepConfig(BaseModel):
     # Handler specification
     handler: str | None = None
     handler_inputs: dict[str, InputBinding] = Field(default_factory=dict)
+    avoid_models_from: str | None = Field(
+        default=None,
+        description=(
+            "Binding path to a prior step's model_id. "
+            "Resolved at execution time and passed as avoid_models "
+            "to /v1/models/select, ensuring model diversity in chained steps. "
+            "Example: 'analyze.model_id'"
+        ),
+    )
     handler_outputs: dict[str, OutputBinding] = Field(default_factory=dict)
 
     # Common optional fields
@@ -242,17 +251,80 @@ class StepConfig(BaseModel):
         search_path: str | None = None,
         model_ref_overrides: dict[str, str] | None = None,
     ) -> str | None:
-        """Get the model_id this step will invoke."""
-        if not self.model_ref:
-            return None
-        self.validate_model_ref()
+        """Get the model_id this step will invoke.
 
-        if model_ref_overrides:
+        Resolution order:
+        1. model_ref_overrides (explicit user/caller choice)
+        2. model_ref "auto" + model_requirements → /v1/models/select (first candidate)
+        3. model_ref → models.yaml registry lookup
+        4. None (no model_ref set and no model_requirements)
+        """
+        if model_ref_overrides and self.model_ref:
             override = model_ref_overrides.get(self.name) or model_ref_overrides.get(
                 self.model_ref
             )
             if isinstance(override, str) and override.strip():
                 return override.strip()
+
+        if self.model_ref == "auto" or (not self.model_ref and self.model_requirements):
+            from .execution.requirements_resolver import resolve_model_requirements
+
+            candidates = resolve_model_requirements(self.model_requirements or {})
+            return candidates[0] if candidates else None
+
+        if not self.model_ref:
+            return None
+        self.validate_model_ref()
+
+        try:
+            model_config = registry.get_model_config(
+                self.model_ref, domain=domain, search_path=search_path
+            )
+            return model_config.model if model_config else None
+        except Exception:
+            return None
+
+    async def get_target_model_id_async(
+        self,
+        registry: Any,
+        *,
+        domain: str | None = None,
+        search_path: str | None = None,
+        model_ref_overrides: dict[str, str] | None = None,
+        context: Any | None = None,
+    ) -> str | None:
+        """Async target-model resolution for live execution paths.
+
+        ∀ event-loop callers: use this variant so `model_requirements` selection
+        yields while `/v1/models/select` is served by the same Stargate process.
+        """
+        if model_ref_overrides and self.model_ref:
+            override = model_ref_overrides.get(self.name) or model_ref_overrides.get(
+                self.model_ref
+            )
+            if isinstance(override, str) and override.strip():
+                return override.strip()
+
+        if self.model_ref == "auto" or (not self.model_ref and self.model_requirements):
+            from .execution.requirements_resolver import (
+                async_resolve_model_requirements,
+            )
+            from .execution.resolved_candidates import get_ranked_candidates
+
+            requirements = dict(self.model_requirements or {})
+            if context is None:
+                candidates = await async_resolve_model_requirements(requirements)
+            else:
+                candidates = await get_ranked_candidates(
+                    context=context,
+                    step_name=self.name,
+                    requirements=requirements,
+                )
+            return candidates[0] if candidates else None
+
+        if not self.model_ref:
+            return None
+        self.validate_model_ref()
 
         try:
             model_config = registry.get_model_config(
@@ -329,4 +401,3 @@ class StepConfig(BaseModel):
             exclude_self=raw.get("exclude_self", False),
             selection=raw.get("selection", "rotate"),
         )
-

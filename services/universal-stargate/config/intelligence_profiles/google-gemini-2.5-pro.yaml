@@ -1,0 +1,27 @@
+basename: gemini-2.5-pro
+full_model_id: google/gemini-2.5-pro
+source: cloud
+latency_bucket: medium
+cost_bucket: medium
+reasoning_depth: strong
+tasks:
+  planning:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Long-context reasoning, structured planning, large codebase analysis
+  code_architecture:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Strong at cross-file reasoning and system design
+  code_review:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Precise and thorough code analysis
+  research:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Grounded synthesis with strong recall

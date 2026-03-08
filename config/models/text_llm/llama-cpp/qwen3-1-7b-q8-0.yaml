@@ -1,0 +1,26 @@
+catalog_schema: 4
+schema: llama-cpp
+metadata:
+  name: Qwen3-1.7B-Q8_0
+  format: gguf
+  quant: Q8_0
+  capabilities:
+    input_schema: messages
+    modalities:
+      input:
+        - text
+      output:
+        - text
+    interaction:
+      chat_template: false
+    reasoning:
+      supports_thinking: false
+    limits: {}
+    provenance: {}
+download:
+  huggingface:
+    repo: Qwen3-1.7B-GGUF
+    file: Qwen3-1.7B-Q8_0.gguf
+    verified: false
+  size_bytes: 1834426944
+  sha256: 0becaa825564295d82e9af4d008bca5f8b7f5f73bf1c6a0b58f7c53ef26b47fd

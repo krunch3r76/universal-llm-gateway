@@ -2,13 +2,34 @@
 
 from __future__ import annotations
 
-import sys
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 import yaml
 
 from .constants import _ROLES_PATH, STARGATE_URL
+
+
+@dataclass(slots=True, kw_only=True)
+class SelectionFailure(RuntimeError):  # noqa: N818
+    """Structured model-selection failure with HTTP context.
+
+    Raised instead of returning None so callers receive machine-readable
+    failure metadata (status_code, failure_kind) for artifact recording.
+    """
+
+    role: str
+    reason: str
+    failure_kind: str
+    status_code: int | None = None
+    response_excerpt: str | None = None
+
+    def __str__(self) -> str:
+        base = f"selection failed for role '{self.role}': {self.reason}"
+        if self.status_code is not None:
+            base += f" (http {self.status_code})"
+        return base
 
 
 def load_roles() -> dict[str, Any]:
@@ -37,22 +58,23 @@ def select_models_for_role(
     role_requirements: dict[str, dict[str, Any]],
     stargate_url: str = STARGATE_URL,
     count: int = 2,
-) -> list[str] | None:
+) -> tuple[list[str], str]:
     """Select models for a role via the unified Stargate endpoint.
 
     Sends a single POST /v1/models/select with the role's requirements.
-    Returns model IDs if the endpoint returns results, None otherwise.
+    Returns (model_ids, selection_path) on success.
+    Raises SelectionFailure on all error paths (config missing, HTTP error,
+    network error, empty result).
     """
     req_config = role_requirements.get(role)
     if req_config is None:
-        print(
-            f"No requirements config for role '{role}', skipping selection",
-            file=sys.stderr,
+        raise SelectionFailure(
+            role=role,
+            reason="missing role requirements",
+            failure_kind="config_missing",
         )
-        return None
 
     payload = {**req_config, "count": count}
-
     try:
         with httpx.Client(timeout=10.0) as client:
             resp = client.post(
@@ -60,41 +82,31 @@ def select_models_for_role(
                 json=payload,
             )
         resp.raise_for_status()
-        data = resp.json()
-        selection_path = data.get("selection_path", "unknown")
-        model_ids = [m["id"] for m in data.get("models", []) if isinstance(m, dict)]
-
-        if model_ids:
-            print(
-                f"Selection path: {selection_path} ({', '.join(model_ids)})",
-                file=sys.stderr,
-            )
-            return model_ids
-        print(
-            f"Selection path: {selection_path} returned no models for '{role}'",
-            file=sys.stderr,
-        )
     except httpx.HTTPStatusError as exc:
-        print(
-            f"Selection: unified endpoint HTTP {exc.response.status_code}: "
-            f"{exc.response.text[:200]}",
-            file=sys.stderr,
-        )
+        raise SelectionFailure(
+            role=role,
+            reason="unified selection endpoint returned error",
+            failure_kind="http_error",
+            status_code=exc.response.status_code,
+            response_excerpt=exc.response.text[:500],
+        ) from exc
     except httpx.RequestError as exc:
-        print(
-            f"Selection: unified endpoint network error: {exc}",
-            file=sys.stderr,
+        raise SelectionFailure(
+            role=role,
+            reason=str(exc),
+            failure_kind="network_error",
+        ) from exc
+
+    data = resp.json()
+    selection_path = data.get("selection_path", "unknown")
+    model_ids = [m["id"] for m in data.get("models", []) if isinstance(m, dict)]
+    if not model_ids:
+        raise SelectionFailure(
+            role=role,
+            reason=f"selection path '{selection_path}' returned no models",
+            failure_kind="empty_result",
         )
-    except Exception as exc:
-        import logging as _logging
-        _logging.getLogger(__name__).exception(
-            "Selection: unified endpoint unexpected error for role '%s'", role
-        )
-        print(
-            f"Selection: unified endpoint unexpected error: {type(exc).__name__}: {exc}",
-            file=sys.stderr,
-        )
-    return None
+    return model_ids, selection_path
 
 
 def warn_local_model_for_role(
@@ -103,6 +115,8 @@ def warn_local_model_for_role(
     role_requirements: dict[str, dict[str, Any]],
 ) -> None:
     """Warn when --models includes local models for a role configured as cloud-only."""
+    import sys
+
     req_config = role_requirements.get(role)
     if not req_config:
         return

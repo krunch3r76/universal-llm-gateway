@@ -106,7 +106,7 @@ class NonStreamingChatCompletion:
 
             resource_tracker = _get_resource_tracker()
 
-            async with resource_tracker.track_inference(model_id):
+            async with resource_tracker.track_inference(model_id, request_id):
                 resource_tracker.set_model_inference_state(model_id, "token_counting")
                 try:
                     resource_tracker.set_model_inference_state(model_id, "generating")

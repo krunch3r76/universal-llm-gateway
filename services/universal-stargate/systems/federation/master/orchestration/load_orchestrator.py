@@ -184,8 +184,7 @@ class FederatedLoadOrchestrator:
         if self._gateway_manager is None:
             return False
 
-        # Use configured staleness threshold (async - emits staleness event if stale)
-        if not await self._gateway_manager.is_telemetry_fresh(
+        if not self._gateway_manager.is_telemetry_fresh(
             gateway.gateway_id,
             self._config.telemetry_staleness_threshold,
         ):

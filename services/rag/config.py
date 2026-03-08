@@ -40,6 +40,8 @@ class KnowledgeExtractionConfig:
     pipeline: str = "rag-extraction"
     schema_version: int = 1
     property_boost_factor: float = 0.5
+    max_extraction_attempts: int = 3
+    # ∀ chunk: attempt_count >= max_extraction_attempts ⟹ permanently skipped
 
 
 DEFAULT_EMBEDDING_MODEL = "bge-m3-q8-0-8192-cpu"
@@ -50,7 +52,9 @@ class RagConfig:
     watch_directories: list[WatchDirectory]
     scopes: dict[str, ScopeDefinition]
     automatic_indexing_enabled: bool = True
-    knowledge_extraction: KnowledgeExtractionConfig = _field(default_factory=KnowledgeExtractionConfig)
+    knowledge_extraction: KnowledgeExtractionConfig = _field(
+        default_factory=KnowledgeExtractionConfig
+    )
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
 
 
@@ -162,10 +166,14 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
     pipeline = raw.get("pipeline", "rag-extraction")
     schema_version = raw.get("schema_version", 1)
     boost = raw.get("property_boost_factor", 0.5)
+    max_attempts = raw.get("max_extraction_attempts", 3)
     return KnowledgeExtractionConfig(
         pipeline=str(pipeline) if isinstance(pipeline, str) else "rag-extraction",
         schema_version=int(schema_version) if isinstance(schema_version, int) else 1,
         property_boost_factor=float(boost) if isinstance(boost, int | float) else 0.5,
+        max_extraction_attempts=int(max_attempts)
+        if isinstance(max_attempts, int)
+        else 3,
     )
 
 
@@ -201,7 +209,9 @@ def load_config() -> RagConfig:
         else DEFAULT_EMBEDDING_MODEL
     )
     raw_indexing = parsed_root.get("automatic_indexing_enabled", True)
-    automatic_indexing_enabled = raw_indexing if isinstance(raw_indexing, bool) else True
+    automatic_indexing_enabled = (
+        raw_indexing if isinstance(raw_indexing, bool) else True
+    )
     return RagConfig(
         watch_directories=watch_directories,
         scopes=scopes,

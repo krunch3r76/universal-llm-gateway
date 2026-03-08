@@ -1,0 +1,27 @@
+basename: deepseek-r1-0528
+full_model_id: deepseek/deepseek-r1-0528
+source: cloud
+latency_bucket: slow
+cost_bucket: cheap
+reasoning_depth: strong
+tasks:
+  planning:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Updated R1 variant with strong multi-step planning
+  code_architecture:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Deep reasoning over code structure
+  code_review:
+    score: good
+    evidence:
+      - source: curated
+        detail: Thorough analysis with thinking mode
+  research:
+    score: good
+    evidence:
+      - source: curated
+        detail: Strong analytical depth

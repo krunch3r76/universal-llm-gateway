@@ -1,0 +1,21 @@
+schema_version: 6
+id: consult-prompt-engineer
+version: "1"
+type: consult
+
+output: consult
+options:
+  timeout_seconds: 300
+
+steps:
+  - name: consult
+    type: generate
+    model_ref: auto
+    prompt_ref: consult.prompt_engineer
+    model_requirements:
+      task: code_review
+      min_score: good
+      source: cloud
+      min_context: 32768
+      tags: [code, reasoning]
+      health_scoring: true

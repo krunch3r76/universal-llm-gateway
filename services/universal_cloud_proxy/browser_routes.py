@@ -58,6 +58,12 @@ class SelectRequest(BaseModel):
         description="Tags to exclude (e.g. exclude 'pro' for budget)",
     )
     min_context: int = Field(default=0, description="Minimum context window size")
+    min_tier: int = Field(
+        default=0,
+        ge=0,
+        le=3,
+        description="Minimum quality tier (0=all, 1=low+, 2=mid+, 3=high only)",
+    )
     min_prompt_cost: float | None = Field(
         default=None,
         description="Min prompt cost per million tokens (filter free tier)",
@@ -301,6 +307,7 @@ def register_browser_routes(
             tags=req.tags or None,
             exclude_tags=req.exclude_tags or None,
             min_context=req.min_context,
+            min_tier=req.min_tier,
             min_prompt_cost=req.min_prompt_cost,
             max_prompt_cost=req.max_prompt_cost,
             min_completion_cost=req.min_completion_cost,

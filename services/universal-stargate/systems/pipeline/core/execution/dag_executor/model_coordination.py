@@ -24,27 +24,49 @@ class StepModelCoordinator:
     def __init__(self, executor: DAGExecutor) -> None:
         self._executor = executor
         self._model_tracker = ModelUsageTracker()
+        self._resolved_target_models: dict[
+            tuple[str, tuple[tuple[str, str], ...] | None],
+            str | None,
+        ] = {}
 
-    def resolve_target_model(self, node: StepNode) -> str | None:
+    async def resolve_target_model(self, node: StepNode) -> str | None:
         """Resolve step target model using pipeline registry/domain context."""
-        return node.step.get_target_model_id(
-            self._executor.context._registry,
-            domain=self._executor.context.pipeline.domain,
-            search_path=self._executor.context.pipeline.source_search_path,
-        )
+        return await self._resolve_target_model(node, model_ref_overrides=None)
 
-    def resolve_target_model_for_execution(
+    async def resolve_target_model_for_execution(
         self,
         node: StepNode,
         model_ref_overrides: dict[str, str] | None,
     ) -> str | None:
         """Resolve target model using execution-time model overrides."""
-        return node.step.get_target_model_id(
+        return await self._resolve_target_model(
+            node,
+            model_ref_overrides=model_ref_overrides,
+        )
+
+    async def _resolve_target_model(
+        self,
+        node: StepNode,
+        *,
+        model_ref_overrides: dict[str, str] | None,
+    ) -> str | None:
+        """Resolve once per step+override set to avoid repeated self-selection."""
+        override_key = (
+            tuple(sorted(model_ref_overrides.items())) if model_ref_overrides else None
+        )
+        cache_key = (node.step.id, override_key)
+        if cache_key in self._resolved_target_models:
+            return self._resolved_target_models[cache_key]
+
+        resolved = await node.step.get_target_model_id_async(
             self._executor.context._registry,
             domain=self._executor.context.pipeline.domain,
             search_path=self._executor.context.pipeline.source_search_path,
             model_ref_overrides=model_ref_overrides,
+            context=self._executor.context,
         )
+        self._resolved_target_models[cache_key] = resolved
+        return resolved
 
     @staticmethod
     def get_lock_model(node: StepNode, target_model: str | None) -> str | None:

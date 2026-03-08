@@ -9,6 +9,8 @@ Layer priority (field-level merge, highest wins):
 from __future__ import annotations
 
 import logging
+import random
+from itertools import groupby
 from pathlib import Path
 from typing import Any
 
@@ -74,12 +76,15 @@ class IntelligenceProfileStore:
         """Return ranked model IDs matching the given requirements.
 
         Filters by task score, context, tool support, source, and cost.
-        Ranks by task score descending, cost ascending as tiebreaker.
+        Ranks by task score descending. Within each score tier, order is
+        randomised so repeated calls with the same requirements rotate
+        through the available pool rather than always returning the same
+        subset.
         Applies provider diversity constraint if specified.
         Returns at most requirements.count IDs.
         """
         all_ids = set(self._curated) | set(self._derived)
-        scored: list[tuple[int, float, str]] = []
+        scored: list[tuple[int, str]] = []
 
         for model_id in all_ids:
             profile = self.get(model_id)
@@ -90,12 +95,15 @@ class IntelligenceProfileStore:
                 continue
 
             task_score = _task_score_value(profile, requirements.task)
-            cost = _cost_sort_value(profile)
-            scored.append((task_score, cost, model_id))
+            scored.append((task_score, model_id))
 
-        scored.sort(key=lambda t: (-t[0], t[1]))
+        scored.sort(key=lambda t: -t[0])
 
-        model_ids = [mid for _, _, mid in scored]
+        model_ids: list[str] = []
+        for _score, group in groupby(scored, key=lambda t: t[0]):
+            tier = [mid for _, mid in group]
+            random.shuffle(tier)
+            model_ids.extend(tier)
         if (
             requirements.provider_diversity
             and requirements.provider_diversity.min_unique > 1
@@ -147,12 +155,6 @@ def _task_score_value(profile: IntelligenceProfile, task: str) -> int:
     entry = profile.tasks.get(task)
     score = getattr(entry, "score", None) if entry else None
     return SCORE_ORDER.get(score, -1) if score else -1
-
-
-def _cost_sort_value(profile: IntelligenceProfile) -> float:
-    """Numeric cost for tiebreaking — lower is better."""
-    cost = _extract_cost(profile)
-    return cost if cost is not None else 999.0
 
 
 def _extract_cost(profile: IntelligenceProfile) -> float | None:

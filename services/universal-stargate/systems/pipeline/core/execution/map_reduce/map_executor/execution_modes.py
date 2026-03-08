@@ -93,6 +93,23 @@ class MapExecutionModes:
             duration = (completion_time - started_at) if started_at else None
 
             if task.exception() is not None:
+                exc = task.exception()
+                from ....dag import ResponseTruncatedError
+
+                truncated_response = None
+                truncation_tokens = None
+                if isinstance(exc, ResponseTruncatedError):
+                    from pathlib import Path
+
+                    truncation_tokens = exc.completion_tokens
+                    dump_dir = Path("/tmp/pipeline-truncated")
+                    dump_dir.mkdir(parents=True, exist_ok=True)
+                    dump_file = dump_dir / f"{self._step.name}-iter{idx}-{int(time.monotonic() * 1000)}.txt"
+                    try:
+                        dump_file.write_text(exc.response_preview, encoding="utf-8")
+                        truncated_response = str(dump_file)
+                    except OSError:
+                        truncated_response = exc.response_preview[:500]
                 iteration_results.append(
                     IterationResult(
                         index=idx,
@@ -100,8 +117,10 @@ class MapExecutionModes:
                         model_id=ctx.get("model_id"),
                         gateway_id=ctx.get("gateway_id"),
                         duration_seconds=duration,
-                        error_message=str(task.exception()),
+                        error_message=str(exc),
                         started_at=started_at,
+                        truncated_response=truncated_response,
+                        truncation_tokens=truncation_tokens,
                     )
                 )
                 logger.warning(
@@ -188,7 +207,7 @@ class MapExecutionModes:
         iteration_metadata: list[tuple[int, str | None]],
         iteration_context: dict[int, dict[str, Any]],
         inference_timeout_seconds: float | None = None,
-    ) -> tuple[list[StepOutput], list[str | None]]:
+    ) -> tuple[list[StepOutput], list[str | None], list[int]]:
         """
         Execute with timeout and optional partial success.
 
@@ -314,12 +333,14 @@ class MapExecutionModes:
 
         outputs = []
         output_keys = []
+        output_positions = []
         for idx, key in iteration_metadata:
             if idx in results_by_index:
                 outputs.append(results_by_index[idx])
                 output_keys.append(key)
+                output_positions.append(idx)
 
-        return outputs, output_keys
+        return outputs, output_keys, output_positions
 
     async def execute_with_fail_fast(
         self,
@@ -328,7 +349,7 @@ class MapExecutionModes:
         threshold: int | float | None,
         iteration_metadata: list[tuple[int, str | None]],
         iteration_context: dict[int, dict[str, Any]],
-    ) -> tuple[list[StepOutput], list[str | None]]:
+    ) -> tuple[list[StepOutput], list[str | None], list[int]]:
         """
         Execute with fail-fast on impossible threshold.
 
@@ -426,9 +447,11 @@ class MapExecutionModes:
 
         outputs = []
         output_keys = []
+        output_positions = []
         for idx, key in iteration_metadata:
             if idx in results_by_index:
                 outputs.append(results_by_index[idx])
                 output_keys.append(key)
+                output_positions.append(idx)
 
-        return outputs, output_keys
+        return outputs, output_keys, output_positions

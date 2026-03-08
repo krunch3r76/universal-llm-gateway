@@ -28,10 +28,10 @@ logger = logging.getLogger(__name__)
 class MapIterationRuntimeProtocol(Protocol):
     """Runtime contract needed by map iteration execution paths."""
 
-    pipeline: Any
+    pipeline: Any  # TODO: tighten to concrete runtime pipeline protocol
     execution_id: str
-    recorder: Any
-    _proxy: Any
+    recorder: Any  # TODO: tighten to concrete recorder protocol
+    _proxy: Any  # TODO: tighten to concrete proxy protocol
 
     def with_map_iteration_request_id(self, request_id: str) -> Self: ...
 
@@ -77,6 +77,7 @@ class MapExecutor:
         checkpoint_manager: CheckpointManager | None = None,
         cancel_callback: Callable[[str, str | None], Awaitable[bool]] | None = None,
     ) -> None:
+        """Initialize map execution dependencies for one map step."""
         self._step = step
         self._handler = handler
         self._runtime = runtime
@@ -133,7 +134,7 @@ class MapExecutor:
             self._map_config.fail_fast,
         )
 
-        pool_assignments = self._iteration_preparer.build_pool_assignments(
+        pool_assignments = await self._iteration_preparer.build_pool_assignments(
             iteration_items, self._runtime
         )
 
@@ -156,7 +157,24 @@ class MapExecutor:
             result = await self._execute_iteration(
                 idx, value, total, key, iteration_context, pool_assignments.get(idx)
             )
-            iteration_context[idx]["completed_at"] = time.monotonic()
+            ctx = iteration_context[idx]
+            ctx["completed_at"] = time.monotonic()
+            elapsed = ctx["completed_at"] - ctx.get("started_at", ctx["completed_at"])
+            inference_start = ctx.get("inference_started_at")
+            inference_seconds = (
+                ctx["completed_at"] - inference_start
+                if inference_start is not None
+                else None
+            )
+            self._event_publisher.emit_iteration_completed_immediate(
+                index=idx,
+                elapsed_seconds=round(elapsed, 3),
+                inference_seconds=round(inference_seconds, 3)
+                if inference_seconds is not None
+                else None,
+                prompt_tokens=getattr(result, "prompt_tokens", 0),
+                completion_tokens=getattr(result, "completion_tokens", 0),
+            )
             return result
 
         tasks = {
@@ -166,8 +184,12 @@ class MapExecutor:
 
         try:
             strict_output_keys = [key for _, _, key in iteration_items]
+            has_timeout_constraints = (
+                self._map_config.timeout_seconds is not None
+                or self._map_config.inference_timeout_seconds is not None
+            )
             if self._map_config.fail_fast:
-                outputs, output_keys = (
+                outputs, output_keys, output_positions = (
                     await self._execution_modes.execute_with_fail_fast(
                         tasks,
                         total,
@@ -176,12 +198,9 @@ class MapExecutor:
                         iteration_context,
                     )
                 )
-            elif (
-                self._map_config.timeout_seconds is not None
-                or self._map_config.inference_timeout_seconds is not None
-            ):
+            elif has_timeout_constraints:
                 outer_timeout = self._map_config.timeout_seconds or 3600.0
-                outputs, output_keys = (
+                outputs, output_keys, output_positions = (
                     await self._execution_modes.execute_with_timeout(
                         tasks,
                         total,
@@ -195,9 +214,11 @@ class MapExecutor:
                     )
                 )
             else:
-                # Strict mode: all must succeed, gather() preserves order
+                # Strict mode is intentionally fail-fast.
+                # gather() preserves order and raises on first task failure.
                 outputs = await asyncio.gather(*tasks.keys())
                 output_keys = strict_output_keys
+                output_positions = list(range(total))
         finally:
             # Yield once so in-flight event callbacks can stamp context before we
             # tear down subscriptions at execution boundary.
@@ -221,7 +242,12 @@ class MapExecutor:
             met_threshold=met_threshold,
         )
 
-        return MapOutputCollection(list(outputs), keys=output_keys)
+        return MapOutputCollection(
+            list(outputs),
+            keys=output_keys,
+            output_positions=output_positions,
+            total_count=total,
+        )
 
     def _subscribe_inference_start(
         self, iteration_context: dict[int, dict[str, Any]]
@@ -315,6 +341,7 @@ class MapExecutor:
                inference.started + fallback.used
             3) neither set: emit signal.lost
         """
+        fallback_warning_emitted = False
         for idx, ctx in iteration_context.items():
             request_id = ctx.get("request_id")
             if not request_id:
@@ -324,6 +351,15 @@ class MapExecutor:
 
             fallback_boundary_at = ctx.get("fallback_boundary_at")
             if isinstance(fallback_boundary_at, float):
+                if not fallback_warning_emitted:
+                    logger.warning(
+                        "Map execution fallback active: primary "
+                        "request.inference.started missing; using "
+                        "request.processing timing (execution_id=%s step=%s)",
+                        self._runtime.execution_id,
+                        self._step.name,
+                    )
+                    fallback_warning_emitted = True
                 queue_wait = fallback_boundary_at - ctx["started_at"]
                 self._event_publisher.emit_iteration_inference_started(
                     index=idx,
@@ -346,6 +382,13 @@ class MapExecutor:
                 index=idx,
                 request_id=request_id,
             )
+
+    @staticmethod
+    def _extract_input_fingerprint(typed_inputs: Any) -> str | None:
+        """Return deterministic input fingerprint when available."""
+        if typed_inputs and hasattr(typed_inputs, "fingerprint"):
+            return typed_inputs.fingerprint()
+        return None
 
     async def _execute_iteration(
         self,
@@ -376,11 +419,7 @@ class MapExecutor:
 
         iteration_key = f"{self._step.name}:{index}"
         if self._checkpoint_manager:
-            fingerprint = (
-                typed_inputs.fingerprint()
-                if typed_inputs and hasattr(typed_inputs, "fingerprint")
-                else None
-            )
+            fingerprint = self._extract_input_fingerprint(typed_inputs)
             cached = await self._checkpoint_manager.load_checkpoint(
                 iteration_key,
                 input_fingerprint=fingerprint,
@@ -430,11 +469,7 @@ class MapExecutor:
         if self._checkpoint_manager and self._checkpoint_manager.should_checkpoint(
             self._step
         ):
-            fingerprint = (
-                typed_inputs.fingerprint()
-                if typed_inputs and hasattr(typed_inputs, "fingerprint")
-                else None
-            )
+            fingerprint = self._extract_input_fingerprint(typed_inputs)
             await self._checkpoint_manager.save_checkpoint(
                 iteration_key,
                 output,
@@ -461,8 +496,8 @@ class MapExecutor:
             iter_step = self._iteration_preparer.create_iteration_step(
                 iter_inputs[2], assigned_model
             )
-            model_id_for_iteration = getattr(iter_step, "model_ref", None) or getattr(
-                iter_step, "model_id", None
+            model_id_for_iteration = getattr(
+                iter_step, "model_ref", getattr(iter_step, "model_id", None)
             )
             iteration_context[idx] = {
                 "model_id": model_id_for_iteration,

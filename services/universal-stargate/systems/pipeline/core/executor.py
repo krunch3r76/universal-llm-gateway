@@ -493,11 +493,13 @@ class PipelineExecutor:
             if isinstance(output, MapOutputCollection):
                 if pipeline.output_format == "json_array":
                     results = []
-                    for item in output.all_outputs():
-                        if item.json is not None:
+                    for item in output.outputs_aligned():
+                        if item is not None and item.json is not None:
                             results.append(item.json)
-                        else:
+                        elif item is not None:
                             results.append(item.raw)
+                        else:
+                            results.append(None)
                     return json.dumps(results)
                 text_parts = [item.text for item in output.all_outputs()]
                 return "\n\n".join(text_parts)

@@ -56,21 +56,21 @@ def _clear_snapshot_files_preserve_directories(snapshot_dir: Path) -> None:
     standard_stages = {"before", "after", "response-from-gateway", "response-to-client"}
 
     for item in snapshot_dir.iterdir():
-        if item.is_file() or item.is_symlink():
-            # Delete files and symlinks at top level
+        if not item.is_dir():
+            # Delete files and symlinks at top level.
             item.unlink()
-        elif item.is_dir():
-            if item.name in standard_stages:
-                # Preserve standard stage directory, delete only its files
-                for subitem in item.iterdir():
-                    if subitem.is_file() or subitem.is_symlink():
-                        subitem.unlink()
-                    elif subitem.is_dir():
-                        # Delete unexpected nested directories in stage dirs
-                        shutil.rmtree(subitem)
+            continue
+        if item.name not in standard_stages:
+            # Delete non-standard directories (old task dirs).
+            shutil.rmtree(item)
+            continue
+        # Preserve standard stage directory, delete only its contents.
+        for subitem in item.iterdir():
+            if subitem.is_dir():
+                # Delete unexpected nested directories in stage dirs.
+                shutil.rmtree(subitem)
             else:
-                # Delete non-standard directories (old task dirs)
-                shutil.rmtree(item)
+                subitem.unlink()
 
 
 def _require_config_dict(proxy: StargateProxy) -> dict[str, Any]:
@@ -112,6 +112,11 @@ def _schedule_supervised_task(coro: Coroutine[Any, Any, object], name: str) -> N
     task = asyncio.create_task(coro, name=name)
 
     def _on_done(done_task: asyncio.Task[Any]) -> None:
+        """Handle completion callback for a supervised background task.
+
+        Args:
+            done_task: Completed asyncio task instance.
+        """
         if done_task.cancelled():
             logger.debug("Background task cancelled: %s", name)
             return
@@ -140,7 +145,7 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
         proxy: Initialized proxy instance to wire and bootstrap.
         app: Optional FastAPI app, required for federation HTTP integration.
     """
-    gateway_config = proxy._gateway_config  # noqa: SLF001
+    gateway_config = proxy.gateway_config
     gateway_name = gateway_config.name if gateway_config else None
     gateway_socket_path = gateway_config.socket_path if gateway_config else None
 
@@ -151,8 +156,9 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
         logger.info("Starting Stargate Proxy with single gateway: %s", gateway_name)
 
     # Start debug event broadcaster if configured (early - want to capture all events)
-    if proxy._debug_broadcaster:
-        await proxy._debug_broadcaster.start_debug_server()
+    debug_broadcaster = proxy.debug_broadcaster
+    if debug_broadcaster:
+        await debug_broadcaster.start_debug_server()
         debug_config = proxy.config.get_debug_event_config()
         socket_path = debug_config.get("socket_path")
         if socket_path:
@@ -234,6 +240,7 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
             gateway_manager=proxy.gateway_manager if gateway_name else None,
             event_bus=proxy.event_bus,
             stargate_config=proxy.config,
+            health_observer=proxy.model_health_store.observe,
         )
         logger.info("✅ Federation integration initialized")
 
@@ -350,7 +357,7 @@ def _wire_federation_manager(proxy: StargateProxy) -> None:
     # federated_manager.get_healthy_gateways → infinite loop
     from systems.federation.common.config import StargateMode
 
-    fed_config = proxy.federation_integration._config
+    fed_config = proxy.federation_integration.config
     if fed_config.mode == StargateMode.REMOTE:
         logger.info(
             "Remote mode: Skipping federation manager wiring (local-only routing)"
@@ -492,15 +499,13 @@ def _start_relay_periodic_telemetry(proxy: StargateProxy) -> None:
     if not proxy.federation_integration:
         return
 
-    # Access RemoteIntegration's method to start periodic telemetry
-    integration = proxy.federation_integration._mode_integration
-    if not integration or not hasattr(integration, "start_relay_periodic_telemetry"):
+    if not proxy.federation_integration.can_start_relay_periodic_telemetry():
         logger.warning("Cannot start relay periodic telemetry: method not available")
         return
 
     # Start the periodic task
     asyncio.create_task(
-        integration.start_relay_periodic_telemetry(),
+        proxy.federation_integration.start_relay_periodic_telemetry(),
         name="relay-periodic-telemetry-starter",
     )
     logger.info("✅ Started relay periodic telemetry task")

@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""Pretty-print history of consult calls from local JSONL events."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from consult_lib.history import (
+    resolve_history_path as _resolve_history_path_lib,
+)
+from consult_lib.history import (
+    resolve_pipeline_models,
+)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Show recent consult call history")
+    parser.add_argument(
+        "--file",
+        default=None,
+        help="History JSONL path (default: CONSULT_HISTORY_FILE or /tmp/consult-history/current.jsonl)",
+    )
+    parser.add_argument(
+        "-n",
+        "--limit",
+        type=int,
+        default=20,
+        help="How many recent calls to show (default: 20)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print matching events as JSON",
+    )
+    parser.add_argument(
+        "--follow",
+        action="store_true",
+        help="Follow and print new consult-call events as they are appended",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=1.0,
+        help="Polling interval seconds for --follow (default: 1.0)",
+    )
+    return parser
+
+
+
+def _parse_ts(value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.strftime("%m-%d %H:%M:%S")
+    except Exception:
+        return value
+
+
+def _compact_models(models: list[str], width: int = 40) -> str:
+    if not models:
+        return "-"
+    text = ", ".join(models)
+    if len(text) <= width:
+        return text
+    return text[: width - 3] + "..."
+
+
+def _truncate(text: str, width: int) -> str:
+    if len(text) <= width:
+        return text
+    return text[: width - 3] + "..."
+
+
+def _enrich_inflight_selected_models(
+    event: dict[str, Any],
+    *,
+    selected_models: list[str],
+    payload: dict[str, Any],
+) -> list[str]:
+    """Resolve pipeline models for running calls when selected_models is empty."""
+    if selected_models or not payload.get("pipeline_id"):
+        return selected_models
+    event_ts = event.get("timestamp", "")
+    try:
+        event_dt = datetime.fromisoformat(str(event_ts).replace("Z", "+00:00"))
+        started_posix = event_dt.timestamp()
+    except (ValueError, OSError):
+        return selected_models
+    return resolve_pipeline_models(started_at=started_posix, finished_at=time.time())
+
+
+def _iter_events(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("signal") not in ("consult.call.finished", "consult.call.started"):
+                continue
+            payload = event.get("payload", {})
+            if isinstance(payload, dict):
+                rows.append(event)
+    return rows
+
+
+def _parse_event_line(line: str) -> dict[str, Any] | None:
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(event, dict):
+        return None
+    if event.get("signal") not in ("consult.call.finished", "consult.call.started"):
+        return None
+    payload = event.get("payload", {})
+    if not isinstance(payload, dict):
+        return None
+    return event
+
+
+def _merge_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge started+finished pairs; keep unfinished started events as in-flight."""
+    finished_ids: set[str] = set()
+    for ev in events:
+        if ev.get("signal") == "consult.call.finished":
+            cid = ev.get("payload", {}).get("call_id")
+            if cid:
+                finished_ids.add(cid)
+
+    merged: list[dict[str, Any]] = []
+    for ev in events:
+        sig = ev.get("signal")
+        if sig == "consult.call.finished":
+            merged.append(ev)
+        elif sig == "consult.call.started":
+            cid = ev.get("payload", {}).get("call_id")
+            if cid not in finished_ids:
+                merged.append(ev)
+    return merged
+
+
+def _render_table(events: list[dict[str, Any]]) -> str:
+    merged = _merge_events(events)
+    header = (
+        f"{'TIME':<17} {'ROLE':<14} {'MODE':<9} {'STATUS':<9} "
+        f"{'SELECTED':<42} {'USED':<42} {'DUR':>7}"
+    )
+    sep = "-" * len(header)
+    lines = [header, sep]
+    for event in merged:
+        ts = _parse_ts(str(event.get("timestamp", "-")))
+        payload = event.get("payload", {})
+        if not isinstance(payload, dict):
+            continue
+        role = str(payload.get("role", "-"))
+        mode = str(payload.get("mode", "-"))
+        is_finished = event.get("signal") == "consult.call.finished"
+        if is_finished:
+            status = "ok" if payload.get("success") else "fail"
+        else:
+            status = "running..."
+        selected_list = [
+            str(model) for model in payload.get("selected_models", []) if isinstance(model, str)
+        ]
+        if not is_finished:
+            selected_list = _enrich_inflight_selected_models(
+                event,
+                selected_models=selected_list,
+                payload=payload,
+            )
+        selected = _compact_models(selected_list)
+        used = _compact_models(
+            [str(m) for m in payload.get("used_models", []) if isinstance(m, str)]
+        ) if is_finished else "-"
+        duration = float(payload.get("duration_seconds", 0.0)) if is_finished else 0.0
+        dur_str = f"{duration:>6.1f}s" if is_finished else f"{'...':>7}"
+        lines.append(
+            f"{_truncate(ts, 17):<17} {_truncate(role, 14):<14} {_truncate(mode, 9):<9} "
+            f"{status:<9} {_truncate(selected, 42):<42} {_truncate(used, 42):<42} "
+            f"{dur_str}"
+        )
+        if is_finished:
+            err = payload.get("error")
+            if isinstance(err, str) and err:
+                lines.append(f"  error: {_truncate(err, 146)}")
+        question = payload.get("question_preview")
+        if isinstance(question, str) and question:
+            lines.append(f"  q: {_truncate(question, 146)}")
+    return "\n".join(lines)
+
+
+def _render_follow_event(event: dict[str, Any]) -> str:
+    payload = event.get("payload", {})
+    if not isinstance(payload, dict):
+        return ""
+    ts = _parse_ts(str(event.get("timestamp", "-")))
+    role = str(payload.get("role", "-"))
+    mode = str(payload.get("mode", "-"))
+    is_finished = event.get("signal") == "consult.call.finished"
+    if is_finished:
+        status = "ok" if payload.get("success") else "fail"
+    else:
+        status = "running..."
+    selected_list = [
+        str(model) for model in payload.get("selected_models", []) if isinstance(model, str)
+    ]
+    if not is_finished:
+        selected_list = _enrich_inflight_selected_models(
+            event,
+            selected_models=selected_list,
+            payload=payload,
+        )
+    selected = _compact_models(selected_list, width=80)
+    used = _compact_models(
+        [str(m) for m in payload.get("used_models", []) if isinstance(m, str)],
+        width=80,
+    ) if is_finished else "-"
+    duration = float(payload.get("duration_seconds", 0.0)) if is_finished else None
+    question = str(payload.get("question_preview", ""))
+    dur_str = f"{duration:.1f}s" if duration is not None else "..."
+    lines = [
+        f"{ts} | role={role} | mode={mode} | status={status} | dur={dur_str}",
+        f"  selected: {selected}",
+        f"  used: {used}",
+    ]
+    if question:
+        lines.append(f"  q: {_truncate(question, 160)}")
+    if is_finished:
+        err = payload.get("error")
+        if isinstance(err, str) and err:
+            lines.append(f"  error: {_truncate(err, 160)}")
+    return "\n".join(lines)
+
+
+def _follow_history(path: Path, *, interval: float, emit_json: bool) -> None:
+    offset = path.stat().st_size if path.exists() else 0
+    print(f"Following: {path}", flush=True)
+    print("Press Ctrl+C to stop.", flush=True)
+    while True:
+        if path.exists():
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                handle.seek(offset)
+                for line in handle:
+                    event = _parse_event_line(line.strip())
+                    if not event:
+                        continue
+                    if emit_json:
+                        print(json.dumps(event, ensure_ascii=True), flush=True)
+                    else:
+                        print(_render_follow_event(event), flush=True)
+                        print("", flush=True)
+                offset = handle.tell()
+        time.sleep(max(interval, 0.1))
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    history_path = Path(args.file) if args.file else _resolve_history_path_lib()
+    events = _iter_events(history_path)
+    if args.follow:
+        selected = events[-max(args.limit, 1) :]
+        if selected:
+            if args.json:
+                for event in selected:
+                    print(json.dumps(event, ensure_ascii=True))
+            else:
+                print(f"Consult history file: {history_path}")
+                print(f"Initial entries shown: {len(selected)} of {len(events)}")
+                print("")
+                print(_render_table(selected))
+                print("")
+        elif not history_path.exists():
+            print(f"No consult history found yet at {history_path}", flush=True)
+        try:
+            _follow_history(
+                history_path,
+                interval=float(args.interval),
+                emit_json=bool(args.json),
+            )
+        except KeyboardInterrupt:
+            return
+        return
+
+    if not events:
+        print(f"No consult history found at {history_path}")
+        return
+
+    selected = events[-max(args.limit, 1) :]
+    if args.json:
+        print(json.dumps(selected, indent=2))
+        return
+
+    print(f"Consult history file: {history_path}")
+    print(f"Entries shown: {len(selected)} of {len(events)}")
+    print("")
+    print(_render_table(selected))
+
+
+if __name__ == "__main__":
+    main()

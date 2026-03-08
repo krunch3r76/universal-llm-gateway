@@ -85,20 +85,110 @@ def _is_instruction_aware_model(model_id: str) -> bool:
 
 
 _EMBED_BATCH_SIZE = 64
-# Stay safely under llama.cpp's n_batch=8192; 4 chars ≈ 1 token for English text.
-_MAX_BATCH_TOKENS = 7000
-_CHARS_PER_TOKEN = 4
+# Conservative estimate: 3 chars ≈ 1 token for dense technical/research text.
+# The qwen3 tokenizer produces more tokens per character than bge-m3 for English
+# research content. Using 3 rather than 4 avoids the llama.cpp n_batch overflow
+# seen with qwen3-embedding-8b-q8-0-4096 (n_batch=4096).
+_CHARS_PER_TOKEN = 3
+
+# n_ctx-aware ceiling: parse context size from model name (e.g. "...-4096").
+# Falls back to 7000 for models without a parseable context suffix (e.g. bge-m3).
+# Apply 0.85 headroom to keep aggregate batch tokens safely under llama.cpp's
+# physical batch limit, which llama-server enforces as a hard ceiling.
+_N_CTX_HEADROOM = 0.85
+_FALLBACK_MAX_BATCH_TOKENS = 7000
+
+
+def _max_batch_tokens_for_model(model_id: str) -> int:
+    """Derive per-batch token cap from the model's context-size suffix.
+
+    ∀ model_id ending in -<digits>: cap = digits * _N_CTX_HEADROOM.
+    Fallback for models without a numeric suffix (e.g. bge-m3): _FALLBACK_MAX_BATCH_TOKENS.
+    """
+    parts = model_id.rsplit("-", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return int(int(parts[1]) * _N_CTX_HEADROOM)
+    return _FALLBACK_MAX_BATCH_TOKENS
+
 
 _EMBED_RETRY_ATTEMPTS = 3
 _EMBED_RETRY_BACKOFF_S = 1.0
+
+# Cached from the first successful embedding response so zero-vector fallbacks
+# match the model's output dimension. Set once, never reset.
+_embed_dim: int | None = None
+
+
+def _cache_embed_dim(embeddings: list[list[float]]) -> None:
+    global _embed_dim
+    if _embed_dim is None and embeddings:
+        _embed_dim = len(embeddings[0])
+
+
+async def _handle_single_item_500(text: str, error_body: str) -> list[list[float]]:
+    """Recover from a 500 on a single-item embedding batch.
+
+    Strategy: truncate to the model's safe character limit and retry once.
+    If still failing, substitute a zero vector (neutral in cosine space)
+    rather than aborting the entire file.
+    """
+    max_chars = _max_batch_tokens_for_model(_embed_model) * _CHARS_PER_TOKEN
+
+    if len(text) > max_chars:
+        truncated = text[:max_chars]
+        logger.warning(
+            "Truncating oversized text from %d to %d chars for embedding retry "
+            "(model=%s)",
+            len(text),
+            max_chars,
+            _embed_model,
+        )
+        try:
+            response = await _client.post(
+                f"{GATEWAY_URL}/v1/embeddings",
+                json={"model": _embed_model, "input": [truncated]},
+            )
+            if response.status_code == 200:
+                result = [item["embedding"] for item in response.json()["data"]]
+                _cache_embed_dim(result)
+                return result
+        except Exception:
+            pass
+        logger.error(
+            "Truncated text still failed embedding (model=%s, truncated_len=%d)",
+            _embed_model,
+            max_chars,
+        )
+    else:
+        logger.error(
+            "Single text failed embedding (model=%s, len=%d chars); "
+            "unrecoverable model error. Error: %s",
+            _embed_model,
+            len(text),
+            error_body,
+        )
+
+    if _embed_dim is not None:
+        logger.warning(
+            "Substituting zero vector (dim=%d) for failed embedding", _embed_dim
+        )
+        return [[0.0] * _embed_dim]
+
+    raise RuntimeError(
+        f"Single-item embedding failed and embedding dimension unknown "
+        f"(model={_embed_model}, text_len={len(text)})"
+    )
 
 
 async def _post_embeddings(batch: list[str]) -> list[list[float]]:
     """POST a single batch to the embedding endpoint with retry on transient errors.
 
     Retries on connection failures and 503 (service temporarily unavailable).
-    Does NOT retry on 500 — content errors (e.g. n_batch overflow) are permanent
-    and should surface immediately rather than spin.
+    On 500 with a multi-item batch: splits in half and recurses. The Gateway wraps
+    llama-server overflow errors as "Internal embedding error" (the raw overflow body
+    is only in container logs), so we cannot distinguish overflow from other 500s —
+    splitting is the only safe recovery for multi-item batches.
+    Single-item 500s: truncate and retry once, then zero-vector fallback.
     """
     last_exc: Exception | None = None
     for attempt in range(_EMBED_RETRY_ATTEMPTS):
@@ -107,8 +197,26 @@ async def _post_embeddings(batch: list[str]) -> list[list[float]]:
                 f"{GATEWAY_URL}/v1/embeddings",
                 json={"model": _embed_model, "input": batch},
             )
+            if response.status_code == 500:
+                body = response.text
+                if len(batch) == 1:
+                    return await _handle_single_item_500(batch[0], body)
+                mid = len(batch) // 2
+                logger.warning(
+                    "Embedding 500 on batch of %d texts (model=%s); "
+                    "splitting at midpoint %d for recovery. Error: %s",
+                    len(batch),
+                    _embed_model,
+                    mid,
+                    body,
+                )
+                left = await _post_embeddings(batch[:mid])
+                right = await _post_embeddings(batch[mid:])
+                return left + right
             response.raise_for_status()
-            return [item["embedding"] for item in response.json()["data"]]
+            result = [item["embedding"] for item in response.json()["data"]]
+            _cache_embed_dim(result)
+            return result
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code != 503:
                 raise
@@ -133,10 +241,11 @@ async def embed_chunks(texts: list[str]) -> list[list[float]]:
     """Embed raw texts for indexing.
 
     Splits into sub-batches bounded by both count and estimated token total.
-    ∀ batch: len ≤ _EMBED_BATCH_SIZE ∧ Σ(tokens) ≤ _MAX_BATCH_TOKENS.
+    ∀ batch: len ≤ _EMBED_BATCH_SIZE ∧ Σ(tokens) ≤ max_batch_tokens.
     Prevents llama.cpp n_batch overflow when the aggregate input token count
-    exceeds the physical batch size (8192 for bge-m3).
+    exceeds the model's physical batch size.
     """
+    max_batch_tokens = _max_batch_tokens_for_model(_embed_model)
     all_embeddings: list[list[float]] = []
     batch: list[str] = []
     batch_tokens = 0
@@ -145,7 +254,7 @@ async def embed_chunks(texts: list[str]) -> list[list[float]]:
         token_estimate = max(1, len(text) // _CHARS_PER_TOKEN)
         if batch and (
             len(batch) >= _EMBED_BATCH_SIZE
-            or batch_tokens + token_estimate > _MAX_BATCH_TOKENS
+            or batch_tokens + token_estimate > max_batch_tokens
         ):
             all_embeddings.extend(await _post_embeddings(batch))
             batch = []

@@ -1,0 +1,27 @@
+basename: gemini-2.5-flash
+full_model_id: google/gemini-2.5-flash
+source: cloud
+latency_bucket: fast
+cost_bucket: cheap
+reasoning_depth: good
+tasks:
+  planning:
+    score: good
+    evidence:
+      - source: curated
+        detail: Fast and capable planner for moderately complex tasks
+  code_architecture:
+    score: good
+    evidence:
+      - source: curated
+        detail: Solid cross-file reasoning at low latency
+  code_review:
+    score: good
+    evidence:
+      - source: curated
+        detail: Good correctness checking and fix suggestions
+  research:
+    score: good
+    evidence:
+      - source: curated
+        detail: Good synthesis, faster than Pro
