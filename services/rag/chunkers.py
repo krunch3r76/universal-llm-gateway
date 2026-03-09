@@ -49,10 +49,10 @@ _CHUNK_TOKENS_CODE = 256
 _CHUNK_TOKENS_EBOOK = 1024
 _CHUNK_TOKENS_EBOOK_PAD = 256
 
-_CHUNK_CHARS_TARGET = _CHUNK_TOKENS_TARGET * _TOKEN_ESTIMATE   # 4096
-_CHUNK_CHARS_PAD = _CHUNK_TOKENS_PAD * _TOKEN_ESTIMATE         # 1024
+_CHUNK_CHARS_TARGET = _CHUNK_TOKENS_TARGET * _TOKEN_ESTIMATE  # 4096
+_CHUNK_CHARS_PAD = _CHUNK_TOKENS_PAD * _TOKEN_ESTIMATE  # 1024
 _CHUNK_CHARS_CODE = _CHUNK_TOKENS_CODE * _TOKEN_ESTIMATE
-_CHUNK_CHARS_EBOOK = _CHUNK_TOKENS_EBOOK * _TOKEN_ESTIMATE     # 4096
+_CHUNK_CHARS_EBOOK = _CHUNK_TOKENS_EBOOK * _TOKEN_ESTIMATE  # 4096
 _CHUNK_CHARS_EBOOK_PAD = _CHUNK_TOKENS_EBOOK_PAD * _TOKEN_ESTIMATE  # 1024
 
 _CODE_EXTENSIONS = {".py", ".js", ".ts", ".go", ".rs", ".sh", ".yaml", ".toml"}
@@ -86,7 +86,7 @@ def _word_split(text: str, max_chars: int) -> list[str]:
     if current:
         chunks.append(" ".join(current))
     # Hard-truncation last resort (no whitespace at all).
-    if not chunks:
+    if not chunks and text:
         return [text[i : i + max_chars] for i in range(0, len(text), max_chars)]
     return chunks
 
@@ -231,7 +231,7 @@ def chunk_markdown(
     the heading prefix does not count toward the target/pad budget.
     """
     chunks: list[Chunk] = []
-    source = str(path)
+    source = path
 
     sections = _HEADER_RE.split(content)
     headers = _HEADER_RE.findall(content)
@@ -243,11 +243,15 @@ def chunk_markdown(
             chunks.append(
                 Chunk(
                     text=text,
-                    metadata={"source": source, "heading": "", "overlap_prefix_len": overlap_len},
+                    metadata={
+                        "source": source,
+                        "heading": "",
+                        "overlap_prefix_len": overlap_len,
+                    },
                 )
             )
 
-    for header, section_body in zip(headers, sections[1:], strict=False):
+    for header, section_body in zip(headers, sections[1:], strict=True):
         heading = header.lstrip("#").strip()
         for text, overlap_len in _split_paragraphs(
             section_body, target_chars, pad_chars, overlap_paragraphs
@@ -286,7 +290,9 @@ def chunk_pdf(
     if isinstance(markdown_text, list):
         markdown_text = "\n\n".join(str(item) for item in markdown_text)
 
-    return chunk_markdown(path, markdown_text, target_chars=target_chars, pad_chars=pad_chars)
+    return chunk_markdown(
+        path, markdown_text, target_chars=target_chars, pad_chars=pad_chars
+    )
 
 
 def chunk_epub(
@@ -326,7 +332,9 @@ def chunk_epub(
         return []
 
     combined = "\n\n".join(sections)
-    return chunk_markdown(path, combined, target_chars=target_chars, pad_chars=pad_chars)
+    return chunk_markdown(
+        path, combined, target_chars=target_chars, pad_chars=pad_chars
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +369,7 @@ def _node_identifier(source: bytes, node: _ts.Node) -> str | None:
             return None
     for child in target.children:
         if child.type == "identifier":
-            return source[child.start_byte : child.end_byte].decode()
+            return source[child.start_byte : child.end_byte].decode("utf-8")
     return None
 
 
@@ -484,7 +492,9 @@ def chunk_code_ast(
     for nodes, ctx_class in raw:
         if not nodes:
             continue
-        text = source[nodes[0].start_byte : nodes[-1].end_byte].decode(errors="replace")
+        text = source[nodes[0].start_byte : nodes[-1].end_byte].decode(
+            "utf-8", errors="replace"
+        )
         if not text.strip():
             continue
 

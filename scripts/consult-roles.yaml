@@ -16,6 +16,7 @@ architect_requirements:
   tags: [general, reasoning, strong_planner]
   exclude_tags: [fast, local, weak_grounding]
   scope_hint: workflows
+  validate_grounding: true
 
 reviewer: |
   You are a code reviewer examining code for correctness, race conditions, resource leaks, and adherence to architectural patterns.
@@ -62,6 +63,7 @@ planner_requirements:
   tags: [code, reasoning, strong_planner]
   exclude_tags: [local, weak_grounding]
   scope_hint: project
+  validate_grounding: true
 
 researcher: |
   You are an AI research assistant with expertise in LLM systems, prompt engineering, and distributed inference. Research findings from published papers are provided when available.

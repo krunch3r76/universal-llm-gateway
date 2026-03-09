@@ -13,6 +13,7 @@ from universal_hot_reload.watcher import HotReloadWatcher
 from services.rag.config import RagConfig, WatchDirectory
 from services.rag.events import (
     rag_watch_directory_missing,
+    rag_watch_file_deleted,
     rag_watch_initial_complete,
     rag_watch_reconcile_complete,
     rag_watch_reindex_complete,
@@ -35,7 +36,13 @@ class IndexOutcome(Protocol):
     unchanged: bool
 
 
+class DeleteOutcome(Protocol):
+    file: str
+    deleted: int
+
+
 IndexFn = Callable[[Path, int | None], Awaitable[IndexOutcome]]
+DeleteFn = Callable[[Path], Awaitable[DeleteOutcome]]
 
 
 class WatcherManager:
@@ -53,8 +60,10 @@ class WatcherManager:
         index_fn: IndexFn,
         event_bus: EventBus | None = None,
         reconcile_interval_s: float = _RECONCILE_INTERVAL_S,
+        delete_fn: DeleteFn | None = None,
     ) -> None:
         self._index_fn: IndexFn = index_fn
+        self._delete_fn: DeleteFn | None = delete_fn
         self._event_bus: EventBus | None = event_bus
         self._reconcile_interval_s = reconcile_interval_s
         self._watchers: list[HotReloadWatcher] = []
@@ -104,6 +113,14 @@ class WatcherManager:
         async def on_change(file_path: str, *, _ct: int | None = chunk_tokens) -> None:
             await self._handle_file_change(file_path, _ct)
 
+        delete_callback: Callable[[str], Awaitable[None]] | None = None
+        if self._delete_fn is not None:
+
+            async def _on_delete(file_path: str) -> None:
+                await self._handle_file_delete(file_path)
+
+            delete_callback = _on_delete
+
         watcher = HotReloadWatcher(
             name=f"rag-watch:{watch_path.name}",
             watch_path=watch_path,
@@ -112,6 +129,7 @@ class WatcherManager:
             recursive=watch_directory.recursive,
             patterns=watch_directory.extensions,
             exclude=watch_directory.exclude,
+            on_delete=delete_callback,
         )
         started = await watcher.start()
         if started:
@@ -134,7 +152,7 @@ class WatcherManager:
         """
         # watch_configs is immutable after start(); precompute once.
         ext_sets = [
-            frozenset(ext.lower() for ext in wd.extensions)
+            frozenset(f".{ext.lower().lstrip('.')}" for ext in wd.extensions)
             for wd in self._watch_configs
         ]
         await asyncio.sleep(self._reconcile_interval_s)
@@ -198,7 +216,9 @@ class WatcherManager:
         walker = (
             watch_path.rglob("*") if watch_directory.recursive else watch_path.glob("*")
         )
-        extensions = {ext.lower() for ext in watch_directory.extensions}
+        extensions = {
+            f".{ext.lower().lstrip('.')}" for ext in watch_directory.extensions
+        }
         exclude = watch_directory.exclude
         for file_path in walker:
             if not file_path.is_file() or file_path.suffix.lower() not in extensions:
@@ -253,6 +273,23 @@ class WatcherManager:
                 deleted=result.deleted,
                 indexed=result.indexed,
                 unchanged=result.unchanged,
+            )
+        )
+
+    async def _handle_file_delete(self, file_path: str) -> None:
+        """Delete all indexed chunks for a removed file."""
+        assert self._delete_fn is not None
+        path = Path(file_path)
+        result = await self._delete_fn(path)
+        logger.info(
+            "Watcher delete complete: file=%s deleted=%d",
+            result.file,
+            result.deleted,
+        )
+        await self._emit(
+            rag_watch_file_deleted(
+                file=result.file,
+                deleted=result.deleted,
             )
         )
 

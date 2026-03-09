@@ -35,6 +35,11 @@ from consult_lib.constants import (
 )
 from consult_lib.context import collect_context_file_paths
 from consult_lib.core import ConsultResult, execute_consult
+from consult_lib.grounding_guard import (
+    report_grounding_results,
+    validate_model_grounding,
+    write_grounding_artifact,
+)
 from consult_lib.history import (
     extract_pipeline_step_records,
     resolve_pipeline_models,
@@ -743,13 +748,24 @@ def _run_direct_branch(
         None,
         args.context_files,
         chained=args.chain,
-        selected_models=args.models,
+        selected_models=selected_models,
         selection_path=autoselect_path,
         pipeline_virtual_model=role_pipeline_id,
         call_id=call_id,
         run_dir=str(artifact.run_dir),
     )
     print(output)
+
+    req_config = role_requirements.get(args.role, {})
+    if req_config.get("validate_grounding"):
+        task = req_config.get("task", args.role)
+        grounding_outcomes = validate_model_grounding(
+            results,
+            task=task,
+        )
+        if grounding_outcomes:
+            report_grounding_results(grounding_outcomes)
+            write_grounding_artifact(grounding_outcomes, run_dir=artifact.run_dir)
 
     has_any_success = any(not r.error for r in results)
     status = STATUS_SUCCESS if has_any_success else STATUS_PIPELINE_FAILED

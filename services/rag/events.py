@@ -70,6 +70,19 @@ def rag_watch_reindex_complete(
 
 
 @event_factory
+def rag_watch_file_deleted(
+    *,
+    file: str,
+    deleted: int,
+) -> Event:
+    """Emitted when watcher deletion removes all chunks for a source file."""
+    return Event(
+        signal="rag.watch.file.deleted",
+        payload={"file": file, "deleted": deleted},
+    )
+
+
+@event_factory
 def rag_watch_reconcile_complete(
     *,
     path: str,

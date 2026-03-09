@@ -39,6 +39,11 @@ class IndexResult(BaseModel):
     extraction_topics: int = 0
 
 
+class DeleteResult(BaseModel):
+    file: str
+    deleted: int
+
+
 class IndexDirectoryRequest(BaseModel):
     path: str
     extensions: list[str] | None = None

@@ -40,6 +40,7 @@ class HotReloadWatcher:
         recursive: bool = False,
         patterns: list[str] | None = None,
         exclude: list[str] | None = None,
+        on_delete: Callable[[str], Awaitable[None]] | None = None,
     ):
         """
         Initialize hot-reload watcher.
@@ -53,15 +54,16 @@ class HotReloadWatcher:
             patterns: File patterns to watch (e.g., [".yaml", ".yml", "yaml"])
                       Patterns are normalized to include leading dot.
             exclude: Filename patterns to exclude (fnmatch, e.g. ["CORPUS_MANIFEST.md", "README*"])
+            on_delete: Optional async callback for file deletion events.
         """
         self.name = name
         self.watch_path = Path(watch_path).expanduser().resolve()
         self.on_change = on_change
+        self.on_delete = on_delete
         self.debounce_ms = debounce_ms
         self.recursive = recursive
         # Normalize patterns: ensure leading dot (handle ".yaml" or "yaml")
-        raw_patterns = patterns or [".yaml", ".yml"]
-        self.patterns = {f".{p.lstrip('.')}" for p in raw_patterns}
+        self.patterns = {f".{p.lstrip('.')}" for p in (patterns or [".yaml", ".yml"])}
         self.exclude = exclude or []
 
         self.watch_task: asyncio.Task[None] | None = None
@@ -70,6 +72,7 @@ class HotReloadWatcher:
         self.error_count = 0
         self._enabled = False
         self._pending_file: str | None = None
+        self._pending_callback: Callable[[str], Awaitable[None]] | None = None
 
     async def start(self) -> bool:
         """
@@ -167,9 +170,12 @@ class HotReloadWatcher:
             # DO NOT SILENTLY EXIT - log prominently and re-raise
             raise  # Re-raise to make task exception visible
         finally:
-            logger.warning(f"🔍 [{self.name}] _watch_loop EXITING")
+            if self._enabled:
+                logger.warning(f"🔍 [{self.name}] _watch_loop EXITING unexpectedly")
+            else:
+                logger.info(f"🔍 [{self.name}] _watch_loop EXITING gracefully")
 
-    async def _handle_change(self, change_type: Change, file_path: str):
+    async def _handle_change(self, change_type: Change, file_path: str) -> None:
         """Handle file change with debouncing."""
         path = Path(file_path)
 
@@ -186,6 +192,13 @@ class HotReloadWatcher:
         if any(fnmatch(path.name, pat) for pat in self.exclude):
             return
 
+        if change_type == Change.deleted:
+            if self.on_delete is None:
+                return
+            callback: Callable[[str], Awaitable[None]] = self.on_delete
+        else:
+            callback = self.on_change
+
         logger.debug(f"[{self.name}] {change_type.name}: {file_path}")
 
         # Cancel existing debounce
@@ -198,21 +211,29 @@ class HotReloadWatcher:
 
         # Track the file that triggered the change
         self._pending_file = file_path
+        self._pending_callback = callback
 
         # Start new debounce
-        self.debounce_task = asyncio.create_task(self._debounced_callback(file_path))
+        self.debounce_task = asyncio.create_task(
+            self._debounced_callback(file_path, callback)
+        )
 
-    async def _debounced_callback(self, file_path: str):
+    async def _debounced_callback(
+        self,
+        file_path: str,
+        callback: Callable[[str], Awaitable[None]],
+    ) -> None:
         """Execute callback after debounce delay."""
         try:
             await asyncio.sleep(self.debounce_ms / 1000.0)
             self.debounce_task = None
             self._pending_file = None
+            self._pending_callback = None
 
             logger.info(f"🔄 [{self.name}] Config changed: {file_path}")
 
             try:
-                await self.on_change(file_path)
+                await callback(file_path)
                 self.reload_count += 1
                 logger.info(f"✅ [{self.name}] Hot-reload complete")
             except Exception as e:

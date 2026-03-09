@@ -70,6 +70,7 @@ from services.rag.indexing_helpers import (
     file_hash,
 )
 from services.rag.models import (
+    DeleteResult,
     FailedChunkItem,
     FailedExtractionResponse,
     IndexResult,
@@ -175,7 +176,14 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
     async def _watcher_index_fn(path: Path, chunk_tokens: int | None) -> IndexResult:
         return await _index_file(path, chunk_tokens=chunk_tokens)
 
-    _watcher_manager = WatcherManager(index_fn=_watcher_index_fn, event_bus=_event_bus)
+    async def _watcher_delete_fn(path: Path) -> DeleteResult:
+        return await _delete_file(path)
+
+    _watcher_manager = WatcherManager(
+        index_fn=_watcher_index_fn,
+        delete_fn=_watcher_delete_fn,
+        event_bus=_event_bus,
+    )
     try:
         await wait_until_healthy()
     except TimeoutError:
@@ -249,7 +257,7 @@ def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | 
             continue
         if watch_directory.extensions and (
             resolved_file.suffix.lower()
-            not in {ext.lower() for ext in watch_directory.extensions}
+            not in {f".{ext.lower().lstrip('.')}" for ext in watch_directory.extensions}
         ):
             continue
         if any(fnmatch(resolved_file.name, pat) for pat in watch_directory.exclude):
@@ -296,6 +304,39 @@ async def _index_file(
         return await _index_file_impl(
             file_path, metadata_overrides, chunk_tokens, source
         )
+
+
+async def _delete_file(file_path: Path) -> DeleteResult:
+    """Delete all indexed chunks for a removed file under the per-source lock."""
+    source = str(file_path)
+    lock = _file_index_locks.setdefault(source, asyncio.Lock())
+    async with lock:
+        return await _delete_file_impl(source)
+
+
+async def _delete_file_impl(source: str) -> DeleteResult:
+    """Inner delete implementation (called with lock held)."""
+    collection = _get_collection()
+    existing = collection.get(where={"source": source}, include=[])
+    existing_ids: list[str] = existing.get("ids", [])
+
+    if not existing_ids:
+        logger.info("Watcher delete: no chunks found for source=%s", source)
+        return DeleteResult(file=source, deleted=0)
+
+    collection.delete(ids=existing_ids)
+    if _property_index is not None:
+        for chunk_id in existing_ids:
+            await _property_index.remove_chunk(chunk_id)
+
+    logger.info(
+        "Watcher delete complete: source=%s deleted=%d", source, len(existing_ids)
+    )
+    if _event_bus is not None:
+        await _event_bus.publish_async_nowait(
+            rag_file_deleted(file=source, deleted=len(existing_ids))
+        )
+    return DeleteResult(file=source, deleted=len(existing_ids))
 
 
 async def _index_file_impl(

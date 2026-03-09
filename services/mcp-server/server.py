@@ -11,22 +11,33 @@ Security boundaries:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import socket
 import sys
+import time
 from asyncio.transports import BaseTransport
+from pathlib import Path
 from typing import cast, override
 
 import uvicorn
 from fastmcp import FastMCP
+from mcp_events import monotonic_now, record
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from tools.browser import register_browser_tools
+from tools.clip import register_clip_tools
+from tools.context import register_context_tools
 from tools.filesystem import register_filesystem_tools
 from tools.project import register_project_tools
+from tools.rag import register_rag_tools
+from tools.sqlite import register_sqlite_tools
+from tools.web import register_web_tools
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +52,19 @@ _TCP_KEEPCNT = 3
 _SSE_PING_INTERVAL: int = int(os.getenv("MCP_SSE_PING_INTERVAL", "15"))
 
 
+def _env_truthy(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _patch_sse_ping() -> None:
     """Force sse_starlette to emit real SSE events every N seconds.
 
-    Sophos XGS (and similar HTTP-inspecting firewalls) categorise SSE
-    comment-only pings as empty traffic and start an idle-stream timer
-    (~60 s default).  Sending a named event with a payload resets that
-    timer.  We inject ping_message_factory and ping interval via kwargs
+    Middleboxes and firewalls may categorise SSE comment-only pings as
+    empty traffic.  Sending a named event with a payload resets idle
+    timers.  We inject ping_message_factory and ping interval via kwargs
     so they're set during the original __init__ constructor path.
     """
     _orig_init = EventSourceResponse.__init__
@@ -64,24 +81,39 @@ def _patch_sse_ping() -> None:
     EventSourceResponse.__init__ = _patched_init  # type: ignore[method-assign]
 
 
-def _patch_sse_disconnect_logging() -> None:
-    """Log every SSE stream termination to identify where drops occur."""
+def _patch_sse_lifecycle_events() -> None:
+    """Emit structured events for every SSE stream start/end."""
     _orig_stream = EventSourceResponse._stream_response  # type: ignore[attr-defined]
 
-    async def _stream_with_log(self: EventSourceResponse, send: Send) -> None:
+    async def _stream_with_events(self: EventSourceResponse, send: Send) -> None:
+        t0 = monotonic_now()
+        record("mcp.sse.stream.started")
         try:
             await _orig_stream(self, send)
         except Exception as exc:
-            logger.warning("SSE stream aborted: %s", exc, exc_info=True)
+            duration = monotonic_now() - t0
+            record(
+                "mcp.sse.stream.aborted",
+                duration_s=round(duration, 3),
+                reason=str(exc),
+                exc_type=type(exc).__name__,
+            )
+            logger.warning("SSE stream aborted after %.1fs: %s", duration, exc)
             raise
         else:
-            logger.info("SSE stream closed (client disconnect or end-of-data)")
+            duration = monotonic_now() - t0
+            record(
+                "mcp.sse.stream.ended",
+                duration_s=round(duration, 3),
+                reason="clean",
+            )
+            logger.info("SSE stream ended cleanly after %.1fs", duration)
 
-    EventSourceResponse._stream_response = _stream_with_log  # type: ignore[method-assign]
+    EventSourceResponse._stream_response = _stream_with_events  # type: ignore[method-assign]
 
 
 _patch_sse_ping()
-_patch_sse_disconnect_logging()
+_patch_sse_lifecycle_events()
 
 
 def _require_env(name: str) -> str:
@@ -109,28 +141,194 @@ def _set_tcp_keepalive(sock: socket.socket) -> None:
 
 
 class BearerAuthMiddleware:
-    """ASGI middleware that enforces bearer token authentication.
+    """ASGI middleware: bearer token auth + request lifecycle events.
 
     /health is exempt to allow Docker healthcheck without credentials.
+    /clip handles CORS preflight without auth, POST with auth.
+    Emits mcp.request.* events for all /mcp requests with timing.
     """
+
+    _CLIPS_DIR = Path("/data/files/clips")
+    _MAX_BODY_BYTES = 5 * 1024 * 1024
+    _CORS_HEADERS: dict[str, str] = {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "POST, OPTIONS",
+        "access-control-allow-headers": "Authorization, Content-Type",
+        "access-control-max-age": "86400",
+    }
 
     def __init__(self, app: ASGIApp, *, token: str) -> None:
         self._app: ASGIApp = app
         self._token: str = token
 
+    @staticmethod
+    def _slugify(text: str, max_len: int = 60) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "-", text.lower())
+        slug = slug.strip("-")[:max_len].rstrip("-")
+        return slug or "untitled"
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http":
-            request = Request(scope, receive)
-            if request.url.path == "/health":
-                response = JSONResponse({"status": "ok"})
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
+
+        if request.url.path == "/health":
+            response = JSONResponse({"status": "ok"})
+            await response(scope, receive, send)
+            return
+
+        if request.url.path == "/clip":
+            if request.method == "OPTIONS":
+                response = JSONResponse({"status": "ok"}, headers=self._CORS_HEADERS)
                 await response(scope, receive, send)
                 return
+
             auth = request.headers.get("authorization", "")
             if auth != f"Bearer {self._token}":
-                response = JSONResponse({"error": "Unauthorized"}, status_code=401)
+                response = JSONResponse(
+                    {"error": "Unauthorized"},
+                    status_code=401,
+                    headers=self._CORS_HEADERS,
+                )
                 await response(scope, receive, send)
                 return
-        await self._app(scope, receive, send)
+
+            if request.method == "POST":
+                response = await self._handle_clip(request)
+                await response(scope, receive, send)
+                return
+
+            response = JSONResponse(
+                {"error": "Method not allowed"},
+                status_code=405,
+                headers=self._CORS_HEADERS,
+            )
+            await response(scope, receive, send)
+            return
+
+        auth = request.headers.get("authorization", "")
+        if auth != f"Bearer {self._token}":
+            response = JSONResponse({"error": "Unauthorized"}, status_code=401)
+            await response(scope, receive, send)
+            return
+
+        if request.url.path != "/mcp":
+            await self._app(scope, receive, send)
+            return
+
+        client_ip = request.client.host if request.client else "unknown"
+        method = request.method
+        t0 = monotonic_now()
+
+        record(
+            "mcp.request.started",
+            method=method,
+            client_ip=client_ip,
+        )
+
+        try:
+            await self._app(scope, receive, send)
+        except Exception as exc:
+            duration = monotonic_now() - t0
+            record(
+                "mcp.request.failed",
+                method=method,
+                client_ip=client_ip,
+                duration_s=round(duration, 3),
+                error=str(exc),
+                exc_type=type(exc).__name__,
+            )
+            raise
+        else:
+            duration = monotonic_now() - t0
+            record(
+                "mcp.request.completed",
+                method=method,
+                client_ip=client_ip,
+                duration_s=round(duration, 3),
+            )
+
+    async def _handle_clip(self, request: Request) -> JSONResponse:
+        """Process a clip submission from the bookmarklet."""
+        body = b""
+        async for chunk in request.stream():
+            body += chunk
+            if len(body) > self._MAX_BODY_BYTES:
+                return JSONResponse(
+                    {"error": "Payload too large (5MB limit)"},
+                    status_code=413,
+                    headers=self._CORS_HEADERS,
+                )
+
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            return JSONResponse(
+                {"error": "Invalid JSON"},
+                status_code=400,
+                headers=self._CORS_HEADERS,
+            )
+
+        url = data.get("url", "").strip()
+        title = data.get("title", "").strip()
+        content = data.get("content", "").strip()
+        selected = bool(data.get("selected", False))
+
+        if not content:
+            return JSONResponse(
+                {"error": "Missing required field: content"},
+                status_code=400,
+                headers=self._CORS_HEADERS,
+            )
+
+        if not title:
+            title = "Untitled Clip"
+
+        ts = int(time.time())
+        slug = self._slugify(title)
+        filename = f"{slug}-{ts}.md"
+
+        self._CLIPS_DIR.mkdir(parents=True, exist_ok=True)
+
+        safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
+        safe_url = url.replace("\\", "\\\\").replace('"', '\\"')
+        frontmatter = (
+            f"---\n"
+            f'url: "{safe_url}"\n'
+            f'title: "{safe_title}"\n'
+            f"clipped_at: {ts}\n"
+            f"selected: {str(selected).lower()}\n"
+            f"chars: {len(content)}\n"
+            f"---\n\n"
+        )
+
+        for attempt in range(5):
+            candidate = self._CLIPS_DIR / (
+                f"{slug}-{ts + attempt}.md" if attempt else filename
+            )
+            try:
+                with candidate.open("x", encoding="utf-8") as clip_file:
+                    clip_file.write(frontmatter + content)
+                filename = candidate.name
+                break
+            except FileExistsError:
+                continue
+        else:
+            return JSONResponse(
+                {"error": "Unable to allocate unique clip filename"},
+                status_code=409,
+                headers=self._CORS_HEADERS,
+            )
+        logger.info(
+            "clip: saved %s (%d chars, selected=%s)", filename, len(content), selected
+        )
+
+        return JSONResponse(
+            {"status": "clipped", "clip_id": filename},
+            headers=self._CORS_HEADERS,
+        )
 
 
 def _build_server() -> FastMCP:
@@ -138,6 +336,15 @@ def _build_server() -> FastMCP:
     mcp: FastMCP = FastMCP("gateway-tools")
     register_filesystem_tools(mcp)
     register_project_tools(mcp)
+    register_web_tools(mcp)
+    register_rag_tools(mcp)
+    if _env_truthy("ENABLE_CONTEXT_TOOLS", default=True):
+        register_context_tools(mcp)
+    else:
+        logger.info("Context tools disabled (ENABLE_CONTEXT_TOOLS=false)")
+    register_clip_tools(mcp)
+    register_browser_tools(mcp)
+    register_sqlite_tools(mcp)
 
     @mcp.tool()
     def health() -> dict[str, str]:

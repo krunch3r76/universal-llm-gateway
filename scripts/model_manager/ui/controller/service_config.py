@@ -155,6 +155,9 @@ class McpConfig:
     data_dir: str = _MCP_DEFAULT_DATA_DIR
     project_dir: str | None = None
     tls_cert_dir: str = _MCP_DEFAULT_TLS_CERT_DIR
+    brave_search_api_key: str = ""
+    firefox_profile_dir: str = ""
+    tasks_access: str = "ro"  # "ro" | "rw" | "off"
 
 
 _MCP_CONFIG_TEMPLATE = """\
@@ -163,22 +166,73 @@ _MCP_CONFIG_TEMPLATE = """\
 #
 # The MCP server runs in a Docker container with TLS and bearer token auth.
 # It is optional — remove this file to disable MCP in fleet deploys.
+#
+# Generate auth_token: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 
+# Required: bearer token for the MCP server (:443)
 auth_token: ""
+
+# Required: workspace root mounted read-only as /data/project
+# project_dir: /path/to/your/universal-llm-gateway
 
 # Host directory for persistent file storage (mounted as /data/files)
 data_dir: ~/mcp-data
 
-# Project root mounted read-only as /data/project (defaults to workspace root)
-# project_dir: /mnt/torus/projects/universal-llm-gateway
+# Optional: enables web_search tool. Get a key at https://brave.com/search/api/
+BRAVE_SEARCH_API_KEY: ""
 
-# Host directory containing TLS certs (fullchain.pem, privkey.pem)
-# tls_cert_dir: /etc/letsencrypt/live/mcp.k-1.me
+# Optional: Firefox profile dir for browser automation tools.
+# Auto-detected from profiles.ini if not set. Override only if you want
+# a specific profile other than the default.
+# firefox_profile_dir: ~/.mozilla/firefox/xxxxxxxx.default-release
+
+# tasks/ access control (default: ro — read-only access for Claude)
+#   ro  = Claude can read tasks/ context (todos, journal, discoveries)
+#   rw  = Claude can also write journal entries and context files
+#   off = tasks/ tools not exposed to Claude at all
+# tasks_access: ro
 """
 
 
+def _resolve_firefox_profile(configured: str) -> str:
+    """Resolve the Firefox profile directory.
+
+    If *configured* is non-empty, expand and return it directly.
+    Otherwise auto-detect the default profile from profiles.ini.
+    Returns an empty string if nothing can be found.
+    """
+    if configured.strip():
+        return str(Path(configured).expanduser())
+
+    profiles_ini = Path.home() / ".mozilla" / "firefox" / "profiles.ini"
+    if not profiles_ini.exists():
+        return ""
+
+    import configparser
+
+    cp = configparser.ConfigParser()
+    try:
+        cp.read(profiles_ini)
+    except configparser.Error as e:
+        logger.warning("Could not parse Firefox profiles.ini: %s", e)
+        return ""
+
+    # Find the section with Default=1 (the active default profile)
+    base = profiles_ini.parent
+    for section in cp.sections():
+        if cp.get(section, "Default", fallback="") == "1":
+            rel_path = cp.get(section, "Path", fallback="")
+            if rel_path:
+                is_relative = cp.get(section, "IsRelative", fallback="1") == "1"
+                profile_path = base / rel_path if is_relative else Path(rel_path)
+                if profile_path.exists():
+                    logger.info("Auto-detected Firefox profile: %s", profile_path)
+                    return str(profile_path)
+
+    return ""
+
+
 def ensure_mcp_config() -> Path:
-    """Return path to ~/.gateway/mcp.yaml, generating template if absent."""
     GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
     if not _MCP_CONFIG_PATH.exists():
         _MCP_CONFIG_PATH.write_text(_MCP_CONFIG_TEMPLATE)
@@ -205,6 +259,13 @@ def load_mcp_config() -> McpConfig | None:
         data_dir=str(raw.get("data_dir", _MCP_DEFAULT_DATA_DIR)),
         project_dir=str(raw["project_dir"]) if raw.get("project_dir") else None,
         tls_cert_dir=str(raw.get("tls_cert_dir", _MCP_DEFAULT_TLS_CERT_DIR)),
+        brave_search_api_key=str(
+            raw.get("BRAVE_SEARCH_API_KEY") or raw.get("brave_search_api_key", "")
+        ).strip(),
+        firefox_profile_dir=_resolve_firefox_profile(
+            str(raw.get("firefox_profile_dir", ""))
+        ),
+        tasks_access=str(raw.get("tasks_access", "ro")).strip().lower(),
     )
 
 
@@ -226,6 +287,27 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
     env["MCP_DATA_DIR"] = str(Path(cfg.data_dir).expanduser())
     if cfg.project_dir:
         env["MCP_PROJECT_DIR"] = cfg.project_dir
+    if cfg.brave_search_api_key:
+        env["BRAVE_SEARCH_API_KEY"] = cfg.brave_search_api_key
+    if cfg.firefox_profile_dir:
+        env["FIREFOX_PROFILE_DIR"] = cfg.firefox_profile_dir
+    # Derive compose vars from the single tasks_access field:
+    #   off → no mount needed, tools disabled
+    #   ro  → read-only mount, write tools blocked in app layer
+    #   rw  → read-write mount, writes allowed
+    match cfg.tasks_access:
+        case "off":
+            env["ENABLE_CONTEXT_TOOLS"] = "false"
+            env["MCP_TASKS_MOUNT_MODE"] = "ro"   # mount still present but tools absent
+            env["TASKS_READ_ONLY"] = "true"
+        case "rw":
+            env["ENABLE_CONTEXT_TOOLS"] = "true"
+            env["MCP_TASKS_MOUNT_MODE"] = "rw"
+            env["TASKS_READ_ONLY"] = "false"
+        case _:  # "ro" or any unrecognised value
+            env["ENABLE_CONTEXT_TOOLS"] = "true"
+            env["MCP_TASKS_MOUNT_MODE"] = "ro"
+            env["TASKS_READ_ONLY"] = "true"
     return env
 
 

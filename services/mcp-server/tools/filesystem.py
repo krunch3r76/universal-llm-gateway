@@ -4,6 +4,7 @@ All paths are resolved relative to _SANDBOX_ROOT. Traversal attempts
 (../) are rejected before resolution so that the container volume mount
 is complemented by explicit code-level defense in depth.
 
+Supported read formats: .md, .txt (plain), .docx (python-docx), .odt (odfpy).
 Supported write formats: .md, .txt (plain), .docx (python-docx), .pdf (fpdf2).
 """
 
@@ -13,6 +14,10 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from mcp_events import record
+
+from .file_editor import perform_edit
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -20,6 +25,31 @@ logger = logging.getLogger(__name__)
 
 _SANDBOX_ROOT = Path("/data/files")
 _ALLOWED_WRITE_SUFFIXES = {".md", ".txt", ".docx", ".pdf"}
+_ALLOWED_READ_SUFFIXES = {".md", ".txt", ".docx", ".odt"}
+_EDITABLE_SUFFIXES = {".md", ".txt"}
+
+
+def _read_plain(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _read_docx(path: Path) -> str:
+    from docx import Document  # type: ignore[import-untyped]
+
+    doc = Document(str(path))
+    return "\n".join(para.text for para in doc.paragraphs)
+
+
+def _read_odt(path: Path) -> str:
+    from odf import teletype  # type: ignore[import-untyped]
+    from odf.opendocument import load as odf_load  # type: ignore[import-untyped]
+    from odf.text import P  # type: ignore[import-untyped]
+
+    doc = odf_load(str(path))
+    return "\n".join(
+        teletype.extractText(node)
+        for node in doc.getElementsByType(P)
+    )
 
 
 def _safe_path(relative: str) -> Path:
@@ -106,8 +136,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
     def read_file(path: str) -> dict[str, str]:
         """Read and return the contents of *path* from the sandboxed directory.
 
-        Only plain-text files (.md, .txt) are supported for reading.
-        Binary formats (.docx, .pdf) are not decoded.
+        Supported formats: .md, .txt (plain text), .docx (Word), .odt (OpenDocument).
 
         Args:
             path: Relative file path, e.g. "documents/notes.md".
@@ -121,9 +150,129 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         if not src.is_file():
             raise ValueError(f"Path is not a file: {path!r}")
 
-        content = src.read_text(encoding="utf-8", errors="replace")
+        suffix = src.suffix.lower()
+        if suffix not in _ALLOWED_READ_SUFFIXES:
+            raise ValueError(
+                f"Unsupported format {suffix!r} for reading. "
+                f"Allowed: {', '.join(sorted(_ALLOWED_READ_SUFFIXES))}"
+            )
+
+        match suffix:
+            case ".docx":
+                content = _read_docx(src)
+            case ".odt":
+                content = _read_odt(src)
+            case _:
+                content = _read_plain(src)
+
         logger.info("read_file: read %s (%d chars)", src, len(content))
         return {"content": content, "path": str(src)}
+
+    @mcp.tool()
+    def edit_file(
+        path: str,
+        operation: str,
+        content: str,
+        line: int | None = None,
+        target: str | None = None,
+        all_occurrences: bool = False,
+    ) -> dict[str, str | int]:
+        """Atomically edit a text file in the sandboxed files directory.
+
+        Performs a server-side read-modify-write so the model never needs
+        to read the full file content just to prepend or append.
+
+        Allowed extensions: .md, .txt
+
+        Args:
+            path: Relative file path (e.g. "notes/daily.md").
+            operation: One of:
+                - "prepend": Insert content at the beginning.
+                - "append": Insert content at the end.
+                - "insert_at_line": Insert at a 1-indexed line number
+                  (requires `line` argument).
+                - "replace": Replace occurrences of `target` string
+                  (requires `target` argument).
+            content: Text to insert or use as replacement.
+            line: 1-indexed line number for insert_at_line.
+            target: String to find for replace.
+            all_occurrences: If True, replace all occurrences (default: first only).
+
+        Returns:
+            {"status": "edited: <op>", "path": "..."}
+            For replace: includes "replacements_made".
+        """
+        dest = _safe_path(path)
+        if dest.suffix.lower() not in _EDITABLE_SUFFIXES:
+            raise ValueError(
+                f"Unsupported format {dest.suffix!r} for editing. Allowed: "
+                + ", ".join(sorted(_EDITABLE_SUFFIXES))
+            )
+
+        try:
+            result = perform_edit(
+                path=dest,
+                operation=operation,
+                content=content,
+                line=line,
+                target_str=target,
+                all_occurrences=all_occurrences,
+            )
+            event_payload: dict[str, str | int | bool] = {
+                "sandbox": "files",
+                "path": path,
+                "operation": operation,
+                "content_chars": len(content),
+            }
+            if line is not None:
+                event_payload["line"] = line
+            if target is not None:
+                event_payload["target_chars"] = len(target)
+            if operation == "replace":
+                event_payload["all_occurrences"] = all_occurrences
+                event_payload["replacements_made"] = result.get("replacements_made", 0)
+            record("mcp.tool.file.edited", **event_payload)
+            logger.info("edit_file: %s on %s", operation, path)
+            return result
+        except (FileNotFoundError, ValueError) as exc:
+            reason = (
+                "not_found"
+                if isinstance(exc, FileNotFoundError)
+                else "validation_error"
+            )
+            record(
+                "mcp.tool.file.edit_failed",
+                sandbox="files",
+                path=path,
+                operation=operation,
+                reason=reason,
+                error_message=str(exc),
+            )
+            logger.warning("edit_file failed on %s: %s", path, exc)
+            raise
+
+    @mcp.tool()
+    def delete_file(path: str) -> dict[str, str]:
+        """Delete a file from the sandboxed files directory.
+
+        Only individual files may be deleted — directories are rejected.
+
+        Args:
+            path: Relative file path, e.g. "documents/draft.md".
+
+        Returns:
+            {"status": "deleted", "path": "<resolved path>"}
+        """
+        target = _safe_path(path)
+        if not target.exists():
+            raise FileNotFoundError(f"File not found: {path!r}")
+        if not target.is_file():
+            raise ValueError(f"Path is not a file (directories cannot be deleted): {path!r}")
+
+        target.unlink()
+        record("mcp.tool.file.deleted", sandbox="files", path=path)
+        logger.info("delete_file: deleted %s", target)
+        return {"status": "deleted", "path": str(target)}
 
     @mcp.tool()
     def list_files(directory: str = "") -> dict[str, list[str]]:
