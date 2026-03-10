@@ -38,8 +38,9 @@ def _format_model_provenance(
     so agents can tell whether provenance was resolved.
 
     ∀ pipeline executions where all result_models are virtual IDs:
-      selected_models are used for cloud/local classification since they
-      represent what was actually requested and executed.
+      we show selected_models as "requested" only; the pipeline response does
+      not confirm which underlying model was invoked — verify via OpenRouter or
+      pipeline execution events.
     """
     lines: list[str] = []
     selected = _dedupe_preserve_order(selected_models or result_models)
@@ -64,17 +65,23 @@ def _format_model_provenance(
     if selected:
         lines.append(f"**Selected models**: {', '.join(selected)}")
 
-    # When all result IDs are pipeline virtual, fall back to selected_models for
-    # cloud/local classification — they represent what actually ran.
+    # When all result IDs are pipeline virtual, we only know what was requested
+    # (selected_models), not what the pipeline actually invoked. Stargate returns
+    # the pipeline ID as model, not the underlying cloud model.
     effective_used = real_used if real_used else (selected or used)
     used_cloud = [m for m in effective_used if _is_cloud_model(m)]
     used_local = [m for m in effective_used if not _is_cloud_model(m)]
+    provenance_resolved = bool(real_used)
 
     lines.append(
-        "**Cloud models used**: " + (", ".join(used_cloud) if used_cloud else "(none)")
+        "**Cloud models requested**: "
+        + (", ".join(used_cloud) if used_cloud else "(none)")
+        + (" (verify in OpenRouter/pipeline events)" if not provenance_resolved and used_cloud else "")
     )
     lines.append(
-        "**Local models used**: " + (", ".join(used_local) if used_local else "(none)")
+        "**Local models requested**: "
+        + (", ".join(used_local) if used_local else "(none)")
+        + (" (verify in pipeline events)" if not provenance_resolved and used_local else "")
     )
     # Only warn if selected models genuinely did not run (real_used available).
     # Do not warn when provenance is unresolved (real_used is empty).

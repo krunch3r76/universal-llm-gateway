@@ -31,7 +31,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from tools.browser import register_browser_tools
-from tools.clip import register_clip_tools
+from tools.clip import normalize_clip_content, register_clip_tools
 from tools.context import register_context_tools
 from tools.filesystem import register_filesystem_tools
 from tools.project import register_project_tools
@@ -283,6 +283,8 @@ class BearerAuthMiddleware:
                 headers=self._CORS_HEADERS,
             )
 
+        content, extracted = normalize_clip_content(content)
+
         if not title:
             title = "Untitled Clip"
 
@@ -292,14 +294,18 @@ class BearerAuthMiddleware:
 
         self._CLIPS_DIR.mkdir(parents=True, exist_ok=True)
 
-        safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
-        safe_url = url.replace("\\", "\\\\").replace('"', '\\"')
+        # Sanitize for YAML: no newlines in quoted values
+        title_sanitized = title.replace("\r", "").replace("\n", " ")
+        url_sanitized = url.replace("\r", "").replace("\n", " ")
+        safe_title = title_sanitized.replace("\\", "\\\\").replace('"', '\\"')
+        safe_url = url_sanitized.replace("\\", "\\\\").replace('"', '\\"')
         frontmatter = (
             f"---\n"
             f'url: "{safe_url}"\n'
             f'title: "{safe_title}"\n'
             f"clipped_at: {ts}\n"
             f"selected: {str(selected).lower()}\n"
+            f"extracted: {str(extracted).lower()}\n"
             f"chars: {len(content)}\n"
             f"---\n\n"
         )

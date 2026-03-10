@@ -97,6 +97,21 @@ _JUNK_LINE_RE: re.Pattern[str] = re.compile(
     r")"
 )
 
+# Lines that look like bibliography entries (author, year; or "et al.")
+_CITATION_LINE_RE: re.Pattern[str] = re.compile(
+    r".*,\s*(?:19|20)\d{2}\b.*|.*\bet\s+al\.?\s*[,\.].*",
+    re.IGNORECASE,
+)
+
+
+def is_bibliography_heavy(content: str, threshold: float = 0.25) -> bool:
+    """True when >= threshold fraction of non-blank lines look like citations."""
+    lines = [line for line in content.splitlines() if line.strip()]
+    if not lines:
+        return False
+    citation_count = sum(1 for line in lines if _CITATION_LINE_RE.search(line))
+    return (citation_count / len(lines)) >= threshold
+
 
 def normalize_source(source: str) -> str:
     """Return a short human-readable label for a chunk source.
@@ -125,10 +140,12 @@ def chunk_is_junk(content: str, threshold: float = 0.35) -> bool:
     """True when content looks like a bibliography, table, or garbled PDF extraction.
 
     Classified as junk when >= ``threshold`` fraction of non-blank lines
-    match ``_JUNK_LINE_RE``.
+    match ``_JUNK_LINE_RE``, or when >= 25% of lines match citation pattern.
     """
     lines = [line for line in content.splitlines() if line.strip()]
     if not lines:
+        return True
+    if is_bibliography_heavy(content, 0.25):
         return True
     junk_count = sum(1 for line in lines if _JUNK_LINE_RE.search(line))
     return (junk_count / len(lines)) >= threshold

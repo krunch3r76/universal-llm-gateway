@@ -361,12 +361,14 @@ alternatives — exactly one is emitted per retrieval step execution that passes
 pipeline.rag.retrieval.skipped?                           (* out-of-scope, no user prefix override)
 pipeline.rag.retrieval.params.resolved
   └─> [parallel queries to RAG /search]
+      └─> pipeline.rag.retrieval.bibliography.filtered?  (* after merge, before completed; when junk filter drops chunks)
       └─> pipeline.rag.retrieval.completed | pipeline.rag.retrieval.failed
 ```
 
 | Signal | Required Payload | Description |
 |--------|------------------|-------------|
 | `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | Retrieval skipped: rewrite model determined query is unanswerable from active corpus |
+| `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | Emitted when post-RRF junk/bibliography filter removes one or more chunks |
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | Pre-retrieval: effective parameters after three-tier merge |
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds` | Post-retrieval: scope prediction + quality metrics |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | All queries failed — no chunks to merge |
@@ -783,6 +785,7 @@ Pipeline events flow to two sinks:
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | - |
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds` | - |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | - |
+| `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | - |
 | `pipeline.rag.rerank.completed` | `pipeline_id`, `execution_id`, `step_name`, `rerank_enabled`, `model_id`, `chunks_input`, `chunks_output`, `windows_evaluated`, `max_rank_movement_observed`, `total_rerank_seconds` | - |
 
 **Note on `pipeline.step.failed` partial progress**: `prompt_tokens`, `completion_tokens`,

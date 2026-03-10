@@ -31,6 +31,7 @@ from systems.pipeline.core.constants import (
 )
 from systems.pipeline.core.events.step import (
     RagMetadataBoostApplied,
+    RagRetrievalBibliographyFiltered,
     RagRetrievalCompleted,
     RagRetrievalFailed,
     RagRetrievalParamsResolved,
@@ -44,11 +45,11 @@ from universal_logging import get_logger
 
 from services.rag.metadata_boost import apply_metadata_boost
 
+from .context_formatting import ChunkData, chunk_is_junk, format_context
 from .retrieval_execution import RetrievedChunk as _RetrievedChunk
 from .retrieval_execution import execute_single_query as _execute_single_query
 from .retrieval_execution import rrf_merge as _rrf_merge
 from .retrieval_profiles import load_retrieval_profiles, resolve_retrieval_params
-from .context_formatting import ChunkData, chunk_is_junk, format_context
 
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
@@ -71,6 +72,7 @@ class RagMultiRetrieveHandler(BaseHandler):
     Options (via pipeline_options or YAML defaults):
         rag_top_k_per_query, rag_max_chunks, rag_rrf_k, rag_recency_weight,
         scope_confidence_threshold, scope_override, rag_source_prefixes,
+        bibliography_filter_threshold, bibliography_filter_disable,
         consumer_model (optional — triggers profile lookup from retrieval-profiles.yaml).
 
     Scope-based retrieval:
@@ -98,17 +100,17 @@ class RagMultiRetrieveHandler(BaseHandler):
         if not endpoint:
             raise ValueError(f"Step '{step.id}': missing 'endpoint' domain field")
 
-        socket_path = step.get_domain_field("socket_path")
+        socket_path: str | None = step.get_domain_field("socket_path")
         if socket_path:
-            base_url = (
-                f"unix://{socket_path}"
-                if not str(socket_path).startswith("unix://")
-                else str(socket_path)
-            )
+            if not socket_path.startswith("unix://"):
+                base_url = f"unix://{socket_path}"
+            else:
+                base_url = socket_path
         else:
             base_url = resolve_rag_base_url()
-        api_path = urlparse(endpoint).path or "/search"
-        api_path = api_path if api_path.startswith("/") else f"/{api_path}"
+        parsed_endpoint = urlparse(endpoint)
+        api_path = (parsed_endpoint.path or "/search").strip("/") or "search"
+        api_path = f"/{api_path}"
 
         resolver = NamespaceResolver(context)
         rewrite_data: dict[str, Any] = self._resolve_input(
@@ -282,9 +284,10 @@ class RagMultiRetrieveHandler(BaseHandler):
                 uses_explicit_prefixes=bool(source_prefixes),
             ),
         )
+        rag_timeout = float(effective.get("rag_client_timeout", 30.0))
         _retrieval_start = _time.monotonic()
 
-        async with make_async_client(base_url, timeout=30.0) as client:
+        async with make_async_client(base_url, timeout=rag_timeout) as client:
             tasks = [
                 _execute_single_query(
                     client,
@@ -331,19 +334,45 @@ class RagMultiRetrieveHandler(BaseHandler):
         merged, merged_scores = _rrf_merge(successful, k=rrf_k, max_chunks=max_chunks)
 
         # --- Post-RRF junk filter ---
+        if effective.get("bibliography_filter_disable", False):
+            junk_threshold = 0.0
+        else:
+            _raw_threshold = effective.get("bibliography_filter_threshold", 0.35)
+            try:
+                junk_threshold = float(_raw_threshold)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Step '%s': bibliography_filter_threshold=%r invalid, using 0.35",
+                    step.id,
+                    _raw_threshold,
+                )
+                junk_threshold = 0.35
         pre_junk = len(merged)
         clean: list[_RetrievedChunk] = []
-        for chunk in merged:
-            if chunk_is_junk(chunk.content):
-                merged_scores.pop(chunk.content_hash, None)
-            else:
-                clean.append(chunk)
-        if len(clean) < pre_junk:
+        if junk_threshold <= 0:
+            clean = merged
+        else:
+            for chunk in merged:
+                if chunk_is_junk(chunk.content, threshold=junk_threshold):
+                    merged_scores.pop(chunk.content_hash, None)
+                else:
+                    clean.append(chunk)
+        chunks_dropped = pre_junk - len(clean)
+        if chunks_dropped > 0:
             logger.info(
                 "Step '%s': junk filter removed %d/%d chunks",
                 step.id,
-                pre_junk - len(clean),
+                chunks_dropped,
                 pre_junk,
+            )
+            self._publish_bus_event(
+                context,
+                RagRetrievalBibliographyFiltered(
+                    pipeline_id=context.pipeline.id,
+                    execution_id=context.execution_id,
+                    step_name=step.name,
+                    chunks_dropped=chunks_dropped,
+                ),
             )
         merged = clean
 
@@ -401,6 +430,7 @@ class RagMultiRetrieveHandler(BaseHandler):
         _retrieval_seconds = _time.monotonic() - _retrieval_start
         chunks_per_query = [len(r) for r in successful]
         rrf_scores_list = list(merged_scores.values())
+        _has_rrf_scores = bool(rrf_scores_list)
         predicted_scope_for_event = str(rewrite_data.get("scope", "unknown"))
         fallback_triggered = scope != predicted_scope_for_event
         self._publish_bus_event(
@@ -414,11 +444,11 @@ class RagMultiRetrieveHandler(BaseHandler):
                 fallback_triggered=fallback_triggered,
                 chunks_per_query=chunks_per_query,
                 zero_result_queries=sum(1 for c in chunks_per_query if c == 0),
-                rrf_score_min=min(rrf_scores_list) if rrf_scores_list else 0.0,
-                rrf_score_max=max(rrf_scores_list) if rrf_scores_list else 0.0,
+                rrf_score_min=min(rrf_scores_list) if _has_rrf_scores else 0.0,
+                rrf_score_max=max(rrf_scores_list) if _has_rrf_scores else 0.0,
                 rrf_score_mean=(
                     sum(rrf_scores_list) / len(rrf_scores_list)
-                    if rrf_scores_list
+                    if _has_rrf_scores
                     else 0.0
                 ),
                 chunks_after_merge=len(merged),
@@ -454,6 +484,7 @@ class RagMultiRetrieveHandler(BaseHandler):
 
     @override
     def validate(self, step: StepConfig) -> list[str]:
+        """Validate step config: endpoint and rewrite_result handler_input required."""
         errors: list[str] = []
         if not step.get_domain_field("endpoint"):
             errors.append(f"Step '{step.id}' missing required 'endpoint' field")

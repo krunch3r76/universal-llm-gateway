@@ -38,6 +38,8 @@ options:
   rag_recency_weight: 0.2  # §4.6: linear additive; deeper decay model deferred
   scope_confidence_threshold: 0.7  # §4.4: CRAG 3-state evaluation — queries below
                                    #        threshold fall back to scope="both"
+  bibliography_filter_threshold: 0.35  # 0 = disable junk filter; >0 = fraction of lines to treat as junk
+  bibliography_filter_disable: false   # If true, skip junk/bibliography filter entirely (overrides threshold)
   hyde_enabled: true  # Hypothetical Document Embeddings — generates a short
                       # hypothetical passage as an additional retrieval query
   metadata_boost_enabled: true   # Post-RRF metadata re-scoring using extracted

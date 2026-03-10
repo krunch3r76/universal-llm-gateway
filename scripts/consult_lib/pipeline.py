@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -128,6 +129,12 @@ def query_pipeline_multi(
     pipeline_options: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Execute pipeline consultation for multiple models in parallel."""
+    if models:
+        print(
+            f"Pipeline multi-model: invoking {pipeline_id} for {len(models)} model(s): "
+            f"{', '.join(models)}",
+            file=sys.stderr,
+        )
     with ThreadPoolExecutor(max_workers=len(models)) as pool:
         futures = {
             pool.submit(
@@ -143,13 +150,21 @@ def query_pipeline_multi(
         }
         results: list[dict[str, Any]] = []
         for future in futures:
+            requested_model = futures[future]
             try:
-                results.append(future.result())
+                result = future.result()
+                # Stargate returns the pipeline virtual ID (e.g. consult-architect); preserve
+                # the requested model so output shows which model produced each response.
+                result["model_id"] = requested_model
+                results.append(result)
             except Exception as exc:
-                model = futures[future]
+                print(
+                    f"Pipeline request failed for model {requested_model}: {exc}",
+                    file=sys.stderr,
+                )
                 results.append(
                     {
-                        "model_id": model,
+                        "model_id": requested_model,
                         "error": str(exc),
                     }
                 )

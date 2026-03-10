@@ -94,7 +94,7 @@ def StepCompleted(  # noqa: N802
     Enables event consumers to detect non-zero shell exits that produced output.
     Optional json_output_keys: top-level keys of JSON output (observability).
     """
-    payload: dict[str, Any] = {
+    payload_data: dict[str, Any] = {
         "pipeline_id": pipeline_id,
         "execution_id": execution_id,
         "step_name": step_name,
@@ -103,13 +103,11 @@ def StepCompleted(  # noqa: N802
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "model_call_count": model_call_count,
+        "model_id": model_id,
+        "exit_code": exit_code,
+        "json_output_keys": json_output_keys,
     }
-    if model_id is not None:
-        payload["model_id"] = model_id
-    if exit_code is not None:
-        payload["exit_code"] = exit_code
-    if json_output_keys is not None:
-        payload["json_output_keys"] = json_output_keys
+    payload = {k: v for k, v in payload_data.items() if v is not None}
     return Event(
         signal="pipeline.step.completed",
         payload=payload,
@@ -142,7 +140,7 @@ def StepFailed(  # noqa: N802
         model_call_count: Total model calls attempted before failure
         traceback: Full Python traceback (omitted when None)
     """
-    payload: dict[str, Any] = {
+    payload_data: dict[str, Any] = {
         "pipeline_id": pipeline_id,
         "execution_id": execution_id,
         "step_name": step_name,
@@ -151,9 +149,9 @@ def StepFailed(  # noqa: N802
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "model_call_count": model_call_count,
+        "traceback": traceback,
     }
-    if traceback is not None:
-        payload["traceback"] = traceback
+    payload = {k: v for k, v in payload_data.items() if v is not None}
     return Event(
         signal="pipeline.step.failed",
         payload=payload,
@@ -534,6 +532,29 @@ def RagRetrievalSkipped(  # noqa: N802
             "step_name": step_name,
             "reason": reason,
             "out_of_scope_reason": out_of_scope_reason,
+        },
+    )
+
+
+@event_factory
+def RagRetrievalBibliographyFiltered(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    chunks_dropped: int,
+) -> Event:
+    """Emitted when post-RRF junk filter removes bibliography-heavy chunks.
+
+    Payload:
+        chunks_dropped: Number of chunks removed by the junk/bibliography filter
+    """
+    return Event(
+        signal="pipeline.rag.retrieval.bibliography.filtered",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "chunks_dropped": chunks_dropped,
         },
     )
 

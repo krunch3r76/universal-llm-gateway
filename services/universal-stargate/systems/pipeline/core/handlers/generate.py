@@ -105,7 +105,9 @@ class GenericGenerateHandler(BaseHandler):
         source_provenance = self._extract_source_provenance(step, context)
 
         executor_override = context._step_model_override.get(step.name)
-        model_ref_overrides = context.options.get("model_ref_overrides")
+        model_ref_overrides: dict[str, str] | None = context.options.get(
+            "model_ref_overrides"
+        )
         runtime_override: str | None = None
         if model_ref_overrides and step.model_ref:
             override = model_ref_overrides.get(step.name) or model_ref_overrides.get(
@@ -113,6 +115,14 @@ class GenericGenerateHandler(BaseHandler):
             )
             if isinstance(override, str) and override.strip():
                 runtime_override = override.strip()
+            elif model_ref_overrides:
+                logger.debug(
+                    "[%s] model_ref_overrides present but no match for step.name=%r or step.model_ref=%r; keys=%s",
+                    step.name,
+                    step.name,
+                    step.model_ref,
+                    list(model_ref_overrides.keys()) if isinstance(model_ref_overrides, dict) else "n/a",
+                )
 
         if executor_override:
             model_id = executor_override
@@ -449,8 +459,12 @@ class GenericGenerateHandler(BaseHandler):
                     )
                 except Exception as e:
                     logger.error(
-                        f"Step '{step.id}': Failed to resolve handler_input "
-                        f"'{field_name}': {e}. Input absent from prompt context.",
+                        "Step '%s': Failed to resolve handler_input '%s' "
+                        "(binding=%s): %s. Input absent from prompt context.",
+                        step.id,
+                        field_name,
+                        binding,
+                        e,
                         exc_info=True,
                     )
                     # Continue with other inputs rather than failing

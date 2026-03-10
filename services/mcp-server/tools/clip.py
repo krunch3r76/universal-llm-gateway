@@ -2,6 +2,10 @@
 
 Clips are saved by the /clip endpoint (called from a browser bookmarklet)
 as markdown files with YAML frontmatter in /data/files/clips/.
+
+When the bookmarklet sends HTML (e.g. full page or selection), content is
+normalized with trafilatura to strip boilerplate so stored clips are lean
+and LLM-friendly.
 """
 
 from __future__ import annotations
@@ -11,6 +15,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import trafilatura
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -18,6 +24,60 @@ logger = logging.getLogger(__name__)
 
 _CLIPS_DIR = Path("/data/files/clips")
 _CLIP_ID_PATTERN = re.compile(r"^[\w\-]+\.md$")
+_HTML_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")
+_ALREADY_DOCUMENT_RE = re.compile(r"<!DOCTYPE\s+html\b", re.IGNORECASE)
+_ALREADY_HTML_ROOT_RE = re.compile(r"<html[\s>]", re.IGNORECASE)
+_MIN_EXTRACT_CHARS = 50
+_MIN_EXTRACT_RATIO = 0.3
+
+
+def normalize_clip_content(content: str) -> tuple[str, bool]:
+    """Strip HTML boilerplate from clip content when it looks like HTML.
+
+    If content appears to be HTML (tag-like patterns), run trafilatura extraction
+    and return (clean_text, True). Otherwise return (content_unchanged, False).
+    Avoids double-wrapping when content is already a full HTML document.
+    """
+    if not content.strip():
+        return content, False
+    if not _HTML_TAG_RE.search(content):
+        return content, False
+    if _ALREADY_DOCUMENT_RE.search(content) or _ALREADY_HTML_ROOT_RE.search(content):
+        wrapped = content
+    else:
+        wrapped = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>"
+            f"{content}</body></html>"
+        )
+    extracted = trafilatura.extract(
+        wrapped,
+        include_links=True,
+        include_tables=True,
+        output_format="txt",
+    )
+    if extracted is None or not extracted.strip():
+        logger.warning(
+            "normalize_clip_content: trafilatura returned empty, keeping original"
+        )
+        return content, False
+    extracted_clean = extracted.strip()
+    original_len = len(content)
+    extracted_len = len(extracted_clean)
+    ratio = extracted_len / original_len if original_len > 0 else 0.0
+    if extracted_len < _MIN_EXTRACT_CHARS or ratio < _MIN_EXTRACT_RATIO:
+        logger.info(
+            "normalize_clip_content: extraction ratio %.2f (%d/%d), falling back to original",
+            ratio,
+            extracted_len,
+            original_len,
+        )
+        return content, False
+    logger.info(
+        "normalize_clip_content: extracted %d chars from %d (HTML stripped)",
+        extracted_len,
+        original_len,
+    )
+    return extracted_clean, True
 
 
 def _parse_frontmatter(head: str) -> dict[str, str]:

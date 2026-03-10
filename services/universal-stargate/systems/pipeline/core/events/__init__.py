@@ -39,6 +39,7 @@ from .recorder import EventRecorder
 from .step import (
     RagMetadataBoostApplied,
     RagRerankCompleted,
+    RagRetrievalBibliographyFiltered,
     RagRetrievalParamsResolved,
 )
 from .verification import (
@@ -103,6 +104,7 @@ __all__ = [
     "VerificationComplete",
     "VetoPassCompleted",
     # RAG
+    "RagRetrievalBibliographyFiltered",
     "RagRetrievalParamsResolved",
     "RagMetadataBoostApplied",
     "RagRerankCompleted",

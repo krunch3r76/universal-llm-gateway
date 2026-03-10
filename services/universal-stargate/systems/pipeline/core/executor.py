@@ -22,12 +22,13 @@ import json
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
 from fastapi.responses import Response
 from universal_event_bus import Event
 from universal_logging import get_logger
 
+from ..registry import PipelineRegistry
 from .dag import DAGBuilder, StepState
 
 # New observability events (for JSONL recorder)
@@ -57,14 +58,25 @@ from .events.step import (
 )
 from .execution import DAGExecutor
 from .execution.disconnect_monitor import execute_with_disconnect_monitoring
+from .execution.map_reduce.map_executor.events import ProxyProtocol
 from .fragments import get_fragment_loader
 from .handlers import PipelineContext, StepOutput
 from .prompts import get_prompt_builder
-from .schemas import FragmentRef, StepConfig
+from .schemas import FragmentRef, PipelineSpec, StepConfig
 
-if TYPE_CHECKING:
-    from ..registry import PipelineRegistry
-    from .schemas import PipelineSpec
+
+class _RequestExecutorProtocol(Protocol):
+    """Minimal contract for request execution (avoids importing proxy at runtime)."""
+
+    async def execute_request(self, context: Any) -> Any: ...
+
+
+class _PipelineRequestContextProtocol(Protocol):
+    """Context passed to execute(); has http_request, original_request, chat_request."""
+
+    http_request: Any
+    original_request: dict[str, Any] | None
+    chat_request: Any
 
 logger = get_logger(__name__)
 # Dedicated logger for pipeline execution tracking (separate file, no truncation)
@@ -85,8 +97,8 @@ class PipelineExecutor:
     def __init__(
         self,
         registry: PipelineRegistry,
-        request_executor: Any,
-        proxy: Any,
+        request_executor: _RequestExecutorProtocol,
+        proxy: ProxyProtocol,
     ):
         self.registry = registry
         self.request_executor = request_executor
@@ -98,10 +110,11 @@ class PipelineExecutor:
 
     def _publish_event(self, context: PipelineContext, event: Event) -> None:
         """
-        Publish event via context's event bus (fire-and-forget).
+        Publish pipeline lifecycle event to the context's event bus (fire-and-forget).
 
-        Reuses pattern from DAGExecutor for consistency.
-        Logs WARN once if event_bus unavailable (graceful degradation).
+        Ensures observability of pipeline execution for monitoring and JSONL recorders.
+        If the event bus is unavailable, logs a warning once and drops events so
+        execution continues without monitoring (graceful degradation).
         """
         proxy = getattr(context, "_proxy", None)
         event_bus = getattr(proxy, "event_bus", None) if proxy else None
@@ -111,7 +124,9 @@ class PipelineExecutor:
             logger.warning("Event bus unavailable - events will not be published")
             self._event_bus_warned = True
 
-    async def execute(self, context) -> Response:
+    async def execute(
+        self, context: _PipelineRequestContextProtocol
+    ) -> Response:
         """
         Execute a pipeline using DAG-based scheduling.
 
@@ -168,6 +183,8 @@ class PipelineExecutor:
         # Extract runtime pipeline_options from HTTP request
         runtime_options: dict[str, Any] = {}
         if context.original_request:
+            # Diagnostic: confirm pipeline_options present for model override investigation
+            orig_keys = list(context.original_request.keys())
             raw_options = context.original_request.get("pipeline_options", {})
             if raw_options is not None and not isinstance(raw_options, dict):
                 raise ValueError(
@@ -180,6 +197,20 @@ class PipelineExecutor:
                 logger.info(
                     f"Pipeline '{pipeline.id}': Received runtime options: {option_keys}"
                 )
+                model_ref_overrides = runtime_options.get("model_ref_overrides")
+                if model_ref_overrides is not None:
+                    logger.info(
+                        "Pipeline '%s': model_ref_overrides from request: %s",
+                        pipeline.id,
+                        dict(model_ref_overrides) if isinstance(model_ref_overrides, dict) else model_ref_overrides,
+                    )
+            elif "pipeline_options" not in context.original_request:
+                logger.warning(
+                    "Pipeline '%s': original_request has no 'pipeline_options' (keys: %s). "
+                    "model_ref_overrides will be empty.",
+                    pipeline.id,
+                    orig_keys,
+                )
 
         # Create pipeline context
         execution_id = str(uuid.uuid4())
@@ -191,6 +222,15 @@ class PipelineExecutor:
             runtime_options=runtime_options,
             _messages=messages,
         )
+
+        # Diagnostic: confirm merged options contain model_ref_overrides for override investigation
+        if runtime_options:
+            merged_overrides = pipeline_context.options.get("model_ref_overrides")
+            logger.info(
+                "Pipeline '%s': context.options.model_ref_overrides = %s",
+                pipeline.id,
+                dict(merged_overrides) if isinstance(merged_overrides, dict) else merged_overrides,
+            )
 
         # Log pipeline execution start with full original request (no truncation)
         execution_logger.info(
@@ -438,16 +478,12 @@ class PipelineExecutor:
             # Handle dict (raw from YAML)
             if isinstance(item, dict):
                 if "use" in item:
-                    # Fragment reference
                     ref = FragmentRef(**item)
-                    fragment_steps = self.fragment_loader.expand_fragment_ref(ref)
-                    expanded.extend(fragment_steps)
+                    expanded.extend(self.fragment_loader.expand_fragment_ref(ref))
                 else:
-                    # Regular step
                     expanded.append(StepConfig(**item))
             elif isinstance(item, FragmentRef):
-                fragment_steps = self.fragment_loader.expand_fragment_ref(item)
-                expanded.extend(fragment_steps)
+                expanded.extend(self.fragment_loader.expand_fragment_ref(item))
             else:
                 expanded.append(item)
 
@@ -494,10 +530,10 @@ class PipelineExecutor:
                 if pipeline.output_format == "json_array":
                     results = []
                     for item in output.outputs_aligned():
-                        if item is not None and item.json is not None:
-                            results.append(item.json)
-                        elif item is not None:
-                            results.append(item.raw)
+                        if item is not None:
+                            results.append(
+                                item.json if item.json is not None else item.raw
+                            )
                         else:
                             results.append(None)
                     return json.dumps(results)
@@ -509,12 +545,6 @@ class PipelineExecutor:
                 f"(raw={output.raw[:40]!r}, json={output.json is not None})"
             )
             return text
-        else:
-            available = list(context.outputs.keys())
-            logger.error(
-                f"Pipeline output '{output_ref}' not found in context.outputs. "
-                f"Available keys: {available}"
-            )
 
         # Handle dotted references like "synthesize_all.qwen"
         if "." in output_ref:
@@ -529,7 +559,6 @@ class PipelineExecutor:
                 return ""
 
             if isinstance(step_output, MapOutputCollection):
-                # Try key-based access
                 result = step_output.get_output_by_key(key)
                 if result:
                     return result.text
@@ -542,7 +571,13 @@ class PipelineExecutor:
                     f"Output '{output_ref}': step '{step_name}' is not a "
                     f"MapOutputCollection"
                 )
+            return ""
 
+        available = list(context.outputs.keys())
+        logger.error(
+            f"Pipeline output '{output_ref}' not found in context.outputs. "
+            f"Available keys: {available}"
+        )
         return ""
 
     def _extract_backtranslation_data(
@@ -558,7 +593,9 @@ class PipelineExecutor:
                     return bt_output.json
         return None
 
-    def _extract_messages(self, context: Any) -> list[dict[str, Any]] | None:
+    def _extract_messages(
+        self, context: _PipelineRequestContextProtocol
+    ) -> list[dict[str, Any]] | None:
         """Extract full chat messages, preferring explicit pre-truncation capture."""
         if hasattr(context.http_request, "state") and hasattr(
             context.http_request.state, "pipeline_full_messages"
@@ -572,7 +609,9 @@ class PipelineExecutor:
                 return messages
         return None
 
-    def _extract_source_text(self, context: Any) -> str:
+    def _extract_source_text(
+        self, context: _PipelineRequestContextProtocol
+    ) -> str:
         """Extract source text from request context."""
         # From chat request
         if context.chat_request and context.chat_request.messages:
