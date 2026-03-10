@@ -21,7 +21,7 @@ logger = get_logger(__name__)
 # Token categories that map to token_defaults keys
 TOKEN_CATEGORIES = (
     "analyze", "classify", "answer", "enrich",
-    "verify", "post_process", "reseed",
+    "verify", "post_process", "reseed", "review", "consult",
 )
 
 
@@ -98,7 +98,8 @@ def infer_token_category(step: StepConfig) -> str | None:
     """
     Infer token category from step name or type.
 
-    Categories: analyze, classify, answer, enrich, verify, post_process, reseed
+    Categories: analyze, classify, answer, enrich, verify, post_process, reseed,
+    review, consult.
     """
     name_lower = step.name.lower()
     for cat in TOKEN_CATEGORIES:

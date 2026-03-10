@@ -237,7 +237,8 @@ Payload semantics:
 | Signal | Required Payload | Description |
 |--------|-----------------|-------------|
 | `rag.extraction.batch.started` | `file`, `chunk_count` | Batch extraction initiated for a file |
-| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | Batch extraction finished (successful ≤ chunk_count; written = 0 on partial failure) |
+| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | Batch extraction finished (successful ≤ chunk_count; written = 0 on partial failure). Optional payload: `extraction_model`. |
+| `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | Re-extraction triggered because existing chunks have different or missing extraction_model. |
 | `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | All chunks permanently failed — no pipeline call made |
 | `rag.extraction.failed` | `chunk_id`, `error` | Per-chunk extraction failure (expected iteration result missing or invalid after batch parsing) |
 | `rag.extraction.permanently.skipped` | `chunk_id`, `source`, `attempt_count` | Chunk crossed `max_extraction_attempts`; permanently abandoned. Persisted as `permanent=1` in `failed_extractions`. Emitted exactly once per chunk. |
@@ -464,6 +465,34 @@ jq -c 'select(.signal == "pipeline.rag.rerank.completed" and .payload.rerank_ena
    chunks: .payload.chunks_input, windows: .payload.windows_evaluated}' \
   /tmp/pipeline-events/current.jsonl
 ```
+
+### Corpus Hint Filtering
+
+**Signal**: `pipeline.rag.hints.filtered`
+
+Emitted by the `filter_corpus_hints` step after filtering corpus hints by
+chunk-weighted co-occurrence with query-derived terms from suggest_terms.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pipeline_id` | string | Pipeline ID |
+| `execution_id` | string | Execution ID |
+| `step_name` | string | Step name (`filter_corpus_hints`) |
+| `query_terms` | string[] | Terms from suggest_terms used for lookup |
+| `original_hint_count` | int | Total hints before filtering |
+| `filtered_hint_count` | int | Hints after filtering (post-cap if applied) |
+| `filtered_hints` | string[] | The surviving hint terms (sorted by overlap count desc) |
+| `fallback` | bool | True if no co-occurrence found, all hints kept |
+| `scoring_mode` | string | `"chunk_weighted"` (default) — co-occurrence scoring strategy |
+| `min_threshold` | int | Minimum co-occurrence count required to keep a hint |
+| `capped` | bool | True if max_hints cap was applied after filtering |
+| `cap_limit` | int | Configured max_hints value (0 = no cap) |
+
+**Invariant**: `filtered_hint_count ≤ original_hint_count`
+**Invariant**: `capped=true` ⟹ `filtered_hint_count ≤ cap_limit`
+**Note**: `fallback=true` ⟹ `filtered_hint_count = original_hint_count` (all hints kept as conservative default)
+
+**Fallback chain**: chunk-weighted (N=`min_threshold`) → doc-level (N=1) → all hints (fallback=true)
 
 ### Unified Model Selection (`POST /v1/models/select`)
 
@@ -747,19 +776,24 @@ provider HTTP failures.
 | `rag.watch.reconcile.complete` | `path`, `recovered`, `unchanged` | - |
 | `rag.watch.stopped` | `watchers` | - |
 | `rag.extraction.batch.started` | `file`, `chunk_count` | - |
-| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | - |
+| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | `extraction_model` (optional) |
+| `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | re-extraction due to model mismatch |
 | `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | all chunks exceeded max_attempts; no pipeline call |
 | `rag.extraction.completed` | `chunk_id`, `entities`, `topics` | - |
 | `rag.extraction.failed` | `chunk_id`, `error` | - |
 | `rag.property.index.rebuilt` | `collection`, `count` | - |
 | `rag.pending.reconciled` | `reconciled`, `cleared`, `failed_transient`, `failed_permanent` | emitted once at startup if interrupted files found |
 | `rag.orphan.purged` | `files`, `chunks` | emitted once at startup; chunks removed for source files deleted while service was down |
-| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file |
+| `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
+| `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
+| `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |
+| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` (when file is in registry) |
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty) |
 | `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`} |
 | `rag.file.indexing.failed` | `file`, `error` | unhandled error aborted indexing for this file |
 | `rag.search.executed` | `query_len`, `top_k`, `results`, `scope` | search completed with ≥1 result |
 | `rag.search.no_results` | `query_len`, `scope` | search completed with 0 results |
+| `rag.corpus_hints.updated` | `path`, `scopes_updated`, `timestamp` | corpus_hints.yaml written after aggregation from property index |
 
 ### Doc Generate Events
 
@@ -803,6 +837,7 @@ Pipeline events flow to two sinks:
 | `pipeline.rag.retrieval.retry.succeeded` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | retry adopted (more chunks) |
 | `pipeline.rag.retrieval.retry.not_improved` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | retry ran, initial kept |
 | `pipeline.rag.rerank.completed` | `pipeline_id`, `execution_id`, `step_name`, `rerank_enabled`, `model_id`, `chunks_input`, `chunks_output`, `windows_evaluated`, `max_rank_movement_observed`, `total_rerank_seconds` | - |
+| `pipeline.rag.hints.filtered` | `pipeline_id`, `execution_id`, `step_name`, `query_terms`, `original_hint_count`, `filtered_hint_count`, `filtered_hints`, `fallback`, `scoring_mode`, `min_threshold`, `capped`, `cap_limit` | - |
 
 **Note on `pipeline.step.failed` partial progress**: `prompt_tokens`, `completion_tokens`,
 and `model_call_count` are populated from all model calls completed before the failure,

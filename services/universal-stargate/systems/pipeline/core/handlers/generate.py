@@ -312,9 +312,18 @@ class GenericGenerateHandler(BaseHandler):
         """Resolve execution configuration for a specific model.
 
         System prompt hierarchy: prompt > model > "".
+        System prompt is rendered with the same template context as the user prompt
+        so placeholders (e.g. {corpus_hints}, {scope_options}) are substituted.
         Generation parameters hierarchy: step > token_defaults > dynamic.
         """
-        system_prompt = prompt_config.system_prompt or model_system_prompt or ""
+        system_prompt_raw = prompt_config.system_prompt or model_system_prompt or ""
+        if system_prompt_raw:
+            prompt_context = self._build_prompt_context(step, context)
+            system_prompt = self._prompt_builder.render_safe(
+                system_prompt_raw, prompt_context
+            )
+        else:
+            system_prompt = ""
         temperature = step.generation_parameters.get("temperature")
         max_tokens = self._resolve_max_tokens(step, context)
 

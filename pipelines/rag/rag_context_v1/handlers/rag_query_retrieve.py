@@ -222,20 +222,57 @@ class RagMultiRetrieveHandler(BaseHandler):
                 scope = scope_override_val
             else:
                 predicted_scope = rewrite_data.get("scope", "both")
-                scope_confidence = float(rewrite_data.get("scope_confidence", 1.0))
+                scope_aliases: dict[str, str] = (
+                    effective.get("scope_aliases") or {}
+                ) or (
+                    context.pipeline.options.to_context_dict().get("scope_aliases")
+                    or {}
+                )
+                resolved_scope = scope_aliases.get(
+                    predicted_scope, predicted_scope
+                )
+                if resolved_scope != predicted_scope:
+                    logger.info(
+                        "Step '%s': scope alias '%s' → '%s'",
+                        step.id,
+                        predicted_scope,
+                        resolved_scope,
+                    )
+                # TODO: derive from single source — e.g. RAG config scopes or pipeline
+                # scopes map — instead of a separate hardcoded valid_scopes list
+                valid_scopes: set[str] = set(
+                    effective.get("valid_scopes")
+                    or context.pipeline.options.to_context_dict().get(
+                        "valid_scopes"
+                    )
+                    or []
+                )
+                default_scope = "both"
+                if valid_scopes and resolved_scope not in valid_scopes:
+                    logger.info(
+                        "Step '%s': scope '%s' not in valid_scopes, "
+                        "fallback to '%s'",
+                        step.id,
+                        resolved_scope,
+                        default_scope,
+                    )
+                    resolved_scope = default_scope
+                scope_confidence = float(
+                    rewrite_data.get("scope_confidence", 1.0)
+                )
                 scope = (
-                    predicted_scope
+                    resolved_scope
                     if scope_confidence >= confidence_threshold
                     else "both"
                 )
-                if scope != predicted_scope:
+                if scope != resolved_scope:
                     logger.info(
                         "Step '%s': scope_confidence=%.2f < threshold=%.2f, "
                         "overriding scope '%s' → 'both'",
                         step.id,
                         scope_confidence,
                         confidence_threshold,
-                        predicted_scope,
+                        resolved_scope,
                     )
             source_prefixes = None  # let RAG service resolve
             search_scope = scope  # pass scope label to /search

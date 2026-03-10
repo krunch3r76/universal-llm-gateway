@@ -46,12 +46,28 @@ from fastapi import FastAPI, HTTPException
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
 from services.rag.admin_routes import register_admin_routes
+from services.rag.article_registry import (
+    ArticleEntry,
+)
+from services.rag.article_registry import (
+    get_entry as get_article_entry,
+)
+from services.rag.article_registry import (
+    load_registry as load_article_registry,
+)
+from services.rag.article_registry import (
+    lookup_article as lookup_article_metadata,
+)
 from services.rag.chunkers import Chunk, chunk_file
 from services.rag.config import RagConfig, load_config
+from services.rag.corpus_hints import update_corpus_hints
 from services.rag.directory_ops import purge_orphaned_chunks
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import embed_chunks, embed_query, wait_until_healthy
 from services.rag.events import (
+    rag_article_registry_failed,
+    rag_article_registry_loaded,
+    rag_extraction_model_mismatch,
     rag_file_deleted,
     rag_file_indexed,
     rag_file_indexing_failed,
@@ -107,9 +123,53 @@ _broadcaster: MinimalEventDebugBroadcaster | None = None
 _config: RagConfig | None = None
 _init_task: asyncio.Task[None] | None = None
 _property_index: PropertyIndex | None = None
+_registry: dict[str, ArticleEntry] | None = None
 
 # Serialize concurrent indexing of the same file path (watcher + API can race).
 _file_index_locks: dict[str, asyncio.Lock] = {}
+
+
+def _article_event_kwargs(
+    registry: dict[str, ArticleEntry] | None, source: str
+) -> dict[str, str]:
+    """Return optional article fields for rag_file_indexed when file is in registry."""
+    entry = get_article_entry(registry, source) if registry else None
+    if entry is None:
+        return {}
+    out: dict[str, str] = {}
+    if entry.title:
+        out["article_title"] = entry.title
+    if entry.authors:
+        out["article_authors"] = entry.authors
+    if entry.venue:
+        out["article_venue"] = entry.venue
+    if entry.published_date:
+        out["published_date"] = entry.published_date
+    if entry.doi:
+        out["article_doi"] = entry.doi
+    return out
+
+
+async def _maybe_update_corpus_hints() -> None:
+    """Update corpus_hints.yaml from property index when config.corpus_hints_path is set.
+
+    Logs on failure; does not raise so indexing is never failed by hints update.
+    """
+    if _config is None or _config.corpus_hints_path is None or _property_index is None:
+        return
+    try:
+        await update_corpus_hints(
+            _property_index,
+            _config.corpus_hints_path,
+            event_bus=_event_bus,
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to update corpus hints at %s: %s",
+            _config.corpus_hints_path,
+            e,
+            exc_info=True,
+        )
 
 
 def _get_collection() -> chromadb.Collection:
@@ -133,7 +193,8 @@ async def _startup() -> None:
         _broadcaster, \
         _config, \
         _init_task, \
-        _property_index
+        _property_index, \
+        _registry
     store_path = Path.home() / ".rag" / "store"
     store_path.mkdir(parents=True, exist_ok=True)
     _chroma = chromadb.PersistentClient(path=str(store_path))
@@ -158,6 +219,33 @@ async def _startup() -> None:
     configure_embeddings(_config.embedding_model)
     _property_index = PropertyIndex()
     await _property_index.start()
+    if _config.article_registry_path is not None:
+        try:
+            _registry = await asyncio.to_thread(
+                load_article_registry, _config.article_registry_path
+            )
+            if _event_bus is not None:
+                await _event_bus.publish_async(
+                    rag_article_registry_loaded(
+                        path=str(_config.article_registry_path),
+                        article_count=len(_registry),
+                    )
+                )
+        except Exception as e:
+            logger.error(
+                "Failed to load article registry from %s: %s",
+                _config.article_registry_path,
+                e,
+                exc_info=True,
+            )
+            if _event_bus is not None:
+                await _event_bus.publish_async(
+                    rag_article_registry_failed(
+                        path=str(_config.article_registry_path),
+                        error=str(e),
+                    )
+                )
+            _registry = None
     if _config.automatic_indexing_enabled and _config.watch_directories:
         _init_task = asyncio.create_task(
             _deferred_watcher_start(_config), name="rag-watcher-init"
@@ -388,6 +476,18 @@ async def _index_file_impl(
     content_hash = file_hash(raw, schema_version=schema_version)
     prefix = content_hash[:16]
 
+    if _registry is not None:
+        entry = get_article_entry(_registry, source)
+        if entry and entry.content_hash:
+            file_sha = hashlib.sha256(raw).hexdigest()
+            if file_sha != entry.content_hash:
+                logger.warning(
+                    "Article registry content_hash mismatch for %s: expected %s, got %s",
+                    source,
+                    entry.content_hash,
+                    file_sha,
+                )
+
     collection = _get_collection()
 
     if file_path.suffix.lower() == ".pdf":
@@ -411,20 +511,36 @@ async def _index_file_impl(
     if not force and existing_ids and all_ids_match_prefix(existing_ids, prefix):
         # Chunks are current — check if extraction metadata is also present.
         # Missing extraction_schema_version means extraction timed out on a prior run;
-        # the file is in ChromaDB but the property index is unpopulated.
+        # mismatch or missing extraction_model triggers re-extraction when config sets it.
+        existing_metadatas = [
+            m for m in (existing.get("metadatas") or []) if isinstance(m, dict)
+        ]
         if _config is not None and _property_index is not None:
+            expected_model = _config.knowledge_extraction.extraction_model
+            has_model_mismatch = bool(expected_model) and any(
+                m.get("extraction_model") != expected_model for m in existing_metadatas
+            )
+            if has_model_mismatch and _event_bus is not None:
+                await _event_bus.publish_async_nowait(
+                    rag_extraction_model_mismatch(
+                        file=source,
+                        expected_model=expected_model,
+                        chunk_count=len(existing_ids),
+                    )
+                )
+            scope = _config.get_scope_for_path(source)
             ext_result = await recover_missing_extraction(
                 collection=collection,
                 source=source,
                 existing_ids=existing_ids,
-                existing_metadatas=[
-                    m for m in (existing.get("metadatas") or []) if isinstance(m, dict)
-                ],
+                existing_metadatas=existing_metadatas,
                 config=_config.knowledge_extraction,
                 property_index=_property_index,
                 event_bus=_event_bus,
+                scope=scope,
             )
             if ext_result is not None and ext_result.success:
+                await _maybe_update_corpus_hints()
                 if _event_bus is not None:
                     await _event_bus.publish_async_nowait(
                         rag_file_indexed(
@@ -432,6 +548,7 @@ async def _index_file_impl(
                             deleted=0,
                             indexed=0,
                             duration_seconds=time.monotonic() - start,
+                            **_article_event_kwargs(_registry, source),
                         )
                     )
                 return IndexResult(
@@ -476,10 +593,15 @@ async def _index_file_impl(
     metadatas = [c.metadata for c in chunks]
     ids = [f"{prefix}-{i}" for i in range(len(chunks))]
 
-    # Apply caller overrides first; reserved keys below always win.
+    merged: dict[str, str | int | float | bool] = {}
+    if _registry is not None:
+        entry_meta = lookup_article_metadata(_registry, source)
+        if entry_meta is not None:
+            merged.update(entry_meta)
     if metadata_overrides is not None:
-        for metadata in metadatas:
-            metadata.update(metadata_overrides)
+        merged.update(metadata_overrides)
+    for metadata in metadatas:
+        metadata.update(merged)
 
     now = datetime.now(UTC).isoformat()
     for metadata, chunk in zip(metadatas, chunks, strict=True):
@@ -498,8 +620,9 @@ async def _index_file_impl(
     try:
         extraction_entities = 0
         extraction_topics = 0
-        extraction_property_entries: list[tuple[str, str]] = []
+        extraction_property_entries: list[tuple[str, str, str, str]] = []
         if _config is not None and _property_index is not None:
+            scope = _config.get_scope_for_path(source)
             ext_result = await run_extraction(
                 file=source,
                 ids=ids,
@@ -509,6 +632,7 @@ async def _index_file_impl(
                 property_index=_property_index,
                 event_bus=_event_bus,
                 apply_property_index=False,
+                scope=scope,
             )
             extraction_entities = ext_result.entities
             extraction_topics = ext_result.topics
@@ -521,7 +645,7 @@ async def _index_file_impl(
         )
         if _property_index is not None and extraction_property_entries:
             try:
-                await _property_index.add_batch(extraction_property_entries)
+                await _property_index.add_batch_with_scope(extraction_property_entries)
             except Exception:
                 # Compensation: keep old chunks untouched by rolling back new upsert.
                 collection.delete(ids=ids)
@@ -541,6 +665,7 @@ async def _index_file_impl(
         if _property_index is not None:
             await _property_index.clear_pending(source)
 
+    await _maybe_update_corpus_hints()
     logger.info(
         "Index complete: file=%s deleted=%d indexed=%d",
         source,
@@ -554,6 +679,7 @@ async def _index_file_impl(
                 deleted=len(existing_ids),
                 indexed=len(chunks),
                 duration_seconds=time.monotonic() - start,
+                **_article_event_kwargs(_registry, source),
             )
         )
     return IndexResult(

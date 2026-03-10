@@ -212,6 +212,20 @@ class PipelineExecutor:
                     orig_keys,
                 )
 
+        # Inject corpus_hints for rag-context so suggest_terms gets vocabulary hints
+        if pipeline.id == "rag-context" and "corpus_hints" not in runtime_options:
+            try:
+                from pipelines.rag.corpus_hints_loader import fetch_corpus_hints_text
+
+                runtime_options = dict(runtime_options)
+                runtime_options["corpus_hints"] = fetch_corpus_hints_text()
+            except Exception as e:
+                logger.debug(
+                    "Pipeline '%s': could not load corpus hints: %s",
+                    pipeline.id,
+                    e,
+                )
+
         # Create pipeline context
         execution_id = str(uuid.uuid4())
         pipeline_context = PipelineContext(

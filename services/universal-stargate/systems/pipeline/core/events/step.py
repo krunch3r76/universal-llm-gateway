@@ -711,6 +711,53 @@ def RagRerankCompleted(  # noqa: N802
 
 
 @event_factory
+def RagHintsFiltered(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    query_terms: list[str],
+    original_hint_count: int,
+    filtered_hint_count: int,
+    filtered_hints: list[str],
+    fallback: bool,
+    scoring_mode: str = "chunk_weighted",
+    min_threshold: int = 2,
+    capped: bool = False,
+    cap_limit: int = 0,
+) -> Event:
+    """Emitted after corpus hints are filtered by co-occurrence with query terms.
+
+    Payload:
+        query_terms: Terms from suggest_terms used for co-occurrence lookup
+        original_hint_count: Total corpus hints before filtering
+        filtered_hint_count: Hints remaining after filtering
+        filtered_hints: The filtered hint terms
+        fallback: True if filtering produced no results and all hints were kept
+        scoring_mode: Co-occurrence scoring strategy ("chunk_weighted" or "doc_level")
+        min_threshold: Minimum co-occurrence count required to keep a hint
+        capped: True if max_hints cap was applied after filtering
+        cap_limit: max_hints value (0 = no cap configured)
+    """
+    return Event(
+        signal="pipeline.rag.hints.filtered",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "query_terms": query_terms,
+            "original_hint_count": original_hint_count,
+            "filtered_hint_count": filtered_hint_count,
+            "filtered_hints": filtered_hints,
+            "fallback": fallback,
+            "scoring_mode": scoring_mode,
+            "min_threshold": min_threshold,
+            "capped": capped,
+            "cap_limit": cap_limit,
+        },
+    )
+
+
+@event_factory
 def StepConditionEvaluated(  # noqa: N802
     pipeline_id: str,
     execution_id: str,

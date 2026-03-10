@@ -98,6 +98,9 @@ class PipelineSpec(BaseModel):
     steps: list[StepConfig]
     output: str
     output_format: str | None = None
+    # Category → max_tokens for steps that don't set generation_parameters.max_tokens.
+    # High values (e.g. 65536) for consult/planning pipelines avoid truncation.
+    token_defaults: dict[str, int] | None = None
 
     # Fragment definitions within this pipeline
     fragments: dict[str, list[dict]] | None = None

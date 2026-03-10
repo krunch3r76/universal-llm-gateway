@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from universal_event_bus import Event, event_factory
 
 
@@ -198,6 +200,7 @@ def rag_extraction_batch_completed(
     successful: int,
     written: int,
     duration_seconds: float,
+    extraction_model: str | None = None,
 ) -> Event:
     """Emitted after an extraction batch finishes.
 
@@ -206,15 +209,34 @@ def rag_extraction_batch_completed(
     written: chunks whose extraction metadata was committed (0 when the
         all-or-nothing rule fires due to partial failure; equals successful
         when all chunks succeed).
+    extraction_model: model id used for extraction when configured.
     """
+    payload: dict[str, Any] = {
+        "file": file,
+        "chunk_count": chunk_count,
+        "successful": successful,
+        "written": written,
+        "duration_seconds": duration_seconds,
+    }
+    if extraction_model is not None:
+        payload["extraction_model"] = extraction_model
+    return Event(signal="rag.extraction.batch.completed", payload=payload)
+
+
+@event_factory
+def rag_extraction_model_mismatch(
+    *,
+    file: str,
+    expected_model: str,
+    chunk_count: int,
+) -> Event:
+    """Emitted when re-extraction is triggered because existing chunks have different or missing extraction_model."""
     return Event(
-        signal="rag.extraction.batch.completed",
+        signal="rag.extraction.model.mismatch",
         payload={
             "file": file,
+            "expected_model": expected_model,
             "chunk_count": chunk_count,
-            "successful": successful,
-            "written": written,
-            "duration_seconds": duration_seconds,
         },
     )
 
@@ -276,23 +298,65 @@ def rag_pending_reconciled(
 
 
 @event_factory
+def rag_article_registry_loaded(*, path: str, article_count: int) -> Event:
+    """Emitted when article registry is successfully loaded at startup."""
+    return Event(
+        signal="rag.article.registry.loaded",
+        payload={"path": path, "article_count": article_count},
+    )
+
+
+@event_factory
+def rag_article_registry_failed(*, path: str, error: str) -> Event:
+    """Emitted when article registry load fails at startup."""
+    return Event(
+        signal="rag.article.registry.failed",
+        payload={"path": path, "error": error},
+    )
+
+
+@event_factory
+def rag_article_registry_write_failed(
+    *, path: str, filename: str, error: str
+) -> Event:
+    """Emitted when writing an entry to article registry fails during ingest."""
+    return Event(
+        signal="rag.article.registry.write.failed",
+        payload={"path": path, "filename": filename, "error": error},
+    )
+
+
+@event_factory
 def rag_file_indexed(
     *,
     file: str,
     deleted: int,
     indexed: int,
     duration_seconds: float = 0.0,
+    article_title: str | None = None,
+    article_authors: str | None = None,
+    article_venue: str | None = None,
+    published_date: str | None = None,
+    article_doi: str | None = None,
 ) -> Event:
     """Emitted after a file is fully indexed into both ChromaDB and the property index."""
-    return Event(
-        signal="rag.file.indexed",
-        payload={
-            "file": file,
-            "deleted": deleted,
-            "indexed": indexed,
-            "duration_seconds": duration_seconds,
-        },
-    )
+    payload: dict[str, Any] = {
+        "file": file,
+        "deleted": deleted,
+        "indexed": indexed,
+        "duration_seconds": duration_seconds,
+    }
+    if article_title is not None:
+        payload["article_title"] = article_title
+    if article_authors is not None:
+        payload["article_authors"] = article_authors
+    if article_venue is not None:
+        payload["article_venue"] = article_venue
+    if published_date is not None:
+        payload["published_date"] = published_date
+    if article_doi is not None:
+        payload["article_doi"] = article_doi
+    return Event(signal="rag.file.indexed", payload=payload)
 
 
 @event_factory
@@ -381,4 +445,22 @@ def rag_search_no_results(
     return Event(
         signal="rag.search.no_results",
         payload={"query_len": query_len, "scope": scope},
+    )
+
+
+@event_factory
+def rag_corpus_hints_updated(
+    *,
+    path: str,
+    scopes_updated: list[str],
+    timestamp: str,
+) -> Event:
+    """Emitted after corpus_hints.yaml is written following aggregation from the property index."""
+    return Event(
+        signal="rag.corpus_hints.updated",
+        payload={
+            "path": path,
+            "scopes_updated": scopes_updated,
+            "timestamp": timestamp,
+        },
     )

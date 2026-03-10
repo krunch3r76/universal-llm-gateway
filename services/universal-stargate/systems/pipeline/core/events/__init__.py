@@ -37,6 +37,7 @@ from .lifecycle import (
 )
 from .recorder import EventRecorder
 from .step import (
+    RagHintsFiltered,
     RagMetadataBoostApplied,
     RagRerankCompleted,
     RagRetrievalBibliographyFiltered,
@@ -107,6 +108,7 @@ __all__ = [
     "VerificationComplete",
     "VetoPassCompleted",
     # RAG
+    "RagHintsFiltered",
     "RagRetrievalBibliographyFiltered",
     "RagRetrievalParamsResolved",
     "RagRetrievalRetryNotImproved",

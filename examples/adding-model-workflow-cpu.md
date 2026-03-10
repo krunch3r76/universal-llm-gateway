@@ -9,7 +9,7 @@ Maintainer workflow for adding and measuring a CPU-profiled model in federated d
 
 ### Quick env setup
 ```bash
-export ROOT="/path/to/universal-llm-gateway"
+export ROOT="$PWD" # project directory
 export PY="$HOME/.venvs/universal/bin/python"
 export STARGATE_URL="http://localhost:9999"  # Master/Relay Stargate endpoint
 export MODELS_DIR="$HOME/.models"
@@ -48,8 +48,7 @@ cd "$ROOT"
 $PY -m scripts.model_manager generate "$MODEL_PATH" \
   --repo "$REPO" \
   --static \
-  --add-verified \
-  --network
+  --add-verified
 ```
 
 **What happens:**

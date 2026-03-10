@@ -9,15 +9,21 @@ already in corpus) and server-side (pdf_hash in ChromaDB metadata).
 from __future__ import annotations
 
 import hashlib
+import logging
 import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
 from transport_utils.rag_client import DEFAULT_RAG_URL, make_sync_client
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CORPUS_DIR = Path("docs/research/prompting")
 DEFAULT_RAG_TIMEOUT = 30.0
+DEFAULT_REGISTRY_PATH = Path("docs/research/article_registry.yaml")
 
 
 @dataclass(slots=True, kw_only=True)
@@ -27,6 +33,7 @@ class IngestRecord:
     skipped_duplicate: bool = False
     duplicate_of: Path | None = None
     error: str | None = None
+    content_hash: str | None = None
 
 
 def ingest_pdfs(
@@ -62,7 +69,13 @@ def ingest_pdfs(
         try:
             dest = _copy_to_corpus(pdf_path, corpus_dir)
             existing_hashes[pdf_hash] = dest
-            records.append(IngestRecord(source_pdf=pdf_path, archived_to=dest))
+            records.append(
+                IngestRecord(
+                    source_pdf=pdf_path,
+                    archived_to=dest,
+                    content_hash=pdf_hash,
+                )
+            )
         except Exception as exc:  # noqa: BLE001
             records.append(IngestRecord(source_pdf=pdf_path, error=str(exc)))
 
@@ -145,6 +158,54 @@ def rag_watch_status(
         if isinstance(item, dict)
     ]
     return watches, None
+
+
+def update_article_registry(
+    registry_path: Path,
+    filename: str,
+    entry: dict[str, Any],
+) -> None:
+    """Read registry YAML, upsert articles[filename]=entry, write back atomically."""
+    data: dict[str, Any] = {"articles": {}}
+    if registry_path.exists():
+        raw: object = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and isinstance(raw.get("articles"), dict):
+            data["articles"] = dict(raw["articles"])
+    data["articles"][filename] = {k: str(v) for k, v in entry.items()}
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        dir=registry_path.parent,
+        prefix=".article_registry.",
+        suffix=".yaml",
+    )
+    try:
+        with open(fd, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(data, fh, default_flow_style=False, allow_unicode=True)
+        tmp_path_obj = Path(tmp_path)
+        tmp_path_obj.replace(registry_path)
+    except Exception as exc:
+        logger.error("Article registry write failed: %s", exc)
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
+
+
+def extract_pdf_metadata(pdf_path: Path) -> dict[str, str]:
+    """Extract title and author from PDF metadata via PyMuPDF; return empty dict on error."""
+    try:
+        import fitz
+
+        doc = fitz.open(pdf_path)
+        try:
+            meta = doc.metadata or {}
+            return {
+                "title": meta.get("title") or "",
+                "authors": meta.get("author") or "",
+            }
+        finally:
+            doc.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PDF metadata extraction failed for %s: %s", pdf_path, exc)
+        return {}
 
 
 def _hash_file(path: Path) -> str:

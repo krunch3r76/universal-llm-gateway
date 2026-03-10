@@ -44,39 +44,46 @@ _FAILURE_THRESHOLD = 0.1
 
 @dataclass(slots=True, kw_only=True)
 class ExtractionResult:
+    """Result of a knowledge extraction run for one file (batch of chunks).
+
+    entities/topics are counts; property_entries are (key, chunk_id, scope, source)
+    quads for the property index; success is True when partial or full write was done.
+    """
+
     entities: int = 0
     topics: int = 0
-    property_entries: list[tuple[str, str]] = field(default_factory=list)
-    # True when extraction was written — ∃ chunk with extraction_schema_version in metadata.
-    # False on soft failure (timeout, partial result): all-or-nothing rule fired, nothing written.
+    property_entries: list[tuple[str, str, str, str]] = field(default_factory=list)
     success: bool = field(default=False)
 
 
 def build_property_entries(
-    knowledge: ExtractedKnowledge, chunk_id: str
-) -> list[tuple[str, str]]:
-    """Build (key, chunk_id) pairs from extracted knowledge for the property index."""
-    entries = [(f"prop.name@@{entity.name}", chunk_id) for entity in knowledge.entities]
-    entries.extend(
-        (f"prop.type@@{etype}", chunk_id)
+    knowledge: ExtractedKnowledge, chunk_id: str, scope: str = "all", source: str = ""
+) -> list[tuple[str, str, str, str]]:
+    """Build (key, chunk_id, scope, source) quads from extracted knowledge."""
+    return [
+        (f"prop.name@@{entity.name}", chunk_id, scope, source)
+        for entity in knowledge.entities
+    ] + [
+        (f"prop.type@@{etype}", chunk_id, scope, source)
         for entity in knowledge.entities
         for etype in entity.type
-    )
-    entries.extend(
-        (f"prop.facet@@{facet.name}:{facet.value}", chunk_id)
+    ] + [
+        (f"prop.facet@@{facet.name}:{facet.value}", chunk_id, scope, source)
         for entity in knowledge.entities
         for facet in entity.facets
-    )
-    entries.extend(
+    ] + [
         (
             f"prop.rel@@{entity.name}>{relation.predicate}>{relation.target}",
             chunk_id,
+            scope,
+            source,
         )
         for entity in knowledge.entities
         for relation in entity.relations
-    )
-    entries.extend((f"prop.topic@@{topic}", chunk_id) for topic in knowledge.topics)
-    return entries
+    ] + [
+        (f"prop.topic@@{topic}", chunk_id, scope, source)
+        for topic in knowledge.topics
+    ]
 
 
 def _publish_event_nonblocking(event_bus: EventBus, event: Event) -> None:
@@ -105,6 +112,7 @@ async def run_extraction(
     property_index: PropertyIndex,
     event_bus: EventBus | None,
     apply_property_index: bool = True,
+    scope: str = "all",
 ) -> ExtractionResult:
     """Run knowledge extraction on all chunks and populate the property index.
 
@@ -237,15 +245,16 @@ async def run_extraction(
 
     should_write = not failed_ids or accept_partial
     if should_write and staged:
-        all_property_entries: list[tuple[str, str]] = []
+        all_property_entries: list[tuple[str, str, str, str]] = []
         for chunk_id, knowledge in staged.items():
             idx = id_to_idx[chunk_id]
             result.entities += len(knowledge.entities)
             result.topics += len(knowledge.topics)
-            prop_entries = build_property_entries(knowledge, chunk_id)
+            prop_entries = build_property_entries(knowledge, chunk_id, scope, file)
             all_property_entries.extend(prop_entries)
             metadatas[idx]["extraction"] = json.dumps(knowledge.to_dict())
             metadatas[idx]["extraction_schema_version"] = config.schema_version
+            metadatas[idx]["extraction_model"] = config.extraction_model
             if event_bus is not None:
                 _publish_event_nonblocking(
                     event_bus,
@@ -256,7 +265,7 @@ async def run_extraction(
                     ),
                 )
         if apply_property_index and all_property_entries:
-            await property_index.add_batch(all_property_entries)
+            await property_index.add_batch_with_scope(all_property_entries)
         result.property_entries = all_property_entries
         written = len(staged)
         result.success = True
@@ -274,6 +283,7 @@ async def run_extraction(
                 successful=successful,
                 written=written,
                 duration_seconds=duration,
+                extraction_model=config.extraction_model or None,
             ),
         )
 
@@ -289,6 +299,7 @@ async def recover_missing_extraction(
     config: KnowledgeExtractionConfig,
     property_index: PropertyIndex,
     event_bus: EventBus | None,
+    scope: str = "all",
 ) -> ExtractionResult | None:
     """Re-run extraction for chunks that are indexed but missing extraction metadata.
 
@@ -304,6 +315,12 @@ async def recover_missing_extraction(
     """
     needs_recovery = any(
         "extraction_schema_version" not in m for m in existing_metadatas
+    ) or (
+        bool(config.extraction_model)
+        and any(
+            m.get("extraction_model") != config.extraction_model
+            for m in existing_metadatas
+        )
     )
     if not needs_recovery:
         return None
@@ -356,6 +373,7 @@ async def recover_missing_extraction(
         property_index=property_index,
         event_bus=event_bus,
         apply_property_index=False,
+        scope=scope,
     )
 
     if not ext_result.success:
@@ -369,7 +387,7 @@ async def recover_missing_extraction(
     # Patch ChromaDB metadata in-place — embeddings and documents are unchanged.
     collection.update(ids=ids, metadatas=metadatas)
     if ext_result.property_entries:
-        await property_index.add_batch(ext_result.property_entries)
+        await property_index.add_batch_with_scope(ext_result.property_entries)
     await property_index.clear_pending(source)
 
     logger.info(

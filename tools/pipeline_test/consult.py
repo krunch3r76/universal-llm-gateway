@@ -37,6 +37,8 @@ def consult_step_via_lib(
     timeout: float = 300.0,
     output_limit_chars: int | None = None,
     no_rag: bool = False,
+    use_rag_pipeline: bool = True,
+    rag_top_k: int | None = None,
 ) -> list[ConsultResult]:
     """Consult models about a pipeline step via consult_lib.
 
@@ -65,6 +67,8 @@ def consult_step_via_lib(
         models=models,
         stargate_url=stargate_url,
         no_rag=no_rag,
+        use_rag_pipeline=use_rag_pipeline,
+        rag_top_k=rag_top_k,
         timeout=timeout,
     )
 

@@ -37,6 +37,32 @@ logger = get_logger(__name__)
 DEFAULT_STARGATE_URL = "http://localhost:9999"
 
 
+def _inject_rag_context_options(merged_options: dict[str, Any], step_id: str) -> None:
+    """Inject scope_options and corpus_hints for rag-context pipeline when absent."""
+    if "scope_options" not in merged_options:
+        try:
+            from pipelines.rag.scope_helpers import fetch_scope_options_text
+
+            merged_options["scope_options"] = fetch_scope_options_text()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "pipeline_call_v1 '%s': failed to inject scope_options for rag-context (%s)",
+                step_id,
+                exc,
+            )
+    if "corpus_hints" not in merged_options:
+        try:
+            from pipelines.rag.corpus_hints_loader import fetch_corpus_hints_text
+
+            merged_options["corpus_hints"] = fetch_corpus_hints_text()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "pipeline_call_v1 '%s': could not load corpus hints: %s",
+                step_id,
+                exc,
+            )
+
+
 @register_handler
 class PipelineCallHandler(AbstractStepHandler):
     """
@@ -78,18 +104,8 @@ class PipelineCallHandler(AbstractStepHandler):
             if k.startswith("rag_") or k.startswith("scope_")
         }
         merged_options = {**step_options, **forwarded}
-        if pipeline_id == "rag-context" and "scope_options" not in merged_options:
-            try:
-                from pipelines.rag.scope_helpers import fetch_scope_options_text
-
-                merged_options["scope_options"] = fetch_scope_options_text()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "pipeline_call_v1 '%s': failed to inject scope_options "
-                    "for rag-context (%s)",
-                    step.id,
-                    exc,
-                )
+        if pipeline_id == "rag-context":
+            _inject_rag_context_options(merged_options, step.id)
 
         consumer_model_ref: str = step.get_domain_field("consumer_model_ref", "")
         if consumer_model_ref and context._registry is not None:

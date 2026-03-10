@@ -11,6 +11,7 @@ output: rerank_assemble
 
 options:
   timeout_seconds: 60    # §4.2: raised from 30s; GPU contention headroom
+  corpus_hints: ""       # Injected at runtime from corpus_hints.yaml when present
   scope_options: |
     "project" — Architecture docs, vision, engram, journal entries, and FAQ
     "small_llm_prompting" — Prompt engineering research for small/local models
@@ -29,6 +30,30 @@ options:
     "all_research" — All research papers and reference ebooks combined
     "both" — Project knowledge + research papers — broad fallback for ambiguous queries
     "all" — All indexed content — use when scope is unclear or spans multiple domains
+  # Valid scope labels for handler validation (must match RAG config). TODO: derive from single source — see tasks/todo.yaml rag-valid-scopes-single-source
+  valid_scopes:
+    - project
+    - small_llm_prompting
+    - llm_prompting
+    - prompting
+    - workflows
+    - research
+    - rag_systems
+    - code_retrieval
+    - knowledge_management
+    - graph_modeling
+    - temporal_provenance
+    - belief_consistency
+    - knowledge_systems
+    - llm_foundations
+    - all_research
+    - both
+    - all
+  # Map model-invented scope labels to valid scope labels
+  scope_aliases:
+    schema_design: graph_modeling
+    data_modeling: graph_modeling
+    data_governance: temporal_provenance
   # --- Retrieval tunables (overridable via pipeline_options) ---
   rag_top_k_per_query: 10
   rag_max_chunks: 20
@@ -38,7 +63,8 @@ options:
   rag_recency_weight: 0.2  # §4.6: linear additive; deeper decay model deferred
   scope_confidence_threshold: 0.7  # §4.4: CRAG 3-state evaluation — queries below
                                    #        threshold fall back to scope="both"
-  rag_min_chunks_retry_threshold: 10  # If chunks after first retrieval < this, retry once with rag_retry_scope_fallback
+  # If chunks after first retrieval < this, retry once with rag_retry_scope_fallback; keep max(initial, retry). Frontier tier overrides to 20.
+  rag_min_chunks_retry_threshold: 10
   rag_retry_scope_fallback: "both"   # Scope used for single retry when chunk count is low
   bibliography_filter_threshold: 0.35  # 0 = disable junk filter; >0 = fraction of lines to treat as junk
   bibliography_filter_disable: false   # If true, skip junk/bibliography filter entirely (overrides threshold)
@@ -61,6 +87,35 @@ options:
                                      # (1.0 = ignore LLM, 0.0 = ignore prior)
 
 steps:
+  - name: suggest_terms
+    type: generate
+    model_ref: qwen3_9b
+    model_requirements:
+      task: rag_rewrite
+      source: any
+    prompt_ref: rag.rag_context_v1.suggest_terms
+    generation_parameters:
+      temperature: 0.2
+      max_tokens: 256
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            terms:
+              type: array
+              items:
+                type: string
+              description: "Concrete retrieval terms (standards, relation types, key concepts)"
+          required: ["terms"]
+
+  - name: filter_corpus_hints
+    type: filter_corpus_hints_v1
+    handler_inputs:
+      suggested_terms: "suggest_terms.json.terms"
+    max_hints: 7
+    min_chunk_cooccurrence: 2
+
   - name: analyze_rewrite
     type: generate
     model_ref: qwen3_9b
@@ -68,6 +123,9 @@ steps:
       task: rag_rewrite
       source: any       # local models qualify — enables laptop/CPU fallback
     prompt_ref: rag.rag_context_v1.analyze_rewrite
+    handler_inputs:
+      suggested_terms: "suggest_terms.json.terms"
+      corpus_hints: "filter_corpus_hints.json.filtered_hints"
     generation_parameters:
       temperature: 0.4   # §4.1: T=0.1→0.4; all 4 sources agree moderate temp
                          #        improves sub-query diversity 3–8% recall;
@@ -93,7 +151,7 @@ steps:
                 type: string
             hyde_passage:
               type: string
-              description: "A hypothetical 2-3 sentence passage that would answer the query, written in the style of an academic paper or technical document"
+              description: "A hypothetical 3-4 sentence passage that would answer the query, written in the style of an academic paper or technical document"
             out_of_scope_reason:
               type: string
               description: "Empty string if in-scope; otherwise brief explanation of why the query does not match the corpus and what research area it maps to"

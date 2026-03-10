@@ -165,6 +165,13 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
         help="Use direct RAG search instead of the pipeline",
     )
     parser.add_argument(
+        "--rag-top-k",
+        type=int,
+        default=None,
+        metavar="N",
+        help="With --no-rag-pipeline: number of chunks to retrieve (default 5)",
+    )
+    parser.add_argument(
         "--timeout", type=float, default=300.0, help="Per-model timeout in seconds"
     )
     parser.add_argument("--list-roles", action="store_true", help="List roles and exit")
@@ -691,6 +698,7 @@ def _run_direct_branch(
             rag_url=args.rag_url,
             no_rag=args.no_rag,
             use_rag_pipeline=args.rag_pipeline is not None and not args.no_rag_pipeline,
+            rag_top_k=args.rag_top_k,
             timeout=args.timeout,
             chain_directive=args.chain_directive,
             cloud_only=args.cloud_only,

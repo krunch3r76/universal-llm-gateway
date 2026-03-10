@@ -14,6 +14,14 @@ _CONFIG_PATH = Path.home() / ".gateway" / "rag.yaml"
 
 @dataclass(slots=True, kw_only=True)
 class WatchDirectory:
+    """A directory watched for RAG indexing.
+
+    chunk_tokens: Target size per chunk in tokens (≈4 chars/token). When None,
+    the chunker uses its built-in default (1024 for docs, 256 for code). Set
+    to 512 or 1024 for larger chunks to improve retrieval of coherent
+    paragraphs; re-index (or touch files) after changing.
+    """
+
     path: str
     extensions: list[str]
     recursive: bool = True
@@ -42,6 +50,9 @@ class KnowledgeExtractionConfig:
     property_boost_factor: float = 0.5
     max_extraction_attempts: int = 3
     # ∀ chunk: attempt_count >= max_extraction_attempts ⟹ permanently skipped
+    extraction_model: str = (
+        ""  # Stored in chunk metadata; mismatch triggers re-extraction
+    )
 
 
 DEFAULT_EMBEDDING_MODEL = "bge-m3-q8-0-8192-cpu"
@@ -56,6 +67,19 @@ class RagConfig:
         default_factory=KnowledgeExtractionConfig
     )
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
+    # Optional path to corpus_hints.yaml (scope → vocabulary hints for suggest_terms).
+    corpus_hints_path: Path | None = None
+    # Optional path to article_registry.yaml (filename → citation metadata for chunk enrichment).
+    article_registry_path: Path | None = None
+
+    def get_scope_for_path(self, file_path: str) -> str:
+        """Longest-prefix match over scopes; return scope name or 'all'."""
+        best: tuple[str, int] = ("all", 0)
+        for scope_name, scope_def in self.scopes.items():
+            for prefix in scope_def.prefixes:
+                if file_path.startswith(prefix) and len(prefix) > best[1]:
+                    best = (scope_name, len(prefix))
+        return best[0]
 
 
 def _normalize_extensions(raw_extensions: object) -> list[str]:
@@ -167,6 +191,8 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
     schema_version = raw.get("schema_version", 1)
     boost = raw.get("property_boost_factor", 0.5)
     max_attempts = raw.get("max_extraction_attempts", 3)
+    raw_model = raw.get("extraction_model", "")
+    extraction_model = str(raw_model) if isinstance(raw_model, str) else ""
     return KnowledgeExtractionConfig(
         pipeline=str(pipeline) if isinstance(pipeline, str) else "rag-extraction",
         schema_version=int(schema_version) if isinstance(schema_version, int) else 1,
@@ -174,6 +200,7 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
         max_extraction_attempts=int(max_attempts)
         if isinstance(max_attempts, int)
         else 3,
+        extraction_model=extraction_model,
     )
 
 
@@ -220,10 +247,20 @@ def load_config() -> RagConfig:
     automatic_indexing_enabled = (
         raw_indexing if isinstance(raw_indexing, bool) else True
     )
+    corpus_hints_path: Path | None = None
+    raw_hints_path = parsed_root.get("corpus_hints_path")
+    if isinstance(raw_hints_path, str) and raw_hints_path.strip():
+        corpus_hints_path = Path(raw_hints_path.strip()).expanduser()
+    article_registry_path: Path | None = None
+    raw_registry = parsed_root.get("article_registry_path")
+    if isinstance(raw_registry, str) and raw_registry.strip():
+        article_registry_path = Path(raw_registry.strip()).expanduser()
     return RagConfig(
         watch_directories=watch_directories,
         scopes=scopes,
         automatic_indexing_enabled=automatic_indexing_enabled,
         knowledge_extraction=knowledge_extraction,
         embedding_model=embedding_model,
+        corpus_hints_path=corpus_hints_path,
+        article_registry_path=article_registry_path,
     )

@@ -1,69 +1,75 @@
 prompts:
-  analyze_rewrite:
-    description: "Analyze user query and produce embedding-optimized retrieval queries"
+  suggest_terms:
+    description: "Pre-step LLM call to suggest concrete retrieval terms (generic, corpus-agnostic)"
     system_prompt: |
-      You are a query analysis and rewriting system for a dense retrieval RAG pipeline.
-      Given a user question, produce optimized search queries for cosine-similarity
-      embedding search over academic papers and project documentation.
-
-      Output valid JSON with exactly these fields — all six are required, never omit any:
-      - needs_retrieval: false only if the question is purely conversational
-        (e.g. "thanks", "ok"); true for anything requiring knowledge
-      - scope: classify the query into one of:
-        {scope_options}
-      - scope_confidence: your confidence in the scope classification (0.0–1.0);
-        use values below 0.7 when the query could belong to multiple scopes;
-        CRITICALLY: if out_of_scope_reason is non-empty, scope_confidence MUST be
-        <= 0.5 — treat it as confidence in corpus match, not in the scope label
-      - out_of_scope_reason: empty string "" if the query is answerable from the corpus;
-        otherwise a brief explanation of why it does not match the active corpus and
-        what abstract research area it maps to (e.g. "product-specific implementation
-        detail — nearest research topics: edge inference serving, service mesh routing")
-      - rewritten_queries: 1–3 short, keyword-rich search phrases optimized
-        for dense embedding retrieval
-      - hyde_passage: Write a short (2–3 sentence) hypothetical passage that
-        would answer the query, as if extracted from an academic paper or
-        technical document. Use domain-specific vocabulary. This passage will
-        be embedded for retrieval. Stay close to the user's concept — do not
-        introduce unrelated methods or broader solution categories unless
-        they are strongly implied by the query. Do not invent product names,
-        framework names, or specific system identities not present in the query.
-
-      Rewriting strategies (apply implicitly based on query):
-      - Single-concept factual → pass through or step-back to broader term
-      - Vocabulary mismatch → rewrite in academic register
-        ("stop hallucinating" → "factual consistency grounded generation")
-      - Multi-hop / multi-faceted → decompose into 2–3 atomic sub-queries
-      - Comparative queries ("X vs Y", "compare X and Y", "how does X compare to Y"):
-        cover BOTH sides symmetrically — include 1–2 queries anchored on each side
-        using canonical method names and synonyms; do not introduce unrelated facets
-      - Failure-analysis / diagnostic queries ("failure modes", "limitations",
-        "errors", "robustness"): rewrite into concrete failure mechanisms and
-        evaluation terms (e.g. distribution shift, domain mismatch, out-of-domain
-        queries, semantic mismatch, hard negatives, recall degradation) rather
-        than generic paraphrases; at least 2 rewrites must name specific mechanisms
-      - Product-/project-specific query against a research corpus: do not preserve
-        proprietary names; rewrite using adjacent generic research concepts (e.g.
-        "API gateway request routing", "service mesh load balancing", "edge inference
-        serving") — do NOT invent or substitute other specific project/product names;
-        set scope_confidence <= 0.5 and a non-empty out_of_scope_reason
-
-      Rules:
-      - Queries must be short keyword phrases, NOT full sentences
-      - Use academic/technical vocabulary matching research papers — prefer canonical
-        method names and paper-vocabulary terms over generic paraphrases
-        (e.g. "LambdaRank", "GraphRAG", "entity linking" over vague descriptors)
-      - For comparative queries, canonical aliases and named methods for each side
-        must appear in at least one rewrite
-      - 1 query for simple questions, 2–3 for complex multi-faceted ones
-      - NEVER substitute or invent product/project/framework names in
-        rewritten_queries or hyde_passage that are not present in the original
-        query — use only generic research vocabulary when the queried product
-        is absent from the corpus (e.g. write "edge inference request routing",
-        not "EdgeX Foundry request routing")
-      - Respond with valid JSON only — no prose, no markdown fences
+      You suggest concrete retrieval terms for search.
+      From the user query, extract 5–10 short, specific terms likely to appear verbatim in relevant documents.
+      Good terms: names of entities, products, tools, systems, languages, frameworks, protocols, standards,
+      APIs, formats, identifiers, relation names, attribute names, acronyms, and domain technical nouns.
+      Rules: prefer exact terms over paraphrases; prefer nouns/noun phrases over questions; avoid generic filler; no explanations.
+      Output only valid JSON. Format: {"terms":["...", "..."]}
     template: |
-      {text}
+      Query: {text}
+
+      Return JSON with a single key "terms" (array of 5–10 strings).
+
+  analyze_rewrite:
+    description: "Analyze query and produce retrieval-optimized rewrites (compact, corpus-agnostic)"
+    system_prompt: |
+      You analyze a user query for dense-retrieval RAG over the indexed corpus.
+      Return valid JSON only with these keys: needs_retrieval, scope, scope_confidence,
+      out_of_scope_reason, rewritten_queries, hyde_passage.
+
+      Required behavior:
+      1. needs_retrieval: false only for purely conversational (thanks, ok); else true.
+      2. scope: set to exactly one of the valid scope labels below. Copy the label verbatim; do not invent values.
+      If uncertain or the query spans multiple areas, use "both".
+      Valid scopes (use exactly one):
+       {scope_options}
+      Invalid (do not use): schema_design, data_governance, data_modeling — use the closest valid label instead.
+      3. If the query is a poor match for the corpus, set out_of_scope_reason to a brief
+        explanation and scope_confidence <= 0.5. Otherwise out_of_scope_reason = "".
+      4. rewritten_queries: 2 for simple topics; 3–4 for multi-facet or comparative.
+        At least one rewrite MUST use mainstream academic/technical vocabulary
+        (established terms, standards, well-known frameworks) without any corpus
+        vocabulary terms.
+        You MAY incorporate corpus-specific terms from the list below into
+        additional rewrites, but ONLY if they are clearly relevant to the query
+        intent. If no corpus term is relevant, do not use any.
+        Each rewrite: a concrete keyword query, not a semantic paraphrase.
+        Suggested retrieval terms (from prior step): {suggested_terms}
+        Corpus vocabulary (domain terms indexed in the corpus — use only when relevant): {corpus_hints}
+        Limit: use at most 2 corpus vocabulary terms per rewrite.
+        Do NOT populate all rewrites with corpus terms — leave room for standard
+        terminology the corpus may index under different names.
+        Prefer exact strings: entity names, acronyms, dates/years, versions, standards,
+        relation types, schema fields, protocol names. Use 2–6 word noun phrases likely
+        to appear verbatim in documents or metadata.
+        For comparisons:
+        - Focus rewrites on the side(s) represented in corpus vocabulary.
+        - If one side has no matching corpus terms, do NOT force specific examples for
+          that side into rewrites; instead include one bridging rewrite targeting the
+          contrast dimension (e.g. "entity-centric vs document-centric" rather than
+          specific tool names absent from the corpus).
+        - Avoid generic phrases ("how X works", "methods for", "differences between").
+      5. hyde_passage: 60–100 words, as if from a document answering the query.
+        For comparison queries with asymmetric corpus coverage: describe the contrast
+        using abstract comparison axes (e.g. "entity-centric vs document-centric",
+        "typed relations vs flat notes") rather than naming tools/systems absent from
+        the corpus. This positions the embedding between both concepts to retrieve
+        bridging content. Use domain-appropriate vocabulary; no invented names.
+      6. If the query targets a different domain than the corpus, set out_of_scope_reason
+        and scope_confidence <= 0.5.
+
+      Output: rewritten_queries array 2–4 items; short phrases not sentences; valid JSON only.
+    # User prompt: explicit classification task + delimited query (frontier consult recommendation for 9B).
+    template: |
+      Task: classify this query for RAG retrieval.
+      For scope, use exactly one allowed label from the system prompt. Do not invent new labels.
+      In rewritten_queries, prefer exact names, acronyms, years, versions, and relation/type terms.
+
+      Query:
+      <query>{text}</query>
 
   rerank_chunks:
     description: "Rerank retrieved chunks by relevance to query using metadata signals"

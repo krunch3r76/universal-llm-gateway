@@ -16,6 +16,8 @@ tiers:
     rag_top_k_per_query: 15
     rag_max_chunks: 30
     rag_rrf_k: 35
+    # Retry once with broader scope when chunks < 20; keep the run with more chunks.
+    rag_min_chunks_retry_threshold: 20
   local:
     rag_top_k_per_query: 10
     rag_max_chunks: 12

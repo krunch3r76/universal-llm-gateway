@@ -19,7 +19,14 @@ import httpx
 import yaml
 
 from .http_helpers import PIPELINE_TEST_HEADERS, PIPELINE_TEST_PARAMS
-from .models import ExecutionSnapshot, ReplayOverrides, ReplayResult, StepConfigMatch
+from .models import (
+    ExecutionSnapshot,
+    ModelCall,
+    ReplayOverrides,
+    ReplayResult,
+    StepConfigMatch,
+    StepSnapshot,
+)
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
 _PLACEHOLDER_RE = re.compile(r"\{([\w]+(?:\.[\w]+)*)\}")
@@ -38,6 +45,19 @@ def replay_recorded(
 
     When pipeline_dir is provided, model and generation parameters from
     the step YAML are applied between snapshot defaults and CLI overrides.
+    If None, only snapshot defaults and CLI overrides are used.
+
+    Args:
+        snapshot: Execution snapshot containing recorded data.
+        step_name: Name of the step to replay.
+        call_label: Optional label for a specific model call within the step.
+        overrides: Optional request parameter overrides.
+        pipeline_dir: Optional path to pipeline directory; enables YAML model/gen params.
+        stargate_url: Stargate base URL.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        ReplayResult with response and metadata.
     """
     step = _get_step(snapshot, step_name)
     call = _get_call(step.model_calls, call_label)
@@ -69,6 +89,19 @@ def replay_rerender(
 
     Falls back to recorded replay if pipeline_dir is not provided or
     prompt files cannot be found.
+
+    Args:
+        snapshot: Execution snapshot containing recorded data.
+        step_name: Name of the step to replay.
+        call_label: Optional label for a specific model call within the step.
+        overrides: Optional request parameter overrides.
+        stargate_url: Stargate base URL.
+        pipeline_dir: Optional path to pipeline directory; if missing or prompts
+            unfound, falls back to recorded replay.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        ReplayResult with response and metadata.
     """
     step = _get_step(snapshot, step_name)
     call = _get_call(step.model_calls, call_label)
@@ -110,6 +143,31 @@ def replay_rerender(
 # ---------------------------------------------------------------------------
 
 
+def _inject_scope_options(
+    pipeline_dir: Path,
+    snapshot: ExecutionSnapshot,
+    variables: dict[str, Any],
+) -> None:
+    """If pipeline YAML has options.scope_options, inject into variables for template render."""
+    pipeline_id = getattr(snapshot, "pipeline_id", None) or "rag-context"
+    root = _find_pipeline_root(pipeline_dir, pipeline_id)
+    if root is None:
+        return
+    for yaml_file in root.rglob("*.yaml"):
+        if yaml_file.name == "prompts.yaml":
+            continue
+        try:
+            with yaml_file.open(encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+            if config.get("id") == pipeline_id:
+                opts = config.get("options") or {}
+                if isinstance(opts.get("scope_options"), str):
+                    variables["scope_options"] = opts["scope_options"]
+                break
+        except Exception:
+            continue
+
+
 def _find_pipeline_root(pipeline_dir: Path, pipeline_id: str) -> Path | None:
     """Return the directory containing the YAML with id == pipeline_id, or None."""
     for yaml_file in pipeline_dir.rglob("*.yaml"):
@@ -127,8 +185,8 @@ def _find_pipeline_root(pipeline_dir: Path, pipeline_id: str) -> Path | None:
 
 def _try_render_from_yaml(
     snapshot: ExecutionSnapshot,
-    step: Any,
-    call: Any,
+    step: StepSnapshot,
+    call: ModelCall,
     pipeline_dir: Path,
     overrides: ReplayOverrides,
 ) -> dict[str, Any] | None:
@@ -148,17 +206,14 @@ def _try_render_from_yaml(
         return None
     prompts = prompts_raw
 
-    prompt_ref = overrides.prompt_ref
-    if prompt_ref:
-        parts = prompt_ref.rsplit(".", 1)
-        prompt_name = parts[-1]
-    else:
-        prompt_name = _infer_prompt_name(call.call_label, step)
-        if prompt_name is None:
-            prompt_name = _resolve_prompt_from_config(
-                step, call.call_label or "", pipeline_dir, snapshot
-            )
-
+    prompt_name = (
+        overrides.prompt_ref.rsplit(".", 1)[-1]
+        if overrides.prompt_ref
+        else _infer_prompt_name(call.call_label, step)
+        or _resolve_prompt_from_config(
+            step, call.call_label or "", pipeline_dir, snapshot
+        )
+    )
     if not prompt_name or prompt_name not in prompts:
         return None
 
@@ -169,6 +224,11 @@ def _try_render_from_yaml(
     system_prompt_template = prompt_config.get("system_prompt", "")
 
     variables = _build_template_variables(step, call)
+    # Fallback for steps that don't have inputs in snapshot (e.g. rag-context analyze_rewrite)
+    if not variables.get("text") and getattr(call, "user_prompt", None):
+        variables["text"] = call.user_prompt
+    if not variables.get("scope_options"):
+        _inject_scope_options(pipeline_dir, snapshot, variables)
 
     user_prompt = _render_template(template, variables)
     system_prompt = (
@@ -189,14 +249,17 @@ def _try_render_from_yaml(
     }
 
     orig_body = call.request_body
-    for param in ("temperature", "max_tokens", "top_p", "response_format"):
-        if param in orig_body:
-            body[param] = orig_body[param]
-
+    body.update(
+        {
+            p: orig_body[p]
+            for p in ("temperature", "max_tokens", "top_p", "response_format")
+            if p in orig_body
+        }
+    )
     return body
 
 
-def _infer_prompt_name(call_label: str, step: Any) -> str | None:
+def _infer_prompt_name(call_label: str, step: StepSnapshot) -> str | None:
     """Infer which prompt to load based on call_label within an assess_loop."""
     if not call_label:
         return None
@@ -210,7 +273,7 @@ def _infer_prompt_name(call_label: str, step: Any) -> str | None:
 
 
 def _find_step_config(
-    step: Any,
+    step: StepSnapshot,
     pipeline_dir: Path,
     snapshot: ExecutionSnapshot | None,
 ) -> StepConfigMatch | None:
@@ -252,7 +315,7 @@ def _find_step_config(
 
 
 def _resolve_prompt_from_config(
-    step: Any,
+    step: StepSnapshot,
     call_label: str,
     pipeline_dir: Path,
     snapshot: ExecutionSnapshot | None = None,
@@ -331,7 +394,7 @@ def _resolve_model_from_config(
 def _apply_step_yaml_settings(
     body: dict[str, Any],
     snapshot: ExecutionSnapshot,
-    step: Any,
+    step: StepSnapshot,
     pipeline_dir: Path | str | None,
 ) -> None:
     """Overlay model + generation parameters from step YAML onto request body.
@@ -363,7 +426,7 @@ def _apply_step_yaml_settings(
             body[key] = value
 
 
-def _build_template_variables(step: Any, call: Any) -> dict[str, Any]:
+def _build_template_variables(step: StepSnapshot, call: ModelCall) -> dict[str, Any]:
     """Build template substitution context from step inputs only.
 
     Re-render must use the same inputs the live pipeline would use; do not
@@ -487,7 +550,7 @@ def _apply_overrides(body: dict[str, Any], overrides: ReplayOverrides) -> None:
         body[k] = v
 
 
-def _get_step(snapshot: ExecutionSnapshot, step_name: str) -> Any:
+def _get_step(snapshot: ExecutionSnapshot, step_name: str) -> StepSnapshot:
     """Resolve step by full or short name."""
     if step_name in snapshot.steps:
         return snapshot.steps[step_name]
@@ -509,7 +572,7 @@ def _get_step(snapshot: ExecutionSnapshot, step_name: str) -> Any:
     )
 
 
-def _get_call(model_calls: list[Any], call_label: str | None) -> Any:
+def _get_call(model_calls: list[ModelCall], call_label: str | None) -> ModelCall:
     """Find a specific model call by label, or return the first/last one."""
     if not model_calls:
         raise ValueError("Step has no model calls to replay")

@@ -54,7 +54,14 @@ class ConsultResult:
 
 
 def _dict_to_result(d: dict[str, Any]) -> ConsultResult:
-    """Convert a raw query result dict into a ConsultResult."""
+    """Convert a raw query result dict into a ConsultResult.
+
+    Args:
+        d: Raw result dict from pipeline or direct query (model_id, response, etc.).
+
+    Returns:
+        ConsultResult with fields populated from d.
+    """
     return ConsultResult(
         model_id=d.get("model_id", "unknown"),
         response_text=d.get("response", ""),
@@ -83,8 +90,15 @@ def _resolve_models(
 ) -> tuple[list[str], str | None]:
     """Resolve target models from explicit list or unified server-side selection.
 
-    Returns (model_ids, selection_path) where selection_path is None when
-    models were explicitly provided via --models.
+    Args:
+        models: Explicit model IDs, or None to use server-side selection.
+        role: Consultation role (researcher, prompt_engineer, etc.).
+        role_requirements: Per-role config (source, scope_hint, etc.).
+        stargate_url: Stargate base URL for /api/select.
+
+    Returns:
+        (model_ids, selection_path); selection_path is None when models were
+        explicitly provided.
 
     Raises SelectionFailure when server-side selection fails (not available,
     HTTP error, or returns no models).
@@ -108,8 +122,21 @@ def _fetch_rag(
     stargate_url: str,
     use_pipeline: bool,
     extra_pipeline_options: dict[str, Any] | None = None,
+    rag_top_k: int | None = None,
 ) -> list[str] | None:
     """Fetch RAG context via pipeline or direct search, returning findings or None.
+
+    Args:
+        question: User question to retrieve context for.
+        scope: RAG scope name (e.g. project, research).
+        rag_url: RAG service URL (UDS or TCP).
+        stargate_url: Stargate base URL when using pipeline.
+        use_pipeline: If True, use rag-context pipeline; if False, direct search.
+        extra_pipeline_options: Options merged into pipeline request.
+        rag_top_k: For direct search, number of chunks (default 5).
+
+    Returns:
+        List of finding strings, or None on failure when use_pipeline=False.
 
     ∀ error when use_pipeline=True: raise RuntimeError — the rag-context pipeline
     was explicitly requested; silent fallback produces ungrounded output with no
@@ -147,7 +174,10 @@ def _fetch_rag(
             extra_pipeline_options=extra_pipeline_options,
         )
     else:
-        findings, error = fetch_rag_direct(question, rag_url=rag_url, scope=scope)
+        top_k = rag_top_k if rag_top_k is not None else 5
+        findings, error = fetch_rag_direct(
+            question, rag_url=rag_url, scope=scope, top_k=top_k
+        )
 
     if error:
         if use_pipeline:
@@ -173,6 +203,12 @@ def _derive_consumer_tier(
     cloud_only: bool,
 ) -> str | None:
     """Infer consumer tier from role config and explicit model list.
+
+    Args:
+        role_requirements: Per-role config (source, scope_hint, etc.).
+        role: Consultation role.
+        models: Explicit model IDs, or None.
+        cloud_only: If True, restrict to cloud models (frontier).
 
     Resolution:
     1. If explicit models contain "/" (cloud model IDs) → "frontier"
@@ -208,6 +244,7 @@ def execute_consult(
     rag_url: str = DEFAULT_RAG_URL,
     no_rag: bool = False,
     use_rag_pipeline: bool = True,
+    rag_top_k: int | None = None,
     timeout: float = 300.0,
     chain_directive: str | None = None,
     cloud_only: bool = False,
@@ -228,6 +265,7 @@ def execute_consult(
         models: Explicit model IDs. None triggers role-based selection.
         no_rag: Disable RAG retrieval entirely.
         use_rag_pipeline: Use rag-context pipeline (True) or direct search (False).
+        rag_top_k: When using direct search, number of chunks to request (default 5).
         timeout: Per-model timeout in seconds.
         chain_directive: Custom reviewer directive for chained mode.
         cloud_only: Restrict to cloud models only.
@@ -280,6 +318,7 @@ def execute_consult(
             stargate_url=stargate_url,
             use_pipeline=use_rag_pipeline,
             extra_pipeline_options=rag_extra or None,
+            rag_top_k=rag_top_k,
         )
 
     context_parts: list[str] = list(file_context or [])
@@ -387,7 +426,19 @@ def _execute_via_pipeline(
     timeout: float,
     pipeline_options: dict[str, Any] | None = None,
 ) -> list[ConsultResult]:
-    """Execute consultation through the pipeline virtual model ID."""
+    """Execute consultation through the pipeline virtual model ID.
+
+    Args:
+        pipeline_id: Virtual model ID of the pipeline (e.g. consult-planner).
+        user_prompt: Assembled user message including context and question.
+        models: Explicit model overrides, or None for pipeline default.
+        stargate_url: Stargate base URL.
+        timeout: Per-request timeout in seconds.
+        pipeline_options: Extra options merged into the request.
+
+    Returns:
+        List of ConsultResult from the pipeline response(s).
+    """
     if models and len(models) > 1:
         print(
             f"Pipeline multi-model: {pipeline_id} × {len(models)} models",

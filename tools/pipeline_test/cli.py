@@ -20,6 +20,8 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,7 @@ from . import sandbox as sandbox_svc
 from . import snapshot as snapshot_svc
 from .models import ConsultResult, ReplayOverrides
 
+logger = logging.getLogger(__name__)
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 DEFAULT_REPLAY_DIR = Path("/tmp/replay")
 
@@ -60,6 +63,7 @@ def main(argv: list[str] | None = None) -> None:
     _add_ingest_papers_parser(sub)
     _add_measure_profile_parser(sub)
     _add_sandbox_parser(sub)
+    _add_ab_test_parser(sub)
 
     args = parser.parse_args(argv)
     args.func(args)
@@ -429,6 +433,24 @@ def _add_consult_parser(sub: Any) -> None:
         help="Disable RAG augmentation entirely",
     )
     p.add_argument(
+        "--rag-direct",
+        action="store_true",
+        help=(
+            "Use direct RAG /search with multiple chunks instead of pipeline "
+            "(1 finding). Better for RRF/retrieval consults; uses --rag-top-k."
+        ),
+    )
+    p.add_argument(
+        "--rag-top-k",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "With --rag-direct: number of chunks to retrieve (default 20). "
+            "Ignored when using pipeline."
+        ),
+    )
+    p.add_argument(
         "--scope",
         default=None,
         help=(
@@ -458,6 +480,9 @@ def _cmd_consult(args: argparse.Namespace) -> None:
     snap = _load_snapshot(args)
     step = _resolve_step(snap, args.step)
 
+    use_rag_pipeline = not args.rag_direct
+    rag_top_k = (args.rag_top_k or 20) if args.rag_direct else None
+
     mode = "parallel" if args.parallel else "chained"
     print(f"Consulting about: {step.step_name} ({mode})")
     print(f"  Problem: {args.problem}")
@@ -466,6 +491,8 @@ def _cmd_consult(args: argparse.Namespace) -> None:
     else:
         detected = consult_svc.detect_scope(step)
         print(f"  Scope: {detected} (auto-detected from model tier)")
+    if args.rag_direct:
+        print(f"  RAG: direct search, top_k={rag_top_k}")
     print()
 
     results = consult_svc.consult_step_via_lib(
@@ -478,6 +505,8 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         stargate_url=args.url,
         timeout=args.timeout,
         output_limit_chars=args.output_limit,
+        use_rag_pipeline=use_rag_pipeline,
+        rag_top_k=rag_top_k,
         no_rag=args.no_rag,
     )
 
@@ -523,7 +552,7 @@ def _add_eval_retrieval_parser(sub: Any) -> None:
         nargs="+",
         metavar="MODEL",
         default=None,
-        help="Cloud model IDs to use as evaluators (default: auto-selected)",
+        help="Cloud model IDs to use as evaluators (default: openai/gpt-5.2, perplexity/sonar-reasoning-pro)",
     )
     p.add_argument(
         "--parallel",
@@ -691,6 +720,28 @@ def _add_ingest_papers_parser(sub: Any) -> None:
         help="Publication date to inject as metadata (e.g. 2023-07-06)",
     )
     p.add_argument(
+        "--title",
+        help="Article title for registry (else from PDF metadata)",
+    )
+    p.add_argument(
+        "--authors",
+        help="Article authors for registry (else from PDF metadata)",
+    )
+    p.add_argument(
+        "--venue",
+        help="Venue/publication for registry",
+    )
+    p.add_argument(
+        "--doi",
+        help="DOI for registry",
+    )
+    p.add_argument(
+        "--registry",
+        default=str(ingest_svc.DEFAULT_REGISTRY_PATH),
+        metavar="PATH",
+        help="Path to article_registry.yaml (default: docs/research/article_registry.yaml)",
+    )
+    p.add_argument(
         "--rag-url",
         default=ingest_svc.DEFAULT_RAG_URL,
         help="RAG service URL for indexing/status checks",
@@ -704,8 +755,24 @@ def _add_ingest_papers_parser(sub: Any) -> None:
     p.set_defaults(func=_cmd_ingest_papers)
 
 
+def _build_registry_entry(record: Any, args: argparse.Namespace) -> dict[str, str]:
+    """Build article registry entry from CLI flags and/or PDF metadata."""
+    meta: dict[str, str] = {}
+    if not (args.title or args.authors):
+        meta = ingest_svc.extract_pdf_metadata(record.source_pdf)
+    return {
+        "title": args.title or meta.get("title", ""),
+        "authors": args.authors or meta.get("authors", ""),
+        "venue": args.venue or "",
+        "published_date": f"{args.published}T00:00:00+00:00" if args.published else "",
+        "doi": args.doi or "",
+        "content_hash": record.content_hash or "",
+    }
+
+
 def _cmd_ingest_papers(args: argparse.Namespace) -> None:
     corpus_dir = Path(args.corpus_dir).expanduser().resolve()
+    registry_path = Path(args.registry).expanduser().resolve()
     records = ingest_svc.ingest_pdfs(
         sources=args.sources,
         corpus_dir=corpus_dir,
@@ -723,6 +790,17 @@ def _cmd_ingest_papers(args: argparse.Namespace) -> None:
     print(f"Ingested {len(copied)}/{len(records)} PDF(s) into {corpus_dir}")
     for record in copied:
         print(f"  [OK] {record.source_pdf.name} -> {record.archived_to}")
+        entry = _build_registry_entry(record, args)
+        try:
+            ingest_svc.update_article_registry(
+                registry_path, record.archived_to.name, entry
+            )
+        except Exception as exc:
+            logger.error(
+                "Registry write failed for %s: %s",
+                record.archived_to.name,
+                exc,
+            )
     for record in duplicates:
         print(f"  [DUP] {record.source_pdf.name} (duplicate of {record.duplicate_of})")
     for record in failed:
@@ -931,6 +1009,131 @@ def _cmd_sandbox_clean(args: argparse.Namespace) -> None:
         print(f"Sandbox '{args.name}' deleted.")
     else:
         print("All sandboxes deleted.")
+
+
+# ---------------------------------------------------------------------------
+# ab-test
+# ---------------------------------------------------------------------------
+
+
+def _add_ab_test_parser(sub: Any) -> None:
+    p = sub.add_parser(
+        "ab-test",
+        help="A/B test two prompt variants (replay analyze_rewrite with dir A vs dir B)",
+    )
+    p.add_argument(
+        "fixtures",
+        nargs="+",
+        metavar="FIXTURE",
+        help="Paths to fixture JSON files (e.g. rag-context-km1.json)",
+    )
+    p.add_argument(
+        "--dir-a",
+        required=True,
+        metavar="DIR",
+        help="Pipeline directory for variant A (e.g. pipelines/rag/rag_context_v1)",
+    )
+    p.add_argument(
+        "--dir-b",
+        required=True,
+        metavar="DIR",
+        help="Pipeline directory for variant B (e.g. /tmp/pipeline_sandboxes/rag-rewrite-ab)",
+    )
+    p.add_argument(
+        "--step",
+        default="analyze_rewrite",
+        help="Step name to replay (default: analyze_rewrite)",
+    )
+    p.add_argument(
+        "--out",
+        default="/tmp/ab-test-rewrite",
+        metavar="DIR",
+        help="Output directory for replay results (default: /tmp/ab-test-rewrite)",
+    )
+    p.add_argument(
+        "--url",
+        default=replay_svc.DEFAULT_STARGATE_URL,
+        help="Stargate URL",
+    )
+    p.add_argument("--timeout", type=float, default=90.0, help="Request timeout (s)")
+    p.set_defaults(func=_cmd_ab_test)
+
+
+def _cmd_ab_test(args: argparse.Namespace) -> None:
+    out_dir = Path(args.out)
+    dir_a = Path(args.dir_a).resolve()
+    dir_b = Path(args.dir_b).resolve()
+    (out_dir / "A").mkdir(parents=True, exist_ok=True)
+    (out_dir / "B").mkdir(parents=True, exist_ok=True)
+
+    results_a: list[tuple[str, Any]] = []
+    results_b: list[tuple[str, Any]] = []
+
+    for fixture_path in args.fixtures:
+        path = Path(fixture_path)
+        stem = path.stem
+        snap = snapshot_svc.load_fixture(str(path))
+        _resolve_step(snap, args.step)
+
+        print(f"  {stem}: replay A...", flush=True)
+        try:
+            res_a = replay_svc.replay_rerender(
+                snap,
+                args.step,
+                pipeline_dir=dir_a,
+                stargate_url=args.url,
+                timeout=args.timeout,
+            )
+            out_a = out_dir / "A" / f"{stem}.json"
+            replay_svc.save_replay_result(res_a, out_a)
+            results_a.append((stem, res_a))
+        except Exception as e:
+            print(f"    A failed: {e}", file=sys.stderr)
+            results_a.append((stem, None))
+
+        print(f"  {stem}: replay B...", flush=True)
+        try:
+            res_b = replay_svc.replay_rerender(
+                snap,
+                args.step,
+                pipeline_dir=dir_b,
+                stargate_url=args.url,
+                timeout=args.timeout,
+            )
+            out_b = out_dir / "B" / f"{stem}.json"
+            replay_svc.save_replay_result(res_b, out_b)
+            results_b.append((stem, res_b))
+        except Exception as e:
+            print(f"    B failed: {e}", file=sys.stderr)
+            results_b.append((stem, None))
+
+    def _metrics(res: Any) -> dict[str, Any]:
+        if res is None:
+            return {"valid_json": False, "rewrites": 0, "hyde_words": 0, "prompt_tokens": 0}
+        try:
+            data = json.loads(res.response_text)
+        except json.JSONDecodeError:
+            return {"valid_json": False, "rewrites": 0, "hyde_words": 0, "prompt_tokens": res.prompt_tokens}
+        rewrites = data.get("rewritten_queries") or []
+        hyde = (data.get("hyde_passage") or "")
+        return {
+            "valid_json": True,
+            "rewrites": len(rewrites),
+            "hyde_words": len(hyde.split()),
+            "prompt_tokens": res.prompt_tokens,
+        }
+    # Print comparison table
+    print()
+    print("A (current) vs B (9B-oriented)")
+    print("-" * 60)
+    for (stem, res_a), (_, res_b) in zip(results_a, results_b):
+        m_a = _metrics(res_a)
+        m_b = _metrics(res_b)
+        print(f"  {stem}:")
+        print(f"    A  valid_json={m_a['valid_json']}  rewrites={m_a['rewrites']}  hyde_words={m_a['hyde_words']}  prompt_tokens={m_a['prompt_tokens']}")
+        print(f"    B  valid_json={m_b['valid_json']}  rewrites={m_b['rewrites']}  hyde_words={m_b['hyde_words']}  prompt_tokens={m_b['prompt_tokens']}")
+    print()
+    print(f"Results saved under {out_dir}/A/ and {out_dir}/B/")
 
 
 # ---------------------------------------------------------------------------

@@ -71,6 +71,36 @@ class PropertyIndex:
         self._conn: sqlite3.Connection | None = None
         self._seq = SequentialExecutor()
 
+    def _migrate_add_scope(self, conn: sqlite3.Connection) -> None:
+        """Add scope column and index if absent (existing DBs from before this change)."""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(properties)")}
+        if "scope" not in cols:
+            try:
+                conn.execute(
+                    "ALTER TABLE properties ADD COLUMN scope TEXT NOT NULL DEFAULT 'all'"
+                )
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_scope ON properties(scope)")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    def _migrate_add_source(self, conn: sqlite3.Connection) -> None:
+        """Add source column (file path) to properties for document frequency scoring."""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(properties)")}
+        if "source" not in cols:
+            try:
+                conn.execute(
+                    "ALTER TABLE properties ADD COLUMN source TEXT NOT NULL DEFAULT ''"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_properties_source ON properties(source)"
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
     async def start(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
@@ -92,8 +122,11 @@ class PropertyIndex:
                     " ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0"
                 )
                 conn.commit()
+            self._migrate_add_scope(conn)
+            self._migrate_add_source(conn)
             await self._seq.start()
-        except Exception:
+        except Exception as e:
+            logger.exception("Failed to start PropertyIndex: %s", e)
             conn.close()
             raise
         self._conn = conn
@@ -114,28 +147,49 @@ class PropertyIndex:
     # Write methods (serialized through SequentialExecutor)
     # ------------------------------------------------------------------
 
-    async def add(self, key: str, chunk_id: str) -> None:
-        """Add a property key → chunk_id mapping."""
+    async def add(
+        self, key: str, chunk_id: str, scope: str = "all", source: str = ""
+    ) -> None:
+        """Add a property key → chunk_id mapping with optional scope and source."""
         normalized = key.lower()
 
         async def _write() -> None:
             conn = self._ensure_conn()
             conn.execute(
-                "INSERT OR IGNORE INTO properties (key, chunk_id) VALUES (?, ?)",
-                (normalized, chunk_id),
+                "INSERT OR IGNORE INTO properties (key, chunk_id, scope, source)"
+                " VALUES (?, ?, ?, ?)",
+                (normalized, chunk_id, scope, source),
             )
             conn.commit()
 
         await self._seq.run(_write())
 
-    async def add_batch(self, entries: list[tuple[str, str]]) -> None:
-        """Add multiple (key, chunk_id) pairs in one transaction."""
-        normalized = [(k.lower(), cid) for k, cid in entries]
+    async def add_batch(self, entries: list[tuple[str, str]], source: str = "") -> None:
+        """Add multiple (key, chunk_id) pairs in one transaction. Scope defaults to 'all'."""
+        normalized = [(k.lower(), cid, "all", source) for k, cid in entries]
 
         async def _write() -> None:
             conn = self._ensure_conn()
             conn.executemany(
-                "INSERT OR IGNORE INTO properties (key, chunk_id) VALUES (?, ?)",
+                "INSERT OR IGNORE INTO properties (key, chunk_id, scope, source)"
+                " VALUES (?, ?, ?, ?)",
+                normalized,
+            )
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    async def add_batch_with_scope(
+        self, entries: list[tuple[str, str, str, str]]
+    ) -> None:
+        """Add multiple (key, chunk_id, scope, source) quads in one transaction."""
+        normalized = [(k.lower(), cid, scope, src) for k, cid, scope, src in entries]
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.executemany(
+                "INSERT OR IGNORE INTO properties (key, chunk_id, scope, source)"
+                " VALUES (?, ?, ?, ?)",
                 normalized,
             )
             conn.commit()
@@ -221,6 +275,23 @@ class PropertyIndex:
 
         await self._seq.run(_write())
 
+    async def backfill_source(self, chunk_to_source: dict[str, str]) -> int:
+        """Set source for rows where source is empty. Returns count updated."""
+        if not chunk_to_source:
+            return 0
+
+        async def _write() -> int:
+            conn = self._ensure_conn()
+            batch = [(src, cid) for cid, src in chunk_to_source.items() if src]
+            cursor = conn.executemany(
+                "UPDATE properties SET source = ? WHERE chunk_id = ? AND source = ''",
+                batch,
+            )
+            conn.commit()
+            return cursor.rowcount
+
+        return await self._seq.run(_write())
+
     def get_pending_files(self) -> list[str]:
         """Return all files with in-flight or interrupted indexing.
 
@@ -233,19 +304,19 @@ class PropertyIndex:
         return [row[0] for row in rows]
 
     async def rebuild_from_metadata(
-        self, metadata_entries: list[tuple[str, str]]
+        self, metadata_entries: list[tuple[str, str, str]]
     ) -> int:
-        """Clear and rebuild from a list of (key, chunk_id) pairs.
-
-        Returns the number of entries inserted.
-        """
+        """Clear and rebuild from a list of (key, chunk_id, source) triples. Scope set to 'all'."""
 
         async def _write() -> int:
             conn = self._ensure_conn()
             conn.execute("DELETE FROM properties")
-            normalized = [(k.lower(), cid) for k, cid in metadata_entries]
+            normalized = [
+                (k.lower(), cid, "all", src) for k, cid, src in metadata_entries
+            ]
             conn.executemany(
-                "INSERT OR IGNORE INTO properties (key, chunk_id) VALUES (?, ?)",
+                "INSERT OR IGNORE INTO properties (key, chunk_id, scope, source)"
+                " VALUES (?, ?, ?, ?)",
                 normalized,
             )
             conn.commit()
@@ -286,6 +357,42 @@ class PropertyIndex:
             (f"%>{entity_name.lower()}",),
         ).fetchall()
         return [row[0] for row in rows]
+
+    def get_term_counts_by_scope(
+        self, key_prefix: str
+    ) -> list[tuple[str, str, int, int]]:
+        """Return (scope, term, chunk_count, doc_count) for keys matching key_prefix.
+
+        doc_count = COUNT(DISTINCT source) excluding un-backfilled rows (source='').
+        Order by chunk_count DESC.
+        """
+        conn = self._ensure_conn()
+        prefix_len = len(key_prefix) + 1  # 1-based substr in SQLite
+        like_pattern = f"{key_prefix}%"
+        rows = conn.execute(
+            "SELECT scope, substr(key, ?),"
+            " COUNT(DISTINCT chunk_id),"
+            " COUNT(DISTINCT CASE WHEN source != '' THEN source END)"
+            " FROM properties WHERE key LIKE ?"
+            " GROUP BY scope, substr(key, ?)"
+            " ORDER BY COUNT(DISTINCT chunk_id) DESC",
+            (prefix_len, like_pattern, prefix_len),
+        ).fetchall()
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+    def get_total_chunks(self) -> int:
+        """Return the total number of distinct chunks in the index."""
+        conn = self._ensure_conn()
+        return conn.execute(
+            "SELECT COUNT(DISTINCT chunk_id) FROM properties"
+        ).fetchone()[0]
+
+    def get_total_docs(self) -> int:
+        """Return the number of distinct source documents with non-empty source."""
+        conn = self._ensure_conn()
+        return conn.execute(
+            "SELECT COUNT(DISTINCT source) FROM properties WHERE source != ''"
+        ).fetchone()[0]
 
     def get_stats(self) -> dict[str, int]:
         """Return property index statistics."""

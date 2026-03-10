@@ -75,7 +75,10 @@ class CatalogScreen(Screen):
         self._load_models()
 
     def on_screen_resume(self) -> None:
-        """Re-check disk state when returning from Download/Measure screens."""
+        """Re-scan catalog from disk and re-check when returning to Catalog."""
+        catalog = self.app.catalog  # type: ignore[attr-defined]
+        catalog.refresh()
+        self._load_filters()
         domain = self.query_one("#domain-filter", Select).value
         engine = self.query_one("#engine-filter", Select).value
         self._load_models(

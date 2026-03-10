@@ -68,6 +68,12 @@ from .models import ConsultResult, ExecutionSnapshot
 
 logger = logging.getLogger(__name__)
 
+# Default evaluator models when --models is not provided.
+DEFAULT_EVAL_RETRIEVAL_MODELS: list[str] = [
+    "openai/gpt-5.2",
+    "perplexity/sonar-reasoning-pro",
+]
+
 # ── prompt constants ─────────────────────────────────────────────────────────
 
 _SYSTEM_PROMPT = """\
@@ -143,7 +149,8 @@ def _build_eval_prompt(
         retrieved_context: Verbatim retrieved context chunks.
         chunks_found: Number of chunks found during retrieval.
         scope_used: Scope used for retrieval.
-        reranking: Optional reranking step metadata when enabled.
+        reranking: Optional reranking step metadata when enabled
+            (rerank_enabled, windows_evaluated, max_rank_movement, etc.).
 
     Returns:
         Formatted evaluation prompt string.
@@ -255,17 +262,17 @@ def evaluate_retrieval(
     )
 
     context_source = "rerank_assemble" if rerank_step else "retrieve_assemble"
+    effective_models = models if models is not None else DEFAULT_EVAL_RETRIEVAL_MODELS
     logger.info(
         "eval_retrieval: query=%r scope=%s chunks=%d source=%s evaluating with %s",
         snapshot.source_text[:80],
         scope_used,
         chunks_found,
         context_source,
-        models or "auto-selected cloud models",
+        effective_models,
     )
 
     context_with_instructions = f"{_SYSTEM_PROMPT}\n\n---\n\n{user_prompt}"
-
     lib_results: list[ConsultResult] = list(
         execute_consult(
             question=snapshot.source_text,
@@ -274,7 +281,7 @@ def evaluate_retrieval(
             scope=None,
             no_rag=True,
             chain=not parallel,
-            models=models,
+            models=effective_models,
             stargate_url=stargate_url,
             timeout=timeout,
         )
@@ -340,20 +347,22 @@ def _parse_evaluation(text: str, model_id: str) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         logger.warning("eval_retrieval: %s returned invalid JSON: %s", model_id, exc)
         preview = (text or "")[:_RAW_RESPONSE_PREVIEW_LEN]
-        issues_list = [f"Could not parse model response as JSON: {exc}"]
-        if not cleaned:
-            issues_list.append(
-                "Response was empty (possible refusal, content filter, or max_tokens=0)."
+        issues_list = [f"Could not parse model response as JSON: {exc}"] + (
+            ["Response was empty (possible refusal, content filter, or max_tokens=0)."]
+            if not cleaned
+            else (
+                ["Response did not start with JSON (possible prose/markdown or truncation)."]
+                if not cleaned.startswith("{")
+                else []
             )
-        elif not cleaned.startswith("{"):
-            issues_list.append(
-                "Response did not start with JSON (possible prose/markdown or truncation)."
-            )
-        if preview:
-            issues_list.append(
+        ) + (
+            [
                 f"Raw response preview (first {min(len(preview), _RAW_RESPONSE_PREVIEW_LEN)} chars): "
                 f"{preview!r}"
-            )
+            ]
+            if preview
+            else []
+        )
         result: dict[str, Any] = {
             "scores": {},
             "verdict": "parse_error",
@@ -382,7 +391,7 @@ def _parse_evaluation(text: str, model_id: str) -> dict[str, Any]:
     }
 
 
-def _coerce_scores(scores: dict[str, int | Any]) -> None:
+def _coerce_scores(scores: dict[str, Any]) -> None:
     """Coerce score values to int in-place; remove keys if coercion fails."""
     for key in ("relevance", "coverage", "noise", "rewrite_quality"):
         if key in scores:
@@ -395,9 +404,10 @@ def _coerce_scores(scores: dict[str, int | Any]) -> None:
 def _derive_verdict(scores: dict[str, int]) -> str:
     """Derive verdict from scores when the model omits or miscases it.
 
-    Returns 'unknown' if no valid integer scores are found.
+    _coerce_scores guarantees remaining values are int. Returns 'unknown'
+    if no scores are present.
     """
-    vals = [v for v in scores.values() if isinstance(v, int)]
+    vals = list(scores.values())
     if not vals:
         return "unknown"
     if all(v >= 7 for v in vals):
