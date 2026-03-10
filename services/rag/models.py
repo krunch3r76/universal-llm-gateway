@@ -114,6 +114,15 @@ class ExtractionExportResponse(BaseModel):
     items: list[ExtractionExportItem]
 
 
+class ClearDirectoryRequest(BaseModel):
+    path: str
+
+
+class ClearDirectoryResponse(BaseModel):
+    sources_cleared: int
+    chunks_cleared: int
+
+
 class FailedChunkItem(BaseModel):
     chunk_id: str
     source: str

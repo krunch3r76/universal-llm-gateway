@@ -653,6 +653,19 @@ async def _index_file_impl(
             extraction_topics = ext_result.topics
             extraction_property_entries = ext_result.property_entries
 
+            # ∀ file: extraction failed below threshold ⟹ skip embed+upsert so
+            # partially-extracted docs are never queryable. Old chunks (if any)
+            # remain intact; next re-index retries extraction.
+            if not ext_result.success:
+                if _event_bus is not None:
+                    await _event_bus.publish_async_nowait(
+                        rag_file_indexing_failed(
+                            file=source,
+                            error="extraction failed below threshold — document excluded until re-indexed",
+                        )
+                    )
+                return IndexResult(deleted=0, indexed=0, unchanged=False, file=source)
+
         # Embed before mutating: if embed raises, old chunks remain intact.
         embeddings = await embed_chunks(texts)
         collection.upsert(

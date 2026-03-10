@@ -18,6 +18,7 @@ steps:
     type: generate
     model_ref: extraction
     prompt_ref: rag_extraction.extract_batch
+    skip_token_counting: false
     map_over:
       chunk: optionsNs.chunks
     map_inputs:

@@ -25,10 +25,13 @@ from services.rag.directory_ops import (
     index_directory_contents,
 )
 from services.rag.events import (
+    rag_directory_cleared,
     rag_directory_index_completed,
     rag_directory_index_started,
 )
 from services.rag.models import (
+    ClearDirectoryRequest,
+    ClearDirectoryResponse,
     ClearResponse,
     ExtractionExportItem,
     ExtractionExportResponse,
@@ -89,6 +92,51 @@ async def _bulk_premark(
     return sorted(seen)
 
 
+async def _clear_directory_sources(
+    dir_path: Path,
+    get_collection_fn: Callable[[], chromadb.Collection],
+    get_property_index_fn: Callable[[], PropertyIndex | None],
+) -> tuple[int, int]:
+    """Delete all ChromaDB chunks and property index entries for sources under dir_path.
+
+    Scans all chunk metadata, matches by source prefix, bulk-deletes from ChromaDB,
+    then removes property index entries and failure records per source.
+
+    Returns:
+        tuple[int, int]: (sources_cleared, chunks_cleared) — number of source paths
+        and total chunks removed from ChromaDB and the property index.
+    """
+    collection = get_collection_fn()
+    dir_prefix = str(dir_path.resolve()) + "/"
+
+    all_data = collection.get(include=["metadatas"])
+    rows: list[dict[str, object]] = all_data.get("metadatas") or []
+    all_ids: list[str] = all_data.get("ids") or []
+
+    source_to_ids: dict[str, list[str]] = {}
+    for chunk_id, row in zip(all_ids, rows, strict=True):
+        if not isinstance(row, dict):
+            continue
+        source = row.get("source")
+        if isinstance(source, str) and source.startswith(dir_prefix):
+            source_to_ids.setdefault(source, []).append(chunk_id)
+
+    if not source_to_ids:
+        return 0, 0
+
+    all_chunk_ids = [cid for ids in source_to_ids.values() for cid in ids]
+    collection.delete(ids=all_chunk_ids)
+
+    prop_idx = get_property_index_fn()
+    if prop_idx is not None:
+        for source, chunk_ids in source_to_ids.items():
+            for chunk_id in chunk_ids:
+                await prop_idx.remove_chunk(chunk_id)
+            await prop_idx.clear_failures_for(source)
+
+    return len(source_to_ids), len(all_chunk_ids)
+
+
 def register_admin_routes(
     *,
     index_file_fn: IndexFileFn,
@@ -102,35 +150,55 @@ def register_admin_routes(
 ) -> APIRouter:
     """Register admin routes with the shared service state via closures."""
 
-    @router.post("/index", response_model=IndexResult)
-    async def index_file(request: IndexRequest) -> IndexResult:
-        return await index_file_fn(
-            _validate_file(request.path),
-            request.metadata_overrides,
-            force=request.force,
-        )
-
-    @router.post("/index_directory", response_model=IndexDirectoryResponse)
-    async def index_directory(
-        request: IndexDirectoryRequest,
+    async def _run_directory_index(
+        dir_path: Path,
+        extensions: set[str],
+        metadata_overrides: dict[str, str | int | float | bool] | None,
+        force: bool,
+        *,
+        is_reindex: bool,
     ) -> IndexDirectoryResponse:
-        dir_path = _validate_directory(request.path)
-        extensions = set(request.extensions or DEFAULT_EXTENSIONS)
+        """Shared flow for index_directory and reindex_directory.
+
+        When is_reindex=True: upfront clear when force=True, collect walked_sources,
+        then delete chunks for sources no longer under dir_path.
+        """
         errors: list[Path] = []
 
         def _on_error(fp: Path, exc: Exception) -> None:
             errors.append(fp)
             logger.warning("Skipping %s: %s", fp, exc)
 
+        eb = get_event_bus_fn() if get_event_bus_fn else None
+
+        if is_reindex and force:
+            sources_cleared, chunks_cleared = await _clear_directory_sources(
+                dir_path, get_collection_fn, get_property_index_fn
+            )
+            logger.warning(
+                "Force reindex upfront clear: path=%s sources=%d chunks=%d",
+                dir_path,
+                sources_cleared,
+                chunks_cleared,
+            )
+            if eb:
+                await eb.publish_async_nowait(
+                    rag_directory_cleared(
+                        path=str(dir_path),
+                        sources_cleared=sources_cleared,
+                        chunks_cleared=chunks_cleared,
+                    )
+                )
+
         file_paths = await _bulk_premark(dir_path, extensions, get_property_index_fn)
         candidate_count = len(file_paths)
         logger.warning(
-            "Directory index starting: path=%s files=%d force=%s",
+            "Directory %s starting: path=%s files=%d force=%s",
+            "reindex" if is_reindex else "index",
             dir_path,
             candidate_count,
-            request.force,
+            force,
         )
-        eb = get_event_bus_fn() if get_event_bus_fn else None
         if eb:
             await eb.publish_async_nowait(
                 rag_directory_index_started(
@@ -138,15 +206,34 @@ def register_admin_routes(
                 )
             )
 
-        totals, _walked = await index_directory_contents(
+        totals, walked_sources = await index_directory_contents(
             dir_path=dir_path,
             extensions=extensions,
             index_file=index_file_fn,
-            metadata_overrides=request.metadata_overrides,
-            collect_walked_sources=False,
+            metadata_overrides=metadata_overrides,
+            collect_walked_sources=is_reindex,
             on_index_error=_on_error,
-            force=request.force,
+            force=force,
         )
+
+        if is_reindex:
+            collection = get_collection_fn()
+            removed_sources = find_removed_sources(
+                collection=collection,
+                dir_path=dir_path,
+                walked_sources=walked_sources,
+            )
+            for source in removed_sources:
+                stale = collection.get(where={"source": source}, include=[])
+                stale_ids = stale.get("ids", [])
+                if stale_ids:
+                    collection.delete(ids=stale_ids)
+                    totals.deleted += len(stale_ids)
+                    logger.info(
+                        "Removed stale chunks: source=%s deleted=%d",
+                        source,
+                        len(stale_ids),
+                    )
 
         if eb:
             await eb.publish_async_nowait(
@@ -166,6 +253,28 @@ def register_admin_routes(
             unchanged=totals.unchanged,
             files=totals.files,
             duplicates=totals.duplicates,
+        )
+
+    @router.post("/index", response_model=IndexResult)
+    async def index_file(request: IndexRequest) -> IndexResult:
+        return await index_file_fn(
+            _validate_file(request.path),
+            request.metadata_overrides,
+            force=request.force,
+        )
+
+    @router.post("/index_directory", response_model=IndexDirectoryResponse)
+    async def index_directory(
+        request: IndexDirectoryRequest,
+    ) -> IndexDirectoryResponse:
+        dir_path = _validate_directory(request.path)
+        extensions = set(request.extensions or DEFAULT_EXTENSIONS)
+        return await _run_directory_index(
+            dir_path,
+            extensions,
+            request.metadata_overrides,
+            request.force,
+            is_reindex=False,
         )
 
     @router.post("/reindex", response_model=IndexResult)
@@ -182,71 +291,45 @@ def register_admin_routes(
     ) -> IndexDirectoryResponse:
         dir_path = _validate_directory(request.path)
         extensions = set(request.extensions or DEFAULT_EXTENSIONS)
-        errors: list[Path] = []
-
-        def _on_error(fp: Path, exc: Exception) -> None:
-            errors.append(fp)
-            logger.warning("Skipping %s: %s", fp, exc)
-
-        file_paths = await _bulk_premark(dir_path, extensions, get_property_index_fn)
-        candidate_count = len(file_paths)
-        logger.warning(
-            "Directory reindex starting: path=%s files=%d force=%s",
+        return await _run_directory_index(
             dir_path,
-            candidate_count,
+            extensions,
+            request.metadata_overrides,
             request.force,
+            is_reindex=True,
+        )
+
+    @router.post("/clear_directory", response_model=ClearDirectoryResponse)
+    async def clear_directory(
+        request: ClearDirectoryRequest,
+    ) -> ClearDirectoryResponse:
+        """Delete all chunks and property index entries for every source under the given path.
+
+        Use this to clear a directory before a fresh manual re-index, or to remove
+        a corpus entirely without touching other scopes.
+        """
+        dir_path = _validate_directory(request.path)
+        sources_cleared, chunks_cleared = await _clear_directory_sources(
+            dir_path, get_collection_fn, get_property_index_fn
+        )
+        logger.warning(
+            "Directory cleared: path=%s sources=%d chunks=%d",
+            dir_path,
+            sources_cleared,
+            chunks_cleared,
         )
         eb = get_event_bus_fn() if get_event_bus_fn else None
         if eb:
             await eb.publish_async_nowait(
-                rag_directory_index_started(
-                    path=str(dir_path), total_files=candidate_count
-                )
-            )
-
-        totals, walked_sources = await index_directory_contents(
-            dir_path=dir_path,
-            extensions=extensions,
-            index_file=index_file_fn,
-            metadata_overrides=request.metadata_overrides,
-            collect_walked_sources=True,
-            on_index_error=_on_error,
-            force=request.force,
-        )
-        collection = get_collection_fn()
-        removed_sources = find_removed_sources(
-            collection=collection, dir_path=dir_path, walked_sources=walked_sources
-        )
-        for source in removed_sources:
-            stale = collection.get(where={"source": source}, include=[])
-            stale_ids: list[str] = stale.get("ids", [])
-            if stale_ids:
-                collection.delete(ids=stale_ids)
-                totals.deleted += len(stale_ids)
-                logger.info(
-                    "Removed stale chunks: source=%s deleted=%d",
-                    source,
-                    len(stale_ids),
-                )
-
-        if eb:
-            await eb.publish_async_nowait(
-                rag_directory_index_completed(
+                rag_directory_cleared(
                     path=str(dir_path),
-                    total_files=candidate_count,
-                    indexed=totals.indexed,
-                    deleted=totals.deleted,
-                    unchanged=totals.unchanged,
-                    duplicates=totals.duplicates,
-                    errors=len(errors),
+                    sources_cleared=sources_cleared,
+                    chunks_cleared=chunks_cleared,
                 )
             )
-        return IndexDirectoryResponse(
-            indexed=totals.indexed,
-            deleted=totals.deleted,
-            unchanged=totals.unchanged,
-            files=totals.files,
-            duplicates=totals.duplicates,
+        return ClearDirectoryResponse(
+            sources_cleared=sources_cleared,
+            chunks_cleared=chunks_cleared,
         )
 
     @router.get("/extraction_export", response_model=ExtractionExportResponse)
@@ -289,6 +372,7 @@ def register_admin_routes(
                 continue
             sources_seen.add(source)
             ext = meta.get("extraction")
+            em = meta.get("extraction_model")
             items.append(
                 ExtractionExportItem(
                     source=source,
@@ -296,7 +380,7 @@ def register_admin_routes(
                     chunk_index=int(meta.get("chunk_index", 0)),
                     text=text or "",
                     extraction=ext if isinstance(ext, str) else None,
-                    extraction_model=meta.get("extraction_model"),
+                    extraction_model=em if isinstance(em, str) else None,
                     extraction_schema_version=(
                         str(v) if (v := meta.get("extraction_schema_version")) else None
                     ),
@@ -353,7 +437,10 @@ def register_admin_routes(
     @router.post("/clear", response_model=ClearResponse)
     async def clear() -> ClearResponse:
         chroma = get_chroma_fn()
-        assert chroma is not None, "ChromaDB client not initialized"
+        if chroma is None:
+            raise HTTPException(
+                status_code=500, detail="ChromaDB client not initialized"
+            )
         collection = get_collection_fn()
         deleted = collection.count()
         chroma.delete_collection(collection_name)

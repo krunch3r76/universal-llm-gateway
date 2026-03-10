@@ -459,6 +459,28 @@ def rag_corpus_hints_updated(
 
 
 @event_factory
+def rag_directory_cleared(
+    *,
+    path: str,
+    sources_cleared: int,
+    chunks_cleared: int,
+) -> Event:
+    """Emitted after all chunks for sources under a directory are deleted.
+
+    Fired by POST /clear_directory and by reindex_directory when force=True
+    (upfront clear before re-indexing).
+    """
+    return Event(
+        signal="rag.directory.cleared",
+        payload={
+            "path": path,
+            "sources_cleared": sources_cleared,
+            "chunks_cleared": chunks_cleared,
+        },
+    )
+
+
+@event_factory
 def rag_directory_index_started(
     *,
     path: str,
