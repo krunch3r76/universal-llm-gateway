@@ -26,11 +26,14 @@ from services.rag.directory_ops import (
 )
 from services.rag.models import (
     ClearResponse,
+    ExtractionExportItem,
+    ExtractionExportResponse,
     IndexDirectoryRequest,
     IndexDirectoryResponse,
     IndexRequest,
     IndexResult,
     SourceResponse,
+    SourcesResponse,
     StatsResponse,
 )
 
@@ -92,6 +95,7 @@ def register_admin_routes(
             metadata_overrides=request.metadata_overrides,
             collect_walked_sources=False,
             on_index_error=lambda fp, exc: logger.warning("Skipping %s: %s", fp, exc),
+            force=request.force,
         )
         return IndexDirectoryResponse(
             indexed=totals.indexed,
@@ -122,6 +126,7 @@ def register_admin_routes(
             metadata_overrides=request.metadata_overrides,
             collect_walked_sources=True,
             on_index_error=lambda fp, exc: logger.warning("Skipping %s: %s", fp, exc),
+            force=request.force,
         )
         collection = get_collection_fn()
         removed_sources = find_removed_sources(
@@ -145,6 +150,63 @@ def register_admin_routes(
             files=totals.files,
             duplicates=totals.duplicates,
         )
+
+    @router.get("/extraction_export", response_model=ExtractionExportResponse)
+    def extraction_export(
+        prefix: str | None = None, include_text: bool = False
+    ) -> ExtractionExportResponse:
+        """Bulk export chunk extractions, optionally filtered by source prefix.
+
+        Queries ChromaDB directly so chunks without any extraction (missing field)
+        are also included — unlike /sources which is property-index-only.
+        Set include_text=true to include the chunk document text in the response.
+        """
+        collection = get_collection_fn()
+        include = ["metadatas"] if not include_text else ["documents", "metadatas"]
+        results = collection.get(include=include)
+        ids: list[str] = results.get("ids") or []
+        docs: list[str] = results.get("documents") or ([""] * len(ids))
+        metas: list = results.get("metadatas") or []
+
+        items: list[ExtractionExportItem] = []
+        sources_seen: set[str] = set()
+        for chunk_id, text, meta in zip(ids, docs, metas, strict=True):
+            if not isinstance(meta, dict):
+                continue
+            source = meta.get("source") or ""
+            if not source:
+                continue
+            if prefix and not source.startswith(prefix):
+                continue
+            sources_seen.add(source)
+            ext = meta.get("extraction")
+            items.append(
+                ExtractionExportItem(
+                    source=source,
+                    chunk_id=chunk_id,
+                    chunk_index=int(meta.get("chunk_index", 0)),
+                    text=text or "",
+                    extraction=ext if isinstance(ext, str) else None,
+                    extraction_model=meta.get("extraction_model"),
+                    extraction_schema_version=(
+                        str(v) if (v := meta.get("extraction_schema_version")) else None
+                    ),
+                )
+            )
+        items.sort(key=lambda x: (x.source, x.chunk_index))
+        return ExtractionExportResponse(
+            total_chunks=len(items),
+            total_sources=len(sources_seen),
+            items=items,
+        )
+
+    @router.get("/sources", response_model=SourcesResponse)
+    def get_sources(prefix: str | None = None) -> SourcesResponse:
+        """List distinct source paths in the property index, optionally filtered by prefix."""
+        prop_idx = get_property_index_fn()
+        if prop_idx is None:
+            return SourcesResponse(sources=[])
+        return SourcesResponse(sources=prop_idx.get_sources(prefix=prefix))
 
     @router.get("/source", response_model=SourceResponse)
     def get_source(path: str) -> SourceResponse:

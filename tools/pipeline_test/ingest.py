@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 from transport_utils.rag_client import DEFAULT_RAG_URL, make_sync_client
 
@@ -28,6 +29,8 @@ DEFAULT_REGISTRY_PATH = Path("docs/research/article_registry.yaml")
 
 @dataclass(slots=True, kw_only=True)
 class IngestRecord:
+    """Outcome of an attempt to ingest a single PDF (archived, skipped duplicate, or error)."""
+
     source_pdf: Path
     archived_to: Path | None = None
     skipped_duplicate: bool = False
@@ -76,7 +79,11 @@ def ingest_pdfs(
                     content_hash=pdf_hash,
                 )
             )
-        except Exception as exc:  # noqa: BLE001
+        except (OSError, shutil.Error) as exc:
+            logger.exception("Failed to copy PDF %s to corpus", pdf_path)
+            records.append(IngestRecord(source_pdf=pdf_path, error=str(exc)))
+        except Exception as exc:
+            logger.exception("Unexpected error during PDF ingestion for %s", pdf_path)
             records.append(IngestRecord(source_pdf=pdf_path, error=str(exc)))
 
     return records
@@ -131,7 +138,53 @@ def index_corpus_directory(
         with make_sync_client(rag_url, timeout=timeout) as client:
             response = client.post("/index_directory", json=body)
         _ = response.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
+    except httpx.RequestError as exc:
+        logger.exception("RAG client request failed for /index_directory: %s", exc)
+        return None, str(exc)
+    except httpx.HTTPStatusError as exc:
+        logger.exception(
+            "RAG client returned error status for /index_directory: %s", exc
+        )
+        return None, str(exc)
+    except Exception as exc:
+        logger.exception(
+            "Unexpected error during RAG indexing for directory %s", directory
+        )
+        return None, str(exc)
+    return response.json(), None
+
+
+def reindex_corpus_directory(
+    *,
+    directory: Path,
+    rag_url: str = DEFAULT_RAG_URL,
+    timeout: float = 300.0,
+    force: bool = True,
+    extensions: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Ask RAG to reindex a directory (removes stale chunks, optional force)."""
+    body: dict[str, Any] = {
+        "path": str(directory.expanduser().resolve()),
+        "force": force,
+    }
+    if extensions is not None:
+        body["extensions"] = extensions
+    try:
+        with make_sync_client(rag_url, timeout=timeout) as client:
+            response = client.post("/reindex_directory", json=body)
+        _ = response.raise_for_status()
+    except httpx.RequestError as exc:
+        logger.exception("RAG client request failed for /reindex_directory: %s", exc)
+        return None, str(exc)
+    except httpx.HTTPStatusError as exc:
+        logger.exception(
+            "RAG client returned error status for /reindex_directory: %s", exc
+        )
+        return None, str(exc)
+    except Exception as exc:
+        logger.exception(
+            "Unexpected error during RAG reindexing for directory %s", directory
+        )
         return None, str(exc)
     return response.json(), None
 
@@ -146,7 +199,14 @@ def rag_watch_status(
         with make_sync_client(rag_url, timeout=timeout) as client:
             response = client.get("/watch/status")
         _ = response.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
+    except httpx.RequestError as exc:
+        logger.exception("RAG client request failed for /watch/status: %s", exc)
+        return None, str(exc)
+    except httpx.HTTPStatusError as exc:
+        logger.exception("RAG client returned error status for /watch/status: %s", exc)
+        return None, str(exc)
+    except Exception as exc:
+        logger.exception("Unexpected error while checking RAG watch status")
         return None, str(exc)
 
     payload = response.json()
@@ -173,19 +233,21 @@ def update_article_registry(
             data["articles"] = dict(raw["articles"])
     data["articles"][filename] = {k: str(v) for k, v in entry.items()}
     registry_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
         dir=registry_path.parent,
         prefix=".article_registry.",
         suffix=".yaml",
-    )
+        delete=False,
+    ) as fh:
+        yaml.safe_dump(data, fh, default_flow_style=False, allow_unicode=True)
+    tmp_path_obj = Path(fh.name)
     try:
-        with open(fd, "w", encoding="utf-8") as fh:
-            yaml.safe_dump(data, fh, default_flow_style=False, allow_unicode=True)
-        tmp_path_obj = Path(tmp_path)
         tmp_path_obj.replace(registry_path)
     except Exception as exc:
         logger.error("Article registry write failed: %s", exc)
-        Path(tmp_path).unlink(missing_ok=True)
+        tmp_path_obj.unlink(missing_ok=True)
         raise
 
 
@@ -203,8 +265,15 @@ def extract_pdf_metadata(pdf_path: Path) -> dict[str, str]:
             }
         finally:
             doc.close()
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("PDF metadata extraction failed for %s: %s", pdf_path, exc)
+    except OSError as exc:
+        logger.warning("PDF metadata extraction failed for %s: %s", pdf_path, exc)
+        return {}
+    except Exception as exc:
+        logger.error(
+            "Unexpected error during PDF metadata extraction for %s: %s",
+            pdf_path,
+            exc,
+        )
         return {}
 
 

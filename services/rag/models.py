@@ -49,6 +49,7 @@ class IndexDirectoryRequest(BaseModel):
     path: str
     extensions: list[str] | None = None
     metadata_overrides: dict[str, str | int | float | bool] | None = None
+    force: bool = False
 
 
 class IndexDirectoryResponse(BaseModel):
@@ -74,6 +75,12 @@ class SourceResponse(BaseModel):
     metadata: list[dict[str, str | int | float | bool]]
 
 
+class SourcesResponse(BaseModel):
+    """List of source file paths (e.g. for extraction export by prefix)."""
+
+    sources: list[str]
+
+
 class ScopeInfo(BaseModel):
     prefixes: list[str]
     description: str
@@ -81,6 +88,26 @@ class ScopeInfo(BaseModel):
 
 class ScopesResponse(BaseModel):
     scopes: dict[str, ScopeInfo]
+
+
+class ExtractionExportItem(BaseModel):
+    """Single chunk with its extraction metadata, for bulk export."""
+
+    source: str
+    chunk_id: str
+    chunk_index: int
+    text: str
+    extraction: str | None = None
+    extraction_model: str | None = None
+    extraction_schema_version: str | None = None
+
+
+class ExtractionExportResponse(BaseModel):
+    """Bulk extraction export: all chunks under a source prefix."""
+
+    total_chunks: int
+    total_sources: int
+    items: list[ExtractionExportItem]
 
 
 class FailedChunkItem(BaseModel):

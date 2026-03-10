@@ -394,6 +394,20 @@ class PropertyIndex:
             "SELECT COUNT(DISTINCT source) FROM properties WHERE source != ''"
         ).fetchone()[0]
 
+    def get_sources(self, prefix: str | None = None) -> list[str]:
+        """Return distinct source paths with non-empty source, optionally filtered by prefix."""
+        conn = self._ensure_conn()
+        if prefix:
+            rows = conn.execute(
+                "SELECT DISTINCT source FROM properties WHERE source != '' AND source LIKE ? ORDER BY source",
+                (f"{prefix}%",),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT DISTINCT source FROM properties WHERE source != '' ORDER BY source"
+            ).fetchall()
+        return [r[0] for r in rows]
+
     def get_stats(self) -> dict[str, int]:
         """Return property index statistics."""
         conn = self._ensure_conn()

@@ -49,6 +49,7 @@ async def index_directory_contents(
     metadata_overrides: dict[str, str | int | float | bool] | None,
     collect_walked_sources: bool,
     on_index_error: OnIndexErrorFn,
+    force: bool = False,
 ) -> tuple[DirectoryIndexTotals, set[str]]:
     totals = DirectoryIndexTotals()
     walked_sources: set[str] = set()
@@ -61,7 +62,7 @@ async def index_directory_contents(
             if collect_walked_sources:
                 walked_sources.add(str(file_path.resolve()))
             try:
-                result = await index_file(file_path, metadata_overrides)
+                result = await index_file(file_path, metadata_overrides, force=force)
             except Exception as exc:
                 on_index_error(file_path, exc)
                 continue
