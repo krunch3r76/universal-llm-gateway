@@ -357,10 +357,20 @@ is present. When skipped fires, neither params.resolved nor completed/failed are
 **INVARIANT**: `pipeline.rag.retrieval.completed` and `pipeline.rag.retrieval.failed` are terminal
 alternatives — exactly one is emitted per retrieval step execution that passes params resolution.
 
+**INVARIANT**: When retry is triggered (`pipeline.rag.retrieval.retry.triggered`), exactly one of
+`pipeline.rag.retrieval.retry.succeeded` or `pipeline.rag.retrieval.retry.not_improved` is emitted
+before `pipeline.rag.retrieval.completed` or `pipeline.rag.retrieval.failed`.
+
+**Cascade guard**: The handler MUST only trigger retry when `retry_scope_fallback` ≠ current scope
+(and not `"all"` when already broad). This prevents cascade retries (retry with same/broader scope
+that would not change results).
+
 ```
 pipeline.rag.retrieval.skipped?                           (* out-of-scope, no user prefix override)
 pipeline.rag.retrieval.params.resolved
   └─> [parallel queries to RAG /search]
+      └─> pipeline.rag.retrieval.retry.triggered?        (* low chunk count; retry with broader scope)
+      │     └─> pipeline.rag.retrieval.retry.succeeded | pipeline.rag.retrieval.retry.not_improved
       └─> pipeline.rag.retrieval.bibliography.filtered?  (* after merge, before completed; when junk filter drops chunks)
       └─> pipeline.rag.retrieval.completed | pipeline.rag.retrieval.failed
 ```
@@ -369,6 +379,9 @@ pipeline.rag.retrieval.params.resolved
 |--------|------------------|-------------|
 | `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | Retrieval skipped: rewrite model determined query is unanswerable from active corpus |
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | Emitted when post-RRF junk/bibliography filter removes one or more chunks |
+| `pipeline.rag.retrieval.retry.triggered` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `threshold`, `retry_scope`, `reason` | Low-chunk retry: retrieval will retry with broader scope; reason e.g. `low_chunk_count` |
+| `pipeline.rag.retrieval.retry.succeeded` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | Retry yielded more chunks; result adopted |
+| `pipeline.rag.retrieval.retry.not_improved` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | Retry ran but did not improve; initial result kept |
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | Pre-retrieval: effective parameters after three-tier merge |
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds` | Post-retrieval: scope prediction + quality metrics |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | All queries failed — no chunks to merge |
@@ -786,6 +799,9 @@ Pipeline events flow to two sinks:
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds` | - |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | - |
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | - |
+| `pipeline.rag.retrieval.retry.triggered` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `threshold`, `retry_scope`, `reason` | low-chunk retry started |
+| `pipeline.rag.retrieval.retry.succeeded` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | retry adopted (more chunks) |
+| `pipeline.rag.retrieval.retry.not_improved` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | retry ran, initial kept |
 | `pipeline.rag.rerank.completed` | `pipeline_id`, `execution_id`, `step_name`, `rerank_enabled`, `model_id`, `chunks_input`, `chunks_output`, `windows_evaluated`, `max_rank_movement_observed`, `total_rerank_seconds` | - |
 
 **Note on `pipeline.step.failed` partial progress**: `prompt_tokens`, `completion_tokens`,

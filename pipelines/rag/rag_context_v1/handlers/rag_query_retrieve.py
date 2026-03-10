@@ -35,6 +35,9 @@ from systems.pipeline.core.events.step import (
     RagRetrievalCompleted,
     RagRetrievalFailed,
     RagRetrievalParamsResolved,
+    RagRetrievalRetryNotImproved,
+    RagRetrievalRetrySucceeded,
+    RagRetrievalRetryTriggered,
     RagRetrievalSkipped,
 )
 from systems.pipeline.core.execution.resolver import NamespaceResolver
@@ -332,6 +335,98 @@ class RagMultiRetrieveHandler(BaseHandler):
             )
 
         merged, merged_scores = _rrf_merge(successful, k=rrf_k, max_chunks=max_chunks)
+
+        # --- Low-chunk retry with broader scope (once) ---
+        min_chunks_threshold = int(
+            effective.get("rag_min_chunks_retry_threshold", 0)
+        )
+        retry_fallback = str(
+            effective.get("rag_retry_scope_fallback", "both")
+        ).strip() or "both"
+        if (
+            min_chunks_threshold > 0
+            and len(merged) < min_chunks_threshold
+            and scope not in (retry_fallback, "all")
+            and source_prefixes is None
+        ):
+            prev_count = len(merged)
+            self._publish_bus_event(
+                context,
+                RagRetrievalRetryTriggered(
+                    pipeline_id=context.pipeline.id,
+                    execution_id=context.execution_id,
+                    step_name=step.name,
+                    initial_chunk_count=prev_count,
+                    threshold=min_chunks_threshold,
+                    retry_scope=retry_fallback,
+                    reason="low_chunk_count",
+                ),
+            )
+            logger.info(
+                "Step '%s': chunks=%d < threshold=%d, retrying with scope=%r",
+                step.id,
+                prev_count,
+                min_chunks_threshold,
+                retry_fallback,
+            )
+            retry_scope = retry_fallback
+            async with make_async_client(base_url, timeout=rag_timeout) as client_retry:
+                tasks_retry = [
+                    _execute_single_query(
+                        client_retry,
+                        api_path,
+                        q,
+                        top_k,
+                        recency_weight,
+                        retry_scope,
+                        None,
+                    )
+                    for q in queries
+                ]
+                results_retry = await asyncio.gather(
+                    *tasks_retry, return_exceptions=True
+                )
+            successful_retry = [
+                r for r in results_retry if not isinstance(r, BaseException)
+            ]
+            if successful_retry:
+                merged_retry, merged_scores_retry = _rrf_merge(
+                    successful_retry, k=rrf_k, max_chunks=max_chunks
+                )
+                if len(merged_retry) > prev_count:
+                    merged = merged_retry
+                    merged_scores = merged_scores_retry
+                    scope = retry_scope
+                    logger.info(
+                        "Step '%s': retry with scope=%r yielded %d chunks (was %d)",
+                        step.id,
+                        retry_scope,
+                        len(merged),
+                        prev_count,
+                    )
+                    self._publish_bus_event(
+                        context,
+                        RagRetrievalRetrySucceeded(
+                            pipeline_id=context.pipeline.id,
+                            execution_id=context.execution_id,
+                            step_name=step.name,
+                            initial_chunk_count=prev_count,
+                            final_chunk_count=len(merged),
+                            retry_scope=retry_scope,
+                        ),
+                    )
+                else:
+                    self._publish_bus_event(
+                        context,
+                        RagRetrievalRetryNotImproved(
+                            pipeline_id=context.pipeline.id,
+                            execution_id=context.execution_id,
+                            step_name=step.name,
+                            initial_chunk_count=prev_count,
+                            final_chunk_count=len(merged_retry),
+                            retry_scope=retry_scope,
+                        ),
+                    )
 
         # --- Post-RRF junk filter ---
         if effective.get("bibliography_filter_disable", False):

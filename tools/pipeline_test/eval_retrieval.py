@@ -120,6 +120,9 @@ Respond with valid JSON only — no prose, no markdown fences.\
 _CONTEXT_CHAR_LIMIT = 12_000
 """Max chars of retrieved context sent to the evaluator to stay within context budgets."""
 
+_RAW_RESPONSE_PREVIEW_LEN = 800
+"""When parse fails, store this many chars of raw response in eval output for diagnosis."""
+
 
 def _build_eval_prompt(
     query: str,
@@ -129,7 +132,22 @@ def _build_eval_prompt(
     scope_used: str,
     reranking: dict[str, Any] | None = None,
 ) -> str:
-    """Build the user-facing evaluation prompt."""
+    """Build the evaluation prompt sent to the retrieval quality evaluator.
+
+    Includes the original query, rewrite metadata, retrieval summary, and
+    retrieved context (truncated to _CONTEXT_CHAR_LIMIT when needed).
+
+    Args:
+        query: The user's original query.
+        rewrite: Rewrite metadata (scope, confidence, rewritten_queries, hyde_passage).
+        retrieved_context: Verbatim retrieved context chunks.
+        chunks_found: Number of chunks found during retrieval.
+        scope_used: Scope used for retrieval.
+        reranking: Optional reranking step metadata when enabled.
+
+    Returns:
+        Formatted evaluation prompt string.
+    """
     context_snippet = retrieved_context
     truncated = False
     if len(context_snippet) > _CONTEXT_CHAR_LIMIT:
@@ -197,7 +215,7 @@ def evaluate_retrieval(
 
     Returns a structured result dict matching the module-level schema.
     """
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    sys.path.insert(0, (Path(__file__).resolve().parents[2] / "scripts").as_posix())
     from consult_lib.core import execute_consult
 
     rewrite_step = snapshot.steps.get("analyze_rewrite")
@@ -248,16 +266,8 @@ def evaluate_retrieval(
 
     context_with_instructions = f"{_SYSTEM_PROMPT}\n\n---\n\n{user_prompt}"
 
-    lib_results: list[ConsultResult] = [
-        ConsultResult(
-            model_id=r.model_id,
-            response_text=r.response_text,
-            prompt_tokens=r.prompt_tokens,
-            completion_tokens=r.completion_tokens,
-            latency_ms=r.latency_ms,
-            error=r.error,
-        )
-        for r in execute_consult(
+    lib_results: list[ConsultResult] = list(
+        execute_consult(
             question=snapshot.source_text,
             role="researcher",
             context_text=context_with_instructions,
@@ -268,7 +278,7 @@ def evaluate_retrieval(
             stargate_url=stargate_url,
             timeout=timeout,
         )
-    ]
+    )
 
     evaluations: list[dict[str, Any]] = []
     for result in lib_results:
@@ -329,13 +339,31 @@ def _parse_evaluation(text: str, model_id: str) -> dict[str, Any]:
         data = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         logger.warning("eval_retrieval: %s returned invalid JSON: %s", model_id, exc)
-        return {
+        preview = (text or "")[:_RAW_RESPONSE_PREVIEW_LEN]
+        issues_list = [f"Could not parse model response as JSON: {exc}"]
+        if not cleaned:
+            issues_list.append(
+                "Response was empty (possible refusal, content filter, or max_tokens=0)."
+            )
+        elif not cleaned.startswith("{"):
+            issues_list.append(
+                "Response did not start with JSON (possible prose/markdown or truncation)."
+            )
+        if preview:
+            issues_list.append(
+                f"Raw response preview (first {min(len(preview), _RAW_RESPONSE_PREVIEW_LEN)} chars): "
+                f"{preview!r}"
+            )
+        result: dict[str, Any] = {
             "scores": {},
             "verdict": "parse_error",
             "strengths": [],
-            "issues": [f"Could not parse model response as JSON: {exc}"],
+            "issues": issues_list,
             "recommendations": [],
         }
+        if preview:
+            result["raw_response_preview"] = preview
+        return result
 
     scores: dict[str, int] = data.get("scores", {})
     _coerce_scores(scores)
@@ -354,8 +382,8 @@ def _parse_evaluation(text: str, model_id: str) -> dict[str, Any]:
     }
 
 
-def _coerce_scores(scores: dict[str, Any]) -> None:
-    """Coerce score values to int in-place; leave missing keys absent."""
+def _coerce_scores(scores: dict[str, int | Any]) -> None:
+    """Coerce score values to int in-place; remove keys if coercion fails."""
     for key in ("relevance", "coverage", "noise", "rewrite_quality"):
         if key in scores:
             try:
@@ -365,7 +393,10 @@ def _coerce_scores(scores: dict[str, Any]) -> None:
 
 
 def _derive_verdict(scores: dict[str, int]) -> str:
-    """Derive verdict from scores when the model omits or miscases it."""
+    """Derive verdict from scores when the model omits or miscases it.
+
+    Returns 'unknown' if no valid integer scores are found.
+    """
     vals = [v for v in scores.values() if isinstance(v, int)]
     if not vals:
         return "unknown"
@@ -419,6 +450,10 @@ def format_eval_result(result: dict[str, Any]) -> str:
         )
         verdict = ev.get("verdict", "?").upper()
         lines.append(f"  Verdict: {verdict}  |  {score_str}")
+
+        if verdict == "PARSE_ERROR" and ev.get("raw_response_preview"):
+            preview = ev["raw_response_preview"]
+            lines.append(f"  Raw response preview: {preview[:200]!r}")
 
         if ev.get("strengths"):
             lines.append("  Strengths:")

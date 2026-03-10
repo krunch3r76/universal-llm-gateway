@@ -560,6 +560,84 @@ def RagRetrievalBibliographyFiltered(  # noqa: N802
 
 
 @event_factory
+def RagRetrievalRetryTriggered(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    initial_chunk_count: int,
+    threshold: int,
+    retry_scope: str,
+    reason: str,
+) -> Event:
+    """Emitted when retrieval will retry with broader scope due to low chunk count.
+
+    Payload:
+        initial_chunk_count: Chunk count from first pass (before retry)
+        threshold: rag_min_chunks_retry_threshold that triggered retry
+        retry_scope: Scope used for retry (e.g. "both")
+        reason: Trigger reason; "low_chunk_count" for threshold-based retry
+    """
+    return Event(
+        signal="pipeline.rag.retrieval.retry.triggered",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "initial_chunk_count": initial_chunk_count,
+            "threshold": threshold,
+            "retry_scope": retry_scope,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def RagRetrievalRetrySucceeded(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    initial_chunk_count: int,
+    final_chunk_count: int,
+    retry_scope: str,
+) -> Event:
+    """Emitted when retry with broader scope yielded more chunks; result adopted."""
+    return Event(
+        signal="pipeline.rag.retrieval.retry.succeeded",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "initial_chunk_count": initial_chunk_count,
+            "final_chunk_count": final_chunk_count,
+            "retry_scope": retry_scope,
+        },
+    )
+
+
+@event_factory
+def RagRetrievalRetryNotImproved(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    initial_chunk_count: int,
+    final_chunk_count: int,
+    retry_scope: str,
+) -> Event:
+    """Emitted when retry ran but did not improve; initial result kept."""
+    return Event(
+        signal="pipeline.rag.retrieval.retry.not_improved",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "initial_chunk_count": initial_chunk_count,
+            "final_chunk_count": final_chunk_count,
+            "retry_scope": retry_scope,
+        },
+    )
+
+
+@event_factory
 def RagMetadataBoostApplied(  # noqa: N802
     pipeline_id: str,
     execution_id: str,
