@@ -13,6 +13,8 @@ services:
     build:
       context: ../../services/mcp-server
       dockerfile: Dockerfile
+      args:
+        SOURCE_VERSION: "0"
     container_name: mcp-server
     user: "1000:1000"
     ports:
@@ -34,7 +36,7 @@ services:
       - ${MCP_DATA_DIR:-~/mcp-data}/sqlite.yaml:/data/sqlite-config.yaml:ro
       - ${MCP_DATA_DIR:-~/mcp-data}/databases:/data/databases:rw
     environment:
-      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN required}
       - PROJECT_ROOT=/data/project
       - TASKS_ROOT=/data/tasks
       # Browser tools (Playwright Firefox) are disabled by default.

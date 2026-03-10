@@ -109,14 +109,13 @@ class ServiceController:
             yield f"ERROR: Build script not found: {script}"
             return
 
-        args = [str(script)]
-        if cpu_native:
-            args.append("--cpu-native")
-        if gpu_native:
-            args.append("--gpu-native")
-        if no_cache:
-            args.append("--no-cache")
-        args.append("--refresh-source")
+        args = [
+            str(script),
+            *(["--cpu-native"] if cpu_native else []),
+            *(["--gpu-native"] if gpu_native else []),
+            *(["--no-cache"] if no_cache else []),
+            "--refresh-source",
+        ]
 
         log_path = Path("/tmp/rebuild-gpu.log")
         cmd_line = f"$ {' '.join(args)}"
@@ -133,24 +132,28 @@ class ServiceController:
             if process.stdout is None:
                 yield "ERROR: Could not capture build output."
                 return
-            with log_path.open("w") as log_file:
-                log_file.write(cmd_line + "\n")
-                log_file.flush()
-                async for raw_line in process.stdout:
-                    line = raw_line.decode(errors="replace").rstrip()
-                    log_file.write(line + "\n")
+            try:
+                with log_path.open("w") as log_file:
+                    log_file.write(cmd_line + "\n")
                     log_file.flush()
-                    yield line
-            exit_code = await process.wait()
-            with log_path.open("a") as log_file:
-                if exit_code == 0:
-                    msg = "Build completed successfully."
-                elif exit_code == -signal.SIGTERM or exit_code == -signal.SIGKILL:
-                    msg = "Build cancelled."
-                else:
-                    msg = f"Build FAILED (exit code {exit_code})."
-                log_file.write(msg + "\n")
-            yield msg
+                    async for raw_line in process.stdout:
+                        line = raw_line.decode(errors="replace").rstrip()
+                        log_file.write(line + "\n")
+                        log_file.flush()
+                        yield line
+                exit_code = await process.wait()
+                with log_path.open("a") as log_file:
+                    if exit_code == 0:
+                        msg = "Build completed successfully."
+                    elif exit_code == -signal.SIGTERM or exit_code == -signal.SIGKILL:
+                        msg = "Build cancelled."
+                    else:
+                        msg = f"Build FAILED (exit code {exit_code})."
+                    log_file.write(msg + "\n")
+                yield msg
+            except OSError as e:
+                logger.error("Failed to write build log to %s: %s", log_path, e)
+                yield f"WARNING: Failed to write build log: {e}"
         finally:
             self._build_process = None
 
@@ -247,16 +250,15 @@ class ServiceController:
         log_path = Path("/tmp/logs/universal-stargate/tui-startup.log")
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            log_fh = log_path.open("w")
         except OSError as e:
             logger.error(
-                "Failed to create log directory or open log file for Stargate: %s",
+                "Failed to create log directory for Stargate: %s",
                 e,
             )
             return f"Failed to start Stargate: could not set up logging ({e})."
 
         try:
-            with log_fh:
+            with log_path.open("w") as log_fh:
                 process = await asyncio.create_subprocess_exec(
                     str(script),
                     "debug",
@@ -268,7 +270,7 @@ class ServiceController:
                 )
         except OSError as e:
             logger.error(
-                "Failed to start Stargate subprocess: %s", e
+                "Failed to start Stargate subprocess or open log file: %s", e
             )
             return f"Failed to start Stargate: {e}"
 
@@ -316,7 +318,7 @@ class ServiceController:
         args = ["docker", "compose", "-f", str(compose_path)]
         override = mcp_browser_override_path(self._root)
         if override is not None and override.exists():
-            args += ["-f", str(override)]
+            args.extend(["-f", str(override)])
         return args, compose_path
 
     async def start_mcp(self) -> str:
@@ -369,18 +371,21 @@ class ServiceController:
         )
         return f"Failed to stop MCP server (exit {result.returncode}).\n{text}"
 
-    async def rebuild_mcp(self) -> str:
-        """Rebuild MCP server image without cache and restart."""
+    async def rebuild_mcp(self, *, no_cache: bool = False) -> str:
+        """Rebuild MCP server image and restart. Uses Docker cache unless no_cache=True."""
         base = self._mcp_compose_args()
         if base is None:
             return "Compose file not found: docker/compose/mcp-server.yml"
         args, _ = base
         env = build_mcp_env(self._root)
 
+        build_args = ["build"]
+        if no_cache:
+            build_args.append("--no-cache")
+
         build = await asyncio.create_subprocess_exec(
             *args,
-            "build",
-            "--no-cache",
+            *build_args,
             env=env,
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
@@ -435,20 +440,19 @@ class ServiceController:
                 logger.error("Corrupt PID file %s: %s", pid_file, e)
                 pid_file.unlink(missing_ok=True)
 
-        if recorded_pid is not None:
-            if self._service_state._pid_alive(recorded_pid):
-                if not port_open:
-                    pid_file.unlink(missing_ok=True)
-                    return (
-                        f"PID {recorded_pid} is alive but port {port} is closed — "
-                        "not Stargate. Stale PID file removed."
-                    )
-                return await self._kill_and_wait(recorded_pid, pid_file)
-            pid_file.unlink(missing_ok=True)
+        if recorded_pid is not None and self._service_state._pid_alive(
+            recorded_pid
+        ):
             if not port_open:
-                return f"Stale PID file removed (PID {recorded_pid} already dead)."
-        elif not port_open:
-            pid_file.unlink(missing_ok=True)
+                pid_file.unlink(missing_ok=True)
+                return (
+                    f"PID {recorded_pid} is alive but port {port} is closed — "
+                    "not Stargate. Stale PID file removed."
+                )
+            return await self._kill_and_wait(recorded_pid, pid_file)
+
+        pid_file.unlink(missing_ok=True)
+        if not port_open:
             return "Stargate is not running."
 
         listener = self._service_state._find_listener_pid(port)
@@ -483,30 +487,30 @@ class ServiceController:
             pid_file.unlink(missing_ok=True)
 
         alive = self._service_state._pid_alive
-        t0 = asyncio.get_running_loop().time()
+        t_start = asyncio.get_running_loop().time()
 
-        while asyncio.get_running_loop().time() - t0 < sigterm_timeout:
+        while asyncio.get_running_loop().time() - t_start < sigterm_timeout:
             await asyncio.sleep(0.3)
             if not alive(pid):
-                total_elapsed = asyncio.get_running_loop().time() - t0
+                total_elapsed = asyncio.get_running_loop().time() - t_start
                 return f"{service_name} stopped (PID {pid}, {total_elapsed:.1f}s)."
 
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
-            total_elapsed = asyncio.get_running_loop().time() - t0
+            total_elapsed = asyncio.get_running_loop().time() - t_start
             return f"{service_name} stopped (PID {pid}, {total_elapsed:.1f}s)."
 
         t1 = asyncio.get_running_loop().time()
         while asyncio.get_running_loop().time() - t1 < sigkill_timeout:
             await asyncio.sleep(0.3)
             if not alive(pid):
-                total_elapsed = asyncio.get_running_loop().time() - t0
+                total_elapsed = asyncio.get_running_loop().time() - t_start
                 return (
                     f"{service_name} SIGKILL'd after {total_elapsed:.1f}s (PID {pid})."
                 )
 
-        total_elapsed = asyncio.get_running_loop().time() - t0
+        total_elapsed = asyncio.get_running_loop().time() - t_start
         return (
             f"{service_name} may still be running "
             f"(could not confirm death, PID {pid}, {total_elapsed:.1f}s)."
