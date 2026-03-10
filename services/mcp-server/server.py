@@ -264,7 +264,7 @@ class BearerAuthMiddleware:
 
         try:
             data = json.loads(body)
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError:
             return JSONResponse(
                 {"error": "Invalid JSON"},
                 status_code=400,
@@ -343,7 +343,10 @@ def _build_server() -> FastMCP:
     else:
         logger.info("Context tools disabled (ENABLE_CONTEXT_TOOLS=false)")
     register_clip_tools(mcp)
-    register_browser_tools(mcp)
+    if _env_truthy("ENABLE_BROWSER_TOOLS", default=False):
+        register_browser_tools(mcp)
+    else:
+        logger.info("Browser tools disabled (ENABLE_BROWSER_TOOLS=false)")
     register_sqlite_tools(mcp)
 
     @mcp.tool()

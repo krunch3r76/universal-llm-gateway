@@ -285,8 +285,9 @@ def _watch_mode() -> None:
                             )
                         case "rag.file.indexed":
                             idx = p.get("indexed", 0)
+                            d = _fmt_duration(p.get("duration_seconds", 0))
                             print(
-                                f"{ts}  [INDEXED ]  {_basename(p.get('file', ''))}  ({idx} chunks stored)"
+                                f"{ts}  [INDEXED ]  {_basename(p.get('file', ''))}  ({idx} chunks stored)  {d}"
                             )
                         case "rag.extraction.permanently.skipped":
                             cid = p.get("chunk_id", "?")

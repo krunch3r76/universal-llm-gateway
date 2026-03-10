@@ -1,0 +1,261 @@
+"""LLM-based sliding-window reranking with bounded movement.
+
+Receives post-RRF chunks from ``retrieve_assemble``, optionally reranks them
+using a local LLM in sliding windows, fuses LLM scores with prior
+(RRF + metadata boost) scores, and formats the final context with entity
+merging.
+
+When ``rerank_enabled`` is false (default), passes chunks straight to
+formatting — zero LLM calls, zero latency overhead.
+
+Tunable pipeline options (via YAML defaults or runtime pipeline_options):
+    rerank_enabled, rerank_model, rerank_window_size, rerank_overlap,
+    rerank_max_candidates, rerank_max_movement, rerank_prior_weight
+"""
+
+from __future__ import annotations
+
+import json
+import time as _time
+from typing import TYPE_CHECKING, Any, override
+
+from systems.pipeline.core.events.step import RagRerankCompleted
+from systems.pipeline.core.execution.resolver import NamespaceResolver
+from systems.pipeline.core.handlers.builtin import BaseHandler
+from systems.pipeline.core.handlers.protocol import StepOutput
+from universal_logging import get_logger
+
+from .context_formatting import ChunkData, format_context
+from .rerank_scoring import (
+    aggregate_window_scores,
+    apply_bounded_movement,
+    build_candidate_block,
+    build_windows,
+)
+
+if TYPE_CHECKING:
+    from systems.pipeline.core.handlers.protocol import PipelineContext
+    from systems.pipeline.core.schemas import StepConfig
+
+logger = get_logger(__name__)
+
+
+class RagRerankAssembleHandler(BaseHandler):
+    """Sliding-window LLM reranking with bounded movement and context formatting.
+
+    When reranking is disabled, passes chunks directly to formatting.
+    When enabled, compresses chunks, builds sliding windows, calls the LLM
+    per window, fuses scores with prior, applies bounded movement, then formats.
+    """
+
+    step_type: str = "rag_rerank_assemble_v1"
+
+    @override
+    async def execute(
+        self,
+        step: StepConfig,
+        context: PipelineContext,
+    ) -> StepOutput:
+        resolver = NamespaceResolver(context)
+        try:
+            chunks_data: list[ChunkData] = self._resolve_input(
+                resolver, step, "chunks_data", step.handler_inputs
+            )
+        except KeyError:
+            logger.warning(
+                "Step '%s': upstream 'chunks' key absent — no chunks to process",
+                step.id,
+            )
+            chunks_data = []
+
+        effective = context.options
+        rerank_enabled = bool(effective.get("rerank_enabled", False))
+
+        if not chunks_data or not rerank_enabled or len(chunks_data) <= 3:
+            context_text = format_context(chunks_data)
+            self._emit_rerank_event(
+                context,
+                step,
+                rerank_enabled=False,
+                model_id=None,
+                chunks_in=len(chunks_data) if chunks_data else 0,
+                chunks_out=len(chunks_data) if chunks_data else 0,
+                windows=0,
+                max_move=0,
+                seconds=0.0,
+            )
+            return StepOutput(
+                raw=context_text,
+                json={
+                    "chunks_reranked": len(chunks_data) if chunks_data else 0,
+                    "rerank_enabled": False,
+                },
+            )
+
+        return await self._execute_rerank(
+            step,
+            context,
+            chunks_data,
+            window_size=int(effective.get("rerank_window_size", 5)),
+            overlap=int(effective.get("rerank_overlap", 1)),
+            max_candidates=int(effective.get("rerank_max_candidates", 14)),
+            max_movement=int(effective.get("rerank_max_movement", 3)),
+            prior_weight=float(effective.get("rerank_prior_weight", 0.70)),
+        )
+
+    async def _execute_rerank(
+        self,
+        step: StepConfig,
+        context: PipelineContext,
+        chunks_data: list[ChunkData],
+        *,
+        window_size: int,
+        overlap: int,
+        max_candidates: int,
+        max_movement: int,
+        prior_weight: float,
+    ) -> StepOutput:
+        """Run sliding-window LLM reranking, fuse scores, format context."""
+        _start = _time.monotonic()
+
+        candidates = chunks_data[:max_candidates]
+        chunk_ids = [c["content_hash"][:8] for c in candidates]
+        tail = chunks_data[max_candidates:]
+
+        windows = build_windows(len(candidates), window_size, overlap)
+
+        model_id = await self._resolve_model_alias_async(
+            step.model_ref, context, step_name=step.name
+        )
+        json_schema = None
+        if step.generation_parameters.get("response_format"):
+            json_schema = step.generation_parameters["response_format"].get("schema")
+
+        window_rankings: list[dict[str, list[dict[str, Any]]]] = []
+        for w_idx, window_indices in enumerate(windows):
+            window_chunks = [candidates[i] for i in window_indices]
+            candidates_text = "\n\n".join(
+                build_candidate_block(c, i)
+                for i, c in zip(window_indices, window_chunks)
+            )
+
+            template_ctx: dict[str, Any] = {
+                "text": context.source_text,
+                **context.options,
+                "rerank_candidates": candidates_text,
+            }
+
+            rendered = self._render_prompt(step.prompt_ref, template_ctx, context)
+
+            call_result = await self._call_model(
+                model_id,
+                rendered.user_prompt,
+                step,
+                context,
+                rendered.system_prompt,
+                temperature=step.generation_parameters.get("temperature", 0.2),
+                max_tokens=step.generation_parameters.get("max_tokens", 512),
+                json_schema=json_schema,
+                call_label=f"rerank_w{w_idx}",
+                model_id_is_resolved=True,
+            )
+
+            try:
+                parsed = json.loads(call_result.content)
+                window_rankings.append(parsed)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(
+                    "rerank window %d returned invalid JSON, skipping", w_idx
+                )
+                window_rankings.append({"ranking": []})
+
+        llm_scores, confidence_map = aggregate_window_scores(
+            window_rankings, windows, chunk_ids
+        )
+
+        max_prior = max((c["score"] for c in candidates), default=1.0) or 1.0
+        max_llm = max(llm_scores.values(), default=1.0) or 1.0
+
+        final_scores: dict[str, float] = {}
+        for c in candidates:
+            cid = c["content_hash"][:8]
+            prior_norm = c["score"] / max_prior
+            llm_norm = llm_scores.get(cid, 0.0) / max_llm
+            final_scores[cid] = (
+                prior_weight * prior_norm + (1 - prior_weight) * llm_norm
+            )
+
+        reranked = apply_bounded_movement(
+            candidates, final_scores, max_movement, confidence_map
+        )
+        all_chunks = reranked + tail
+
+        _seconds = _time.monotonic() - _start
+
+        max_move_observed = 0
+        prior_order = {c["content_hash"][:8]: i for i, c in enumerate(candidates)}
+        for new_pos, c in enumerate(reranked):
+            cid = c["content_hash"][:8]
+            old_pos = prior_order.get(cid, new_pos)
+            max_move_observed = max(max_move_observed, abs(new_pos - old_pos))
+
+        context_text = format_context(all_chunks)
+
+        self._emit_rerank_event(
+            context,
+            step,
+            rerank_enabled=True,
+            model_id=model_id,
+            chunks_in=len(candidates),
+            chunks_out=len(all_chunks),
+            windows=len(windows),
+            max_move=max_move_observed,
+            seconds=_seconds,
+        )
+
+        return StepOutput(
+            raw=context_text,
+            json={
+                "chunks_reranked": len(reranked),
+                "rerank_enabled": True,
+                "windows_evaluated": len(windows),
+                "max_rank_movement": max_move_observed,
+                "rerank_seconds": round(_seconds, 3),
+            },
+        )
+
+    def _emit_rerank_event(
+        self,
+        context: PipelineContext,
+        step: StepConfig,
+        *,
+        rerank_enabled: bool,
+        model_id: str | None,
+        chunks_in: int,
+        chunks_out: int,
+        windows: int,
+        max_move: int,
+        seconds: float,
+    ) -> None:
+        self._publish_bus_event(
+            context,
+            RagRerankCompleted(
+                pipeline_id=context.pipeline.id,
+                execution_id=context.execution_id,
+                step_name=step.name,
+                rerank_enabled=rerank_enabled,
+                model_id=model_id,
+                chunks_input=chunks_in,
+                chunks_output=chunks_out,
+                windows_evaluated=windows,
+                max_rank_movement_observed=max_move,
+                total_rerank_seconds=seconds,
+            ),
+        )
+
+    @override
+    def validate(self, step: StepConfig) -> list[str]:
+        errors: list[str] = []
+        if not step.handler_inputs or "chunks_data" not in step.handler_inputs:
+            errors.append(f"Step '{step.id}' missing 'chunks_data' in handler_inputs")
+        return errors

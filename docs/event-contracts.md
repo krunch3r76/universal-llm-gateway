@@ -174,6 +174,7 @@ request.processing
 ```
 rag.started
   └─> rag.pending.reconciled?               (* emitted once if pending files found at startup)
+  └─> rag.orphan.purged                     (* always emitted; files=0 when nothing to purge)
   └─> rag.watch.directory.missing | rag.watch.started
       └─> rag.watch.initial.complete
       └─> rag.watch.reindex.complete*        (* zero or more)
@@ -212,6 +213,22 @@ Payload semantics:
 - `cleared`: files removed from `pending` because the file no longer exists on disk
 - `failed_transient`: files that hit a timeout/connection error — watcher will retry on next sweep
 - `failed_permanent`: files that hit an unexpected error — requires manual intervention
+
+### RAG Orphan Purge
+
+**INVARIANT**: `rag.orphan.purged` is emitted exactly once per startup, after pending reconciliation
+and before `rag.watch.started`. `files=0` when no orphans were found.
+
+**INVARIANT**: Only sources under configured watch directory prefixes are examined — externally
+indexed sources are left untouched.
+
+| Signal | Required Payload | Description |
+|--------|-----------------|-------------|
+| `rag.orphan.purged` | `files`, `chunks` | Chunks removed for source files deleted while service was down |
+
+Payload semantics:
+- `files`: number of distinct source paths whose chunks were deleted
+- `chunks`: total chunks removed across all purged sources
 
 ### RAG Extraction Batch Lifecycle
 
@@ -333,10 +350,15 @@ executor-level suppression semantics above.
 
 **INVARIANT**: `pipeline.rag.retrieval.params.resolved` ⟹ (`pipeline.rag.retrieval.completed` ∨ `pipeline.rag.retrieval.failed`)
 
+**INVARIANT**: `pipeline.rag.retrieval.skipped` is emitted *before* params resolution when the
+rewrite model flags an out-of-scope query and no user-supplied `rag_source_prefixes` override
+is present. When skipped fires, neither params.resolved nor completed/failed are emitted.
+
 **INVARIANT**: `pipeline.rag.retrieval.completed` and `pipeline.rag.retrieval.failed` are terminal
 alternatives — exactly one is emitted per retrieval step execution that passes params resolution.
 
 ```
+pipeline.rag.retrieval.skipped?                           (* out-of-scope, no user prefix override)
 pipeline.rag.retrieval.params.resolved
   └─> [parallel queries to RAG /search]
       └─> pipeline.rag.retrieval.completed | pipeline.rag.retrieval.failed
@@ -344,11 +366,13 @@ pipeline.rag.retrieval.params.resolved
 
 | Signal | Required Payload | Description |
 |--------|------------------|-------------|
-| `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | Pre-retrieval: effective parameters after three-tier merge |
+| `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | Retrieval skipped: rewrite model determined query is unanswerable from active corpus |
+| `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | Pre-retrieval: effective parameters after three-tier merge |
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds` | Post-retrieval: scope prediction + quality metrics |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | All queries failed — no chunks to merge |
 
 Payload semantics:
+- `consumer_tier`: Caller-declared consumer capacity class (`"frontier"`, `"local"`, `"small_local"`, or None if not specified)
 - `predicted_scope`: Raw scope label from the rewrite model (before confidence-threshold fallback)
 - `scope_confidence`: Model confidence in [0.0, 1.0]; values below threshold trigger fallback
 - `fallback_triggered`: True when low confidence caused scope override to `both`
@@ -360,6 +384,12 @@ Payload semantics:
 **Debugging queries**:
 
 ```bash
+# Consumer tier resolution and parameter impact
+jq -c 'select(.signal == "pipeline.rag.retrieval.params.resolved") |
+  {tier: .payload.consumer_tier, model: .payload.consumer_model,
+   class: .payload.profile_class, top_k: .payload.top_k_per_query,
+   max_chunks: .payload.max_chunks}' /tmp/pipeline-events/current.jsonl
+
 # Scope prediction accuracy and fallback rate
 jq -c 'select(.signal == "pipeline.rag.retrieval.completed") |
   {scope: .payload.predicted_scope, confidence: .payload.scope_confidence,
@@ -379,6 +409,45 @@ jq -c 'select(.signal == "pipeline.rag.retrieval.completed") |
 
 # Retrieval failures
 jq -c 'select(.signal == "pipeline.rag.retrieval.failed")' /tmp/pipeline-events/current.jsonl
+
+# Out-of-scope skips (query unanswerable from active corpus)
+jq -c 'select(.signal == "pipeline.rag.retrieval.skipped") |
+  {reason: .payload.reason, oos: .payload.out_of_scope_reason}' /tmp/pipeline-events/current.jsonl
+```
+
+### RAG LLM Reranking
+
+Emitted once per `rerank_assemble` step execution, whether reranking is enabled or skipped.
+
+**INVARIANT**: `pipeline.rag.rerank.completed` is emitted exactly once per `rerank_assemble` step execution, before `pipeline.step.completed`.
+
+| Signal | Required Payload | Description |
+|--------|------------------|-------------|
+| `pipeline.rag.rerank.completed` | `pipeline_id`, `execution_id`, `step_name`, `rerank_enabled`, `model_id`, `chunks_input`, `chunks_output`, `windows_evaluated`, `max_rank_movement_observed`, `total_rerank_seconds` | Post-reranking: LLM reranking metrics or skip confirmation |
+
+Payload semantics:
+- `rerank_enabled`: True if LLM reranking was performed; False if skipped (disabled or too few chunks)
+- `model_id`: Model used for reranking LLM calls (None when skipped)
+- `chunks_input`: Number of candidate chunks considered for reranking
+- `chunks_output`: Final chunk count after reranking (includes passthrough tail)
+- `windows_evaluated`: Number of sliding windows processed by LLM (0 when skipped)
+- `max_rank_movement_observed`: Largest rank position change in this execution (0 when skipped)
+- `total_rerank_seconds`: Wall-clock time for the reranking phase
+
+**Debugging queries**:
+
+```bash
+# Reranking activity
+jq -c 'select(.signal == "pipeline.rag.rerank.completed") |
+  {enabled: .payload.rerank_enabled, windows: .payload.windows_evaluated,
+   max_move: .payload.max_rank_movement_observed, seconds: .payload.total_rerank_seconds}' \
+  /tmp/pipeline-events/current.jsonl
+
+# Reranking latency when enabled
+jq -c 'select(.signal == "pipeline.rag.rerank.completed" and .payload.rerank_enabled) |
+  {model: .payload.model_id, seconds: .payload.total_rerank_seconds,
+   chunks: .payload.chunks_input, windows: .payload.windows_evaluated}' \
+  /tmp/pipeline-events/current.jsonl
 ```
 
 ### Unified Model Selection (`POST /v1/models/select`)
@@ -669,7 +738,8 @@ provider HTTP failures.
 | `rag.extraction.failed` | `chunk_id`, `error` | - |
 | `rag.property.index.rebuilt` | `collection`, `count` | - |
 | `rag.pending.reconciled` | `reconciled`, `cleared`, `failed_transient`, `failed_permanent` | emitted once at startup if interrupted files found |
-| `rag.file.indexed` | `file`, `deleted`, `indexed` | file fully indexed into ChromaDB + property index |
+| `rag.orphan.purged` | `files`, `chunks` | emitted once at startup; chunks removed for source files deleted while service was down |
+| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file |
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty) |
 | `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`} |
 | `rag.file.indexing.failed` | `file`, `error` | unhandled error aborted indexing for this file |
@@ -709,9 +779,11 @@ Pipeline events flow to two sinks:
 | `pipeline.estimate.requested` | `pipeline_id`, `item_count`, `total_chars` | - |
 | `pipeline.estimate.completed` | `pipeline_id`, `item_count`, `batch_count`, `total_source_tokens`, `budget_tokens` | `estimated_validate_tokens` |
 | `pipeline.estimate.failed` | `pipeline_id`, `error`, `retryable` | - |
-| `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | - |
+| `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | - |
+| `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | - |
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds` | - |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | - |
+| `pipeline.rag.rerank.completed` | `pipeline_id`, `execution_id`, `step_name`, `rerank_enabled`, `model_id`, `chunks_input`, `chunks_output`, `windows_evaluated`, `max_rank_movement_observed`, `total_rerank_seconds` | - |
 
 **Note on `pipeline.step.failed` partial progress**: `prompt_tokens`, `completion_tokens`,
 and `model_call_count` are populated from all model calls completed before the failure,

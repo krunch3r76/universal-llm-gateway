@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+"""Ingest arXiv papers into a RAG corpus scope.
+
+Usage:
+  scripts/rag/ingest-arxiv SCOPE [options]
+  scripts/rag/ingest-arxiv rag-systems
+  scripts/rag/ingest-arxiv rag-systems --category reranking
+  scripts/rag/ingest-arxiv rag-systems --list
+  scripts/rag/ingest-arxiv --list-scopes
+  scripts/rag/ingest-arxiv rag-systems --dry-run
+  scripts/rag/ingest-arxiv --file paper.pdf --scope rag-systems --published 2024-12-19
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import sys
+import time
+from pathlib import Path
+
+import httpx
+import yaml
+
+# --- Constants ---
+
+ARXIV_PDF_URL = "https://arxiv.org/pdf/{arxiv_id}.pdf"
+CACHE_DIR = Path("/tmp/arxiv-papers")
+DEFAULT_RAG_SOCKET = Path("/tmp/universal-protocol/rag.sock")
+PAPERS_DIR = Path(__file__).parent / "papers"
+RATE_LIMIT_SLEEP = 1.5
+
+SCOPE_FALLBACK_DIRS: dict[str, str] = {
+    "rag-systems": "docs/research/rag-systems",
+    "rag_systems": "docs/research/rag-systems",
+    "workflows": "docs/research/workflows",
+    "small_llm_prompting": "docs/research/small_llm/prompting",
+    "llm_prompting": "docs/research/llm/prompting",
+}
+
+
+# --- RAG client ---
+
+
+def _rag_client(url_or_socket: str | Path) -> httpx.Client:
+    target = str(url_or_socket)
+    if not target.startswith("http"):
+        transport = httpx.HTTPTransport(uds=target)
+        return httpx.Client(transport=transport, base_url="http://rag", timeout=300.0)
+    return httpx.Client(base_url=target, timeout=300.0)
+
+
+# --- Corpus dir resolution ---
+
+
+def resolve_corpus_dir(scope: str, override: Path | None) -> Path:
+    if override:
+        return override.resolve()
+    rag_yaml = Path.home() / ".gateway" / "rag.yaml"
+    if rag_yaml.exists():
+        config = yaml.safe_load(rag_yaml.read_text())
+        prefixes = config.get("scopes", {}).get(scope, {}).get("prefixes", [])
+        if prefixes:
+            return Path(prefixes[0])
+    rel = SCOPE_FALLBACK_DIRS.get(scope)
+    if rel:
+        candidate = Path(rel)
+        if not candidate.is_absolute():
+            # Resolve relative to workspace root (script is at scripts/rag/ingest-arxiv)
+            candidate = (Path(__file__).parent.parent.parent / rel).resolve()
+        return candidate
+    raise SystemExit(
+        f"Cannot resolve corpus dir for scope '{scope}'. Use --corpus-dir."
+    )
+
+
+# --- Paper registry ---
+
+
+def load_registry(scope: str) -> dict[str, list[dict]]:
+    """Load papers/<scope>.yaml, returns {category: [paper, ...]}."""
+    reg_file = PAPERS_DIR / f"{scope}.yaml"
+    if not reg_file.exists():
+        raise SystemExit(f"No paper registry for scope '{scope}' at {reg_file}")
+    data = yaml.safe_load(reg_file.read_text())
+    return data.get("papers", {})
+
+
+def list_scopes() -> None:
+    if not PAPERS_DIR.exists():
+        print("No paper registries found.")
+        return
+    for f in sorted(PAPERS_DIR.glob("*.yaml")):
+        data = yaml.safe_load(f.read_text())
+        papers = data.get("papers", {})
+        total = sum(len(v) for v in papers.values())
+        cats = ", ".join(papers.keys())
+        print(f"  {f.stem:20s}  {total:3d} papers  [{cats}]")
+
+
+# --- Download ---
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def download_paper(arxiv_id: str, slug: str, dry_run: bool) -> Path | None:
+    """Download PDF to cache, return cached path. Returns None on dry-run."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    dest = CACHE_DIR / f"{slug}.pdf"
+    if dest.exists():
+        print(f"  [cache] {slug}.pdf ({sha256(dest)[:8]})")
+        return dest
+    url = ARXIV_PDF_URL.format(arxiv_id=arxiv_id)
+    if dry_run:
+        print(f"  [dry-run] would download {url} → {dest}")
+        return None
+    print(f"  [download] {url}")
+    with httpx.Client(follow_redirects=True, timeout=60.0) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        content = resp.content
+    if not (content.startswith(b"%PDF") or b"%PDF" in content[:1024]):
+        raise SystemExit(f"Response for {arxiv_id} is not a PDF")
+    dest.write_bytes(content)
+    print(f"  [saved]  {dest} ({len(content):,} bytes)")
+    return dest
+
+
+# --- Indexing ---
+
+
+def index_file(
+    client: httpx.Client,
+    file_path: Path,
+    published_date: str | None,
+    dry_run: bool,
+    force: bool = False,
+) -> None:
+    """Index a single file via POST /index."""
+    payload: dict = {"path": str(file_path)}
+    if published_date:
+        payload["metadata_overrides"] = {
+            "published_date": f"{published_date}T00:00:00+00:00"
+        }
+    if force:
+        payload["force"] = True
+    if dry_run:
+        force_note = " --force" if force else ""
+        print(
+            f"  [dry-run] POST /index {file_path.name} published={published_date}{force_note}"
+        )
+        return
+    try:
+        resp = client.post("/index", json=payload)
+        resp.raise_for_status()
+        result = resp.json()
+        chunks = result.get("indexed", "?")
+        unchanged = result.get("unchanged", False)
+        duplicate = result.get("duplicate", False)
+        flag = " [unchanged]" if unchanged else (" [duplicate]" if duplicate else "")
+        print(f"  [indexed] {file_path.name}  chunks={chunks}{flag}")
+    except httpx.HTTPStatusError as e:
+        print(
+            f"  [error]  {file_path.name}: {e.response.status_code} {e.response.text[:200]}",
+            file=sys.stderr,
+        )
+        raise
+
+
+# --- Main actions ---
+
+
+def ingest_file(
+    file_path: Path,
+    scope: str,
+    published: str | None,
+    corpus_dir_override: Path | None,
+    no_index: bool,
+    rag_url: str | Path,
+    dry_run: bool,
+    force: bool = False,
+) -> None:
+    corpus_dir = resolve_corpus_dir(scope, corpus_dir_override)
+    if not file_path.exists():
+        raise SystemExit(f"File not found: {file_path}")
+
+    # Copy to corpus dir if not already there
+    dest = corpus_dir / file_path.name
+    if dest != file_path.resolve():
+        if dry_run:
+            print(f"  [dry-run] copy {file_path} → {dest}")
+        else:
+            corpus_dir.mkdir(parents=True, exist_ok=True)
+            import shutil
+
+            shutil.copy2(file_path, dest)
+            print(f"  [copied] {file_path.name} → {corpus_dir}")
+    else:
+        print(f"  [in-place] {file_path.name}")
+
+    if no_index:
+        return
+
+    with _rag_client(rag_url) as client:
+        index_file(client, dest, published, dry_run, force=force)
+
+
+def ingest_registry(
+    scope: str,
+    category: str | None,
+    published_override: str | None,
+    corpus_dir_override: Path | None,
+    no_index: bool,
+    rag_url: str | Path,
+    dry_run: bool,
+    force: bool = False,
+) -> None:
+    registry = load_registry(scope)
+    corpus_dir = resolve_corpus_dir(scope, corpus_dir_override)
+
+    categories = {category: registry[category]} if category else registry
+    if category and category not in registry:
+        raise SystemExit(
+            f"Category '{category}' not in registry for scope '{scope}'. "
+            f"Available: {', '.join(registry)}"
+        )
+
+    with _rag_client(rag_url) as client:
+        for cat_name, papers in categories.items():
+            print(f"\n=== {scope}/{cat_name} ({len(papers)} papers) ===")
+            for paper in papers:
+                arxiv_id = paper["arxiv_id"]
+                slug = paper["slug"]
+                published = published_override or paper.get("published")
+                print(f"\n{slug}  [{arxiv_id}]")
+
+                cached = download_paper(arxiv_id, slug, dry_run)
+                if dry_run or cached is None:
+                    continue
+
+                dest = corpus_dir / f"{slug}.pdf"
+                if dest.exists() and sha256(dest) == sha256(cached):
+                    print("  [skip] already in corpus (hash match)")
+                else:
+                    corpus_dir.mkdir(parents=True, exist_ok=True)
+                    import shutil
+
+                    shutil.copy2(cached, dest)
+                    print(f"  [copied] → {dest}")
+
+                if no_index:
+                    continue
+
+                index_file(client, dest, published, dry_run, force=force)
+
+                time.sleep(RATE_LIMIT_SLEEP)
+
+
+# --- CLI ---
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument("scope", nargs="?", help="Scope name (e.g. rag-systems)")
+    p.add_argument(
+        "--scope",
+        dest="scope_flag",
+        metavar="SCOPE",
+        help="Scope name (alternative to positional, for use with --file)",
+    )
+    p.add_argument("--category", help="Filter by category within the scope registry")
+    p.add_argument(
+        "--list", action="store_true", help="List papers without downloading"
+    )
+    p.add_argument("--list-scopes", action="store_true", help="Show all known scopes")
+    p.add_argument(
+        "--dry-run", action="store_true", help="Show actions without executing"
+    )
+    p.add_argument(
+        "--file",
+        type=Path,
+        metavar="PATH",
+        help="Ingest a single PDF (requires --scope and --published)",
+    )
+    p.add_argument(
+        "--published", metavar="YYYY-MM-DD", help="Publication date override"
+    )
+    p.add_argument(
+        "--no-index", action="store_true", help="Copy PDFs only, skip RAG index call"
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Force reindex even if file content is unchanged (bypasses hash check)",
+    )
+    p.add_argument(
+        "--rag-url", default=DEFAULT_RAG_SOCKET, help="RAG service URL or socket path"
+    )
+    p.add_argument("--corpus-dir", type=Path, help="Override corpus directory")
+    return p
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+
+    rag_url: str | Path = args.rag_url
+    if isinstance(rag_url, str) and not rag_url.startswith("http"):
+        rag_url = Path(rag_url)
+
+    # --scope flag takes precedence over positional when both provided; used with --file
+    effective_scope: str | None = args.scope_flag or args.scope
+
+    if args.list_scopes:
+        list_scopes()
+        return
+
+    if args.file:
+        if not effective_scope:
+            parser.error("--file requires --scope")
+        ingest_file(
+            file_path=args.file,
+            scope=effective_scope,
+            published=args.published,
+            corpus_dir_override=args.corpus_dir,
+            no_index=args.no_index,
+            rag_url=rag_url,
+            dry_run=args.dry_run,
+            force=args.force,
+        )
+        return
+
+    if not effective_scope:
+        parser.print_help()
+        raise SystemExit(1)
+
+    if args.list:
+        registry = load_registry(effective_scope)
+        categories = (
+            {args.category: registry[args.category]} if args.category else registry
+        )
+        if args.category and args.category not in registry:
+            raise SystemExit(
+                f"Category '{args.category}' not found. Available: {', '.join(registry)}"
+            )
+        for cat, papers in categories.items():
+            print(f"\n{effective_scope}/{cat}")
+            for p in papers:
+                print(
+                    f"  {p['slug']:50s}  {p.get('published', '')}  arxiv:{p['arxiv_id']}"
+                )
+        return
+
+    ingest_registry(
+        scope=effective_scope,
+        category=args.category,
+        published_override=args.published,
+        corpus_dir_override=args.corpus_dir,
+        no_index=args.no_index,
+        rag_url=rag_url,
+        dry_run=args.dry_run,
+        force=args.force,
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -107,22 +107,34 @@ def _fetch_rag(
     rag_url: str,
     stargate_url: str,
     use_pipeline: bool,
+    extra_pipeline_options: dict[str, Any] | None = None,
 ) -> list[str] | None:
-    """Fetch RAG context via pipeline or direct search, returning findings or None."""
+    """Fetch RAG context via pipeline or direct search, returning findings or None.
+
+    ∀ error when use_pipeline=True: raise RuntimeError — the rag-context pipeline
+    was explicitly requested; silent fallback produces ungrounded output with no
+    visible signal to the caller.
+
+    ∀ error when use_pipeline=False (direct search): return None — direct search
+    is a best-effort path and its failure modes (socket absent, scope unknown) are
+    already surfaced as warnings.
+    """
     if not rag_socket_present(rag_url):
-        print(
-            "RAG service not available (socket absent); running without context retrieval",
-            file=sys.stderr,
-        )
+        msg = "RAG service not available (socket absent)"
+        if use_pipeline:
+            raise RuntimeError(msg)
+        print(f"{msg}; running without context retrieval", file=sys.stderr)
         return None
 
     available_scopes = set(fetch_scope_choices(rag_url=rag_url))
     if scope not in available_scopes:
-        print(
-            f"Unknown scope '{scope}'. Available: {', '.join(sorted(available_scopes))}. "
-            + "Skipping RAG.",
-            file=sys.stderr,
+        msg = (
+            f"Unknown RAG scope '{scope}'. "
+            f"Available: {', '.join(sorted(available_scopes))}."
         )
+        if use_pipeline:
+            raise RuntimeError(msg)
+        print(f"{msg} Skipping RAG.", file=sys.stderr)
         return None
 
     print("Retrieving RAG context...", file=sys.stderr)
@@ -132,16 +144,55 @@ def _fetch_rag(
             stargate_url=stargate_url,
             rag_url=rag_url,
             scope_override=scope,
+            extra_pipeline_options=extra_pipeline_options,
         )
     else:
         findings, error = fetch_rag_direct(question, rag_url=rag_url, scope=scope)
 
     if error:
+        if use_pipeline:
+            if error.startswith("pipeline.step.error:"):
+                print(
+                    f"RAG pipeline step failed: {error} (continuing without context)",
+                    file=sys.stderr,
+                )
+                return None
+            raise RuntimeError(f"RAG pipeline failed: {error}")
         print(f"RAG: {error} (continuing without)", file=sys.stderr)
         return None
     if findings:
         print(f"RAG: {len(findings)} findings", file=sys.stderr)
     return findings or None
+
+
+def _derive_consumer_tier(
+    *,
+    role_requirements: dict[str, dict[str, Any]],
+    role: str,
+    models: list[str] | None,
+    cloud_only: bool,
+) -> str | None:
+    """Infer consumer tier from role config and explicit model list.
+
+    Resolution:
+    1. If explicit models contain "/" (cloud model IDs) → "frontier"
+    2. If role requirements declare source: cloud → "frontier"
+    3. If cloud_only flag is set → "frontier"
+    4. If role requirements declare source: any → "local"
+    5. Otherwise → None (let handler use defaults)
+    """
+    if models and any("/" in m for m in models):
+        return "frontier"
+
+    req = role_requirements.get(role, {})
+    source = req.get("source", "")
+
+    if cloud_only or source == "cloud":
+        return "frontier"
+    if source == "any":
+        return "local"
+
+    return None
 
 
 def execute_consult(
@@ -160,6 +211,7 @@ def execute_consult(
     timeout: float = 300.0,
     chain_directive: str | None = None,
     cloud_only: bool = False,
+    pipeline_options: dict[str, Any] | None = None,
 ) -> list[ConsultResult]:
     """Execute a consultation against one or more models.
 
@@ -179,6 +231,8 @@ def execute_consult(
         timeout: Per-model timeout in seconds.
         chain_directive: Custom reviewer directive for chained mode.
         cloud_only: Restrict to cloud models only.
+        pipeline_options: Extra pipeline_options merged into Stargate requests.
+            User-supplied keys win on conflict with code-generated keys.
 
     Returns:
         List of ConsultResult, one per model queried.
@@ -204,6 +258,20 @@ def execute_consult(
             f"Using role scope hint '{scope_hint}' (override with --scope)",
             file=sys.stderr,
         )
+
+    consumer_tier = _derive_consumer_tier(
+        role_requirements=role_requirements,
+        role=role,
+        models=models,
+        cloud_only=cloud_only,
+    )
+
+    rag_extra: dict[str, Any] = {}
+    if pipeline_options:
+        rag_extra.update(pipeline_options)
+    if consumer_tier:
+        rag_extra["consumer_tier"] = consumer_tier
+
     if not no_rag:
         rag_findings = _fetch_rag(
             question=question,
@@ -211,6 +279,7 @@ def execute_consult(
             rag_url=rag_url,
             stargate_url=stargate_url,
             use_pipeline=use_rag_pipeline,
+            extra_pipeline_options=rag_extra or None,
         )
 
     context_parts: list[str] = list(file_context or [])
@@ -237,6 +306,7 @@ def execute_consult(
             models=models,
             stargate_url=stargate_url,
             timeout=timeout,
+            pipeline_options=pipeline_options,
         )
 
     # Legacy path: direct model queries (roles without a pipeline, or chain mode)
@@ -315,6 +385,7 @@ def _execute_via_pipeline(
     models: list[str] | None,
     stargate_url: str,
     timeout: float,
+    pipeline_options: dict[str, Any] | None = None,
 ) -> list[ConsultResult]:
     """Execute consultation through the pipeline virtual model ID."""
     if models and len(models) > 1:
@@ -328,6 +399,7 @@ def _execute_via_pipeline(
             models=models,
             stargate_url=stargate_url,
             timeout=timeout,
+            pipeline_options=pipeline_options,
         )
     elif models and len(models) == 1:
         print(
@@ -341,6 +413,7 @@ def _execute_via_pipeline(
                 stargate_url=stargate_url,
                 timeout=timeout,
                 model_override=models[0],
+                pipeline_options=pipeline_options,
             )
         ]
     else:
@@ -351,6 +424,7 @@ def _execute_via_pipeline(
                 user_message=user_prompt,
                 stargate_url=stargate_url,
                 timeout=timeout,
+                pipeline_options=pipeline_options,
             )
         ]
 

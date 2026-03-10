@@ -6,26 +6,84 @@ prompts:
       Given a user question, produce optimized search queries for cosine-similarity
       embedding search over academic papers and project documentation.
 
-      Output valid JSON with exactly these fields:
+      Output valid JSON with exactly these fields — all six are required, never omit any:
       - needs_retrieval: false only if the question is purely conversational
         (e.g. "thanks", "ok"); true for anything requiring knowledge
       - scope: classify the query into one of:
         {scope_options}
       - scope_confidence: your confidence in the scope classification (0.0–1.0);
-        use values below 0.7 when the query could belong to multiple scopes
+        use values below 0.7 when the query could belong to multiple scopes;
+        CRITICALLY: if out_of_scope_reason is non-empty, scope_confidence MUST be
+        <= 0.5 — treat it as confidence in corpus match, not in the scope label
+      - out_of_scope_reason: empty string "" if the query is answerable from the corpus;
+        otherwise a brief explanation of why it does not match the active corpus and
+        what abstract research area it maps to (e.g. "product-specific implementation
+        detail — nearest research topics: edge inference serving, service mesh routing")
       - rewritten_queries: 1–3 short, keyword-rich search phrases optimized
         for dense embedding retrieval
+      - hyde_passage: Write a short (2–3 sentence) hypothetical passage that
+        would answer the query, as if extracted from an academic paper or
+        technical document. Use domain-specific vocabulary. This passage will
+        be embedded for retrieval. Stay close to the user's concept — do not
+        introduce unrelated methods or broader solution categories unless
+        they are strongly implied by the query. Do not invent product names,
+        framework names, or specific system identities not present in the query.
 
       Rewriting strategies (apply implicitly based on query):
       - Single-concept factual → pass through or step-back to broader term
       - Vocabulary mismatch → rewrite in academic register
         ("stop hallucinating" → "factual consistency grounded generation")
       - Multi-hop / multi-faceted → decompose into 2–3 atomic sub-queries
+      - Comparative queries ("X vs Y", "compare X and Y", "how does X compare to Y"):
+        cover BOTH sides symmetrically — include 1–2 queries anchored on each side
+        using canonical method names and synonyms; do not introduce unrelated facets
+      - Failure-analysis / diagnostic queries ("failure modes", "limitations",
+        "errors", "robustness"): rewrite into concrete failure mechanisms and
+        evaluation terms (e.g. distribution shift, domain mismatch, out-of-domain
+        queries, semantic mismatch, hard negatives, recall degradation) rather
+        than generic paraphrases; at least 2 rewrites must name specific mechanisms
+      - Product-/project-specific query against a research corpus: do not preserve
+        proprietary names; rewrite using adjacent generic research concepts (e.g.
+        "API gateway request routing", "service mesh load balancing", "edge inference
+        serving") — do NOT invent or substitute other specific project/product names;
+        set scope_confidence <= 0.5 and a non-empty out_of_scope_reason
 
       Rules:
       - Queries must be short keyword phrases, NOT full sentences
-      - Use academic/technical vocabulary matching research papers
+      - Use academic/technical vocabulary matching research papers — prefer canonical
+        method names and paper-vocabulary terms over generic paraphrases
+        (e.g. "LambdaRank", "GraphRAG", "entity linking" over vague descriptors)
+      - For comparative queries, canonical aliases and named methods for each side
+        must appear in at least one rewrite
       - 1 query for simple questions, 2–3 for complex multi-faceted ones
+      - NEVER substitute or invent product/project/framework names in
+        rewritten_queries or hyde_passage that are not present in the original
+        query — use only generic research vocabulary when the queried product
+        is absent from the corpus (e.g. write "edge inference request routing",
+        not "EdgeX Foundry request routing")
       - Respond with valid JSON only — no prose, no markdown fences
     template: |
       {text}
+
+  rerank_chunks:
+    description: "Rerank retrieved chunks by relevance to query using metadata signals"
+    system_prompt: |
+      You are reranking candidate context chunks for a retrieval-augmented generation system.
+      Rank chunks by how useful they are for answering the query.
+
+      Criteria, in order of importance:
+      1. Direct relevance to the query intent
+      2. Presence of concrete facts, definitions, or evidence useful for answering
+      3. Match between query concepts and chunk metadata (entities, topics)
+      4. Prefer chunks that add new useful information over redundant ones
+      5. Do NOT overvalue chunks just because they list many entities or topics
+      6. Prefer text evidence over superficial keyword overlap
+      7. Use the prior rank as a weak anchor, not a hard rule
+
+      Return JSON only.
+    template: |
+      Query: {text}
+
+      Candidate chunks:
+
+      {rerank_candidates}

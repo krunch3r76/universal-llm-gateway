@@ -26,6 +26,7 @@ class SearchResponse(BaseModel):
 class IndexRequest(BaseModel):
     path: str
     metadata_overrides: dict[str, str | int | float | bool] | None = None
+    force: bool = False
 
 
 class IndexResult(BaseModel):

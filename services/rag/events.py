@@ -281,11 +281,17 @@ def rag_file_indexed(
     file: str,
     deleted: int,
     indexed: int,
+    duration_seconds: float = 0.0,
 ) -> Event:
     """Emitted after a file is fully indexed into both ChromaDB and the property index."""
     return Event(
         signal="rag.file.indexed",
-        payload={"file": file, "deleted": deleted, "indexed": indexed},
+        payload={
+            "file": file,
+            "deleted": deleted,
+            "indexed": indexed,
+            "duration_seconds": duration_seconds,
+        },
     )
 
 
@@ -325,6 +331,23 @@ def rag_file_indexing_failed(
     return Event(
         signal="rag.file.indexing.failed",
         payload={"file": file, "error": error},
+    )
+
+
+@event_factory
+def rag_orphan_purged(
+    *,
+    files: int,
+    chunks: int,
+) -> Event:
+    """Emitted once at startup after purging chunks for files deleted while service was down.
+
+    ∀ source ∈ ChromaDB ∩ watched_prefixes: ¬Path(source).exists() ⟹ purged before watcher starts.
+    Emitted even when files=0 so startup sequence is always observable.
+    """
+    return Event(
+        signal="rag.orphan.purged",
+        payload={"files": files, "chunks": chunks},
     )
 
 

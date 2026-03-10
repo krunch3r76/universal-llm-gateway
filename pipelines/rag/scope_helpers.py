@@ -10,7 +10,9 @@ _FALLBACK_SCOPE_OPTIONS = '"research", "project", or "all"'
 _scopes_cache: dict[str, dict[str, str | list[str]]] | None = None
 
 
-def _fetch_scopes(rag_url: str = DEFAULT_RAG_URL) -> dict[str, dict[str, str | list[str]]]:
+def _fetch_scopes(
+    rag_url: str = DEFAULT_RAG_URL,
+) -> dict[str, dict[str, str | list[str]]]:
     """Fetch and cache scope registry from RAG service."""
     global _scopes_cache  # noqa: PLW0603
     if _scopes_cache is not None:

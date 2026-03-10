@@ -11,6 +11,8 @@ Subcommands:
     replay      Re-execute a model call against running Stargate
     compare     Diff original vs replay output
     consult     Query consultant models for prompt improvements (chained by default)
+    eval-retrieval  Score retrieval + reranking quality using cloud model critique
+    eval-steps      Per-step diagnosis: score each pipeline step + identify bottleneck
     ingest-papers  Copy PDFs into RAG corpus directory for indexing
     sandbox     Manage pipeline sandboxes for experimentation
 """
@@ -24,6 +26,8 @@ from typing import Any
 
 from . import compare as compare_svc
 from . import consult as consult_svc
+from . import eval_retrieval as eval_retrieval_svc
+from . import eval_steps as eval_steps_svc
 from . import format as format_svc
 from . import ingest as ingest_svc
 from . import measure as measure_svc
@@ -51,6 +55,8 @@ def main(argv: list[str] | None = None) -> None:
     _add_replay_parser(sub)
     _add_compare_parser(sub)
     _add_consult_parser(sub)
+    _add_eval_retrieval_parser(sub)
+    _add_eval_steps_parser(sub)
     _add_ingest_papers_parser(sub)
     _add_measure_profile_parser(sub)
     _add_sandbox_parser(sub)
@@ -493,6 +499,160 @@ def _print_result(result: ConsultResult, label: str) -> None:
         print("=" * 72)
         print(result.response_text)
     print()
+
+
+# ---------------------------------------------------------------------------
+# eval-retrieval
+# ---------------------------------------------------------------------------
+
+
+def _add_eval_retrieval_parser(sub: Any) -> None:
+    p = sub.add_parser(
+        "eval-retrieval",
+        help="Score retrieval + reranking quality using cloud model critique",
+    )
+    source = p.add_mutually_exclusive_group()
+    source.add_argument("fixture", nargs="?", default=None, help="Path to fixture JSON")
+    source.add_argument(
+        "--latest",
+        metavar="PIPELINE_ID",
+        help="Snapshot latest execution and evaluate it",
+    )
+    p.add_argument(
+        "--models",
+        nargs="+",
+        metavar="MODEL",
+        default=None,
+        help="Cloud model IDs to use as evaluators (default: auto-selected)",
+    )
+    p.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Query evaluators in parallel instead of chained",
+    )
+    p.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        metavar="PATH",
+        help="Save JSON result to this path",
+    )
+    p.add_argument(
+        "--url",
+        default="http://localhost:9999",
+        help="Stargate URL (default: http://localhost:9999)",
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="Request timeout in seconds (default: 120)",
+    )
+    p.set_defaults(func=_cmd_eval_retrieval)
+
+
+def _cmd_eval_retrieval(args: argparse.Namespace) -> None:
+    snap = _load_snapshot(args)
+
+    print(
+        f"Evaluating retrieval quality for: {snap.source_text[:80]}",
+        file=sys.stderr,
+    )
+
+    result = eval_retrieval_svc.evaluate_retrieval(
+        snap,
+        models=args.models,
+        stargate_url=args.url,
+        timeout=args.timeout,
+        parallel=args.parallel,
+    )
+
+    print(eval_retrieval_svc.format_eval_result(result))
+
+    if args.output:
+        import json
+
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+        print(f"\nResult saved: {out_path}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# eval-steps
+# ---------------------------------------------------------------------------
+
+
+def _add_eval_steps_parser(sub: Any) -> None:
+    p = sub.add_parser(
+        "eval-steps",
+        help="Per-step diagnosis: score each pipeline step + identify bottleneck",
+    )
+    source = p.add_mutually_exclusive_group()
+    source.add_argument("fixture", nargs="?", default=None, help="Path to fixture JSON")
+    source.add_argument(
+        "--latest",
+        metavar="PIPELINE_ID",
+        help="Snapshot latest execution and evaluate it",
+    )
+    p.add_argument(
+        "--models",
+        nargs="+",
+        metavar="MODEL",
+        default=None,
+        help="Cloud model IDs to use as evaluators (default: auto-selected)",
+    )
+    p.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Query evaluators in parallel instead of chained",
+    )
+    p.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        metavar="PATH",
+        help="Save JSON result to this path",
+    )
+    p.add_argument(
+        "--url",
+        default="http://localhost:9999",
+        help="Stargate URL (default: http://localhost:9999)",
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="Request timeout in seconds (default: 120)",
+    )
+    p.set_defaults(func=_cmd_eval_steps)
+
+
+def _cmd_eval_steps(args: argparse.Namespace) -> None:
+    snap = _load_snapshot(args)
+
+    print(
+        f"Evaluating per-step quality for: {snap.source_text[:80]}",
+        file=sys.stderr,
+    )
+
+    result = eval_steps_svc.evaluate_steps(
+        snap,
+        models=args.models,
+        stargate_url=args.url,
+        timeout=args.timeout,
+        parallel=args.parallel,
+    )
+
+    print(eval_steps_svc.format_eval_steps_result(result))
+
+    if args.output:
+        import json
+
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+        print(f"\nResult saved: {out_path}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------

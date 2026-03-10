@@ -126,21 +126,36 @@ def register_web_tools(mcp: FastMCP) -> None:
         url: str,
         max_chars: int = _DEFAULT_MAX_CHARS,
         start_offset: int = 0,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        body: str | None = None,
+        raw: bool = False,
     ) -> dict[str, str | int | bool]:
-        """Fetch a web page and extract its readable content.
+        """Fetch a URL and return its content.
 
-        Uses trafilatura to strip boilerplate (ads, navigation, etc.) and
-        return clean text. Typical 2MB HTML page becomes 5-50KB of content.
+        For HTML pages, strips boilerplate via trafilatura and returns clean text.
+        For JSON APIs (or when raw=True), returns the response body as-is.
 
-        Use max_chars and start_offset for pagination on large pages.
+        Use headers to pass authentication (Cookie, Authorization, etc.).
+        Use method + body for POST requests (e.g. GraphQL APIs).
 
         Args:
-            url: The URL to fetch (must be http or https).
-            max_chars: Maximum characters to return (default 30000).
-            start_offset: Character offset to start from (default 0, for pagination).
+            url: The URL to fetch (must be http or https, no private IPs).
+            max_chars: Maximum characters to return (default 36000).
+            start_offset: Character offset for pagination (default 0).
+            method: HTTP method — "GET" (default) or "POST".
+            headers: Optional dict of extra request headers. The User-Agent is
+                set automatically but can be overridden. Example:
+                {"Cookie": "token=abc; session=xyz", "Authorization": "Bearer abc"}
+            body: Optional request body string for POST requests.
+                For JSON APIs pass a JSON string; the Content-Type header is
+                NOT set automatically — include it in headers if needed.
+            raw: If True, skip trafilatura extraction and return the raw response
+                body. Use for JSON APIs or non-HTML content (default False).
 
         Returns:
             {"title", "content", "url", "total_chars", "truncated"}
+            or on error: {"error", "url", "status_code"}
         """
         if _is_private_url(url):
             return {
@@ -148,44 +163,62 @@ def register_web_tools(mcp: FastMCP) -> None:
                 "url": url,
             }
 
+        method = method.upper()
+        request_headers = {"User-Agent": _USER_AGENT}
+        if headers:
+            request_headers.update(headers)
+
         try:
             with httpx.Client(
                 timeout=_FETCH_TIMEOUT,
                 follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
             ) as client:
-                resp = client.get(url)
+                if method == "POST":
+                    resp = client.post(url, headers=request_headers, content=body or "")
+                else:
+                    resp = client.get(url, headers=request_headers)
                 resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             logger.warning("web_fetch HTTP error for %s: %s", url, e)
-            return {"error": f"HTTP {e.response.status_code}", "url": url}
+            return {
+                "error": f"HTTP {e.response.status_code}",
+                "url": url,
+                "status_code": e.response.status_code,
+            }
         except httpx.RequestError as e:
             logger.warning("web_fetch request error for %s: %s", url, e)
             return {"error": f"Request failed: {e}", "url": url}
 
-        html = resp.text
-        title = _extract_title(html)
+        response_text = resp.text
+        content_type = resp.headers.get("content-type", "")
+        is_html = "html" in content_type
 
-        extracted = trafilatura.extract(
-            html,
-            include_links=True,
-            include_tables=True,
-            output_format="txt",
-        )
-
-        if extracted is None:
-            content = html[:max_chars]
-            warning = " (trafilatura extraction failed — raw HTML truncated)"
-        else:
-            content = extracted
+        if raw or not is_html:
+            content = response_text
+            title = ""
             warning = ""
+        else:
+            title = _extract_title(response_text)
+            extracted = trafilatura.extract(
+                response_text,
+                include_links=True,
+                include_tables=True,
+                output_format="txt",
+            )
+            if extracted is None:
+                content = response_text
+                warning = " (trafilatura extraction failed — raw HTML)"
+            else:
+                content = extracted
+                warning = ""
 
         total_chars = len(content)
         sliced = content[start_offset : start_offset + max_chars]
         truncated = (start_offset + max_chars) < total_chars
 
         logger.info(
-            "web_fetch: %s → %d total chars, returning %d (offset=%d)",
+            "web_fetch: %s %s → %d total chars, returning %d (offset=%d)",
+            method,
             url,
             total_chars,
             len(sliced),
@@ -194,8 +227,8 @@ def register_web_tools(mcp: FastMCP) -> None:
 
         return {
             "title": title,
-            "content": sliced + warning,
-            "url": url,
+            "content": sliced + (warning if not raw and is_html else ""),
+            "url": str(resp.url),
             "total_chars": total_chars,
             "truncated": truncated,
         }

@@ -9,6 +9,7 @@ Usage:
   consult -r architect "Should routing use events or polling?" -f systems/routing/
   consult -r reviewer -f capacity/ledger.py  # structured pipeline (default for reviewer)
   consult -r planner "Add per-model timeouts" -o plan.md
+  consult -r planner -Q /tmp/question.txt -o plan.md
   consult --models qwen3-32b-awq-32768 google/gemini-2.5-pro "question"
   consult --chain -r planner --models local cloud "complex question"
   consult --no-rag "question"
@@ -19,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import textwrap
 import time
@@ -89,6 +91,7 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
               consult -r architect "Event bus: pub/sub vs direct?" -f docs/event-contracts.md
               consult -r reviewer -f capacity/ledger.py  # structured pipeline (default for reviewer)
               consult -r planner "Add per-model timeouts" -o plan.md
+              consult -r planner -Q /tmp/question.txt -o plan.md
               consult --chain -r planner --models local cloud "complex question"
               consult --models qwen3-32b-awq-32768 google/gemini-2.5-pro "question"
               consult --cloud-only -r reviewer -f myfile.py "question"
@@ -97,6 +100,17 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
         """),
     )
     parser.add_argument("question", nargs="?", help="Question to consult on")
+    parser.add_argument(
+        "-Q",
+        "--question-file",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Read question from file instead of positional arg. "
+            "Use '-' to read from stdin. "
+            "Cannot be combined with the positional question argument."
+        ),
+    )
     parser.add_argument(
         "-r",
         "--role",
@@ -141,9 +155,14 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
         "--rag-pipeline",
         nargs="?",
         const="rag-context",
-        default=None,
+        default="rag-context",
         metavar="PIPELINE",
-        help="Use intelligent RAG pipeline (default: rag-context)",
+        help="RAG pipeline to use (default: rag-context). Pass --no-rag-pipeline for direct search.",
+    )
+    parser.add_argument(
+        "--no-rag-pipeline",
+        action="store_true",
+        help="Use direct RAG search instead of the pipeline",
     )
     parser.add_argument(
         "--timeout", type=float, default=300.0, help="Per-model timeout in seconds"
@@ -196,6 +215,16 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
         action="store_true",
         help="After output is produced, validate FILE: lines against the repo. "
         "Reports valid/invalid paths. Appended to run artifact metadata.",
+    )
+    parser.add_argument(
+        "--pipeline-options",
+        default=None,
+        metavar="JSON",
+        help=(
+            "Extra pipeline_options as a JSON object, merged into the request sent "
+            "to Stargate (e.g. '{\"metadata_boost_enabled\": false}'). "
+            "Applies to both the RAG retrieval pipeline and the consult pipeline."
+        ),
     )
     return parser
 
@@ -661,10 +690,11 @@ def _run_direct_branch(
             stargate_url=args.stargate_url,
             rag_url=args.rag_url,
             no_rag=args.no_rag,
-            use_rag_pipeline=args.rag_pipeline is not None,
+            use_rag_pipeline=args.rag_pipeline is not None and not args.no_rag_pipeline,
             timeout=args.timeout,
             chain_directive=args.chain_directive,
             cloud_only=args.cloud_only,
+            pipeline_options=getattr(args, "pipeline_options_parsed", None),
         )
     except ValueError as exc:
         _fail_direct(
@@ -885,13 +915,40 @@ def main() -> None:
                 print(f"  Pipeline: {pipeline_id}")
         sys.exit(0)
 
-    if not args.question:
+    if args.question_file:
+        if args.question:
+            parser.error(
+                "Cannot combine --question-file (-Q) with a positional question argument"
+            )
+        if args.question_file == "-":
+            args.question = sys.stdin.read().strip()
+        else:
+            _qpath = Path(args.question_file)
+            try:
+                args.question = _qpath.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                parser.error(f"Cannot read question file '{args.question_file}': {exc}")
+        if not args.question:
+            parser.error(
+                f"Question file '{args.question_file}' is empty or contains only whitespace"
+            )
+    elif not args.question:
         if not sys.stdin.isatty():
             args.question = sys.stdin.read().strip()
         if not args.question:
             parser.error("No question provided")
 
     call_id = str(uuid4())
+
+    pipeline_options: dict[str, Any] | None = None
+    if args.pipeline_options:
+        try:
+            pipeline_options = json.loads(args.pipeline_options)
+            if not isinstance(pipeline_options, dict):
+                parser.error("--pipeline-options must be a JSON object")
+        except json.JSONDecodeError as exc:
+            parser.error(f"--pipeline-options is not valid JSON: {exc}")
+    args.pipeline_options_parsed = pipeline_options
 
     if args.pipeline:
         _run_pipeline_branch(args, parser, role_requirements, started_at, call_id)

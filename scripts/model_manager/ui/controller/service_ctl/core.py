@@ -25,6 +25,7 @@ from ..service_config import (
     ensure_socket_dir,
     ensure_stargate_config,
     load_env_file,
+    mcp_browser_override_path,
 )
 from ..sidecar_ctl import SidecarController
 from . import cloud_proxy_service, rag_service
@@ -129,7 +130,9 @@ class ServiceController:
         )
         self._build_process = process
         try:
-            assert process.stdout is not None
+            if process.stdout is None:
+                yield "ERROR: Could not capture build output."
+                return
             with log_path.open("w") as log_file:
                 log_file.write(cmd_line + "\n")
                 log_file.flush()
@@ -242,18 +245,32 @@ class ServiceController:
         env["STARGATE_MODE"] = "master"
 
         log_path = Path("/tmp/logs/universal-stargate/tui-startup.log")
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with log_path.open("w") as log_fh:
-            process = await asyncio.create_subprocess_exec(
-                str(script),
-                "debug",
-                env=env,
-                cwd=str(self._root),
-                stdout=log_fh,
-                stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True,
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_fh = log_path.open("w")
+        except OSError as e:
+            logger.error(
+                "Failed to create log directory or open log file for Stargate: %s",
+                e,
             )
+            return f"Failed to start Stargate: could not set up logging ({e})."
+
+        try:
+            with log_fh:
+                process = await asyncio.create_subprocess_exec(
+                    str(script),
+                    "debug",
+                    env=env,
+                    cwd=str(self._root),
+                    stdout=log_fh,
+                    stderr=asyncio.subprocess.STDOUT,
+                    start_new_session=True,
+                )
+        except OSError as e:
+            logger.error(
+                "Failed to start Stargate subprocess: %s", e
+            )
+            return f"Failed to start Stargate: {e}"
 
         try:
             exit_code = await asyncio.wait_for(process.wait(), timeout=3.0)
@@ -288,11 +305,19 @@ class ServiceController:
         )
 
     def _mcp_compose_args(self) -> tuple[list[str], Path] | None:
-        """Return (base docker compose args, compose_path) or None if missing."""
+        """Return (docker compose args, compose_path) or None if missing.
+
+        When browser tools are enabled in ~/.gateway/mcp.yaml, appends the
+        browser override file which applies the narrow seccomp relaxation.
+        """
         compose_path = self._root / "docker" / "compose" / "mcp-server.yml"
         if not compose_path.exists():
             return None
-        return ["docker", "compose", "-f", str(compose_path)], compose_path
+        args = ["docker", "compose", "-f", str(compose_path)]
+        override = mcp_browser_override_path(self._root)
+        if override is not None and override.exists():
+            args += ["-f", str(override)]
+        return args, compose_path
 
     async def start_mcp(self) -> str:
         """Start MCP server container via docker compose."""

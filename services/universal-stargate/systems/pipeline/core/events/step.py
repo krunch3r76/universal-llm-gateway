@@ -387,6 +387,7 @@ def RagRetrievalParamsResolved(  # noqa: N802
     execution_id: str,
     step_name: str,
     consumer_model: str | None,
+    consumer_tier: str | None,
     profile_class: str | None,
     max_chunks: int,
     top_k_per_query: int,
@@ -399,6 +400,7 @@ def RagRetrievalParamsResolved(  # noqa: N802
 
     Payload:
         consumer_model: Model that will read the retrieved context (None if not set)
+        consumer_tier: Tier of the consumer model (None if not set)
         profile_class: Matched model_class name (e.g. "frontier"), None if exact profile
                        or no profile matched
         max_chunks: Effective rag_max_chunks after profile + runtime merge
@@ -415,6 +417,7 @@ def RagRetrievalParamsResolved(  # noqa: N802
             "execution_id": execution_id,
             "step_name": step_name,
             "consumer_model": consumer_model,
+            "consumer_tier": consumer_tier,
             "profile_class": profile_class,
             "max_chunks": max_chunks,
             "top_k_per_query": top_k_per_query,
@@ -501,6 +504,109 @@ def RagRetrievalFailed(  # noqa: N802
             "step_name": step_name,
             "error": error,
             "total_retrieval_seconds": total_retrieval_seconds,
+        },
+    )
+
+
+@event_factory
+def RagRetrievalSkipped(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    reason: str,
+    out_of_scope_reason: str,
+) -> Event:
+    """Emitted when retrieval is skipped due to out-of-scope detection.
+
+    Fires instead of retrieval.completed/failed when the rewrite model
+    determined the query is unanswerable from the active corpus and no
+    user-supplied source_prefixes override is present.
+
+    Payload:
+        reason: Skip category ("out_of_scope" is the only current value)
+        out_of_scope_reason: Rewrite model's explanation of the corpus mismatch
+    """
+    return Event(
+        signal="pipeline.rag.retrieval.skipped",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "reason": reason,
+            "out_of_scope_reason": out_of_scope_reason,
+        },
+    )
+
+
+@event_factory
+def RagMetadataBoostApplied(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    metadata_hit_count: int,
+    avg_metadata_score: float,
+    applied: bool,
+    chunks_after_boost: int,
+) -> Event:
+    """Emitted after post-RRF metadata boost is applied (or skipped).
+
+    Payload:
+        metadata_hit_count: Chunks with non-zero metadata overlap score
+        avg_metadata_score: Mean raw metadata score across all input chunks
+        applied: True if boost was enabled and had query terms to match
+        chunks_after_boost: Final chunk count after boost + optional coverage selection
+    """
+    return Event(
+        signal="pipeline.rag.metadata.boost.applied",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "metadata_hit_count": metadata_hit_count,
+            "avg_metadata_score": avg_metadata_score,
+            "applied": applied,
+            "chunks_after_boost": chunks_after_boost,
+        },
+    )
+
+
+@event_factory
+def RagRerankCompleted(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    rerank_enabled: bool,
+    model_id: str | None,
+    chunks_input: int,
+    chunks_output: int,
+    windows_evaluated: int,
+    max_rank_movement_observed: int,
+    total_rerank_seconds: float,
+) -> Event:
+    """Emitted after LLM reranking completes (or is skipped when disabled).
+
+    Payload:
+        rerank_enabled: True if LLM reranking was performed
+        model_id: Model used for reranking (None if skipped)
+        chunks_input: Number of candidate chunks considered for reranking
+        chunks_output: Final chunk count after reranking
+        windows_evaluated: Number of sliding windows processed by LLM
+        max_rank_movement_observed: Largest rank position change in this execution
+        total_rerank_seconds: Wall-clock time for the reranking phase
+    """
+    return Event(
+        signal="pipeline.rag.rerank.completed",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "rerank_enabled": rerank_enabled,
+            "model_id": model_id,
+            "chunks_input": chunks_input,
+            "chunks_output": chunks_output,
+            "windows_evaluated": windows_evaluated,
+            "max_rank_movement_observed": max_rank_movement_observed,
+            "total_rerank_seconds": total_rerank_seconds,
         },
     )
 

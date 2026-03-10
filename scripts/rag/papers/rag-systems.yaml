@@ -1,0 +1,100 @@
+# Curated papers for the rag-systems RAG corpus scope.
+# scope: rag-systems
+# corpus_dir: docs/research/rag-systems  (fallback if ~/.gateway/rag.yaml has no rag-systems scope)
+
+papers:
+  # --- Listwise and sliding-window LLM reranking ---
+  reranking:
+    - arxiv_id: "2304.09542"
+      slug: rankgpt-listwise-reranking
+      published: "2023-04-19"
+      title: "Is ChatGPT Good at Search? Investigating LLMs as Re-Ranking Agents"
+      note: "Seminal listwise paper; defines the sliding window algorithm"
+
+    - arxiv_id: "2412.14574"
+      slug: sliding-window-vs-full-ranking
+      published: "2024-12-19"
+      title: "Sliding Windows Are Not the End: Full Ranking with Long-Context LLMs"
+      note: "Direct sliding window vs. full listwise tradeoff comparison; ACL 2025"
+
+    - arxiv_id: "2312.02724"
+      slug: rankzephyr-zero-shot-listwise
+      published: "2023-12-05"
+      title: "RankZephyr: Effective and Robust Zero-Shot Listwise Reranking is a Breeze!"
+      note: "7B open-source, matches GPT-4; benchmarks sliding window variants"
+
+    - arxiv_id: "2411.04602"
+      slug: scalr-self-calibrated-listwise
+      published: "2024-11-07"
+      title: "Self-Calibrated Listwise Reranking with Large Language Models"
+      note: "SCaLR — addresses repeated-computation limitation of sliding window; WWW 2025"
+
+    - arxiv_id: "2309.15088"
+      slug: rankvicuna-open-source-listwise
+      published: "2023-09-26"
+      title: "RankVicuna: Zero-Shot Listwise Document Reranking with Open-Source LLMs"
+      note: "First open-source zero-shot listwise reranker; context for RankZephyr"
+
+    - arxiv_id: "2310.07712"
+      slug: permutation-self-consistency-ranking
+      published: "2023-10-11"
+      title: "Found in the Middle: Permutation Self-Consistency Improves Listwise Ranking"
+      note: "Positional bias fix for listwise ranking; 7-52% improvement; NAACL 2024"
+
+    - arxiv_id: "2406.15657"
+      slug: first-faster-listwise-single-token
+      published: "2024-06-22"
+      title: "FIRST: Faster Improved Listwise Reranking with Single Token Decoding"
+      note: "50% inference speedup; learning-to-rank loss; EMNLP 2024"
+
+    - arxiv_id: "2405.07920"
+      slug: rank-distillm-cross-encoder-distillation
+      published: "2024-05-13"
+      title: "Rank-DistiLLM: Closing the Effectiveness Gap Between Cross-Encoders and LLMs"
+      note: "173x faster, 24x less memory than teacher LLM; ECIR 2025 Best Short Paper"
+
+    - arxiv_id: "2310.09497"
+      slug: setwise-reranking-prompting
+      published: "2023-10-14"
+      title: "A Setwise Approach for Effective Zero-shot Ranking with LLMs"
+      note: "Groupwise paradigm between pointwise and listwise; efficiency vs. quality tradeoff"
+
+  # --- Surveys and benchmarking ---
+  survey:
+    - arxiv_id: "2512.16236"
+      slug: reranking-evolution-survey
+      published: "2024-12-20"
+      title: "The Evolution of Reranking Models in IR: From Heuristic Methods to LLMs"
+      note: "Comprehensive survey from learning-to-rank through LLM integration"
+
+    - arxiv_id: "2508.16757"
+      slug: llm-reranker-empirical-analysis
+      published: "2025-08-22"
+      title: "How Good are LLM-based Rerankers? An Empirical Analysis"
+      note: "22 methods × 40 variants; introduces FutureQueryEval anti-contamination; EMNLP 2025"
+
+  # --- Bleeding edge (2025, not yet widely cited) ---
+  frontier:
+    - arxiv_id: "2505.14432"
+      slug: rank-k-test-time-reasoning
+      published: "2025-05-20"
+      title: "Rank-K: Test-Time Reasoning for Listwise Reranking"
+      note: "23% over RankZephyr; uses DeepSeek R1 reasoning; multilingual"
+
+    - arxiv_id: "2511.11653"
+      slug: grouprank-groupwise-reranking
+      published: "2025-11-10"
+      title: "GroupRank: A Groupwise Reranking Paradigm Driven by Reinforcement Learning"
+      note: "GRPO-trained; bridges pointwise flexibility with listwise comparison depth"
+
+    - arxiv_id: "2412.14405"
+      slug: ract-cot-reranking
+      published: "2024-12-19"
+      title: "RaCT: Ranking-aware Chain-of-Thought for LLM Reranking"
+      note: "CoT + SFT-RPO pipeline; retains MMLU general ability while improving ranking"
+
+    - arxiv_id: "2404.06912"
+      slug: set-encoder-permutation-invariant
+      published: "2024-04-10"
+      title: "Set-Encoder: Permutation-Invariant Inter-Passage Attention"
+      note: "Architecture fix for cross-encoder permutation inconsistency"

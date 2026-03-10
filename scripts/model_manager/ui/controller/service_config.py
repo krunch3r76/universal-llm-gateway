@@ -158,6 +158,7 @@ class McpConfig:
     brave_search_api_key: str = ""
     firefox_profile_dir: str = ""
     tasks_access: str = "ro"  # "ro" | "rw" | "off"
+    enable_browser_tools: bool = False
 
 
 _MCP_CONFIG_TEMPLATE = """\
@@ -191,6 +192,11 @@ BRAVE_SEARCH_API_KEY: ""
 #   rw  = Claude can also write journal entries and context files
 #   off = tasks/ tools not exposed to Claude at all
 # tasks_access: ro
+
+# Browser automation tools (Playwright Firefox) — disabled by default.
+# Enabling this also applies a narrow seccomp relaxation (unshare/clone3/setns)
+# required for Firefox's internal process sandbox. See docker/compose/mcp-server-browser.override.yml.
+# enable_browser_tools: false
 """
 
 
@@ -266,12 +272,16 @@ def load_mcp_config() -> McpConfig | None:
             str(raw.get("firefox_profile_dir", ""))
         ),
         tasks_access=str(raw.get("tasks_access", "ro")).strip().lower(),
+        enable_browser_tools=bool(raw.get("enable_browser_tools", False)),
     )
 
 
 def is_mcp_configured(workspace_root: Path) -> bool:  # noqa: ARG001
     """Return True iff ~/.gateway/mcp.yaml exists with a non-empty auth_token."""
     return load_mcp_config() is not None
+
+
+_BROWSER_OVERRIDE_COMPOSE = "docker/compose/mcp-server-browser.override.yml"
 
 
 def build_mcp_env(workspace_root: Path) -> dict[str, str]:
@@ -291,6 +301,7 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
         env["BRAVE_SEARCH_API_KEY"] = cfg.brave_search_api_key
     if cfg.firefox_profile_dir:
         env["FIREFOX_PROFILE_DIR"] = cfg.firefox_profile_dir
+    env["ENABLE_BROWSER_TOOLS"] = "true" if cfg.enable_browser_tools else "false"
     # Derive compose vars from the single tasks_access field:
     #   off → no mount needed, tools disabled
     #   ro  → read-only mount, write tools blocked in app layer
@@ -298,7 +309,7 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
     match cfg.tasks_access:
         case "off":
             env["ENABLE_CONTEXT_TOOLS"] = "false"
-            env["MCP_TASKS_MOUNT_MODE"] = "ro"   # mount still present but tools absent
+            env["MCP_TASKS_MOUNT_MODE"] = "off"  # no mount needed, tools disabled
             env["TASKS_READ_ONLY"] = "true"
         case "rw":
             env["ENABLE_CONTEXT_TOOLS"] = "true"
@@ -309,6 +320,14 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
             env["MCP_TASKS_MOUNT_MODE"] = "ro"
             env["TASKS_READ_ONLY"] = "true"
     return env
+
+
+def mcp_browser_override_path(workspace_root: Path) -> Path | None:
+    """Return the browser override compose path if browser tools are enabled, else None."""
+    cfg = load_mcp_config()
+    if cfg is None or not cfg.enable_browser_tools:
+        return None
+    return workspace_root / _BROWSER_OVERRIDE_COMPOSE
 
 
 def ensure_stargate_config() -> Path:
@@ -513,16 +532,29 @@ def _recover_root_owned_socket_dir(socket_dir: Path) -> bool:
         shutil.rmtree(socket_dir)
     except PermissionError:
         # Need elevated privileges — try sudo
-        result = subprocess.run(
-            ["sudo", "-n", "rm", "-rf", str(socket_dir)],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
+        try:
+            result = subprocess.run(
+                ["sudo", "-n", "rm", "-rf", str(socket_dir)],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                logger.error(
+                    "Cannot remove root-owned %s (sudo -n failed: %s)",
+                    socket_dir,
+                    result.stderr.strip(),
+                )
+                return False
+        except FileNotFoundError:
             logger.error(
-                "Cannot remove root-owned %s (sudo -n failed: %s)",
+                "sudo not found; cannot remove root-owned %s", socket_dir
+            )
+            return False
+        except OSError as exc:
+            logger.error(
+                "Error running sudo to remove root-owned %s: %s",
                 socket_dir,
-                result.stderr.strip(),
+                exc,
             )
             return False
 
@@ -654,7 +686,7 @@ def read_cloud_proxy_socket_path(config_path: Path | None = None) -> Path:
         cfg = load_config(path)
         if cfg.socket_path:
             return Path(cfg.socket_path)
-    except Exception as exc:
+    except (yaml.YAMLError, ValueError, OSError) as exc:
         logger.warning(
             "Could not read cloud proxy socket path from %s: %s; using default",
             path,
@@ -680,7 +712,7 @@ def read_cloud_proxy_port(config_path: Path | None = None) -> int:
 
         default_port = DEFAULT_PORT
         return load_config(path).port
-    except Exception:
+    except (yaml.YAMLError, ValueError, OSError):
         logger.warning("Could not read port from %s — using default 8200", path)
     return default_port
 
@@ -701,7 +733,7 @@ def read_cloud_proxy_host(config_path: Path | None = None) -> str:
 
         default_host = DEFAULT_HOST
         return load_config(path).host
-    except Exception:
+    except (yaml.YAMLError, ValueError, OSError):
         logger.warning("Could not read host from %s — using default 127.0.0.1", path)
     return default_host
 

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 import chromadb
 
 from services.rag.models import IndexResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -18,10 +22,22 @@ class DirectoryIndexTotals:
     files: int = 0
 
 
-IndexFileFn = Callable[
-    [Path, dict[str, str | int | float | bool] | None],
-    Awaitable[IndexResult],
-]
+class IndexFileFn(Protocol):
+    """Callable protocol for indexing a single file.
+
+    `force=True` bypasses the hash-unchanged check so metadata updates and
+    re-extraction are applied even when the file content has not changed.
+    """
+
+    def __call__(
+        self,
+        path: Path,
+        metadata_overrides: dict[str, str | int | float | bool] | None = ...,
+        *,
+        force: bool = ...,
+    ) -> Awaitable[IndexResult]: ...
+
+
 OnIndexErrorFn = Callable[[Path, Exception], None]
 
 
@@ -79,3 +95,55 @@ def find_removed_sources(
         and source not in walked_sources
         and not Path(source).exists()
     }
+
+
+# Callable type for property-index chunk removal (avoids circular import with PropertyIndex).
+RemoveChunkFn = Callable[[str], Awaitable[None]]
+
+
+async def purge_orphaned_chunks(
+    *,
+    collection: chromadb.Collection,
+    watch_prefixes: list[str],
+    remove_chunk_fn: RemoveChunkFn | None = None,
+) -> tuple[int, int]:
+    """Delete chunks for source files that no longer exist on disk.
+
+    Only sources under watched directory prefixes are examined — externally
+    indexed sources are left untouched.
+
+    ∀ source ∈ ChromaDB ∩ watched_prefixes: ¬Path(source).exists() ⟹ delete.
+
+    Returns (files_purged, chunks_purged).
+    """
+    if not watch_prefixes:
+        return 0, 0
+
+    all_data = collection.get(include=["metadatas"])
+    rows: list[dict[str, object]] = all_data.get("metadatas") or []
+    all_ids: list[str] = all_data.get("ids") or []
+
+    source_to_ids: dict[str, list[str]] = {}
+    for chunk_id, row in zip(all_ids, rows, strict=True):
+        if not isinstance(row, dict):
+            continue
+        source = row.get("source")
+        if not isinstance(source, str):
+            continue
+        if not any(source.startswith(prefix) for prefix in watch_prefixes):
+            continue
+        source_to_ids.setdefault(source, []).append(chunk_id)
+
+    files_purged = 0
+    chunks_purged = 0
+    for source, ids in source_to_ids.items():
+        if not Path(source).exists():
+            collection.delete(ids=ids)
+            if remove_chunk_fn is not None:
+                for chunk_id in ids:
+                    await remove_chunk_fn(chunk_id)
+            logger.info("Startup orphan purge: source=%s deleted=%d", source, len(ids))
+            files_purged += 1
+            chunks_purged += len(ids)
+
+    return files_purged, chunks_purged

@@ -36,7 +36,11 @@ from .lifecycle import (
     StepStarted,
 )
 from .recorder import EventRecorder
-from .step import RagRetrievalParamsResolved
+from .step import (
+    RagMetadataBoostApplied,
+    RagRerankCompleted,
+    RagRetrievalParamsResolved,
+)
 from .verification import (
     ClaimsClassified,
     ClaimsContextualized,
@@ -100,6 +104,8 @@ __all__ = [
     "VetoPassCompleted",
     # RAG
     "RagRetrievalParamsResolved",
+    "RagMetadataBoostApplied",
+    "RagRerankCompleted",
     # Checkpoint
     "CheckpointSaved",
     "CheckpointLoaded",

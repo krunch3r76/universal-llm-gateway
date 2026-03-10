@@ -87,6 +87,7 @@ def fetch_rag_pipeline(
     rag_url: str = DEFAULT_RAG_URL,
     timeout: float = 70.0,
     scope_override: str | None = None,
+    extra_pipeline_options: dict[str, Any] | None = None,
 ) -> tuple[list[str], str | None]:
     """Use the rag-context pipeline for intelligent RAG retrieval."""
     url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
@@ -95,6 +96,8 @@ def fetch_rag_pipeline(
     }
     if scope_override:
         pipeline_options["scope_override"] = scope_override
+    if extra_pipeline_options:
+        pipeline_options.update(extra_pipeline_options)
     body: dict[str, Any] = {
         "model": pipeline_id,
         "messages": [{"role": "user", "content": query}],
@@ -105,6 +108,10 @@ def fetch_rag_pipeline(
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(url, json=body)
         resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code >= 500:
+            return [], f"pipeline.step.error: {exc}"
+        return [], str(exc)
     except Exception as exc:
         return [], str(exc)
     data = resp.json()

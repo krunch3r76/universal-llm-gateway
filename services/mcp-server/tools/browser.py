@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PROFILE_DIR = Path("/data/firefox_profile")
-_MAX_TEXT_LENGTH = 100_000
+_MAX_TEXT_LENGTH = 25_000
 _USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"
 )
@@ -113,7 +113,20 @@ class BrowserSession:
                 self.pw = await async_playwright().start()
 
             if not self.browser:
-                self.browser = await self.pw.firefox.launch(headless=True)
+                try:
+                    self.browser = await asyncio.wait_for(
+                        self.pw.firefox.launch(headless=True),
+                        timeout=20.0,
+                    )
+                except TimeoutError:
+                    record("mcp.browser.launch.failed", reason="timeout_firefox_init")
+                    raise RuntimeError(
+                        "Firefox launch timed out (20s). "
+                        "The container image may be stale — rebuild to pick up the "
+                        "/home/mcp directory fix that Firefox requires for font cache. "
+                        "Restart with: docker compose -f docker/compose/mcp-server.yml "
+                        "-f docker/compose/mcp-server-browser.override.yml up -d --build"
+                    )
 
             if self.context:
                 await self.context.close()
@@ -121,6 +134,11 @@ class BrowserSession:
             self.context = await self.browser.new_context(
                 user_agent=_USER_AGENT,
                 viewport={"width": 1280, "height": 800},
+            )
+
+            await self.context.route(
+                "**/*.{png,jpg,jpeg,gif,webp,svg,ico,woff,woff2,ttf,mp4,mp3}",
+                lambda route, _: route.abort(),
             )
 
             cookies = self._get_cookies()
@@ -174,12 +192,91 @@ def register_browser_tools(mcp: FastMCP) -> None:
             return {"error": str(e), "url": url}
 
     @mcp.tool()
-    async def browser_get_content() -> dict[str, str | bool]:
-        """Get visible text content of the current page."""
+    async def browser_get_structure() -> dict[str, object]:
+        """Get the structural outline of the current page.
+
+        Returns semantic landmark elements (main, article, nav, section, etc.),
+        headings (h1-h3), and the approximate character count of each landmark's
+        text. Use this before browser_get_content to identify the right CSS
+        selector — pick the landmark with the most content that matches what
+        you need (e.g. "main", "article", "#content").
+        """
+        record("mcp.browser.action", action="get_structure")
+        page = await _session.ensure_active()
+        try:
+            structure = await page.evaluate("""() => {
+                const LANDMARKS = ['main', 'article', 'section', 'aside',
+                                   'header', 'footer', 'nav', 'form'];
+                const seen = new Set();
+                const landmarks = [];
+
+                // Semantic landmark tags
+                for (const tag of LANDMARKS) {
+                    for (const el of document.querySelectorAll(tag)) {
+                        const id = el.id ? '#' + el.id : '';
+                        const cls = (typeof el.className === 'string' && el.className.trim())
+                            ? '.' + el.className.trim().split(/\\s+/).slice(0, 2).join('.')
+                            : '';
+                        const selector = id ? tag + id : (cls ? tag + cls : tag);
+                        const chars = (el.innerText || '').length;
+                        if (chars < 30 || seen.has(selector)) continue;
+                        seen.add(selector);
+                        landmarks.push({
+                            selector,
+                            chars,
+                            preview: (el.innerText || '').substring(0, 80)
+                                         .replace(/\\s+/g, ' ').trim(),
+                        });
+                    }
+                }
+
+                // Divs with id/role that suggest content containers
+                for (const el of document.querySelectorAll('div[id], div[role]')) {
+                    const id = el.id ? '#' + el.id : '';
+                    const role = el.getAttribute('role') || '';
+                    const selector = id ? 'div' + id : `div[role="${role}"]`;
+                    const chars = (el.innerText || '').length;
+                    if (chars < 200 || seen.has(selector)) continue;
+                    seen.add(selector);
+                    landmarks.push({
+                        selector,
+                        chars,
+                        preview: (el.innerText || '').substring(0, 80)
+                                     .replace(/\\s+/g, ' ').trim(),
+                    });
+                }
+
+                const headings = [];
+                for (const el of document.querySelectorAll('h1, h2, h3')) {
+                    headings.push({
+                        tag: el.tagName.toLowerCase(),
+                        text: (el.innerText || '').trim().substring(0, 120),
+                    });
+                }
+
+                landmarks.sort((a, b) => b.chars - a.chars);
+                return { landmarks, headings };
+            }""")
+            _record_action_result("get_structure", "success")
+            return {"url": page.url, **structure}
+        except Exception as e:
+            logger.exception("browser_get_structure failed")
+            _record_action_result("get_structure", "failed", error=str(e))
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def browser_get_content(selector: str = "body") -> dict[str, str | bool]:
+        """Get visible text content of the current page.
+
+        Pass a CSS selector to extract only a specific section (e.g. "main",
+        "article", "#content") — strongly preferred over the default full-body
+        extraction to keep context size manageable.
+        """
         record("mcp.browser.action", action="get_content")
         page = await _session.ensure_active()
         try:
-            text = await page.evaluate("() => document.body.innerText")
+            element = await page.query_selector(selector)
+            text = await element.inner_text() if element else ""
             if not isinstance(text, str):
                 text = ""
             _record_action_result("get_content", "success")
@@ -248,3 +345,85 @@ def register_browser_tools(mcp: FastMCP) -> None:
             "status": "success",
             "message": "Session cleared. Next browser action will reload cookies from host Firefox.",
         }
+
+    @mcp.tool()
+    async def browser_load_cookies(cookies_json: str) -> dict[str, object]:
+        """Inject cookies from a JSON string into the current browser context.
+
+        Accepts the standard Cookie-Editor export format (array of cookie objects).
+        Each cookie must have at minimum: name, value, domain.
+        Optional fields: path, expires, secure, httpOnly, sameSite.
+
+        Use this to load session cookies exported from Chrome/Firefox via a
+        browser extension (e.g. Cookie-Editor) when no Firefox profile is mounted.
+        After loading, call browser_navigate to reach the authenticated page.
+
+        To export from Chrome/Firefox:
+          1. Install Cookie-Editor extension
+          2. Navigate to the site you want access to
+          3. Open Cookie-Editor → Export → Copy to clipboard
+          4. Pass the clipboard content as cookies_json
+        """
+        import json
+
+        record("mcp.browser.action", action="load_cookies")
+        await _session.ensure_active()
+        try:
+            raw: list[dict[str, object]] = json.loads(cookies_json)
+        except json.JSONDecodeError as e:
+            return {"error": f"Invalid JSON: {e}"}
+
+        if not isinstance(raw, list):
+            return {"error": "Expected a JSON array of cookie objects"}
+
+        # Normalise to Playwright format — keep only known fields, coerce types
+        _SAME_SITE = {"Strict", "Lax", "None"}
+        cleaned: list[dict[str, object]] = []
+        skipped = 0
+        for c in raw:
+            if not isinstance(c, dict):
+                skipped += 1
+                continue
+            name = c.get("name")
+            value = c.get("value")
+            domain = c.get("domain")
+            if not (name and isinstance(name, str) and isinstance(value, str) and domain):
+                skipped += 1
+                continue
+            cookie: dict[str, object] = {
+                "name": name,
+                "value": value,
+                "domain": str(domain),
+                "path": str(c.get("path") or "/"),
+            }
+            if "expires" in c and c["expires"] is not None:
+                try:
+                    cookie["expires"] = int(float(str(c["expires"])))
+                except (ValueError, TypeError):
+                    pass
+            if "secure" in c:
+                cookie["secure"] = bool(c["secure"])
+            if "httpOnly" in c:
+                cookie["httpOnly"] = bool(c["httpOnly"])
+            ss = c.get("sameSite") or c.get("samesite")
+            if ss and str(ss).capitalize() in _SAME_SITE:
+                cookie["sameSite"] = str(ss).capitalize()
+            cleaned.append(cookie)
+
+        if not cleaned:
+            return {"error": "No valid cookies found in input", "skipped": skipped}
+
+        try:
+            await _session.context.add_cookies(cleaned)
+            record("mcp.browser.cookies.loaded", count=len(cleaned), source="manual_import")
+            _record_action_result("load_cookies", "success", count=len(cleaned))
+            return {
+                "status": "success",
+                "loaded": len(cleaned),
+                "skipped": skipped,
+                "message": f"Loaded {len(cleaned)} cookies. Call browser_navigate to use them.",
+            }
+        except Exception as e:
+            logger.exception("browser_load_cookies failed")
+            _record_action_result("load_cookies", "failed", error=str(e))
+            return {"error": str(e)}

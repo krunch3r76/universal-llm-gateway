@@ -10,7 +10,6 @@ import yaml
 logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path.home() / ".gateway" / "rag.yaml"
-_LEGACY_CONFIG_PATH = Path.home() / ".rag" / "config.yaml"
 
 
 @dataclass(slots=True, kw_only=True)
@@ -179,21 +178,14 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
 
 
 def _resolve_config_path() -> Path | None:
-    """Return the config path to use, preferring new location with legacy fallback."""
+    """Return ~/.gateway/rag.yaml if it exists, otherwise None."""
     if _CONFIG_PATH.exists():
         return _CONFIG_PATH
-    if _LEGACY_CONFIG_PATH.exists():
-        logger.warning(
-            "RAG config at %s is deprecated; move to %s",
-            _LEGACY_CONFIG_PATH,
-            _CONFIG_PATH,
-        )
-        return _LEGACY_CONFIG_PATH
     return None
 
 
 def load_config() -> RagConfig:
-    """Load ~/.gateway/rag.yaml (or legacy ~/.rag/config.yaml) and return parsed config."""
+    """Load ~/.gateway/rag.yaml and return parsed config."""
     config_path = _resolve_config_path()
     if config_path is None:
         return RagConfig(watch_directories=[], scopes={})

@@ -25,8 +25,10 @@ COPY tools/ tools/
 
 # Non-root user — container boundary is the real security primitive,
 # but defense-in-depth: process runs without root privileges
-RUN useradd -r -u 1000 -s /sbin/nologin mcp
-RUN chown -R mcp:mcp /app /ms-playwright /data/databases
+RUN useradd -r -u 1000 -m -d /home/mcp -s /sbin/nologin mcp
+RUN chown -R mcp:mcp /app /ms-playwright /data/databases /home/mcp
+
+ENV HOME=/home/mcp
 
 USER mcp
 

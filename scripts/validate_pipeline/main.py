@@ -140,11 +140,15 @@ def _validate_yaml_files(
             print(f"Error: No YAML files found in: {path}", file=sys.stderr)
             sys.exit(2)
 
+    # Config files co-located with pipelines that are not pipeline YAMLs
+    _SKIP_FILENAMES: set[str] = {"retrieval-profiles.yaml"}
+
     # Separate into pipelines and config files
     pipeline_files = []
     prompts_files = []
     models_files = []
     categories_files = []
+    skipped_files = []
 
     for yaml_file in yaml_files:
         if yaml_file.name == "prompts.yaml":
@@ -153,11 +157,16 @@ def _validate_yaml_files(
             models_files.append(yaml_file)
         elif yaml_file.name == "categories.yaml":
             categories_files.append(yaml_file)
+        elif yaml_file.name in _SKIP_FILENAMES:
+            skipped_files.append(yaml_file)
         else:
             pipeline_files.append(yaml_file)
 
-    total = len(yaml_files)
+    total = len(yaml_files) - len(skipped_files)
     passed = 0
+
+    for yaml_file in skipped_files:
+        print(f"✓ {_rel_path(yaml_file)} [config — skipped]")
 
     print(f"\nValidating {total} file(s)...\n")
 
@@ -204,8 +213,13 @@ def _validate_yaml_files(
                 )
                 errors.extend(threshold_errors)
                 valid = valid and len(threshold_errors) == 0
-            except Exception:
-                pass  # YAML loading errors handled by validate_file
+            except yaml.YAMLError:
+                pass  # YAML loading errors reported by validate_file
+            except Exception as e:
+                print(
+                    f"  ⚠ Unexpected error during generation_params threshold validation for {_rel_path(yaml_file)}: {e}",
+                    file=sys.stderr,
+                )
 
         rel_path = _rel_path(yaml_file)
         if valid:
@@ -253,6 +267,8 @@ def _validate_yaml_files(
     print(f"  - {len(models_files)} models config(s)")
     if categories_files:
         print(f"  - {len(categories_files)} categories config(s)")
+    if skipped_files:
+        print(f"  - {len(skipped_files)} config file(s) skipped")
     if registered_step_types:
         print(f"  - {len(registered_step_types)} registered handler step types")
 

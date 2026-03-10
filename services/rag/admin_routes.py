@@ -76,6 +76,7 @@ def register_admin_routes(
         return await index_file_fn(
             _validate_file(request.path),
             request.metadata_overrides,
+            force=request.force,
         )
 
     @router.post("/index_directory", response_model=IndexDirectoryResponse)
@@ -105,6 +106,7 @@ def register_admin_routes(
         return await index_file_fn(
             _validate_file(request.path),
             request.metadata_overrides,
+            force=request.force,
         )
 
     @router.post("/reindex_directory", response_model=IndexDirectoryResponse)

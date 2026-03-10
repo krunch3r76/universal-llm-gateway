@@ -1,0 +1,32 @@
+# Browser tools override — adds narrow seccomp relaxation required for Playwright Firefox.
+#
+# Usage:
+#   docker compose -f docker/compose/mcp-server.yml \
+#                  -f docker/compose/mcp-server-browser.override.yml up -d
+#
+# What this does:
+#   - Registers browser_* tools on the MCP server (ENABLE_BROWSER_TOOLS=true)
+#   - Applies a custom seccomp profile that unconditionally allows the namespace
+#     syscalls Firefox needs for its internal process sandbox:
+#       clone, clone3, unshare, setns
+#   - All other syscalls remain at Docker's default policy (SCMP_ACT_ERRNO)
+#   - No capabilities are added; container still runs as non-root uid 1000
+#
+# Note: the main prerequisite for Firefox to work is a writable HOME for the mcp
+# user (/home/mcp) — the Dockerfile creates this. Without it, fontconfig cannot
+# write its cache and Firefox stalls silently during headless startup.
+#
+# Security tradeoff:
+#   clone/unshare/setns let Firefox create its own process namespaces for
+#   content isolation. They do NOT allow escaping the container, mounting
+#   filesystems, or gaining Linux capabilities. Risk is low and scoped to
+#   Firefox's own startup path.
+#
+# To re-tighten: restart without this override (tools will be absent).
+
+services:
+  mcp-server:
+    security_opt:
+      - seccomp:../../docker/seccomp/mcp-server-browser.json
+    environment:
+      - ENABLE_BROWSER_TOOLS=true

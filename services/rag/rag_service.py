@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 from datetime import UTC, datetime
 from fnmatch import fnmatch
 from pathlib import Path
@@ -47,6 +48,7 @@ from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 from services.rag.admin_routes import register_admin_routes
 from services.rag.chunkers import Chunk, chunk_file
 from services.rag.config import RagConfig, load_config
+from services.rag.directory_ops import purge_orphaned_chunks
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import embed_chunks, embed_query, wait_until_healthy
 from services.rag.events import (
@@ -54,6 +56,7 @@ from services.rag.events import (
     rag_file_indexed,
     rag_file_indexing_failed,
     rag_file_skipped,
+    rag_orphan_purged,
     rag_pending_reconciled,
     rag_scope_rejected,
     rag_scope_resolved,
@@ -238,6 +241,33 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
                     )
                 )
 
+    # Purge chunks whose source files were deleted while the service was down.
+    # The live watcher handles deletions in real time; this covers the gap
+    # between shutdown and the next restart.
+    if _collection is not None and config.watch_directories:
+        watch_prefixes = [
+            str(Path(wd.path).expanduser().resolve()) + "/"
+            for wd in config.watch_directories
+        ]
+        remove_fn = (
+            _property_index.remove_chunk if _property_index is not None else None
+        )
+        files_purged, chunks_purged = await purge_orphaned_chunks(
+            collection=_collection,
+            watch_prefixes=watch_prefixes,
+            remove_chunk_fn=remove_fn,
+        )
+        if files_purged > 0:
+            logger.info(
+                "Startup orphan purge complete: files=%d chunks=%d",
+                files_purged,
+                chunks_purged,
+            )
+        if _event_bus is not None:
+            await _event_bus.publish_async(
+                rag_orphan_purged(files=files_purged, chunks=chunks_purged)
+            )
+
     await _watcher_manager.start(config)
 
 
@@ -295,14 +325,16 @@ _TOKEN_ESTIMATE = 4
 async def _index_file(
     file_path: Path,
     metadata_overrides: dict[str, str | int | float | bool] | None = None,
+    *,
     chunk_tokens: int | None = None,
+    force: bool = False,
 ) -> IndexResult:
     """Index a file, cleaning up stale chunks when content changed."""
     source = str(file_path)
     lock = _file_index_locks.setdefault(source, asyncio.Lock())
     async with lock:
         return await _index_file_impl(
-            file_path, metadata_overrides, chunk_tokens, source
+            file_path, metadata_overrides, chunk_tokens, source, force=force
         )
 
 
@@ -344,8 +376,11 @@ async def _index_file_impl(
     metadata_overrides: dict[str, str | int | float | bool] | None,
     chunk_tokens: int | None,
     source: str,
+    *,
+    force: bool = False,
 ) -> IndexResult:
     """Inner implementation of file indexing (called with lock held)."""
+    start = time.monotonic()
     raw = file_path.read_bytes()
     schema_version = (
         _config.knowledge_extraction.schema_version if _config is not None else 0
@@ -373,7 +408,7 @@ async def _index_file_impl(
     existing = collection.get(where={"source": source}, include=["metadatas"])
     existing_ids: list[str] = existing.get("ids", [])
 
-    if existing_ids and all_ids_match_prefix(existing_ids, prefix):
+    if not force and existing_ids and all_ids_match_prefix(existing_ids, prefix):
         # Chunks are current — check if extraction metadata is also present.
         # Missing extraction_schema_version means extraction timed out on a prior run;
         # the file is in ChromaDB but the property index is unpopulated.
@@ -392,7 +427,12 @@ async def _index_file_impl(
             if ext_result is not None and ext_result.success:
                 if _event_bus is not None:
                     await _event_bus.publish_async_nowait(
-                        rag_file_indexed(file=source, deleted=0, indexed=0)
+                        rag_file_indexed(
+                            file=source,
+                            deleted=0,
+                            indexed=0,
+                            duration_seconds=time.monotonic() - start,
+                        )
                     )
                 return IndexResult(
                     deleted=0,
@@ -455,7 +495,6 @@ async def _index_file_impl(
     if _property_index is not None:
         await _property_index.mark_pending(source)
 
-    clear_pending_on_success = False
     try:
         extraction_entities = 0
         extraction_topics = 0
@@ -492,16 +531,15 @@ async def _index_file_impl(
             if _property_index is not None:
                 for old_id in existing_ids:
                     await _property_index.remove_chunk(old_id)
-        clear_pending_on_success = True
     except Exception as exc:
         if _event_bus is not None:
             await _event_bus.publish_async_nowait(
                 rag_file_indexing_failed(file=source, error=str(exc))
             )
         raise
-
-    if clear_pending_on_success and _property_index is not None:
-        await _property_index.clear_pending(source)
+    finally:
+        if _property_index is not None:
+            await _property_index.clear_pending(source)
 
     logger.info(
         "Index complete: file=%s deleted=%d indexed=%d",
@@ -515,6 +553,7 @@ async def _index_file_impl(
                 file=source,
                 deleted=len(existing_ids),
                 indexed=len(chunks),
+                duration_seconds=time.monotonic() - start,
             )
         )
     return IndexResult(
