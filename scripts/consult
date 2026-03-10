@@ -147,9 +147,13 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
     parser.add_argument("--no-rag", action="store_true", help="Disable RAG")
     parser.add_argument(
         "--scope",
-        default="project",
-        help="RAG retrieval scope (default: project). "
-        "Available scopes fetched from RAG service.",
+        nargs="*",
+        default=["project"],
+        metavar="SCOPE",
+        help=(
+            "RAG retrieval scope(s), space-separated (default: project). "
+            "E.g. --scope research, or --scope project research for union."
+        ),
     )
     parser.add_argument(
         "--rag-pipeline",
@@ -905,6 +909,7 @@ def main() -> None:
     role_prompts, role_requirements = split_role_config(raw_roles)
     parser = _build_parser(role_prompts)
     args = parser.parse_args()
+    args.scope = args.scope if args.scope else ["project"]
     started_at = time.monotonic()
 
     if _handle_admin_flags(args):

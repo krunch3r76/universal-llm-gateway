@@ -99,21 +99,27 @@ class RagMultiRetrieveHandler(BaseHandler):
         step: StepConfig,
         context: PipelineContext,
     ) -> StepOutput:
+        """Execute multi-query RAG retrieval with RRF merge and optional retry.
+
+        Orchestrates retrieval from rewritten queries, merges results via
+        reciprocal rank fusion, applies junk filtering and metadata boost,
+        and emits retrieval lifecycle events.
+        """
         endpoint: str = step.get_domain_field("endpoint", "")
         if not endpoint:
             raise ValueError(f"Step '{step.id}': missing 'endpoint' domain field")
 
         socket_path: str | None = step.get_domain_field("socket_path")
         if socket_path:
-            if not socket_path.startswith("unix://"):
-                base_url = f"unix://{socket_path}"
-            else:
-                base_url = socket_path
+            base_url = (
+                socket_path
+                if socket_path.startswith("unix://")
+                else f"unix://{socket_path}"
+            )
         else:
             base_url = resolve_rag_base_url()
         parsed_endpoint = urlparse(endpoint)
-        api_path = (parsed_endpoint.path or "/search").strip("/") or "search"
-        api_path = f"/{api_path}"
+        api_path = f"/{(parsed_endpoint.path or '/search').strip('/') or 'search'}"
 
         resolver = NamespaceResolver(context)
         rewrite_data: dict[str, Any] = self._resolve_input(
@@ -204,6 +210,8 @@ class RagMultiRetrieveHandler(BaseHandler):
         # --- Scope resolution ---
         explicit_prefixes_raw = effective.get("rag_source_prefixes")
         source_prefixes: list[str] | None = None
+        scope: str | list[str]
+        search_scope: str | list[str] | None
         if isinstance(explicit_prefixes_raw, list) and all(
             isinstance(x, str) for x in explicit_prefixes_raw
         ):
@@ -217,9 +225,34 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "Step '%s': 'rag_source_prefixes' is not a list of strings, ignoring.",
                     step.id,
                 )
-            scope_override_val: str = effective.get("scope_override", "")
-            if scope_override_val:
-                scope = scope_override_val
+            scope_override_raw = effective.get("scope_override", "")
+            if isinstance(scope_override_raw, list) and len(scope_override_raw) > 0:
+                scope = scope_override_raw
+                valid_scopes: set[str] = set(
+                    effective.get("valid_scopes")
+                    or context.pipeline.options.to_context_dict().get(
+                        "valid_scopes"
+                    )
+                    or []
+                )
+                if valid_scopes and not all(s in valid_scopes for s in scope):
+                    logger.info(
+                        "Step '%s': scope_override %s not all in valid_scopes, "
+                        "fallback to ['both']",
+                        step.id,
+                        scope,
+                    )
+                    scope = ["both"]
+                source_prefixes = None
+                search_scope = scope
+                retrieval_mode = "scope"
+            elif (
+                isinstance(scope_override_raw, str) and scope_override_raw.strip()
+            ):
+                scope = scope_override_raw.strip()
+                source_prefixes = None
+                search_scope = scope
+                retrieval_mode = "scope"
             else:
                 predicted_scope = rewrite_data.get("scope", "both")
                 scope_aliases: dict[str, str] = (
@@ -240,7 +273,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                     )
                 # TODO: derive from single source — e.g. RAG config scopes or pipeline
                 # scopes map — instead of a separate hardcoded valid_scopes list
-                valid_scopes: set[str] = set(
+                valid_scopes = set(
                     effective.get("valid_scopes")
                     or context.pipeline.options.to_context_dict().get(
                         "valid_scopes"
@@ -274,15 +307,17 @@ class RagMultiRetrieveHandler(BaseHandler):
                         confidence_threshold,
                         resolved_scope,
                     )
-            source_prefixes = None  # let RAG service resolve
-            search_scope = scope  # pass scope label to /search
-            retrieval_mode = "scope"
+                source_prefixes = None
+                search_scope = scope
+                retrieval_mode = "scope"
+
+        scope_key = scope[0] if isinstance(scope, list) else scope
 
         # Tier 3: scope-conditional recency (unless caller explicitly overrode it)
         if "rag_recency_weight" not in runtime:
             scope_recency = (
                 profiles_data.get("scope_defaults", {})
-                .get(scope, {})
+                .get(scope_key, {})
                 .get("rag_recency_weight")
             )
             if scope_recency is not None:
@@ -324,7 +359,14 @@ class RagMultiRetrieveHandler(BaseHandler):
                 uses_explicit_prefixes=bool(source_prefixes),
             ),
         )
-        rag_timeout = float(effective.get("rag_client_timeout", 30.0))
+        try:
+            rag_timeout = float(effective.get("rag_client_timeout", 30.0))
+        except (TypeError, ValueError):
+            logger.warning(
+                "Step '%s': 'rag_client_timeout' is invalid, using default 30.0 seconds.",
+                step.id,
+            )
+            rag_timeout = 30.0
         _retrieval_start = _time.monotonic()
 
         async with make_async_client(base_url, timeout=rag_timeout) as client:
@@ -383,7 +425,7 @@ class RagMultiRetrieveHandler(BaseHandler):
         if (
             min_chunks_threshold > 0
             and len(merged) < min_chunks_threshold
-            and scope not in (retry_fallback, "all")
+            and scope_key not in (retry_fallback, "all")
             and source_prefixes is None
         ):
             prev_count = len(merged)
@@ -562,9 +604,13 @@ class RagMultiRetrieveHandler(BaseHandler):
         _retrieval_seconds = _time.monotonic() - _retrieval_start
         chunks_per_query = [len(r) for r in successful]
         rrf_scores_list = list(merged_scores.values())
-        _has_rrf_scores = bool(rrf_scores_list)
         predicted_scope_for_event = str(rewrite_data.get("scope", "unknown"))
-        fallback_triggered = scope != predicted_scope_for_event
+        fallback_triggered = scope_key != predicted_scope_for_event
+        rrf_score_min = min(rrf_scores_list) if rrf_scores_list else 0.0
+        rrf_score_max = max(rrf_scores_list) if rrf_scores_list else 0.0
+        rrf_score_mean = (
+            sum(rrf_scores_list) / len(rrf_scores_list) if rrf_scores_list else 0.0
+        )
         self._publish_bus_event(
             context,
             RagRetrievalCompleted(
@@ -576,13 +622,9 @@ class RagMultiRetrieveHandler(BaseHandler):
                 fallback_triggered=fallback_triggered,
                 chunks_per_query=chunks_per_query,
                 zero_result_queries=sum(1 for c in chunks_per_query if c == 0),
-                rrf_score_min=min(rrf_scores_list) if _has_rrf_scores else 0.0,
-                rrf_score_max=max(rrf_scores_list) if _has_rrf_scores else 0.0,
-                rrf_score_mean=(
-                    sum(rrf_scores_list) / len(rrf_scores_list)
-                    if _has_rrf_scores
-                    else 0.0
-                ),
+                rrf_score_min=rrf_score_min,
+                rrf_score_max=rrf_score_max,
+                rrf_score_mean=rrf_score_mean,
                 chunks_after_merge=len(merged),
                 total_retrieval_seconds=_retrieval_seconds,
             ),

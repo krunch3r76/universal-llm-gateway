@@ -130,10 +130,10 @@ _file_index_locks: dict[str, asyncio.Lock] = {}
 
 
 def _article_event_kwargs(
-    registry: dict[str, ArticleEntry] | None, source: str
+    registry: dict[str, ArticleEntry], source: str
 ) -> dict[str, str]:
     """Return optional article fields for rag_file_indexed when file is in registry."""
-    entry = get_article_entry(registry, source) if registry else None
+    entry = get_article_entry(registry, source)
     if entry is None:
         return {}
     out: dict[str, str] = {}
@@ -467,7 +467,13 @@ async def _index_file_impl(
     *,
     force: bool = False,
 ) -> IndexResult:
-    """Inner implementation of file indexing (called with lock held)."""
+    """Inner implementation of file indexing (called with lock held).
+
+    ∀ exit path (unchanged, duplicate, empty, success, error):
+    clear_pending is called in the outer finally once mark_pending has been called.
+    mark_pending is called before any early-return so the pending journal covers
+    all in-flight files, enabling full auto-reconciliation on restart.
+    """
     start = time.monotonic()
     raw = file_path.read_bytes()
     schema_version = (
@@ -508,116 +514,125 @@ async def _index_file_impl(
     existing = collection.get(where={"source": source}, include=["metadatas"])
     existing_ids: list[str] = existing.get("ids", [])
 
-    if not force and existing_ids and all_ids_match_prefix(existing_ids, prefix):
-        # Chunks are current — check if extraction metadata is also present.
-        # Missing extraction_schema_version means extraction timed out on a prior run;
-        # mismatch or missing extraction_model triggers re-extraction when config sets it.
-        existing_metadatas = [
-            m for m in (existing.get("metadatas") or []) if isinstance(m, dict)
-        ]
-        if _config is not None and _property_index is not None:
-            expected_model = _config.knowledge_extraction.extraction_model
-            has_model_mismatch = bool(expected_model) and any(
-                m.get("extraction_model") != expected_model for m in existing_metadatas
-            )
-            if has_model_mismatch and _event_bus is not None:
-                await _event_bus.publish_async_nowait(
-                    rag_extraction_model_mismatch(
-                        file=source,
-                        expected_model=expected_model,
-                        chunk_count=len(existing_ids),
-                    )
-                )
-            scope = _config.get_scope_for_path(source)
-            ext_result = await recover_missing_extraction(
-                collection=collection,
-                source=source,
-                existing_ids=existing_ids,
-                existing_metadatas=existing_metadatas,
-                config=_config.knowledge_extraction,
-                property_index=_property_index,
-                event_bus=_event_bus,
-                scope=scope,
-            )
-            if ext_result is not None and ext_result.success:
-                await _maybe_update_corpus_hints()
-                if _event_bus is not None:
-                    await _event_bus.publish_async_nowait(
-                        rag_file_indexed(
-                            file=source,
-                            deleted=0,
-                            indexed=0,
-                            duration_seconds=time.monotonic() - start,
-                            **_article_event_kwargs(_registry, source),
-                        )
-                    )
-                return IndexResult(
-                    deleted=0,
-                    indexed=0,
-                    unchanged=False,
-                    file=source,
-                    extraction_entities=ext_result.entities,
-                    extraction_topics=ext_result.topics,
-                )
-        if _event_bus is not None:
-            await _event_bus.publish_async_nowait(
-                rag_file_skipped(file=source, reason="unchanged")
-            )
-        return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
-
-    existing_timestamps: dict[str, str] = {}
-    for meta in existing.get("metadatas") or []:
-        if isinstance(meta, dict):
-            chunk_hash = meta.get("chunk_hash")
-            indexed_at = meta.get("indexed_at")
-            if isinstance(chunk_hash, str) and isinstance(indexed_at, str):
-                existing_timestamps[chunk_hash] = indexed_at
-
-    target_chars = chunk_tokens * _TOKEN_ESTIMATE if chunk_tokens else None
-    chunks: list[Chunk] = chunk_file(file_path, target_chars=target_chars)
-    if not chunks:
-        if existing_ids:
-            collection.delete(ids=existing_ids)
-        logger.info(
-            "Index complete: file=%s deleted=%d indexed=0", source, len(existing_ids)
-        )
-        if _event_bus is not None:
-            await _event_bus.publish_async_nowait(
-                rag_file_deleted(file=source, deleted=len(existing_ids))
-            )
-        return IndexResult(
-            deleted=len(existing_ids), indexed=0, unchanged=False, file=source
-        )
-
-    texts = [c.text for c in chunks]
-    metadatas = [c.metadata for c in chunks]
-    ids = [f"{prefix}-{i}" for i in range(len(chunks))]
-
-    merged: dict[str, str | int | float | bool] = {}
-    if _registry is not None:
-        entry_meta = lookup_article_metadata(_registry, source)
-        if entry_meta is not None:
-            merged.update(entry_meta)
-    if metadata_overrides is not None:
-        merged.update(metadata_overrides)
-    for metadata in metadatas:
-        metadata.update(merged)
-
-    now = datetime.now(UTC).isoformat()
-    for metadata, chunk in zip(metadatas, chunks, strict=True):
-        chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()[:16]
-        metadata["chunk_hash"] = chunk_hash
-        metadata["indexed_at"] = existing_timestamps.get(chunk_hash, now)
-
-    if file_path.suffix.lower() == ".pdf":
-        for metadata in metadatas:
-            metadata["pdf_hash"] = content_hash
-
-    # Mark file as in-flight before any store mutation.
+    # Register in pending journal before any early-return so the startup reconciler
+    # can recover this file if the service is killed at any point after this line.
+    # ∀ exit path below: finally: clear_pending removes the entry.
     if _property_index is not None:
         await _property_index.mark_pending(source)
 
     try:
+        if not force and existing_ids and all_ids_match_prefix(existing_ids, prefix):
+            # Chunks are current — check if extraction metadata is also present.
+            # Missing extraction_schema_version means extraction timed out on a prior run;
+            # mismatch or missing extraction_model triggers re-extraction when config sets it.
+            existing_metadatas = [
+                m for m in (existing.get("metadatas") or []) if isinstance(m, dict)
+            ]
+            if _config is not None and _property_index is not None:
+                expected_model = _config.knowledge_extraction.extraction_model
+                has_model_mismatch = bool(expected_model) and any(
+                    m.get("extraction_model") != expected_model
+                    for m in existing_metadatas
+                )
+                if has_model_mismatch and _event_bus is not None:
+                    await _event_bus.publish_async_nowait(
+                        rag_extraction_model_mismatch(
+                            file=source,
+                            expected_model=expected_model,
+                            chunk_count=len(existing_ids),
+                        )
+                    )
+                scope = _config.get_scope_for_path(source)
+                ext_result = await recover_missing_extraction(
+                    collection=collection,
+                    source=source,
+                    existing_ids=existing_ids,
+                    existing_metadatas=existing_metadatas,
+                    config=_config.knowledge_extraction,
+                    property_index=_property_index,
+                    event_bus=_event_bus,
+                    scope=scope,
+                )
+                if ext_result is not None and ext_result.success:
+                    await _maybe_update_corpus_hints()
+                    if _event_bus is not None:
+                        await _event_bus.publish_async_nowait(
+                            rag_file_indexed(
+                                file=source,
+                                deleted=0,
+                                indexed=0,
+                                duration_seconds=time.monotonic() - start,
+                                **(_article_event_kwargs(_registry, source) if _registry is not None else {}),
+                            )
+                        )
+                    return IndexResult(
+                        deleted=0,
+                        indexed=0,
+                        unchanged=False,
+                        file=source,
+                        extraction_entities=ext_result.entities,
+                        extraction_topics=ext_result.topics,
+                    )
+            if _event_bus is not None:
+                await _event_bus.publish_async_nowait(
+                    rag_file_skipped(file=source, reason="unchanged")
+                )
+            return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
+
+        existing_timestamps: dict[str, str] = {}
+        for meta in existing.get("metadatas") or []:
+            if isinstance(meta, dict):
+                chunk_hash = meta.get("chunk_hash")
+                indexed_at = meta.get("indexed_at")
+                if isinstance(chunk_hash, str) and isinstance(indexed_at, str):
+                    existing_timestamps[chunk_hash] = indexed_at
+
+        target_chars = chunk_tokens * _TOKEN_ESTIMATE if chunk_tokens else None
+        chunks: list[Chunk] = chunk_file(file_path, target_chars=target_chars)
+        if not chunks:
+            if existing_ids:
+                # Property index cleanup before ChromaDB delete (same order as main path).
+                if _property_index is not None:
+                    for old_id in existing_ids:
+                        await _property_index.remove_chunk(old_id)
+                collection.delete(ids=existing_ids)
+            logger.info(
+                "Index complete: file=%s deleted=%d indexed=0",
+                source,
+                len(existing_ids),
+            )
+            if _event_bus is not None:
+                await _event_bus.publish_async_nowait(
+                    rag_file_deleted(file=source, deleted=len(existing_ids))
+                )
+            return IndexResult(
+                deleted=len(existing_ids), indexed=0, unchanged=False, file=source
+            )
+
+        texts = [c.text for c in chunks]
+        metadatas = [c.metadata for c in chunks]
+        ids = [f"{prefix}-{i}" for i in range(len(chunks))]
+
+        merged: dict[str, str | int | float | bool] = {}
+        if _registry is not None:
+            entry_meta = lookup_article_metadata(_registry, source)
+            if entry_meta is not None:
+                merged.update(entry_meta)
+        if metadata_overrides is not None:
+            merged.update(metadata_overrides)
+        for metadata in metadatas:
+            metadata.update(merged)
+
+        now = datetime.now(UTC).isoformat()
+        for metadata, chunk in zip(metadatas, chunks, strict=True):
+            chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()[:16]
+            metadata["chunk_hash"] = chunk_hash
+            metadata["indexed_at"] = existing_timestamps.get(chunk_hash, now)
+
+        if file_path.suffix.lower() == ".pdf":
+            for metadata in metadatas:
+                metadata["pdf_hash"] = content_hash
+
         extraction_entities = 0
         extraction_topics = 0
         extraction_property_entries: list[tuple[str, str, str, str]] = []
@@ -650,11 +665,18 @@ async def _index_file_impl(
                 # Compensation: keep old chunks untouched by rolling back new upsert.
                 collection.delete(ids=ids)
                 raise
-        if existing_ids:
-            collection.delete(ids=existing_ids)
+        # ∀ id ∈ existing_ids ∩ ids: already overwritten by upsert — do not re-delete.
+        new_id_set = set(ids)
+        stale_ids = [eid for eid in existing_ids if eid not in new_id_set]
+        if stale_ids:
+            # Property index cleanup BEFORE ChromaDB delete.
+            # ∀ kill after remove_chunk, before collection.delete:
+            #   stale chunks remain in ChromaDB (no property refs) → reconcile deletes on restart.
+            # ∀ kill after collection.delete: impossible — property refs already cleaned.
             if _property_index is not None:
-                for old_id in existing_ids:
+                for old_id in stale_ids:
                     await _property_index.remove_chunk(old_id)
+            collection.delete(ids=stale_ids)
     except Exception as exc:
         if _event_bus is not None:
             await _event_bus.publish_async_nowait(
@@ -669,21 +691,21 @@ async def _index_file_impl(
     logger.info(
         "Index complete: file=%s deleted=%d indexed=%d",
         source,
-        len(existing_ids),
+        len(stale_ids),
         len(chunks),
     )
     if _event_bus is not None:
         await _event_bus.publish_async_nowait(
             rag_file_indexed(
                 file=source,
-                deleted=len(existing_ids),
+                deleted=len(stale_ids),
                 indexed=len(chunks),
                 duration_seconds=time.monotonic() - start,
-                **_article_event_kwargs(_registry, source),
+                **(_article_event_kwargs(_registry, source) if _registry is not None else {}),
             )
         )
     return IndexResult(
-        deleted=len(existing_ids),
+        deleted=len(stale_ids),
         indexed=len(chunks),
         unchanged=False,
         file=source,
@@ -869,5 +891,6 @@ _admin_router = register_admin_routes(
     set_collection_fn=_set_collection,
     collection_name=COLLECTION_NAME,
     get_property_index_fn=lambda: _property_index,
+    get_event_bus_fn=lambda: _event_bus,
 )
 app.include_router(_admin_router)

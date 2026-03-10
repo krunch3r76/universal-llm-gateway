@@ -128,7 +128,7 @@ consult --no-rag "question"   # skip RAG, useful for quick queries
 | `-f PATH` | — | Inject file as context; repeat per file; directories glob `*.py` only |
 | `--no-rag` | — | Disable RAG — required when calling from foreign workspaces |
 | `--chain` | — | Sequential: first model analyses, rest review prior output |
-| `--scope` | `project` | RAG retrieval scope: `project`, `research`, `all` |
+| `--scope` | `project` | RAG retrieval scope: `project`, `research`, `all`. Multiple scopes: pass space-separated (e.g. `--scope project research`); RAG returns the union of those scopes' source_prefixes. |
 | `--rag-pipeline` | — | Use `rag-context` pipeline for intelligent RAG retrieval |
 | `-o PATH` | — | Save markdown output to file |
 | `--timeout N` | 300s | Per-model timeout |
@@ -177,7 +177,7 @@ reasoning/thinking models. Claude Sonnet and Gemini Pro carry the `general`
 fallback tag and are excluded. They appear for `architect`/`researcher`.
 For a general-purpose code review using those models, pass `--models` explicitly.
 
-RAG scope maps `source_prefixes` → `project`: `docs/architecture`, `docs/vision`, `docs/engram`; `research`: `docs/research`.
+RAG `/search` accepts `scope` as a single name or a list of names (union of scopes). Scope maps to `source_prefixes` via config; e.g. `project`: `docs/architecture`, `docs/vision`, `docs/engram`; `research`: `docs/research`. Use `GET /scopes` to list available scope names.
 
 ## scripts/ask
 

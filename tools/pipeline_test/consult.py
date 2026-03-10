@@ -31,7 +31,7 @@ def consult_step_via_lib(
     *,
     call_label: str | None = None,
     models: list[str] | None = None,
-    scope: str | None = None,
+    scope: str | list[str] | None = None,
     parallel: bool = False,
     stargate_url: str = "http://localhost:9999",
     timeout: float = 300.0,
@@ -56,7 +56,11 @@ def consult_step_via_lib(
         output_limit_chars=output_limit_chars,
     )
 
-    effective_scope = scope or detect_scope(step)
+    effective_scope: str | list[str] = (
+        scope
+        if (scope is not None and (not isinstance(scope, list) or len(scope) > 0))
+        else detect_scope(step)
+    )
 
     lib_results: list[LibResult] = execute_consult(
         question=problem,
@@ -72,17 +76,8 @@ def consult_step_via_lib(
         timeout=timeout,
     )
 
-    return [
-        ConsultResult(
-            model_id=r.model_id,
-            response_text=r.response_text,
-            prompt_tokens=r.prompt_tokens,
-            completion_tokens=r.completion_tokens,
-            latency_ms=r.latency_ms,
-            error=r.error,
-        )
-        for r in lib_results
-    ]
+    subset = ("model_id", "response_text", "prompt_tokens", "completion_tokens", "latency_ms", "error")
+    return [ConsultResult(**{k: getattr(r, k) for k in subset}) for r in lib_results]
 
 
 def detect_scope(step: StepSnapshot) -> str:

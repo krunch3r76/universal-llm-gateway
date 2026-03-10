@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_list_parser(sub: Any) -> None:
+def _add_list_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("list", help="List available pipeline executions")
     p.add_argument("pipeline_id", nargs="?", help="Pipeline ID to filter by")
     p.set_defaults(func=_cmd_list)
@@ -116,7 +116,7 @@ def _list_all_pipelines() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_snapshot_parser(sub: Any) -> None:
+def _add_snapshot_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("snapshot", help="Capture execution into a fixture")
     p.add_argument("pipeline_id", help="Pipeline ID")
     p.add_argument(
@@ -162,7 +162,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_inspect_parser(sub: Any) -> None:
+def _add_inspect_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("inspect", help="Inspect a fixture or specific step")
     p.add_argument("fixture", help="Path to fixture JSON")
     p.add_argument("--step", "-s", help="Step name to inspect")
@@ -199,7 +199,7 @@ def _cmd_inspect(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_refine_parser(sub: Any) -> None:
+def _add_refine_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "refine-context",
         help="Agent-optimized step view for prompt refinement",
@@ -258,7 +258,7 @@ def _load_snapshot(args: argparse.Namespace) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _add_replay_parser(sub: Any) -> None:
+def _add_replay_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("replay", help="Replay a model call against Stargate")
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument("fixture", nargs="?", help="Path to fixture JSON")
@@ -348,7 +348,7 @@ def _cmd_replay(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_compare_parser(sub: Any) -> None:
+def _add_compare_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("compare", help="Compare original vs replay output")
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument("fixture", nargs="?", help="Path to fixture JSON")
@@ -400,7 +400,7 @@ def _cmd_compare(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_consult_parser(sub: Any) -> None:
+def _add_consult_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "consult",
         help="Query other models for prompt improvement suggestions (chained by default)",
@@ -452,10 +452,12 @@ def _add_consult_parser(sub: Any) -> None:
     )
     p.add_argument(
         "--scope",
+        nargs="*",
         default=None,
+        metavar="SCOPE",
         help=(
-            "RAG scope override (default: auto-detected from model tier). "
-            "See ~/.gateway/rag.yaml for available scopes."
+            "RAG scope override, one or more names space-separated (default: auto-detected). "
+            "E.g. --scope prompting or --scope prompting research. See ~/.gateway/rag.yaml."
         ),
     )
     p.add_argument(
@@ -486,8 +488,9 @@ def _cmd_consult(args: argparse.Namespace) -> None:
     mode = "parallel" if args.parallel else "chained"
     print(f"Consulting about: {step.step_name} ({mode})")
     print(f"  Problem: {args.problem}")
-    if args.scope:
-        print(f"  Scope: {args.scope} (explicit)")
+    scope_arg = args.scope if args.scope else None
+    if scope_arg is not None:
+        print(f"  Scope: {scope_arg} (explicit)")
     else:
         detected = consult_svc.detect_scope(step)
         print(f"  Scope: {detected} (auto-detected from model tier)")
@@ -500,7 +503,7 @@ def _cmd_consult(args: argparse.Namespace) -> None:
         problem=args.problem,
         call_label=args.call,
         models=args.models,
-        scope=args.scope,
+        scope=scope_arg,
         parallel=args.parallel,
         stargate_url=args.url,
         timeout=args.timeout,
@@ -535,7 +538,7 @@ def _print_result(result: ConsultResult, label: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_eval_retrieval_parser(sub: Any) -> None:
+def _add_eval_retrieval_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "eval-retrieval",
         help="Score retrieval + reranking quality using cloud model critique",
@@ -612,7 +615,7 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_eval_steps_parser(sub: Any) -> None:
+def _add_eval_steps_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "eval-steps",
         help="Per-step diagnosis: score each pipeline step + identify bottleneck",
@@ -689,7 +692,7 @@ def _cmd_eval_steps(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_ingest_papers_parser(sub: Any) -> None:
+def _add_ingest_papers_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "ingest-papers",
         help="Copy prompt-engineering PDFs into RAG corpus directory",
@@ -844,7 +847,7 @@ def _cmd_ingest_papers(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_measure_profile_parser(sub: Any) -> None:
+def _add_measure_profile_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "measure-profile",
         help="Sweep RAG tunables to find optimal values for a consumer model",
@@ -947,7 +950,7 @@ def _cmd_measure_profile(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_sandbox_parser(sub: Any) -> None:
+def _add_sandbox_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser("sandbox", help="Manage pipeline sandboxes for experimentation")
     sp = p.add_subparsers(dest="sandbox_cmd", required=True)
 
@@ -1016,7 +1019,7 @@ def _cmd_sandbox_clean(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _add_ab_test_parser(sub: Any) -> None:
+def _add_ab_test_parser(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "ab-test",
         help="A/B test two prompt variants (replay analyze_rewrite with dir A vs dir B)",

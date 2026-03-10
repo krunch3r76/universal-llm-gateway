@@ -94,7 +94,7 @@ def StepCompleted(  # noqa: N802
     Enables event consumers to detect non-zero shell exits that produced output.
     Optional json_output_keys: top-level keys of JSON output (observability).
     """
-    payload_data: dict[str, Any] = {
+    payload: dict[str, Any] = {
         "pipeline_id": pipeline_id,
         "execution_id": execution_id,
         "step_name": step_name,
@@ -103,11 +103,10 @@ def StepCompleted(  # noqa: N802
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "model_call_count": model_call_count,
-        "model_id": model_id,
-        "exit_code": exit_code,
-        "json_output_keys": json_output_keys,
+        **({"model_id": model_id} if model_id is not None else {}),
+        **({"exit_code": exit_code} if exit_code is not None else {}),
+        **({"json_output_keys": json_output_keys} if json_output_keys is not None else {}),
     }
-    payload = {k: v for k, v in payload_data.items() if v is not None}
     return Event(
         signal="pipeline.step.completed",
         payload=payload,
@@ -140,18 +139,17 @@ def StepFailed(  # noqa: N802
         model_call_count: Total model calls attempted before failure
         traceback: Full Python traceback (omitted when None)
     """
-    payload_data: dict[str, Any] = {
+    payload: dict[str, Any] = {
         "pipeline_id": pipeline_id,
         "execution_id": execution_id,
         "step_name": step_name,
-        "duration_seconds": duration_seconds,
         "error": error,
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "model_call_count": model_call_count,
-        "traceback": traceback,
+        **({"duration_seconds": duration_seconds} if duration_seconds is not None else {}),
+        **({"traceback": traceback} if traceback is not None else {}),
     }
-    payload = {k: v for k, v in payload_data.items() if v is not None}
     return Event(
         signal="pipeline.step.failed",
         payload=payload,
@@ -390,7 +388,7 @@ def RagRetrievalParamsResolved(  # noqa: N802
     max_chunks: int,
     top_k_per_query: int,
     rrf_k: int,
-    scope: str,
+    scope: str | list[str],
     retrieval_mode: str,
     uses_explicit_prefixes: bool,
 ) -> Event:
@@ -404,7 +402,8 @@ def RagRetrievalParamsResolved(  # noqa: N802
         max_chunks: Effective rag_max_chunks after profile + runtime merge
         top_k_per_query: Effective rag_top_k_per_query
         rrf_k: Effective RRF constant
-        scope: Resolved retrieval scope (research / project / both / custom)
+        scope: Resolved retrieval scope: single label or list of labels for multiscope
+               (research / project / both / custom or list thereof)
         retrieval_mode: "scope" or "source_prefixes"
         uses_explicit_prefixes: True iff caller passed rag_source_prefixes
     """

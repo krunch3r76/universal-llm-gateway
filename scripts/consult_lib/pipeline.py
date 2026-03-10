@@ -292,7 +292,11 @@ def run_code_review_pipeline(
 
 
 def build_reviewer_pipeline_model_overrides(models: list[str]) -> dict[str, str]:
-    """Map reviewer target models to code-review pipeline model refs."""
+    """Map reviewer target models to code-review pipeline model refs.
+
+    Override IDs are passed through verbatim to the pipeline; they do not need
+    to exist in any config. The pipeline uses them as literal model IDs.
+    """
     overrides: dict[str, str] = {}
     if not models:
         return overrides

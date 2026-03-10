@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -54,6 +55,10 @@ async def index_directory_contents(
     totals = DirectoryIndexTotals()
     walked_sources: set[str] = set()
 
+    # Collect all candidate paths before dispatch so walked_sources is complete
+    # before asyncio.gather starts and stale-chunk cleanup in reindex_directory
+    # sees the full walked set even if gather is interrupted.
+    file_paths: list[Path] = []
     for root, _dirs, files in dir_path.walk():
         for name in files:
             file_path = root / name
@@ -61,18 +66,32 @@ async def index_directory_contents(
                 continue
             if collect_walked_sources:
                 walked_sources.add(str(file_path.resolve()))
-            try:
-                result = await index_file(file_path, metadata_overrides, force=force)
-            except Exception as exc:
-                on_index_error(file_path, exc)
-                continue
-            totals.indexed += result.indexed
-            totals.deleted += result.deleted
-            if result.duplicate:
-                totals.duplicates += 1
-            elif result.unchanged:
-                totals.unchanged += 1
-            totals.files += 1
+            file_paths.append(file_path)
+
+    if not file_paths:
+        return totals, walked_sources
+
+    # Stargate's capacity gate (32 slots) provides natural back-pressure — no semaphore needed.
+    # ∀ file_path: per-source asyncio.Lock in _index_file prevents double-indexing.
+    async def _process(fp: Path) -> IndexResult | None:
+        try:
+            return await index_file(fp, metadata_overrides, force=force)
+        except Exception as exc:
+            on_index_error(fp, exc)
+            return None
+
+    results = await asyncio.gather(*(_process(fp) for fp in file_paths))
+
+    for result in results:
+        if result is None:
+            continue
+        totals.indexed += result.indexed
+        totals.deleted += result.deleted
+        if result.duplicate:
+            totals.duplicates += 1
+        elif result.unchanged:
+            totals.unchanged += 1
+        totals.files += 1
 
     return totals, walked_sources
 
@@ -87,7 +106,7 @@ def find_removed_sources(
     metadata_rows = all_meta.get("metadatas") or []
     dir_prefix = f"{dir_path.resolve()}/"
     return {
-        str(source)
+        source
         for row in metadata_rows
         if isinstance(row, dict)
         for source in [row.get("source")]
@@ -129,9 +148,9 @@ async def purge_orphaned_chunks(
         if not isinstance(row, dict):
             continue
         source = row.get("source")
-        if not isinstance(source, str):
-            continue
-        if not any(source.startswith(prefix) for prefix in watch_prefixes):
+        if not isinstance(source, str) or not any(
+            source.startswith(prefix) for prefix in watch_prefixes
+        ):
             continue
         source_to_ids.setdefault(source, []).append(chunk_id)
 

@@ -70,7 +70,7 @@ async def execute_single_query(
     query: str,
     top_k: int,
     recency_weight: float,
-    scope: str | None,
+    scope: str | list[str] | None,
     source_prefixes: list[str] | None,
 ) -> list[RetrievedChunk]:
     """Execute one RAG search and parse results into chunks."""
@@ -81,7 +81,7 @@ async def execute_single_query(
     }
     if source_prefixes:
         body["source_prefixes"] = source_prefixes
-    elif scope:
+    elif scope is not None:
         body["scope"] = scope
 
     response = await client.post(endpoint, json=body)

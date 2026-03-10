@@ -106,7 +106,7 @@ def rag_watch_stopped(*, watchers: int) -> Event:
 @event_factory
 def rag_scope_resolved(
     *,
-    scope: str,
+    scope: str | list[str],
     prefix_count: int,
 ) -> Event:
     return Event(
@@ -118,7 +118,7 @@ def rag_scope_resolved(
 @event_factory
 def rag_scope_rejected(
     *,
-    scope: str,
+    scope: str | list[str],
     reason: str,
     available: list[str],
 ) -> Event:
@@ -217,9 +217,8 @@ def rag_extraction_batch_completed(
         "successful": successful,
         "written": written,
         "duration_seconds": duration_seconds,
+        **({"extraction_model": extraction_model} if extraction_model is not None else {}),
     }
-    if extraction_model is not None:
-        payload["extraction_model"] = extraction_model
     return Event(signal="rag.extraction.batch.completed", payload=payload)
 
 
@@ -316,9 +315,7 @@ def rag_article_registry_failed(*, path: str, error: str) -> Event:
 
 
 @event_factory
-def rag_article_registry_write_failed(
-    *, path: str, filename: str, error: str
-) -> Event:
+def rag_article_registry_write_failed(*, path: str, filename: str, error: str) -> Event:
     """Emitted when writing an entry to article registry fails during ingest."""
     return Event(
         signal="rag.article.registry.write.failed",
@@ -345,17 +342,12 @@ def rag_file_indexed(
         "deleted": deleted,
         "indexed": indexed,
         "duration_seconds": duration_seconds,
+        **({"article_title": article_title} if article_title is not None else {}),
+        **({"article_authors": article_authors} if article_authors is not None else {}),
+        **({"article_venue": article_venue} if article_venue is not None else {}),
+        **({"published_date": published_date} if published_date is not None else {}),
+        **({"article_doi": article_doi} if article_doi is not None else {}),
     }
-    if article_title is not None:
-        payload["article_title"] = article_title
-    if article_authors is not None:
-        payload["article_authors"] = article_authors
-    if article_venue is not None:
-        payload["article_venue"] = article_venue
-    if published_date is not None:
-        payload["published_date"] = published_date
-    if article_doi is not None:
-        payload["article_doi"] = article_doi
     return Event(signal="rag.file.indexed", payload=payload)
 
 
@@ -421,7 +413,7 @@ def rag_search_executed(
     query_len: int,
     top_k: int,
     results: int,
-    scope: str | None,
+    scope: str | list[str] | None,
 ) -> Event:
     """Emitted after a search query completes."""
     return Event(
@@ -439,7 +431,7 @@ def rag_search_executed(
 def rag_search_no_results(
     *,
     query_len: int,
-    scope: str | None,
+    scope: str | list[str] | None,
 ) -> Event:
     """Emitted when a search returns zero results."""
     return Event(
@@ -462,5 +454,54 @@ def rag_corpus_hints_updated(
             "path": path,
             "scopes_updated": scopes_updated,
             "timestamp": timestamp,
+        },
+    )
+
+
+@event_factory
+def rag_directory_index_started(
+    *,
+    path: str,
+    total_files: int,
+) -> Event:
+    """Emitted before concurrent directory indexing dispatch begins.
+
+    ∀ concurrent reindex: emitted once, listing the directory and file count
+    so an interrupted session is diagnosable via the event log.
+    total_files: number of files that will be dispatched (before any are processed).
+    """
+    return Event(
+        signal="rag.directory.index.started",
+        payload={"path": path, "total_files": total_files},
+    )
+
+
+@event_factory
+def rag_directory_index_completed(
+    *,
+    path: str,
+    total_files: int,
+    indexed: int,
+    deleted: int,
+    unchanged: int,
+    duplicates: int,
+    errors: int,
+) -> Event:
+    """Emitted after all files in a directory index/reindex have been processed.
+
+    Absence of this signal following rag.directory.index.started indicates
+    an interrupted session — re-run reindex_directory to recover.
+    errors: files that raised an exception and were passed to on_index_error.
+    """
+    return Event(
+        signal="rag.directory.index.completed",
+        payload={
+            "path": path,
+            "total_files": total_files,
+            "indexed": indexed,
+            "deleted": deleted,
+            "unchanged": unchanged,
+            "duplicates": duplicates,
+            "errors": errors,
         },
     )

@@ -268,14 +268,19 @@ async def embed_chunks(texts: list[str]) -> list[list[float]]:
     return all_embeddings
 
 
-async def embed_query(text: str, scope: str | None = None) -> list[float]:
+async def embed_query(text: str, scope: str | list[str] | None = None) -> list[float]:
     """Embed a search query.
 
     For instruction-aware models (Qwen3-Embedding): uses Instruct:/Query: format
     with scope-specific instructions. For legacy models (bge-m3): uses search_query: prefix.
+    When scope is a list, the first scope is used for instruction selection.
     """
+    if isinstance(scope, list):
+        effective_scope = scope[0] if scope else None
+    else:
+        effective_scope = scope
     if _is_instruction_aware_model(_embed_model):
-        instruction = _SCOPE_INSTRUCTIONS.get(scope or "", _DEFAULT_INSTRUCTION)
+        instruction = _SCOPE_INSTRUCTIONS.get(effective_scope or "", _DEFAULT_INSTRUCTION)
         formatted = f"Instruct: {instruction}\nQuery: {text}"
     else:
         formatted = f"search_query: {text}"

@@ -252,6 +252,15 @@ due to the all-or-nothing write invariant; equals `successful` when all chunks s
 
 **INVARIANT**: `rag.extraction.permanently.skipped` is emitted at most once per `chunk_id` — on the attempt that causes `attempt_count >= max_extraction_attempts`.
 
+### RAG scope resolution
+
+The RAG `/search` request body may send `scope` as a string (single scope name) or an array of strings (multiple scopes; resolved to the union of each scope's `source_prefixes`). Scope resolution runs before search; event payload `scope` is the client-provided value (string or array of strings).
+
+| Signal | Payload | Description |
+|--------|---------|-------------|
+| `rag.scope.resolved` | `scope` (str \| list[str]), `prefix_count` | Scope(s) resolved to merged source_prefixes |
+| `rag.scope.rejected` | `scope` (str \| list[str]), `reason`, `available` | Scope validation failed (e.g. unknown scope name or empty list) |
+
 ### Doc Generate Extraction Lifecycle
 
 **INVARIANT**: `doc.generate.extract.success` ⟹ preceding
@@ -383,12 +392,13 @@ pipeline.rag.retrieval.params.resolved
 | `pipeline.rag.retrieval.retry.triggered` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `threshold`, `retry_scope`, `reason` | Low-chunk retry: retrieval will retry with broader scope; reason e.g. `low_chunk_count` |
 | `pipeline.rag.retrieval.retry.succeeded` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | Retry yielded more chunks; result adopted |
 | `pipeline.rag.retrieval.retry.not_improved` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | Retry ran but did not improve; initial result kept |
-| `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | Pre-retrieval: effective parameters after three-tier merge |
+| `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | Pre-retrieval: effective parameters after three-tier merge; `scope` may be string or array of strings (multiscope) |
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds` | Post-retrieval: scope prediction + quality metrics |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | All queries failed — no chunks to merge |
 
 Payload semantics:
 - `consumer_tier`: Caller-declared consumer capacity class (`"frontier"`, `"local"`, `"small_local"`, or None if not specified)
+- `scope` (params.resolved): Resolved retrieval scope: single label (str) or list of labels (array of str) for multiscope retrieval
 - `predicted_scope`: Raw scope label from the rewrite model (before confidence-threshold fallback)
 - `scope_confidence`: Model confidence in [0.0, 1.0]; values below threshold trigger fallback
 - `fallback_triggered`: True when low confidence caused scope override to `both`
@@ -791,8 +801,12 @@ provider HTTP failures.
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty) |
 | `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`} |
 | `rag.file.indexing.failed` | `file`, `error` | unhandled error aborted indexing for this file |
-| `rag.search.executed` | `query_len`, `top_k`, `results`, `scope` | search completed with ≥1 result |
-| `rag.search.no_results` | `query_len`, `scope` | search completed with 0 results |
+| `rag.directory.index.started` | `path`, `total_files` | emitted once before concurrent directory index/reindex dispatch; total_files = count of files to process |
+| `rag.directory.index.completed` | `path`, `total_files`, `indexed`, `deleted`, `unchanged`, `duplicates`, `errors` | emitted after all files in a directory index/reindex have been processed; absence after `rag.directory.index.started` indicates interrupted session |
+| `rag.scope.resolved` | `scope`, `prefix_count` | scope(s) resolved to prefixes; `scope`: str or array of strings |
+| `rag.scope.rejected` | `scope`, `reason`, `available` | scope validation failed |
+| `rag.search.executed` | `query_len`, `top_k`, `results`, `scope` | search completed with ≥1 result; `scope`: str \| list[str] \| None |
+| `rag.search.no_results` | `query_len`, `scope` | search completed with 0 results; `scope`: str \| list[str] \| None |
 | `rag.corpus_hints.updated` | `path`, `scopes_updated`, `timestamp` | corpus_hints.yaml written after aggregation from property index |
 
 ### Doc Generate Events
@@ -829,7 +843,7 @@ Pipeline events flow to two sinks:
 | `pipeline.estimate.completed` | `pipeline_id`, `item_count`, `batch_count`, `total_source_tokens`, `budget_tokens` | `estimated_validate_tokens` |
 | `pipeline.estimate.failed` | `pipeline_id`, `error`, `retryable` | - |
 | `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | - |
-| `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | - |
+| `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | `scope` may be string or array of strings (multiscope) |
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds` | - |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | - |
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | - |

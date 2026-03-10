@@ -53,6 +53,16 @@ class ConsultResult:
     response_preview: str | None = None
 
 
+_CONSULT_RESULT_DEFAULTS: dict[str, Any] = {
+    "model_id": "unknown",
+    "response_text": "",
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "latency_ms": 0.0,
+}
+_VALID_RESULT_KEYS = frozenset(ConsultResult.__dataclass_fields__)
+
+
 def _dict_to_result(d: dict[str, Any]) -> ConsultResult:
     """Convert a raw query result dict into a ConsultResult.
 
@@ -62,23 +72,15 @@ def _dict_to_result(d: dict[str, Any]) -> ConsultResult:
     Returns:
         ConsultResult with fields populated from d.
     """
-    return ConsultResult(
-        model_id=d.get("model_id", "unknown"),
-        response_text=d.get("response", ""),
-        prompt_tokens=d.get("prompt_tokens", 0),
-        completion_tokens=d.get("completion_tokens", 0),
-        latency_ms=d.get("latency_ms", 0.0),
-        phase=d.get("phase"),
-        phase_index=d.get("phase_index"),
-        error=d.get("error"),
-        execution_id=d.get("execution_id"),
-        pipeline_id=d.get("pipeline_id"),
-        started_at=d.get("started_at"),
-        finished_at=d.get("finished_at"),
-        duration_ms=d.get("duration_ms"),
-        input_prompt_preview=d.get("input_prompt_preview"),
-        response_preview=d.get("response_preview"),
-    )
+    data: dict[str, Any] = {
+        k: _CONSULT_RESULT_DEFAULTS.get(k) for k in _VALID_RESULT_KEYS
+    }
+    for k, v in d.items():
+        if k == "response":
+            data["response_text"] = v if v is not None else ""
+        elif k in _VALID_RESULT_KEYS:
+            data[k] = v
+    return ConsultResult(**data)
 
 
 def _resolve_models(
@@ -117,7 +119,7 @@ def _resolve_models(
 def _fetch_rag(
     *,
     question: str,
-    scope: str,
+    scope: str | list[str],
     rag_url: str,
     stargate_url: str,
     use_pipeline: bool,
@@ -128,7 +130,7 @@ def _fetch_rag(
 
     Args:
         question: User question to retrieve context for.
-        scope: RAG scope name (e.g. project, research).
+        scope: RAG scope name or list of names (e.g. project, [project, research]).
         rag_url: RAG service URL (UDS or TCP).
         stargate_url: Stargate base URL when using pipeline.
         use_pipeline: If True, use rag-context pipeline; if False, direct search.
@@ -146,22 +148,31 @@ def _fetch_rag(
     is a best-effort path and its failure modes (socket absent, scope unknown) are
     already surfaced as warnings.
     """
-    if not rag_socket_present(rag_url):
-        msg = "RAG service not available (socket absent)"
-        if use_pipeline:
-            raise RuntimeError(msg)
-        print(f"{msg}; running without context retrieval", file=sys.stderr)
-        return None
 
-    available_scopes = set(fetch_scope_choices(rag_url=rag_url))
-    if scope not in available_scopes:
-        msg = (
-            f"Unknown RAG scope '{scope}'. "
-            f"Available: {', '.join(sorted(available_scopes))}."
-        )
+    def _handle_rag_error(msg: str) -> None:
         if use_pipeline:
             raise RuntimeError(msg)
         print(f"{msg} Skipping RAG.", file=sys.stderr)
+
+    if not rag_socket_present(rag_url):
+        _handle_rag_error(
+            "RAG service not available (socket absent); running without context retrieval"
+        )
+        return None
+
+    available_scopes = set(fetch_scope_choices(rag_url=rag_url))
+    unknown_scopes: list[str] = []
+    if isinstance(scope, str):
+        if scope not in available_scopes:
+            unknown_scopes.append(scope)
+    else:
+        unknown_scopes = [s for s in scope if s not in available_scopes]
+    if unknown_scopes:
+        msg = (
+            f"Unknown RAG scope(s): {', '.join(unknown_scopes)}. "
+            f"Available: {', '.join(sorted(available_scopes))}."
+        )
+        _handle_rag_error(msg)
         return None
 
     print("Retrieving RAG context...", file=sys.stderr)
@@ -237,7 +248,7 @@ def execute_consult(
     role: str = "researcher",
     context_files: list[Path] | None = None,
     context_text: str | None = None,
-    scope: str | None = None,
+    scope: str | list[str] | None = None,
     chain: bool = False,
     models: list[str] | None = None,
     stargate_url: str = DEFAULT_STARGATE_URL,
@@ -260,7 +271,7 @@ def execute_consult(
         role: Consultation role (researcher, architect, reviewer, planner, prompt_engineer).
         context_files: Files/directories to include as context.
         context_text: Pre-assembled context string (e.g. pipeline step snapshot).
-        scope: RAG retrieval scope. None defaults to "project".
+        scope: RAG retrieval scope (str or list of names). None/empty defaults to "project".
         chain: If True, run models sequentially (analyst -> reviewer(s)).
         models: Explicit model IDs. None triggers role-based selection.
         no_rag: Disable RAG retrieval entirely.
@@ -290,7 +301,7 @@ def execute_consult(
 
     rag_findings: list[str] | None = None
     scope_hint = role_requirements.get(role, {}).get("scope_hint")
-    effective_scope = scope or scope_hint or "project"
+    effective_scope: str | list[str] = scope or scope_hint or "project"
     if scope_hint and not scope:
         print(
             f"Using role scope hint '{scope_hint}' (override with --scope)",
@@ -304,11 +315,10 @@ def execute_consult(
         cloud_only=cloud_only,
     )
 
-    rag_extra: dict[str, Any] = {}
-    if pipeline_options:
-        rag_extra.update(pipeline_options)
-    if consumer_tier:
-        rag_extra["consumer_tier"] = consumer_tier
+    rag_extra: dict[str, Any] = {
+        **(pipeline_options or {}),
+        **({"consumer_tier": consumer_tier} if consumer_tier else {}),
+    }
 
     if not no_rag:
         rag_findings = _fetch_rag(
@@ -439,45 +449,28 @@ def _execute_via_pipeline(
     Returns:
         List of ConsultResult from the pipeline response(s).
     """
+    common = {
+        "pipeline_id": pipeline_id,
+        "user_message": user_prompt,
+        "stargate_url": stargate_url,
+        "timeout": timeout,
+        "pipeline_options": pipeline_options,
+    }
     if models and len(models) > 1:
         print(
             f"Pipeline multi-model: {pipeline_id} × {len(models)} models",
             file=sys.stderr,
         )
-        raw_results = query_pipeline_multi(
-            pipeline_id=pipeline_id,
-            user_message=user_prompt,
-            models=models,
-            stargate_url=stargate_url,
-            timeout=timeout,
-            pipeline_options=pipeline_options,
-        )
+        raw_results = query_pipeline_multi(**common, models=models)
     elif models and len(models) == 1:
         print(
             f"Pipeline: {pipeline_id} (model override: {models[0]})",
             file=sys.stderr,
         )
-        raw_results = [
-            query_pipeline(
-                pipeline_id=pipeline_id,
-                user_message=user_prompt,
-                stargate_url=stargate_url,
-                timeout=timeout,
-                model_override=models[0],
-                pipeline_options=pipeline_options,
-            )
-        ]
+        raw_results = [query_pipeline(**common, model_override=models[0])]
     else:
         print(f"Pipeline: {pipeline_id} (auto model selection)", file=sys.stderr)
-        raw_results = [
-            query_pipeline(
-                pipeline_id=pipeline_id,
-                user_message=user_prompt,
-                stargate_url=stargate_url,
-                timeout=timeout,
-                pipeline_options=pipeline_options,
-            )
-        ]
+        raw_results = [query_pipeline(**common)]
 
     for r in raw_results:
         if isinstance(r, dict) and "pipeline_id" not in r:

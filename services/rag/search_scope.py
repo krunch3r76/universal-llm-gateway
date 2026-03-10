@@ -52,19 +52,36 @@ def resolve_scope_request(
             status_code=400,
             detail="'scope' and 'source_prefixes' are mutually exclusive",
         )
-    if not request.scope:
+    scope_names: list[str]
+    if request.scope is None:
         return request
+    if isinstance(request.scope, str):
+        scope_names = [request.scope]
+    else:
+        if len(request.scope) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="scope cannot be empty list",
+            )
+        scope_names = list(request.scope)
 
     loaded_config = require_loaded_config(config)
-    scope_def = loaded_config.scopes.get(request.scope)
-    if scope_def is None:
-        available = sorted(loaded_config.scopes)
-        available_display = ", ".join(available)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown scope '{request.scope}'. Available: {available_display}",
-        )
-    return request.model_copy(update={"source_prefixes": scope_def.prefixes})
+    merged_prefixes: list[str] = []
+    seen: set[str] = set()
+    for name in scope_names:
+        scope_def = loaded_config.scopes.get(name)
+        if scope_def is None:
+            available = sorted(loaded_config.scopes)
+            available_display = ", ".join(available)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown scope {name!r}. Available: {available_display}",
+            )
+        for p in scope_def.prefixes:
+            if p not in seen:
+                seen.add(p)
+                merged_prefixes.append(p)
+    return request.model_copy(update={"source_prefixes": merged_prefixes})
 
 
 def apply_source_prefix_filter(

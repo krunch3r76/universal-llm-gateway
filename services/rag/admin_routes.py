@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -23,6 +23,10 @@ from services.rag.directory_ops import (
     IndexFileFn,
     find_removed_sources,
     index_directory_contents,
+)
+from services.rag.events import (
+    rag_directory_index_completed,
+    rag_directory_index_started,
 )
 from services.rag.models import (
     ClearResponse,
@@ -62,6 +66,29 @@ def _validate_directory(path: str) -> Path:
     return dir_path
 
 
+async def _bulk_premark(
+    dir_path: Path,
+    extensions: set[str],
+    get_property_index_fn: Callable[[], PropertyIndex | None],
+) -> list[Path]:
+    """Collect file paths and pre-mark all as pending before concurrent dispatch.
+
+    ∀ fp ∈ returned list: pending journal entry exists before asyncio.gather starts.
+    ∀ fp: _index_file_impl calls clear_pending on any exit (success/skip/error).
+    Duplicate PDF / unchanged files: clear_pending is called when _index_file_impl
+    returns (mark_pending now precedes those early-return paths per Task 5).
+    """
+    prop_idx = get_property_index_fn()
+    seen: set[Path] = set()
+    for ext in extensions:
+        for fp in dir_path.rglob(f"*{ext}"):
+            if fp.is_file() and fp not in seen:
+                seen.add(fp)
+                if prop_idx is not None:
+                    await prop_idx.mark_pending(str(fp))
+    return sorted(seen)
+
+
 def register_admin_routes(
     *,
     index_file_fn: IndexFileFn,
@@ -71,6 +98,7 @@ def register_admin_routes(
     set_collection_fn: Callable[[chromadb.Collection], None],
     collection_name: str,
     get_property_index_fn: Callable[[], PropertyIndex | None],
+    get_event_bus_fn: Callable[[], object | None] | None = None,
 ) -> APIRouter:
     """Register admin routes with the shared service state via closures."""
 
@@ -88,15 +116,50 @@ def register_admin_routes(
     ) -> IndexDirectoryResponse:
         dir_path = _validate_directory(request.path)
         extensions = set(request.extensions or DEFAULT_EXTENSIONS)
+        errors: list[Path] = []
+
+        def _on_error(fp: Path, exc: Exception) -> None:
+            errors.append(fp)
+            logger.warning("Skipping %s: %s", fp, exc)
+
+        file_paths = await _bulk_premark(dir_path, extensions, get_property_index_fn)
+        candidate_count = len(file_paths)
+        logger.warning(
+            "Directory index starting: path=%s files=%d force=%s",
+            dir_path,
+            candidate_count,
+            request.force,
+        )
+        eb = get_event_bus_fn() if get_event_bus_fn else None
+        if eb:
+            await eb.publish_async_nowait(
+                rag_directory_index_started(
+                    path=str(dir_path), total_files=candidate_count
+                )
+            )
+
         totals, _walked = await index_directory_contents(
             dir_path=dir_path,
             extensions=extensions,
             index_file=index_file_fn,
             metadata_overrides=request.metadata_overrides,
             collect_walked_sources=False,
-            on_index_error=lambda fp, exc: logger.warning("Skipping %s: %s", fp, exc),
+            on_index_error=_on_error,
             force=request.force,
         )
+
+        if eb:
+            await eb.publish_async_nowait(
+                rag_directory_index_completed(
+                    path=str(dir_path),
+                    total_files=candidate_count,
+                    indexed=totals.indexed,
+                    deleted=totals.deleted,
+                    unchanged=totals.unchanged,
+                    duplicates=totals.duplicates,
+                    errors=len(errors),
+                )
+            )
         return IndexDirectoryResponse(
             indexed=totals.indexed,
             deleted=totals.deleted,
@@ -119,13 +182,35 @@ def register_admin_routes(
     ) -> IndexDirectoryResponse:
         dir_path = _validate_directory(request.path)
         extensions = set(request.extensions or DEFAULT_EXTENSIONS)
+        errors: list[Path] = []
+
+        def _on_error(fp: Path, exc: Exception) -> None:
+            errors.append(fp)
+            logger.warning("Skipping %s: %s", fp, exc)
+
+        file_paths = await _bulk_premark(dir_path, extensions, get_property_index_fn)
+        candidate_count = len(file_paths)
+        logger.warning(
+            "Directory reindex starting: path=%s files=%d force=%s",
+            dir_path,
+            candidate_count,
+            request.force,
+        )
+        eb = get_event_bus_fn() if get_event_bus_fn else None
+        if eb:
+            await eb.publish_async_nowait(
+                rag_directory_index_started(
+                    path=str(dir_path), total_files=candidate_count
+                )
+            )
+
         totals, walked_sources = await index_directory_contents(
             dir_path=dir_path,
             extensions=extensions,
             index_file=index_file_fn,
             metadata_overrides=request.metadata_overrides,
             collect_walked_sources=True,
-            on_index_error=lambda fp, exc: logger.warning("Skipping %s: %s", fp, exc),
+            on_index_error=_on_error,
             force=request.force,
         )
         collection = get_collection_fn()
@@ -143,6 +228,19 @@ def register_admin_routes(
                     source,
                     len(stale_ids),
                 )
+
+        if eb:
+            await eb.publish_async_nowait(
+                rag_directory_index_completed(
+                    path=str(dir_path),
+                    total_files=candidate_count,
+                    indexed=totals.indexed,
+                    deleted=totals.deleted,
+                    unchanged=totals.unchanged,
+                    duplicates=totals.duplicates,
+                    errors=len(errors),
+                )
+            )
         return IndexDirectoryResponse(
             indexed=totals.indexed,
             deleted=totals.deleted,
@@ -165,8 +263,19 @@ def register_admin_routes(
         include = ["metadatas"] if not include_text else ["documents", "metadatas"]
         results = collection.get(include=include)
         ids: list[str] = results.get("ids") or []
-        docs: list[str] = results.get("documents") or ([""] * len(ids))
-        metas: list = results.get("metadatas") or []
+        raw_docs = results.get("documents")
+        raw_metas = results.get("metadatas")
+        n = len(ids)
+        docs: list[str] = (
+            raw_docs
+            if isinstance(raw_docs, list) and len(raw_docs) == n
+            else ["" for _ in ids]
+        )
+        metas: list[dict[str, Any]] = (
+            raw_metas
+            if isinstance(raw_metas, list) and len(raw_metas) == n
+            else [{} for _ in ids]
+        )
 
         items: list[ExtractionExportItem] = []
         sources_seen: set[str] = set()

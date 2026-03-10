@@ -1,24 +1,28 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 DECAY_LAMBDA = 0.01  # half-life ~= 69 days
 
 
 class SearchRequest(BaseModel):
+    """Request body for RAG /search. Scope and source_prefixes are mutually exclusive."""
+
     query: str
     top_k: int = 5
     recency_weight: float = 0.0
     max_distance: float | None = None  # None = return all (backward compat)
     source_prefixes: list[str] | None = None
-    scope: str | None = (
-        None  # Resolved to source_prefixes via config; mutually exclusive
+    scope: str | list[str] | None = (
+        None  # Single scope name or list of names; resolved to union of source_prefixes via config; mutually exclusive with source_prefixes
     )
 
 
 class SearchResponse(BaseModel):
     chunks: list[str]
-    metadata: list[dict[str, str | int | float | bool]]
+    metadata: list[dict[str, Any]]
     distances: list[float]
     property_hits: int = 0
 

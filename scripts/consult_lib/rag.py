@@ -38,7 +38,7 @@ def fetch_scope_choices(rag_url: str = DEFAULT_RAG_URL) -> list[str]:
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, dict):
-            scopes = data.get("scopes", {})
+            scopes = data.get("scopes")
             if isinstance(scopes, dict) and scopes:
                 return list(scopes.keys())
     except Exception as exc:
@@ -56,19 +56,16 @@ def fetch_scope_options_text(rag_url: str = DEFAULT_RAG_URL) -> str:
             resp = client.get("/scopes")
         resp.raise_for_status()
         data = resp.json()
-        scopes = data.get("scopes", {}) if isinstance(data, dict) else {}
+        scopes = data.get("scopes") if isinstance(data, dict) else None
         if not isinstance(scopes, dict) or not scopes:
             return '"research", "project", or "all"'
         lines: list[str] = []
         for name, info in scopes.items():
             if name == "all":
                 continue
-            desc = ""
-            if isinstance(info, dict):
-                raw_desc = info.get("description", "")
-                if isinstance(raw_desc, str):
-                    desc = raw_desc
-            lines.append(f'"{name}" — {desc}' if desc else f'"{name}"')
+            desc = info.get("description") if isinstance(info, dict) else None
+            desc_str = desc if isinstance(desc, str) else ""
+            lines.append(f'"{name}" — {desc_str}' if desc_str else f'"{name}"')
         lines.append('"all" — when unclear or mixed across multiple scopes')
         return "\n        ".join(lines)
     except Exception as exc:
@@ -86,7 +83,7 @@ def fetch_rag_pipeline(
     stargate_url: str = DEFAULT_STARGATE_URL,
     rag_url: str = DEFAULT_RAG_URL,
     timeout: float = 70.0,
-    scope_override: str | None = None,
+    scope_override: str | list[str] | None = None,
     extra_pipeline_options: dict[str, Any] | None = None,
 ) -> tuple[list[str], str | None]:
     """Use the rag-context pipeline for intelligent RAG retrieval."""
@@ -94,8 +91,8 @@ def fetch_rag_pipeline(
     pipeline_options: dict[str, Any] = {
         "scope_options": fetch_scope_options_text(rag_url=rag_url),
     }
-    if scope_override:
-        pipeline_options["scope_override"] = scope_override
+    if scope_override is not None:
+        pipeline_options["scope_override"] = scope_override  # str or list[str]; pipeline accepts both
     if extra_pipeline_options:
         pipeline_options.update(extra_pipeline_options)
     body: dict[str, Any] = {
@@ -112,7 +109,11 @@ def fetch_rag_pipeline(
         if exc.response.status_code >= 500:
             return [], f"pipeline.step.error: {exc}"
         return [], str(exc)
+    except httpx.RequestError as exc:
+        return [], f"Request failed: {exc}"
     except Exception as exc:
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         return [], str(exc)
     data = resp.json()
     content: str = data.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -126,13 +127,13 @@ def fetch_rag_direct(
     *,
     rag_url: str = DEFAULT_RAG_URL,
     top_k: int = 5,
-    scope: str | None = None,
+    scope: str | list[str] | None = None,
     timeout: float = 10.0,
 ) -> tuple[list[str], str | None]:
-    """Direct RAG search via the /search endpoint."""
+    """Direct RAG search via the /search endpoint. scope may be a single name or list (union)."""
     body: dict[str, object] = {"query": query, "top_k": top_k}
     if scope:
-        body["scope"] = scope
+        body["scope"] = scope  # RAG accepts str or list[str]
     try:
         with make_sync_client(rag_url, timeout=timeout) as client:
             resp = client.post("/search", json=body)
@@ -153,6 +154,6 @@ def fetch_rag_direct(
             if idx < len(metadata) and isinstance(metadata[idx], dict)
             else {}
         )
-        source = meta.get("source", "unknown") if isinstance(meta, dict) else "unknown"
+        source = str(meta.get("source", "unknown")) if isinstance(meta, dict) else "unknown"
         findings.append(f"Source: {source}\n{chunk}")
     return findings, None
