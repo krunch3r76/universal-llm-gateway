@@ -34,6 +34,7 @@ reviewer_requirements:
   source: cloud
   min_context: 32768
   tags: [code, reasoning]
+  validate_grounding: true
 
 planner: |
   You are an implementation planner. Given a requirement and codebase context, produce a concrete implementation plan with literal code.
@@ -147,6 +148,7 @@ modularizer_requirements:
   source: any
   min_context: 32768
   tags: [code, reasoning]
+  validate_grounding: true
 
 prompt_engineer: |
   You are an expert prompt engineer and LLM systems analyst evaluating a pipeline step.
@@ -186,3 +188,4 @@ prompt_engineer_requirements:
   min_context: 32768
   tags: [code, reasoning]
   scope_hint: prompting
+  validate_grounding: true

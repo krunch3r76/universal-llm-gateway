@@ -76,6 +76,11 @@ options:
                                  # (0.0 = pure RRF, 1.0 = pure metadata)
   coverage_selection_enabled: false  # Greedy entity coverage selection — maximizes
                                      # unique entity diversity in final chunk set
+  # --- Neighbor chunk expansion (post-junk-filter, pre-metadata-boost) ---
+  neighbor_expansion_enabled: false     # Fetch ±n adjacent chunks from same source
+  neighbor_expansion_n: 1              # Neighbors each direction (±n)
+  neighbor_expansion_max_chunks: 30    # Cap on total chunks after expansion
+  neighbor_expansion_score_discount: 1.0  # Score multiplier for neighbor chunks
   # --- LLM reranking (post-RRF, pre-formatting) ---
   rerank_enabled: false              # Master toggle — zero overhead when disabled
   rerank_model: qwen3_9b             # Model alias for reranking LLM calls

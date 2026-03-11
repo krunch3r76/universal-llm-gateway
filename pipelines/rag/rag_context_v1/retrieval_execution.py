@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -56,8 +59,7 @@ def rrf_merge(
         for rank, chunk in enumerate(results):
             cid = chunk.content_hash
             scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
-            if cid not in chunks:
-                chunks[cid] = chunk
+            chunks.setdefault(cid, chunk)
 
     sorted_ids = sorted(scores, key=lambda cid: scores[cid], reverse=True)
     selected = sorted_ids[:max_chunks]
@@ -82,7 +84,7 @@ async def execute_single_query(
     if source_prefixes:
         body["source_prefixes"] = source_prefixes
     elif scope is not None:
-        body["scope"] = scope
+        body["scope"] = [scope] if isinstance(scope, str) else scope
 
     response = await client.post(endpoint, json=body)
     response.raise_for_status()
@@ -100,3 +102,144 @@ async def execute_single_query(
         )
         for chunk, meta in zip(raw_chunks, metadata, strict=True)
     ]
+
+
+@dataclass(slots=True)
+class NeighborExpansionResult:
+    """Result of neighbor chunk expansion."""
+
+    chunks: list[RetrievedChunk]
+    scores: dict[str, float]
+    neighbors_added: int
+    neighbors_fetched: int
+    sources_expanded: int
+
+
+async def expand_neighbors(
+    client: httpx.AsyncClient,
+    endpoint: str,
+    chunks: list[RetrievedChunk],
+    scores: dict[str, float],
+    *,
+    n: int = 1,
+    max_chunks: int = 30,
+    score_discount: float = 1.0,
+) -> NeighborExpansionResult:
+    """Expand retrieved chunks with ±n neighbors from the same source.
+
+    Fetches neighbors via POST /chunks_by_index (one HTTP round-trip).
+    Deduplicates by content_hash, enforces max_chunks budget (originals
+    always kept, neighbors fill remaining slots by score).
+    """
+    if n <= 0 or not chunks:
+        return NeighborExpansionResult(
+            chunks=chunks,
+            scores=scores,
+            neighbors_added=0,
+            neighbors_fetched=0,
+            sources_expanded=0,
+        )
+
+    existing_hashes: set[str] = {c.content_hash for c in chunks}
+    source_indices: dict[str, set[int]] = {}
+    chunk_scores_by_source: dict[str, dict[int, float]] = {}
+
+    for chunk in chunks:
+        source = chunk.source
+        idx = chunk.metadata.get("chunk_index")
+        if idx is None or int(idx) < 0:
+            continue
+        idx = int(idx)
+        source_indices.setdefault(source, set()).add(idx)
+        chunk_scores_by_source.setdefault(source, {})[idx] = scores.get(
+            chunk.content_hash, 0.0
+        )
+
+    groups: list[dict[str, object]] = []
+    neighbor_parent_scores: dict[tuple[str, int], float] = {}
+
+    for source, indices in source_indices.items():
+        needed: set[int] = set()
+        for idx in indices:
+            for delta in range(1, n + 1):
+                for neighbor_idx in (idx - delta, idx + delta):
+                    if neighbor_idx >= 0 and neighbor_idx not in indices:
+                        needed.add(neighbor_idx)
+                        parent_score = chunk_scores_by_source.get(source, {}).get(
+                            idx, 0.0
+                        )
+                        key = (source, neighbor_idx)
+                        neighbor_parent_scores[key] = max(
+                            neighbor_parent_scores.get(key, 0.0), parent_score
+                        )
+        if needed:
+            groups.append({"source": source, "chunk_indices": sorted(needed)})
+
+    if not groups:
+        return NeighborExpansionResult(
+            chunks=chunks,
+            scores=scores,
+            neighbors_added=0,
+            neighbors_fetched=0,
+            sources_expanded=0,
+        )
+
+    try:
+        response = await client.post(
+            endpoint.replace("/search", "/chunks_by_index"),
+            json={"groups": groups},
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        logger.warning("expand_neighbors: /chunks_by_index call failed", exc_info=True)
+        return NeighborExpansionResult(
+            chunks=chunks,
+            scores=scores,
+            neighbors_added=0,
+            neighbors_fetched=0,
+            sources_expanded=len(groups),
+        )
+
+    raw_neighbors = data.get("chunks", [])
+    neighbor_chunks: list[tuple[float, RetrievedChunk]] = []
+
+    for item in raw_neighbors:
+        chunk_index = item.get("chunk_index")
+        if chunk_index is None or not isinstance(chunk_index, int):
+            logger.warning(
+                "Missing or invalid chunk_index in neighbor item: %s", item
+            )
+            continue
+        rc = RetrievedChunk(
+            content=item["text"],
+            source=item["source"],
+            indexed_at=str(item["metadata"].get("indexed_at", "unknown")),
+            metadata=item["metadata"],
+        )
+        if rc.content_hash in existing_hashes:
+            continue
+        existing_hashes.add(rc.content_hash)
+        parent_score = neighbor_parent_scores.get(
+            (item["source"], chunk_index), 0.0
+        )
+        discounted = parent_score * score_discount
+        neighbor_chunks.append((discounted, rc))
+
+    budget = max(0, max_chunks - len(chunks))
+    neighbor_chunks.sort(key=lambda t: t[0], reverse=True)
+    selected = neighbor_chunks[:budget]
+
+    expanded_scores = dict(scores)
+    expanded_chunks = list(chunks)
+    for discounted_score, rc in selected:
+        expanded_chunks.append(rc)
+        expanded_scores[rc.content_hash] = discounted_score
+
+    return NeighborExpansionResult(
+        chunks=expanded_chunks,
+        scores=expanded_scores,
+        neighbors_added=len(selected),
+        neighbors_fetched=len(raw_neighbors),
+        sources_expanded=len(groups),
+    )

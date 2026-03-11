@@ -55,8 +55,13 @@ class ModelRequirements(BaseModel):
     count: int = Field(default=1, ge=1, le=20)
     min_context: int | None = Field(
         default=None,
-        ge=0,
+        ge=1,
         description="Minimum context window in tokens",
+    )
+    min_completion_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="Minimum max_completion_tokens — reject models that cannot produce at least this many output tokens",
     )
     require_tools: bool | None = Field(
         default=None,
@@ -109,7 +114,8 @@ class SelectionRequest(BaseModel):
     )
     count: int = Field(default=2, ge=1, le=20)
     source: Literal["cloud", "local", "any"] = Field(default="cloud")
-    min_context: int | None = Field(default=None, ge=0)
+    min_context: int | None = Field(default=None, ge=1)
+    min_completion_tokens: int | None = Field(default=None, ge=1)
     require_tools: bool | None = None
     provider_diversity: ProviderDiversity | None = None
     cost_budget: CostBudget | None = None
@@ -153,13 +159,18 @@ class SelectionRequest(BaseModel):
     )
 
     def to_model_requirements(self) -> ModelRequirements:
-        """Extract the ModelRequirements-compatible subset."""
+        """Extract the ModelRequirements-compatible subset from SelectionRequest.
+
+        Builds a ModelRequirements instance with the fields used for profile-based
+        model selection. Omits tag-based and other SelectionRequest-only fields.
+        """
         return ModelRequirements(
             task=self.task,
             min_score=self.min_score,
             count=self.count,
             source=self.source,
             min_context=self.min_context,
+            min_completion_tokens=self.min_completion_tokens,
             require_tools=self.require_tools,
             provider_diversity=self.provider_diversity,
             cost_budget=self.cost_budget,

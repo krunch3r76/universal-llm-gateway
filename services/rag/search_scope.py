@@ -12,7 +12,7 @@ search results before they are returned to the retrieval pipeline:
 
   Recency sort:
     Adds an additive bonus to chunks based on ``indexed_at`` timestamp using
-    exponential decay (``DECAY_LAMBDA``).  Controlled per-request via
+    exponential decay (``RECENCY_DECAY_LAMBDA``).  Controlled per-request via
     ``recency_weight`` (0 = pure cosine, 1 = recency-dominant).
     Applied by ``apply_recency_sort()``.
 
@@ -33,7 +33,7 @@ from datetime import UTC, datetime
 from fastapi import HTTPException
 
 from services.rag.config import RagConfig
-from services.rag.models import DECAY_LAMBDA, SearchRequest
+from services.rag.models import RECENCY_DECAY_LAMBDA, SearchRequest
 from services.rag.property_index import PropertyIndex
 
 
@@ -200,7 +200,7 @@ def _apply_recency(
             result.append(distance)
             continue
         days_old = max((now - doc_date).total_seconds() / 86400, 0.0)
-        recency_score = math.exp(-DECAY_LAMBDA * days_old)
+        recency_score = math.exp(-RECENCY_DECAY_LAMBDA * days_old)
         adjusted_distance = (
             distance * (1 - recency_weight) - recency_weight * recency_score
         )

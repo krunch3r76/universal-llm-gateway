@@ -90,6 +90,9 @@ from services.rag.indexing_helpers import (
     file_hash,
 )
 from services.rag.models import (
+    ChunkByIndexItem,
+    ChunksByIndexRequest,
+    ChunksByIndexResponse,
     DeleteResult,
     FailedChunkItem,
     FailedExtractionResponse,
@@ -879,6 +882,66 @@ async def search(request: SearchRequest) -> SearchResponse:
         distances=distances,
         property_hits=property_hits,
     )
+
+
+@app.post("/chunks_by_index", response_model=ChunksByIndexResponse)
+async def chunks_by_index(request: ChunksByIndexRequest) -> ChunksByIndexResponse:
+    """Fetch specific chunks by source + chunk_index for neighbor expansion.
+
+    Uses collection.get() with metadata where clause — no embedding needed.
+    Batched by source for efficiency.
+    """
+    collection = _get_collection()
+    results: list[ChunkByIndexItem] = []
+
+    for group in request.groups:
+        if not group.chunk_indices:
+            continue
+        where_filter: dict[str, object]
+        if len(group.chunk_indices) == 1:
+            where_filter = {
+                "$and": [
+                    {"source": group.source},
+                    {"chunk_index": group.chunk_indices[0]},
+                ]
+            }
+        else:
+            where_filter = {
+                "$and": [
+                    {"source": group.source},
+                    {"chunk_index": {"$gte": min(group.chunk_indices)}},
+                    {"chunk_index": {"$lte": max(group.chunk_indices)}},
+                ]
+            }
+        try:
+            raw = collection.get(
+                where=where_filter,
+                include=["documents", "metadatas"],
+            )
+        except Exception:
+            logger.warning(
+                "chunks_by_index: failed for source=%s", group.source, exc_info=True
+            )
+            continue
+
+        ids = raw.get("ids") or []
+        docs = raw.get("documents") or []
+        metas = raw.get("metadatas") or []
+        requested_set = set(group.chunk_indices)
+        for chunk_id, doc, meta in zip(ids, docs, metas, strict=True):
+            idx = meta.get("chunk_index")
+            if idx is not None and int(idx) in requested_set:
+                results.append(
+                    ChunkByIndexItem(
+                        chunk_id=chunk_id,
+                        source=group.source,
+                        chunk_index=int(idx),
+                        text=doc or "",
+                        metadata=meta,
+                    )
+                )
+
+    return ChunksByIndexResponse(chunks=results)
 
 
 @app.get("/scopes", response_model=ScopesResponse)

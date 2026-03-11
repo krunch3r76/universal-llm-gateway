@@ -15,6 +15,7 @@ Later agents should read:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -24,6 +25,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .history import PipelineStepRecord
+
+logger = logging.getLogger(__name__)
 
 _RUNS_ROOT = Path("tmp/consult-runs")
 
@@ -70,11 +73,17 @@ class RunArtifact:
     finished_at: str | None = None
     duration_seconds: float | None = None
     _run_dir: Path | None = field(default=None, repr=False)
+    _grounding_exclusions: list[dict[str, Any]] = field(
+        default_factory=list, repr=False
+    )
 
     def _ensure_dir(self) -> Path:
         if self._run_dir is not None:
             return self._run_dir
-        ts = self.started_at.replace(":", "-").replace(".", "-")
+        dt = datetime.fromisoformat(
+            self.started_at.replace("Z", "+00:00")
+        )
+        ts = dt.strftime("%Y%m%d-%H%M%S-%f")[:-3]
         name = f"{ts}-{self.call_id[:8]}"
         d = _runs_root() / name
         d.mkdir(parents=True, exist_ok=True)
@@ -127,6 +136,25 @@ class RunArtifact:
             }
         )
 
+    def record_grounding_exclusion(
+        self,
+        *,
+        task: str,
+        model_id: str,
+        hallucination_ratio: float,
+        invalid_paths: list[str],
+    ) -> None:
+        """Record one auto-exclusion for this run (observability)."""
+        self._grounding_exclusions.append(
+            {
+                "task": task,
+                "model_id": model_id,
+                "hallucination_ratio": round(hallucination_ratio, 3),
+                "invalid_paths": invalid_paths,
+                "ts": _now_iso(),
+            }
+        )
+
     def record_partial_step(self, record: PipelineStepRecord) -> None:
         """Append a pipeline recorder step to partial_outputs.
 
@@ -170,15 +198,15 @@ class RunArtifact:
             "error_summary": self.error_summary,
             "partial_success": bool(self.partial_outputs),
             "chain_phase_count": len(self.chain_trace) if self.chain_trace else None,
+            "grounding_exclusions_applied": len(self._grounding_exclusions),
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "duration_seconds": self.duration_seconds,
             "run_dir": str(self.run_dir),
         }
 
-    def checkpoint(self) -> None:
-        """Write current metadata + partial outputs to disk (call at any time)."""
-        d = self._ensure_dir()
+    def _write_common_artifacts(self, d: Path) -> None:
+        """Write metadata, partial, chain_trace, stderr to run directory."""
         _atomic_write(d / "metadata.json", json.dumps(self._metadata(), indent=2))
         if self.partial_outputs:
             _atomic_write(
@@ -194,6 +222,11 @@ class RunArtifact:
             (d / "stderr.log").write_text(
                 "\n".join(self.stderr_lines), encoding="utf-8"
             )
+
+    def checkpoint(self) -> None:
+        """Write current metadata + partial outputs to disk (call at any time)."""
+        d = self._ensure_dir()
+        self._write_common_artifacts(d)
 
     def finalize(
         self,
@@ -221,26 +254,15 @@ class RunArtifact:
             self.execution_id = execution_id
 
         d = self._ensure_dir()
-        _atomic_write(d / "metadata.json", json.dumps(self._metadata(), indent=2))
+        self._write_common_artifacts(d)
 
         if output_text and status in (STATUS_SUCCESS, STATUS_PARTIAL_OUTPUT_AVAILABLE):
             _atomic_write(d / "stdout.md", output_text)
 
-        if self.partial_outputs:
+        if self._grounding_exclusions:
             _atomic_write(
-                d / "partial.json",
-                json.dumps(self.partial_outputs, indent=2),
-            )
-
-        if self.chain_trace:
-            _atomic_write(
-                d / "chain_trace.json",
-                json.dumps(self.chain_trace, indent=2),
-            )
-
-        if self.stderr_lines:
-            (d / "stderr.log").write_text(
-                "\n".join(self.stderr_lines), encoding="utf-8"
+                d / "grounding_exclusions.json",
+                json.dumps(self._grounding_exclusions, indent=2),
             )
 
         return d
@@ -254,11 +276,14 @@ def _atomic_write(path: Path, content: str) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(content)
         os.replace(tmp, path)
-    except Exception:
+    except Exception as e:
+        logger.error("Error during atomic write to %s: %s", path, e)
         try:
             os.unlink(tmp)
-        except OSError:
+        except FileNotFoundError:
             pass
+        except OSError as unlink_e:
+            logger.warning("Failed to clean up temporary file %s: %s", tmp, unlink_e)
         raise
 
 

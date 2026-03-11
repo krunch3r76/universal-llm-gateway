@@ -31,6 +31,7 @@ from systems.pipeline.core.constants import (
 )
 from systems.pipeline.core.events.step import (
     RagMetadataBoostApplied,
+    RagNeighborExpansionCompleted,
     RagRetrievalBibliographyFiltered,
     RagRetrievalCompleted,
     RagRetrievalFailed,
@@ -52,6 +53,7 @@ from services.rag.metadata_boost import apply_metadata_boost
 from .context_formatting import ChunkData, format_context
 from .retrieval_execution import RetrievedChunk as _RetrievedChunk
 from .retrieval_execution import execute_single_query as _execute_single_query
+from .retrieval_execution import expand_neighbors as _expand_neighbors
 from .retrieval_execution import rrf_merge as _rrf_merge
 from .retrieval_profiles import load_retrieval_profiles, resolve_retrieval_params
 
@@ -539,6 +541,56 @@ class RagMultiRetrieveHandler(BaseHandler):
             )
         merged = clean
 
+        # --- Neighbor expansion (post-junk-filter, pre-metadata-boost) ---
+        neighbor_enabled = bool(effective.get("neighbor_expansion_enabled", False))
+        neighbor_expansion_added = 0
+        if neighbor_enabled:
+            neighbor_n = int(effective.get("neighbor_expansion_n", 1))
+            neighbor_max = int(effective.get("neighbor_expansion_max_chunks", 30))
+            neighbor_discount = float(
+                effective.get("neighbor_expansion_score_discount", 1.0)
+            )
+            _expansion_start = _time.monotonic()
+            async with make_async_client(base_url, timeout=rag_timeout) as exp_client:
+                expansion_result = await _expand_neighbors(
+                    exp_client,
+                    api_path,
+                    merged,
+                    merged_scores,
+                    n=neighbor_n,
+                    max_chunks=neighbor_max,
+                    score_discount=neighbor_discount,
+                )
+            merged = expansion_result.chunks
+            merged_scores = expansion_result.scores
+            _expansion_seconds = _time.monotonic() - _expansion_start
+            neighbor_expansion_added = expansion_result.neighbors_added
+            self._publish_bus_event(
+                context,
+                RagNeighborExpansionCompleted(
+                    pipeline_id=context.pipeline.id,
+                    execution_id=context.execution_id,
+                    step_name=step.name,
+                    enabled=True,
+                    neighbors_added=expansion_result.neighbors_added,
+                    neighbors_fetched=expansion_result.neighbors_fetched,
+                    sources_expanded=expansion_result.sources_expanded,
+                    expansion_n=neighbor_n,
+                    max_chunks=neighbor_max,
+                    expansion_seconds=_expansion_seconds,
+                ),
+            )
+            if expansion_result.neighbors_added > 0:
+                logger.info(
+                    "Step '%s': neighbor expansion added %d chunks "
+                    "(fetched=%d, sources=%d, %.2fs)",
+                    step.id,
+                    expansion_result.neighbors_added,
+                    expansion_result.neighbors_fetched,
+                    expansion_result.sources_expanded,
+                    _expansion_seconds,
+                )
+
         # --- Post-RRF metadata boost ---
         boost_enabled = bool(effective.get("metadata_boost_enabled", True))
         boost_weight = float(effective.get("metadata_boost_weight", 0.20))
@@ -616,6 +668,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 rrf_score_mean=rrf_score_mean,
                 chunks_after_merge=len(merged),
                 total_retrieval_seconds=_retrieval_seconds,
+                neighbor_expansion_added=neighbor_expansion_added,
             ),
         )
 

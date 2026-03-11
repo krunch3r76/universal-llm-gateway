@@ -22,6 +22,7 @@ def rag_socket_present(rag_url: str) -> bool:
     that fires when RAG is simply not configured/started.
 
     For TCP URLs: always returns True (errors surface at connection time).
+    Default unix socket path when not specified: /tmp/universal-protocol/rag.sock.
     """
     if not rag_url.startswith("unix://"):
         return True
@@ -41,7 +42,7 @@ def fetch_scope_choices(rag_url: str = DEFAULT_RAG_URL) -> list[str]:
             scopes = data.get("scopes")
             if isinstance(scopes, dict) and scopes:
                 return list(scopes.keys())
-    except Exception as exc:
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         print(
             f"RAG scope discovery failed ({type(exc).__name__}); using defaults",
             file=sys.stderr,
@@ -68,7 +69,7 @@ def fetch_scope_options_text(rag_url: str = DEFAULT_RAG_URL) -> str:
             lines.append(f'"{name}" — {desc_str}' if desc_str else f'"{name}"')
         lines.append('"all" — when unclear or mixed across multiple scopes')
         return "\n        ".join(lines)
-    except Exception as exc:
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         print(
             f"RAG scope option fetch failed ({type(exc).__name__}); using fallback text",
             file=sys.stderr,
@@ -92,7 +93,9 @@ def fetch_rag_pipeline(
         "scope_options": fetch_scope_options_text(rag_url=rag_url),
     }
     if scope_override is not None:
-        pipeline_options["scope_override"] = scope_override  # str or list[str]; pipeline accepts both
+        pipeline_options["scope_override"] = (
+            scope_override  # str or list[str]; pipeline accepts both
+        )
     if extra_pipeline_options:
         pipeline_options.update(extra_pipeline_options)
     body: dict[str, Any] = {
@@ -112,8 +115,9 @@ def fetch_rag_pipeline(
     except httpx.RequestError as exc:
         return [], f"Request failed: {exc}"
     except Exception as exc:
-        import traceback
-        traceback.print_exc(file=sys.stderr)
+        import logging
+
+        logging.getLogger(__name__).exception("Unexpected error during fetch_rag_pipeline")
         return [], str(exc)
     data = resp.json()
     content: str = data.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -138,7 +142,7 @@ def fetch_rag_direct(
         with make_sync_client(rag_url, timeout=timeout) as client:
             resp = client.post("/search", json=body)
         resp.raise_for_status()
-    except Exception as exc:
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
         return [], f"RAG service unreachable ({type(exc).__name__})"
     data = resp.json()
     if not isinstance(data, dict):
@@ -149,11 +153,8 @@ def fetch_rag_direct(
     for idx, chunk in enumerate(chunks):
         if not isinstance(chunk, str):
             continue
-        meta = (
-            metadata[idx]
-            if idx < len(metadata) and isinstance(metadata[idx], dict)
-            else {}
-        )
-        source = str(meta.get("source", "unknown")) if isinstance(meta, dict) else "unknown"
+        meta_item = metadata[idx] if idx < len(metadata) else None
+        meta = meta_item if isinstance(meta_item, dict) else {}
+        source = str(meta.get("source", "unknown"))
         findings.append(f"Source: {source}\n{chunk}")
     return findings, None

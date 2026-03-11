@@ -16,6 +16,7 @@ from typing import Any, Protocol, cast
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from intelligence_profiles.requirements import SelectionRequest
+from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
 from ....profiles.exclusions import get_excluded_models, load_exclusions
@@ -28,6 +29,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["model-profiles"])
 
+
+class ModelObservationPayload(BaseModel):
+    """Request body for POST /v1/models/observe (consult grounding → reputation)."""
+
+    task: str
+    model_id: str
+    outcome: str
+    latency_ms: float
+    quality_score: float | None = None
+    tokens_per_second: float | None = None
+
+
 type CloudSelectFn = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
@@ -36,14 +49,18 @@ class _CloudSelectable(Protocol):
 
 
 def _get_nested_attr(obj: object, *attrs: str) -> object | None:
-    """Safely traverse nested attributes and return None on first missing.
+    """Safely traverse nested attributes of an object.
+
+    Attempts to access a sequence of attributes on the object. If any attribute
+    in the sequence is not found or an intermediate value is None, returns None
+    immediately, avoiding AttributeError.
 
     Args:
-        obj: Object to start attribute traversal from.
-        *attrs: Attribute names to traverse in order.
+        obj: Starting object for attribute traversal.
+        *attrs: Attribute names to access in order.
 
     Returns:
-        The final attribute value, or None if any step fails.
+        The value of the last attribute if all steps succeed; otherwise None.
     """
     current: object | None = obj
     for attr in attrs:
@@ -132,6 +149,30 @@ async def select_models_endpoint(
     )
 
 
+@router.post("/models/observe")
+async def observe_model(
+    payload: ModelObservationPayload,
+    proxy: StargateProxy = Depends(get_proxy),
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> JSONResponse:
+    """Record a model observation (e.g. consult grounding exclusion) for reputation."""
+    store = proxy.model_health_store
+    if store is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Reputation store not initialized",
+        )
+    store.observe(
+        task=payload.task,
+        model_id=payload.model_id,
+        latency_ms=payload.latency_ms,
+        outcome=payload.outcome,
+        quality_score=payload.quality_score,
+        tokens_per_second=payload.tokens_per_second,
+    )
+    return JSONResponse(content={"status": "observed"})
+
+
 @router.post("/models/profiles/reload")
 async def reload_intelligence_profiles(
     proxy: StargateProxy = Depends(get_proxy),
@@ -162,7 +203,11 @@ async def reload_intelligence_profiles(
     loaded = await asyncio.get_event_loop().run_in_executor(
         None, store.load_curated, curated_dir
     )
-    logger.info("Hot-reloaded %d curated intelligence profiles from %s", loaded, curated_dir)
+    logger.info(
+        "Hot-reloaded %d curated intelligence profiles from %s",
+        loaded,
+        curated_dir,
+    )
 
     return JSONResponse(
         content={
@@ -182,7 +227,6 @@ def _resolve_curated_profile_dir(proxy: StargateProxy) -> Path | None:
     if not config_path:
         return Path("config") / "intelligence_profiles"
     return Path(config_path).parent / "intelligence_profiles"
-
 
 
 async def get_model_rankings(

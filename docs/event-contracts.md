@@ -382,6 +382,7 @@ pipeline.rag.retrieval.params.resolved
       └─> pipeline.rag.retrieval.retry.triggered?        (* low chunk count; retry with broader scope)
       │     └─> pipeline.rag.retrieval.retry.succeeded | pipeline.rag.retrieval.retry.not_improved
       └─> pipeline.rag.retrieval.bibliography.filtered?  (* after merge, before completed; when junk filter drops chunks)
+      └─> pipeline.rag.neighbor.expansion.completed?     (* after junk filter, before metadata boost; when expansion enabled)
       └─> pipeline.rag.retrieval.completed | pipeline.rag.retrieval.failed
 ```
 
@@ -393,7 +394,8 @@ pipeline.rag.retrieval.params.resolved
 | `pipeline.rag.retrieval.retry.succeeded` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | Retry yielded more chunks; result adopted |
 | `pipeline.rag.retrieval.retry.not_improved` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | Retry ran but did not improve; initial result kept |
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | Pre-retrieval: effective parameters after three-tier merge; `scope` may be string or array of strings (multiscope) |
-| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds` | Post-retrieval: scope prediction + quality metrics |
+| `pipeline.rag.neighbor.expansion.completed` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | Neighbor chunk expansion result — emitted when expansion is enabled, even if zero neighbors were added |
+| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added` | Post-retrieval: scope prediction + quality metrics (`neighbor_expansion_added` is optional and defaults to 0 when expansion is disabled) |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | All queries failed — no chunks to merge |
 
 Payload semantics:
@@ -406,6 +408,7 @@ Payload semantics:
 - `zero_result_queries`: Count of queries with 0 results — high values indicate query quality or scope issues
 - `rrf_score_{min,max,mean}`: Distribution of RRF scores in the merged set
 - `total_retrieval_seconds`: Wall-clock time from first query dispatch to merge completion/failure
+- `neighbor_expansion_added`: Number of chunks appended during contiguous neighbor expansion (0 when expansion disabled or no eligible neighbors)
 
 **Debugging queries**:
 
@@ -420,6 +423,12 @@ jq -c 'select(.signal == "pipeline.rag.retrieval.params.resolved") |
 jq -c 'select(.signal == "pipeline.rag.retrieval.completed") |
   {scope: .payload.predicted_scope, confidence: .payload.scope_confidence,
    fallback: .payload.fallback_triggered}' /tmp/pipeline-events/current.jsonl
+
+# Neighbor expansion activity
+jq -c 'select(.signal == "pipeline.rag.neighbor.expansion.completed") |
+  {added: .payload.neighbors_added, fetched: .payload.neighbors_fetched,
+   sources: .payload.sources_expanded, seconds: .payload.expansion_seconds}' \
+  /tmp/pipeline-events/current.jsonl
 
 # Low-quality retrievals (low RRF max or any zero-result query)
 jq -c 'select(.signal == "pipeline.rag.retrieval.completed" and
@@ -519,12 +528,21 @@ synchronously.
 | `model.selection.rank.computed` | `task`, `selection_path`, `candidates` | `avoid_models` |
 | `model.selection.switch.suppressed` | `task`, `sticky_key`, `current_model_id`, `contender_model_id`, `delta`, `reason` | — |
 | `model.selection.switch.allowed` | `task`, `sticky_key`, `previous_model_id`, `new_model_id`, `delta` | — |
+| `model.selection.filtered` | `model_id`, `reason` | — |
+
+When a candidate is excluded by requirement checks (e.g. `min_context`, `min_completion_tokens`), the intelligence profile store logs at DEBUG with signal name `model.selection.filtered` and payload `model_id`, `reason` (`"min_context"` or `"min_completion_tokens"`). Optional emission from the selection layer (Stargate) may be added later for request-scoped correlation.
 
 **INVARIANT**: `model.selection.score.updated` is emitted once per candidate model in a reputation-enabled request.
 **INVARIANT**: `model.selection.rank.computed` includes candidates sorted descending by `final_score`.
 **INVARIANT**: `model.selection.switch.suppressed` ⊕ `model.selection.switch.allowed` — exactly one is emitted when anti-thrash evaluates a candidate switch.
 
 `avoid_models`: `list[str] | null` — model IDs excluded from this selection (set when `avoid_models_from` binding is active).
+
+### Consultation / grounding
+
+When the consult script's grounding guard auto-excludes a model (path hallucination), that outcome is recorded in the run artifact only; no event-bus signal is emitted. The logical signal name for this behavior is **consult.grounding.auto_excluded**. Payload (in artifact): `task`, `model_id`, `hallucination_ratio`, `invalid_paths`, `ts`. Captured in the consult run artifact as `grounding_exclusions.json` and in metadata as `grounding_exclusions_applied`.
+
+Consult may POST to `POST /v1/models/observe` for each excluded outcome. Stargate then calls `reputation_store.observe()` and emits **model.selection.health.observation** (existing contract); no change to that signal's payload or semantics.
 
 ### Model Selection Decisions
 
@@ -845,9 +863,10 @@ Pipeline events flow to two sinks:
 | `pipeline.estimate.failed` | `pipeline_id`, `error`, `retryable` | - |
 | `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | - |
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | `scope` may be string or array of strings (multiscope) |
-| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds` | - |
+| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added` | `neighbor_expansion_added` defaults to 0 when expansion disabled |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | - |
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | - |
+| `pipeline.rag.neighbor.expansion.completed` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | - |
 | `pipeline.rag.retrieval.retry.triggered` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `threshold`, `retry_scope`, `reason` | low-chunk retry started |
 | `pipeline.rag.retrieval.retry.succeeded` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | retry adopted (more chunks) |
 | `pipeline.rag.retrieval.retry.not_improved` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | retry ran, initial kept |

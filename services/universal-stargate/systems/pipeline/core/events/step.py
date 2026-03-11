@@ -105,7 +105,11 @@ def StepCompleted(  # noqa: N802
         "model_call_count": model_call_count,
         **({"model_id": model_id} if model_id is not None else {}),
         **({"exit_code": exit_code} if exit_code is not None else {}),
-        **({"json_output_keys": json_output_keys} if json_output_keys is not None else {}),
+        **(
+            {"json_output_keys": json_output_keys}
+            if json_output_keys is not None
+            else {}
+        ),
     }
     return Event(
         signal="pipeline.step.completed",
@@ -147,7 +151,11 @@ def StepFailed(  # noqa: N802
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "model_call_count": model_call_count,
-        **({"duration_seconds": duration_seconds} if duration_seconds is not None else {}),
+        **(
+            {"duration_seconds": duration_seconds}
+            if duration_seconds is not None
+            else {}
+        ),
         **({"traceback": traceback} if traceback is not None else {}),
     }
     return Event(
@@ -441,6 +449,7 @@ def RagRetrievalCompleted(  # noqa: N802
     rrf_score_mean: float,
     chunks_after_merge: int,
     total_retrieval_seconds: float,
+    neighbor_expansion_added: int = 0,
 ) -> Event:
     """Emitted after successful RAG multi-query retrieval + RRF merge.
 
@@ -458,6 +467,8 @@ def RagRetrievalCompleted(  # noqa: N802
         rrf_score_mean: Mean RRF score in merged result set
         chunks_after_merge: Final chunk count after RRF deduplication
         total_retrieval_seconds: Wall-clock time for all queries + merge
+        neighbor_expansion_added: Number of chunks added by neighbor expansion
+                                  (0 when expansion is disabled or adds none)
     """
     return Event(
         signal="pipeline.rag.retrieval.completed",
@@ -475,6 +486,7 @@ def RagRetrievalCompleted(  # noqa: N802
             "rrf_score_mean": rrf_score_mean,
             "chunks_after_merge": chunks_after_merge,
             "total_retrieval_seconds": total_retrieval_seconds,
+            "neighbor_expansion_added": neighbor_expansion_added,
         },
     )
 
@@ -554,6 +566,40 @@ def RagRetrievalBibliographyFiltered(  # noqa: N802
             "execution_id": execution_id,
             "step_name": step_name,
             "chunks_dropped": chunks_dropped,
+        },
+    )
+
+
+@event_factory
+def RagNeighborExpansionCompleted(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    enabled: bool,
+    neighbors_added: int,
+    neighbors_fetched: int,
+    sources_expanded: int,
+    expansion_n: int,
+    max_chunks: int,
+    expansion_seconds: float,
+) -> Event:
+    """Emitted after neighbor chunk expansion completes.
+
+    Emitted only when neighbor expansion is enabled, including zero-addition runs.
+    """
+    return Event(
+        signal="pipeline.rag.neighbor.expansion.completed",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "enabled": enabled,
+            "neighbors_added": neighbors_added,
+            "neighbors_fetched": neighbors_fetched,
+            "sources_expanded": sources_expanded,
+            "expansion_n": expansion_n,
+            "max_chunks": max_chunks,
+            "expansion_seconds": expansion_seconds,
         },
     )
 

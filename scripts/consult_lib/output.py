@@ -68,7 +68,7 @@ def _format_model_provenance(
     # When all result IDs are pipeline virtual, we only know what was requested
     # (selected_models), not what the pipeline actually invoked. Stargate returns
     # the pipeline ID as model, not the underlying cloud model.
-    effective_used = real_used if real_used else (selected or used)
+    effective_used = real_used or selected or used
     used_cloud = [m for m in effective_used if _is_cloud_model(m)]
     used_local = [m for m in effective_used if not _is_cloud_model(m)]
     provenance_resolved = bool(real_used)
@@ -76,12 +76,20 @@ def _format_model_provenance(
     lines.append(
         "**Cloud models requested**: "
         + (", ".join(used_cloud) if used_cloud else "(none)")
-        + (" (verify in OpenRouter/pipeline events)" if not provenance_resolved and used_cloud else "")
+        + (
+            " (verify in OpenRouter/pipeline events)"
+            if not provenance_resolved and used_cloud
+            else ""
+        )
     )
     lines.append(
         "**Local models requested**: "
         + (", ".join(used_local) if used_local else "(none)")
-        + (" (verify in pipeline events)" if not provenance_resolved and used_local else "")
+        + (
+            " (verify in pipeline events)"
+            if not provenance_resolved and used_local
+            else ""
+        )
     )
     # Only warn if selected models genuinely did not run (real_used available).
     # Do not warn when provenance is unresolved (real_used is empty).
@@ -139,18 +147,17 @@ def format_output(
     lines.append(title)
     lines.append(f"**Date**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append(f"**Question**: {question}")
-    if call_id:
-        lines.append(f"**Call ID**: `{call_id}`")
-    if run_dir:
-        lines.append(f"**Run artifacts**: `{run_dir}`")
-    if file_paths:
-        lines.append(f"**Context files**: {', '.join(file_paths)}")
-    if chained:
-        lines.append("**Mode**: analyst -> reviewer(s)")
-    if selection_path:
-        lines.append(f"**Selection path**: {selection_path}")
-    if rag_error:
-        lines.append(f"**RAG**: failed ({rag_error})")
+    optional_fields: list[tuple[bool | list[str], str]] = [
+        (bool(call_id), f"**Call ID**: `{call_id}`"),
+        (bool(run_dir), f"**Run artifacts**: `{run_dir}`"),
+        (bool(file_paths), f"**Context files**: {', '.join(file_paths)}"),
+        (chained, "**Mode**: analyst -> reviewer(s)"),
+        (bool(selection_path), f"**Selection path**: {selection_path}"),
+        (bool(rag_error), f"**RAG**: failed ({rag_error})"),
+    ]
+    for condition, line_content in optional_fields:
+        if condition:
+            lines.append(line_content)
     result_models = [str(result.get("model_id", "unknown")) for result in results]
     lines.extend(
         _format_model_provenance(
@@ -188,10 +195,13 @@ def format_pipeline_review_output(
     lines.append("# Consultation: reviewer (pipeline)")
     lines.append(f"**Date**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append(f"**Question**: {question}")
-    if call_id:
-        lines.append(f"**Call ID**: `{call_id}`")
-    if run_dir:
-        lines.append(f"**Run artifacts**: `{run_dir}`")
+    optional_fields = [
+        (bool(call_id), f"**Call ID**: `{call_id}`"),
+        (bool(run_dir), f"**Run artifacts**: `{run_dir}`"),
+    ]
+    for condition, line_content in optional_fields:
+        if condition:
+            lines.append(line_content)
     lines.append(f"**Context files**: {', '.join(file_paths)}")
     lines.append("**Mode**: estimator-driven parallel batches")
     result_models: list[str] = []

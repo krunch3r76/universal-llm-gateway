@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import ValidationError
 
 from .requirements import LATENCY_ORDER, ModelRequirements
 from .schema import SCORE_ORDER, IntelligenceProfile, score_gte
@@ -49,8 +50,8 @@ class IntelligenceProfileStore:
                 key = profile.full_model_id or profile.basename
                 self._curated[key] = profile
                 loaded += 1
-            except Exception:
-                logger.exception("Failed to load curated profile: %s", path)
+            except (yaml.YAMLError, ValidationError, OSError) as e:
+                logger.exception("Failed to load curated profile %s: %s", path, e)
 
         logger.info("Loaded %d curated profiles from %s", loaded, directory)
         return loaded
@@ -86,12 +87,18 @@ class IntelligenceProfileStore:
         all_ids = set(self._curated) | set(self._derived)
         scored: list[tuple[int, str]] = []
 
+        req_for_filter = requirements
+        if req_for_filter.min_completion_tokens is None:
+            req_for_filter = req_for_filter.model_copy(
+                update={"min_completion_tokens": 16384}
+            )
+
         for model_id in all_ids:
             profile = self.get(model_id)
             if profile is None:
                 continue
 
-            if not _matches_requirements(profile, model_id, requirements):
+            if not _matches_requirements(profile, model_id, req_for_filter):
                 continue
 
             task_score = _task_score_value(profile, requirements.task)
@@ -145,6 +152,28 @@ def _matches_requirements(
             LATENCY_ORDER[profile.latency_bucket]
             > LATENCY_ORDER[req.max_latency_bucket]
         ):
+            return False
+
+    if req.min_context is not None:
+        context = getattr(profile, "context_length", 0) or 0
+        if context < req.min_context:
+            logger.debug(
+                "model.selection.filtered",
+                extra={"model_id": model_id, "reason": "min_context"},
+            )
+            return False
+
+    effective_min_completion_tokens = req.min_completion_tokens if req.min_completion_tokens is not None else 16384
+    if req.min_completion_tokens is not None:
+        max_completion = getattr(profile, "max_completion_tokens", None)
+        if max_completion is not None and max_completion < effective_min_completion_tokens:
+            logger.debug(
+                "model.selection.filtered",
+                extra={
+                    "model_id": model_id,
+                    "reason": "min_completion_tokens",
+                },
+            )
             return False
 
     return True

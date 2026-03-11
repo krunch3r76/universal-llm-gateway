@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .run_artifact import validate_file_lines
+from .run_artifact import RunArtifact, validate_file_lines
 
 if TYPE_CHECKING:
     from .core import ConsultResult
@@ -48,6 +48,7 @@ def validate_model_grounding(
     *,
     task: str,
     repo_root: Path | None = None,
+    artifact: RunArtifact | None = None,
 ) -> list[ModelGroundingResult]:
     """Validate FILE: line grounding per model and auto-exclude hallucinators.
 
@@ -74,7 +75,13 @@ def validate_model_grounding(
         )
 
         if should_exclude:
-            _auto_exclude(task, result.model_id)
+            _auto_exclude(
+                task,
+                result.model_id,
+                artifact=artifact,
+                invalid_paths=invalid,
+                hallucination_ratio=ratio,
+            )
 
         outcomes.append(
             ModelGroundingResult(
@@ -94,9 +101,24 @@ def validate_model_grounding(
 _EXCLUSIONS_PATH = Path.home() / ".gateway" / "model-exclusions.yaml"
 
 
-def _auto_exclude(task: str, model_id: str) -> None:
+def _auto_exclude(
+    task: str,
+    model_id: str,
+    *,
+    artifact: RunArtifact | None = None,
+    invalid_paths: list[str] | None = None,
+    hallucination_ratio: float = 0.0,
+) -> None:
     """Add model to exclusion list for a task, with stderr notification."""
     import yaml
+
+    if artifact is not None and invalid_paths is not None:
+        artifact.record_grounding_exclusion(
+            task=task,
+            model_id=model_id,
+            hallucination_ratio=hallucination_ratio,
+            invalid_paths=invalid_paths,
+        )
 
     exclusions: dict[str, list[str]] = {}
     if _EXCLUSIONS_PATH.exists():

@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import httpx
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from consult_lib.constants import (
@@ -71,6 +73,35 @@ from consult_lib.run_artifact import (
     write_output_safe,
 )
 from transport_utils.rag_client import DEFAULT_RAG_URL
+
+
+def _observe_excluded_outcomes(
+    grounding_outcomes: list[Any],
+    task: str,
+    stargate_url: str,
+) -> None:
+    """POST each excluded outcome to Stargate /v1/models/observe (reputation)."""
+    url = f"{stargate_url.rstrip('/')}/v1/models/observe"
+    for outcome in grounding_outcomes:
+        if not getattr(outcome, "excluded", False):
+            continue
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                client.post(
+                    url,
+                    json={
+                        "task": task,
+                        "model_id": outcome.model_id,
+                        "outcome": "error",
+                        "latency_ms": 0.0,
+                        "quality_score": 1.0 - outcome.hallucination_ratio,
+                    },
+                )
+        except httpx.HTTPError as exc:
+            print(
+                f"WARN: failed to POST grounding exclusion to observe: {exc}",
+                file=sys.stderr,
+            )
 
 
 def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
@@ -591,6 +622,39 @@ def _run_pipeline_branch(
             )
         raise
 
+    req_config = reviewer_requirements.get("reviewer", {})
+    if req_config.get("validate_grounding"):
+        # Code-review pipeline returns batch dicts with keys 'model_id' and 'result' (response text).
+        grounding_inputs: list[ConsultResult] = []
+        for batch in batch_results:
+            model_id = batch.get("model_id")
+            result_text = batch.get("result")
+            if not (isinstance(model_id, str) and isinstance(result_text, str)):
+                print(
+                    "WARN: Malformed batch item: missing model_id or result; skipping grounding for this batch.",
+                    file=sys.stderr,
+                )
+                continue
+            grounding_inputs.append(
+                ConsultResult(
+                    model_id=model_id,
+                    response_text=result_text,
+                )
+            )
+        grounding_outcomes = validate_model_grounding(
+            grounding_inputs,
+            task=req_config.get("task", "code_review"),
+            artifact=artifact,
+        )
+        if grounding_outcomes:
+            report_grounding_results(grounding_outcomes)
+            write_grounding_artifact(grounding_outcomes, run_dir=artifact.run_dir)
+            _observe_excluded_outcomes(
+                grounding_outcomes,
+                req_config.get("task", "code_review"),
+                args.stargate_url,
+            )
+
     print(output)
     finished_wall = time.time()
     batch_exec_ids = [
@@ -804,10 +868,16 @@ def _run_direct_branch(
         grounding_outcomes = validate_model_grounding(
             results,
             task=task,
+            artifact=artifact,
         )
         if grounding_outcomes:
             report_grounding_results(grounding_outcomes)
             write_grounding_artifact(grounding_outcomes, run_dir=artifact.run_dir)
+            _observe_excluded_outcomes(
+                grounding_outcomes,
+                task,
+                args.stargate_url,
+            )
 
     has_any_success = any(not r.error for r in results)
     status = STATUS_SUCCESS if has_any_success else STATUS_PIPELINE_FAILED

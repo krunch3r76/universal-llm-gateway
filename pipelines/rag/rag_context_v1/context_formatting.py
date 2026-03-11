@@ -93,7 +93,7 @@ def normalize_source(source: str) -> str:
     URLs -> path basename if present, else netloc.
     Empty or unparseable -> 'unknown'.
     """
-    if not source or source == "unknown":
+    if not source:
         return "unknown"
     if "://" in source:
         parsed = urlparse(source)
@@ -115,7 +115,7 @@ def _format_source_line(label: str, c: ChunkData) -> str:
     title = (meta.get("article_title") or "").strip()
     if title:
         raw = [meta.get("article_authors"), meta.get("published_date")]
-        parts = [str(p).strip() for p in raw if p is not None and str(p).strip()]
+        parts = [str(p).strip() for p in raw if p and str(p).strip()]
         if parts:
             title = f"{title} ({', '.join(parts)})"
         display_label = title
@@ -132,6 +132,9 @@ def format_context(chunks: list[ChunkData]) -> str:
     Source paths are normalized to filenames.  Chunks whose source extension
     is in _BINARY_EXTENSIONS are silently dropped.
 
+    Contiguous chunks from the same source (adjacent chunk_index values) are
+    merged into a single source block with overlap trimmed.
+
     When extraction metadata is present, merged entities, relations, and topics
     are appended as structured sections after the source chunks.
 
@@ -140,7 +143,7 @@ def format_context(chunks: list[ChunkData]) -> str:
     if not chunks:
         return _NO_RESULTS_SENTINEL
 
-    accepted: list[tuple[str, ChunkData]] = []
+    filtered: list[ChunkData] = []
     all_entities: list[Entity] = []
     all_topics: list[str] = []
 
@@ -148,14 +151,52 @@ def format_context(chunks: list[ChunkData]) -> str:
         if source_is_binary(c["source"]):
             logger.debug("format_context: dropped binary source '%s'", c["source"])
             continue
-        accepted.append((normalize_source(c["source"]), c))
+        filtered.append(c)
         all_entities.extend(extract_entities_from_metadata(c["metadata"]))
         all_topics.extend(extract_topics_from_metadata(c["metadata"]))
 
-    if not accepted:
+    if not filtered:
         return _NO_RESULTS_SENTINEL
 
-    sections = [_format_source_line(label, c) for label, c in accepted]
+    filtered.sort(key=lambda c: (c["source"], c["metadata"].get("chunk_index", 0)))
+
+    sections: list[str] = []
+    i = 0
+    while i < len(filtered):
+        run_start = i
+        source = filtered[i]["source"]
+        run_text = filtered[i]["content"]
+
+        while i + 1 < len(filtered):
+            nxt = filtered[i + 1]
+            cur_idx = filtered[i]["metadata"].get("chunk_index")
+            nxt_idx = nxt["metadata"].get("chunk_index")
+            if (
+                nxt["source"] != source
+                or cur_idx is None
+                or nxt_idx is None
+                or int(nxt_idx) != int(cur_idx) + 1
+            ):
+                break
+            overlap_len = int(nxt["metadata"].get("overlap_prefix_len", 0))
+            overlap_len = min(overlap_len, len(nxt["content"]))
+            continuation = nxt["content"][overlap_len:]
+            if continuation:
+                run_text += "\n\n" + continuation
+            i += 1
+
+        first = filtered[run_start]
+        merged_chunk: ChunkData = {
+            "content": run_text,
+            "source": first["source"],
+            "indexed_at": first["indexed_at"],
+            "metadata": first["metadata"],
+            "content_hash": first.get("content_hash", ""),
+            "score": first.get("score", 0.0),
+        }
+        label = normalize_source(source)
+        sections.append(_format_source_line(label, merged_chunk))
+        i += 1
 
     if all_entities:
         merged_entities = merge_entities(all_entities)

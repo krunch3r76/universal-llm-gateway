@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
-DECAY_LAMBDA = 0.01  # half-life ~= 69 days
+RECENCY_DECAY_LAMBDA = 0.01  # half-life ~= 69 days
 
 
 class SearchRequest(BaseModel):
@@ -15,9 +15,16 @@ class SearchRequest(BaseModel):
     recency_weight: float = 0.0
     max_distance: float | None = None  # None = return all (backward compat)
     source_prefixes: list[str] | None = None
-    scope: str | list[str] | None = (
-        None  # Single scope name or list of names; resolved to union of source_prefixes via config; mutually exclusive with source_prefixes
-    )
+    scope: str | list[str] | None = None
+
+    @model_validator(mode="after")
+    def check_scope_source_prefixes_exclusive(self) -> SearchRequest:
+        """Enforce mutual exclusivity of scope and source_prefixes."""
+        if self.scope is not None and self.source_prefixes is not None:
+            raise ValueError(
+                "scope and source_prefixes are mutually exclusive; set only one"
+            )
+        return self
 
 
 class SearchResponse(BaseModel):
@@ -121,6 +128,35 @@ class ClearDirectoryRequest(BaseModel):
 class ClearDirectoryResponse(BaseModel):
     sources_cleared: int
     chunks_cleared: int
+
+
+class ChunkIndexGroup(BaseModel):
+    """A source file and the chunk indices to fetch from it."""
+
+    source: str
+    chunk_indices: list[int]
+
+
+class ChunkByIndexItem(BaseModel):
+    """A single chunk returned by the chunks_by_index endpoint."""
+
+    chunk_id: str
+    source: str
+    chunk_index: int
+    text: str
+    metadata: dict[str, Any]
+
+
+class ChunksByIndexRequest(BaseModel):
+    """Batched request to fetch chunks by source + index position."""
+
+    groups: list[ChunkIndexGroup]
+
+
+class ChunksByIndexResponse(BaseModel):
+    """Response from chunks_by_index endpoint."""
+
+    chunks: list[ChunkByIndexItem]
 
 
 class FailedChunkItem(BaseModel):
