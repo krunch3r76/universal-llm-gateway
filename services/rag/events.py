@@ -217,7 +217,7 @@ def rag_extraction_batch_completed(
         "successful": successful,
         "written": written,
         "duration_seconds": duration_seconds,
-        **({} if extraction_model is None else {"extraction_model": extraction_model}),
+        **({"extraction_model": extraction_model} if extraction_model is not None else {}),
     }
     return Event(signal="rag.extraction.batch.completed", payload=payload)
 
@@ -336,22 +336,29 @@ def rag_file_indexed(
     article_venue: str | None = None,
     published_date: str | None = None,
     article_doi: str | None = None,
+    bibliography_chunks: int | None = None,
 ) -> Event:
     """Emitted after a file is fully indexed into both ChromaDB and the property index.
 
     batch_start_ts: optional ISO-8601 when extraction started (enables per-file wall-clock duration).
+    bibliography_chunks: optional count of chunks tagged is_bibliography for this file.
     """
     payload: dict[str, Any] = {
         "file": file,
         "deleted": deleted,
         "indexed": indexed,
         "duration_seconds": duration_seconds,
-        **({} if batch_start_ts is None else {"batch_start_ts": batch_start_ts}),
-        **({} if article_title is None else {"article_title": article_title}),
-        **({} if article_authors is None else {"article_authors": article_authors}),
-        **({} if article_venue is None else {"article_venue": article_venue}),
-        **({} if published_date is None else {"published_date": published_date}),
-        **({} if article_doi is None else {"article_doi": article_doi}),
+        **({"batch_start_ts": batch_start_ts} if batch_start_ts is not None else {}),
+        **({"article_title": article_title} if article_title is not None else {}),
+        **({"article_authors": article_authors} if article_authors is not None else {}),
+        **({"article_venue": article_venue} if article_venue is not None else {}),
+        **({"published_date": published_date} if published_date is not None else {}),
+        **({"article_doi": article_doi} if article_doi is not None else {}),
+        **(
+            {"bibliography_chunks": bibliography_chunks}
+            if bibliography_chunks is not None
+            else {}
+        ),
     }
     return Event(signal="rag.file.indexed", payload=payload)
 

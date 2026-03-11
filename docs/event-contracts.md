@@ -798,7 +798,7 @@ provider HTTP failures.
 | `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
 | `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
 | `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |
-| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` (when file is in registry) |
+| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` (when file is in registry), `bibliography_chunks` (int — count of chunks tagged `is_bibliography` for this file) |
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty) |
 | `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`} |
 | `rag.file.indexing.failed` | `file`, `error` | unhandled error aborted indexing for this file |

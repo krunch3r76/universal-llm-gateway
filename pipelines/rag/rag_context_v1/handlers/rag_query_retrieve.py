@@ -46,9 +46,10 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from transport_utils.rag_client import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
 
+from services.rag.chunk_filters import chunk_is_junk
 from services.rag.metadata_boost import apply_metadata_boost
 
-from .context_formatting import ChunkData, chunk_is_junk, format_context
+from .context_formatting import ChunkData, format_context
 from .retrieval_execution import RetrievedChunk as _RetrievedChunk
 from .retrieval_execution import execute_single_query as _execute_single_query
 from .retrieval_execution import rrf_merge as _rrf_merge
@@ -76,7 +77,8 @@ class RagMultiRetrieveHandler(BaseHandler):
         rag_top_k_per_query, rag_max_chunks, rag_rrf_k, rag_recency_weight,
         scope_confidence_threshold, scope_override, rag_source_prefixes,
         bibliography_filter_threshold, bibliography_filter_disable,
-        consumer_model (optional — triggers profile lookup from retrieval-profiles.yaml).
+        consumer_model (optional — triggers profile lookup from retrieval-profiles.yaml;
+        can be None if no matching profile is found).
 
     Scope-based retrieval:
         - The rewrite step predicts a scope label (e.g., "research", "project")
@@ -230,9 +232,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 scope = scope_override_raw
                 valid_scopes: set[str] = set(
                     effective.get("valid_scopes")
-                    or context.pipeline.options.to_context_dict().get(
-                        "valid_scopes"
-                    )
+                    or context.pipeline.options.to_context_dict().get("valid_scopes")
                     or []
                 )
                 if valid_scopes and not all(s in valid_scopes for s in scope):
@@ -246,24 +246,18 @@ class RagMultiRetrieveHandler(BaseHandler):
                 source_prefixes = None
                 search_scope = scope
                 retrieval_mode = "scope"
-            elif (
-                isinstance(scope_override_raw, str) and scope_override_raw.strip()
-            ):
+            elif isinstance(scope_override_raw, str) and scope_override_raw.strip():
                 scope = scope_override_raw.strip()
                 source_prefixes = None
                 search_scope = scope
                 retrieval_mode = "scope"
             else:
                 predicted_scope = rewrite_data.get("scope", "both")
+                _pipeline_options = context.pipeline.options.to_context_dict()
                 scope_aliases: dict[str, str] = (
-                    effective.get("scope_aliases") or {}
-                ) or (
-                    context.pipeline.options.to_context_dict().get("scope_aliases")
-                    or {}
+                    effective.get("scope_aliases") or _pipeline_options.get("scope_aliases") or {}
                 )
-                resolved_scope = scope_aliases.get(
-                    predicted_scope, predicted_scope
-                )
+                resolved_scope = scope_aliases.get(predicted_scope, predicted_scope)
                 if resolved_scope != predicted_scope:
                     logger.info(
                         "Step '%s': scope alias '%s' → '%s'",
@@ -275,24 +269,19 @@ class RagMultiRetrieveHandler(BaseHandler):
                 # scopes map — instead of a separate hardcoded valid_scopes list
                 valid_scopes = set(
                     effective.get("valid_scopes")
-                    or context.pipeline.options.to_context_dict().get(
-                        "valid_scopes"
-                    )
+                    or _pipeline_options.get("valid_scopes")
                     or []
                 )
                 default_scope = "both"
                 if valid_scopes and resolved_scope not in valid_scopes:
                     logger.info(
-                        "Step '%s': scope '%s' not in valid_scopes, "
-                        "fallback to '%s'",
+                        "Step '%s': scope '%s' not in valid_scopes, fallback to '%s'",
                         step.id,
                         resolved_scope,
                         default_scope,
                     )
                     resolved_scope = default_scope
-                scope_confidence = float(
-                    rewrite_data.get("scope_confidence", 1.0)
-                )
+                scope_confidence = float(rewrite_data.get("scope_confidence", 1.0))
                 scope = (
                     resolved_scope
                     if scope_confidence >= confidence_threshold
@@ -311,7 +300,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 search_scope = scope
                 retrieval_mode = "scope"
 
-        scope_key = scope[0] if isinstance(scope, list) else scope
+        scope_key = scope[0] if isinstance(scope, list) and scope else scope
 
         # Tier 3: scope-conditional recency (unless caller explicitly overrode it)
         if "rag_recency_weight" not in runtime:
@@ -416,12 +405,10 @@ class RagMultiRetrieveHandler(BaseHandler):
         merged, merged_scores = _rrf_merge(successful, k=rrf_k, max_chunks=max_chunks)
 
         # --- Low-chunk retry with broader scope (once) ---
-        min_chunks_threshold = int(
-            effective.get("rag_min_chunks_retry_threshold", 0)
+        min_chunks_threshold = int(effective.get("rag_min_chunks_retry_threshold", 0))
+        retry_fallback = (
+            str(effective.get("rag_retry_scope_fallback", "both")).strip() or "both"
         )
-        retry_fallback = str(
-            effective.get("rag_retry_scope_fallback", "both")
-        ).strip() or "both"
         if (
             min_chunks_threshold > 0
             and len(merged) < min_chunks_threshold
@@ -527,7 +514,9 @@ class RagMultiRetrieveHandler(BaseHandler):
             clean = merged
         else:
             for chunk in merged:
-                if chunk_is_junk(chunk.content, threshold=junk_threshold):
+                if chunk.metadata.get("is_bibliography") or chunk_is_junk(
+                    chunk.content, threshold=junk_threshold
+                ):
                     merged_scores.pop(chunk.content_hash, None)
                 else:
                     clean.append(chunk)

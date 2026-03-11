@@ -58,6 +58,7 @@ from services.rag.article_registry import (
 from services.rag.article_registry import (
     lookup_article as lookup_article_metadata,
 )
+from services.rag.chunk_filters import chunk_is_junk
 from services.rag.chunkers import Chunk, chunk_file
 from services.rag.config import RagConfig, load_config
 from services.rag.corpus_hints import update_corpus_hints
@@ -111,6 +112,7 @@ from services.rag.watcher_manager import WatcherManager
 
 logger = logging.getLogger(__name__)
 
+# ChromaDB collection name for knowledge chunks.
 COLLECTION_NAME = "knowledge"
 
 app = FastAPI(title="RAG Service")
@@ -516,9 +518,11 @@ async def _index_file_impl(
 
     # Register in pending journal before any early-return so the startup reconciler
     # can recover this file if the service is killed at any point after this line.
-    # ∀ exit path below: finally: clear_pending removes the entry.
+    # ∀ exit path below: finally: clear_pending removes the entry only if we marked.
+    pending_marked = False
     if _property_index is not None:
         await _property_index.mark_pending(source)
+        pending_marked = True
 
     try:
         if not force and existing_ids and all_ids_match_prefix(existing_ids, prefix):
@@ -562,7 +566,11 @@ async def _index_file_impl(
                                 deleted=0,
                                 indexed=0,
                                 duration_seconds=time.monotonic() - start,
-                                **(_article_event_kwargs(_registry, source) if _registry is not None else {}),
+                                **(
+                                    _article_event_kwargs(_registry, source)
+                                    if _registry is not None
+                                    else {}
+                                ),
                             )
                         )
                     return IndexResult(
@@ -633,6 +641,10 @@ async def _index_file_impl(
             for metadata in metadatas:
                 metadata["pdf_hash"] = content_hash
 
+        # Bibliography tagging for downstream filter_corpus_hints and retrieve_assemble
+        for metadata, chunk in zip(metadatas, chunks, strict=True):
+            metadata["is_bibliography"] = chunk_is_junk(chunk.text)
+
         extraction_entities = 0
         extraction_topics = 0
         extraction_property_entries: list[tuple[str, str, str, str]] = []
@@ -654,6 +666,18 @@ async def _index_file_impl(
             extraction_topics = ext_result.topics
             extraction_property_entries = ext_result.property_entries
             file_batch_start_ts = getattr(ext_result, "batch_start_ts", None)
+
+            bibliography_ids = {
+                ids[i]
+                for i, meta in enumerate(metadatas)
+                if meta.get("is_bibliography")
+            }
+            if bibliography_ids:
+                extraction_property_entries = [
+                    e
+                    for e in extraction_property_entries
+                    if e[1] not in bibliography_ids
+                ]
 
             # ∀ file: extraction failed below threshold ⟹ skip embed+upsert so
             # partially-extracted docs are never queryable. Old chunks (if any)
@@ -699,7 +723,7 @@ async def _index_file_impl(
             )
         raise
     finally:
-        if _property_index is not None:
+        if pending_marked and _property_index is not None:
             await _property_index.clear_pending(source)
 
     await _maybe_update_corpus_hints()
@@ -710,6 +734,7 @@ async def _index_file_impl(
         len(chunks),
     )
     if _event_bus is not None:
+        n_bib = sum(1 for m in metadatas if m.get("is_bibliography"))
         await _event_bus.publish_async_nowait(
             rag_file_indexed(
                 file=source,
@@ -717,7 +742,12 @@ async def _index_file_impl(
                 indexed=len(chunks),
                 duration_seconds=time.monotonic() - start,
                 batch_start_ts=file_batch_start_ts,
-                **(_article_event_kwargs(_registry, source) if _registry is not None else {}),
+                bibliography_chunks=n_bib,
+                **(
+                    _article_event_kwargs(_registry, source)
+                    if _registry is not None
+                    else {}
+                ),
             )
         )
     return IndexResult(

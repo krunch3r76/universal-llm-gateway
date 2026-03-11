@@ -7,7 +7,6 @@ handlers so formatting logic is not duplicated.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any, TypedDict
 from urllib.parse import urlparse
@@ -87,32 +86,6 @@ _BINARY_EXTENSIONS: frozenset[str] = frozenset(
 )
 
 
-_JUNK_LINE_RE: re.Pattern[str] = re.compile(
-    r"^\s*("
-    r"\[\d+\]"
-    r"|\d+\.\s+[A-Z]"
-    r"|References\b|Bibliography\b"
-    r"|Table\s+\d+"
-    r"|\.\s+\.\s+\."
-    r")"
-)
-
-# Lines that look like bibliography entries (author, year; or "et al.")
-_CITATION_LINE_RE: re.Pattern[str] = re.compile(
-    r".*,\s*(?:19|20)\d{2}\b.*|.*\bet\s+al\.?\s*[,\.].*",
-    re.IGNORECASE,
-)
-
-
-def is_bibliography_heavy(content: str, threshold: float = 0.25) -> bool:
-    """True when >= threshold fraction of non-blank lines look like citations."""
-    lines = [line for line in content.splitlines() if line.strip()]
-    if not lines:
-        return False
-    citation_count = sum(1 for line in lines if _CITATION_LINE_RE.search(line))
-    return (citation_count / len(lines)) >= threshold
-
-
 def normalize_source(source: str) -> str:
     """Return a short human-readable label for a chunk source.
 
@@ -136,21 +109,6 @@ def source_is_binary(source: str) -> bool:
     return bool(ext) and ext in _BINARY_EXTENSIONS
 
 
-def chunk_is_junk(content: str, threshold: float = 0.35) -> bool:
-    """True when content looks like a bibliography, table, or garbled PDF extraction.
-
-    Classified as junk when >= ``threshold`` fraction of non-blank lines
-    match ``_JUNK_LINE_RE``, or when >= 25% of lines match citation pattern.
-    """
-    lines = [line for line in content.splitlines() if line.strip()]
-    if not lines:
-        return True
-    if is_bibliography_heavy(content, 0.25):
-        return True
-    junk_count = sum(1 for line in lines if _JUNK_LINE_RE.search(line))
-    return (junk_count / len(lines)) >= threshold
-
-
 def _format_source_line(label: str, c: ChunkData) -> str:
     """Format a single chunk as a source line with optional article title and metadata."""
     meta = c.get("metadata") or {}
@@ -163,7 +121,9 @@ def _format_source_line(label: str, c: ChunkData) -> str:
         display_label = title
     else:
         display_label = label
-    return f"[Source: {display_label} | Last changed: {c['indexed_at']}]\n{c['content']}"
+    return (
+        f"[Source: {display_label} | Last changed: {c['indexed_at']}]\n{c['content']}"
+    )
 
 
 def format_context(chunks: list[ChunkData]) -> str:
