@@ -70,7 +70,7 @@ Stargate detects the ID and routes to `PipelineExecutor` transparently.
 **Current service pipelines**:
 | ID | Purpose | Source |
 |---|---|---|
-| `rag-context` | Query rewrite → parallel RAG + RRF merge → context | `pipelines/rag/rag_context_v1/` |
+| `rag-context` | Scope analysis → optional rewrite generation → parallel RAG + RRF merge → context | `pipelines/rag/rag_context_v1/` |
 | `rag-answer` | Calls `rag-context` → grounded answer via phi4 | `pipelines/answer_v1/` |
 | `rag-extraction` | Structured entity/topic/facet extraction used during RAG indexing | `pipelines/rag_extraction/` |
 | `project-assistant` | Project-scoped assistant flow that pins RAG context scope to project docs | `pipelines/project_assistant/` |
@@ -82,6 +82,9 @@ Stargate detects the ID and routes to `PipelineExecutor` transparently.
 - `rag-context` does not rely on a duplicated static `valid_scopes` list.
 - Invalid explicit scope overrides, invalid predicted scopes, low-confidence predictions, or unavailable scope catalog trigger fail-closed behavior.
 - Fail-closed retrieval returns zero chunks and emits `pipeline.rag.scope.rejected`.
+- Query preprocessing is split into `analyze_scope` and conditionally executed `generate_rewrites`; retrieval consumes `scope_result` (required) and `rewrite_result` (optional).
+- Runtime option `rewrite_enabled=false` bypasses rewrite/HyDE generation for diagnostics while preserving scope validation and retrieval execution.
+- Consumers use split outputs: `analyze_scope.json` (required) and optionally `generate_rewrites.json`.
 
 ### Pipeline Estimation Metadata
 

@@ -7,32 +7,38 @@ description: >
   Rewrites the query into optimized sub-queries, executes parallel retrieval
   with RRF merge, and returns assembled context chunks as the response.
   Used by pipeline_test ask/consult as a drop-in replacement for direct RAG search.
+  scope_options: candidate scope labels for the scope-analysis prompt; runtime
+  validation uses RAG scope registry (GET /scopes). scope_aliases: map
+  model-invented labels (e.g. schema_design) to valid registry labels; invalid
+  or unknown scopes are fail-closed (0 chunks).
 output: rerank_assemble
 
 options:
   timeout_seconds: 60    # §4.2: raised from 30s; GPU contention headroom
   corpus_hints: ""       # Injected at runtime from corpus_hints.yaml when present
-  scope_options: |
-    "project"
-    "small_llm_prompting"
-    "llm_prompting"
-    "prompting"
-    "workflows"
-    "research"
-    "rag_systems"
-    "code_retrieval"
-    "knowledge_management"
-    "graph_modeling"
-    "temporal_provenance"
-    "belief_consistency"
-    "knowledge_systems"
-    "llm_foundations"
-    "all_research"
-    "both"
-    "all"
+  rewrite_enabled: true  # Diagnostic toggle: skip rewrite generation/HyDE when false
+  # Candidate scope labels provided to the scope-analysis prompt.
+  # Runtime enforcement is still dynamic via RAG scope registry lookup (GET /scopes).
+  scope_options:
+    - "project"
+    - "small_llm_prompting"
+    - "llm_prompting"
+    - "prompting"
+    - "workflows"
+    - "research"
+    - "rag_systems"
+    - "code_retrieval"
+    - "knowledge_management"
+    - "graph_modeling"
+    - "temporal_provenance"
+    - "belief_consistency"
+    - "knowledge_systems"
+    - "llm_foundations"
+    - "all_research"
+    - "all"
   # Scope validation derives from RAG service scope registry (GET /scopes),
   # not a static list.  Invalid/unknown scopes are fail-closed (0 chunks).
-  # Map model-invented scope labels to valid scope labels
+  # Map model-invented scope labels (even when discouraged by prompt) to valid labels.
   scope_aliases:
     schema_design: graph_modeling
     data_modeling: graph_modeling
@@ -47,9 +53,11 @@ options:
   scope_confidence_threshold: 0.7  # §4.4: CRAG 3-state evaluation — queries below
                                    #        threshold are fail-closed (0 chunks, no broadening)
   bibliography_filter_threshold: 0.35  # 0 = disable junk filter; >0 = fraction of lines to treat as junk
-  bibliography_filter_disable: false   # If true, skip junk/bibliography filter entirely (overrides threshold)
+  bibliography_filter_disable: false   # Explicit hard-disable flag; if true, overrides threshold
   hyde_enabled: true  # Hypothetical Document Embeddings — generates a short
                       # hypothetical passage as an additional retrieval query
+  source_only_retrieval: false  # Diagnostic mode: ignore rewritten queries and
+                                # HyDE, retrieve using source_text only
   metadata_boost_enabled: true   # Post-RRF metadata re-scoring using extracted
                                  # entity/relation/topic overlap with query terms
   metadata_boost_weight: 0.20    # Weight of metadata score in fusion with RRF
@@ -69,7 +77,7 @@ options:
   rerank_max_candidates: 14          # Top-N chunks sent to reranker (rest pass through)
   rerank_max_movement: 3             # Max rank positions a chunk can move (±)
   rerank_prior_weight: 0.70          # Weight of prior (RRF+metadata) score in fusion
-                                     # (1.0 = ignore LLM, 0.0 = ignore prior)
+                                     # (0.0 = pure LLM, 1.0 = pure prior)
 
 steps:
   - name: suggest_terms
@@ -89,6 +97,8 @@ steps:
           properties:
             terms:
               type: array
+              minItems: 5
+              maxItems: 10
               items:
                 type: string
               description: "Concrete retrieval terms (standards, relation types, key concepts)"
@@ -101,21 +111,16 @@ steps:
     max_hints: 7
     min_chunk_cooccurrence: 2
 
-  - name: analyze_rewrite
+  - name: analyze_scope
     type: generate
     model_ref: qwen3_9b
     model_requirements:
       task: rag_rewrite
       source: any       # local models qualify — enables laptop/CPU fallback
-    prompt_ref: rag.rag_context_v1.analyze_rewrite
-    handler_inputs:
-      suggested_terms: "suggest_terms.json.terms"
-      corpus_hints: "filter_corpus_hints.json.filtered_hints"
+    prompt_ref: rag.rag_context_v1.analyze_scope
     generation_parameters:
-      temperature: 0.4   # §4.1: T=0.1→0.4; all 4 sources agree moderate temp
-                         #        improves sub-query diversity 3–8% recall;
-                         #        JSON schema constraint keeps output reliable
-      max_tokens: 512
+      temperature: 0.2
+      max_tokens: 256
       response_format:
         type: json_object
         schema:
@@ -130,23 +135,48 @@ steps:
               minimum: 0
               maximum: 1
               description: "Confidence in the scope classification (0–1)"
+            out_of_scope_reason:
+              type: string
+              description: "Empty string if in-scope; otherwise brief explanation of why the query does not match the corpus and what research area it maps to"
+          required: ["needs_retrieval", "scope", "scope_confidence", "out_of_scope_reason"]
+
+  - name: generate_rewrites
+    type: generate
+    model_ref: qwen3_9b
+    model_requirements:
+      task: rag_rewrite
+      source: any
+    prompt_ref: rag.rag_context_v1.generate_rewrites
+    condition: "analyze_scope.json.get('needs_retrieval') and options.get('rewrite_enabled', True)"
+    handler_inputs:
+      scope: "analyze_scope.json.scope"
+      suggested_terms: "suggest_terms.json.terms"
+      corpus_hints: "filter_corpus_hints.json.filtered_hints"
+    generation_parameters:
+      temperature: 0.4   # moderate temperature improves rewrite diversity while JSON schema constrains structure
+      max_tokens: 1024
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
             rewritten_queries:
               type: array
+              minItems: 2
+              maxItems: 4
               items:
                 type: string
             hyde_passage:
               type: string
               description: "A hypothetical 3-4 sentence passage that would answer the query, written in the style of an academic paper or technical document"
-            out_of_scope_reason:
-              type: string
-              description: "Empty string if in-scope; otherwise brief explanation of why the query does not match the corpus and what research area it maps to"
-          required: ["needs_retrieval", "scope", "scope_confidence", "rewritten_queries", "hyde_passage", "out_of_scope_reason"]
+          required: ["rewritten_queries", "hyde_passage"]
 
   - name: retrieve_assemble
     type: rag_multi_retrieve_v1
     endpoint: "http://localhost:8100/search"
     handler_inputs:
-      rewrite_result: "analyze_rewrite.json"
+      scope_result: "analyze_scope.json"
+      rewrite_result: "generate_rewrites.json"
 
   - name: rerank_assemble
     type: rag_rerank_assemble_v1
@@ -154,10 +184,10 @@ steps:
     prompt_ref: rag.rag_context_v1.rerank_chunks
     handler_inputs:
       chunks_data: "retrieve_assemble.json.chunks"
-      rewrite_result: "analyze_rewrite.json"
+      rewrite_result: "generate_rewrites.json"
     generation_parameters:
       temperature: 0.2
-      max_tokens: 1024   # window_size=5 chunks × ~80 tok/entry + JSON overhead; 512 truncates
+      max_tokens: 1024   # window_size=5 chunks × ~80 tok/entry + JSON overhead; 1024 should be sufficient
       response_format:
         type: json_object
         schema:

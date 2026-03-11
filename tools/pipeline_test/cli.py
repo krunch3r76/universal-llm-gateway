@@ -37,7 +37,7 @@ from . import measure_analysis as measure_analysis_svc
 from . import replay as replay_svc
 from . import sandbox as sandbox_svc
 from . import snapshot as snapshot_svc
-from .models import ConsultResult, ReplayOverrides
+from .models import ConsultResult, ExecutionSnapshot, ReplayOverrides, StepSnapshot
 
 logger = logging.getLogger(__name__)
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -51,19 +51,23 @@ def main(argv: list[str] | None = None) -> None:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    _add_list_parser(sub)
-    _add_snapshot_parser(sub)
-    _add_inspect_parser(sub)
-    _add_refine_parser(sub)
-    _add_replay_parser(sub)
-    _add_compare_parser(sub)
-    _add_consult_parser(sub)
-    _add_eval_retrieval_parser(sub)
-    _add_eval_steps_parser(sub)
-    _add_ingest_papers_parser(sub)
-    _add_measure_profile_parser(sub)
-    _add_sandbox_parser(sub)
-    _add_ab_test_parser(sub)
+    parser_builders = {
+        "list": _add_list_parser,
+        "snapshot": _add_snapshot_parser,
+        "inspect": _add_inspect_parser,
+        "refine-context": _add_refine_parser,
+        "replay": _add_replay_parser,
+        "compare": _add_compare_parser,
+        "consult": _add_consult_parser,
+        "eval-retrieval": _add_eval_retrieval_parser,
+        "eval-steps": _add_eval_steps_parser,
+        "ingest-papers": _add_ingest_papers_parser,
+        "measure-profile": _add_measure_profile_parser,
+        "sandbox": _add_sandbox_parser,
+        "ab-test": _add_ab_test_parser,
+    }
+    for add_parser in parser_builders.values():
+        add_parser(sub)
 
     args = parser.parse_args(argv)
     args.func(args)
@@ -75,6 +79,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _add_list_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for listing executions."""
     p = sub.add_parser("list", help="List available pipeline executions")
     p.add_argument("pipeline_id", nargs="?", help="Pipeline ID to filter by")
     p.set_defaults(func=_cmd_list)
@@ -117,6 +122,7 @@ def _list_all_pipelines() -> None:
 
 
 def _add_snapshot_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for creating fixture snapshots."""
     p = sub.add_parser("snapshot", help="Capture execution into a fixture")
     p.add_argument("pipeline_id", help="Pipeline ID")
     p.add_argument(
@@ -163,6 +169,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> None:
 
 
 def _add_inspect_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for fixture inspection."""
     p = sub.add_parser("inspect", help="Inspect a fixture or specific step")
     p.add_argument("fixture", help="Path to fixture JSON")
     p.add_argument("--step", "-s", help="Step name to inspect")
@@ -200,6 +207,7 @@ def _cmd_inspect(args: argparse.Namespace) -> None:
 
 
 def _add_refine_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for prompt-refinement context views."""
     p = sub.add_parser(
         "refine-context",
         help="Agent-optimized step view for prompt refinement",
@@ -242,7 +250,7 @@ def _cmd_refine_context(args: argparse.Namespace) -> None:
         print(format_svc.format_refine_context(step, call_label=args.call))
 
 
-def _load_snapshot(args: argparse.Namespace) -> Any:
+def _load_snapshot(args: argparse.Namespace) -> ExecutionSnapshot:
     """Load snapshot from fixture file or directly from latest execution."""
     if args.latest:
         executions = snapshot_svc.list_executions(args.latest)
@@ -259,6 +267,7 @@ def _load_snapshot(args: argparse.Namespace) -> Any:
 
 
 def _add_replay_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for replaying recorded model calls."""
     p = sub.add_parser("replay", help="Replay a model call against Stargate")
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument("fixture", nargs="?", help="Path to fixture JSON")
@@ -349,6 +358,7 @@ def _cmd_replay(args: argparse.Namespace) -> None:
 
 
 def _add_compare_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for comparing original and replay outputs."""
     p = sub.add_parser("compare", help="Compare original vs replay output")
     source = p.add_mutually_exclusive_group(required=True)
     source.add_argument("fixture", nargs="?", help="Path to fixture JSON")
@@ -375,11 +385,14 @@ def _cmd_compare(args: argparse.Namespace) -> None:
     step = _resolve_step(snap, args.step)
 
     if args.call:
-        original = ""
-        for call in step.model_calls:
-            if call.call_label == args.call:
-                original = call.response_text
-                break
+        original = next(
+            (
+                call.response_text
+                for call in step.model_calls
+                if call.call_label == args.call
+            ),
+            "",
+        )
         if not original:
             print(f"Call '{args.call}' not found in step", file=sys.stderr)
             sys.exit(1)
@@ -401,6 +414,7 @@ def _cmd_compare(args: argparse.Namespace) -> None:
 
 
 def _add_consult_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for consultation against external models."""
     p = sub.add_parser(
         "consult",
         help="Query other models for prompt improvement suggestions (chained by default)",
@@ -539,6 +553,7 @@ def _print_result(result: ConsultResult, label: str) -> None:
 
 
 def _add_eval_retrieval_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for retrieval-quality evaluation."""
     p = sub.add_parser(
         "eval-retrieval",
         help="Score retrieval + reranking quality using cloud model critique",
@@ -602,11 +617,9 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> None:
     print(eval_retrieval_svc.format_eval_result(result))
 
     if args.output:
-        import json
-
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+        out_path.write_text(json.dumps(result, indent=2))
         print(f"\nResult saved: {out_path}", file=sys.stderr)
 
 
@@ -616,6 +629,7 @@ def _cmd_eval_retrieval(args: argparse.Namespace) -> None:
 
 
 def _add_eval_steps_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for per-step quality/bottleneck evaluation."""
     p = sub.add_parser(
         "eval-steps",
         help="Per-step diagnosis: score each pipeline step + identify bottleneck",
@@ -679,11 +693,9 @@ def _cmd_eval_steps(args: argparse.Namespace) -> None:
     print(eval_steps_svc.format_eval_steps_result(result))
 
     if args.output:
-        import json
-
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+        out_path.write_text(json.dumps(result, indent=2))
         print(f"\nResult saved: {out_path}", file=sys.stderr)
 
 
@@ -693,6 +705,7 @@ def _cmd_eval_steps(args: argparse.Namespace) -> None:
 
 
 def _add_ingest_papers_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for ingesting PDF papers into the RAG corpus."""
     p = sub.add_parser(
         "ingest-papers",
         help="Copy prompt-engineering PDFs into RAG corpus directory",
@@ -758,7 +771,9 @@ def _add_ingest_papers_parser(sub: argparse._SubParsersAction) -> None:
     p.set_defaults(func=_cmd_ingest_papers)
 
 
-def _build_registry_entry(record: Any, args: argparse.Namespace) -> dict[str, str]:
+def _build_registry_entry(
+    record: ingest_svc.IngestRecord, args: argparse.Namespace
+) -> dict[str, str]:
     """Build article registry entry from CLI flags and/or PDF metadata."""
     meta: dict[str, str] = {}
     if not (args.title or args.authors):
@@ -848,6 +863,7 @@ def _cmd_ingest_papers(args: argparse.Namespace) -> None:
 
 
 def _add_measure_profile_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for retrieval profile sweep/measurement."""
     p = sub.add_parser(
         "measure-profile",
         help="Sweep RAG tunables to find optimal values for a consumer model",
@@ -951,6 +967,7 @@ def _cmd_measure_profile(args: argparse.Namespace) -> None:
 
 
 def _add_sandbox_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for sandbox management commands."""
     p = sub.add_parser("sandbox", help="Manage pipeline sandboxes for experimentation")
     sp = p.add_subparsers(dest="sandbox_cmd", required=True)
 
@@ -1020,9 +1037,10 @@ def _cmd_sandbox_clean(args: argparse.Namespace) -> None:
 
 
 def _add_ab_test_parser(sub: argparse._SubParsersAction) -> None:
+    """Register parser for rewrite prompt A/B testing."""
     p = sub.add_parser(
         "ab-test",
-        help="A/B test two prompt variants (replay analyze_rewrite with dir A vs dir B)",
+        help="A/B test two prompt variants (replay analyze_scope or generate_rewrites with dir A vs dir B)",
     )
     p.add_argument(
         "fixtures",
@@ -1044,8 +1062,8 @@ def _add_ab_test_parser(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--step",
-        default="analyze_rewrite",
-        help="Step name to replay (default: analyze_rewrite)",
+        default="analyze_scope",
+        help="Step name to replay (default: analyze_scope)",
     )
     p.add_argument(
         "--out",
@@ -1112,19 +1130,30 @@ def _cmd_ab_test(args: argparse.Namespace) -> None:
 
     def _metrics(res: Any) -> dict[str, Any]:
         if res is None:
-            return {"valid_json": False, "rewrites": 0, "hyde_words": 0, "prompt_tokens": 0}
+            return {
+                "valid_json": False,
+                "rewrites": 0,
+                "hyde_words": 0,
+                "prompt_tokens": 0,
+            }
         try:
             data = json.loads(res.response_text)
         except json.JSONDecodeError:
-            return {"valid_json": False, "rewrites": 0, "hyde_words": 0, "prompt_tokens": res.prompt_tokens}
+            return {
+                "valid_json": False,
+                "rewrites": 0,
+                "hyde_words": 0,
+                "prompt_tokens": res.prompt_tokens,
+            }
         rewrites = data.get("rewritten_queries") or []
-        hyde = (data.get("hyde_passage") or "")
+        hyde = data.get("hyde_passage") or ""
         return {
             "valid_json": True,
             "rewrites": len(rewrites),
             "hyde_words": len(hyde.split()),
             "prompt_tokens": res.prompt_tokens,
         }
+
     # Print comparison table
     print()
     print("A (current) vs B (9B-oriented)")
@@ -1133,8 +1162,12 @@ def _cmd_ab_test(args: argparse.Namespace) -> None:
         m_a = _metrics(res_a)
         m_b = _metrics(res_b)
         print(f"  {stem}:")
-        print(f"    A  valid_json={m_a['valid_json']}  rewrites={m_a['rewrites']}  hyde_words={m_a['hyde_words']}  prompt_tokens={m_a['prompt_tokens']}")
-        print(f"    B  valid_json={m_b['valid_json']}  rewrites={m_b['rewrites']}  hyde_words={m_b['hyde_words']}  prompt_tokens={m_b['prompt_tokens']}")
+        print(
+            f"    A  valid_json={m_a['valid_json']}  rewrites={m_a['rewrites']}  hyde_words={m_a['hyde_words']}  prompt_tokens={m_a['prompt_tokens']}"
+        )
+        print(
+            f"    B  valid_json={m_b['valid_json']}  rewrites={m_b['rewrites']}  hyde_words={m_b['hyde_words']}  prompt_tokens={m_b['prompt_tokens']}"
+        )
     print()
     print(f"Results saved under {out_dir}/A/ and {out_dir}/B/")
 
@@ -1144,7 +1177,7 @@ def _cmd_ab_test(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_step(snap: Any, step_name: str) -> Any:
+def _resolve_step(snap: ExecutionSnapshot, step_name: str) -> StepSnapshot:
     if step_name in snap.steps:
         return snap.steps[step_name]
     matches = [

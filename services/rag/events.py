@@ -217,8 +217,9 @@ def rag_extraction_batch_completed(
         "successful": successful,
         "written": written,
         "duration_seconds": duration_seconds,
-        **({"extraction_model": extraction_model} if extraction_model is not None else {}),
     }
+    if extraction_model is not None:
+        payload["extraction_model"] = extraction_model
     return Event(signal="rag.extraction.batch.completed", payload=payload)
 
 
@@ -331,16 +332,14 @@ def rag_file_indexed(
     indexed: int,
     duration_seconds: float = 0.0,
     batch_start_ts: str | None = None,
-    article_title: str | None = None,
-    article_authors: str | None = None,
-    article_venue: str | None = None,
-    published_date: str | None = None,
-    article_doi: str | None = None,
+    document_metadata: dict[str, Any] | None = None,
     bibliography_chunks: int | None = None,
 ) -> Event:
     """Emitted after a file is fully indexed into both ChromaDB and the property index.
 
     batch_start_ts: optional ISO-8601 when extraction started (enables per-file wall-clock duration).
+    document_metadata: optional dict for document-specific fields (e.g. article_title, article_authors,
+        article_venue, published_date, article_doi when file is in article registry).
     bibliography_chunks: optional count of chunks tagged is_bibliography for this file.
     """
     payload: dict[str, Any] = {
@@ -348,18 +347,13 @@ def rag_file_indexed(
         "deleted": deleted,
         "indexed": indexed,
         "duration_seconds": duration_seconds,
-        **({"batch_start_ts": batch_start_ts} if batch_start_ts is not None else {}),
-        **({"article_title": article_title} if article_title is not None else {}),
-        **({"article_authors": article_authors} if article_authors is not None else {}),
-        **({"article_venue": article_venue} if article_venue is not None else {}),
-        **({"published_date": published_date} if published_date is not None else {}),
-        **({"article_doi": article_doi} if article_doi is not None else {}),
-        **(
-            {"bibliography_chunks": bibliography_chunks}
-            if bibliography_chunks is not None
-            else {}
-        ),
     }
+    if batch_start_ts is not None:
+        payload["batch_start_ts"] = batch_start_ts
+    if document_metadata is not None:
+        payload["document_metadata"] = document_metadata
+    if bibliography_chunks is not None:
+        payload["bibliography_chunks"] = bibliography_chunks
     return Event(signal="rag.file.indexed", payload=payload)
 
 
@@ -398,6 +392,34 @@ def rag_file_indexing_failed(
     """Emitted when an unhandled error aborts file indexing."""
     return Event(
         signal="rag.file.indexing.failed",
+        payload={"file": file, "error": error},
+    )
+
+
+@event_factory
+def rag_html_normalization_started(*, file: str) -> Event:
+    """Emitted when HTML ingest enters the normalization pipeline."""
+    return Event(signal="rag.html.normalization.started", payload={"file": file})
+
+
+@event_factory
+def rag_html_normalization_completed(
+    *,
+    file: str,
+    output_chars: int,
+) -> Event:
+    """Emitted when HTML normalization succeeds with deterministic markdown output."""
+    return Event(
+        signal="rag.html.normalization.completed",
+        payload={"file": file, "output_chars": output_chars},
+    )
+
+
+@event_factory
+def rag_html_normalization_failed(*, file: str, error: str) -> Event:
+    """Emitted when HTML normalization fails and file is skipped from indexing."""
+    return Event(
+        signal="rag.html.normalization.failed",
         payload={"file": file, "error": error},
     )
 

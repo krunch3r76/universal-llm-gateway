@@ -7,85 +7,80 @@ prompts:
       Good terms: names of entities, products, tools, systems, languages, frameworks, protocols, standards,
       APIs, formats, identifiers, relation names, attribute names, acronyms, and domain technical nouns.
       Rules: prefer exact terms over paraphrases; prefer nouns/noun phrases over questions; avoid generic filler; no explanations.
-      Output only valid JSON. Format: {"terms":["...", "..."]}
+      Format: {"terms":["...", "..."]}
     template: |
       Query: {text}
 
       Return JSON with a single key "terms" (array of 5–10 strings).
 
-  analyze_rewrite:
-    description: "Analyze query and produce retrieval-optimized rewrites (compact, corpus-agnostic)"
+  analyze_scope:
+    description: "Analyze query retrieval need and scope (compact, corpus-agnostic)"
     system_prompt: |
       You analyze a user query for dense-retrieval RAG over the indexed corpus.
-      Return valid JSON only with these keys: needs_retrieval, scope, scope_confidence,
-      out_of_scope_reason, rewritten_queries, hyde_passage.
-
-      Safety heuristic for query expansion:
-      LM-based expansion can reduce retrieval quality by adding irrelevant terms,
-      over-specifying the query, or collapsing ambiguous queries to one popular
-      interpretation. Generate conservative rewrites that preserve the original
-      relevance signal. When in doubt, copy the original phrasing or use close
-      technical synonyms rather than introducing new corpus terms.
+      Return valid JSON only with these keys:
+      needs_retrieval, scope, scope_confidence, out_of_scope_reason.
 
       Required behavior:
       1. needs_retrieval: false only for purely conversational (thanks, ok); else true.
       2. scope: set to exactly one of the valid scope labels below. Copy the label verbatim; do not invent values.
-      If uncertain or the query spans multiple areas, use "both".
+      If uncertain or the query spans multiple areas, use "all".
+      For scope assignment, prioritize label stability across close phrasings:
+      - Choose the most specific valid label directly supported by explicit query terms.
+      - Do not switch to a broader neighboring label based only on paraphrase, wording strength, or inferred intent.
+      - If two labels remain genuinely plausible from the literal query text, use "all" rather than guessing.
       Valid scopes (use exactly one):
        {scope_options}
       Invalid (do not use): schema_design, data_governance, data_modeling — use the closest valid label instead.
       3. If the query is a poor match for the corpus, set out_of_scope_reason to a brief
         explanation and scope_confidence <= 0.5. Otherwise out_of_scope_reason = "".
-      4. rewritten_queries: 2 for simple topics; 3–4 for multi-facet or comparative.
-        At least one rewrite MUST preserve the original query's main lexical anchors.
-        Each rewrite must retain at least 1-2 key terms from the original query
-        unless performing a bridging rewrite.
-        At least one rewrite MUST use mainstream academic/technical vocabulary
-        (established terms, standards, well-known frameworks) without any corpus
-        vocabulary terms.
-        You MAY incorporate corpus-specific terms from the list below into
-        additional rewrites, but ONLY if they are clearly relevant to the query
-        intent. If no corpus term is relevant, do not use any.
-        Each rewrite: a concrete keyword query, not a semantic paraphrase.
-        Suggested retrieval terms (from prior step): {suggested_terms}
-        Corpus vocabulary (domain terms indexed in the corpus — use only when relevant): {corpus_hints}
-        Limit: use at most 2 corpus vocabulary terms per rewrite.
-        Do NOT populate all rewrites with corpus terms — leave room for standard
-        terminology the corpus may index under different names.
-        Prefer exact strings: entity names, acronyms, dates/years, versions, standards,
-        relation types, schema fields, protocol names. Use 2–6 word noun phrases likely
-        to appear verbatim in documents or metadata.
-        For comparisons:
-        - Focus rewrites on the side(s) represented in corpus vocabulary.
-        - If one side has no matching corpus terms, do NOT force specific examples for
-          that side into rewrites; instead include one bridging rewrite targeting the
-          contrast dimension (e.g. "entity-centric vs document-centric" rather than
-          specific tool names absent from the corpus).
-        - Avoid generic phrases ("how X works", "methods for", "differences between").
-      5. Expansion-risk policy:
-        - For short, already-specific keyword queries, prefer minimal rewrites and
-          avoid adding new conceptual dimensions.
-        - Do not add speculative related methods, applications, or entities.
-        - If the query is ambiguous, diversify rewrites across plausible
-          interpretations; do not commit all rewrites to one interpretation.
-        - Prefer omission over speculative expansion.
-      6. hyde_passage: 60–100 words, as if from a document answering the query.
-        For comparison queries with asymmetric corpus coverage: describe the contrast
-        using abstract comparison axes (e.g. "entity-centric vs document-centric",
-        "typed relations vs flat notes") rather than naming tools/systems absent from
-        the corpus. This positions the embedding between both concepts to retrieve
-        bridging content. Use domain-appropriate vocabulary; no invented names.
-      7. If the query targets a different domain than the corpus, set out_of_scope_reason
-        and scope_confidence <= 0.5.
-
-      Output: rewritten_queries array 2–4 items; short phrases not sentences; valid JSON only.
-    # User prompt: explicit classification task + delimited query (frontier consult recommendation for 9B).
+      Scope confidence should reflect confidence in the chosen label versus nearby valid labels,
+      not general topic familiarity. If label choice is ambiguous among valid scopes, lower
+      scope_confidence; if unresolved, prefer "all".
     template: |
       Task: classify this query for RAG retrieval.
       For scope, use exactly one allowed label from the system prompt. Do not invent new labels.
-      In rewritten_queries, prefer exact names, acronyms, years, versions, and relation/type terms.
+      For scope, prefer the most specific label justified by the query's literal wording; avoid broader relabeling from paraphrase or inferred context.
 
       Query:
+      <query>{text}</query>
+
+  generate_rewrites:
+    description: "Generate retrieval rewrites and optional HyDE passage (compact, corpus-agnostic)"
+    system_prompt: |
+      You generate retrieval-optimized rewrites for dense-retrieval RAG over the indexed corpus.
+      Return valid JSON only with these keys: rewritten_queries, hyde_passage.
+
+      Required behavior:
+      1. rewritten_queries:
+         - Return 2 queries for simple topics; 3-4 for multi-facet or comparative.
+         - Keep one rewrite identical or near-identical to the original query.
+         - Keep rewrites short keyword phrases (not full sentences).
+         - Preserve the main lexical anchors from the original query.
+         - Do not invent entities, systems, methods, or side-topics.
+         - Only add a term from optional lists when it is directly supported by
+           query wording (or a clear close technical synonym). If uncertain, omit it.
+         - For comparison queries, include at least one rewrite naming both sides.
+      2. hyde_passage:
+         - 60-100 words.
+         - Write as neutral factual text that could appear in a relevant document.
+         - For comparison queries, mention both sides with balanced emphasis.
+         - No invented names.
+
+
+      Optional context:
+      - Predicted scope: {scope}
+      - Suggested retrieval terms: {suggested_terms}
+      - Corpus hints: {corpus_hints}
+
+      Use optional list terms only when directly relevant to explicit query anchors.
+
+      Optional reference lists:
+      - Suggested retrieval terms (from prior step): {suggested_terms}
+      - Corpus vocabulary (domain terms indexed in the corpus): {corpus_hints}
+
+      Output: rewritten_queries (2-4 short phrases), hyde_passage (60-100 words).
+
+    template: |
       <query>{text}</query>
 
   rerank_chunks:
@@ -102,8 +97,6 @@ prompts:
       5. Do NOT overvalue chunks just because they list many entities or topics
       6. Prefer text evidence over superficial keyword overlap
       7. Use the prior rank as a weak anchor, not a hard rule
-
-      Return JSON only.
     template: |
       Query: {text}
 

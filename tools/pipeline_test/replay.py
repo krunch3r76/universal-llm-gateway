@@ -161,8 +161,11 @@ def _inject_scope_options(
                 config = yaml.safe_load(f) or {}
             if config.get("id") == pipeline_id:
                 opts = config.get("options") or {}
-                if isinstance(opts.get("scope_options"), str):
-                    variables["scope_options"] = opts["scope_options"]
+                so = opts.get("scope_options")
+                if isinstance(so, str):
+                    variables["scope_options"] = so
+                elif isinstance(so, list):
+                    variables["scope_options"] = "\n".join(f'    "{x}"' for x in so)
                 break
         except Exception:
             continue
@@ -224,7 +227,7 @@ def _try_render_from_yaml(
     system_prompt_template = prompt_config.get("system_prompt", "")
 
     variables = _build_template_variables(step, call)
-    # Fallback for steps that don't have inputs in snapshot (e.g. rag-context analyze_rewrite)
+    # Fallback for steps that don't have inputs in snapshot (e.g. rag-context analyze_scope / generate_rewrites)
     if not variables.get("text") and getattr(call, "user_prompt", None):
         variables["text"] = call.user_prompt
     if not variables.get("scope_options"):
@@ -260,7 +263,15 @@ def _try_render_from_yaml(
 
 
 def _infer_prompt_name(call_label: str, step: StepSnapshot) -> str | None:
-    """Infer which prompt to load based on call_label within an assess_loop."""
+    """Infer which prompt to load based on call_label within an assess_loop.
+
+    Args:
+        call_label: Label of the model call (e.g. action_rewrite_0).
+        step: Step snapshot (unused; kept for signature consistency).
+
+    Returns:
+        Prompt name for action_* labels (e.g. rewrite from action_rewrite_0); None otherwise.
+    """
     if not call_label:
         return None
     if call_label.startswith("assess_"):
@@ -277,7 +288,16 @@ def _find_step_config(
     pipeline_dir: Path,
     snapshot: ExecutionSnapshot | None,
 ) -> StepConfigMatch | None:
-    """Return the pipeline + step config dict for this step, if discoverable."""
+    """Return the pipeline + step config dict for this step, if discoverable.
+
+    Args:
+        step: Step snapshot (name may include __map_ or __ suffix).
+        pipeline_dir: Root to search for pipeline YAML.
+        snapshot: Optional execution snapshot for pipeline_id scoping.
+
+    Returns:
+        StepConfigMatch with pipeline_config and step_config, or None.
+    """
     raw_name = step.step_name
     if "__map_" in raw_name:
         raw_name = raw_name.split("__map_", 1)[0]
@@ -363,7 +383,15 @@ _ALLOWED_GEN_PARAMS = frozenset(
 
 
 def _resolve_namespaced_value(ref: str, pipeline_config: dict[str, Any]) -> Any:
-    """Resolve optionsNs.* references against the pipeline's options block."""
+    """Resolve optionsNs.* references against the pipeline's options block.
+
+    Args:
+        ref: Reference string (e.g. optionsNs.rerank_model).
+        pipeline_config: Full pipeline config containing options.
+
+    Returns:
+        Resolved value from options, or ref unchanged if not optionsNs.*.
+    """
     if not isinstance(ref, str):
         return ref
     if ref.startswith("optionsNs."):
@@ -376,7 +404,15 @@ def _resolve_namespaced_value(ref: str, pipeline_config: dict[str, Any]) -> Any:
 def _resolve_model_from_config(
     match: StepConfigMatch, pipeline_dir: Path
 ) -> str | None:
-    """Resolve model_ref from step config through namespace + alias lookup."""
+    """Resolve model_ref from step config through namespace + alias lookup.
+
+    Args:
+        match: StepConfigMatch with pipeline and step config.
+        pipeline_dir: Used for models.yaml alias resolution.
+
+    Returns:
+        Resolved model ID string, or None if unset or not a string.
+    """
     ref = match.step_config.get("model_ref") or match.step_config.get("model")
     if not ref:
         return None
@@ -432,6 +468,13 @@ def _build_template_variables(step: StepSnapshot, call: ModelCall) -> dict[str, 
     Re-render must use the same inputs the live pipeline would use; do not
     inject the previous render's system_prompt/user_prompt or templates
     may incorrectly reuse prior output.
+
+    Args:
+        step: Step snapshot (inputs used for placeholders).
+        call: Model call (unused; kept for signature consistency).
+
+    Returns:
+        Dict of variable names to values for template rendering.
     """
     if len(step.model_calls) > 1:
         print(
@@ -445,7 +488,15 @@ def _build_template_variables(step: StepSnapshot, call: ModelCall) -> dict[str, 
 
 
 def _render_template(template: str, variables: dict[str, Any]) -> str:
-    """Regex-based template rendering matching PromptBuilder behavior."""
+    """Regex-based template rendering matching PromptBuilder behavior.
+
+    Args:
+        template: String with {path.to.key} placeholders.
+        variables: Context for resolution (nested dicts/objects).
+
+    Returns:
+        Template with placeholders replaced; unresolved left as-is.
+    """
 
     def replacer(match: re.Match[str]) -> str:
         path = match.group(1)
@@ -456,7 +507,15 @@ def _render_template(template: str, variables: dict[str, Any]) -> str:
 
 
 def _resolve_path(path: str, context: dict[str, Any]) -> Any | None:
-    """Navigate dot-separated path through nested dicts/objects."""
+    """Navigate dot-separated path through nested dicts/objects.
+
+    Args:
+        path: Dot-separated key path (e.g. options.rerank_model).
+        context: Root dict or object for traversal.
+
+    Returns:
+        Value at path, or None if any segment is missing.
+    """
     parts = path.split(".")
     current: Any = context
     for part in parts:
@@ -484,7 +543,18 @@ def _send_request(
     stargate_url: str,
     timeout: float,
 ) -> ReplayResult:
-    """POST to /v1/chat/completions and return a ReplayResult."""
+    """POST to /v1/chat/completions and return a ReplayResult.
+
+    Args:
+        body: Request body (model, messages, stream=False, etc.).
+        step_name: Step name for result metadata.
+        call_label: Optional call label for result metadata.
+        stargate_url: Base URL of Stargate.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        ReplayResult with response text, usage, and latency.
+    """
     url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
 
     start = time.monotonic()
@@ -539,7 +609,12 @@ def resolve_model_alias(alias: str, pipeline_dir: Path | str | None) -> str:
 
 
 def _apply_overrides(body: dict[str, Any], overrides: ReplayOverrides) -> None:
-    """Mutate request body with CLI overrides."""
+    """Mutate request body with CLI overrides.
+
+    Args:
+        body: Request body to modify in place.
+        overrides: Model, temperature, max_tokens, extra_params to apply.
+    """
     if overrides.model:
         body["model"] = overrides.model
     if overrides.temperature is not None:
@@ -551,7 +626,18 @@ def _apply_overrides(body: dict[str, Any], overrides: ReplayOverrides) -> None:
 
 
 def _get_step(snapshot: ExecutionSnapshot, step_name: str) -> StepSnapshot:
-    """Resolve step by full or short name."""
+    """Resolve step by full or short name.
+
+    Args:
+        snapshot: Execution snapshot containing steps.
+        step_name: Full step name or short suffix (must be unambiguous).
+
+    Returns:
+        StepSnapshot for the step.
+
+    Raises:
+        KeyError: Step not found. ValueError: Multiple matches.
+    """
     if step_name in snapshot.steps:
         return snapshot.steps[step_name]
 
@@ -573,7 +659,18 @@ def _get_step(snapshot: ExecutionSnapshot, step_name: str) -> StepSnapshot:
 
 
 def _get_call(model_calls: list[ModelCall], call_label: str | None) -> ModelCall:
-    """Find a specific model call by label, or return the first/last one."""
+    """Find a specific model call by label, or return the first one.
+
+    Args:
+        model_calls: List of model calls in the step.
+        call_label: Optional label; if None, returns the first call.
+
+    Returns:
+        Matching ModelCall.
+
+    Raises:
+        ValueError: No model calls. KeyError: call_label not found.
+    """
     if not model_calls:
         raise ValueError("Step has no model calls to replay")
 

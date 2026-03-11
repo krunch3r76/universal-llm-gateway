@@ -3,6 +3,7 @@ pymupdf4llm
 pymupdf-layout
 ebooklib
 beautifulsoup4
+markdownify
 pyyaml
 watchfiles
 tree-sitter

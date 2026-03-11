@@ -35,10 +35,11 @@ from pathlib import Path
 
 import tree_sitter as _ts
 import tree_sitter_python as _tspython
+from bs4 import BeautifulSoup
+from markdownify import markdownify as md
 
 from services.rag.chunker_ast_metadata import (
     build_python_chunk_metadata,
-    complexity_score,
 )
 
 _TOKEN_ESTIMATE = 4  # chars per token approximation
@@ -56,6 +57,14 @@ _CHUNK_CHARS_EBOOK = _CHUNK_TOKENS_EBOOK * _TOKEN_ESTIMATE  # 4096
 _CHUNK_CHARS_EBOOK_PAD = _CHUNK_TOKENS_EBOOK_PAD * _TOKEN_ESTIMATE  # 1024
 
 _CODE_EXTENSIONS = {".py", ".js", ".ts", ".go", ".rs", ".sh", ".yaml", ".toml"}
+
+_HTML_EXTENSIONS = {".html", ".htm"}
+_BOILERPLATE_SELECTORS = (
+    "nav, header, footer, aside, [role='navigation'], [aria-label*='cookie' i], "
+    "[class*='cookie' i], [id*='cookie' i], [class*='consent' i], [id*='consent' i], "
+    "[class*='banner' i], [id*='banner' i], [class*='sidebar' i], [id*='sidebar' i], "
+    "[class*='advert' i], [id*='advert' i], [class*='ad-' i], [id*='ad-']"
+)
 
 _PY_LANG = _ts.Language(_tspython.language())
 _PY_PARSER = _ts.Parser(_PY_LANG)
@@ -111,7 +120,8 @@ def _split_oversized(para: str, max_chars: int) -> list[str]:
                 current_rows = []
                 current_len = 0
             if len(row) > max_chars:
-                # Single row too large — word-split it, flush first
+                # Single row too large — word-split it, flush first.
+                # _word_split may hard-truncate a single word; table formatting can break.
                 if current_rows:
                     sub_chunks.append("\n".join(current_rows))
                     current_rows = []
@@ -230,43 +240,30 @@ def chunk_markdown(
     Heading is prepended to every chunk in its section for extraction context;
     the heading prefix does not count toward the target/pad budget.
     """
-    chunks: list[Chunk] = []
-    source = path
 
-    sections = _HEADER_RE.split(content)
-    headers = _HEADER_RE.findall(content)
-
-    if sections[0].strip():
+    def _add_chunks_from_section(section_text: str, heading_prefix: str) -> None:
         for text, overlap_len in _split_paragraphs(
-            sections[0], target_chars, pad_chars, overlap_paragraphs
+            section_text, target_chars, pad_chars, overlap_paragraphs
         ):
-            chunks.append(
-                Chunk(
-                    text=text,
-                    metadata={
-                        "source": source,
-                        "heading": "",
-                        "overlap_prefix_len": overlap_len,
-                    },
-                )
-            )
-
-    for header, section_body in zip(headers, sections[1:], strict=True):
-        heading = header.lstrip("#").strip()
-        for text, overlap_len in _split_paragraphs(
-            section_body, target_chars, pad_chars, overlap_paragraphs
-        ):
-            full_text = f"## {heading}\n\n{text}" if heading else text
+            full_text = f"## {heading_prefix}\n\n{text}" if heading_prefix else text
             chunks.append(
                 Chunk(
                     text=full_text,
                     metadata={
                         "source": source,
-                        "heading": heading,
+                        "heading": heading_prefix.strip(),
                         "overlap_prefix_len": overlap_len,
                     },
                 )
             )
+
+    chunks = []
+    source = path
+    sections = _HEADER_RE.split(content)
+    headers = _HEADER_RE.findall(content)
+    heading_prefixes = [""] + [h.lstrip("#").strip() for h in headers]
+    for heading_prefix, section_text in zip(heading_prefixes, sections, strict=True):
+        _add_chunks_from_section(section_text, heading_prefix)
 
     return _annotate_chunk_indices(chunks)
 
@@ -286,7 +283,10 @@ def chunk_pdf(
             "Install with: pip install pymupdf4llm pymupdf-layout"
         ) from exc
 
-    markdown_text = pymupdf4llm.to_markdown(path)
+    try:
+        markdown_text = pymupdf4llm.to_markdown(path)
+    except Exception as e:
+        raise RuntimeError(f"Failed to convert PDF '{path}' to markdown: {e}") from e
     if isinstance(markdown_text, list):
         markdown_text = "\n\n".join(str(item) for item in markdown_text)
 
@@ -311,13 +311,9 @@ def chunk_epub(
             "Install with: pip install ebooklib beautifulsoup4"
         ) from exc
     try:
-        from bs4 import BeautifulSoup
-    except ImportError as exc:
-        raise RuntimeError(
-            "Missing HTML parsing dependency. Install with: pip install beautifulsoup4"
-        ) from exc
-
-    book = epub.read_epub(path, options={"ignore_ncx": True})
+        book = epub.read_epub(path, options={"ignore_ncx": True})
+    except Exception as e:
+        raise RuntimeError(f"Failed to read EPUB '{path}': {e}") from e
     sections: list[str] = []
     for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
         html = item.get_body_content()
@@ -335,6 +331,52 @@ def chunk_epub(
     return chunk_markdown(
         path, combined, target_chars=target_chars, pad_chars=pad_chars
     )
+
+
+def normalize_html_to_markdown(path: str, html: str) -> str:
+    """Convert HTML into deterministic markdown for chunking/indexing."""
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup.select("script, style, noscript, template, svg, canvas, iframe"):
+        tag.decompose()
+    for node in soup.select("[hidden], [aria-hidden='true']"):
+        node.decompose()
+    for node in soup.select(_BOILERPLATE_SELECTORS):
+        node.decompose()
+
+    root = soup.select_one("main") or soup.select_one("article") or soup.body or soup
+    markdown = md(
+        str(root),
+        heading_style="ATX",
+        bullets="-",
+        strip=["span", "font"],
+        escape_asterisks=False,
+        escape_underscores=False,
+    )
+    markdown = "\n".join(line.rstrip() for line in markdown.splitlines())
+    while "\n\n\n" in markdown:
+        markdown = markdown.replace("\n\n\n", "\n\n")
+    cleaned = markdown.strip()
+    if not cleaned:
+        raise ValueError(f"HTML normalization produced empty markdown for {path}")
+    return cleaned
+
+
+def chunk_html(
+    path: str,
+    *,
+    target_chars: int = _CHUNK_CHARS_TARGET,
+    pad_chars: int = _CHUNK_CHARS_PAD,
+) -> list[Chunk]:
+    """Convert HTML to markdown, then chunk as markdown."""
+    raw_html = Path(path).read_text(errors="replace")
+    markdown = normalize_html_to_markdown(path, raw_html)
+    chunks = chunk_markdown(
+        path, markdown, target_chars=target_chars, pad_chars=pad_chars
+    )
+    for chunk in chunks:
+        chunk.metadata["source_format"] = "html"
+        chunk.metadata["normalized_format"] = "markdown"
+    return chunks
 
 
 # ---------------------------------------------------------------------------
@@ -461,30 +503,15 @@ def chunk_code_ast(
         whole_text = content if content.strip() else ""
         if not whole_text:
             return []
-        if root.children:
-            meta = build_python_chunk_metadata(
-                path=path,
-                source=source,
-                text=content,
-                nodes=root.children,
-                class_scope=None,
-                nws_len=_nws_len(content.encode()),
-            )
-            return _annotate_chunk_indices([Chunk(text=content, metadata=meta)])
-        meta: dict[str, str | int | float | bool] = {
-            "source": path,
-            "language": "python",
-            "chunk_type": "statement_block",
-            "start_line": 1,
-            "end_line": max(1, content.count("\n") + 1),
-            "chunk_size_nws_chars": _nws_len(content.encode()),
-            "is_semantically_complete": not root.has_error,
-            "chunk_hash": sha256(content.encode()).hexdigest()[:16],
-            "docstring_present": False,
-            "docstring_has_params": False,
-            "docstring_has_return": False,
-            "lightweight_complexity_score": complexity_score(root.children),
-        }
+        # Keep metadata generation consistent with multi-chunk path.
+        meta = build_python_chunk_metadata(
+            path=path,
+            source=source,
+            text=content,
+            nodes=root.children,
+            class_scope=None,
+            nws_len=_nws_len(content.encode()),
+        )
         return _annotate_chunk_indices([Chunk(text=content, metadata=meta)])
 
     raw = _chunk_ast_nodes(root.children, source, max_chunk_chars, None)
@@ -531,28 +558,8 @@ def chunk_code(
     current: list[str] = []
     current_chars = 0
 
-    for line in lines:
-        current.append(line)
-        current_chars += len(line)
-        if current_chars >= budget:
-            chunk_text = "\n".join(current)
-            chunks.append(
-                Chunk(
-                    text=chunk_text,
-                    metadata={
-                        "source": source,
-                        "language": language,
-                        "chunk_type": "statement_block",
-                        "chunk_size_nws_chars": _nws_len(chunk_text.encode()),
-                        "is_semantically_complete": False,
-                        "chunk_hash": sha256(chunk_text.encode()).hexdigest()[:16],
-                    },
-                )
-            )
-            current = []
-            current_chars = 0
-
-    if current:
+    def _append_current_chunk() -> None:
+        nonlocal current, current_chars
         chunk_text = "\n".join(current)
         chunks.append(
             Chunk(
@@ -567,6 +574,17 @@ def chunk_code(
                 },
             )
         )
+        current = []
+        current_chars = 0
+
+    for line in lines:
+        current.append(line)
+        current_chars += len(line)
+        if current_chars >= budget:
+            _append_current_chunk()
+
+    if current:
+        _append_current_chunk()
 
     return _annotate_chunk_indices(chunks)
 
@@ -594,8 +612,11 @@ def chunk_file(
     if suffix == ".epub":
         return chunk_epub(str(path), **kwargs)
 
+    if suffix in _HTML_EXTENSIONS:
+        return chunk_html(str(path), **kwargs)
+
     if suffix in _CODE_EXTENSIONS:
-        # Code chunkers use a single max_chars value; translate target to that.
+        # Code chunkers use max_chunk_chars; map target_chars to the same budget.
         max_chunk_chars = target_chars
         return chunk_code(
             str(path), path.read_text(errors="replace"), max_chunk_chars=max_chunk_chars

@@ -196,6 +196,10 @@ rag.started
 
 **INVARIANT**: `rag.file.indexing.failed` ⟹ `rag.file.skipped` is NOT emitted for same `file`.
 
+**INVARIANT**: For `.html`/`.htm` files: `rag.html.normalization.started` ⟹
+`rag.html.normalization.completed` ∨ `rag.html.normalization.failed` (same `file`).
+Failure emits `failed` then indexing raises; success emits `completed` then indexing continues.
+
 ### RAG Pending Reconciliation
 
 **INVARIANT**: `rag.pending.reconciled` is emitted at most once per startup, and only when
@@ -260,6 +264,16 @@ The RAG `/search` request body may send `scope` as a string (single scope name) 
 |--------|---------|-------------|
 | `rag.scope.resolved` | `scope` (str \| list[str]), `prefix_count` | Scope(s) resolved to merged source_prefixes |
 | `rag.scope.rejected` | `scope` (str \| list[str]), `reason`, `available` | Scope validation failed (e.g. unknown scope name or empty list) |
+
+### HTML Normalization Lifecycle (RAG)
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `rag.html.normalization.started` | `file` | HTML/HTM normalization started before chunking |
+| `rag.html.normalization.completed` | `file`, `output_chars` | HTML normalized to markdown successfully |
+| `rag.html.normalization.failed` | `file`, `error` | HTML normalization failed; file indexing aborted |
+
+**INVARIANT**: `rag.html.normalization.started` ⟹ (`rag.html.normalization.completed` ∨ `rag.html.normalization.failed`) for each HTML/HTM file indexing attempt.
 
 ### Doc Generate Extraction Lifecycle
 
@@ -358,6 +372,12 @@ executor-level suppression semantics above.
 
 ### RAG Retrieval Lifecycle
 
+**INVARIANT**: `pipeline.rag.query.analysis.completed` is emitted once per retrieval step execution, before retrieval gate evaluation.
+
+**INVARIANT**: `pipeline.rag.query.analysis.completed` ⟹ (`pipeline.rag.query.rewrite.completed` ∨ `pipeline.rag.query.rewrite.skipped`)
+
+**INVARIANT**: `pipeline.rag.query.rewrite.skipped.reason` ∈ {`rewrite_disabled`, `needs_retrieval_false`, `step_condition_false`}
+
 **INVARIANT**: `pipeline.rag.retrieval.params.resolved` ⟹ (`pipeline.rag.retrieval.completed` ∨ `pipeline.rag.retrieval.failed`)
 
 **INVARIANT**: `pipeline.rag.retrieval.skipped` is emitted *before* params resolution when the
@@ -374,11 +394,13 @@ alternatives — exactly one is emitted per retrieval step execution that passes
 
 **Scope validation**: Scope authority derives from the RAG service scope registry (`GET /scopes`),
 not a static pipeline-local list. Invalid or low-confidence scopes result in fail-closed behavior
-(0 chunks returned), never implicit broadening to `"both"`.
+(0 chunks returned), never implicit broadening.
 
 ```
-pipeline.rag.scope.rejected?                              (* scope policy rejection — fail-closed, 0 chunks)
-pipeline.rag.retrieval.skipped?                           (* out-of-scope, no user prefix override)
+pipeline.rag.query.analysis.completed
+  └─> pipeline.rag.query.rewrite.completed | pipeline.rag.query.rewrite.skipped
+pipeline.rag.scope.rejected?                              (* retrieval requested, but scope policy rejection — fail-closed, 0 chunks)
+pipeline.rag.retrieval.skipped?                           (* semantic no-retrieval gate, no user prefix override)
 pipeline.rag.retrieval.params.resolved
   └─> [parallel queries to RAG /search]
       └─> pipeline.rag.retrieval.bibliography.filtered?  (* after merge, before completed; when junk filter drops chunks)
@@ -388,8 +410,11 @@ pipeline.rag.retrieval.params.resolved
 
 | Signal | Required Payload | Description |
 |--------|------------------|-------------|
+| `pipeline.rag.query.analysis.completed` | `pipeline_id`, `execution_id`, `step_name`, `needs_retrieval`, `scope`, `scope_confidence`, `out_of_scope_reason` | Scope-analysis decision consumed by retrieval |
+| `pipeline.rag.query.rewrite.completed` | `pipeline_id`, `execution_id`, `step_name`, `rewrite_count`, `hyde_present` | Rewrite generation completed and available to retrieval |
+| `pipeline.rag.query.rewrite.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | Rewrite generation bypassed (`rewrite_disabled`, `needs_retrieval_false`, `step_condition_false`) |
 | `pipeline.rag.scope.rejected` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `scope`, `details` | Scope validation rejected — fail-closed, 0 chunks returned |
-| `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | Retrieval skipped: rewrite model determined query is unanswerable from active corpus |
+| `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | Retrieval skipped by semantic no-retrieval gate (query/corpus mismatch with no user prefix override) |
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | Emitted when post-RRF junk/bibliography filter removes one or more chunks |
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | Pre-retrieval: effective parameters after three-tier merge; `scope` may be string or array of strings (multiscope) |
 | `pipeline.rag.neighbor.expansion.completed` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | Neighbor chunk expansion result — emitted when expansion is enabled, even if zero neighbors were added |
@@ -400,6 +425,7 @@ Payload semantics:
 - `reason` (scope.rejected): one of `invalid_scope_override`, `invalid_predicted_scope`, `scope_confidence_below_threshold`, `scope_catalog_unavailable`
 - `scope` (scope.rejected): the scope label(s) that were rejected (str or list of str)
 - `details` (scope.rejected): human-readable explanation (e.g., unknown scope names, confidence values)
+- `reason` (query.rewrite.skipped): `rewrite_disabled`, `needs_retrieval_false`, or `step_condition_false`
 - `consumer_tier`: Caller-declared consumer capacity class (`"frontier"`, `"local"`, `"small_local"`, or None if not specified)
 - `scope` (params.resolved): Resolved retrieval scope: single label (str) or list of labels (array of str) for multiscope retrieval
 - `predicted_scope`: Raw scope label from the rewrite model (before alias resolution)
@@ -549,6 +575,15 @@ When a candidate is excluded by requirement checks (e.g. `min_context`, `min_com
 When the consult script's grounding guard auto-excludes a model (path hallucination), that outcome is recorded in the run artifact only; no event-bus signal is emitted. The logical signal name for this behavior is **consult.grounding.auto_excluded**. Payload (in artifact): `task`, `model_id`, `hallucination_ratio`, `invalid_paths`, `ts`. Captured in the consult run artifact as `grounding_exclusions.json` and in metadata as `grounding_exclusions_applied`.
 
 Consult may POST to `POST /v1/models/observe` for each excluded outcome. Stargate then calls `reputation_store.observe()` and emits **model.selection.health.observation** (existing contract); no change to that signal's payload or semantics.
+
+### Agent report-model (reducing reputation of bad models)
+
+Agents (including consult's grounding guard) can reduce a model's reputation so selection prefers others:
+
+- **POST /api/v1/report-model** — Request body: `task`, `model_id`, `reason`, optional `details`. Stargate maps this to `reputation_store.observe()` with `outcome=reason`, `quality_score=0`, `latency_ms=0`, and emits **model.selection.health.observation**. Use for path hallucination, wrong format, refusal, or other quality failures. Administrative API (same auth as other /api/v1 endpoints).
+- **POST /v1/models/observe** — Full observation payload (task, model_id, outcome, latency_ms, quality_score?, tokens_per_second?) for callers that already have structured metrics; part of the standardized /v1 surface.
+
+Both endpoints feed the same reputation store; negative reports lower the model's quality component and thus its rank in reputation-aware selection.
 
 ### Model Selection Decisions
 
@@ -822,10 +857,13 @@ provider HTTP failures.
 | `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
 | `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
 | `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |
-| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` (when file is in registry), `bibliography_chunks` (int — count of chunks tagged `is_bibliography` for this file) |
+| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `bibliography_chunks` (int — count of chunks tagged `is_bibliography` for this file) |
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty) |
 | `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`} |
 | `rag.file.indexing.failed` | `file`, `error` | unhandled error aborted indexing for this file |
+| `rag.html.normalization.started` | `file` | HTML ingest entered normalization pipeline (before chunking) |
+| `rag.html.normalization.completed` | `file`, `output_chars` | HTML normalization succeeded; output_chars = total chunk text length |
+| `rag.html.normalization.failed` | `file`, `error` | HTML normalization failed; file indexing aborted for this file |
 | `rag.directory.index.started` | `path`, `total_files` | emitted once before concurrent directory index/reindex dispatch; total_files = count of files to process |
 | `rag.directory.index.completed` | `path`, `total_files`, `indexed`, `deleted`, `unchanged`, `duplicates`, `errors` | emitted after all files in a directory index/reindex have been processed; absence after `rag.directory.index.started` indicates interrupted session |
 | `rag.scope.resolved` | `scope`, `prefix_count` | scope(s) resolved to prefixes; `scope`: str or array of strings |
@@ -867,6 +905,9 @@ Pipeline events flow to two sinks:
 | `pipeline.estimate.requested` | `pipeline_id`, `item_count`, `total_chars` | - |
 | `pipeline.estimate.completed` | `pipeline_id`, `item_count`, `batch_count`, `total_source_tokens`, `budget_tokens` | `estimated_validate_tokens` |
 | `pipeline.estimate.failed` | `pipeline_id`, `error`, `retryable` | - |
+| `pipeline.rag.query.analysis.completed` | `pipeline_id`, `execution_id`, `step_name`, `needs_retrieval`, `scope`, `scope_confidence`, `out_of_scope_reason` | - |
+| `pipeline.rag.query.rewrite.completed` | `pipeline_id`, `execution_id`, `step_name`, `rewrite_count`, `hyde_present` | - |
+| `pipeline.rag.query.rewrite.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | reasons: `rewrite_disabled`, `needs_retrieval_false`, `step_condition_false` |
 | `pipeline.rag.scope.rejected` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `scope`, `details` | fail-closed scope rejection (0 chunks); reasons: `invalid_scope_override`, `invalid_predicted_scope`, `scope_confidence_below_threshold`, `scope_catalog_unavailable` |
 | `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | - |
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | `scope` may be string or array of strings (multiscope) |

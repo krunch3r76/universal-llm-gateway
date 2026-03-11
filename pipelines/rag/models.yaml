@@ -3,7 +3,7 @@ models:
     model: phi-4-q4-k-m-16384
   qwen3_9b:
     model: qwen3-5-9b-q8-0-32768
-    profile: qwen3-5-instruct
+    profile: qwen3-5-instruct-reasoning
   openrouter_gemini-pro:
     model: openrouter/free
   qwen3_32b:

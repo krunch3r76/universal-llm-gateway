@@ -39,6 +39,9 @@ from .recorder import EventRecorder
 from .step import (
     RagHintsFiltered,
     RagMetadataBoostApplied,
+    RagQueryAnalysisCompleted,
+    RagQueryRewriteCompleted,
+    RagQueryRewriteSkipped,
     RagRerankCompleted,
     RagRetrievalBibliographyFiltered,
     RagRetrievalParamsResolved,
@@ -107,6 +110,9 @@ __all__ = [
     "VetoPassCompleted",
     # RAG
     "RagHintsFiltered",
+    "RagQueryAnalysisCompleted",
+    "RagQueryRewriteCompleted",
+    "RagQueryRewriteSkipped",
     "RagRetrievalBibliographyFiltered",
     "RagRetrievalParamsResolved",
     "RagScopeRejected",

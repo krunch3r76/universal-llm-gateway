@@ -78,7 +78,7 @@ _SYSTEM_PROMPT = """\
 You are a diagnostic evaluator for a multi-step RAG (Retrieval-Augmented Generation) pipeline.
 
 The pipeline has three steps:
-1. analyze_rewrite — rewrites the query into sub-queries and generates a HyDE passage
+1. analyze_scope + optional generate_rewrites — scope classification and query rewrites / HyDE
 2. retrieve_assemble — runs parallel retrieval and merges via RRF (no LLM ranking)
 3. rerank_assemble — optionally reranks retrieved chunks using an LLM sliding window
 
@@ -159,6 +159,15 @@ recommendations: up to 3 concrete, actionable changes (empty list if none).\
 
 
 def _truncate(text: str, limit: int) -> tuple[str, bool]:
+    """Truncate text to a character limit.
+
+    Args:
+        text: Input string.
+        limit: Maximum character length.
+
+    Returns:
+        Tuple of (truncated_or_original_text, was_truncated).
+    """
     if len(text) <= limit:
         return text, False
     return text[:limit], True
@@ -172,7 +181,22 @@ def _build_eval_prompt(
     rerank_raw: str | None,
     rerank_meta: dict[str, Any] | None,
 ) -> str:
-    """Build the multi-step evaluation prompt."""
+    """Build the multi-step evaluation prompt.
+
+    Assembles original query plus rewrite, retrieve, and rerank step outputs
+    for the evaluator model.
+
+    Args:
+        query: User's original query.
+        rewrite_out: Scope, rewrites, HyDE from analyze_scope + generate_rewrites.
+        retrieve_raw: Raw pre-rerank chunk text.
+        retrieve_meta: Chunks found, scope used, etc.
+        rerank_raw: Post-rerank chunk text (or None if disabled).
+        rerank_meta: Rerank metadata or None.
+
+    Returns:
+        Full prompt string for the evaluator.
+    """
     sections: list[str] = [f"## Original Query\n{query}"]
 
     # Rewrite step
@@ -188,7 +212,8 @@ def _build_eval_prompt(
         ensure_ascii=False,
     )
     sections.append(
-        f"## Step 1: analyze_rewrite output\n```json\n{rewrite_summary}\n```"
+        "## Step 1: query preprocessing (analyze_scope + generate_rewrites)\n"
+        f"```json\n{rewrite_summary}\n```"
     )
 
     # Retrieve step — pre-rerank chunks
@@ -251,15 +276,26 @@ def evaluate_steps(
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
     from consult_lib.core import execute_consult
 
-    rewrite_step = snapshot.steps.get("analyze_rewrite")
-    if rewrite_step is None:
-        raise ValueError("Fixture has no 'analyze_rewrite' step")
+    scope_step = snapshot.steps.get("analyze_scope")
+    if scope_step is None:
+        raise ValueError("Fixture has no 'analyze_scope' step")
+    rewrite_step = snapshot.steps.get("generate_rewrites")
+    scope_out: dict[str, Any] = scope_step.json_output or {}
+    rewrite_result: dict[str, Any] = (
+        rewrite_step.json_output if rewrite_step else {}
+    ) or {}
+    rewrite_out = {
+        "scope": scope_out.get("scope", "unknown"),
+        "scope_confidence": scope_out.get("scope_confidence"),
+        "out_of_scope_reason": scope_out.get("out_of_scope_reason", ""),
+        "rewritten_queries": rewrite_result.get("rewritten_queries", []),
+        "hyde_passage": rewrite_result.get("hyde_passage", ""),
+    }
     retrieve_step = snapshot.steps.get("retrieve_assemble")
     if retrieve_step is None:
         raise ValueError("Fixture has no 'retrieve_assemble' step")
     rerank_step = snapshot.steps.get("rerank_assemble")
 
-    rewrite_out: dict[str, Any] = rewrite_step.json_output or {}
     retrieve_meta: dict[str, Any] = retrieve_step.json_output or {}
     retrieve_raw: str = retrieve_step.raw_output or ""
     rerank_meta: dict[str, Any] | None = (
@@ -341,7 +377,15 @@ def evaluate_steps(
 
 
 def _parse_step_evaluation(text: str, model_id: str) -> dict[str, Any]:
-    """Parse the model's JSON response; return safe defaults on parse error."""
+    """Parse the model's JSON response; return safe defaults on parse error.
+
+    Args:
+        text: Raw response text (may include markdown fences).
+        model_id: Model ID for logging.
+
+    Returns:
+        Dict with bottleneck, bottleneck_reason, rewrite, retrieval, reranking.
+    """
     cleaned = text.strip()
     if cleaned.startswith("```"):
         lines = cleaned.splitlines()

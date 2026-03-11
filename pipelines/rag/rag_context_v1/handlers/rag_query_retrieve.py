@@ -1,9 +1,9 @@
 """
 Multi-query RAG retrieval with reciprocal rank fusion (RRF).
 
-Reads structured output from an upstream query-rewriting step, executes
-parallel RAG searches, and merges results via RRF into a single ranked
-context block.
+Reads structured output from split scope-analysis and rewrite steps, executes
+parallel RAG searches, and merges results via RRF into a single ranked context
+block.
 
 Tunable resolution (per-request):
     runtime pipeline_options  >  profile[consumer_model]  >  scope_defaults[scope]  >  YAML defaults
@@ -19,7 +19,7 @@ Invariants:
 - ∀ execute(): returns StepOutput.raw = formatted context text (never empty string)
 - ∀ needs_retrieval=false: returns sentinel (generation step handles gracefully)
 - ∀ RRF merge: deduplicates by chunk content hash, scores by rank only
-- ∀ invalid/unknown scope: 0 chunks (¬fallback to ``"both"``)
+- ∀ invalid/unknown scope: 0 chunks (¬fallback broadening)
 - ∀ low-confidence scope: 0 chunks (¬implicit broadening)
 """
 
@@ -39,6 +39,9 @@ from systems.pipeline.core.constants import (
 from systems.pipeline.core.events.step import (
     RagMetadataBoostApplied,
     RagNeighborExpansionCompleted,
+    RagQueryAnalysisCompleted,
+    RagQueryRewriteCompleted,
+    RagQueryRewriteSkipped,
     RagRetrievalBibliographyFiltered,
     RagRetrievalCompleted,
     RagRetrievalFailed,
@@ -74,8 +77,8 @@ class RagMultiRetrieveHandler(BaseHandler):
     """
     Multi-query RAG retrieval with RRF merge.
 
-    Reads structured JSON from an upstream query-rewriting step,
-    executes parallel RAG searches for each rewritten query,
+    Reads structured JSON from split scope-analysis and rewrite steps,
+    executes parallel RAG searches for rewritten and HyDE queries,
     merges via reciprocal rank fusion, and returns formatted context.
 
     Tunable resolution per request:
@@ -98,7 +101,8 @@ class RagMultiRetrieveHandler(BaseHandler):
         endpoint: str — RAG service URL
 
     handler_inputs:
-        rewrite_result — bound to upstream step's .json output
+        scope_result — required; bound to analyze_scope.json
+        rewrite_result — optional; bound to generate_rewrites.json
     """
 
     step_type: str = "rag_multi_retrieve_v1"
@@ -109,11 +113,23 @@ class RagMultiRetrieveHandler(BaseHandler):
         step: StepConfig,
         context: PipelineContext,
     ) -> StepOutput:
-        """Execute multi-query RAG retrieval with RRF merge and optional retry.
+        """Executes multi-query RAG retrieval.
 
         Orchestrates retrieval from rewritten queries, merges results via
         reciprocal rank fusion, applies junk filtering and metadata boost,
         and emits retrieval lifecycle events.
+
+        Returns:
+            StepOutput where:
+            - raw: formatted context text, or a non-empty sentinel when no context
+            - json.chunks_found: final chunk count after filters/boost
+            - json.queries_executed: number of queries dispatched
+            - json.queries_succeeded: successful query count
+            - json.raw_chunks_total: total chunks across successful queries
+            - json.scope: resolved retrieval scope
+            - json.rewritten_queries: effective query list (with source text)
+            - json.chunks: formatted chunk dictionaries used for assembly
+            - json.effective_params: resolved retrieval tunables for observability
         """
         endpoint: str = step.get_domain_field("endpoint", "")
         if not endpoint:
@@ -132,17 +148,93 @@ class RagMultiRetrieveHandler(BaseHandler):
         api_path = f"/{(parsed_endpoint.path or '/search').strip('/') or 'search'}"
 
         resolver = NamespaceResolver(context)
-        rewrite_data: dict[str, Any] = self._resolve_input(
+        scope_data: dict[str, Any] = self._resolve_input(
+            resolver, step, "scope_result", step.handler_inputs
+        )
+        if not isinstance(scope_data, dict):
+            raise ValueError(
+                f"Step '{step.id}': scope_result must be dict, got "
+                f"{type(scope_data).__name__}"
+            )
+
+        rewrite_data_raw = self._resolve_input(
             resolver, step, "rewrite_result", step.handler_inputs
         )
+        rewrite_result: dict[str, Any] = (
+            rewrite_data_raw if isinstance(rewrite_data_raw, dict) else {}
+        )
+        rewrite_result_valid = bool(rewrite_result) and not bool(
+            rewrite_result.get("_skipped", False)
+        )
+        rewrite_data: dict[str, Any] = {
+            "needs_retrieval": bool(scope_data.get("needs_retrieval", True)),
+            "scope": scope_data.get("scope", "all"),
+            "scope_confidence": float(scope_data.get("scope_confidence", 1.0)),
+            "out_of_scope_reason": str(scope_data.get("out_of_scope_reason", "")),
+            "rewritten_queries": (
+                rewrite_result.get("rewritten_queries", [])
+                if rewrite_result_valid
+                else []
+            ),
+            "hyde_passage": (
+                rewrite_result.get("hyde_passage", "") if rewrite_result_valid else ""
+            ),
+        }
 
-        if not isinstance(rewrite_data, dict):
-            logger.warning(
-                "Step '%s': rewrite_result is %s, expected dict — falling back",
-                step.id,
-                type(rewrite_data).__name__,
+        rewrite_enabled = bool(
+            context.runtime_options.get(
+                "rewrite_enabled",
+                context.pipeline.options.to_context_dict().get("rewrite_enabled", True),
             )
-            rewrite_data = {"needs_retrieval": True, "scope": "both"}
+        )
+
+        needs_retrieval = bool(rewrite_data.get("needs_retrieval", True))
+        self._publish_bus_event(
+            context,
+            RagQueryAnalysisCompleted(
+                pipeline_id=context.pipeline.id,
+                execution_id=context.execution_id,
+                step_name=step.name,
+                needs_retrieval=needs_retrieval,
+                scope=str(rewrite_data.get("scope", "")),
+                scope_confidence=float(rewrite_data.get("scope_confidence", 1.0)),
+                out_of_scope_reason=str(rewrite_data.get("out_of_scope_reason", "")),
+            ),
+        )
+        if rewrite_result_valid:
+            rewritten_queries = rewrite_data.get("rewritten_queries", [])
+            self._publish_bus_event(
+                context,
+                RagQueryRewriteCompleted(
+                    pipeline_id=context.pipeline.id,
+                    execution_id=context.execution_id,
+                    step_name=step.name,
+                    rewrite_count=(
+                        len(rewritten_queries)
+                        if isinstance(rewritten_queries, list)
+                        else 0
+                    ),
+                    hyde_present=bool(
+                        str(rewrite_data.get("hyde_passage", "")).strip()
+                    ),
+                ),
+            )
+        else:
+            if not needs_retrieval:
+                rewrite_skip_reason = "needs_retrieval_false"
+            elif not rewrite_enabled:
+                rewrite_skip_reason = "rewrite_disabled"
+            else:
+                rewrite_skip_reason = "step_condition_false"
+            self._publish_bus_event(
+                context,
+                RagQueryRewriteSkipped(
+                    pipeline_id=context.pipeline.id,
+                    execution_id=context.execution_id,
+                    step_name=step.name,
+                    reason=rewrite_skip_reason,
+                ),
+            )
 
         if not rewrite_data.get("needs_retrieval", True):
             logger.info("Step '%s': needs_retrieval=false, skipping RAG", step.id)
@@ -173,7 +265,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 ),
             )
             return StepOutput(
-                raw=f"[RAG-OUT-OF-SCOPE: {out_of_scope_reason}]",
+                raw=_NO_RETRIEVAL_SENTINEL,
                 json={
                     "chunks_found": 0,
                     "queries_executed": 0,
@@ -183,13 +275,17 @@ class RagMultiRetrieveHandler(BaseHandler):
                 },
             )
 
-        queries: list[str] = rewrite_data.get("rewritten_queries", [])
+        queries: list[str] = []
+        if rewrite_result_valid:
+            queries_raw = rewrite_data.get("rewritten_queries", [])
+            if isinstance(queries_raw, list):
+                queries = [q for q in queries_raw if isinstance(q, str) and q.strip()]
         if not queries:
-            queries = [context.source_text]
             logger.info(
-                "Step '%s': no rewritten queries, falling back to source text",
+                "Step '%s': rewrite unavailable or empty, using source text only",
                 step.id,
             )
+            queries = [context.source_text]
         elif context.source_text not in queries:
             queries.insert(0, context.source_text)
 
@@ -284,7 +380,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 retrieval_mode = "scope"
 
             else:
-                predicted_scope = rewrite_data.get("scope", "both")
+                predicted_scope = rewrite_data.get("scope", "all")
                 _pipeline_options = context.pipeline.options.to_context_dict()
                 scope_aliases: dict[str, str] = (
                     effective.get("scope_aliases")
@@ -331,7 +427,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 search_scope = scope
                 retrieval_mode = "scope"
 
-        scope_key = scope[0] if isinstance(scope, list) and scope else scope
+        scope_key = scope[0] if isinstance(scope, list) and scope else str(scope)
 
         # Tier 3: scope-conditional recency (unless caller explicitly overrode it)
         if "rag_recency_weight" not in runtime:
@@ -343,8 +439,18 @@ class RagMultiRetrieveHandler(BaseHandler):
             if scope_recency is not None:
                 recency_weight = float(scope_recency)
 
+        # Optional fixed-scope diagnostic mode: bypass rewrite expansion and
+        # retrieve from source text only (keeps scope resolution unchanged).
+        source_only_retrieval: bool = bool(
+            effective.get("source_only_retrieval", False)
+        )
+        if source_only_retrieval:
+            queries = [context.source_text]
+
         # --- Append HyDE passage as additional retrieval query ---
         hyde_enabled: bool = bool(effective.get("hyde_enabled", True))
+        if source_only_retrieval or not rewrite_result_valid:
+            hyde_enabled = False
         if hyde_enabled and hyde_passage.strip():
             queries.append(hyde_passage)
             logger.info(
@@ -381,12 +487,11 @@ class RagMultiRetrieveHandler(BaseHandler):
         )
         try:
             rag_timeout = float(effective.get("rag_client_timeout", 30.0))
-        except (TypeError, ValueError):
-            logger.warning(
-                "Step '%s': 'rag_client_timeout' is invalid, using default 30.0 seconds.",
-                step.id,
-            )
-            rag_timeout = 30.0
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"Step '{step.id}': 'rag_client_timeout' is invalid: {e}. "
+                f"Value was {effective.get('rag_client_timeout')!r}"
+            ) from e
         _retrieval_start = _time.monotonic()
 
         async with make_async_client(base_url, timeout=rag_timeout) as client:
@@ -572,7 +677,9 @@ class RagMultiRetrieveHandler(BaseHandler):
             }
             for c in merged
         ]
-        context_text = format_context(chunk_dicts)
+        context_text = (
+            format_context(chunk_dicts) if chunk_dicts else _NO_RESULTS_SENTINEL
+        )
 
         total_raw = sum(len(r) for r in successful)
         logger.info(
@@ -645,7 +752,21 @@ class RagMultiRetrieveHandler(BaseHandler):
         scope: str | list[str],
         details: str,
     ) -> StepOutput:
-        """Emit scope rejection event and return fail-closed no-results output."""
+        """Emit scope rejection event and return fail-closed no-results output.
+
+        Used when the determined scope is invalid, unknown, or has insufficient
+        confidence, leading to zero retrieval results.
+
+        Args:
+            context: The pipeline context.
+            step: The current step configuration.
+            reason: Short code for the rejection (e.g. invalid_scope_override).
+            scope: The scope (or list of scopes) that was rejected.
+            details: Descriptive message about the rejection.
+
+        Returns:
+            StepOutput with raw=no-results sentinel and scope_rejected=True.
+        """
         logger.info(
             "Step '%s': scope rejected — reason=%s, scope=%s, details=%s",
             step.id,
@@ -677,12 +798,10 @@ class RagMultiRetrieveHandler(BaseHandler):
 
     @override
     def validate(self, step: StepConfig) -> list[str]:
-        """Validate step config: endpoint and rewrite_result handler_input required."""
+        """Validate step config: endpoint and scope_result handler_input required."""
         errors: list[str] = []
         if not step.get_domain_field("endpoint"):
             errors.append(f"Step '{step.id}' missing required 'endpoint' field")
-        if not step.handler_inputs or "rewrite_result" not in step.handler_inputs:
-            errors.append(
-                f"Step '{step.id}' missing 'rewrite_result' in handler_inputs"
-            )
+        if not step.handler_inputs or "scope_result" not in step.handler_inputs:
+            errors.append(f"Step '{step.id}' missing 'scope_result' in handler_inputs")
         return errors

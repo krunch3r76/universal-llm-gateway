@@ -15,11 +15,12 @@ Only high-sensitivity tunables are swept; settled parameters are held fixed:
     Settled (not swept):
         ``rag_top_k_per_query``         — saturated at 10
         ``scope_confidence_threshold``  — confirmed at 0.7
-        ``analyze_rewrite`` temperature — confirmed at 0.4
+        ``analyze_scope`` / ``generate_rewrites`` temperature — confirmed at 0.4
 """
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,8 @@ from .measure_analysis import (
     save_results,
     write_profile,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
 DEFAULT_TIMEOUT = 180.0
@@ -140,6 +143,14 @@ def _run_sweep(
                         **metrics,
                     )
                 except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Sweep run failed: parameter=%s value=%s scope=%s q=%s: %s",
+                        parameter,
+                        val,
+                        scope,
+                        qi,
+                        exc,
+                    )
                     point = SweepPoint(
                         parameter=parameter,
                         value=val,

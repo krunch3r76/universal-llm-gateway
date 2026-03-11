@@ -73,6 +73,9 @@ from services.rag.events import (
     rag_file_indexed,
     rag_file_indexing_failed,
     rag_file_skipped,
+    rag_html_normalization_completed,
+    rag_html_normalization_failed,
+    rag_html_normalization_started,
     rag_orphan_purged,
     rag_pending_reconciled,
     rag_scope_rejected,
@@ -137,7 +140,15 @@ _file_index_locks: dict[str, asyncio.Lock] = {}
 def _article_event_kwargs(
     registry: dict[str, ArticleEntry], source: str
 ) -> dict[str, str]:
-    """Return optional article fields for rag_file_indexed when file is in registry."""
+    """Return optional article metadata for rag_file_indexed document_metadata.
+
+    Args:
+        registry: Loaded article registry.
+        source: Source file path being indexed.
+
+    Returns:
+        Metadata fields from registry entry, or empty dict when unmatched.
+    """
     entry = get_article_entry(registry, source)
     if entry is None:
         return {}
@@ -184,22 +195,18 @@ def _get_collection() -> chromadb.Collection:
 
 
 def get_event_bus() -> EventBus | None:
-    """Return initialized event bus, if available."""
+    """Return initialized event bus, if available.
+
+    Returns:
+        EventBus after startup, otherwise None.
+    """
     return _event_bus
 
 
 @app.on_event("startup")
 async def _startup() -> None:
-    global \
-        _chroma, \
-        _collection, \
-        _watcher_manager, \
-        _event_bus, \
-        _broadcaster, \
-        _config, \
-        _init_task, \
-        _property_index, \
-        _registry
+    global _chroma, _collection, _watcher_manager, _event_bus, _broadcaster
+    global _config, _init_task, _property_index, _registry
     store_path = Path.home() / ".rag" / "store"
     store_path.mkdir(parents=True, exist_ok=True)
     _chroma = chromadb.PersistentClient(path=str(store_path))
@@ -292,7 +299,14 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
     # Runs after health check so embeddings are available; runs before the
     # watcher sweep so pending files are consistent before it sees them.
     if _property_index is not None:
-        pending_files = _property_index.get_pending_files()
+        try:
+            pending_files = _property_index.get_pending_files()
+        except Exception:
+            logger.error(
+                "Failed to read pending files during startup reconciliation",
+                exc_info=True,
+            )
+            pending_files = []
         if pending_files:
             logger.warning(
                 "Reconciling %d files pending from interrupted indexing",
@@ -365,11 +379,14 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
 
 
 def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | None:
-    """
-    Resolve chunk_tokens for a file using the same watch-directory rules.
+    """Resolve chunk_tokens for a file using watch-directory matching rules.
 
-    This preserves chunking consistency when reconciling pending files after
-    interrupted indexing.
+    Args:
+        file_path: File path being indexed/reconciled.
+        config: Active RAG configuration.
+
+    Returns:
+        Matching chunk_tokens override, or None when no watch directory matches.
     """
     resolved_file = file_path.expanduser().resolve()
     for watch_directory in config.watch_directories:
@@ -385,6 +402,7 @@ def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | 
             continue
         if any(fnmatch(resolved_file.name, pat) for pat in watch_directory.exclude):
             continue
+        # First matching directory wins; overlapping watch dirs may have different chunk_tokens.
         return watch_directory.chunk_tokens
     return None
 
@@ -412,7 +430,7 @@ async def _shutdown() -> None:
 # ---------------------------------------------------------------------------
 
 
-_TOKEN_ESTIMATE = 4
+_TOKEN_ESTIMATE = 4  # Chars per token approximation for chunk sizing.
 
 
 async def _index_file(
@@ -422,25 +440,57 @@ async def _index_file(
     chunk_tokens: int | None = None,
     force: bool = False,
 ) -> IndexResult:
-    """Index a file, cleaning up stale chunks when content changed."""
+    """Index a file under a per-source lock.
+
+    Args:
+        file_path: File to index.
+        metadata_overrides: Optional metadata fields merged into all chunks.
+        chunk_tokens: Optional token budget override for chunking.
+        force: If True, bypass unchanged checks.
+
+    Returns:
+        IndexResult for the file.
+    """
     source = str(file_path)
     lock = _file_index_locks.setdefault(source, asyncio.Lock())
-    async with lock:
-        return await _index_file_impl(
-            file_path, metadata_overrides, chunk_tokens, source, force=force
-        )
+    try:
+        async with lock:
+            return await _index_file_impl(
+                file_path, metadata_overrides, chunk_tokens, source, force=force
+            )
+    finally:
+        if _file_index_locks.get(source) is lock and not lock.locked():
+            _file_index_locks.pop(source, None)
 
 
 async def _delete_file(file_path: Path) -> DeleteResult:
-    """Delete all indexed chunks for a removed file under the per-source lock."""
+    """Delete all indexed chunks for a removed file under per-source lock.
+
+    Args:
+        file_path: Source file path.
+
+    Returns:
+        DeleteResult with deleted chunk count.
+    """
     source = str(file_path)
     lock = _file_index_locks.setdefault(source, asyncio.Lock())
-    async with lock:
-        return await _delete_file_impl(source)
+    try:
+        async with lock:
+            return await _delete_file_impl(source)
+    finally:
+        if _file_index_locks.get(source) is lock and not lock.locked():
+            _file_index_locks.pop(source, None)
 
 
 async def _delete_file_impl(source: str) -> DeleteResult:
-    """Inner delete implementation (called with lock held)."""
+    """Delete source chunks from ChromaDB and property index.
+
+    Args:
+        source: Canonical source path.
+
+    Returns:
+        DeleteResult with number of deleted chunk IDs.
+    """
     collection = _get_collection()
     existing = collection.get(where={"source": source}, include=[])
     existing_ids: list[str] = existing.get("ids", [])
@@ -480,7 +530,9 @@ async def _index_file_impl(
     all in-flight files, enabling full auto-reconciliation on restart.
     """
     start = time.monotonic()
+    is_html_file = file_path.suffix.lower() in {".html", ".htm"}
     raw = file_path.read_bytes()
+    # Indexing must run after config load; else schema_version=0 can cause inconsistent hashing.
     schema_version = (
         _config.knowledge_extraction.schema_version if _config is not None else 0
     )
@@ -569,10 +621,10 @@ async def _index_file_impl(
                                 deleted=0,
                                 indexed=0,
                                 duration_seconds=time.monotonic() - start,
-                                **(
+                                document_metadata=(
                                     _article_event_kwargs(_registry, source)
                                     if _registry is not None
-                                    else {}
+                                    else None
                                 ),
                             )
                         )
@@ -599,7 +651,23 @@ async def _index_file_impl(
                     existing_timestamps[chunk_hash] = indexed_at
 
         target_chars = chunk_tokens * _TOKEN_ESTIMATE if chunk_tokens else None
-        chunks: list[Chunk] = chunk_file(file_path, target_chars=target_chars)
+        if is_html_file and _event_bus is not None:
+            await _event_bus.publish_async_nowait(
+                rag_html_normalization_started(file=source)
+            )
+        try:
+            chunks: list[Chunk] = chunk_file(file_path, target_chars=target_chars)
+        except Exception as exc:
+            if is_html_file and _event_bus is not None:
+                await _event_bus.publish_async_nowait(
+                    rag_html_normalization_failed(file=source, error=str(exc))
+                )
+            raise
+        if is_html_file and _event_bus is not None:
+            total_chars = sum(len(c.text) for c in chunks)
+            await _event_bus.publish_async_nowait(
+                rag_html_normalization_completed(file=source, output_chars=total_chars)
+            )
         if not chunks:
             if existing_ids:
                 # Property index cleanup before ChromaDB delete (same order as main path).
@@ -668,7 +736,10 @@ async def _index_file_impl(
             extraction_entities = ext_result.entities
             extraction_topics = ext_result.topics
             extraction_property_entries = ext_result.property_entries
-            file_batch_start_ts = getattr(ext_result, "batch_start_ts", None)
+            _batch_start_ts = getattr(ext_result, "batch_start_ts", None)
+            file_batch_start_ts = (
+                _batch_start_ts if isinstance(_batch_start_ts, str) else None
+            )
 
             bibliography_ids = {
                 ids[i]
@@ -746,10 +817,10 @@ async def _index_file_impl(
                 duration_seconds=time.monotonic() - start,
                 batch_start_ts=file_batch_start_ts,
                 bibliography_chunks=n_bib,
-                **(
+                document_metadata=(
                     _article_event_kwargs(_registry, source)
                     if _registry is not None
-                    else {}
+                    else None
                 ),
             )
         )
@@ -855,26 +926,17 @@ async def search(request: SearchRequest) -> SearchResponse:
 
     if _event_bus is not None:
         result_count = len(chunks)
-        if result_count == 0:
-            asyncio.create_task(
-                _event_bus.publish_async_nowait(
-                    rag_search_no_results(
-                        query_len=len(request.query),
-                        scope=request.scope,
-                    )
-                )
+        event = (
+            rag_search_no_results(query_len=len(request.query), scope=request.scope)
+            if result_count == 0
+            else rag_search_executed(
+                query_len=len(request.query),
+                top_k=request.top_k,
+                results=result_count,
+                scope=request.scope,
             )
-        else:
-            asyncio.create_task(
-                _event_bus.publish_async_nowait(
-                    rag_search_executed(
-                        query_len=len(request.query),
-                        top_k=request.top_k,
-                        results=result_count,
-                        scope=request.scope,
-                    )
-                )
-            )
+        )
+        asyncio.create_task(_event_bus.publish_async_nowait(event))
 
     return SearchResponse(
         chunks=chunks,
@@ -918,11 +980,14 @@ async def chunks_by_index(request: ChunksByIndexRequest) -> ChunksByIndexRespons
                 where=where_filter,
                 include=["documents", "metadatas"],
             )
-        except Exception:
-            logger.warning(
-                "chunks_by_index: failed for source=%s", group.source, exc_info=True
+        except Exception as e:
+            logger.error(
+                "chunks_by_index: failed for source=%s: %s",
+                group.source,
+                e,
+                exc_info=True,
             )
-            continue
+            raise
 
         ids = raw.get("ids") or []
         docs = raw.get("documents") or []
@@ -945,18 +1010,12 @@ async def chunks_by_index(request: ChunksByIndexRequest) -> ChunksByIndexRespons
 
 
 @app.get("/scopes", response_model=ScopesResponse)
-def get_scopes() -> ScopesResponse:
+async def get_scopes() -> ScopesResponse:
     loaded_config = require_loaded_config(_config)
     if _event_bus is not None:
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(
-                _event_bus.publish_async_nowait(
-                    rag_scopes_listed(count=len(loaded_config.scopes))
-                )
-            )
-        except RuntimeError:
-            logger.debug("Skipping rag.scopes.listed event: no running event loop")
+        await _event_bus.publish_async_nowait(
+            rag_scopes_listed(count=len(loaded_config.scopes))
+        )
     return ScopesResponse(
         scopes={
             name: ScopeInfo(prefixes=scope.prefixes, description=scope.description)
@@ -987,7 +1046,11 @@ def get_failed_extractions(source: str | None = None) -> FailedExtractionRespons
 
 
 def _set_collection(col: chromadb.Collection) -> None:
-    """Set global ChromaDB collection instance."""
+    """Set global ChromaDB collection instance.
+
+    Args:
+        col: ChromaDB collection object.
+    """
     global _collection
     _collection = col
 

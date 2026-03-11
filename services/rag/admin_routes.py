@@ -46,7 +46,18 @@ from services.rag.models import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_EXTENSIONS = [".md", ".mdc", ".txt", ".pdf", ".epub", ".py", ".js", ".ts"]
+DEFAULT_EXTENSIONS = [
+    ".md",
+    ".mdc",
+    ".txt",
+    ".pdf",
+    ".epub",
+    ".html",
+    ".htm",
+    ".py",
+    ".js",
+    ".ts",
+]
 
 router = APIRouter()
 
@@ -76,10 +87,8 @@ async def _bulk_premark(
 ) -> list[Path]:
     """Collect file paths and pre-mark all as pending before concurrent dispatch.
 
-    ∀ fp ∈ returned list: pending journal entry exists before asyncio.gather starts.
-    ∀ fp: _index_file_impl calls clear_pending on any exit (success/skip/error).
-    Duplicate PDF / unchanged files: clear_pending is called when _index_file_impl
-    returns (mark_pending now precedes those early-return paths per Task 5).
+    Ensures a pending journal entry exists for each file before indexing runs,
+    so _index_file_impl can clear_pending on any exit (success/skip/error).
     """
     prop_idx = get_property_index_fn()
     seen: set[Path] = set()
@@ -103,15 +112,15 @@ async def _clear_directory_sources(
     then removes property index entries and failure records per source.
 
     Returns:
-        tuple[int, int]: (sources_cleared, chunks_cleared) — number of source paths
-        and total chunks removed from ChromaDB and the property index.
+        tuple[int, int]: A tuple containing (number of source paths cleared,
+        total number of chunks removed from ChromaDB and the property index).
     """
     collection = get_collection_fn()
     dir_prefix = str(dir_path.resolve()) + "/"
 
     all_data = collection.get(include=["metadatas"])
-    rows: list[dict[str, object]] = all_data.get("metadatas") or []
-    all_ids: list[str] = all_data.get("ids") or []
+    rows: list[dict[str, object]] = all_data.get("metadatas", [])
+    all_ids: list[str] = all_data.get("ids", [])
 
     source_to_ids: dict[str, list[str]] = {}
     for chunk_id, row in zip(all_ids, rows, strict=True):
@@ -438,6 +447,7 @@ def register_admin_routes(
     async def clear() -> ClearResponse:
         chroma = get_chroma_fn()
         if chroma is None:
+            logger.error("ChromaDB client not initialized when /clear was called.")
             raise HTTPException(
                 status_code=500, detail="ChromaDB client not initialized"
             )

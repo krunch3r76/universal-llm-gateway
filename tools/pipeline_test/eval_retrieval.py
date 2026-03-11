@@ -161,16 +161,15 @@ def _build_eval_prompt(
         context_snippet = context_snippet[:_CONTEXT_CHAR_LIMIT]
         truncated = True
 
+    rewrite_summary_data = {
+        "scope": rewrite.get("scope", "unknown"),
+        "scope_confidence": rewrite.get("scope_confidence"),
+        "out_of_scope_reason": rewrite.get("out_of_scope_reason", ""),
+        "rewritten_queries": rewrite.get("rewritten_queries", []),
+        "hyde_passage": rewrite.get("hyde_passage", ""),
+    }
     rewrite_summary = json.dumps(
-        {
-            "scope": rewrite.get("scope", "unknown"),
-            "scope_confidence": rewrite.get("scope_confidence"),
-            "out_of_scope_reason": rewrite.get("out_of_scope_reason", ""),
-            "rewritten_queries": rewrite.get("rewritten_queries", []),
-            "hyde_passage": rewrite.get("hyde_passage", ""),
-        },
-        indent=2,
-        ensure_ascii=False,
+        rewrite_summary_data, indent=2, ensure_ascii=False
     )
 
     trunc_note = (
@@ -216,18 +215,33 @@ def evaluate_retrieval(
 ) -> dict[str, Any]:
     """Run retrieval quality evaluation against one or more cloud models.
 
-    Reads ``analyze_rewrite`` and the final context step (``rerank_assemble``
-    if present, otherwise ``retrieve_assemble``) from the snapshot, assembles
-    the evaluation prompt, and queries models via ``execute_consult``.
+    Reads ``analyze_scope`` (and optionally ``generate_rewrites``) and the
+    final context step (``rerank_assemble`` if present, otherwise
+    ``retrieve_assemble``) from the snapshot, assembles the evaluation prompt,
+    and queries models via ``execute_consult``.
 
     Returns a structured result dict matching the module-level schema.
     """
     sys.path.insert(0, (Path(__file__).resolve().parents[2] / "scripts").as_posix())
     from consult_lib.core import execute_consult
 
-    rewrite_step = snapshot.steps.get("analyze_rewrite")
-    if rewrite_step is None:
-        raise ValueError("Fixture has no 'analyze_rewrite' step")
+    scope_step = snapshot.steps.get("analyze_scope")
+    if scope_step is None:
+        raise ValueError("Fixture has no 'analyze_scope' step")
+
+    rewrite_step = snapshot.steps.get("generate_rewrites")
+    scope_out: dict[str, Any] = scope_step.json_output or {}
+    rewrite_result: dict[str, Any] = (
+        rewrite_step.json_output if rewrite_step else {}
+    ) or {}
+    rewrite_out = {
+        "scope": scope_out.get("scope", "unknown"),
+        "scope_confidence": scope_out.get("scope_confidence"),
+        "out_of_scope_reason": scope_out.get("out_of_scope_reason", ""),
+        "needs_retrieval": scope_out.get("needs_retrieval", True),
+        "rewritten_queries": rewrite_result.get("rewritten_queries", []),
+        "hyde_passage": rewrite_result.get("hyde_passage", ""),
+    }
 
     rerank_step = snapshot.steps.get("rerank_assemble")
     retrieve_step = snapshot.steps.get("retrieve_assemble")
@@ -241,7 +255,6 @@ def evaluate_retrieval(
     retrieve_out: dict[str, Any] = (
         retrieve_step.json_output if retrieve_step else {}
     ) or {}
-    rewrite_out: dict[str, Any] = rewrite_step.json_output or {}
     retrieved_context: str = context_step.raw_output or ""
 
     scope_used: str = str(retrieve_out.get("scope", "unknown"))
@@ -306,13 +319,7 @@ def evaluate_retrieval(
         "query": snapshot.source_text,
         "fixture": snapshot.source_dir,
         "execution_id": snapshot.execution_id,
-        "rewrite": {
-            "scope": rewrite_out.get("scope", "unknown"),
-            "scope_confidence": rewrite_out.get("scope_confidence"),
-            "out_of_scope_reason": rewrite_out.get("out_of_scope_reason", ""),
-            "rewritten_queries": rewrite_out.get("rewritten_queries", []),
-            "hyde_passage": rewrite_out.get("hyde_passage", ""),
-        },
+        "rewrite": rewrite_out,
         "retrieval": {
             "scope_used": scope_used,
             "chunks_found": chunks_found,
@@ -347,22 +354,20 @@ def _parse_evaluation(text: str, model_id: str) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         logger.warning("eval_retrieval: %s returned invalid JSON: %s", model_id, exc)
         preview = (text or "")[:_RAW_RESPONSE_PREVIEW_LEN]
-        issues_list = [f"Could not parse model response as JSON: {exc}"] + (
-            ["Response was empty (possible refusal, content filter, or max_tokens=0)."]
-            if not cleaned
-            else (
-                ["Response did not start with JSON (possible prose/markdown or truncation)."]
-                if not cleaned.startswith("{")
-                else []
+        issues_list = [f"Could not parse model response as JSON: {exc}"]
+        if not cleaned:
+            issues_list.append(
+                "Response was empty (possible refusal, content filter, or max_tokens=0)."
             )
-        ) + (
-            [
+        elif not cleaned.startswith("{"):
+            issues_list.append(
+                "Response did not start with JSON (possible prose/markdown or truncation)."
+            )
+        if preview:
+            issues_list.append(
                 f"Raw response preview (first {min(len(preview), _RAW_RESPONSE_PREVIEW_LEN)} chars): "
                 f"{preview!r}"
-            ]
-            if preview
-            else []
-        )
+            )
         result: dict[str, Any] = {
             "scores": {},
             "verdict": "parse_error",
@@ -398,7 +403,7 @@ def _coerce_scores(scores: dict[str, Any]) -> None:
             try:
                 scores[key] = int(scores[key])
             except (TypeError, ValueError):
-                del scores[key]
+                scores.pop(key, None)
 
 
 def _derive_verdict(scores: dict[str, int]) -> str:

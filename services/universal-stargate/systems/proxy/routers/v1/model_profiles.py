@@ -2,6 +2,7 @@
 
 GET  /v1/models/{model_id}/profile      — single model profile
 POST /v1/models/select                  — unified three-tier cascade selection
+POST /v1/models/observe                 — record observation for reputation (full payload)
 POST /v1/models/profiles/reload         — hot-reload curated YAML profiles
 """
 
@@ -236,9 +237,14 @@ async def get_model_rankings(
 ) -> JSONResponse:
     """Get ranked models for a task with reputation scores and exclusion status.
 
-    Returns models scored by the reputation system for a given task,
-    sorted by score descending. Includes exclusion status from
-    ~/.gateway/model-exclusions.yaml.
+    Args:
+        task: Task name used for reputation lookup.
+        proxy: Injected Stargate proxy (reputation store, policy).
+        _current_user: Injected auth (unused; required for route protection).
+
+    Returns:
+        JSONResponse with task, rankings (model_id, score, observations,
+        confidence, reliability, quality, excluded), and exclusions list.
     """
     reputation_store = proxy.model_health_store
     if reputation_store is None:

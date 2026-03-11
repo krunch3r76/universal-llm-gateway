@@ -24,6 +24,7 @@ from .registry import register_handler
 if TYPE_CHECKING:
     from ..execution.resolver import NamespaceResolver
     from ..schemas import PromptConfig, StepConfig
+    from .builtin.types import ModelCallResult
     from .protocol import PipelineContext
 
 logger = get_logger(__name__)
@@ -58,6 +59,12 @@ def _resolve_avoid_models(
             resolver=resolver,
         )
     except Exception:
+        logger.error(
+            "[%s] Failed resolving avoid_models_from=%s",
+            step_name,
+            binding_path,
+            exc_info=True,
+        )
         return []
 
     if not value:
@@ -108,21 +115,28 @@ class GenericGenerateHandler(BaseHandler):
         model_ref_overrides: dict[str, str] | None = context.options.get(
             "model_ref_overrides"
         )
-        runtime_override: str | None = None
-        if model_ref_overrides and step.model_ref:
-            override = model_ref_overrides.get(step.name) or model_ref_overrides.get(
-                step.model_ref
+        runtime_override = (
+            model_ref_overrides.get(step.name)
+            or model_ref_overrides.get(step.model_ref)
+            if model_ref_overrides and step.model_ref
+            else None
+        )
+        if isinstance(runtime_override, str) and runtime_override.strip():
+            runtime_override = runtime_override.strip()
+        elif model_ref_overrides and step.model_ref:
+            override_keys = (
+                list(model_ref_overrides.keys())
+                if isinstance(model_ref_overrides, dict)
+                else "n/a"
             )
-            if isinstance(override, str) and override.strip():
-                runtime_override = override.strip()
-            elif model_ref_overrides:
-                logger.debug(
-                    "[%s] model_ref_overrides present but no match for step.name=%r or step.model_ref=%r; keys=%s",
-                    step.name,
-                    step.name,
-                    step.model_ref,
-                    list(model_ref_overrides.keys()) if isinstance(model_ref_overrides, dict) else "n/a",
-                )
+            logger.debug(
+                "[%s] model_ref_overrides present but no match for "
+                "step.name=%r or step.model_ref=%r; keys=%s",
+                step.name,
+                step.name,
+                step.model_ref,
+                override_keys,
+            )
 
         if executor_override:
             model_id = executor_override
@@ -433,6 +447,13 @@ class GenericGenerateHandler(BaseHandler):
             "text": context.source_text,
             **context.options,
         }
+        # scope_options may be a list in pipeline YAML; prompt template expects string
+        if "scope_options" in prompt_context and isinstance(
+            prompt_context["scope_options"], list
+        ):
+            prompt_context["scope_options"] = "\n".join(
+                f'    "{x}"' for x in prompt_context["scope_options"]
+            )
 
         # Resolve handler_inputs and add to prompt context
         if step.handler_inputs:
@@ -567,15 +588,13 @@ class GenericGenerateHandler(BaseHandler):
         from ..execution.map_reduce import MapOutputCollection
 
         if isinstance(source_output, MapOutputCollection):
-            if iteration_key:
-                specific_output = source_output.get_output_by_key(iteration_key)
-                if specific_output and specific_output.provenance:
-                    return specific_output.provenance
-            else:
-                # Fallback to index-based for list iterations
-                specific_output = source_output.get_output(map_state.iteration_index)
-                if specific_output and specific_output.provenance:
-                    return specific_output.provenance
+            specific_output = (
+                source_output.get_output_by_key(iteration_key)
+                if iteration_key
+                else source_output.get_output(map_state.iteration_index)
+            )
+            if specific_output and specific_output.provenance:
+                return specific_output.provenance
         elif hasattr(source_output, "provenance") and source_output.provenance:
             return source_output.provenance
 
@@ -621,7 +640,7 @@ class GenericGenerateHandler(BaseHandler):
 
     def _build_step_output(
         self,
-        call_result,
+        call_result: ModelCallResult,
         resolved_config: dict[str, Any],
         latency_ms: float,
         step_id: str,
@@ -697,6 +716,14 @@ class GenericGenerateHandler(BaseHandler):
         )
 
     def validate(self, step: StepConfig) -> list[str]:
+        """Validate required config for generate step.
+
+        Args:
+            step: Step configuration.
+
+        Returns:
+            Validation error messages (empty when valid).
+        """
         errors = []
         if not step.model_ref and not step.model_requirements:
             errors.append(f"Step '{step.id}' needs model_ref or model_requirements")
@@ -705,4 +732,5 @@ class GenericGenerateHandler(BaseHandler):
         return errors
 
     def get_required_placeholders(self) -> set[str]:
+        """Return placeholders required by the base template context."""
         return {"text"}
