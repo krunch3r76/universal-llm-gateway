@@ -30,8 +30,6 @@ def normalize_model_id(model_id: str) -> str:
     Returns:
         Normalized model ID (e.g., 'model-8192-hybrid' -> 'model-8192')
     """
-    from model_id import ModelId
-
     return ModelId.parse(model_id).normalized
 
 
@@ -108,7 +106,7 @@ class ModelRegistry:
         _seen = _seen or set()
         if model_id in _seen:
             raise ValueError(f"Cyclic model alias detected: {model_id}")
-        _seen = _seen | {model_id}
+        _seen.add(model_id)
 
         # Normalize to strip -hybrid suffix (informational only)
         model_id = normalize_model_id(model_id)
@@ -184,9 +182,9 @@ class ModelRegistry:
                 f"Model '{model_config_key}' missing required 'openai_api_fields'"
             )
 
-        # Use synthetic ID if available, otherwise use base model ID
+        # Use synthetic ID if available, else openai id or normalized canonical_id
         model_id_to_use = (
-            synthetic_id if synthetic_id else openai_fields.get("id", model_id)
+            synthetic_id if synthetic_id else openai_fields.get("id", canonical_id)
         )
 
         capabilities = model_info.get("capabilities", {})
@@ -338,8 +336,6 @@ class ModelRegistry:
         Returns:
             List of synthetic model IDs that pass the filters
         """
-        from src.core.synthetic_models import SyntheticModelResolver
-
         # Get all synthetic models from catalog
         config = self.model_loaders_config
 
@@ -390,8 +386,6 @@ class ModelRegistry:
 
         Returns synthetic model IDs with explicit context lengths.
         """
-        from src.core.synthetic_models import SyntheticModelResolver
-
         # Get all synthetic models
         all_synthetic_models = SyntheticModelResolver.get_default_synthetic_models(
             self.model_loaders_config
@@ -486,31 +480,13 @@ class ModelRegistry:
                 loader_config = first_profile.get("loader", {})
                 return loader_config.get("max_model_len") or loader_config.get("n_ctx")
 
-            # Find the best matching context length
+            # Exact match required — no silent substitution.
             ctx_key = str(effective_ctx)
             if ctx_key in profiles:
                 loader_config = profiles[ctx_key].get("loader", {})
                 return loader_config.get("max_model_len") or loader_config.get("n_ctx")
             else:
-                # Find the closest available context length
-                # Only consider numeric keys (context-based formats)
-                numeric_keys = [k for k in profiles.keys() if k.isdigit()]
-                if numeric_keys:
-                    available_ctx = [int(k) for k in numeric_keys]
-                    closest_ctx = min(
-                        available_ctx, key=lambda x: abs(x - effective_ctx)
-                    )
-                    loader_config = profiles[str(closest_ctx)].get("loader", {})
-                    return loader_config.get("max_model_len") or loader_config.get(
-                        "n_ctx"
-                    )
-                else:
-                    # Named profile format (no context lengths) - use first profile
-                    first_profile = list(profiles.values())[0]
-                    loader_config = first_profile.get("loader", {})
-                    return loader_config.get("max_model_len") or loader_config.get(
-                        "n_ctx"
-                    )
+                return None
 
         # Legacy fallback - try metadata (will be removed)
         info = model_config.get("info", {})
@@ -641,8 +617,7 @@ class ModelRegistry:
         if llama_installed:
             if hardware_gpu_available:
                 logger.info(
-                    "✅ llama-server + GPU hardware - "
-                    "all GGUF models supported"
+                    "✅ llama-server + GPU hardware - all GGUF models supported"
                 )
             else:
                 logger.info(
@@ -899,7 +874,7 @@ class ModelRegistry:
         profiles: dict[str, Any],
         requested_ctx: int | None,
         is_cpu: bool = False,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """
         Select appropriate profile loader configuration.
 
@@ -913,7 +888,8 @@ class ModelRegistry:
             is_cpu: Whether selecting from CPU profiles
 
         Returns:
-            Profile loader config dict (empty if no match)
+            Profile loader config dict, or None if requested_ctx has no exact match.
+            None signals a hard reject — callers must not attempt to load the model.
         """
         if not profiles:
             return {}
@@ -960,32 +936,34 @@ class ModelRegistry:
                 selected_key = ctx_key
                 loader_config = profiles[ctx_key].get("loader", {}).copy()
             else:
-                # Find the closest available context length (only numeric keys)
-                numeric_keys = [k for k in profiles.keys() if k.isdigit()]
-                if numeric_keys:
-                    available_ctx = [int(k) for k in numeric_keys]
-                    closest_ctx = min(
-                        available_ctx, key=lambda x: abs(x - requested_ctx)
-                    )
-                    selected_key = str(closest_ctx)
-                    loader_config = profiles[selected_key].get("loader", {}).copy()
-                elif profiles:
-                    # No numeric keys - use first profile
-                    # (named profiles like "default")
-                    first_profile = list(profiles.values())[0]
-                    loader_config = first_profile.get("loader", {}).copy()
+                # ∀ synthetic model ID with context suffix: exact profile key required.
+                # Stargate owns context selection; Gateway must not silently substitute.
+                numeric_keys = sorted(
+                    int(k) for k in profiles.keys() if k.isdigit()
+                )
+                logger.error(
+                    f"[registry] Context {requested_ctx} not found in profiles. "
+                    f"Available: {numeric_keys}. "
+                    f"Re-run model measurement to add this context profile."
+                )
+                return None
 
-        # Inject n_ctx from profile key for GGUF models.
-        # Skip when max_model_len already provides context length (vLLM uses
-        # max_model_len; passing n_ctx to AsyncEngineArgs crashes it).
+        # Profile key is the authoritative context length for llama-cpp GGUF profiles.
+        # ∀ numeric profile key k: loader["n_ctx"] must equal int(k).
+        # An explicit n_ctx in the loader (from a stale measurement pass) must not
+        # override the profile key — the synthetic model ID encodes the intended context.
+        # vLLM models use max_model_len instead; skip for those.
         if selected_key and selected_key.isdigit():
             ctx_value = int(selected_key)
-            if "n_ctx" not in loader_config and "max_model_len" not in loader_config:
+            if "max_model_len" not in loader_config:
+                stale_value = loader_config.get("n_ctx")
+                if stale_value is not None and stale_value != ctx_value:
+                    logger.error(
+                        f"[registry] Stale n_ctx={stale_value} in profile '{selected_key}' "
+                        f"loader overridden to ctx_value={ctx_value}. "
+                        f"Re-run model measurement on this edge node to correct the catalog."
+                    )
                 loader_config["n_ctx"] = ctx_value
-                logger.debug(
-                    f"[registry] Injected n_ctx={ctx_value} from "
-                    f"profile '{selected_key}'"
-                )
 
         logger.info(
             f"[registry] _select_profile_loader: selected_key={selected_key}, "
@@ -1007,9 +985,9 @@ class ModelRegistry:
             model_id: Model ID to resolve (can be synthetic or base)
 
         Returns:
-            Tuple of (canonical_model_id, config, error_message)
+            Tuple of (normalized_model_id, config, error_message)
             - If error_message is not None, request should be rejected with 400
-            - canonical_model_id is normalized
+            - normalized_model_id is the input model_id after suffix normalization
               (e.g., 'model-8192-hybrid' -> 'model-8192')
             - config is the model configuration dict, or None if not found
 
@@ -1077,8 +1055,11 @@ class ModelRegistry:
             # Use regular profiles for GPU or base model IDs
             profiles = model_config.get("profiles", {})
 
-        # Select profile-specific loader overrides if profiles exist
+        # Select profile-specific loader overrides if profiles exist.
+        # Returns None when requested_ctx has no exact profile match — hard reject.
         profile_loader = self._select_profile_loader(profiles, requested_ctx, is_cpu)
+        if profile_loader is None:
+            return None
 
         # Merge base_loader with profile-specific overrides
         # base_loader contains shared config (including vision params)

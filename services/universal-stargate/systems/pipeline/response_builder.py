@@ -20,12 +20,32 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _collect_resolved_models(
+    pipeline_context: "PipelineContext",
+    execution_order: list[str] | None,
+) -> list[str]:
+    """Collect resolved model_id from each step output, in execution order."""
+    order = execution_order or list(pipeline_context.outputs)
+    result: list[str] = []
+    for step_id in order:
+        out = pipeline_context.outputs.get(step_id)
+        if out is None:
+            continue
+        if isinstance(out, MapOutputCollection):
+            for inner in out.all_outputs():
+                if getattr(inner, "model_id", None):
+                    result.append(inner.model_id)
+            continue
+        if isinstance(out, StepOutput) and out.model_id:
+            result.append(out.model_id)
+    return result
+
+
 class ResponseBuilder:
     """Build OpenAI-compatible responses for pipeline executions."""
 
     @staticmethod
     def build_response(
-        request_context: Any,
         pipeline_context: "PipelineContext",
         final_result: str,
         pipeline: PipelineSpec,
@@ -37,7 +57,6 @@ class ResponseBuilder:
         Build strictly OpenAI-compliant response from pipeline execution result.
 
         Args:
-            request_context: Request context (for execution summaries only)
             pipeline_context: Execution context with source text and outputs
             final_result: Final pipeline output text
             pipeline: Pipeline specification with options
@@ -51,6 +70,7 @@ class ResponseBuilder:
             Standard fields (always present):
             - choices[0].message: Assistant message only (OpenAI spec)
             - usage: Token counts aggregated from all pipeline steps
+            - resolved_models: List of resolved model IDs in step order (non-standard)
 
             Optional extensions (non-standard, only if enabled):
             - pipeline.alternates: All step outputs (for A/B testing)
@@ -96,6 +116,10 @@ class ResponseBuilder:
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
             },
+            # Non-standard: resolved model IDs per step
+            "resolved_models": _collect_resolved_models(
+                pipeline_context, execution_order
+            ),
         }
 
         # Optional: Include alternates in non-standard extension
@@ -107,9 +131,7 @@ class ResponseBuilder:
 
         # Optional: Include backtranslation data if present
         if backtranslation:
-            if "pipeline" not in body:
-                body["pipeline"] = {}
-            body["pipeline"]["backtranslation"] = backtranslation
+            body.setdefault("pipeline", {})["backtranslation"] = backtranslation
 
         # Optional: per-step token breakdown (order by execution_order when provided)
         include_step_stats = pipeline.options.get("include_step_stats", False)
@@ -129,6 +151,11 @@ class ResponseBuilder:
                         getattr(o, "model_call_count", 0) for o in out.all_outputs()
                     )
                     latencies = [o.latency_ms for o in out.all_outputs()]
+                    inners = out.all_outputs()
+                    first_model = next(
+                        (o.model_id for o in inners if getattr(o, "model_id", None)),
+                        None,
+                    )
                     step_stats.append(
                         {
                             "step": step_id,
@@ -137,6 +164,7 @@ class ResponseBuilder:
                             "total_tokens": map_prompt + map_comp,
                             "latency_ms": round(max(latencies, default=0.0), 1),
                             "model_calls": map_calls or len(list(out.all_outputs())),
+                            **({"model_id": first_model} if first_model else {}),
                         }
                     )
                 elif isinstance(out, StepOutput):
@@ -149,6 +177,7 @@ class ResponseBuilder:
                             "total_tokens": step_total,
                             "latency_ms": round(out.latency_ms, 1),
                             "model_calls": getattr(out, "model_call_count", 0),
+                            **({"model_id": out.model_id} if out.model_id else {}),
                         }
                     )
             if "pipeline" not in body:

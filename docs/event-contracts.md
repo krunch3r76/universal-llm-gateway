@@ -741,6 +741,7 @@ provider HTTP failures.
 | `model.unloaded` | `model_id` | `reason` |
 | `model.load.initiated` | `request_id`, `model_id` | `correlation_id` |
 | `model.load.completed` | `request_id`, `model_id`, `duration_ms` | `correlation_id` |
+| `model.load.context.mismatch` | `model_id`, `requested_context`, `actual_context`, `reason` | - |
 
 **Note**: Execution-capacity signals (`model.execution.*` and
 `model.capacity.freed`) are documented under **Capacity & Slot Lifecycle**.

@@ -70,6 +70,18 @@ Payload:
     bypassed_margin: bool - Whether safety margin was bypassed
 """
 
+MODEL_LOAD_CONTEXT_MISMATCH = "model.load.context.mismatch"
+"""
+Emitted when a profile loader contained a stale n_ctx that was overridden by the
+profile key, OR when a pre-load validation detects requested context ≠ resolved n_ctx.
+
+Payload:
+    model_id: str - Synthetic model ID (e.g., 'qwen3-5-9b-q8-0-262144')
+    requested_context: int - Context encoded in the synthetic model ID
+    actual_context: int - n_ctx value found in the profile loader before override
+    reason: str - 'stale_profile_loader' | 'profile_not_found'
+"""
+
 MODEL_UNLOADING_STARTED = "model.unloading.started"
 """
 Emitted when a model unloading operation begins.
@@ -288,8 +300,6 @@ Payload:
     active_count: int - Current active requests
     limit: int - Capacity limit
     timestamp_ms: int - Milliseconds since epoch
-
-Note: Signal uses present tense for backward compatibility (already deployed).
 """
 
 COMPUTE_CAPACITY_QUEUE_ACQUIRED = "compute.capacity.queue.acquired"
@@ -446,6 +456,36 @@ def ModelLoadBlocked(
             "required_ram_mb": required_ram_mb,
             "available_ram_mb": available_ram_mb,
             "bypassed_margin": bypassed_margin,
+        },
+    )
+
+
+@event_factory
+def ModelLoadContextMismatch(
+    model_id: str,
+    requested_context: int,
+    actual_context: int,
+    reason: str = "stale_profile_loader",
+) -> Event:
+    """
+    Create MODEL_LOAD_CONTEXT_MISMATCH event.
+
+    Args:
+        model_id: Synthetic model ID encoding the requested context
+        requested_context: Context encoded in the model ID suffix
+        actual_context: n_ctx value found in the profile loader
+        reason: Classification of why the mismatch occurred
+
+    Returns:
+        Event with MODEL_LOAD_CONTEXT_MISMATCH signal
+    """
+    return Event(
+        signal=MODEL_LOAD_CONTEXT_MISMATCH,
+        payload={
+            "model_id": model_id,
+            "requested_context": requested_context,
+            "actual_context": actual_context,
+            "reason": reason,
         },
     )
 
@@ -732,31 +772,23 @@ def InferenceResourceUpdate(
     Returns:
         Event with InferenceResourceUpdate signal
     """
-    payload: dict[str, Any] = {
+    payload = {
         "model_id": model_id,
         "request_id": request_id,
         "timestamp": timestamp,
         "worker_config": worker_config,
+        "vram_used_mb": vram_used_mb,
+        "ram_used_mb": ram_used_mb,
+        "vram_max_mb": vram_max_mb,
+        "ram_max_mb": ram_max_mb,
+        "gpu_utilization": gpu_utilization,
+        "inference_duration": inference_duration,
+        "peak_ram_gb": peak_ram_gb,
+        "peak_vram_gb": peak_vram_gb,
     }
-    if vram_used_mb is not None:
-        payload["vram_used_mb"] = vram_used_mb
-    if ram_used_mb is not None:
-        payload["ram_used_mb"] = ram_used_mb
-    if vram_max_mb is not None:
-        payload["vram_max_mb"] = vram_max_mb
-    if ram_max_mb is not None:
-        payload["ram_max_mb"] = ram_max_mb
-    if gpu_utilization is not None:
-        payload["gpu_utilization"] = gpu_utilization
-    if inference_duration is not None:
-        payload["inference_duration"] = inference_duration
-    if peak_ram_gb is not None:
-        payload["peak_ram_gb"] = peak_ram_gb
-    if peak_vram_gb is not None:
-        payload["peak_vram_gb"] = peak_vram_gb
     return Event(
         signal=INFERENCE_RESOURCE_UPDATE,
-        payload=payload,
+        payload={k: v for k, v in payload.items() if v is not None},
     )
 
 
@@ -1009,6 +1041,7 @@ def GatewaySnapshotResourceGap(
         all_models_count: Total models in catalog
         resource_models_count: Models with VRAM/RAM resource data (routable)
         gap_cause: "init_cache_not_ready" or "resource_tracker_incomplete"
+        gap_count: all_models_count - resource_models_count (in payload)
         sample_missing: Up to 5 model IDs missing resource data
 
     Returns:

@@ -458,7 +458,6 @@ class PipelineExecutor:
         )
 
         response = ResponseBuilder.build_response(
-            context,
             pipeline_context,
             final_result,
             pipeline,

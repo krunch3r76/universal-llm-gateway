@@ -26,10 +26,73 @@ class ModelLoader:
     def __init__(self, controller: "WorkerController"):
         self._controller = controller
 
+    async def _validate_context_availability(self, model_id: str) -> tuple[bool, str]:
+        """Verify resolved n_ctx matches the context encoded in the synthetic model ID.
+
+        ∀ synthetic model ID with context suffix: resolved loader n_ctx must equal
+        the suffix value. Emits MODEL_LOAD_CONTEXT_MISMATCH if a stale value is present
+        (after _select_profile_loader has already corrected it in Task 1 — this is a
+        belt-and-suspenders guard for future regressions).
+
+        Returns (is_valid, error_message).
+        """
+        from src.core.events.types import ModelLoadContextMismatch
+
+        synthetic_info = self._controller.model_registry._resolve_synthetic_id_info(
+            model_id
+        )
+        if not synthetic_info:
+            return True, ""
+
+        _, requested_ctx, _, _ = synthetic_info
+        loader_config = self._controller.model_registry.get_model_loader_config(
+            model_id
+        )
+        if not loader_config:
+            return False, f"No loader config found for {model_id}"
+
+        actual_ctx = loader_config.get("n_ctx")
+        if actual_ctx is None:
+            # vLLM or config-less model — no context validation needed
+            return True, ""
+
+        if actual_ctx != requested_ctx:
+            # After Task 1, this should never happen in normal operation.
+            # If it does, something else in the stack is overriding n_ctx.
+            logger.error(
+                f"❌ Context mismatch for {model_id}: "
+                f"requested={requested_ctx}, resolved loader n_ctx={actual_ctx}. "
+                f"Check profile loader config and re-run measurement."
+            )
+            if self._controller.event_bus:
+                await self._controller.event_bus.publish_async_nowait(
+                    ModelLoadContextMismatch(
+                        model_id=model_id,
+                        requested_context=requested_ctx,
+                        actual_context=actual_ctx,
+                        reason="stale_profile_loader",
+                    )
+                )
+            return False, (
+                f"Context mismatch: model ID encodes context={requested_ctx} but "
+                f"resolved loader n_ctx={actual_ctx}. "
+                f"Re-run model measurement on this edge node."
+            )
+
+        return True, ""
+
     async def ensure_model_loaded(self, model_id: str) -> bool:
         """Ensure a model is loaded and available for inference."""
         try:
             resource_tracker = _get_resource_tracker()
+
+            # Validate context availability before touching tracker state.
+            # Fails loudly if resolved n_ctx ≠ requested context from synthetic ID.
+            is_valid, ctx_error = await self._validate_context_availability(model_id)
+            if not is_valid:
+                resource_tracker.set_model_error(model_id, ctx_error)
+                return False
+
             resource_tracker.register_model(model_id)
 
             if await self._controller.is_model_loaded(model_id):
@@ -45,7 +108,9 @@ class ModelLoader:
                 return False
         except Exception as e:
             _get_resource_tracker().set_model_error(model_id, str(e))
-            logger.error(f"Error ensuring model {model_id} is loaded: {e}")
+            logger.error(
+                f"Error ensuring model {model_id} is loaded: {e}", exc_info=True
+            )
             return False
 
     async def load_model(self, model_id: str) -> bool:
@@ -76,10 +141,9 @@ class ModelLoader:
                     )
 
                 # Emit MODEL_LOAD_FAILED for Stargate notification (fast-fail)
+                model_info = resource_tracker.get_model_info(model_id)
                 error_msg = (
-                    resource_tracker.get_model_info(model_id).error_message
-                    if resource_tracker.get_model_info(model_id)
-                    else "Insufficient resources"
+                    model_info.error_message if model_info else "Insufficient resources"
                 )
                 await load_flow.emit_loading_event(
                     self._controller, model_id, "failed", error_msg
@@ -119,6 +183,7 @@ class ModelLoader:
             )
             return True
         except Exception as e:
+            logger.error(f"Error loading model {model_id}: {e}", exc_info=True)
             await load_flow.handle_load_exception(self._controller, model_id, e)
             return False
 
