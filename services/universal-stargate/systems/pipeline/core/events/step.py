@@ -624,7 +624,7 @@ def RagRetrievalSourceDiversityLimited(  # noqa: N802
         chunks_after: Chunk count after applying source-diversity cap
     """
     return Event(
-        signal="pipeline.rag.retrieval.source.diversity.limited",
+        signal="pipeline.rag.retrieval.diversity.limited",
         payload={
             "pipeline_id": pipeline_id,
             "execution_id": execution_id,

@@ -33,17 +33,53 @@ def _pipeline_call(
     *,
     pipeline_options: dict[str, Any] | None = None,
     timeout: float,
-) -> dict[str, Any] | None:
-    """POST to Stargate /v1/chat/completions. Returns parsed JSON or None on error."""
-    body: dict[str, Any] = {"model": model, "messages": messages}
-    if pipeline_options:
-        body["pipeline_options"] = pipeline_options
+) -> dict[str, Any]:
+    """POST to Stargate /v1/chat/completions. Raises httpx errors on failure."""
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        **({"pipeline_options": pipeline_options} if pipeline_options else {}),
+    }
 
     url = f"{_STARGATE_URL}/v1/chat/completions"
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, json=body)
         resp.raise_for_status()
         return resp.json()
+
+
+def _handle_pipeline_error(
+    exc: BaseException,
+    pipeline: str,
+    t0: float,
+    user_message: str,
+) -> dict[str, str]:
+    """Log, record mcp.rag.pipeline.failed, and return error dict for HTTPX pipeline failures."""
+    if isinstance(exc, httpx.TimeoutException):
+        duration = monotonic_now() - t0
+        logger.warning("Pipeline timed out after %.1fs: %s", duration, exc)
+        record(
+            "mcp.rag.pipeline.failed",
+            pipeline=pipeline,
+            error="timeout",
+            duration_s=round(duration, 3),
+        )
+        return {"error": user_message}
+    if isinstance(exc, httpx.ConnectError):
+        logger.warning("Stargate connection failed: %s", exc)
+        record("mcp.rag.pipeline.failed", pipeline=pipeline, error=str(exc))
+        return {"error": user_message}
+    if isinstance(exc, httpx.HTTPStatusError):
+        logger.warning("Pipeline HTTP error: %s", exc)
+        record(
+            "mcp.rag.pipeline.failed",
+            pipeline=pipeline,
+            error=f"{exc.response.status_code}",
+        )
+        return {"error": user_message}
+    logger.warning("Pipeline request error: %s", exc)
+    record("mcp.rag.pipeline.failed", pipeline=pipeline, error=str(exc))
+    return {"error": user_message}
 
 
 def _extract_content(response: dict[str, Any]) -> str:
@@ -54,6 +90,41 @@ def _extract_content(response: dict[str, Any]) -> str:
     return choices[0].get("message", {}).get("content", "")
 
 
+def _normalize_scope_override(
+    scope: str | list[str] | None,
+) -> tuple[str | list[str] | None, str | None]:
+    """Normalize scope input into pipeline scope_override shape.
+
+    Accepts either:
+    - a single scope string
+    - a comma-separated scope string
+    - a list of scope strings
+
+    Returns:
+        (normalized_scope, error_message)
+    """
+    if scope is None:
+        return None, None
+
+    if isinstance(scope, list):
+        normalized = [s.strip() for s in scope if s.strip()]
+        if not normalized:
+            return None, "Invalid scope list: no scopes provided."
+        return normalized, None
+
+    scope_val = scope.strip()
+    if not scope_val:
+        return None, "Invalid scope: empty string."
+
+    if "," in scope_val:
+        normalized = [s.strip() for s in scope_val.split(",") if s.strip()]
+        if not normalized:
+            return None, "Invalid scope list: no scopes provided."
+        return normalized, None
+
+    return scope_val, None
+
+
 def register_rag_tools(mcp: FastMCP) -> None:
     """Register RAG pipeline tools on *mcp*."""
 
@@ -61,7 +132,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
     def rag_search(
         query: str,
         top_k: int = 20,
-        scope: str | None = None,
+        scope: str | list[str] | None = None,
     ) -> dict[str, str]:
         """Search the knowledge base using the full RAG pipeline.
 
@@ -77,7 +148,10 @@ def register_rag_tools(mcp: FastMCP) -> None:
         Args:
             query: Natural language search query.
             top_k: Maximum chunks after RRF merge (default 20).
-            scope: Named scope filter (e.g. "project", "research", "all").
+            scope: Named scope filter as single string, comma-separated string,
+                or list of scope strings (e.g. "research",
+                "research, knowledge_management",
+                ["all_research", "knowledge_management"]).
 
         Returns:
             On success: {"context": "<assembled context with source labels>",
@@ -86,7 +160,10 @@ def register_rag_tools(mcp: FastMCP) -> None:
         """
         pipeline_options: dict[str, Any] = {}
         if scope:
-            pipeline_options["scope_override"] = scope
+            scope_override, scope_error = _normalize_scope_override(scope)
+            if scope_error:
+                return {"error": scope_error}
+            pipeline_options["scope_override"] = scope_override
         if top_k != 20:
             pipeline_options["rag_max_chunks"] = top_k
 
@@ -99,37 +176,29 @@ def register_rag_tools(mcp: FastMCP) -> None:
             result = _pipeline_call(
                 "rag-context",
                 [{"role": "user", "content": query}],
-                pipeline_options=pipeline_options or None,
+                pipeline_options=pipeline_options,
                 timeout=_CONTEXT_TIMEOUT,
             )
-        except httpx.ConnectError as e:
-            logger.warning("Stargate connection failed: %s", e)
-            record("mcp.rag.pipeline.failed", pipeline="rag-context", error=str(e))
-            return {"error": "Pipeline not available. Stargate may not be running."}
-        except httpx.TimeoutException as e:
-            duration = monotonic_now() - t0
-            logger.warning("Pipeline timed out after %.1fs: %s", duration, e)
-            record(
-                "mcp.rag.pipeline.failed",
-                pipeline="rag-context",
-                error="timeout",
-                duration_s=round(duration, 3),
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+        ) as e:
+            return _handle_pipeline_error(
+                e,
+                "rag-context",
+                t0,
+                (
+                    "Pipeline timed out. The query may be too complex."
+                    if isinstance(e, httpx.TimeoutException)
+                    else "Pipeline not available. Stargate may not be running."
+                    if isinstance(e, httpx.ConnectError)
+                    else f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
+                    if isinstance(e, httpx.HTTPStatusError)
+                    else f"Pipeline request failed: {e}"
+                ),
             )
-            return {"error": "Pipeline timed out. The query may be too complex."}
-        except httpx.HTTPStatusError as e:
-            logger.warning("Pipeline HTTP error: %s", e)
-            record(
-                "mcp.rag.pipeline.failed",
-                pipeline="rag-context",
-                error=f"{e.response.status_code}",
-            )
-            return {
-                "error": f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
-            }
-        except httpx.RequestError as e:
-            logger.warning("Pipeline request error: %s", e)
-            record("mcp.rag.pipeline.failed", pipeline="rag-context", error=str(e))
-            return {"error": f"Pipeline request failed: {e}"}
 
         content = _extract_content(result) if result else ""
         duration = monotonic_now() - t0
@@ -161,7 +230,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     def rag_answer(
         question: str,
-        scope: str | None = None,
+        scope: str | list[str] | None = None,
         deep: bool = False,
     ) -> dict[str, str]:
         """Ask a question and get a grounded answer from the knowledge base.
@@ -180,7 +249,10 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         Args:
             question: Natural language question.
-            scope: Named scope filter (e.g. "research", "project", "all").
+            scope: Named scope filter as single string, comma-separated string,
+                or list of scope strings (e.g. "research",
+                "research, knowledge_management",
+                ["research", "knowledge_management"]).
             deep: Use iterative retrieval for complex questions (default False).
 
         Returns:
@@ -190,7 +262,10 @@ def register_rag_tools(mcp: FastMCP) -> None:
         pipeline = "rag-answer-deep" if deep else "rag-answer"
         pipeline_options: dict[str, Any] = {}
         if scope:
-            pipeline_options["scope_override"] = scope
+            scope_override, scope_error = _normalize_scope_override(scope)
+            if scope_error:
+                return {"error": scope_error}
+            pipeline_options["scope_override"] = scope_override
 
         t0 = monotonic_now()
         record(
@@ -205,39 +280,29 @@ def register_rag_tools(mcp: FastMCP) -> None:
             result = _pipeline_call(
                 pipeline,
                 [{"role": "user", "content": question}],
-                pipeline_options=pipeline_options or None,
+                pipeline_options=pipeline_options,
                 timeout=_ANSWER_TIMEOUT,
             )
-        except httpx.ConnectError as e:
-            logger.warning("Stargate connection failed: %s", e)
-            record("mcp.rag.pipeline.failed", pipeline=pipeline, error=str(e))
-            return {"error": "Pipeline not available. Stargate may not be running."}
-        except httpx.TimeoutException as e:
-            duration = monotonic_now() - t0
-            logger.warning("Pipeline timed out after %.1fs: %s", duration, e)
-            record(
-                "mcp.rag.pipeline.failed",
-                pipeline=pipeline,
-                error="timeout",
-                duration_s=round(duration, 3),
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+        ) as e:
+            return _handle_pipeline_error(
+                e,
+                pipeline,
+                t0,
+                (
+                    "Pipeline timed out. The question may be too complex — try without deep=True."
+                    if isinstance(e, httpx.TimeoutException)
+                    else "Pipeline not available. Stargate may not be running."
+                    if isinstance(e, httpx.ConnectError)
+                    else f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
+                    if isinstance(e, httpx.HTTPStatusError)
+                    else f"Pipeline request failed: {e}"
+                ),
             )
-            return {
-                "error": "Pipeline timed out. The question may be too complex — try without deep=True."
-            }
-        except httpx.HTTPStatusError as e:
-            logger.warning("Pipeline HTTP error: %s", e)
-            record(
-                "mcp.rag.pipeline.failed",
-                pipeline=pipeline,
-                error=f"{e.response.status_code}",
-            )
-            return {
-                "error": f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
-            }
-        except httpx.RequestError as e:
-            logger.warning("Pipeline request error: %s", e)
-            record("mcp.rag.pipeline.failed", pipeline=pipeline, error=str(e))
-            return {"error": f"Pipeline request failed: {e}"}
 
         content = _extract_content(result) if result else ""
         duration = monotonic_now() - t0
