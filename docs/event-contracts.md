@@ -364,23 +364,23 @@ executor-level suppression semantics above.
 rewrite model flags an out-of-scope query and no user-supplied `rag_source_prefixes` override
 is present. When skipped fires, neither params.resolved nor completed/failed are emitted.
 
+**INVARIANT**: `pipeline.rag.scope.rejected` is emitted *before* params resolution when scope
+validation fails (invalid override, invalid predicted scope, low confidence, or scope catalog
+unavailable). When scope.rejected
+fires, neither params.resolved nor completed/failed are emitted. Retrieval returns 0 chunks.
+
 **INVARIANT**: `pipeline.rag.retrieval.completed` and `pipeline.rag.retrieval.failed` are terminal
 alternatives — exactly one is emitted per retrieval step execution that passes params resolution.
 
-**INVARIANT**: When retry is triggered (`pipeline.rag.retrieval.retry.triggered`), exactly one of
-`pipeline.rag.retrieval.retry.succeeded` or `pipeline.rag.retrieval.retry.not_improved` is emitted
-before `pipeline.rag.retrieval.completed` or `pipeline.rag.retrieval.failed`.
-
-**Cascade guard**: The handler MUST only trigger retry when `retry_scope_fallback` ≠ current scope
-(and not `"all"` when already broad). This prevents cascade retries (retry with same/broader scope
-that would not change results).
+**Scope validation**: Scope authority derives from the RAG service scope registry (`GET /scopes`),
+not a static pipeline-local list. Invalid or low-confidence scopes result in fail-closed behavior
+(0 chunks returned), never implicit broadening to `"both"`.
 
 ```
+pipeline.rag.scope.rejected?                              (* scope policy rejection — fail-closed, 0 chunks)
 pipeline.rag.retrieval.skipped?                           (* out-of-scope, no user prefix override)
 pipeline.rag.retrieval.params.resolved
   └─> [parallel queries to RAG /search]
-      └─> pipeline.rag.retrieval.retry.triggered?        (* low chunk count; retry with broader scope)
-      │     └─> pipeline.rag.retrieval.retry.succeeded | pipeline.rag.retrieval.retry.not_improved
       └─> pipeline.rag.retrieval.bibliography.filtered?  (* after merge, before completed; when junk filter drops chunks)
       └─> pipeline.rag.neighbor.expansion.completed?     (* after junk filter, before metadata boost; when expansion enabled)
       └─> pipeline.rag.retrieval.completed | pipeline.rag.retrieval.failed
@@ -388,22 +388,23 @@ pipeline.rag.retrieval.params.resolved
 
 | Signal | Required Payload | Description |
 |--------|------------------|-------------|
+| `pipeline.rag.scope.rejected` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `scope`, `details` | Scope validation rejected — fail-closed, 0 chunks returned |
 | `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | Retrieval skipped: rewrite model determined query is unanswerable from active corpus |
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | Emitted when post-RRF junk/bibliography filter removes one or more chunks |
-| `pipeline.rag.retrieval.retry.triggered` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `threshold`, `retry_scope`, `reason` | Low-chunk retry: retrieval will retry with broader scope; reason e.g. `low_chunk_count` |
-| `pipeline.rag.retrieval.retry.succeeded` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | Retry yielded more chunks; result adopted |
-| `pipeline.rag.retrieval.retry.not_improved` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | Retry ran but did not improve; initial result kept |
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | Pre-retrieval: effective parameters after three-tier merge; `scope` may be string or array of strings (multiscope) |
 | `pipeline.rag.neighbor.expansion.completed` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | Neighbor chunk expansion result — emitted when expansion is enabled, even if zero neighbors were added |
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added` | Post-retrieval: scope prediction + quality metrics (`neighbor_expansion_added` is optional and defaults to 0 when expansion is disabled) |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | All queries failed — no chunks to merge |
 
 Payload semantics:
+- `reason` (scope.rejected): one of `invalid_scope_override`, `invalid_predicted_scope`, `scope_confidence_below_threshold`, `scope_catalog_unavailable`
+- `scope` (scope.rejected): the scope label(s) that were rejected (str or list of str)
+- `details` (scope.rejected): human-readable explanation (e.g., unknown scope names, confidence values)
 - `consumer_tier`: Caller-declared consumer capacity class (`"frontier"`, `"local"`, `"small_local"`, or None if not specified)
 - `scope` (params.resolved): Resolved retrieval scope: single label (str) or list of labels (array of str) for multiscope retrieval
-- `predicted_scope`: Raw scope label from the rewrite model (before confidence-threshold fallback)
-- `scope_confidence`: Model confidence in [0.0, 1.0]; values below threshold trigger fallback
-- `fallback_triggered`: True when low confidence caused scope override to `both`
+- `predicted_scope`: Raw scope label from the rewrite model (before alias resolution)
+- `scope_confidence`: Model confidence in [0.0, 1.0]; values below threshold cause scope rejection (0 chunks)
+- `fallback_triggered`: True when scope was normalized via alias resolution (no broad fallback exists — invalid/low-confidence scopes are rejected before retrieval via `pipeline.rag.scope.rejected`)
 - `chunks_per_query`: Per-query result counts; `[10, 0, 8]` means query 1 returned 10, query 2 returned 0
 - `zero_result_queries`: Count of queries with 0 results — high values indicate query quality or scope issues
 - `rrf_score_{min,max,mean}`: Distribution of RRF scores in the merged set
@@ -419,10 +420,15 @@ jq -c 'select(.signal == "pipeline.rag.retrieval.params.resolved") |
    class: .payload.profile_class, top_k: .payload.top_k_per_query,
    max_chunks: .payload.max_chunks}' /tmp/pipeline-events/current.jsonl
 
-# Scope prediction accuracy and fallback rate
+# Scope rejection events (fail-closed — invalid, low-confidence, or catalog unavailable)
+jq -c 'select(.signal == "pipeline.rag.scope.rejected") |
+  {reason: .payload.reason, scope: .payload.scope,
+   details: .payload.details}' /tmp/pipeline-events/current.jsonl
+
+# Scope prediction accuracy (alias normalization only — no broad fallback)
 jq -c 'select(.signal == "pipeline.rag.retrieval.completed") |
   {scope: .payload.predicted_scope, confidence: .payload.scope_confidence,
-   fallback: .payload.fallback_triggered}' /tmp/pipeline-events/current.jsonl
+   alias_normalized: .payload.fallback_triggered}' /tmp/pipeline-events/current.jsonl
 
 # Neighbor expansion activity
 jq -c 'select(.signal == "pipeline.rag.neighbor.expansion.completed") |
@@ -861,15 +867,13 @@ Pipeline events flow to two sinks:
 | `pipeline.estimate.requested` | `pipeline_id`, `item_count`, `total_chars` | - |
 | `pipeline.estimate.completed` | `pipeline_id`, `item_count`, `batch_count`, `total_source_tokens`, `budget_tokens` | `estimated_validate_tokens` |
 | `pipeline.estimate.failed` | `pipeline_id`, `error`, `retryable` | - |
+| `pipeline.rag.scope.rejected` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `scope`, `details` | fail-closed scope rejection (0 chunks); reasons: `invalid_scope_override`, `invalid_predicted_scope`, `scope_confidence_below_threshold`, `scope_catalog_unavailable` |
 | `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | - |
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | `scope` may be string or array of strings (multiscope) |
-| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added` | `neighbor_expansion_added` defaults to 0 when expansion disabled |
+| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added` | `neighbor_expansion_added` defaults to 0 when expansion disabled; `fallback_triggered` now reflects alias normalization only (no broad fallback) |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | - |
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | - |
 | `pipeline.rag.neighbor.expansion.completed` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | - |
-| `pipeline.rag.retrieval.retry.triggered` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `threshold`, `retry_scope`, `reason` | low-chunk retry started |
-| `pipeline.rag.retrieval.retry.succeeded` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | retry adopted (more chunks) |
-| `pipeline.rag.retrieval.retry.not_improved` | `pipeline_id`, `execution_id`, `step_name`, `initial_chunk_count`, `final_chunk_count`, `retry_scope` | retry ran, initial kept |
 | `pipeline.rag.rerank.completed` | `pipeline_id`, `execution_id`, `step_name`, `rerank_enabled`, `model_id`, `chunks_input`, `chunks_output`, `windows_evaluated`, `max_rank_movement_observed`, `total_rerank_seconds` | - |
 | `pipeline.rag.hints.filtered` | `pipeline_id`, `execution_id`, `step_name`, `query_terms`, `original_hint_count`, `filtered_hint_count`, `filtered_hints`, `fallback`, `scoring_mode`, `min_threshold`, `capped`, `cap_limit` | - |
 

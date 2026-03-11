@@ -13,42 +13,25 @@ options:
   timeout_seconds: 60    # §4.2: raised from 30s; GPU contention headroom
   corpus_hints: ""       # Injected at runtime from corpus_hints.yaml when present
   scope_options: |
-    "project" — Architecture docs, vision, engram, journal entries, and FAQ
-    "small_llm_prompting" — Prompt engineering research for small/local models
-    "llm_prompting" — Prompt engineering research for large/cloud models
-    "prompting" — All prompt engineering research (small + large model, tier-agnostic)
-    "workflows" — Pipeline architecture, agent workflows, and orchestration patterns
-    "research" — All research papers — prompting, RAG systems, workflows, knowledge systems
-    "rag_systems" — RAG systems research — architecture, evaluation frameworks, benchmarks
-    "code_retrieval" — Code retrieval research — AST chunking, dependency retrieval, code embeddings
-    "knowledge_management" — PKM systems, second brain, personal information architecture, agent memory
-    "graph_modeling" — Property graphs, RDF/OWL, schema design, schema evolution, query languages, KG construction
-    "temporal_provenance" — Bitemporal databases, versioning, data lineage, event sourcing, provenance tracking
-    "belief_consistency" — Belief revision, contradiction handling, confidence/uncertainty, entity resolution
-    "knowledge_systems" — All knowledge systems research — PKM, graph modeling, temporal, belief/consistency
-    "llm_foundations" — LLM reference ebooks and foundational texts
-    "all_research" — All research papers and reference ebooks combined
-    "both" — Project knowledge + research papers — broad fallback for ambiguous queries
-    "all" — All indexed content — use when scope is unclear or spans multiple domains
-  # Valid scope labels for handler validation (must match RAG config). TODO: derive from single source — see tasks/todo.yaml rag-valid-scopes-single-source
-  valid_scopes:
-    - project
-    - small_llm_prompting
-    - llm_prompting
-    - prompting
-    - workflows
-    - research
-    - rag_systems
-    - code_retrieval
-    - knowledge_management
-    - graph_modeling
-    - temporal_provenance
-    - belief_consistency
-    - knowledge_systems
-    - llm_foundations
-    - all_research
-    - both
-    - all
+    "project"
+    "small_llm_prompting"
+    "llm_prompting"
+    "prompting"
+    "workflows"
+    "research"
+    "rag_systems"
+    "code_retrieval"
+    "knowledge_management"
+    "graph_modeling"
+    "temporal_provenance"
+    "belief_consistency"
+    "knowledge_systems"
+    "llm_foundations"
+    "all_research"
+    "both"
+    "all"
+  # Scope validation derives from RAG service scope registry (GET /scopes),
+  # not a static list.  Invalid/unknown scopes are fail-closed (0 chunks).
   # Map model-invented scope labels to valid scope labels
   scope_aliases:
     schema_design: graph_modeling
@@ -62,10 +45,7 @@ options:
                           #        k=60 on TREC Web with 3–5 systems, not 1–3
   rag_recency_weight: 0.2  # §4.6: linear additive; deeper decay model deferred
   scope_confidence_threshold: 0.7  # §4.4: CRAG 3-state evaluation — queries below
-                                   #        threshold fall back to scope="both"
-  # If chunks after first retrieval < this, retry once with rag_retry_scope_fallback; keep max(initial, retry). Frontier tier overrides to 20.
-  rag_min_chunks_retry_threshold: 10
-  rag_retry_scope_fallback: "both"   # Scope used for single retry when chunk count is low
+                                   #        threshold are fail-closed (0 chunks, no broadening)
   bibliography_filter_threshold: 0.35  # 0 = disable junk filter; >0 = fraction of lines to treat as junk
   bibliography_filter_disable: false   # If true, skip junk/bibliography filter entirely (overrides threshold)
   hyde_enabled: true  # Hypothetical Document Embeddings — generates a short

@@ -457,9 +457,11 @@ def RagRetrievalCompleted(  # noqa: N802
     Paired with RagRetrievalParamsResolved (pre-retrieval) to give full lifecycle.
 
     Payload:
-        predicted_scope: Scope label from the rewrite model (before fallback)
+        predicted_scope: Scope label from the rewrite model (before alias resolution)
         scope_confidence: Model's confidence in its scope prediction (0.0-1.0)
-        fallback_triggered: True if scope was overridden due to low confidence
+        fallback_triggered: True if scope was normalized via alias resolution
+                            (no broad fallback exists — invalid/low-confidence
+                            scopes are rejected before retrieval)
         chunks_per_query: Per-query chunk counts (length = successful query count)
         zero_result_queries: Count of queries that returned 0 chunks
         rrf_score_min: Minimum RRF score in merged result set
@@ -605,79 +607,34 @@ def RagNeighborExpansionCompleted(  # noqa: N802
 
 
 @event_factory
-def RagRetrievalRetryTriggered(  # noqa: N802
+def RagScopeRejected(  # noqa: N802
     pipeline_id: str,
     execution_id: str,
     step_name: str,
-    initial_chunk_count: int,
-    threshold: int,
-    retry_scope: str,
     reason: str,
+    scope: str | list[str],
+    details: str = "",
 ) -> Event:
-    """Emitted when retrieval will retry with broader scope due to low chunk count.
+    """Emitted when scope validation rejects the scope; retrieval returns 0 chunks.
 
-    Payload:
-        initial_chunk_count: Chunk count from first pass (before retry)
-        threshold: rag_min_chunks_retry_threshold that triggered retry
-        retry_scope: Scope used for retry (e.g. "both")
-        reason: Trigger reason; "low_chunk_count" for threshold-based retry
+    Fired before params resolution — mutually exclusive with the
+    ``params.resolved`` → ``completed``/``failed`` path.
+
+    Reasons:
+        invalid_scope_override — explicit scope_override contains unknown scope(s)
+        invalid_predicted_scope — rewrite model predicted a scope not in the catalog
+        scope_confidence_below_threshold — confidence below configured threshold
+        scope_catalog_unavailable — RAG /scopes endpoint unreachable (fail-closed)
     """
     return Event(
-        signal="pipeline.rag.retrieval.retry.triggered",
+        signal="pipeline.rag.scope.rejected",
         payload={
             "pipeline_id": pipeline_id,
             "execution_id": execution_id,
             "step_name": step_name,
-            "initial_chunk_count": initial_chunk_count,
-            "threshold": threshold,
-            "retry_scope": retry_scope,
             "reason": reason,
-        },
-    )
-
-
-@event_factory
-def RagRetrievalRetrySucceeded(  # noqa: N802
-    pipeline_id: str,
-    execution_id: str,
-    step_name: str,
-    initial_chunk_count: int,
-    final_chunk_count: int,
-    retry_scope: str,
-) -> Event:
-    """Emitted when retry with broader scope yielded more chunks; result adopted."""
-    return Event(
-        signal="pipeline.rag.retrieval.retry.succeeded",
-        payload={
-            "pipeline_id": pipeline_id,
-            "execution_id": execution_id,
-            "step_name": step_name,
-            "initial_chunk_count": initial_chunk_count,
-            "final_chunk_count": final_chunk_count,
-            "retry_scope": retry_scope,
-        },
-    )
-
-
-@event_factory
-def RagRetrievalRetryNotImproved(  # noqa: N802
-    pipeline_id: str,
-    execution_id: str,
-    step_name: str,
-    initial_chunk_count: int,
-    final_chunk_count: int,
-    retry_scope: str,
-) -> Event:
-    """Emitted when retry ran but did not improve; initial result kept."""
-    return Event(
-        signal="pipeline.rag.retrieval.retry.not_improved",
-        payload={
-            "pipeline_id": pipeline_id,
-            "execution_id": execution_id,
-            "step_name": step_name,
-            "initial_chunk_count": initial_chunk_count,
-            "final_chunk_count": final_chunk_count,
-            "retry_scope": retry_scope,
+            "scope": scope,
+            "details": details,
         },
     )
 

@@ -62,6 +62,9 @@ Published to EventBus as `pipeline.*` signals. Persisted to
 | `pipeline.step.started` / `pipeline.step.completed` / `pipeline.step.failed` | Step lifecycle |
 | `pipeline.step.inputs.captured` / `pipeline.step.output.captured` | Step I/O |
 | `pipeline.model.invocation` | Each `_call_model()` |
+| `pipeline.rag.scope.rejected` | Scope validation failed; retrieval returns 0 chunks (fail-closed) |
+| `pipeline.rag.retrieval.params.resolved` | Effective retrieval params resolved after validation |
+| `pipeline.rag.retrieval.completed` / `pipeline.rag.retrieval.failed` | Retrieval terminal outcomes on non-rejected path |
 
 `pipeline.step.failed` payload includes `prompt_tokens`, `completion_tokens`,
 `model_call_count` — populated even on timeout.

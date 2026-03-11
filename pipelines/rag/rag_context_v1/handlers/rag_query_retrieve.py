@@ -10,10 +10,17 @@ Tunable resolution (per-request):
 
 Profiles loaded from ``pipelines/rag/retrieval-profiles.yaml`` (cached after first load).
 
+Scope validation:
+    Scope authority derives from the RAG service scope registry (``GET /scopes``),
+    not a static pipeline-local list.  Invalid or low-confidence scopes result in
+    fail-closed behavior (0 chunks returned), never implicit broadening.
+
 Invariants:
 - ∀ execute(): returns StepOutput.raw = formatted context text (never empty string)
 - ∀ needs_retrieval=false: returns sentinel (generation step handles gracefully)
 - ∀ RRF merge: deduplicates by chunk content hash, scores by rank only
+- ∀ invalid/unknown scope: 0 chunks (¬fallback to ``"both"``)
+- ∀ low-confidence scope: 0 chunks (¬implicit broadening)
 """
 
 from __future__ import annotations
@@ -36,10 +43,8 @@ from systems.pipeline.core.events.step import (
     RagRetrievalCompleted,
     RagRetrievalFailed,
     RagRetrievalParamsResolved,
-    RagRetrievalRetryNotImproved,
-    RagRetrievalRetrySucceeded,
-    RagRetrievalRetryTriggered,
     RagRetrievalSkipped,
+    RagScopeRejected,
 )
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
@@ -56,6 +61,7 @@ from .retrieval_execution import execute_single_query as _execute_single_query
 from .retrieval_execution import expand_neighbors as _expand_neighbors
 from .retrieval_execution import rrf_merge as _rrf_merge
 from .retrieval_profiles import load_retrieval_profiles, resolve_retrieval_params
+from .scope_catalog import fetch_valid_scopes
 
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
@@ -211,7 +217,7 @@ class RagMultiRetrieveHandler(BaseHandler):
         recency_weight = params.recency_weight
         confidence_threshold = params.confidence_threshold
 
-        # --- Scope resolution ---
+        # --- Scope resolution (fail-closed: invalid/uncertain → 0 chunks) ---
         explicit_prefixes_raw = effective.get("rag_source_prefixes")
         source_prefixes: list[str] | None = None
         scope: str | list[str]
@@ -221,7 +227,7 @@ class RagMultiRetrieveHandler(BaseHandler):
         ):
             source_prefixes = explicit_prefixes_raw
             scope = "custom"
-            search_scope = None  # use raw prefixes
+            search_scope = None
             retrieval_mode = "source_prefixes"
         else:
             if explicit_prefixes_raw is not None:
@@ -229,35 +235,61 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "Step '%s': 'rag_source_prefixes' is not a list of strings, ignoring.",
                     step.id,
                 )
+            catalog = await fetch_valid_scopes(base_url)
             scope_override_raw = effective.get("scope_override", "")
+
             if isinstance(scope_override_raw, list) and len(scope_override_raw) > 0:
                 scope = scope_override_raw
-                valid_scopes: set[str] = set(
-                    effective.get("valid_scopes")
-                    or context.pipeline.options.to_context_dict().get("valid_scopes")
-                    or []
-                )
-                if valid_scopes and not all(s in valid_scopes for s in scope):
-                    logger.info(
-                        "Step '%s': scope_override %s not all in valid_scopes, "
-                        "fallback to ['both']",
-                        step.id,
+                if catalog is None:
+                    return self._scope_rejection_output(
+                        context,
+                        step,
+                        "scope_catalog_unavailable",
                         scope,
+                        "RAG /scopes unreachable; fail-closed with explicit list override",
                     )
-                    scope = ["both"]
+                invalid = [s for s in scope if s not in catalog]
+                if invalid:
+                    return self._scope_rejection_output(
+                        context,
+                        step,
+                        "invalid_scope_override",
+                        scope,
+                        f"Unknown scope(s): {invalid}",
+                    )
                 source_prefixes = None
                 search_scope = scope
                 retrieval_mode = "scope"
+
             elif isinstance(scope_override_raw, str) and scope_override_raw.strip():
                 scope = scope_override_raw.strip()
+                if catalog is None:
+                    return self._scope_rejection_output(
+                        context,
+                        step,
+                        "scope_catalog_unavailable",
+                        scope,
+                        "RAG /scopes unreachable; fail-closed with explicit string override",
+                    )
+                if scope not in catalog:
+                    return self._scope_rejection_output(
+                        context,
+                        step,
+                        "invalid_scope_override",
+                        scope,
+                        f"Unknown scope: {scope!r}",
+                    )
                 source_prefixes = None
                 search_scope = scope
                 retrieval_mode = "scope"
+
             else:
                 predicted_scope = rewrite_data.get("scope", "both")
                 _pipeline_options = context.pipeline.options.to_context_dict()
                 scope_aliases: dict[str, str] = (
-                    effective.get("scope_aliases") or _pipeline_options.get("scope_aliases") or {}
+                    effective.get("scope_aliases")
+                    or _pipeline_options.get("scope_aliases")
+                    or {}
                 )
                 resolved_scope = scope_aliases.get(predicted_scope, predicted_scope)
                 if resolved_scope != predicted_scope:
@@ -267,37 +299,34 @@ class RagMultiRetrieveHandler(BaseHandler):
                         predicted_scope,
                         resolved_scope,
                     )
-                # TODO: derive from single source — e.g. RAG config scopes or pipeline
-                # scopes map — instead of a separate hardcoded valid_scopes list
-                valid_scopes = set(
-                    effective.get("valid_scopes")
-                    or _pipeline_options.get("valid_scopes")
-                    or []
-                )
-                default_scope = "both"
-                if valid_scopes and resolved_scope not in valid_scopes:
-                    logger.info(
-                        "Step '%s': scope '%s' not in valid_scopes, fallback to '%s'",
-                        step.id,
+                if catalog is None:
+                    return self._scope_rejection_output(
+                        context,
+                        step,
+                        "scope_catalog_unavailable",
                         resolved_scope,
-                        default_scope,
+                        "RAG /scopes unreachable; fail-closed",
                     )
-                    resolved_scope = default_scope
+                if resolved_scope not in catalog:
+                    return self._scope_rejection_output(
+                        context,
+                        step,
+                        "invalid_predicted_scope",
+                        resolved_scope,
+                        f"Predicted scope not in catalog"
+                        f" ({predicted_scope!r}"
+                        f"{'→' + resolved_scope if resolved_scope != predicted_scope else ''})",
+                    )
                 scope_confidence = float(rewrite_data.get("scope_confidence", 1.0))
-                scope = (
-                    resolved_scope
-                    if scope_confidence >= confidence_threshold
-                    else "both"
-                )
-                if scope != resolved_scope:
-                    logger.info(
-                        "Step '%s': scope_confidence=%.2f < threshold=%.2f, "
-                        "overriding scope '%s' → 'both'",
-                        step.id,
-                        scope_confidence,
-                        confidence_threshold,
+                if scope_confidence < confidence_threshold:
+                    return self._scope_rejection_output(
+                        context,
+                        step,
+                        "scope_confidence_below_threshold",
                         resolved_scope,
+                        f"confidence={scope_confidence:.2f} < threshold={confidence_threshold:.2f}",
                     )
+                scope = resolved_scope
                 source_prefixes = None
                 search_scope = scope
                 retrieval_mode = "scope"
@@ -405,96 +434,6 @@ class RagMultiRetrieveHandler(BaseHandler):
             )
 
         merged, merged_scores = _rrf_merge(successful, k=rrf_k, max_chunks=max_chunks)
-
-        # --- Low-chunk retry with broader scope (once) ---
-        min_chunks_threshold = int(effective.get("rag_min_chunks_retry_threshold", 0))
-        retry_fallback = (
-            str(effective.get("rag_retry_scope_fallback", "both")).strip() or "both"
-        )
-        if (
-            min_chunks_threshold > 0
-            and len(merged) < min_chunks_threshold
-            and scope_key not in (retry_fallback, "all")
-            and source_prefixes is None
-        ):
-            prev_count = len(merged)
-            self._publish_bus_event(
-                context,
-                RagRetrievalRetryTriggered(
-                    pipeline_id=context.pipeline.id,
-                    execution_id=context.execution_id,
-                    step_name=step.name,
-                    initial_chunk_count=prev_count,
-                    threshold=min_chunks_threshold,
-                    retry_scope=retry_fallback,
-                    reason="low_chunk_count",
-                ),
-            )
-            logger.info(
-                "Step '%s': chunks=%d < threshold=%d, retrying with scope=%r",
-                step.id,
-                prev_count,
-                min_chunks_threshold,
-                retry_fallback,
-            )
-            retry_scope = retry_fallback
-            async with make_async_client(base_url, timeout=rag_timeout) as client_retry:
-                tasks_retry = [
-                    _execute_single_query(
-                        client_retry,
-                        api_path,
-                        q,
-                        top_k,
-                        recency_weight,
-                        retry_scope,
-                        None,
-                    )
-                    for q in queries
-                ]
-                results_retry = await asyncio.gather(
-                    *tasks_retry, return_exceptions=True
-                )
-            successful_retry = [
-                r for r in results_retry if not isinstance(r, BaseException)
-            ]
-            if successful_retry:
-                merged_retry, merged_scores_retry = _rrf_merge(
-                    successful_retry, k=rrf_k, max_chunks=max_chunks
-                )
-                if len(merged_retry) > prev_count:
-                    merged = merged_retry
-                    merged_scores = merged_scores_retry
-                    scope = retry_scope
-                    logger.info(
-                        "Step '%s': retry with scope=%r yielded %d chunks (was %d)",
-                        step.id,
-                        retry_scope,
-                        len(merged),
-                        prev_count,
-                    )
-                    self._publish_bus_event(
-                        context,
-                        RagRetrievalRetrySucceeded(
-                            pipeline_id=context.pipeline.id,
-                            execution_id=context.execution_id,
-                            step_name=step.name,
-                            initial_chunk_count=prev_count,
-                            final_chunk_count=len(merged),
-                            retry_scope=retry_scope,
-                        ),
-                    )
-                else:
-                    self._publish_bus_event(
-                        context,
-                        RagRetrievalRetryNotImproved(
-                            pipeline_id=context.pipeline.id,
-                            execution_id=context.execution_id,
-                            step_name=step.name,
-                            initial_chunk_count=prev_count,
-                            final_chunk_count=len(merged_retry),
-                            retry_scope=retry_scope,
-                        ),
-                    )
 
         # --- Post-RRF junk filter ---
         if effective.get("bibliography_filter_disable", False):
@@ -695,6 +634,44 @@ class RagMultiRetrieveHandler(BaseHandler):
                     ),
                     "tier_applied": bool(consumer_tier and params.tier_profile),
                 },
+            },
+        )
+
+    def _scope_rejection_output(
+        self,
+        context: PipelineContext,
+        step: StepConfig,
+        reason: str,
+        scope: str | list[str],
+        details: str,
+    ) -> StepOutput:
+        """Emit scope rejection event and return fail-closed no-results output."""
+        logger.info(
+            "Step '%s': scope rejected — reason=%s, scope=%s, details=%s",
+            step.id,
+            reason,
+            scope,
+            details,
+        )
+        self._publish_bus_event(
+            context,
+            RagScopeRejected(
+                pipeline_id=context.pipeline.id,
+                execution_id=context.execution_id,
+                step_name=step.name,
+                reason=reason,
+                scope=scope,
+                details=details,
+            ),
+        )
+        return StepOutput(
+            raw=_NO_RESULTS_SENTINEL,
+            json={
+                "chunks_found": 0,
+                "queries_executed": 0,
+                "chunks": [],
+                "scope_rejected": True,
+                "scope_rejection_reason": reason,
             },
         )
 

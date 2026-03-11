@@ -42,9 +42,7 @@ from .step import (
     RagRerankCompleted,
     RagRetrievalBibliographyFiltered,
     RagRetrievalParamsResolved,
-    RagRetrievalRetryNotImproved,
-    RagRetrievalRetrySucceeded,
-    RagRetrievalRetryTriggered,
+    RagScopeRejected,
 )
 from .verification import (
     ClaimsClassified,
@@ -111,9 +109,7 @@ __all__ = [
     "RagHintsFiltered",
     "RagRetrievalBibliographyFiltered",
     "RagRetrievalParamsResolved",
-    "RagRetrievalRetryNotImproved",
-    "RagRetrievalRetrySucceeded",
-    "RagRetrievalRetryTriggered",
+    "RagScopeRejected",
     "RagMetadataBoostApplied",
     "RagRerankCompleted",
     # Checkpoint

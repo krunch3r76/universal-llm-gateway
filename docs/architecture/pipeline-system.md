@@ -76,6 +76,13 @@ Stargate detects the ID and routes to `PipelineExecutor` transparently.
 | `project-assistant` | Project-scoped assistant flow that pins RAG context scope to project docs | `pipelines/project_assistant/` |
 | `code-review` | Structured review → validation → deterministic merged findings | `pipelines/code_review/` |
 
+#### `rag-context` scope validation
+
+- Scope authority is the RAG runtime catalog exposed by `GET /scopes`, sourced from `~/.gateway/rag.yaml`.
+- `rag-context` does not rely on a duplicated static `valid_scopes` list.
+- Invalid explicit scope overrides, invalid predicted scopes, low-confidence predictions, or unavailable scope catalog trigger fail-closed behavior.
+- Fail-closed retrieval returns zero chunks and emits `pipeline.rag.scope.rejected`.
+
 ### Pipeline Estimation Metadata
 
 Pipelines can expose estimation policy through domain extras in YAML:

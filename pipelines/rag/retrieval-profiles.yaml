@@ -16,8 +16,6 @@ tiers:
     rag_top_k_per_query: 15
     rag_max_chunks: 30
     rag_rrf_k: 35
-    # Retry once with broader scope when chunks < 20; keep the run with more chunks.
-    rag_min_chunks_retry_threshold: 20
   local:
     rag_top_k_per_query: 10
     rag_max_chunks: 12
@@ -35,7 +33,7 @@ model_classes:
     rag_rrf_k: 35
   small_local:
     # Sub-8B local models — conservative chunk budget fits ~4-8K context.
-    # Pattern covers common small model ID suffixes.
+    # Pattern covers common small model ID suffixes, e.g. model-1b-chat, phi-2b-v2.
     match: "-0-6b-|-1-7b-|-1b-|-2b-|-3b-|-4b-"
     rag_max_chunks: 6
     rag_top_k_per_query: 5
