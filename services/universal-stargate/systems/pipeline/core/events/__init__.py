@@ -44,6 +44,7 @@ from .step import (
     RagQueryRewriteSkipped,
     RagRerankCompleted,
     RagRetrievalBibliographyFiltered,
+    RagRetrievalSourceDiversityLimited,
     RagRetrievalParamsResolved,
     RagScopeRejected,
 )
@@ -114,6 +115,7 @@ __all__ = [
     "RagQueryRewriteCompleted",
     "RagQueryRewriteSkipped",
     "RagRetrievalBibliographyFiltered",
+    "RagRetrievalSourceDiversityLimited",
     "RagRetrievalParamsResolved",
     "RagScopeRejected",
     "RagMetadataBoostApplied",

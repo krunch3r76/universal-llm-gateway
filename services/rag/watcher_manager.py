@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Protocol
@@ -10,7 +10,7 @@ from typing import Protocol
 from universal_event_bus import Event, EventBus
 from universal_hot_reload.watcher import HotReloadWatcher
 
-from services.rag.config import RagConfig, WatchDirectory
+from services.rag.config import BASELINE_EXTENSIONS, RagConfig, WatchDirectory
 from services.rag.events import (
     rag_watch_directory_missing,
     rag_watch_file_deleted,
@@ -27,6 +27,24 @@ logger = logging.getLogger(__name__)
 # ∀ file ∈ watched_dir: if not in index → index now.
 # Interval is intentionally slow; this is a safety net, not a polling mechanism.
 _RECONCILE_INTERVAL_S = 60.0
+
+
+def _normalize_extensions(extensions: Sequence[str]) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            f".{ext.strip().lower().lstrip('.')}" for ext in extensions if ext.strip()
+        )
+    )
+
+
+def _effective_extensions(
+    watch_directory: WatchDirectory,
+    baseline_extensions: tuple[str, ...],
+) -> tuple[str, ...]:
+    configured = _normalize_extensions(watch_directory.extensions)
+    if configured:
+        return configured
+    return _normalize_extensions(baseline_extensions)
 
 
 class IndexOutcome(Protocol):
@@ -69,9 +87,16 @@ class WatcherManager:
         self._watchers: list[HotReloadWatcher] = []
         self._watch_configs: list[WatchDirectory] = []
         self._reconcile_task: asyncio.Task[None] | None = None
+        self._baseline_extensions: tuple[str, ...] = _normalize_extensions(
+            BASELINE_EXTENSIONS
+        )
 
     async def start(self, config: RagConfig) -> None:
         """Start watchers and background reconciliation for all configured directories."""
+        configured_baseline = _normalize_extensions(config.baseline_extensions)
+        self._baseline_extensions = configured_baseline or _normalize_extensions(
+            BASELINE_EXTENSIONS
+        )
         for watch_directory in config.watch_directories:
             await self._start_one(watch_directory)
         if self._watch_configs:
@@ -101,13 +126,11 @@ class WatcherManager:
             logger.warning("Watch directory missing; skipping: %s", watch_path)
             await self._emit(rag_watch_directory_missing(path=str(watch_path)))
             return
-        if not watch_directory.extensions:
-            logger.warning(
-                "Watch directory has no extensions; skipping: %s", watch_path
-            )
-            return
 
-        await self._initial_reindex(watch_path, watch_directory)
+        effective_extensions = _effective_extensions(
+            watch_directory, self._baseline_extensions
+        )
+        await self._initial_reindex(watch_path, watch_directory, effective_extensions)
         chunk_tokens = watch_directory.chunk_tokens
 
         async def on_change(file_path: str, *, _ct: int | None = chunk_tokens) -> None:
@@ -127,7 +150,7 @@ class WatcherManager:
             on_change=on_change,
             debounce_ms=2000,
             recursive=watch_directory.recursive,
-            patterns=watch_directory.extensions,
+            patterns=list(effective_extensions),
             exclude=watch_directory.exclude,
             on_delete=delete_callback,
         )
@@ -138,7 +161,7 @@ class WatcherManager:
             await self._emit(
                 rag_watch_started(
                     path=str(watch_path),
-                    extensions=watch_directory.extensions,
+                    extensions=list(effective_extensions),
                     recursive=watch_directory.recursive,
                 )
             )
@@ -152,7 +175,7 @@ class WatcherManager:
         """
         # watch_configs is immutable after start(); precompute once.
         ext_sets = [
-            frozenset(f".{ext.lower().lstrip('.')}" for ext in wd.extensions)
+            frozenset(_effective_extensions(wd, self._baseline_extensions))
             for wd in self._watch_configs
         ]
         await asyncio.sleep(self._reconcile_interval_s)
@@ -208,6 +231,7 @@ class WatcherManager:
         self,
         watch_path: Path,
         watch_directory: WatchDirectory,
+        effective_extensions: tuple[str, ...],
     ) -> None:
         file_total = 0
         reindexed_total = 0
@@ -216,9 +240,7 @@ class WatcherManager:
         walker = (
             watch_path.rglob("*") if watch_directory.recursive else watch_path.glob("*")
         )
-        extensions = {
-            f".{ext.lower().lstrip('.')}" for ext in watch_directory.extensions
-        }
+        extensions = set(effective_extensions)
         exclude = watch_directory.exclude
         for file_path in walker:
             if not file_path.is_file() or file_path.suffix.lower() not in extensions:

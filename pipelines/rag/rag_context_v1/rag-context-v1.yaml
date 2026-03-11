@@ -15,7 +15,8 @@ output: rerank_assemble
 
 options:
   timeout_seconds: 60    # §4.2: raised from 30s; GPU contention headroom
-  corpus_hints: ""       # Injected at runtime from corpus_hints.yaml when present
+  corpus_hints: ""       # Optional. Injected at runtime from corpus_hints.yaml. Provides
+                         # additional context or keywords to guide retrieval.
   rewrite_enabled: true  # Diagnostic toggle: skip rewrite generation/HyDE when false
   # Candidate scope labels provided to the scope-analysis prompt.
   # Runtime enforcement is still dynamic via RAG scope registry lookup (GET /scopes).
@@ -53,9 +54,13 @@ options:
   scope_confidence_threshold: 0.7  # §4.4: CRAG 3-state evaluation — queries below
                                    #        threshold are fail-closed (0 chunks, no broadening)
   rag_scope_chunk_caps: {}  # Optional per-scope cap for multi-scope retrieval unions.
+                            # Limits chunks per scope, preventing a single scope from saturating results.
                             # Example: {"graph_modeling": 8, "knowledge_systems": 4}
-  bibliography_filter_threshold: 0.35  # 0 = disable junk filter; >0 = fraction of lines to treat as junk
+  bibliography_filter_threshold: 0.35  # 0 = disable junk filter; >0 = fraction of lines to treat as boilerplate/citations
   bibliography_filter_disable: false   # Explicit hard-disable flag; if true, overrides threshold
+  source_diversity_max: 3              # Max chunks per source document post-RRF; 0 = disabled.
+                                       # Forces minority sources to surface when a dominant paper
+                                       # saturates retrieval.
   hyde_enabled: true  # Hypothetical Document Embeddings — generates a short
                       # hypothetical passage as an additional retrieval query
   source_only_retrieval: false  # Diagnostic mode: ignore rewritten queries and
@@ -64,15 +69,15 @@ options:
                                  # entity/relation/topic overlap with query terms
   metadata_boost_weight: 0.20    # Weight of metadata score in fusion with RRF
                                  # (0.0 = pure RRF, 1.0 = pure metadata)
-  coverage_selection_enabled: false  # Greedy entity coverage selection — maximizes
-                                     # unique entity diversity in final chunk set
+  coverage_selection_enabled: false  # Greedy entity coverage selection — maximizes the
+                                     # diversity of unique entities and concepts in the final chunk set.
   # --- Neighbor chunk expansion (post-junk-filter, pre-metadata-boost) ---
   neighbor_expansion_enabled: false     # Fetch ±n adjacent chunks from same source
   neighbor_expansion_n: 1              # Neighbors each direction (±n)
   neighbor_expansion_max_chunks: 30    # Cap on total chunks after expansion
   neighbor_expansion_score_discount: 1.0  # Score multiplier for neighbor chunks
   # --- LLM reranking (post-RRF, pre-formatting) ---
-  rerank_enabled: false              # Master toggle — zero overhead when disabled
+  rerank_enabled: true               # LLM-based reranking for relevance + diversity
   rerank_model: qwen3_9b             # Model alias for reranking LLM calls
   rerank_window_size: 5              # Chunks per sliding window
   rerank_overlap: 1                  # Overlap between adjacent windows
@@ -165,7 +170,7 @@ steps:
       corpus_hints: "filter_corpus_hints.json.filtered_hints"
     generation_parameters:
       temperature: 0.4   # moderate temperature improves rewrite diversity while JSON schema constrains structure
-      max_tokens: 4096
+      max_tokens: 1024  # 2-4 rewritten queries + reasoning; avoids over-allocation
       response_format:
         type: json_object
         schema:
@@ -192,7 +197,7 @@ steps:
     condition: "analyze_scope.json.get('needs_retrieval') and options.get('rewrite_enabled', True) and options.get('hyde_enabled', True)"
     generation_parameters:
       temperature: 0.3
-      max_tokens: 600
+      max_tokens: 256  # Keep HyDE passage concise for retrieval quality
       response_format:
         type: json_object
         schema:
@@ -220,7 +225,7 @@ steps:
       rewrite_result: "generate_rewrites.json"
     generation_parameters:
       temperature: 0.2
-      max_tokens: 1024   # window_size=5 chunks × ~80 tok/entry + JSON overhead; 1024 should be sufficient
+      max_tokens: 768    # tighter bound for ranking JSON while preserving headroom
       response_format:
         type: json_object
         schema:
@@ -238,6 +243,7 @@ steps:
                   confidence:
                     type: string
                     enum: ["high", "medium", "low"]
+                    description: "Confidence in the chunk's relevance to the query after reranking."
                   reason:
                     type: string
                 required: ["chunk_id", "rank", "confidence", "reason"]

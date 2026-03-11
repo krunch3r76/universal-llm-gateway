@@ -82,7 +82,7 @@ pipelines:
 
 ## RAG Config (~/.gateway/rag.yaml)
 
-`WatchDirectory` fields: `path`, `extensions`, `recursive` (default `true`), `chunk_tokens` (optional int — overrides default 512-token chunk size for that directory; use 1024 for ebooks), `exclude` (optional filename globs matched with `fnmatch`; excluded files are skipped by startup, reconcile, and hot-reload indexing).
+`WatchDirectory` fields: `path`, `extensions` (optional; defaults to baseline `[".md", ".txt", ".html", ".htm", ".pdf"]`), `recursive` (default `true`), `chunk_tokens` (optional int — overrides default 512-token chunk size for that directory; use 1024 for ebooks), `exclude` (optional filename globs matched with `fnmatch`; excluded files are skipped by startup, reconcile, and hot-reload indexing).
 
 Top-level field: `embedding_model` (model ID used for all `/v1/embeddings`
 requests from RAG; defaults to `bge-m3-q8-0-8192-cpu`).

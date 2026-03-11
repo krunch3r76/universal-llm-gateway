@@ -606,6 +606,38 @@ def RagRetrievalBibliographyFiltered(  # noqa: N802
 
 
 @event_factory
+def RagRetrievalSourceDiversityLimited(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    per_source_limit: int,
+    chunks_dropped: int,
+    chunks_before: int,
+    chunks_after: int,
+) -> Event:
+    """Emitted when source-diversity cap removes chunks from a dominant source.
+
+    Payload:
+        per_source_limit: Configured max chunks allowed per source document
+        chunks_dropped: Number of chunks removed by source-diversity enforcement
+        chunks_before: Chunk count before applying source-diversity cap
+        chunks_after: Chunk count after applying source-diversity cap
+    """
+    return Event(
+        signal="pipeline.rag.retrieval.source.diversity.limited",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "per_source_limit": per_source_limit,
+            "chunks_dropped": chunks_dropped,
+            "chunks_before": chunks_before,
+            "chunks_after": chunks_after,
+        },
+    )
+
+
+@event_factory
 def RagNeighborExpansionCompleted(  # noqa: N802
     pipeline_id: str,
     execution_id: str,

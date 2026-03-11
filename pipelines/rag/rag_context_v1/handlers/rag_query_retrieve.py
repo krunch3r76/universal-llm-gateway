@@ -46,6 +46,7 @@ from systems.pipeline.core.events.step import (
     RagRetrievalCompleted,
     RagRetrievalFailed,
     RagRetrievalParamsResolved,
+    RagRetrievalSourceDiversityLimited,
     RagRetrievalSkipped,
     RagScopeRejected,
 )
@@ -720,6 +721,44 @@ class RagMultiRetrieveHandler(BaseHandler):
             )
         merged = clean
 
+        # --- Source diversity cap (post-junk-filter, pre-neighbor-expansion) ---
+        source_diversity_max = int(effective.get("source_diversity_max", 0))
+        source_diversity_dropped = 0
+        if source_diversity_max > 0:
+            chunks_before_diversity = len(merged)
+            source_counts: dict[str, int] = {}
+            diverse: list[_RetrievedChunk] = []
+            for chunk in merged:
+                src = chunk.source
+                count = source_counts.get(src, 0)
+                if count >= source_diversity_max:
+                    merged_scores.pop(chunk.content_hash, None)
+                    source_diversity_dropped += 1
+                    continue
+                source_counts[src] = count + 1
+                diverse.append(chunk)
+            if source_diversity_dropped > 0:
+                logger.info(
+                    "Step '%s': source diversity cap (%d/source) dropped %d/%d chunks",
+                    step.id,
+                    source_diversity_max,
+                    source_diversity_dropped,
+                    len(merged),
+                )
+                self._publish_bus_event(
+                    context,
+                    RagRetrievalSourceDiversityLimited(
+                        pipeline_id=context.pipeline.id,
+                        execution_id=context.execution_id,
+                        step_name=step.name,
+                        per_source_limit=source_diversity_max,
+                        chunks_dropped=source_diversity_dropped,
+                        chunks_before=chunks_before_diversity,
+                        chunks_after=len(diverse),
+                    ),
+                )
+            merged = diverse
+
         # --- Neighbor expansion (post-junk-filter, pre-metadata-boost) ---
         neighbor_enabled = bool(effective.get("neighbor_expansion_enabled", False))
         neighbor_expansion_added = 0
@@ -885,6 +924,8 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "recency_weight": recency_weight,
                     "scope_confidence_threshold": confidence_threshold,
                     "rag_scope_chunk_caps": scope_chunk_caps,
+                    "source_diversity_max": source_diversity_max or None,
+                    "source_diversity_dropped": source_diversity_dropped,
                     "consumer_model": consumer_model or None,
                     "consumer_tier": consumer_tier,
                     "profile_applied": bool(

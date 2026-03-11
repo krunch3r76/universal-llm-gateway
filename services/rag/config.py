@@ -23,7 +23,7 @@ class WatchDirectory:
     """
 
     path: str
-    extensions: list[str]
+    extensions: list[str] = _field(default_factory=list)
     recursive: bool = True
     chunk_tokens: int | None = None
     exclude: list[str] = _field(default_factory=list)
@@ -56,6 +56,15 @@ class KnowledgeExtractionConfig:
 
 
 DEFAULT_EMBEDDING_MODEL = "bge-m3-q8-0-8192-cpu"
+_BASELINE_EXTENSIONS: tuple[str, ...] = (
+    ".md",
+    ".txt",
+    ".html",
+    ".htm",
+    ".pdf",
+)
+# Public alias for cross-module baseline defaults.
+BASELINE_EXTENSIONS: tuple[str, ...] = _BASELINE_EXTENSIONS
 
 
 @dataclass(slots=True, kw_only=True)
@@ -71,6 +80,7 @@ class RagConfig:
     corpus_hints_path: Path | None = None
     # Optional path to article_registry.yaml (filename → citation metadata for chunk enrichment).
     article_registry_path: Path | None = None
+    baseline_extensions: tuple[str, ...] = BASELINE_EXTENSIONS
 
     def get_scope_for_path(self, file_path: str) -> str:
         """Longest-prefix match over scopes; return scope name or 'all'."""
@@ -263,4 +273,5 @@ def load_config() -> RagConfig:
         embedding_model=embedding_model,
         corpus_hints_path=corpus_hints_path,
         article_registry_path=article_registry_path,
+        baseline_extensions=BASELINE_EXTENSIONS,
     )

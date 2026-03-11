@@ -404,6 +404,7 @@ pipeline.rag.retrieval.skipped?                           (* semantic no-retriev
 pipeline.rag.retrieval.params.resolved
   └─> [parallel queries to RAG /search]
       └─> pipeline.rag.retrieval.bibliography.filtered?  (* after merge, before completed; when junk filter drops chunks)
+      └─> pipeline.rag.retrieval.source.diversity.limited? (* after bibliography filter; when per-source cap drops chunks)
       └─> pipeline.rag.neighbor.expansion.completed?     (* after junk filter, before metadata boost; when expansion enabled)
       └─> pipeline.rag.retrieval.completed | pipeline.rag.retrieval.failed
 ```
@@ -416,6 +417,7 @@ pipeline.rag.retrieval.params.resolved
 | `pipeline.rag.scope.rejected` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `scope`, `details` | Scope validation rejected — fail-closed, 0 chunks returned |
 | `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | Retrieval skipped by semantic no-retrieval gate (query/corpus mismatch with no user prefix override) |
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | Emitted when post-RRF junk/bibliography filter removes one or more chunks |
+| `pipeline.rag.retrieval.source.diversity.limited` | `pipeline_id`, `execution_id`, `step_name`, `per_source_limit`, `chunks_dropped`, `chunks_before`, `chunks_after` | Emitted when source-diversity cap removes chunks from dominant source documents |
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | Pre-retrieval: effective parameters after three-tier merge; `scope` may be string or array of strings (multiscope) |
 | `pipeline.rag.neighbor.expansion.completed` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | Neighbor chunk expansion result — emitted when expansion is enabled, even if zero neighbors were added |
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added` | Post-retrieval: scope prediction + quality metrics (`neighbor_expansion_added` is optional and defaults to 0 when expansion is disabled) |
@@ -434,6 +436,7 @@ Payload semantics:
 - `chunks_per_query`: Per-query result counts; `[10, 0, 8]` means query 1 returned 10, query 2 returned 0
 - `zero_result_queries`: Count of queries with 0 results — high values indicate query quality or scope issues
 - `rrf_score_{min,max,mean}`: Distribution of RRF scores in the merged set
+- `per_source_limit` / `chunks_dropped` / `chunks_before` / `chunks_after`: Source-diversity cap impact on final candidate pool (emitted only when drops occur)
 - `total_retrieval_seconds`: Wall-clock time from first query dispatch to merge completion/failure
 - `neighbor_expansion_added`: Number of chunks appended during contiguous neighbor expansion (0 when expansion disabled or no eligible neighbors)
 
@@ -460,6 +463,12 @@ jq -c 'select(.signal == "pipeline.rag.retrieval.completed") |
 jq -c 'select(.signal == "pipeline.rag.neighbor.expansion.completed") |
   {added: .payload.neighbors_added, fetched: .payload.neighbors_fetched,
    sources: .payload.sources_expanded, seconds: .payload.expansion_seconds}' \
+  /tmp/pipeline-events/current.jsonl
+
+# Source-diversity cap impact
+jq -c 'select(.signal == "pipeline.rag.retrieval.source.diversity.limited") |
+  {limit: .payload.per_source_limit, dropped: .payload.chunks_dropped,
+   before: .payload.chunks_before, after: .payload.chunks_after}' \
   /tmp/pipeline-events/current.jsonl
 
 # Low-quality retrievals (low RRF max or any zero-result query)
@@ -914,6 +923,7 @@ Pipeline events flow to two sinks:
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added` | `neighbor_expansion_added` defaults to 0 when expansion disabled; `fallback_triggered` now reflects alias normalization only (no broad fallback) |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | - |
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | - |
+| `pipeline.rag.retrieval.source.diversity.limited` | `pipeline_id`, `execution_id`, `step_name`, `per_source_limit`, `chunks_dropped`, `chunks_before`, `chunks_after` | - |
 | `pipeline.rag.neighbor.expansion.completed` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | - |
 | `pipeline.rag.rerank.completed` | `pipeline_id`, `execution_id`, `step_name`, `rerank_enabled`, `model_id`, `chunks_input`, `chunks_output`, `windows_evaluated`, `max_rank_movement_observed`, `total_rerank_seconds` | - |
 | `pipeline.rag.hints.filtered` | `pipeline_id`, `execution_id`, `step_name`, `query_terms`, `original_hint_count`, `filtered_hint_count`, `filtered_hints`, `fallback`, `scoring_mode`, `min_threshold`, `capped`, `cap_limit` | - |

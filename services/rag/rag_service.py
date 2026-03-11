@@ -389,16 +389,19 @@ def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | 
         Matching chunk_tokens override, or None when no watch directory matches.
     """
     resolved_file = file_path.expanduser().resolve()
+    baseline = {f".{ext.lower().lstrip('.')}" for ext in config.baseline_extensions}
     for watch_directory in config.watch_directories:
         watch_path = Path(watch_directory.path).expanduser().resolve()
         if not resolved_file.is_relative_to(watch_path):
             continue
         if not watch_directory.recursive and resolved_file.parent != watch_path:
             continue
-        if watch_directory.extensions and (
-            resolved_file.suffix.lower()
-            not in {f".{ext.lower().lstrip('.')}" for ext in watch_directory.extensions}
-        ):
+        effective_extensions = (
+            {f".{ext.lower().lstrip('.')}" for ext in watch_directory.extensions}
+            if watch_directory.extensions
+            else baseline
+        )
+        if resolved_file.suffix.lower() not in effective_extensions:
             continue
         if any(fnmatch(resolved_file.name, pat) for pat in watch_directory.exclude):
             continue

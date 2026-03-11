@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from services.rag.property_index import PropertyIndex
     from services.rag.watcher_manager import WatcherManager
 
+from services.rag.config import BASELINE_EXTENSIONS
 from services.rag.directory_ops import (
     IndexFileFn,
     find_removed_sources,
@@ -46,18 +47,7 @@ from services.rag.models import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_EXTENSIONS = [
-    ".md",
-    ".mdc",
-    ".txt",
-    ".pdf",
-    ".epub",
-    ".html",
-    ".htm",
-    ".py",
-    ".js",
-    ".ts",
-]
+DEFAULT_EXTENSIONS = list(BASELINE_EXTENSIONS)
 
 router = APIRouter()
 
