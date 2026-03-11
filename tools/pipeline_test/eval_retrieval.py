@@ -149,8 +149,9 @@ def _build_eval_prompt(
         retrieved_context: Verbatim retrieved context chunks.
         chunks_found: Number of chunks found during retrieval.
         scope_used: Scope used for retrieval.
-        reranking: Optional reranking step metadata when enabled
-            (rerank_enabled, windows_evaluated, max_rank_movement, etc.).
+        reranking: Optional reranking step metadata. When present, retrieval
+            summary includes reranking state/details (rerank_enabled,
+            windows_evaluated, max_rank_movement, etc.).
 
     Returns:
         Formatted evaluation prompt string.
@@ -215,7 +216,7 @@ def evaluate_retrieval(
 ) -> dict[str, Any]:
     """Run retrieval quality evaluation against one or more cloud models.
 
-    Reads ``analyze_scope`` (and optionally ``generate_rewrites``) and the
+    Reads ``analyze_scope`` and rewrite/HyDE generation outputs, then the
     final context step (``rerank_assemble`` if present, otherwise
     ``retrieve_assemble``) from the snapshot, assembles the evaluation prompt,
     and queries models via ``execute_consult``.
@@ -230,17 +231,34 @@ def evaluate_retrieval(
         raise ValueError("Fixture has no 'analyze_scope' step")
 
     rewrite_step = snapshot.steps.get("generate_rewrites")
+    hyde_step = snapshot.steps.get("generate_hyde")
     scope_out: dict[str, Any] = scope_step.json_output or {}
-    rewrite_result: dict[str, Any] = (
-        rewrite_step.json_output if rewrite_step else {}
-    ) or {}
+    rewrite_result = (
+        rewrite_step.json_output
+        if rewrite_step and isinstance(rewrite_step.json_output, dict)
+        else {}
+    )
+    hyde_result = (
+        hyde_step.json_output
+        if hyde_step and isinstance(hyde_step.json_output, dict)
+        else {}
+    )
+    hyde_passage = hyde_result.get("hyde_passage")
+    if not isinstance(hyde_passage, str) or not hyde_passage.strip():
+        # Backward compatibility for pre-split snapshots where HyDE lived in
+        # generate_rewrites.
+        hyde_passage = rewrite_result.get("hyde_passage", "")
     rewrite_out = {
         "scope": scope_out.get("scope", "unknown"),
         "scope_confidence": scope_out.get("scope_confidence"),
         "out_of_scope_reason": scope_out.get("out_of_scope_reason", ""),
         "needs_retrieval": scope_out.get("needs_retrieval", True),
-        "rewritten_queries": rewrite_result.get("rewritten_queries", []),
-        "hyde_passage": rewrite_result.get("hyde_passage", ""),
+        "rewritten_queries": (
+            rewrite_result.get("rewritten_queries")
+            if isinstance(rewrite_result.get("rewritten_queries"), list)
+            else []
+        ),
+        "hyde_passage": hyde_passage,
     }
 
     rerank_step = snapshot.steps.get("rerank_assemble")
@@ -344,10 +362,13 @@ def _parse_evaluation(text: str, model_id: str) -> dict[str, Any]:
     """Parse a model's JSON evaluation response; return safe defaults on error."""
     cleaned = text.strip()
     if cleaned.startswith("```"):
-        lines = cleaned.splitlines()
-        cleaned = "\n".join(
-            ln for ln in lines if not ln.strip().startswith("```")
-        ).strip()
+        cleaned = cleaned[3:]
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+        cleaned = cleaned.lstrip()
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
 
     try:
         data = json.loads(cleaned)
@@ -365,7 +386,7 @@ def _parse_evaluation(text: str, model_id: str) -> dict[str, Any]:
             )
         if preview:
             issues_list.append(
-                f"Raw response preview (first {min(len(preview), _RAW_RESPONSE_PREVIEW_LEN)} chars): "
+                f"Raw response preview (first {len(preview)} chars): "
                 f"{preview!r}"
             )
         result: dict[str, Any] = {
@@ -379,8 +400,14 @@ def _parse_evaluation(text: str, model_id: str) -> dict[str, Any]:
             result["raw_response_preview"] = preview
         return result
 
-    scores: dict[str, int] = data.get("scores", {})
-    _coerce_scores(scores)
+    raw_scores = data.get("scores", {})
+    scores_for_coercion: dict[str, Any] = (
+        raw_scores if isinstance(raw_scores, dict) else {}
+    )
+    _coerce_scores(scores_for_coercion)
+    scores: dict[str, int] = {
+        key: value for key, value in scores_for_coercion.items() if isinstance(value, int)
+    }
 
     # Derive verdict from scores if model omitted/miscased it
     verdict = str(data.get("verdict", "")).lower()

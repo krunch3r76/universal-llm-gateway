@@ -52,6 +52,8 @@ options:
   rag_recency_weight: 0.2  # §4.6: linear additive; deeper decay model deferred
   scope_confidence_threshold: 0.7  # §4.4: CRAG 3-state evaluation — queries below
                                    #        threshold are fail-closed (0 chunks, no broadening)
+  rag_scope_chunk_caps: {}  # Optional per-scope cap for multi-scope retrieval unions.
+                            # Example: {"graph_modeling": 8, "knowledge_systems": 4}
   bibliography_filter_threshold: 0.35  # 0 = disable junk filter; >0 = fraction of lines to treat as junk
   bibliography_filter_disable: false   # Explicit hard-disable flag; if true, overrides threshold
   hyde_enabled: true  # Hypothetical Document Embeddings — generates a short
@@ -119,8 +121,8 @@ steps:
       source: any       # local models qualify — enables laptop/CPU fallback
     prompt_ref: rag.rag_context_v1.analyze_scope
     generation_parameters:
-      temperature: 0.2
-      max_tokens: 256
+      temperature: 0.3
+      max_tokens: 512
       response_format:
         type: json_object
         schema:
@@ -128,8 +130,13 @@ steps:
           properties:
             needs_retrieval:
               type: boolean
-            scope:
-              type: string
+            scopes:
+              type: array
+              minItems: 1
+              maxItems: 3
+              items:
+                type: string
+              description: "1–3 valid scope labels the query touches"
             scope_confidence:
               type: number
               minimum: 0
@@ -138,38 +145,63 @@ steps:
             out_of_scope_reason:
               type: string
               description: "Empty string if in-scope; otherwise brief explanation of why the query does not match the corpus and what research area it maps to"
-          required: ["needs_retrieval", "scope", "scope_confidence", "out_of_scope_reason"]
+            rewrite_strategy:
+              type: string
+              description: "2-5 sentence rewrite strategy tailored to this query's structure, injected into the rewrite generation prompt"
+          required: ["needs_retrieval", "scopes", "scope_confidence", "out_of_scope_reason", "rewrite_strategy"]
 
   - name: generate_rewrites
     type: generate
-    model_ref: qwen3_9b
+    model_ref: qwen3_9b_reasoning
     model_requirements:
       task: rag_rewrite
       source: any
     prompt_ref: rag.rag_context_v1.generate_rewrites
     condition: "analyze_scope.json.get('needs_retrieval') and options.get('rewrite_enabled', True)"
     handler_inputs:
-      scope: "analyze_scope.json.scope"
+      scope: "analyze_scope.json.scopes"
+      rewrite_strategy: "analyze_scope.json.rewrite_strategy"
       suggested_terms: "suggest_terms.json.terms"
       corpus_hints: "filter_corpus_hints.json.filtered_hints"
     generation_parameters:
       temperature: 0.4   # moderate temperature improves rewrite diversity while JSON schema constrains structure
-      max_tokens: 1024
+      max_tokens: 4096
       response_format:
         type: json_object
         schema:
           type: object
           properties:
+            reasoning:
+              type: string
+              description: "Free-form explanation of rewrite decisions, trade-offs, and omitted optional terms"
             rewritten_queries:
               type: array
               minItems: 2
               maxItems: 4
               items:
                 type: string
+          required: ["reasoning", "rewritten_queries"]
+
+  - name: generate_hyde
+    type: generate
+    model_ref: qwen3_9b
+    model_requirements:
+      task: rag_rewrite
+      source: any
+    prompt_ref: rag.rag_context_v1.generate_hyde
+    condition: "analyze_scope.json.get('needs_retrieval') and options.get('rewrite_enabled', True) and options.get('hyde_enabled', True)"
+    generation_parameters:
+      temperature: 0.3
+      max_tokens: 600
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
             hyde_passage:
               type: string
-              description: "A hypothetical 3-4 sentence passage that would answer the query, written in the style of an academic paper or technical document"
-          required: ["rewritten_queries", "hyde_passage"]
+              description: "A hypothetical document passage used as an additional retrieval query"
+          required: ["hyde_passage"]
 
   - name: retrieve_assemble
     type: rag_multi_retrieve_v1
@@ -177,6 +209,7 @@ steps:
     handler_inputs:
       scope_result: "analyze_scope.json"
       rewrite_result: "generate_rewrites.json"
+      hyde_result: "generate_hyde.json"
 
   - name: rerank_assemble
     type: rag_rerank_assemble_v1

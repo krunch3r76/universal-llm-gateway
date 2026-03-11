@@ -14,71 +14,114 @@ prompts:
       Return JSON with a single key "terms" (array of 5–10 strings).
 
   analyze_scope:
-    description: "Analyze query retrieval need and scope (compact, corpus-agnostic)"
+    description: "Analyze query scope + generate dynamic rewrite strategy"
     system_prompt: |
       You analyze a user query for dense-retrieval RAG over the indexed corpus.
       Return valid JSON only with these keys:
-      needs_retrieval, scope, scope_confidence, out_of_scope_reason.
+      needs_retrieval, scopes, scope_confidence, out_of_scope_reason, rewrite_strategy.
 
       Required behavior:
       1. needs_retrieval: false only for purely conversational (thanks, ok); else true.
-      2. scope: set to exactly one of the valid scope labels below. Copy the label verbatim; do not invent values.
-      If uncertain or the query spans multiple areas, use "all".
-      For scope assignment, prioritize label stability across close phrasings:
-      - Choose the most specific valid label directly supported by explicit query terms.
-      - Do not switch to a broader neighboring label based only on paraphrase, wording strength, or inferred intent.
-      - If two labels remain genuinely plausible from the literal query text, use "all" rather than guessing.
-      Valid scopes (use exactly one):
+      2. scopes: return an array of 1–3 valid scope labels that the query touches.
+      Copy each label verbatim from the list below; do not invent values.
+      - Start with the single most specific label supported by explicit query terms.
+      - Add a second label only if the query explicitly spans a distinct area
+        (e.g. a comparison across two domains, or a conjunction of two topics).
+      - Add a third label only for genuinely three-way queries; this is rare.
+      - If no specific label fits, use ["all"].
+      Valid scopes:
        {scope_options}
       Invalid (do not use): schema_design, data_governance, data_modeling — use the closest valid label instead.
       3. If the query is a poor match for the corpus, set out_of_scope_reason to a brief
         explanation and scope_confidence <= 0.5. Otherwise out_of_scope_reason = "".
-      Scope confidence should reflect confidence in the chosen label versus nearby valid labels,
-      not general topic familiarity. If label choice is ambiguous among valid scopes, lower
-      scope_confidence; if unresolved, prefer "all".
+      Scope confidence should reflect confidence in the chosen labels,
+      not general topic familiarity. If label choice is ambiguous, lower
+      scope_confidence.
+      4. rewrite_strategy: write 2–5 sentences of specific rewrite instructions
+      tailored to this query's structure. These instructions will be injected
+      directly into a downstream rewrite-generation prompt. Be concrete and
+      actionable. Consider:
+      - What is the query's structure? (comparison, multi-facet exploration,
+        focused topic, definitional, procedural, or something else)
+      - How many rewrites (2–4) suit this query?
+      - Should rewrites diversify across facets, add comparison vocabulary,
+        expand with close technical synonyms, use canonical terminology, or
+        broaden with implementation/design language?
+      - What specific expansion directions are justified by the query wording?
+      - What expansions should be avoided to prevent drift?
+      Write the strategy as direct instructions to a rewrite generator,
+      not as an analysis of the query.
     template: |
-      Task: classify this query for RAG retrieval.
-      For scope, use exactly one allowed label from the system prompt. Do not invent new labels.
-      For scope, prefer the most specific label justified by the query's literal wording; avoid broader relabeling from paraphrase or inferred context.
+      Task: classify this query for RAG retrieval and write a rewrite strategy.
+      For scopes, use 1–3 allowed labels from the system prompt. Do not invent new labels.
+      Prefer specific labels justified by the query's literal wording.
 
       Query:
       <query>{text}</query>
 
   generate_rewrites:
-    description: "Generate retrieval rewrites and optional HyDE passage (compact, corpus-agnostic)"
+    description: "Generate retrieval rewrites with dynamic strategy injection"
     system_prompt: |
-      You generate retrieval-optimized rewrites for dense-retrieval RAG over the indexed corpus.
-      Return valid JSON only with these keys: rewritten_queries, hyde_passage.
+      You generate retrieval-optimized query rewrites for dense-retrieval RAG
+      over an indexed technical corpus.
+      Return valid JSON only with these keys: reasoning, rewritten_queries.
 
-      Required behavior:
-      1. rewritten_queries:
-         - Return 2 queries for simple topics; 3-4 for multi-facet or comparative.
-         - Keep one rewrite identical or near-identical to the original query.
-         - Keep rewrites short keyword phrases (not full sentences).
-         - Preserve the main lexical anchors from the original query.
-         - Do not invent entities, systems, methods, or side-topics.
-         - Only add a term from optional lists when it is directly supported by
-           query wording (or a clear close technical synonym). If uncertain, omit it.
-         - For comparison queries, include at least one rewrite naming both sides.
-      2. hyde_passage:
-         - 60-100 words.
-         - Write as neutral factual text that could appear in a relevant document.
-         - For comparison queries, mention both sides with balanced emphasis.
-         - No invented names.
+      Core objective:
+      Produce short retrieval queries that improve semantic recall while
+      preserving the user's intent. Rewrites should help retrieve relevant
+      technical material, not merely paraphrase the input.
 
+      Global rules:
+      1. Return 2–4 rewritten queries (count guided by strategy below).
+      2. Keep rewrites concise keyword-style phrases, not full sentences.
+      3. Preserve the core intent and technical anchors of the query.
+      4. You may add close technical synonyms, canonical field terminology,
+         and directly related comparison or implementation vocabulary when
+         clearly justified by the query wording or corpus hints.
+      5. Do not introduce unrelated entities, products, systems, or side-topics.
+      6. Prefer terms likely to appear in technical writing, surveys, schemas,
+         or architecture discussions.
+      7. If the query has multiple explicit facets, diversify across them
+         rather than repeating near-duplicates.
+      8. Use optional list terms only when directly relevant to explicit query
+         anchors or a very close technical synonym. If uncertain, omit.
 
-      Optional context:
+      Query-specific rewrite strategy (from upstream analysis):
+      {rewrite_strategy}
+
+      Reference lists (use only when directly relevant):
       - Predicted scope: {scope}
       - Suggested retrieval terms: {suggested_terms}
-      - Corpus hints: {corpus_hints}
+      - Corpus vocabulary hints: {corpus_hints}
 
-      Use optional list terms only when directly relevant to explicit query anchors.
+      Output:
+      - reasoning: concise explanation of rewrite choices, diversification
+        approach, and why added terms are justified or omitted.
+      - rewritten_queries: 2–4 short keyword phrases.
 
-      Optional reference lists:
-      - Suggested retrieval terms (from prior step): {suggested_terms}
-      - Corpus vocabulary (domain terms indexed in the corpus): {corpus_hints}
+    template: |
+      <query>{text}</query>
 
-      Output: rewritten_queries (2-4 short phrases), hyde_passage (60-100 words).
+  generate_hyde:
+    description: "Generate HyDE passage only (hypothetical retrieval document)"
+    system_prompt: |
+      You generate a HyDE passage for dense-retrieval RAG.
+      Return valid JSON only with this key: hyde_passage.
+
+      Required behavior:
+      - HyDE means a hypothetical document passage used as an additional retrieval
+        query (embedding target), not a final answer.
+      - 60-100 words.
+      - Write neutral factual text that could plausibly appear in a relevant
+        technical document.
+      - Keep the same core topic and lexical anchors as the user query.
+      - For comparison queries, mention both sides with balanced emphasis.
+      - Do not introduce specific entities, datasets, or claims unless explicit
+        in the query.
+      - No invented names.
+
+      Output:
+      - hyde_passage: 60-100 words.
 
     template: |
       <query>{text}</query>

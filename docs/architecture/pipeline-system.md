@@ -70,7 +70,7 @@ Stargate detects the ID and routes to `PipelineExecutor` transparently.
 **Current service pipelines**:
 | ID | Purpose | Source |
 |---|---|---|
-| `rag-context` | Scope analysis → optional rewrite generation → parallel RAG + RRF merge → context | `pipelines/rag/rag_context_v1/` |
+| `rag-context` | Scope analysis → optional rewrite + optional HyDE → multi-scope parallel RAG + RRF → context | `pipelines/rag/rag_context_v1/` |
 | `rag-answer` | Calls `rag-context` → grounded answer via phi4 | `pipelines/answer_v1/` |
 | `rag-extraction` | Structured entity/topic/facet extraction used during RAG indexing | `pipelines/rag_extraction/` |
 | `project-assistant` | Project-scoped assistant flow that pins RAG context scope to project docs | `pipelines/project_assistant/` |
@@ -82,9 +82,9 @@ Stargate detects the ID and routes to `PipelineExecutor` transparently.
 - `rag-context` does not rely on a duplicated static `valid_scopes` list.
 - Invalid explicit scope overrides, invalid predicted scopes, low-confidence predictions, or unavailable scope catalog trigger fail-closed behavior.
 - Fail-closed retrieval returns zero chunks and emits `pipeline.rag.scope.rejected`.
-- Query preprocessing is split into `analyze_scope` and conditionally executed `generate_rewrites`; retrieval consumes `scope_result` (required) and `rewrite_result` (optional).
-- Runtime option `rewrite_enabled=false` bypasses rewrite/HyDE generation for diagnostics while preserving scope validation and retrieval execution.
-- Consumers use split outputs: `analyze_scope.json` (required) and optionally `generate_rewrites.json`.
+- Query preprocessing: `analyze_scope` (required), then conditionally `generate_rewrites` and/or `generate_hyde`; retrieval consumes `scope_result`, optional `rewrite_result`, optional `hyde_result`. Multi-scope: `analyze_scope` may return `scopes` (array); per-scope chunk caps via `rag_scope_chunk_caps`.
+- Runtime options `rewrite_enabled=false` and `hyde_enabled=false` bypass rewrite/HyDE generation for diagnostics while preserving scope validation and retrieval execution.
+- Consumers use split outputs: `analyze_scope.json` (required), optionally `generate_rewrites.json`, optionally `generate_hyde.json`.
 
 ### Pipeline Estimation Metadata
 

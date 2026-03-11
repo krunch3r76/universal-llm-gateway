@@ -1,7 +1,7 @@
 """
 Multi-query RAG retrieval with reciprocal rank fusion (RRF).
 
-Reads structured output from split scope-analysis and rewrite steps, executes
+Reads structured output from split scope-analysis, rewrite, and HyDE steps, executes
 parallel RAG searches, and merges results via RRF into a single ranked context
 block.
 
@@ -77,7 +77,7 @@ class RagMultiRetrieveHandler(BaseHandler):
     """
     Multi-query RAG retrieval with RRF merge.
 
-    Reads structured JSON from split scope-analysis and rewrite steps,
+    Reads structured JSON from split scope-analysis, rewrite, and HyDE steps,
     executes parallel RAG searches for rewritten and HyDE queries,
     merges via reciprocal rank fusion, and returns formatted context.
 
@@ -103,6 +103,7 @@ class RagMultiRetrieveHandler(BaseHandler):
     handler_inputs:
         scope_result — required; bound to analyze_scope.json
         rewrite_result — optional; bound to generate_rewrites.json
+        hyde_result — optional; bound to generate_hyde.json
     """
 
     step_type: str = "rag_multi_retrieve_v1"
@@ -157,18 +158,38 @@ class RagMultiRetrieveHandler(BaseHandler):
                 f"{type(scope_data).__name__}"
             )
 
+        def _is_valid_step_result(data: Any) -> bool:
+            return isinstance(data, dict) and not bool(data.get("_skipped", False))
+
         rewrite_data_raw = self._resolve_input(
             resolver, step, "rewrite_result", step.handler_inputs
         )
         rewrite_result: dict[str, Any] = (
             rewrite_data_raw if isinstance(rewrite_data_raw, dict) else {}
         )
-        rewrite_result_valid = bool(rewrite_result) and not bool(
-            rewrite_result.get("_skipped", False)
+        rewrite_result_valid = _is_valid_step_result(rewrite_result)
+        hyde_data_raw = self._resolve_input(
+            resolver, step, "hyde_result", step.handler_inputs
         )
+        hyde_result: dict[str, Any] = (
+            hyde_data_raw if isinstance(hyde_data_raw, dict) else {}
+        )
+        hyde_result_valid = _is_valid_step_result(hyde_result)
+        raw_scopes = scope_data.get("scopes") or scope_data.get("scope", "all")
+        if isinstance(raw_scopes, list):
+            predicted_scopes = [s for s in raw_scopes if isinstance(s, str) and s.strip()]
+            if not predicted_scopes:
+                predicted_scopes = ["all"]
+        else:
+            predicted_scopes = (
+                [raw_scopes]
+                if isinstance(raw_scopes, str) and raw_scopes.strip()
+                else ["all"]
+            )
+
         rewrite_data: dict[str, Any] = {
             "needs_retrieval": bool(scope_data.get("needs_retrieval", True)),
-            "scope": scope_data.get("scope", "all"),
+            "scopes": predicted_scopes,
             "scope_confidence": float(scope_data.get("scope_confidence", 1.0)),
             "out_of_scope_reason": str(scope_data.get("out_of_scope_reason", "")),
             "rewritten_queries": (
@@ -177,7 +198,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 else []
             ),
             "hyde_passage": (
-                rewrite_result.get("hyde_passage", "") if rewrite_result_valid else ""
+                hyde_result.get("hyde_passage", "") if hyde_result_valid else ""
             ),
         }
 
@@ -189,6 +210,12 @@ class RagMultiRetrieveHandler(BaseHandler):
         )
 
         needs_retrieval = bool(rewrite_data.get("needs_retrieval", True))
+        analysis_scope = rewrite_data.get("scopes", ["unknown"])
+        analysis_scope_value = (
+            analysis_scope[0]
+            if isinstance(analysis_scope, list) and analysis_scope
+            else "unknown"
+        )
         self._publish_bus_event(
             context,
             RagQueryAnalysisCompleted(
@@ -196,7 +223,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 execution_id=context.execution_id,
                 step_name=step.name,
                 needs_retrieval=needs_retrieval,
-                scope=str(rewrite_data.get("scope", "")),
+                scope=analysis_scope_value,
                 scope_confidence=float(rewrite_data.get("scope_confidence", 1.0)),
                 out_of_scope_reason=str(rewrite_data.get("out_of_scope_reason", "")),
             ),
@@ -238,6 +265,16 @@ class RagMultiRetrieveHandler(BaseHandler):
 
         if not rewrite_data.get("needs_retrieval", True):
             logger.info("Step '%s': needs_retrieval=false, skipping RAG", step.id)
+            self._publish_bus_event(
+                context,
+                RagRetrievalSkipped(
+                    pipeline_id=context.pipeline.id,
+                    execution_id=context.execution_id,
+                    step_name=step.name,
+                    reason="needs_retrieval_false",
+                    out_of_scope_reason="",
+                ),
+            )
             return StepOutput(
                 raw=_NO_RETRIEVAL_SENTINEL,
                 json={"chunks_found": 0, "queries_executed": 0, "chunks": []},
@@ -313,6 +350,21 @@ class RagMultiRetrieveHandler(BaseHandler):
         recency_weight = params.recency_weight
         confidence_threshold = params.confidence_threshold
 
+        # Optional per-scope caps for multi-scope retrieval. Example:
+        # rag_scope_chunk_caps: {"graph_modeling": 8, "knowledge_systems": 4}
+        scope_chunk_caps_raw = effective.get("rag_scope_chunk_caps")
+        scope_chunk_caps: dict[str, int] = {}
+        if isinstance(scope_chunk_caps_raw, dict):
+            for scope_name, cap in scope_chunk_caps_raw.items():
+                if not isinstance(scope_name, str):
+                    continue
+                try:
+                    cap_int = int(cap)
+                except (TypeError, ValueError):
+                    continue
+                if cap_int > 0:
+                    scope_chunk_caps[scope_name] = cap_int
+
         # --- Scope resolution (fail-closed: invalid/uncertain → 0 chunks) ---
         explicit_prefixes_raw = effective.get("rag_source_prefixes")
         source_prefixes: list[str] | None = None
@@ -380,57 +432,68 @@ class RagMultiRetrieveHandler(BaseHandler):
                 retrieval_mode = "scope"
 
             else:
-                predicted_scope = rewrite_data.get("scope", "all")
+                predicted_scopes: list[str] = rewrite_data.get("scopes", ["all"])
                 _pipeline_options = context.pipeline.options.to_context_dict()
                 scope_aliases: dict[str, str] = (
                     effective.get("scope_aliases")
                     or _pipeline_options.get("scope_aliases")
                     or {}
                 )
-                resolved_scope = scope_aliases.get(predicted_scope, predicted_scope)
-                if resolved_scope != predicted_scope:
-                    logger.info(
-                        "Step '%s': scope alias '%s' → '%s'",
-                        step.id,
-                        predicted_scope,
-                        resolved_scope,
-                    )
+                resolved_scopes: list[str] = []
+                for ps in predicted_scopes:
+                    rs = scope_aliases.get(ps, ps)
+                    if rs != ps:
+                        logger.info(
+                            "Step '%s': scope alias '%s' → '%s'",
+                            step.id,
+                            ps,
+                            rs,
+                        )
+                    resolved_scopes.append(rs)
                 if catalog is None:
                     return self._scope_rejection_output(
                         context,
                         step,
                         "scope_catalog_unavailable",
-                        resolved_scope,
+                        resolved_scopes,
                         "RAG /scopes unreachable; fail-closed",
                     )
-                if resolved_scope not in catalog:
-                    return self._scope_rejection_output(
-                        context,
-                        step,
-                        "invalid_predicted_scope",
-                        resolved_scope,
-                        f"Predicted scope not in catalog"
-                        f" ({predicted_scope!r}"
-                        f"{'→' + resolved_scope if resolved_scope != predicted_scope else ''})",
+                invalid = [s for s in resolved_scopes if s not in catalog]
+                if invalid:
+                    valid = [s for s in resolved_scopes if s in catalog]
+                    if not valid:
+                        return self._scope_rejection_output(
+                            context,
+                            step,
+                            "invalid_predicted_scope",
+                            resolved_scopes,
+                            f"No valid predicted scopes (invalid: {invalid})",
+                        )
+                    logger.warning(
+                        "Step '%s': dropping invalid predicted scopes %s, keeping %s",
+                        step.id,
+                        invalid,
+                        valid,
                     )
+                    resolved_scopes = valid
                 scope_confidence = float(rewrite_data.get("scope_confidence", 1.0))
                 if scope_confidence < confidence_threshold:
                     return self._scope_rejection_output(
                         context,
                         step,
                         "scope_confidence_below_threshold",
-                        resolved_scope,
+                        resolved_scopes,
                         f"confidence={scope_confidence:.2f} < threshold={confidence_threshold:.2f}",
                     )
-                scope = resolved_scope
+                scope = resolved_scopes if len(resolved_scopes) > 1 else resolved_scopes[0]
                 source_prefixes = None
-                search_scope = scope
+                search_scope = resolved_scopes if len(resolved_scopes) > 1 else resolved_scopes[0]
                 retrieval_mode = "scope"
 
-        scope_key = scope[0] if isinstance(scope, list) and scope else str(scope)
+        scope_key: str | None = scope if isinstance(scope, str) else None
 
         # Tier 3: scope-conditional recency (unless caller explicitly overrode it)
-        if "rag_recency_weight" not in runtime:
+        if "rag_recency_weight" not in runtime and scope_key is not None:
             scope_recency = (
                 profiles_data.get("scope_defaults", {})
                 .get(scope_key, {})
@@ -493,21 +556,76 @@ class RagMultiRetrieveHandler(BaseHandler):
                 f"Value was {effective.get('rag_client_timeout')!r}"
             ) from e
         _retrieval_start = _time.monotonic()
+        chunk_scope_by_hash: dict[str, str] = {}
 
         async with make_async_client(base_url, timeout=rag_timeout) as client:
-            tasks = [
-                _execute_single_query(
-                    client,
-                    api_path,
-                    q,
-                    top_k,
-                    recency_weight,
-                    search_scope,
-                    source_prefixes,
-                )
-                for q in queries
-            ]
-            results_per_query = await asyncio.gather(*tasks, return_exceptions=True)
+            results_per_query: list[list[_RetrievedChunk] | BaseException]
+            if (
+                isinstance(search_scope, list)
+                and len(search_scope) > 1
+                and source_prefixes is None
+            ):
+                task_specs: list[tuple[int, str]] = []
+                tasks = []
+                for q_idx, q in enumerate(queries):
+                    for scoped_label in search_scope:
+                        task_specs.append((q_idx, scoped_label))
+                        tasks.append(
+                            _execute_single_query(
+                                client,
+                                api_path,
+                                q,
+                                top_k,
+                                recency_weight,
+                                scoped_label,
+                                None,
+                            )
+                        )
+                task_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                per_query_chunks: dict[int, list[_RetrievedChunk]] = {}
+                per_query_errors: dict[int, BaseException] = {}
+                for (q_idx, scoped_label), result in zip(
+                    task_specs, task_results, strict=True
+                ):
+                    if isinstance(result, BaseException):
+                        per_query_errors.setdefault(q_idx, result)
+                        continue
+                    for chunk in result:
+                        chunk_scope_by_hash.setdefault(
+                            chunk.content_hash, scoped_label
+                        )
+                    per_query_chunks.setdefault(q_idx, []).extend(result)
+
+                results_per_query = []
+                for q_idx in range(len(queries)):
+                    if q_idx in per_query_chunks:
+                        raw = per_query_chunks[q_idx]
+                        seen: set[str] = set()
+                        deduped: list[_RetrievedChunk] = []
+                        for chunk in raw:
+                            if chunk.content_hash not in seen:
+                                seen.add(chunk.content_hash)
+                                deduped.append(chunk)
+                        results_per_query.append(deduped)
+                    elif q_idx in per_query_errors:
+                        results_per_query.append(per_query_errors[q_idx])
+                    else:
+                        results_per_query.append([])
+            else:
+                tasks = [
+                    _execute_single_query(
+                        client,
+                        api_path,
+                        q,
+                        top_k,
+                        recency_weight,
+                        search_scope,
+                        source_prefixes,
+                    )
+                    for q in queries
+                ]
+                results_per_query = await asyncio.gather(*tasks, return_exceptions=True)
 
         successful: list[list[_RetrievedChunk]] = []
         for i, result in enumerate(results_per_query):
@@ -539,6 +657,23 @@ class RagMultiRetrieveHandler(BaseHandler):
             )
 
         merged, merged_scores = _rrf_merge(successful, k=rrf_k, max_chunks=max_chunks)
+
+        # Optional per-scope cap applied after RRF ranking, before junk filtering.
+        if scope_chunk_caps:
+            capped: list[_RetrievedChunk] = []
+            seen_per_scope: dict[str, int] = {}
+            for chunk in merged:
+                chunk_scope = chunk_scope_by_hash.get(chunk.content_hash, "").strip()
+                if not chunk_scope or chunk_scope not in scope_chunk_caps:
+                    capped.append(chunk)
+                    continue
+                curr = seen_per_scope.get(chunk_scope, 0)
+                if curr >= scope_chunk_caps[chunk_scope]:
+                    merged_scores.pop(chunk.content_hash, None)
+                    continue
+                seen_per_scope[chunk_scope] = curr + 1
+                capped.append(chunk)
+            merged = capped
 
         # --- Post-RRF junk filter ---
         if effective.get("bibliography_filter_disable", False):
@@ -671,15 +806,22 @@ class RagMultiRetrieveHandler(BaseHandler):
                 "content": c.content,
                 "source": c.source,
                 "indexed_at": c.indexed_at,
-                "metadata": c.metadata,
+                "metadata": (
+                    {
+                        **c.metadata,
+                        "retrieval_scope": chunk_scope_by_hash[c.content_hash],
+                    }
+                    if c.content_hash in chunk_scope_by_hash
+                    else c.metadata
+                ),
                 "content_hash": c.content_hash,
                 "score": boost_result.scores.get(c.content_hash, 0.0),
             }
             for c in merged
         ]
-        context_text = (
-            format_context(chunk_dicts) if chunk_dicts else _NO_RESULTS_SENTINEL
-        )
+        context_text = format_context(chunk_dicts) if chunk_dicts else _NO_RESULTS_SENTINEL
+        if not context_text.strip():
+            context_text = _NO_RESULTS_SENTINEL
 
         total_raw = sum(len(r) for r in successful)
         logger.info(
@@ -691,7 +833,15 @@ class RagMultiRetrieveHandler(BaseHandler):
         _retrieval_seconds = _time.monotonic() - _retrieval_start
         chunks_per_query = [len(r) for r in successful]
         rrf_scores_list = list(merged_scores.values())
-        predicted_scope_for_event = str(rewrite_data.get("scope", "unknown"))
+        predicted_scope_for_event_raw = rewrite_data.get("scopes", ["unknown"])
+        if (
+            isinstance(predicted_scope_for_event_raw, list)
+            and predicted_scope_for_event_raw
+            and isinstance(predicted_scope_for_event_raw[0], str)
+        ):
+            predicted_scope_for_event = predicted_scope_for_event_raw[0]
+        else:
+            predicted_scope_for_event = str(predicted_scope_for_event_raw)
         fallback_triggered = scope_key != predicted_scope_for_event
         rrf_score_min = min(rrf_scores_list) if rrf_scores_list else 0.0
         rrf_score_max = max(rrf_scores_list) if rrf_scores_list else 0.0
@@ -734,6 +884,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "rrf_k": rrf_k,
                     "recency_weight": recency_weight,
                     "scope_confidence_threshold": confidence_threshold,
+                    "rag_scope_chunk_caps": scope_chunk_caps,
                     "consumer_model": consumer_model or None,
                     "consumer_tier": consumer_tier,
                     "profile_applied": bool(
@@ -761,7 +912,8 @@ class RagMultiRetrieveHandler(BaseHandler):
             context: The pipeline context.
             step: The current step configuration.
             reason: Short code for the rejection (e.g. invalid_scope_override).
-            scope: The scope (or list of scopes) that was rejected.
+            scope: The rejected scope. Can be a single scope string or a list
+                of scope strings.
             details: Descriptive message about the rejection.
 
         Returns:

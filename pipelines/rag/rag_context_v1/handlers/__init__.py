@@ -4,7 +4,8 @@ RAG rag_context_v1 handler registration.
 Registers rag_multi_retrieve_v1 (retrieval + RRF merge),
 rag_rerank_assemble_v1 (LLM reranking + context formatting), and
 filter_corpus_hints_v1 (query-conditioned hint filtering).
-Built-in ``generate`` handles analyze_scope and generate_rewrites steps.
+Built-in ``generate`` handles analyze_scope, generate_rewrites, and
+generate_hyde steps.
 """
 
 from __future__ import annotations
@@ -25,6 +26,8 @@ def register_handlers(router: DomainRouter) -> None:
     Args:
         router: DomainRouter to register rag_multi_retrieve_v1,
             rag_rerank_assemble_v1, and filter_corpus_hints_v1 with.
+            Built-in ``generate`` handles analyze_scope, generate_rewrites,
+            and generate_hyde steps.
     """
     router.register_domain_handler_class(
         "rag", "rag_multi_retrieve_v1", RagMultiRetrieveHandler
