@@ -12,6 +12,7 @@ import argparse
 import json
 import sqlite3
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,7 @@ def _load_events() -> list[dict[str, Any]]:
 
 
 def _basename(path: str) -> str:
+    """Return the base name of a path (filename or last path component)."""
     return Path(path).name
 
 
@@ -110,6 +112,7 @@ def _build_state(events: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _fmt_duration(secs: float) -> str:
+    """Format duration in seconds as human-readable string (e.g. '1.5s' or '2m05s')."""
     if secs < 60:
         return f"{secs:.1f}s"
     m, s = divmod(int(secs), 60)
@@ -244,12 +247,53 @@ def _print_failures() -> None:
         conn.close()
 
 
+def _parse_ts(ts: str) -> float:
+    """Parse ISO timestamp to epoch seconds for elapsed-time math."""
+    if not ts or "T" not in ts:
+        return 0.0
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return dt.timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _file_index_duration_seconds(
+    payload: dict[str, Any],
+    indexed_ts: str,
+    batch_start_by_file: dict[str, float] | None = None,
+) -> float | None:
+    """Per-file wall-clock seconds from batch start to indexed.
+
+    Prefer batch_start_ts from payload (set by RAG service after restart).
+    Fallback: use batch_start_by_file from earlier rag.extraction.batch.started events.
+    """
+    batch_start = payload.get("batch_start_ts")
+    if batch_start and indexed_ts:
+        start = _parse_ts(batch_start)
+        end = _parse_ts(indexed_ts)
+        if start > 0 and end > 0:
+            return max(0.0, end - start)
+    if batch_start_by_file is not None and indexed_ts:
+        path = payload.get("file", "")
+        if path:
+            start = batch_start_by_file.get(path)
+            end = _parse_ts(indexed_ts)
+            if start is not None and end > 0:
+                return max(0.0, end - start)
+    return None
+
+
 def _watch_mode() -> None:
     """Stream new events as they arrive, formatted."""
     if not EVENT_FILE.exists():
         print(f"Waiting for {EVENT_FILE} ...", flush=True)
 
     seen = 0
+    # Elapsed "since start" uses directory index start (not first batch.started — files run in parallel).
+    dir_start_ts: float | None = None
+    # Per-file batch start (for "to index" when payload has no batch_start_ts — works before RAG restart).
+    batch_start_by_file: dict[str, float] = {}
     try:
         while True:
             if EVENT_FILE.exists():
@@ -266,11 +310,27 @@ def _watch_mode() -> None:
                     sig = ev.get("signal", "")
                     p = ev.get("payload", {})
                     ts = ev.get("timestamp", "")[:19].replace("T", " ")
+                    ts_full = ev.get("timestamp", "")
 
                     match sig:
                         case "rag.started":
+                            dir_start_ts = None
+                            batch_start_by_file.clear()
                             print(f"{ts}  [START   ]  RAG service started")
+                        case "rag.directory.index.started":
+                            if ts_full:
+                                dir_start_ts = _parse_ts(ts_full)
+                            batch_start_by_file.clear()
+                            nfiles = p.get("total_files", 0)
+                            print(
+                                f"{ts}  [DIR     ]  directory index started  ({nfiles} files)"
+                            )
                         case "rag.extraction.batch.started":
+                            path = p.get("file", "")
+                            if path and ts_full:
+                                t = _parse_ts(ts_full)
+                                if t > 0:
+                                    batch_start_by_file[path] = t
                             n = p.get("chunk_count", 0)
                             print(
                                 f"{ts}  [BATCH   ]  {_basename(p.get('file', ''))}  ({n} chunks)"
@@ -278,14 +338,31 @@ def _watch_mode() -> None:
                         case "rag.extraction.batch.completed":
                             w = p.get("written", 0)
                             n = p.get("chunk_count", 0)
-                            d = _fmt_duration(p.get("duration_seconds", 0))
+                            file_duration = p.get("duration_seconds", 0)
+                            d = _fmt_duration(file_duration)
                             mark = "✓" if w == n else "!"
+                            since_start = ""
+                            if dir_start_ts is not None and ts_full:
+                                end_ts = _parse_ts(ts_full)
+                                if end_ts > 0:
+                                    since_start = f"  {_fmt_duration(end_ts - dir_start_ts)} since dir start"
                             print(
-                                f"{ts}  [{mark} DONE  ]  {_basename(p.get('file', ''))}  {w}/{n} chunks  {d}"
+                                f"{ts}  [{mark} DONE  ]  {_basename(p.get('file', ''))}  {w}/{n} chunks  {d} to chunk{since_start}"
                             )
                         case "rag.file.indexed":
                             idx = p.get("indexed", 0)
-                            d = _fmt_duration(p.get("duration_seconds", 0))
+                            file_dur = _file_index_duration_seconds(
+                                p, ts_full, batch_start_by_file
+                            )
+                            display_secs = (
+                                file_dur
+                                if file_dur is not None
+                                else p.get("duration_seconds", 0)
+                            )
+                            d = _fmt_duration(display_secs) + " to index"
+                            path = p.get("file", "")
+                            if path:
+                                batch_start_by_file.pop(path, None)
                             print(
                                 f"{ts}  [INDEXED ]  {_basename(p.get('file', ''))}  ({idx} chunks stored)  {d}"
                             )

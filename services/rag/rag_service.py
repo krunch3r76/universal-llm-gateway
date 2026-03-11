@@ -636,6 +636,7 @@ async def _index_file_impl(
         extraction_entities = 0
         extraction_topics = 0
         extraction_property_entries: list[tuple[str, str, str, str]] = []
+        file_batch_start_ts: str | None = None
         if _config is not None and _property_index is not None:
             scope = _config.get_scope_for_path(source)
             ext_result = await run_extraction(
@@ -652,6 +653,7 @@ async def _index_file_impl(
             extraction_entities = ext_result.entities
             extraction_topics = ext_result.topics
             extraction_property_entries = ext_result.property_entries
+            file_batch_start_ts = getattr(ext_result, "batch_start_ts", None)
 
             # ∀ file: extraction failed below threshold ⟹ skip embed+upsert so
             # partially-extracted docs are never queryable. Old chunks (if any)
@@ -714,6 +716,7 @@ async def _index_file_impl(
                 deleted=len(stale_ids),
                 indexed=len(chunks),
                 duration_seconds=time.monotonic() - start,
+                batch_start_ts=file_batch_start_ts,
                 **(_article_event_kwargs(_registry, source) if _registry is not None else {}),
             )
         )

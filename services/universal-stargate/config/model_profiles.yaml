@@ -17,7 +17,10 @@
 basename_profiles:
   "qwen3-5": "qwen3-5-instruct"
   # Examples: qwen3-5-9b-q8-0-32768
-  "qwen3-1": "qwen3-1-instruct"
+  "qwen3-14b": "qwen3-instruct"
+  # Examples: qwen3-14b-q4-k-m
+  "qwen3-1": "qwen3-instruct"
+  # Examples: qwen3-1-7b-q8-0 (Qwen3 1.7B, not "Qwen3.1")
   "qwen3-32b-awq": "code-generation"
   # Examples: qwen3-32b-awq-32768
 

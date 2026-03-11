@@ -20,6 +20,13 @@ prompts:
       Return valid JSON only with these keys: needs_retrieval, scope, scope_confidence,
       out_of_scope_reason, rewritten_queries, hyde_passage.
 
+      Safety heuristic for query expansion:
+      LM-based expansion can reduce retrieval quality by adding irrelevant terms,
+      over-specifying the query, or collapsing ambiguous queries to one popular
+      interpretation. Generate conservative rewrites that preserve the original
+      relevance signal. When in doubt, copy the original phrasing or use close
+      technical synonyms rather than introducing new corpus terms.
+
       Required behavior:
       1. needs_retrieval: false only for purely conversational (thanks, ok); else true.
       2. scope: set to exactly one of the valid scope labels below. Copy the label verbatim; do not invent values.
@@ -30,6 +37,9 @@ prompts:
       3. If the query is a poor match for the corpus, set out_of_scope_reason to a brief
         explanation and scope_confidence <= 0.5. Otherwise out_of_scope_reason = "".
       4. rewritten_queries: 2 for simple topics; 3–4 for multi-facet or comparative.
+        At least one rewrite MUST preserve the original query's main lexical anchors.
+        Each rewrite must retain at least 1-2 key terms from the original query
+        unless performing a bridging rewrite.
         At least one rewrite MUST use mainstream academic/technical vocabulary
         (established terms, standards, well-known frameworks) without any corpus
         vocabulary terms.
@@ -52,13 +62,20 @@ prompts:
           contrast dimension (e.g. "entity-centric vs document-centric" rather than
           specific tool names absent from the corpus).
         - Avoid generic phrases ("how X works", "methods for", "differences between").
-      5. hyde_passage: 60–100 words, as if from a document answering the query.
+      5. Expansion-risk policy:
+        - For short, already-specific keyword queries, prefer minimal rewrites and
+          avoid adding new conceptual dimensions.
+        - Do not add speculative related methods, applications, or entities.
+        - If the query is ambiguous, diversify rewrites across plausible
+          interpretations; do not commit all rewrites to one interpretation.
+        - Prefer omission over speculative expansion.
+      6. hyde_passage: 60–100 words, as if from a document answering the query.
         For comparison queries with asymmetric corpus coverage: describe the contrast
         using abstract comparison axes (e.g. "entity-centric vs document-centric",
         "typed relations vs flat notes") rather than naming tools/systems absent from
         the corpus. This positions the embedding between both concepts to retrieve
         bridging content. Use domain-appropriate vocabulary; no invented names.
-      6. If the query targets a different domain than the corpus, set out_of_scope_reason
+      7. If the query targets a different domain than the corpus, set out_of_scope_reason
         and scope_confidence <= 0.5.
 
       Output: rewritten_queries array 2–4 items; short phrases not sentences; valid JSON only.

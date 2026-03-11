@@ -92,6 +92,8 @@ requests from RAG; defaults to `bge-m3-q8-0-8192-cpu`).
 (integer to force re-extraction by hash invalidation), `property_boost_factor`
 (hybrid search distance multiplier for chunks matching extracted properties).
 
+`article_registry_path` (optional): path to an article registry YAML (e.g. `docs/research/article_registry.yaml`). When set, the RAG service loads it at startup and merges citation metadata (`title`, `authors`, `published_date`, etc.) into chunk metadata for matching filenames. Chunks from registered files then expose `article_title`, `article_authors`, and `published_date` in search results and in rag-context formatted output.
+
 ```yaml
 watch_directories:
   - path: /mnt/torus/projects/universal-llm-gateway/docs/architecture
@@ -112,6 +114,8 @@ watch_directories:
     exclude: [CORPUS_MANIFEST.md]
     recursive: true
 embedding_model: bge-m3-q8-0-8192-cpu
+# Optional: path to article registry for paper title/authors/date in chunk metadata and context
+article_registry_path: /mnt/torus/projects/universal-llm-gateway/docs/research/article_registry.yaml
 extraction:
   enabled: true
   pipeline: rag-extraction

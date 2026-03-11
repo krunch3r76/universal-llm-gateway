@@ -393,40 +393,8 @@ profiles:
       presence_penalty: 2.0
       frequency_penalty: 0.0
 
-  qwen3-32b-thinking:
-    description: "Qwen3-32B-AWQ thinking mode — general tasks (model card)"
-    system_prompt: ""
-    temperature: 0.6
-    top_p: 0.95
-    top_k: 20
-    presence_penalty: 1.5
-    chat_template_kwargs:
-      enable_thinking: true
-    llama_cpp:
-      min_p: 0.0
-      repeat_penalty: 1.0
-    vllm:
-      presence_penalty: 1.5
-      frequency_penalty: 0.0
-
-  qwen3-32b-instruct:
-    description: "Qwen3-32B-AWQ non-thinking/instruct mode — general tasks (model card)"
-    system_prompt: ""
-    temperature: 0.7
-    top_p: 0.8
-    top_k: 20
-    presence_penalty: 1.5
-    chat_template_kwargs:
-      enable_thinking: false
-    llama_cpp:
-      min_p: 0.0
-      repeat_penalty: 1.0
-    vllm:
-      presence_penalty: 1.5
-      frequency_penalty: 0.0
-
-  qwen3-1-thinking:
-    description: "Qwen3-1.7B thinking mode — general tasks (model card)"
+  qwen3-thinking:
+    description: "Qwen3 thinking mode — general tasks (model card)"
     system_prompt: ""
     temperature: 0.6
     top_p: 0.95
@@ -438,11 +406,11 @@ profiles:
       min_p: 0.0
       repeat_penalty: 1.0
     vllm:
-      presence_penalty: 1.5
+      presence_penalty: 0.0
       frequency_penalty: 0.0
 
-  qwen3-1-instruct:
-    description: "Qwen3-1.7B non-thinking/instruct mode — general tasks (model card)"
+  qwen3-instruct:
+    description: "Qwen3 non-thinking/instruct mode — general tasks (model card)"
     system_prompt: ""
     temperature: 0.7
     top_p: 0.8
@@ -454,7 +422,7 @@ profiles:
       min_p: 0.0
       repeat_penalty: 1.0
     vllm:
-      presence_penalty: 1.5
+      presence_penalty: 0.0
       frequency_penalty: 0.0
 
   cursorcore:

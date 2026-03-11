@@ -47,7 +47,7 @@ def score_record(
         1.0
         - (
             policy.error_weight * record.error_ewma
-            + (1.0 - policy.error_weight) * record.timeout_ewma
+            + policy.timeout_weight * record.timeout_ewma
         ),
     )
     # Normalize tok/s against reference ceiling; neutral 0.5 when not yet observed

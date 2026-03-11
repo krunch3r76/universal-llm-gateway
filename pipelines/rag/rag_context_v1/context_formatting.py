@@ -151,6 +151,21 @@ def chunk_is_junk(content: str, threshold: float = 0.35) -> bool:
     return (junk_count / len(lines)) >= threshold
 
 
+def _format_source_line(label: str, c: ChunkData) -> str:
+    """Format a single chunk as a source line with optional article title and metadata."""
+    meta = c.get("metadata") or {}
+    title = (meta.get("article_title") or "").strip()
+    if title:
+        raw = [meta.get("article_authors"), meta.get("published_date")]
+        parts = [str(p).strip() for p in raw if p is not None and str(p).strip()]
+        if parts:
+            title = f"{title} ({', '.join(parts)})"
+        display_label = title
+    else:
+        display_label = label
+    return f"[Source: {display_label} | Last changed: {c['indexed_at']}]\n{c['content']}"
+
+
 def format_context(chunks: list[ChunkData]) -> str:
     """Format chunks for prompt injection with entity/relation/topic sections.
 
@@ -180,10 +195,7 @@ def format_context(chunks: list[ChunkData]) -> str:
     if not accepted:
         return _NO_RESULTS_SENTINEL
 
-    sections = [
-        f"[Source: {label} | Last changed: {c['indexed_at']}]\n{c['content']}"
-        for label, c in accepted
-    ]
+    sections = [_format_source_line(label, c) for label, c in accepted]
 
     if all_entities:
         merged_entities = merge_entities(all_entities)

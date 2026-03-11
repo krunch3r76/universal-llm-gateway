@@ -16,6 +16,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from universal_event_bus import Event, EventBus
@@ -48,18 +49,24 @@ class ExtractionResult:
 
     entities/topics are counts; property_entries are (key, chunk_id, scope, source)
     quads for the property index; success is True when partial or full write was done.
+    batch_start_ts: ISO-8601 timestamp when extraction batch started (for per-file duration).
     """
 
     entities: int = 0
     topics: int = 0
     property_entries: list[tuple[str, str, str, str]] = field(default_factory=list)
     success: bool = field(default=False)
+    batch_start_ts: str | None = None
 
 
 def build_property_entries(
     knowledge: ExtractedKnowledge, chunk_id: str, scope: str = "all", source: str = ""
 ) -> list[tuple[str, str, str, str]]:
-    """Build (key, chunk_id, scope, source) quads from extracted knowledge."""
+    """Build (key, chunk_id, scope, source) quads from extracted knowledge.
+
+    Keys use prefixes: prop.name@@ (entity names), prop.type@@ (entity types),
+    prop.facet@@ (facets), prop.rel@@ (relations), prop.topic@@ (topics).
+    """
     return [
         (f"prop.name@@{entity.name}", chunk_id, scope, source)
         for entity in knowledge.entities
@@ -97,7 +104,12 @@ def _publish_event_nonblocking(event_bus: EventBus, event: Event) -> None:
             return
         exc = done_task.exception()
         if exc is not None:
-            logger.warning("Non-blocking event publish failed: %s", exc, exc_info=True)
+            logger.warning(
+                "Non-blocking event publish failed for '%s': %s",
+                event.signal,
+                exc,
+                exc_info=True,
+            )
 
     task.add_done_callback(_on_done)
 
@@ -168,6 +180,7 @@ async def run_extraction(
     # --- end permanent failure gate ---
 
     if event_bus is not None:
+        result.batch_start_ts = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         _publish_event_nonblocking(
             event_bus,
             rag_extraction_batch_started(file=file, chunk_count=len(ids)),
@@ -283,7 +296,7 @@ async def run_extraction(
                 successful=successful,
                 written=written,
                 duration_seconds=duration,
-                extraction_model=config.extraction_model or None,
+                extraction_model=config.extraction_model,
             ),
         )
 
@@ -350,8 +363,9 @@ async def recover_missing_extraction(
 
     with_docs = collection.get(ids=existing_ids, include=["documents", "metadatas"])
     docs: list[str] = with_docs.get("documents") or []
+    metadatas_from_db: list[Any] = with_docs.get("metadatas") or []
     metadatas: list[dict[str, Any]] = [
-        m for m in (with_docs.get("metadatas") or []) if isinstance(m, dict)
+        m for m in metadatas_from_db if isinstance(m, dict)
     ]
     ids: list[str] = with_docs.get("ids") or []
 

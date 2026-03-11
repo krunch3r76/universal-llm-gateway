@@ -8,7 +8,7 @@ from math import exp
 from pathlib import Path
 from threading import Lock
 from time import monotonic
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.scheduling.events.request import ModelSelectionHealthObservation
 
@@ -36,8 +36,8 @@ _PERSISTENT_FIELDS = (
 @dataclass(slots=True, kw_only=True)
 class ReputationRecord:
     request_ewma: float = 0.0
-    timeout_ewma: float = 0.0   # transient — not persisted
-    error_ewma: float = 0.0     # transient — not persisted
+    timeout_ewma: float = 0.0  # transient — not persisted
+    error_ewma: float = 0.0  # transient — not persisted
     quality_ewma: float = 0.0
     toks_per_second_ewma: float | None = None
     p50_latency_ms: float | None = None
@@ -47,6 +47,13 @@ class ReputationRecord:
 
 
 class TaskModelReputationStore:
+    """Persists and serves reputation scores for (task, model_id) pairs.
+
+    Tracks request count, timeouts, errors, quality, latency, and tokens/sec
+    per model. Observations update in-memory EWMAs; stable fields are written
+    to disk after a debounced interval.
+    """
+
     def __init__(
         self,
         policy: ReputationPolicy = DEFAULT_REPUTATION_POLICY,
@@ -112,20 +119,8 @@ class TaskModelReputationStore:
 
         logger.info("Loaded %d reputation records from %s", loaded, target)
 
-    def _save(self) -> None:
-        """Write stable fields to disk. Called via asyncio.create_task."""
-        with self._lock:
-            data = {
-                f"{task}:{model_id}": {
-                    field: getattr(rec, field)
-                    for field in _PERSISTENT_FIELDS
-                    if getattr(rec, field) is not None
-                }
-                for (task, model_id), rec in self._records.items()
-            }
-            self._last_save_ts = monotonic()
-            self._save_pending = False
-
+    def _save_to_disk(self, data: dict[str, Any]) -> None:
+        """Write serialized data to disk. Called from thread pool; does not acquire lock."""
         try:
             self._persistence_path.parent.mkdir(parents=True, exist_ok=True)
             self._persistence_path.write_text(json.dumps(data, indent=2))
@@ -141,20 +136,45 @@ class TaskModelReputationStore:
 
     def _schedule_save(self) -> None:
         """Debounced async save. Observations arriving during a pending save
-        are coalesced into the single scheduled write."""
+        are coalesced into the single scheduled write.
+        Data is copied under lock; disk write runs in thread pool without lock.
+        """
         now = monotonic()
         with self._lock:
             if now - self._last_save_ts >= _SAVE_DEBOUNCE_SECONDS:
-                # Debounce interval elapsed — save immediately
-                asyncio.create_task(asyncio.to_thread(self._save))
+                data_to_save = {
+                    f"{task}:{model_id}": {
+                        field: getattr(rec, field)
+                        for field in _PERSISTENT_FIELDS
+                        if getattr(rec, field) is not None
+                    }
+                    for (task, model_id), rec in self._records.items()
+                }
+                self._last_save_ts = now
+                self._save_pending = False
+                asyncio.create_task(
+                    asyncio.to_thread(self._save_to_disk, data_to_save)
+                )
             elif not self._save_pending:
-                # Schedule a deferred save for the remainder of the debounce window
                 self._save_pending = True
                 delay = _SAVE_DEBOUNCE_SECONDS - (now - self._last_save_ts)
 
                 async def _deferred() -> None:
                     await asyncio.sleep(delay)
-                    await asyncio.to_thread(self._save)
+                    with self._lock:
+                        data_to_save = {
+                            f"{task}:{model_id}": {
+                                field: getattr(rec, field)
+                                for field in _PERSISTENT_FIELDS
+                                if getattr(rec, field) is not None
+                            }
+                            for (task, model_id), rec in self._records.items()
+                        }
+                        self._last_save_ts = monotonic()
+                        self._save_pending = False
+                    await asyncio.to_thread(
+                        self._save_to_disk, data_to_save
+                    )
 
                 asyncio.create_task(_deferred())
 
@@ -174,30 +194,32 @@ class TaskModelReputationStore:
             dt = max(1e-9, now - rec.last_event_ts) if rec.last_event_ts > 0 else 1.0
             alpha = 1.0 - exp(-dt / self._policy.ewma_half_life_seconds)
             rec.request_ewma = (1 - alpha) * rec.request_ewma + alpha
-            rec.timeout_ewma = (1 - alpha) * rec.timeout_ewma + alpha * (
+            # timeout/error: shorter half-life → temporary weight, decay faster.
+            alpha_fail = 1.0 - exp(-dt / self._policy.timeout_ewma_half_life_seconds)
+            rec.timeout_ewma = (1 - alpha_fail) * rec.timeout_ewma + alpha_fail * (
                 1.0 if outcome == "timeout" else 0.0
             )
-            rec.error_ewma = (1 - alpha) * rec.error_ewma + alpha * (
+            rec.error_ewma = (1 - alpha_fail) * rec.error_ewma + alpha_fail * (
                 1.0 if outcome == "error" else 0.0
             )
             if quality_score is not None:
                 rec.quality_ewma = (
-                    (1 - alpha) * rec.quality_ewma + alpha * quality_score
-                )
+                    1 - alpha
+                ) * rec.quality_ewma + alpha * quality_score
             if tokens_per_second is not None and tokens_per_second > 0:
                 if rec.toks_per_second_ewma is None:
                     rec.toks_per_second_ewma = tokens_per_second
                 else:
                     tps = rec.toks_per_second_ewma
                     rec.toks_per_second_ewma = (
-                        (1 - alpha) * tps + alpha * tokens_per_second
-                    )
+                        1 - alpha
+                    ) * tps + alpha * tokens_per_second
             if rec.p50_latency_ms is None:
                 rec.p50_latency_ms = latency_ms
             else:
                 rec.p50_latency_ms = (
-                    (1 - alpha) * rec.p50_latency_ms + alpha * latency_ms
-                )
+                    1 - alpha
+                ) * rec.p50_latency_ms + alpha * latency_ms
             if rec.p90_latency_ms is None:
                 rec.p90_latency_ms = latency_ms
             else:
