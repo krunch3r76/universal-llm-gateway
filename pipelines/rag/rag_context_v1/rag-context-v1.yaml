@@ -28,7 +28,6 @@ options:
     - "research"
     - "rag_systems"
     - "code_retrieval"
-    - "knowledge_management"
     - "graph_modeling"
     - "temporal_provenance"
     - "belief_consistency"
@@ -43,11 +42,10 @@ options:
     data_modeling: graph_modeling
     data_governance: temporal_provenance
   # --- Retrieval tunables (overridable via pipeline_options) ---
-  rag_top_k_per_query: 10
+  rag_top_k_per_query: 15
   rag_max_chunks: 20
-  rag_rrf_k: 35           # §4.3: k=60 compresses rank diffs to 13% for N≤3 lists;
-                          #        k=35 yields 23% — Cormack/Clarke/Butt 2009 tuned
-                          #        k=60 on TREC Web with 3–5 systems, not 1–3
+  rag_rrf_k: 35           # §4.3: Chosen to preserve more rank separation than k=60
+                          #        for small list counts (N≤3), improving diversity.
   rag_recency_weight: 0.2  # §4.6: linear additive; deeper decay model deferred
   scope_confidence_threshold: 0.7  # §4.4: CRAG 3-state evaluation — queries below
                                    #        threshold are fail-closed (0 chunks, no broadening)
@@ -85,7 +83,7 @@ options:
   rerank_window_size: 5              # Chunks per sliding window
   rerank_overlap: 1                  # Overlap between adjacent windows
   rerank_max_candidates: 14          # Top-N chunks sent to reranker (rest pass through)
-  rerank_max_movement: 3             # Max rank positions a chunk can move (±)
+  rerank_max_movement: 3             # Max rank movement (±) to prevent drastic LLM reorder.
   rerank_prior_weight: 0.70          # Weight of prior (RRF+metadata) score in fusion
                                      # (0.0 = pure LLM, 1.0 = pure prior)
 
@@ -185,7 +183,7 @@ steps:
       task: rag_rewrite
       source: any
     prompt_ref: rag.rag_context_v1.generate_rewrites
-    condition: "analyze_scope.json.get('needs_retrieval') and options.rewrite_enabled"
+    condition: "analyze_scope.json.needs_retrieval and options.rewrite_enabled"
     handler_inputs:
       scope: "analyze_scope.json.scopes"
       rewrite_strategy: "analyze_scope.json.rewrite_strategy"
@@ -218,7 +216,7 @@ steps:
       task: rag_rewrite
       source: any
     prompt_ref: rag.rag_context_v1.generate_hyde
-    condition: "analyze_scope.json.get('needs_retrieval') and options.rewrite_enabled and options.hyde_enabled"
+    condition: "analyze_scope.json.needs_retrieval and options.rewrite_enabled and options.hyde_enabled"
     handler_inputs:
       rewrite_strategy: "analyze_scope.json.rewrite_strategy"
       must_include: "refine_generation_context.json.enriched_must_include"
@@ -252,7 +250,7 @@ steps:
       rewrite_result: "generate_rewrites.json"
     generation_parameters:
       temperature: 0.2
-      max_tokens: 768    # tighter bound for ranking JSON while preserving headroom
+      max_tokens: 768    # Bounds ranking JSON size while keeping generation headroom.
       response_format:
         type: json_object
         schema:

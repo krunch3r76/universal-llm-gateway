@@ -123,13 +123,12 @@ def _normalize_scope_override(
     if not scope_val:
         return None, "Invalid scope: empty string."
 
-    if "," in scope_val:
-        normalized = [s.strip() for s in scope_val.split(",") if s.strip()]
-        if not normalized:
-            return None, "Invalid scope list: no scopes provided."
-        return normalized, None
-
-    return scope_val, None
+    normalized = [s.strip() for s in scope_val.split(",") if s.strip()]
+    if not normalized:
+        return None, "Invalid scope list: no scopes provided."
+    if len(normalized) == 1:
+        return normalized[0], None
+    return normalized, None
 
 
 def register_rag_tools(mcp: FastMCP) -> None:
@@ -214,16 +213,16 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         Available scopes: "project", "research", "all_research",
         "rag_systems", "code_retrieval", "workflows", "prompting",
-        "knowledge_management", "graph_modeling", "temporal_provenance",
-        "belief_consistency", "knowledge_systems", "both", "all".
+        "graph_modeling", "temporal_provenance", "belief_consistency",
+        "knowledge_systems", "both", "all".
 
         Args:
             query: Natural language search query.
             top_k: Maximum chunks after RRF merge (default 20).
             scope: Named scope filter as single string, comma-separated string,
                 or list of scope strings (e.g. "research",
-                "research, knowledge_management",
-                ["all_research", "knowledge_management"]).
+                "research, knowledge_systems",
+                ["all_research", "knowledge_systems"]).
 
         Returns:
             On success: {"context": "<assembled context with source labels>",
@@ -251,20 +250,19 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 pipeline_options=pipeline_options,
                 timeout=_CONTEXT_TIMEOUT,
             )
-        except (
-            httpx.ConnectError,
-            httpx.TimeoutException,
-            httpx.HTTPStatusError,
-            httpx.RequestError,
-        ) as e:
-            if isinstance(e, httpx.TimeoutException):
-                user_message = "Pipeline timed out. The query may be too complex."
-            elif isinstance(e, httpx.ConnectError):
-                user_message = "Pipeline not available. Stargate may not be running."
-            elif isinstance(e, httpx.HTTPStatusError):
-                user_message = f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
-            else:
-                user_message = f"Pipeline request failed: {e}"
+        except httpx.TimeoutException as e:
+            user_message = "Pipeline timed out. The query may be too complex."
+            return _handle_pipeline_error(e, "rag-context", t0, user_message)
+        except httpx.ConnectError as e:
+            user_message = "Pipeline not available. Stargate may not be running."
+            return _handle_pipeline_error(e, "rag-context", t0, user_message)
+        except httpx.HTTPStatusError as e:
+            user_message = (
+                f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
+            )
+            return _handle_pipeline_error(e, "rag-context", t0, user_message)
+        except httpx.RequestError as e:
+            user_message = f"Pipeline request failed: {e}"
             return _handle_pipeline_error(e, "rag-context", t0, user_message)
 
         content = _extract_content(result) if result else ""
@@ -311,15 +309,15 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         Available scopes: "project", "research", "all_research",
         "rag_systems", "code_retrieval", "workflows", "prompting",
-        "knowledge_management", "graph_modeling", "temporal_provenance",
-        "belief_consistency", "knowledge_systems", "both", "all".
+        "graph_modeling", "temporal_provenance", "belief_consistency",
+        "knowledge_systems", "both", "all".
 
         Args:
             question: Natural language question.
             scope: Named scope filter as single string, comma-separated string,
                 or list of scope strings (e.g. "research",
-                "research, knowledge_management",
-                ["research", "knowledge_management"]).
+                "research, knowledge_systems",
+                ["research", "knowledge_systems"]).
             deep: Use iterative retrieval for complex questions (default False).
 
         Returns:
@@ -350,20 +348,19 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 pipeline_options=pipeline_options,
                 timeout=_ANSWER_TIMEOUT,
             )
-        except (
-            httpx.ConnectError,
-            httpx.TimeoutException,
-            httpx.HTTPStatusError,
-            httpx.RequestError,
-        ) as e:
-            if isinstance(e, httpx.TimeoutException):
-                user_message = "Pipeline timed out. The question may be too complex — try without deep=True."
-            elif isinstance(e, httpx.ConnectError):
-                user_message = "Pipeline not available. Stargate may not be running."
-            elif isinstance(e, httpx.HTTPStatusError):
-                user_message = f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
-            else:
-                user_message = f"Pipeline request failed: {e}"
+        except httpx.TimeoutException as e:
+            user_message = "Pipeline timed out. The question may be too complex — try without deep=True."
+            return _handle_pipeline_error(e, pipeline, t0, user_message)
+        except httpx.ConnectError as e:
+            user_message = "Pipeline not available. Stargate may not be running."
+            return _handle_pipeline_error(e, pipeline, t0, user_message)
+        except httpx.HTTPStatusError as e:
+            user_message = (
+                f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
+            )
+            return _handle_pipeline_error(e, pipeline, t0, user_message)
+        except httpx.RequestError as e:
+            user_message = f"Pipeline request failed: {e}"
             return _handle_pipeline_error(e, pipeline, t0, user_message)
 
         content = _extract_content(result) if result else ""

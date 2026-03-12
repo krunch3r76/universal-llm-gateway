@@ -1,18 +1,27 @@
 # Universal LLM Gateway
 
-An OpenAI-compatible inference stack where nothing leaves your hardware. Models run unprivileged inside network-isolated containers (`network_mode: "none"`): no exfiltration, no phoning home, no cloud dependency.
+A privacy-first, OpenAI-compatible inference stack built on three principles:
+
+1.  **Hardened by Construction.** Your data never leaves your hardware by default. Models run unprivileged in **network-isolated Docker containers** (`network_mode: "none"`). There is no telemetry, no phoning home, and no exfiltration path. The *only* way to the internet is through an optional, single-process cloud proxy. If it's off, the stack is structurally air-gapped.
+
+2.  **A Safer Model for Tools.** Instead of giving LLMs direct tool-execution authority, we use **prompt-driven pseudo-tooling**. The model outputs a structured decision (e.g., JSON), and the engine maps it to a pre-defined operation executed in a hardened sidecar. The model *chooses*, it never *executes*. Adversarial tool use is structurally prevented.
+
+3.  **Minimal Network Surface.** Most communication happens over Unix domain sockets. By default, there is only **one client-facing TCP port (`:9999`)**. The core inference engine is never exposed to any network.
+
+---
 
 > **Documentation status**: This project is production-used but documentation is under active overhaul. Comprehensive onboarding guides, API references, and subsystem docs are coming in the next few weeks. What follows is an accurate capability summary — expect rough edges and missing detail in the linked docs.
 
 ## What it solves
 
-- **Contain untrusted models**: execution runs unprivileged with zero network access
-- **One API across many GPU nodes**: route to local + remote machines via federation
-- **Multi-model workflows**: pipelines are "virtual models" behind a single `model` name
-- **Secure tool-like capabilities**: pipelines perform actions (search, shell, verification) on behalf of models — models never get direct system access
-- **Knowledge retrieval**: RAG service with semantic search, knowledge extraction, scoped corpora, and LLM-driven query rewriting
-- **Cloud model tool access**: MCP server exposes system capabilities (filesystem, RAG, web search, browser automation) as tools for Anthropic and other cloud model APIs — with per-tool-category security policies
-- **Optional cloud routing**: a separate, opt-in cloud proxy isolates all outbound internet access to a single process — if it's not running, outbound traffic is impossible by construction
+- **Privacy by default**: Inference and tool execution stay on your hardware. Outbound internet exists only in an optional, single-process cloud proxy — if it's off, nothing can call out.
+- **Contain untrusted models**: Execution runs unprivileged with zero network access. Edge containers are isolated by construction.
+- **Prevent adversarial tool use**: With **pipeline pseudo-tooling**, models emit structured decisions that our engine maps to pre-defined operations in a hardened sidecar. Models never invoke tools directly, making prompt injection attacks that target tool execution structurally impossible.
+- **Provide hardened traditional pathways**: **Native tool-calling** (OpenAI/Anthropic-style) is planned and will execute in the same hardened sidecar. **MCP** is under active development for cloud model APIs with tiered security per tool category. These pathways are optional and hardened.
+- **Unify multi-GPU nodes**: Route to local and remote machines via federation through a single client endpoint.
+- **Build multi-model workflows**: Pipelines are "virtual models" behind a single `model` name. RAG, consensus, and consultation pipelines ship today.
+- **Enable knowledge retrieval**: Perform local RAG with semantic search, knowledge extraction, scoped corpora, and LLM-driven query rewriting.
+- **Isolate cloud access**: A separate cloud proxy contains all outbound API traffic and credentials, which never leave that single process.
 
 ## Status: Alpha (v0.0.0)
 
@@ -31,26 +40,27 @@ Production-used on single-GPU and multi-node federated deployments. Under active
 | Intelligence profiles | `GET /v1/models/{id}/profile` | Per-model capability profiles |
 | Health | `GET /health` | |
 
-All endpoints are served by Stargate on `:9999` — the sole client-facing endpoint.
+All endpoints are served by Stargate on `:9999` — the **sole client-facing endpoint** in the default setup.
 
 ### Roadmap
 
 - [x] **Simplified onboarding** — `./manage` bootstraps environment and launches TUI ([demo](https://krunch3r76.github.io/assets/universal-llm-gateway/measure_demo_02-18-2026_01.mp4))
 - [x] **RAG service** — ChromaDB-backed semantic search with file watching, recency scoring, scope registry, knowledge extraction, and article registry
-- [x] **Pipeline pseudo-tooling** — prompt-driven tool calling: any model becomes tool-capable without native function-calling support, and adversarial tool invocations are structurally prevented because models produce structured JSON decisions that the engine maps to pre-defined operations — models never call tools directly
-- [x] **Consensus pipeline (v7/v7.1)** — multi-model answer generation with decomposition, domain-specific verification, veto, citation enforcement, and structured synthesis
-- [x] **Pipeline event observability** — dedicated `/tmp/pipeline-events/` stream with per-step metrics (tokens, duration, call count)
+- [x] **Pipeline pseudo-tooling** — Prompt-driven tool calling where any model becomes tool-capable. Models produce structured JSON decisions that the engine maps to pre-defined operations, structurally preventing adversarial tool invocation.
+- [x] **Consensus pipeline (v7/v7.1)** — Multi-model answer generation with decomposition, domain-specific verification, veto, citation enforcement, and structured synthesis
+- [x] **Pipeline event observability** — Dedicated `/tmp/pipeline-events/` stream with per-step metrics (tokens, duration, call count)
 - [x] **Cloud proxy** — OpenRouter/Anthropic/OpenAI/Google integration with quality-tier autoselection, cost-aware routing, configurable provider allow-lists, and browser UI for interactive model selection
 - [x] **RAG-augmented routing** — `rag-context` pipeline rewrites queries into embedding-optimized sub-queries, executes parallel retrieval with RRF merge, and returns assembled context chunks; `rag-answer` wraps it with grounded answer generation; `rag-answer-deep` adds iterative refinement; `source_prefixes` and named scopes restrict retrieval to any indexed corpus subset
-- [x] **Consultation pipelines** — domain-specialized assistants (researcher, architect, planner, prompt engineer) available as pipeline model IDs
+- [x] **Consultation pipelines** — Domain-specialized assistants (researcher, architect, planner, prompt engineer) available as pipeline model IDs
 - [x] **Knowledge extraction** — LLM-driven entity, topic, and relation extraction from indexed documents, stored in a property index for hybrid structured+vector search
-- [x] **Intelligence profiles** — per-model capability metadata and task-aware model selection with cost budgets
-- [x] **MCP server** — internet-facing MCP tool server for Anthropic API integration; exposes filesystem, project browsing, RAG search, web search/fetch, clips, SQLite, and browser automation as model-callable tools; tiered security policies per tool category
-- [ ] **MCP: web and OpenAI API support** — extend MCP server to support web-based MCP clients and OpenAI's tool protocol
+- [x] **Intelligence profiles** — Per-model capability metadata and task-aware model selection with cost budgets
+- [x] **MCP server** — Internet-facing MCP tool server for Anthropic API integration; exposes filesystem, project browsing, RAG search, web search/fetch, clips, SQLite, and browser automation as model-callable tools; tiered security policies per tool category
+- [ ] **MCP: web and OpenAI API support** — Extend MCP server to support web-based MCP clients and OpenAI's tool protocol
+- [ ] **Native tool-calling** — OpenAI/Anthropic-style tool use, executed in the same hardened sidecar with allow-list policy (no new trust surface)
 - [ ] Multi-GPU / tensor parallelism (vLLM)
 - [ ] Native VPS deployment tooling (one-command setup)
 - [ ] Simplified model onboarding (CLI wizard or web UI)
-- [ ] **Documentation overhaul** — comprehensive onboarding, API reference, subsystem guides (in progress)
+- [ ] **Documentation overhaul** — Comprehensive onboarding, API reference, subsystem guides (in progress)
 
 Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup.
 
@@ -69,8 +79,28 @@ Client → Master Stargate:9999 (host, orchestrator)
 Pipeline-tools sidecar (network_mode: "none", read-only) ← shell execution for pipeline steps
 RAG Service (UDS /tmp/universal-protocol/rag.sock by default) ← semantic search for pipeline handlers
 ```
-
 For remote GPU nodes, a **Relay Stargate** on the remote host bridges the Master to the network-isolated Edge container on that host.
+
+### Deployment: Docker, Containers, and Minimal TCP
+
+The stack is **container-native** and exposes **the fewest possible TCP ports**. Most communication is local over **Unix domain sockets**.
+
+| Component | Where it runs | Network | Exposed Ports |
+|------|----------------|---------|---------|
+| **Master Stargate** | Host process (or container) | Binds to host | **`:9999`** — The only client-facing TCP port. |
+| **Edge Node** | **Docker container** per GPU | `network_mode: "none"` | **None.** The host talks to it over a Unix socket. |
+| **Pipeline-tools Sidecar** | **Docker container** (Alpine) | `network_mode: "none"` | **None.** Invoked via `docker exec`. No listening ports. |
+| **RAG Service** | Host process or container | Listens on **UDS** by default | **None** (unless manually configured for TCP).|
+| **Cloud Proxy** | Host process or **container** | Listens on **UDS** by default | **None.** Communicates with Stargate via UDS. Optional. |
+| **Relay Stargate** (remote) | Host process on GPU machine | Binds to host | **`:9999`** on that host for Master → Relay traffic only. |
+| **MCP Server** (optional)| **Docker container** | TLS on 443 | **`:443`** if you run MCP for cloud model tools. |
+
+**Minimal exposure by design:**
+-   **Single Machine**: Expose **`:9999`** (Stargate). That’s it.
+-   **Federation**: Expose **`:9999`** on the master and on each remote host (for the Relay).
+-   **With MCP**: Optionally add `:443` for the MCP server container.
+
+The **Gateway (inference engine)** is never exposed. It listens on `localhost:9998` *inside* the Edge container, which has no network. Stargate reaches it over the container's internal loopback. Inference is always behind the socket boundary.
 
 ### Components
 
@@ -88,20 +118,18 @@ For remote GPU nodes, a **Relay Stargate** on the remote host bridges the Master
 
 ### Key Design Decisions
 
-- **Network isolation**: Edge containers run with `network_mode: "none"` — zero network access. All communication via Unix sockets.
-- **Non-root execution**: Containers run as unprivileged users — no root escalation surface.
-- **Privilege separation**: Each Edge runs with minimal capabilities — models are isolated from the host system. Multiple models may share an Edge container but are isolated from all other hosts and the underlying OS.
-- **Router-only Master**: Masters have no local Gateway. They orchestrate via Edge and Relay stargates.
-- **Structural privacy**: Outbound internet access exists only in the optional cloud proxy. Every other component is local-only or network-isolated. No data leaves the network unless the cloud proxy is explicitly started.
-- **Container-per-concern security tiers**: Inference runs in `network_mode: none` edge containers. Tool execution runs in a capability-dropped, read-only sidecar. Cloud access runs in a domain-whitelisted proxy. Each concern gets the minimum privilege it needs — enforced by container policy, not application code.
+- **Privacy-First**: Your data stays on your hardware unless you explicitly opt in by running the cloud proxy. No telemetry. No phoning home.
+- **Hardening by Construction**: Network isolation (`network_mode: "none"`), non-root execution, privilege separation, and read-only mounts are enforced by container policy, not application logic.
+- **Novel Tooling First**: The default model, pseudo-tooling, eliminates direct model-to-tool invocation. Traditional pathways like native tool-calling and MCP are optional, hardened alternatives that reuse the same security primitives.
+- **Container-per-Concern**: Inference, tool execution, and cloud access run in separate, purpose-built containers. Each component gets the minimum privilege required for its job.
 
 ### Request Flow
 
-1. Client sends request to Master Stargate
-2. DecisionEngine selects an Edge (T0/T1/T2 feasibility scoring) or cloud backend
-3. Master loads model on the Edge if needed (via Unix socket or relay)
-4. Master forwards inference request through the same path
-5. Response streams back: Worker → Gateway → Edge → (relay) → Master → Client
+1. Client sends request to Master Stargate (`:9999`).
+2. DecisionEngine selects a local Edge, remote Edge, or cloud backend.
+3. Master loads the model on the target Edge if needed (via Unix socket or remote relay).
+4. Master forwards the inference request through the same path.
+5. Response streams back: Worker → Gateway → Edge → (Relay) → Master → Client.
 
 ## Quick Start
 
@@ -151,7 +179,7 @@ OpenAI-compatible. All requests go to Stargate on port **9999**.
 
 ## Pipelines
 
-Virtual models that orchestrate multiple real models behind a single `model` name. Use a pipeline ID as the `model` parameter in any standard API request.
+Pipelines are **virtual models** that orchestrate multiple real models behind a single `model` name. Use a pipeline ID as the `model` parameter in any standard API request.
 
 ```bash
 curl -X POST http://localhost:9999/v1/chat/completions \
@@ -161,19 +189,27 @@ curl -X POST http://localhost:9999/v1/chat/completions \
 
 **Key features:**
 - Graph execution with automatic parallelization, loops, and conditional branching
-- Explicit object-flow (`stepName.json.field` bindings) — no hidden state
+- Explicit object-flow (`stepName.json.field` bindings) without hidden state
 - Automatic dependency resolution from `handler_inputs`
 - Built-in retry, timeout, checkpointing, and map/reduce
-- Runtime option overrides via `pipeline_options` in the request body
 - Hot-reload of pipeline YAML definitions
-- Automatic model selection via `model_ref: "auto"` with `model_requirements`
 - OpenAI-compatible — pipelines are just model IDs
 
-### Secure Tooling: The Sidecar Model
+### Tooling: Structurally Safe by Default
 
-Pipelines provide tool-like capabilities without giving models direct system access. Instead of models calling tools, **pipeline handlers** execute actions server-side based on structured model output. The model never directly touches the filesystem, network, or any external service — the pipeline engine mediates every action.
+The stack's default tooling method is novel and designed to prevent prompt injection attacks from escalating to arbitrary code execution. Traditional, hardened pathways are optional.
 
-Shell commands run inside a **pipeline-tools sidecar** — a hardened Alpine container that enforces isolation by construction:
+| Pathway | Status | How it works | Hardening |
+|--------|--------|--------------|-----------|
+| **Pipeline Pseudo-Tooling** | **Shipped** | A model emits a structured decision (JSON). The engine maps it to a **pre-defined** operation from a static YAML file. A **sidecar** runs the command. The model never calls the tool; it just chooses an action. | Commands come from static YAML, not model output. Sidecar: `network_mode: none`, read-only mounts, capability-dropped, non-root, memory-limited. |
+| **Native Tool-Calling** (OpenAI/Anthropic) | **Not yet** | Models would receive a tool schema and return tool calls. The gateway would execute them in the same sidecar under the same policies. | **Same sidecar**, same allow-list discipline — no new trust surface. |
+| **MCP** (Cloud Models) | **Active Development** | An internet-facing MCP server exposes tools (filesystem, RAG, web, browser) to Anthropic and others. | Tiered security per tool category. Execution is isolated. |
+
+**Why pseudo-tooling?** It fundamentally changes the trust boundary. The model never generates shell commands or API calls. It returns a bounded choice, and our engine maps that choice to an operation you've already defined. The attack surface shrinks from "arbitrary execution" to "picking from a list."
+
+### The Sidecar: Hardened Execution Environment
+
+All shell and filesystem actions run inside the **pipeline-tools sidecar**, a dedicated Alpine container with strict, non-negotiable limits:
 
 ```
 Pipeline Step (YAML)  →  Handler  →  docker exec pipeline-tools sh -c "..."
@@ -184,7 +220,7 @@ Pipeline Step (YAML)  →  Handler  →  docker exec pipeline-tools sh -c "..."
                                       └── --pids-limit 64, --memory 256m
 ```
 
-Commands come from static YAML definitions, not from model output — the model produces structured JSON decisions (e.g., `{"action": "expand_git", "reason": "..."}`), and the engine maps these to pre-defined operations.
+The model never writes the command string. This same hardened environment will execute native tool calls when they are supported.
 
 | Handler | Action | Isolation |
 |---|---|---|
@@ -218,35 +254,28 @@ See [Pipeline System README](services/universal-stargate/systems/pipeline/README
 
 > Scoped documentation: [services/rag/README.md](services/rag/README.md)
 
-A semantic search and knowledge management service backed by ChromaDB. At its core: embed the query, retrieve top-k nearest chunks, inject into the generation prompt.
+A local semantic search and knowledge management service backed by ChromaDB. The service provides advanced retrieval pipelines that rewrite user questions into embedding-optimized sub-queries, run them in parallel, and merge results via reciprocal rank fusion (RRF) for superior context.
 
-The `rag-context` pipeline layers advanced retrieval on top: a model rewrites the user question into 1–3 embedding-optimized sub-queries (handling vocabulary mismatch, step-back expansion, and multi-hop decomposition), runs them in parallel, and merges results via reciprocal rank fusion. `rag-answer` wraps `rag-context` with grounded answer generation. `rag-answer-deep` adds iterative refinement.
+- **Indexing**: Markdown, code (Python via tree-sitter AST), PDF (native via `pymupdf4llm`), EPUB, HTML, and plain text, chunked by structure.
+- **Knowledge Extraction**: Extracts entities, topics, and relations from documents to power hybrid structured+vector search.
+- **Search**: Cosine similarity with configurable recency scoring and property boosting.
+- **Corpus Scoping**: Query specific subsets of your data using a named scope registry or ad-hoc `source_prefixes`.
+- **File Watching**: Automatically re-indexes changed files via inotify.
+- **Local Embeddings**: Uses a local model via the Gateway. No external API calls.
+- **PDF Deduplication**: Content-hash (`pdf_hash`) dedup across files.
 
-- **Indexing**: Markdown, code (Python via tree-sitter AST), PDF (native via `pymupdf4llm`), EPUB/ebook, HTML, and plain text — chunked by structure (headers, paragraphs, code blocks, AST for source code)
-- **Knowledge extraction**: LLM-driven entity, topic, and relation extraction from indexed chunks; stored in a SQLite property index for hybrid structured+vector search
-- **Search**: Cosine similarity with configurable recency scoring and property boost (entities, topics, relations); recency driven by `published_date` (preferred for research papers) or `indexed_at`
-- **Corpus scoping**: Named scope registry (`GET /scopes`) with per-scope path roots, retrieval parameters, and union scopes; `source_prefixes` for ad-hoc queries
-- **Article registry**: Optional `article_registry.yaml` for citation metadata (title, authors, venue, DOI, published_date)
-- **Corpus hints**: Scope-specific vocabulary hints for retrieval tuning
-- **File watching**: Automatic reindexing via inotify with periodic reconciliation, pending journal for crash recovery
-- **Embeddings**: Uses a local embedding model (`bge-m3`) via the Gateway — no external API calls
-- **PDF deduplication**: Content-hash (`pdf_hash`) dedup across files
-
-Config: `~/.gateway/rag.yaml`. Store: `~/.rag/store/` (ChromaDB persistent data).
+Config: `~/.gateway/rag.yaml`. Store: `~/.rag/store/`.
 
 ## Cloud Proxy
 
 > Scoped documentation: [services/universal_cloud_proxy/README.md](services/universal_cloud_proxy/README.md)
 
-> Functional for text generation. Quality-tier autoselection and browser UI shipped. Vision model routing is implemented but untested. Provider catalog and edge cases under ongoing refinement.
+The cloud proxy is the **only** component allowed to reach the internet, and it is **entirely optional**. If you don't run it, nothing can call out. It routes requests to providers like OpenRouter, Anthropic, and OpenAI, and is the single process where API keys and outbound traffic are contained.
 
-The cloud proxy is a **separate, optional service** that routes requests to cloud API providers (OpenRouter, Anthropic, OpenAI, Google, etc.). It is the **only component in the system with outbound internet access**, making cloud integration a structural security decision rather than a configuration flag.
-
-**Security model:**
-- **Isolation by construction**: if the cloud proxy isn't running, no component can make outbound requests — the system is local-only by default
-- **Credential containment**: API keys live exclusively in the cloud proxy process; Stargate and edge containers never see them
-- **Network boundary**: the proxy communicates with Stargate over loopback only; outbound connections are restricted to declared provider domains
-- **Uniform routing**: cloud models appear in `/v1/models` alongside local models and use the same routing infrastructure — no separate API surface
+- **Isolation by Construction**: The system is local-only by default. Running the proxy is an explicit choice to enable outbound traffic.
+- **Credential Containment**: API keys live exclusively in the cloud proxy process. They are never seen by Stargate or the inference containers.
+- **Network Boundary**: The proxy communicates with Stargate over a local Unix domain socket.
+- **Uniform Routing**: Cloud models appear in `/v1/models` alongside local models and use the same routing infrastructure.
 
 ```yaml
 # ~/.gateway/cloud-proxy.yaml
@@ -259,53 +288,38 @@ providers:
       - "openai/"
       - "google/"
 ```
-
-Cloud models use provider IDs directly (e.g., `anthropic/claude-sonnet-4-20250514`). In pipeline configs, they're just another model alias — the pipeline system doesn't know or care where inference runs.
-
-**Additional features:**
-- **Browser UI**: Interactive model selection at the proxy root with task tags, quality tiers, and cost filters
-- **Cost-aware routing**: `/catalog/pricing` endpoint exposes per-model pricing for routing decisions
-- **Task-aware selection**: `POST /api/select` matches model capabilities to task requirements
+The proxy also includes a browser UI for interactive model selection, cost-aware routing, and task-aware selection logic.
 
 ## MCP Server (Under Active Development)
 
 > Scoped documentation: [services/mcp-server/README.md](services/mcp-server/README.md)
 
-An internet-facing MCP (Model Context Protocol) server that exposes system capabilities as tools to cloud models. Currently supports the **Anthropic API** (`mcp_servers` parameter); **web-based MCP** and **OpenAI API** support are next.
+**Traditional tooling, hardened.** The MCP server provides the optional pathway for standard tool-calling to cloud models (Anthropic today; web and OpenAI next). It exposes tools—filesystem, RAG, web search, browser automation—via the Model Context Protocol, applying the same privacy and hardening mindset.
 
-Runs as a containerized FastAPI service on `:443` with TLS and bearer token auth. Different tool categories carry different security policies — browser automation requires an explicit Compose override that relaxes the container's seccomp profile, while most tools run under Docker's default restrictions.
+It runs as a containerized FastAPI service on `:443` with TLS and bearer token auth. Each tool category has a distinct security policy, allowing you to choose what to expose.
 
 | Tool Category | Tools | Security Policy |
 |---|---|---|
-| **Filesystem** | `read_file`, `write_file`, `edit_file`, `delete_file`, `list_files` | Sandboxed to `/data/files` volume; path traversal rejected at code level |
-| **Project** | `list_project_files`, `read_project_file`, `search_project` | Read-only mount; only git-tracked files visible |
-| **RAG** | `rag_search`, `rag_answer`, `rag_list_scopes` | Routes through Stargate pipelines via `host.docker.internal` |
+| **Filesystem** | `read_file`, `write_file`, `edit_file`, etc. | Sandboxed to `/data/files` volume; path traversal prohibited |
+| **Project** | `list_project_files`, `read_project_file`, etc. | Read-only mount; only git-tracked files visible |
+| **RAG** | `rag_search`, `rag_answer`, etc. | Routes through Stargate pipelines via `host.docker.internal` |
 | **Web** | `web_search`, `web_fetch` | Brave Search API; SSRF guard blocks private/loopback URLs |
-| **Clips** | `list_clips`, `read_clip` | Read-only access to bookmarklet-saved content |
-| **Context** | `read_todo`, `read_journal`, `list_discoveries`, etc. | Tasks directory; configurable read-only or read-write mount |
-| **SQLite** | `sqlite_query`, `sqlite_execute`, `sqlite_list_databases` | Parameterized queries; DROP/PRAGMA blocked by default |
-| **Browser** | `browser_navigate`, `browser_get_content`, `browser_click`, `browser_fill`, `browser_screenshot` | **Requires separate Compose override** — relaxes seccomp to allow Firefox's internal namespace syscalls (`clone`, `unshare`, `setns`); no capabilities added; still non-root |
+| **Browser** | `browser_navigate`, `browser_click`, etc. | **Requires seccomp override** to allow Firefox's internal sandboxing syscalls; no new capabilities are added |
 
-**Security tiers:**
-- **Default container**: Docker default seccomp, non-root (`uid 1000`), memory-limited (2GB), bearer token auth, TLS
-- **With browser override**: Adds 4 syscalls (`clone`, `clone3`, `unshare`, `setns`) for Playwright Firefox's internal process sandbox. No capability escalation, no filesystem escape — scoped to Firefox's own startup path. To re-tighten: restart without the override
-- **Project access**: Read-only volume mount + code-level defense-in-depth (only git-tracked, non-binary files)
-- **Web access**: SSRF guard rejects private/loopback; fetch timeouts enforced
+This tiered security model ensures that enabling powerful tools like browser automation is an explicit, reversible decision.
 
 ## Federation
 
-Federation lets a Master Stargate distribute inference across multiple GPU nodes. Each remote node runs a Relay Stargate on the host that bridges to a network-isolated Edge container. The Master routes requests to the best available node based on feasibility scoring (loaded model, GPU capacity, queue depth). Clients still talk to `:9999` — federation is transparent.
+Federation lets a Master Stargate distribute inference across multiple GPU nodes. Each remote node runs a Relay Stargate on the host that bridges to a network-isolated Edge container. The Master routes requests to the best available node based on GPU capacity, loaded models, and queue depth. The client experience is unchanged—all requests go to the single Master Stargate at `:9999`.
 
-**Features:**
-- WebSocket-based real-time telemetry (HTTP polling fallback)
-- Single-flight model loading with coalescing and retry
-- Orchestration metrics endpoint (`GET /api/v1/federation/orchestration/metrics`)
-- Gateway proxy for remote job/model/status inspection
-- In-flight inference cancellation (`DELETE /api/v1/federation/inference/{id}`)
+- WebSocket-based real-time telemetry with HTTP polling fallback.
+- Single-flight model loading with request coalescing.
+- Metrics endpoint (`GET /api/v1/federation/orchestration/metrics`).
+- In-flight inference cancellation (`DELETE /api/v1/federation/inference/{id}`).
 
 ## Model Catalog
 
-Models are defined in `config/models/{type}/{engine}/{model-id}.yaml` with structured metadata.
+Models are defined in `config/models/{type}/{engine}/{model-id}.yaml` with structured metadata, including download source, SHA256 checksum, and capability flags. The TUI (`./manage`) handles model discovery, download, and registration.
 
 | Model Type | Engine | Examples |
 |------------|--------|----------|
@@ -316,11 +330,9 @@ Models are defined in `config/models/{type}/{engine}/{model-id}.yaml` with struc
 | Graphics | Diffusers | Flux.2 image generation |
 | Translation | CTranslate2 | Multilingual translation |
 
-Each model config includes download source (HuggingFace), SHA256 verification, quantization metadata, parameter count, and capability flags. The TUI (`./manage`) handles model discovery, download, and registration.
-
 ## Event Observability
 
-Every major subsystem emits structured JSONL events for debugging and monitoring:
+Every major subsystem emits structured JSONL events for debugging and monitoring.
 
 | Event Stream | Path | Scope |
 |---|---|---|
@@ -338,38 +350,18 @@ universal-llm-gateway/
 ├── services/
 │   ├── _universal-llm-gateway/       # Gateway service (container-internal)
 │   ├── universal-stargate/           # Stargate service (port 9999)
-│   │   └── systems/                  # Subsystems: pipeline, federation, routing,
-│   │                                 #   profiles, transformations, graphics, proxy
+│   │   └── systems/                  # Subsystems: pipeline, federation, routing,..
 │   ├── rag/                          # RAG service (UDS default)
 │   ├── universal_cloud_proxy/        # Cloud proxy service (UDS default)
 │   └── mcp-server/                   # MCP tool server (port 443, TLS)
-├── libs/
-│   ├── inference_djinn/              # LLM engines (llama.cpp, vLLM, Whisper, Flux)
-│   ├── intelligence_profiles/        # Per-model profiles and selection
-│   ├── model_id/                     # ModelId type-safe identifiers
-│   ├── process_ipc/                  # Process supervision and IPC
-│   ├── provenance/                   # Model provenance tracking
-│   ├── universal_concurrency/        # Async concurrency primitives
-│   ├── universal_event_bus/          # Event messaging system
-│   ├── universal_logging/            # Structured logging
-│   ├── universal_protocol/           # RPC protocol definitions
-│   ├── universal_transport/          # Transport layer (Unix sockets, HTTP)
-│   └── universal_workspace/          # Workspace path resolution
+├── libs/                             # Shared libraries
 ├── scripts/
-│   └── model_manager/               # TUI application (Textual, MVC)
+│   └── model_manager/                # TUI application (Textual, MVC)
 ├── config/                           # Model catalog, templates, stargate configs
 ├── docker/                           # Dockerfiles, Compose configs, build scripts
 ├── pipelines/                        # Shipped pipeline definitions
-│   ├── consensus/                    # Multi-model consensus (v7, v7.1, v8.0)
-│   ├── rag/                          # RAG sub-pipelines (query rewriting, retrieval)
-│   ├── answer_v1/                    # RAG-augmented answer (calls rag-context)
-│   ├── consult/                      # Domain-specialized consultation pipelines
-│   ├── modularize/                   # Code modularization pipeline
-│   └── tools/                        # Pseudo-tool handlers (shell, RAG, assess loop)
-├── docs/
-│   ├── architecture/                 # System architecture reference
-│   └── vision/                       # Design vision documents per subsystem
-└── tools/                            # Developer utilities (pipeline viewer, test infra)
+├── docs/                             # System architecture and vision docs
+└── tools/                            # Developer utilities
 ```
 
 ## Documentation

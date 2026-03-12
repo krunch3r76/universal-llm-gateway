@@ -87,6 +87,7 @@ scope_vocabulary.yaml
 # Development artifacts
 report.txt
 ATTRIBUTION.txt
+README_REVISED.md
 
 # Generated images (regenerate from PlantUML sources in docs)
 *.svg

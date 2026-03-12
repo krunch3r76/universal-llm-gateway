@@ -111,7 +111,9 @@ def load_corpus_hints(path: Path) -> dict[str, str]:
         logger.warning("Failed to load corpus hints from %s: %s", path, e)
         return {}
     except Exception as e:
-        logger.error("Unexpected error loading corpus hints from %s: %s", path, e)
+        logger.error(
+            "Unexpected error loading corpus hints from %s: %s", path, e, exc_info=True
+        )
         return {}
 
 
@@ -123,7 +125,7 @@ def load_scope_vocabulary(path: Path | None = None) -> dict[str, dict[str, list[
 
     Expected format:
         scope_vocabulary:
-          knowledge_management:
+          knowledge_systems:
             practitioner: ["Obsidian", "Zettelkasten", ...]
             academic: ["PKG", "personal knowledge graph", ...]
             specification: ["RDF", "OWL", ...]
@@ -166,7 +168,7 @@ def format_register_hints(
     """Format register-structured vocabulary for prompt injection.
 
     Output example:
-      [knowledge_management] practitioner: Obsidian, Zettelkasten, PKM | academic: PKG, entity-centric | specification: RDF, OWL
+      [knowledge_systems] practitioner: Obsidian, Zettelkasten, PKM | academic: PKG, entity-centric | specification: RDF, OWL
       [graph_modeling] practitioner: Neo4j, Cypher | academic: property graph, RDF | specification: SPARQL, Gremlin
 
     If scopes is None, format all scopes. Skips scopes with no terms.
@@ -229,11 +231,11 @@ def _build_word_boundary_conditions(
             conditions.append("key = ?")
             params.append(f"{prefix}{norm}")
             conditions.append("key LIKE ?")
-            params.append(f"{prefix}% {norm}")
-            conditions.append("key LIKE ?")
             params.append(f"{prefix}{norm} %")
             conditions.append("key LIKE ?")
             params.append(f"{prefix}% {norm} %")
+            conditions.append("key LIKE ?")
+            params.append(f"{prefix}% {norm}")
     return conditions, params
 
 
@@ -278,30 +280,34 @@ def filter_hints_by_cooccurrence(
                 return []
 
             where_clause = " OR ".join(wb_conditions)
-            _ = conn.execute(
-                "CREATE TEMP TABLE query_chunks AS"
-                " SELECT DISTINCT source, chunk_id FROM properties"
-                f" WHERE source != '' AND ({where_clause})",
-                wb_params,
-            )
+            try:
+                _ = conn.execute(
+                    "CREATE TEMP TABLE query_chunks AS"
+                    " SELECT DISTINCT source, chunk_id FROM properties"
+                    f" WHERE source != '' AND ({where_clause})",
+                    wb_params,
+                )
 
-            key_ph = ",".join("?" for _ in hint_keys)
-            _ = conn.execute(
-                "CREATE TEMP TABLE hint_chunks AS"
-                " SELECT DISTINCT key, source, chunk_id FROM properties"
-                f" WHERE key IN ({key_ph})",
-                hint_keys,
-            )
+                key_ph = ",".join("?" for _ in hint_keys)
+                _ = conn.execute(
+                    "CREATE TEMP TABLE hint_chunks AS"
+                    " SELECT DISTINCT key, source, chunk_id FROM properties"
+                    f" WHERE key IN ({key_ph})",
+                    hint_keys,
+                )
 
-            key_overlaps = _chunk_level_overlap(conn, min_chunk_cooccurrence)
+                key_overlaps = _chunk_level_overlap(conn, min_chunk_cooccurrence)
 
-            if not key_overlaps:
-                key_overlaps = _doc_level_overlap(conn)
+                if not key_overlaps:
+                    key_overlaps = _doc_level_overlap(conn)
 
-            if not key_overlaps:
-                return []
+                if not key_overlaps:
+                    return []
 
-            return _order_hints_by_overlap(hint_terms, key_overlaps)
+                return _order_hints_by_overlap(hint_terms, key_overlaps)
+            finally:
+                _ = conn.execute("DROP TABLE IF EXISTS query_chunks")
+                _ = conn.execute("DROP TABLE IF EXISTS hint_chunks")
     except sqlite3.OperationalError:
         logger.debug("Cannot open property index DB read-only: %s", db_path)
         return []
@@ -348,13 +354,16 @@ def _order_hints_by_overlap(
                 term = key[len(prefix) :]
                 term_scores[term] = max(term_scores.get(term, 0), count)
 
-    scored: list[tuple[str, int]] = []
-    seen: set[str] = set()
+    normalized_to_original: dict[str, str] = {}
     for hint in hint_terms:
         norm = hint.lower().strip()
-        if norm in term_scores and norm not in seen:
-            seen.add(norm)
-            scored.append((hint, term_scores[norm]))
+        if norm and norm not in normalized_to_original:
+            normalized_to_original[norm] = hint
+
+    scored: list[tuple[str, int]] = []
+    for norm_term, score in term_scores.items():
+        if norm_term in normalized_to_original:
+            scored.append((normalized_to_original[norm_term], score))
 
     scored.sort(key=lambda x: (-x[1], x[0]))
     return [h for h, _ in scored]
@@ -462,7 +471,12 @@ def _write_hints_file(hints_path: Path, hints: dict[str, str]) -> None:
 
 
 def _build_chunk_source_map() -> dict[str, str]:
-    """Read chunk→source mapping from ChromaDB for backfill."""
+    """Build chunk_id→source mapping from Chroma metadata.
+
+    Loads all chunk IDs and metadata entries from the Chroma ``knowledge``
+    collection, extracts non-empty ``source`` values, and returns a mapping
+    used by the property-index backfill path.
+    """
     import chromadb
 
     store_path = Path.home() / ".rag" / "store"
@@ -483,7 +497,11 @@ def _build_chunk_source_map() -> dict[str, str]:
 
 
 def _cli_generate_hints() -> None:
-    """One-shot retroactive corpus hints generation from the property index."""
+    """Run one-shot corpus-hints generation from the local property index.
+
+    Supports ``--backfill`` to populate missing source values in the property
+    index from Chroma metadata before generating hints.
+    """
     import asyncio
     import sys
 
