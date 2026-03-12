@@ -903,7 +903,7 @@ async def search(request: SearchRequest) -> SearchResponse:
 
     # ChromaDB >=1.0 dropped $regex on metadata and $contains is array-only,
     # so source_prefixes filtering is done in Python after the query.
-    fetch_k = request.top_k * 5 if request.source_prefixes else request.top_k
+    fetch_k = request.top_k * 5 if request.source_prefixes else request.top_k * 3
 
     results = collection.query(
         query_embeddings=[query_embedding],
@@ -917,6 +917,22 @@ async def search(request: SearchRequest) -> SearchResponse:
         results["metadatas"][0] if results["metadatas"] else []
     )
     distances: list[float] = results["distances"][0] if results["distances"] else []
+
+    # Drop bibliography/junk chunks before top-k truncation so useful content
+    # fills the budget. Over-fetching provides headroom.
+    if result_ids:
+        clean = [
+            (rid, doc, meta, dist)
+            for rid, doc, meta, dist in zip(
+                result_ids, chunks, metadatas, distances, strict=True
+            )
+            if not meta.get("is_bibliography")
+        ]
+        if clean:
+            result_ids = [t[0] for t in clean]
+            chunks = [t[1] for t in clean]
+            metadatas = [t[2] for t in clean]
+            distances = [t[3] for t in clean]
 
     result_ids, chunks, metadatas, distances = apply_source_prefix_filter_with_ids(
         ids=result_ids,

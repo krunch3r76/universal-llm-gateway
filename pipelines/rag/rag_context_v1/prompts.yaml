@@ -94,9 +94,10 @@ prompts:
       1. Return 2–4 rewritten queries (count guided by strategy below).
       2. Keep rewrites concise keyword-style phrases, not full sentences.
       3. Preserve the core intent and technical anchors of the query.
-      4. You may add close technical synonyms, canonical field terminology,
-         and directly related comparison or implementation vocabulary when
-         clearly justified by the query wording or corpus hints.
+      4. Add terms primarily from the dynamic inputs for this query, in this
+         priority order: must_include > corpus vocabulary hints >
+         suggested retrieval terms > inferred synonyms.
+         Prefer exact surface forms from dynamic hints over variants.
       5. Do not introduce unrelated entities, products, systems, or side-topics.
       6. Prefer terms likely to appear in technical writing, surveys, schemas,
          architecture discussions, implementation guides, or tool documentation.
@@ -109,9 +110,19 @@ prompts:
          all rewrites in the same register. If corpus hints include labeled
          registers (practitioner, academic, specification), use the labels
          and terms from the relevant registers to guide each rewrite.
-      10. Must-include tokens: every token in the must_include list below
-          MUST appear verbatim in at least one rewrite. These are
-          high-signal retrieval anchors selected upstream.
+      10. Must-include tokens: distribute across rewrites — each rewrite
+          MUST contain at least 2 distinct anchors from (original query
+          tokens + must_include tokens). Do not group all must_include
+          tokens into a single rewrite. No rewrite should be a near-copy
+          of the original query without added retrieval value.
+      11. Anchor preservation: do not replace a must_include phrase with a
+          near variant (e.g. do not substitute "personal knowledge graphs"
+          for "personal knowledge base" if the latter is in must_include).
+          Prefer exact upstream surface forms.
+      12. Hint coverage: across the full rewrite set, cover as many
+          high-signal corpus_hints and scope_vocabulary terms as fit
+          naturally. Each rewrite should add at least one non-query term
+          drawn from the dynamic hints.
 
       Query-specific rewrite strategy (from upstream analysis):
       {rewrite_strategy}

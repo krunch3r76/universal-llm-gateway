@@ -12,6 +12,8 @@ Signals:
     routing.upstream.all.excluded — all gateways excluded by upstream failures
     routing.capacity.divergence — telemetry/CapacityPool state mismatch
     routing.capacity.preseeded — CapacityPool pre-seeded for cold load
+    routing.overflow.triggered — non-sticky spillover path selected
+    routing.overflow.failed — non-sticky spillover had no feasible alternate
 """
 
 from universal_event_bus import Event, event_factory
@@ -143,6 +145,37 @@ Payload: {
     "model_id": str,
     "gateway_id": str,
     "expected_capacity": int,
+}
+"""
+
+ROUTING_OVERFLOW_TRIGGERED = "routing.overflow.triggered"
+"""
+Non-sticky request selected an alternate gateway due to primary saturation.
+
+Emitted when a second decision pass (excluding the original selected gateway)
+finds a feasible alternate and spillover is triggered.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "from_gateway": str,
+    "to_gateway": str,
+    "reason": str,
+}
+"""
+
+ROUTING_OVERFLOW_FAILED = "routing.overflow.failed"
+"""
+Non-sticky overflow path attempted but no alternate gateway was feasible.
+
+Emitted when the spillover branch is entered and either no alternate candidate
+is selected or overflow model load fails.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "from_gateway": str,
+    "reason": str,
 }
 """
 
@@ -391,5 +424,45 @@ def RoutingCapacityPreseeded(
             "model_id": model_id,
             "gateway_id": gateway_id,
             "expected_capacity": expected_capacity,
+        },
+    )
+
+
+@event_factory
+def RoutingOverflowTriggered(
+    request_id: str,
+    model_id: str,
+    from_gateway: str,
+    to_gateway: str,
+    reason: str,
+) -> Event:
+    """Create ROUTING_OVERFLOW_TRIGGERED event."""
+    return Event(
+        signal=ROUTING_OVERFLOW_TRIGGERED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "from_gateway": from_gateway,
+            "to_gateway": to_gateway,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def RoutingOverflowFailed(
+    request_id: str,
+    model_id: str,
+    from_gateway: str,
+    reason: str,
+) -> Event:
+    """Create ROUTING_OVERFLOW_FAILED event."""
+    return Event(
+        signal=ROUTING_OVERFLOW_FAILED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "from_gateway": from_gateway,
+            "reason": reason,
         },
     )

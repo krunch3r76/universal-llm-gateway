@@ -245,15 +245,21 @@ class CapacityPool:
         allowed_gateway_ids: frozenset[str],
     ) -> str | None:
         """Try to reserve a slot immediately. Returns gateway_id or None."""
+        ranked: list[tuple[str, int]] = []
         for gw_id in allowed_gateway_ids:
-            slot = _Slot(gateway_id=gw_id, model_id=model_id)
-            capacity = self._capacity.get(slot, 0)
-            in_flight = self._in_flight.get(slot, 0)
-            if in_flight < capacity:
-                self._in_flight[slot] = in_flight + 1
-                logger.debug(f"Immediate admit: {request_id} → {gw_id}/{model_id}")
-                return gw_id
-        return None
+            available, _in_flight, _capacity = self.get_slot_info(gw_id, model_id)
+            if available > 0:
+                ranked.append((gw_id, available))
+
+        if not ranked:
+            return None
+
+        ranked.sort(key=lambda item: (-item[1], item[0]))
+        gw_id = ranked[0][0]
+        slot = _Slot(gateway_id=gw_id, model_id=model_id)
+        self._in_flight[slot] = self._in_flight.get(slot, 0) + 1
+        logger.debug(f"Immediate admit: {request_id} → {gw_id}/{model_id}")
+        return gw_id
 
     async def _wait_for_slot(
         self,
@@ -345,8 +351,13 @@ class CapacityPool:
                     name=f"capacity-recover-dispatch-{model_id}",
                 )
             )
-        except RuntimeError:
-            pass
+        except RuntimeError as exc:
+            logger.warning(
+                "Failed to dispatch after slot leak recovery for %s: "
+                "no running event loop (%s)",
+                model_id,
+                exc,
+            )
 
     def _emit_slot_leak_recovered(
         self, request_id: str, gateway_id: str, model_id: str
@@ -369,8 +380,22 @@ class CapacityPool:
             asyncio.get_running_loop().call_soon(
                 lambda: asyncio.create_task(self._event_bus.publish_async_nowait(event))
             )
-        except Exception:
-            pass
+        except RuntimeError as exc:
+            logger.warning(
+                "Failed to emit slot leak recovered event for %s/%s: "
+                "no running event loop (%s)",
+                gateway_id,
+                model_id,
+                exc,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to emit slot leak recovered event for %s/%s: %s",
+                gateway_id,
+                model_id,
+                exc,
+                exc_info=True,
+            )
 
     # ── Release ──
 

@@ -199,6 +199,102 @@ async def _emit_eviction_classification_event(
         logger.debug(f"Failed to emit routing eviction classification event: {exc}")
 
 
+async def _emit_overflow_triggered_event(
+    event_bus: Any,
+    request_id: str,
+    model_id: "ModelId",
+    from_gateway: str,
+    to_gateway: str,
+    reason: str,
+) -> None:
+    """Emit routing.overflow.triggered for non-sticky spillover attempts."""
+    from src.scheduling.events.routing import RoutingOverflowTriggered
+
+    try:
+        await event_bus.publish_async_nowait(
+            RoutingOverflowTriggered(
+                request_id=request_id,
+                model_id=str(model_id),
+                from_gateway=from_gateway,
+                to_gateway=to_gateway,
+                reason=reason,
+            )
+        )
+    except Exception as exc:
+        logger.debug(f"Failed to emit routing overflow triggered event: {exc}")
+
+
+async def _emit_overflow_failed_event(
+    event_bus: Any,
+    request_id: str,
+    model_id: "ModelId",
+    tried_gateways: list[str],
+    reason: str,
+) -> None:
+    """Emit routing.overflow.failed when no alternate is feasible."""
+    from src.scheduling.events.routing import RoutingOverflowFailed
+
+    try:
+        await event_bus.publish_async_nowait(
+            RoutingOverflowFailed(
+                request_id=request_id,
+                model_id=str(model_id),
+                tried_gateways=sorted(tried_gateways),
+                reason=reason,
+            )
+        )
+    except Exception as exc:
+        logger.debug(f"Failed to emit routing overflow failed event: {exc}")
+
+
+async def _emit_overflow_load_started_event(
+    event_bus: Any,
+    request_id: str,
+    model_id: "ModelId",
+    gateway_id: str,
+    reason: str,
+) -> None:
+    """Emit model.load.overflow.started before overflow cold-load begins."""
+    from src.scheduling.events.routing import ModelLoadOverflowStarted
+
+    try:
+        await event_bus.publish_async_nowait(
+            ModelLoadOverflowStarted(
+                request_id=request_id,
+                model_id=str(model_id),
+                gateway_id=gateway_id,
+                reason=reason,
+            )
+        )
+    except Exception as exc:
+        logger.debug(f"Failed to emit overflow load started event: {exc}")
+
+
+async def _emit_overflow_assigned_event(
+    event_bus: Any,
+    request_id: str,
+    model_id: "ModelId",
+    from_gateway: str,
+    to_gateway: str,
+    depth_before: int,
+) -> None:
+    """Emit model.capacity.overflow.assigned at admission boundary."""
+    from src.scheduling.events.routing import ModelCapacityOverflowAssigned
+
+    try:
+        await event_bus.publish_async_nowait(
+            ModelCapacityOverflowAssigned(
+                request_id=request_id,
+                model_id=str(model_id),
+                from_gateway=from_gateway,
+                to_gateway=to_gateway,
+                depth_before=depth_before,
+            )
+        )
+    except Exception as exc:
+        logger.debug(f"Failed to emit overflow assignment event: {exc}")
+
+
 async def _route_to_federated_gateway(
     context: "RequestContext",
     federated_manager,
@@ -426,8 +522,118 @@ async def _route_to_federated_gateway(
         stability_tracker=stability_tracker,
     )
 
-    # Admission control: acquire slot before proceeding
-    # CRITICAL: This must happen AFTER select() and BEFORE any await
+    allowed_gateway_ids_override: frozenset[str] | None = None
+    overflow_origin_gateway: str | None = None
+    overflow_depth_before = 0
+
+    # Non-sticky overflow: if selected gateway has no immediate slot, try a
+    # second decision pass excluding the primary gateway.
+    if (
+        selected_gateway is not None
+        and not context.model_sticky
+        and policy.non_sticky_overflow_enabled
+        and capacity_pool is not None
+    ):
+        primary_available, primary_in_flight, primary_capacity = (
+            capacity_pool.get_slot_info(selected_gateway.name, model_id.routing_key)
+        )
+        queue_pressure = max(0, primary_in_flight - primary_capacity)
+        primary_saturated = primary_capacity > 0 and primary_available <= 0
+        queue_over_threshold = (
+            queue_pressure >= policy.non_sticky_overflow_queue_threshold
+        )
+
+        if primary_saturated or queue_over_threshold:
+            overflow_origin_gateway = selected_gateway.name
+            overflow_depth_before = queue_pressure
+            overflow_gateway, overflow_trace = decision_engine.select_excluding(
+                gateways=gateways_for_routing,
+                placement=placement,
+                excluded_gateway_names=frozenset({selected_gateway.name}),
+                request_id=context.request_id,
+                sticky=context.model_sticky,
+                stability_tracker=stability_tracker,
+            )
+
+            if overflow_gateway is None:
+                if event_bus:
+                    tried_gateways = [
+                        g.name
+                        for g in gateways_for_routing
+                        if g.name != selected_gateway.name
+                    ]
+                    await _emit_overflow_failed_event(
+                        event_bus=event_bus,
+                        request_id=context.request_id,
+                        model_id=model_id,
+                        tried_gateways=tried_gateways,
+                        reason=(
+                            overflow_trace.selection_reason
+                            if overflow_trace
+                            else "no_alternate_gateway"
+                        ),
+                    )
+            else:
+                if event_bus:
+                    await _emit_overflow_triggered_event(
+                        event_bus=event_bus,
+                        request_id=context.request_id,
+                        model_id=model_id,
+                        from_gateway=selected_gateway.name,
+                        to_gateway=overflow_gateway.name,
+                        reason=(
+                            "queue_threshold_exceeded"
+                            if queue_over_threshold
+                            else "primary_capacity_saturated"
+                        ),
+                    )
+
+                try:
+                    if (
+                        federated_load_orchestrator
+                        and model_id not in overflow_gateway.loaded_models
+                        and model_id not in overflow_gateway.loading_models
+                    ):
+                        if event_bus:
+                            await _emit_overflow_load_started_event(
+                                event_bus=event_bus,
+                                request_id=context.request_id,
+                                model_id=model_id,
+                                gateway_id=overflow_gateway.name,
+                                reason="overflow_spillover",
+                            )
+                        await federated_load_orchestrator.ensure_model_loaded_on_remote(
+                            overflow_gateway.ref,
+                            model_id,
+                            sticky=False,
+                            request_id=context.request_id,
+                        )
+
+                    selected_gateway = overflow_gateway
+                    allowed_gateway_ids_override = frozenset(
+                        g.name
+                        for g in gateways_for_routing
+                        if model_id in g.loaded_models
+                    ) | frozenset({overflow_gateway.name})
+                except Exception as exc:
+                    logger.warning(
+                        "Overflow load attempt failed for %s on %s: %s",
+                        model_id,
+                        overflow_gateway.name,
+                        exc,
+                    )
+                    if event_bus:
+                        await _emit_overflow_failed_event(
+                            event_bus=event_bus,
+                            request_id=context.request_id,
+                            model_id=model_id,
+                            tried_gateways=[overflow_gateway.name],
+                            reason="overflow_load_failed",
+                        )
+
+    # Admission control: acquire slot before proceeding.
+    # Non-sticky overflow may perform a bounded pre-admission load on an
+    # alternate gateway before this point.
     is_cold_load = (
         selected_gateway is not None and model_id not in selected_gateway.loaded_models
     )
@@ -521,7 +727,9 @@ async def _route_to_federated_gateway(
         # ∀ sticky: allowed ⊆ {selected_gateway} so admission cannot reassign.
         # Non-sticky warm: allow any warm gateway for load balancing.
         # Cold load: restrict to selected gateway (it's the load target).
-        if context.model_sticky or is_cold_load:
+        if allowed_gateway_ids_override is not None:
+            allowed_gateway_ids = allowed_gateway_ids_override
+        elif context.model_sticky or is_cold_load:
             allowed_gateway_ids = frozenset({selected_gateway.name})
         else:
             allowed_gateway_ids = frozenset(
@@ -548,6 +756,19 @@ async def _route_to_federated_gateway(
                 timeout_s=timeout_s,
             )
             context.capacity_token = token
+            if (
+                event_bus
+                and overflow_origin_gateway is not None
+                and token.gateway_id != overflow_origin_gateway
+            ):
+                await _emit_overflow_assigned_event(
+                    event_bus=event_bus,
+                    request_id=context.request_id,
+                    model_id=model_id,
+                    from_gateway=overflow_origin_gateway,
+                    to_gateway=token.gateway_id,
+                    depth_before=overflow_depth_before,
+                )
 
             # If assigned to a different gateway than selected, re-select
             if token.gateway_id != selected_gateway.name:

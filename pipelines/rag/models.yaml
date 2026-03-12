@@ -7,8 +7,6 @@ models:
   qwen3_9b_reasoning:
     model: qwen3-5-9b-q8-0-32768
     profile: qwen3-5-instruct-reasoning
-  openrouter_gemini-pro:
-    model: openrouter/free
   qwen3_32b:
     model: qwen3-32b-awq-32768
   gpt-oss:

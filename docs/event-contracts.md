@@ -97,6 +97,18 @@ contain `request_id` and `gateway_id` for slot tracking.
 - `CapacityWaiter`: Wakes queue processors on `completed` / `failed` / `freed`.
 - `GatewayTracker`: Releases slot reservations on `completed` / `failed`.
 
+### Non-sticky Overflow Lifecycle
+
+**INVARIANT**: `routing.overflow.triggered` ⟹
+(`model.load.overflow.started` ∨ `model.capacity.overflow.assigned`) ∨ `routing.overflow.failed`.
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `routing.overflow.triggered` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `reason` | Spillover branch selected |
+| `model.load.overflow.started` | `request_id`, `model_id`, `gateway_id`, `reason` | Overflow gateway cold-load initiated |
+| `model.capacity.overflow.assigned` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `depth_before` | Admission moved to overflow gateway |
+| `routing.overflow.failed` | `request_id`, `model_id`, `tried_gateways`, `reason` | No feasible spillover path |
+
 ### Model Lifecycle
 
 **INVARIANT**: `model.load.initiated` ⟹ (`model.loaded` ∨ `model.loading.failed`)
@@ -687,6 +699,10 @@ jq -c 'select(.event_type == "combine_passages_completed") | {step: .step_name, 
 | `routing.eviction.insufficient.permanent` | `request_id`, `model_id`, `gateway_id`, `reason`, `failed_constraints` | - |
 | `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | - |
 | `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | - |
+| `routing.overflow.triggered` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `reason` | - |
+| `routing.overflow.failed` | `request_id`, `model_id`, `tried_gateways`, `reason` | - |
+| `model.load.overflow.started` | `request_id`, `model_id`, `gateway_id`, `reason` | - |
+| `model.capacity.overflow.assigned` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `depth_before` | - |
 | `federated.request.prompt.transformation.applied` | `request_id`, `model_id`, `gateway_id`, `prompt_chars` | — |
 | `federated.request.prompt.transformation.failed`  | `request_id`, `model_id`, `gateway_id`, `error` | — |
 | `federated.request.prompt.transformation.skipped` | `request_id`, `model_id`, `gateway_id`, `reason` | — |
@@ -789,6 +805,56 @@ HTTP 429 (rate limit), the client receives 429; otherwise 503.
 | `request_id` | string | Request that exhausted upstream alternatives |
 | `model_id` | string | Model requested |
 | `excluded_gateway_ids` | list[string] | Gateways excluded due to upstream errors |
+
+### routing.overflow.triggered
+
+Emitted when non-sticky overflow spillover excludes the primary saturated gateway,
+finds a feasible alternate gateway, and triggers spillover routing to that target.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request that triggered spillover |
+| `model_id` | string | Model requested |
+| `from_gateway` | string | Original selected gateway before overflow |
+| `to_gateway` | string | Alternate gateway selected in overflow pass |
+| `reason` | string | Spillover reason (`primary_capacity_saturated`) |
+
+### routing.overflow.failed
+
+Emitted when the non-sticky overflow path is attempted but cannot complete due
+to no alternate feasible gateway or overflow load failure.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request that attempted spillover |
+| `model_id` | string | Model requested |
+| `tried_gateways` | list[string] | Alternate gateways evaluated in spillover path |
+| `reason` | string | Failure reason (`no_alternate_gateway`, `overflow_load_failed`, etc.) |
+
+### model.load.overflow.started
+
+Emitted when overflow spillover selects an alternate gateway that requires a
+cold-load, immediately before remote load orchestration begins.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request that triggered overflow loading |
+| `model_id` | string | Model being loaded on overflow gateway |
+| `gateway_id` | string | Overflow gateway selected for loading |
+| `reason` | string | Initiation reason (`overflow_spillover`) |
+
+### model.capacity.overflow.assigned
+
+Emitted at admission boundary when overflow spillover causes effective
+assignment to move from the original saturated gateway to an alternate gateway.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request assigned via overflow path |
+| `model_id` | string | Model assigned |
+| `from_gateway` | string | Primary gateway selected before spillover |
+| `to_gateway` | string | Gateway selected by admission after spillover |
+| `depth_before` | int | Queue depth on the primary gateway before spillover |
 
 ### Cloud Proxy Provider Adapter Contract
 

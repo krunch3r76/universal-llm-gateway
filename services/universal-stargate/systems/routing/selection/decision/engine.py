@@ -306,6 +306,43 @@ class DecisionEngine:
 
         return selected.gateway if selected else None, trace
 
+    def select_excluding(
+        self,
+        gateways: list[Gateway],
+        placement: Placement,
+        *,
+        excluded_gateway_names: frozenset[str],
+        request_id: str | None = None,
+        sticky: bool | None = None,
+        stability_tracker: StickyPlacementTracker | None = None,
+    ) -> tuple[Gateway | None, DecisionTrace]:
+        """Select best gateway while excluding already-attempted gateways."""
+        filtered = [g for g in gateways if g.name not in excluded_gateway_names]
+        if not filtered:
+            return (
+                None,
+                DecisionTrace(
+                    model_id=str(placement.model_id),
+                    original_model_id=placement.original_model_id,
+                    request_id=request_id,
+                    selected_gateway=None,
+                    selection_reason="no_candidates_after_exclusion",
+                    selection_tier=None,
+                    is_sticky=(
+                        sticky
+                        if sticky is not None
+                        else self._policy.is_sticky(str(placement.model_id))
+                    ),
+                ),
+            )
+        return self.select(
+            filtered,
+            placement,
+            request_id=request_id,
+            sticky=sticky,
+            stability_tracker=stability_tracker,
+        )
+
     def _apply_selection_rule(
         self,
         candidates: list[GatewayCandidate],
@@ -443,13 +480,20 @@ class DecisionEngine:
                         self._event_bus.publish_async_nowait(event)
                     )
                 )
-            except RuntimeError:
-                # Not in async context, skip emission
-                pass
+            except RuntimeError as exc:
+                logger.warning(
+                    "Failed to emit decision trace for %s: no running event loop (%s)",
+                    trace.model_id,
+                    exc,
+                )
 
         except Exception as e:
-            # Fire and forget - log error but don't fail routing
-            logger.debug(f"Failed to emit decision trace: {e}")
+            logger.error(
+                "Failed to emit decision trace for %s: %s",
+                trace.model_id,
+                e,
+                exc_info=True,
+            )
 
 
 def create_decision_engine(

@@ -154,6 +154,8 @@ class RoutingPolicy:
     # Resource margin configuration (for _check_resources)
     # Stored as dict to pass through to feasibility checks
     resource_margins: dict[str, float] = field(default_factory=dict)
+    non_sticky_overflow_enabled: bool = True
+    non_sticky_overflow_queue_threshold: int = 1
 
     def find_affinity(self, model_id: ModelId | str) -> AffinityRule | None:
         """
@@ -326,4 +328,10 @@ def load_routing_policy(config: dict[str, Any]) -> RoutingPolicy:
         default_sticky=default_sticky,
         sticky_overrides=sticky_overrides,
         resource_margins=resource_margins,
+        non_sticky_overflow_enabled=bool(
+            scoring.get("non_sticky_overflow_enabled", True)
+        ),
+        non_sticky_overflow_queue_threshold=int(
+            scoring.get("non_sticky_overflow_queue_threshold", 1)
+        ),
     )

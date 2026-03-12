@@ -187,7 +187,7 @@ steps:
       corpus_hints: "filter_corpus_hints.json.filtered_hints"
     generation_parameters:
       temperature: 0.4   # moderate temperature improves rewrite diversity while JSON schema constrains structure
-      max_tokens: 1024  # 2-4 rewritten queries + reasoning; avoids over-allocation
+      max_tokens: 1024  # reasoning profile uses hidden thinking tokens; keep headroom
       response_format:
         type: json_object
         schema:

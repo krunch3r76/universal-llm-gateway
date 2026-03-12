@@ -7,11 +7,17 @@ Signals:
     request.routed — request successfully routed to gateway
     model.load.initiated — model load triggered
     model.load.completed — model load finished (success or failure)
+    model.load.overflow.started — overflow gateway cold-load initiated
+    model.capacity.overflow.assigned — admission moved request to overflow target
     token.count.completed — token counting finished
     token.counting.failed — federated token counting failed
     scheduler.routing.decided — routing decision made by DecisionEngine
     scheduler.routing.failed — routing failed (no gateway found)
+    routing.overflow.triggered — overflow branch selected alternate gateway
+    routing.overflow.failed — overflow branch failed to assign feasible target
 """
+
+# ruff: noqa: N802
 
 from universal_event_bus import Event, event_factory
 
@@ -139,6 +145,56 @@ Payload: {
     "evaluation_time_ms": float,
     "request_id": str | None,
     "timestamp": float,
+    "reason": str
+}
+"""
+
+ROUTING_OVERFLOW_TRIGGERED = "routing.overflow.triggered"
+"""
+Non-sticky overflow branch selected an alternate gateway.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "from_gateway": str,
+    "to_gateway": str,
+    "reason": str
+}
+"""
+
+ROUTING_OVERFLOW_FAILED = "routing.overflow.failed"
+"""
+Non-sticky overflow branch failed to find or load a feasible alternate gateway.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "tried_gateways": list[str],
+    "reason": str
+}
+"""
+
+MODEL_CAPACITY_OVERFLOW_ASSIGNED = "model.capacity.overflow.assigned"
+"""
+Admission assigned request to overflow gateway after spillover decision.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "from_gateway": str,
+    "to_gateway": str,
+    "depth_before": int
+}
+"""
+
+MODEL_LOAD_OVERFLOW_STARTED = "model.load.overflow.started"
+"""
+Cold-load started on overflow gateway chosen by spillover.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
     "reason": str
 }
 """
@@ -443,6 +499,86 @@ def RoutingDecisionFailed(
             "evaluation_time_ms": evaluation_time_ms,
             "request_id": request_id,
             "timestamp": timestamp,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def RoutingOverflowTriggered(
+    request_id: str,
+    model_id: str,
+    from_gateway: str,
+    to_gateway: str,
+    reason: str,
+) -> Event:
+    """Create ROUTING_OVERFLOW_TRIGGERED event."""
+    return Event(
+        signal=ROUTING_OVERFLOW_TRIGGERED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "from_gateway": from_gateway,
+            "to_gateway": to_gateway,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def RoutingOverflowFailed(
+    request_id: str,
+    model_id: str,
+    tried_gateways: list[str],
+    reason: str,
+) -> Event:
+    """Create ROUTING_OVERFLOW_FAILED event."""
+    return Event(
+        signal=ROUTING_OVERFLOW_FAILED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "tried_gateways": tried_gateways,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def ModelCapacityOverflowAssigned(
+    request_id: str,
+    model_id: str,
+    from_gateway: str,
+    to_gateway: str,
+    depth_before: int,
+) -> Event:
+    """Create MODEL_CAPACITY_OVERFLOW_ASSIGNED event."""
+    return Event(
+        signal=MODEL_CAPACITY_OVERFLOW_ASSIGNED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "from_gateway": from_gateway,
+            "to_gateway": to_gateway,
+            "depth_before": depth_before,
+        },
+    )
+
+
+@event_factory
+def ModelLoadOverflowStarted(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    reason: str,
+) -> Event:
+    """Create MODEL_LOAD_OVERFLOW_STARTED event."""
+    return Event(
+        signal=MODEL_LOAD_OVERFLOW_STARTED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
             "reason": reason,
         },
     )
