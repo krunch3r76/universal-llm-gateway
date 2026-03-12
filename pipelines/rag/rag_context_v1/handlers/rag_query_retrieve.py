@@ -46,8 +46,8 @@ from systems.pipeline.core.events.step import (
     RagRetrievalCompleted,
     RagRetrievalFailed,
     RagRetrievalParamsResolved,
-    RagRetrievalSourceDiversityLimited,
     RagRetrievalSkipped,
+    RagRetrievalSourceDiversityLimited,
     RagScopeRejected,
 )
 from systems.pipeline.core.execution.resolver import NamespaceResolver
@@ -65,7 +65,11 @@ from .retrieval_execution import execute_single_query as _execute_single_query
 from .retrieval_execution import expand_neighbors as _expand_neighbors
 from .retrieval_execution import rrf_merge as _rrf_merge
 from .retrieval_profiles import load_retrieval_profiles, resolve_retrieval_params
-from .scope_catalog import fetch_valid_scopes
+from .scope_catalog import (
+    fetch_scope_prefixes,
+    fetch_valid_scopes,
+    resolve_child_scopes,
+)
 
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
@@ -150,14 +154,15 @@ class RagMultiRetrieveHandler(BaseHandler):
         api_path = f"/{(parsed_endpoint.path or '/search').strip('/') or 'search'}"
 
         resolver = NamespaceResolver(context)
-        scope_data: dict[str, Any] = self._resolve_input(
+        scope_data_raw = self._resolve_input(
             resolver, step, "scope_result", step.handler_inputs
         )
-        if not isinstance(scope_data, dict):
+        if not isinstance(scope_data_raw, dict):
             raise ValueError(
                 f"Step '{step.id}': scope_result must be dict, got "
-                f"{type(scope_data).__name__}"
+                f"{type(scope_data_raw).__name__}"
             )
+        scope_data: dict[str, Any] = scope_data_raw
 
         def _is_valid_step_result(data: Any) -> bool:
             return isinstance(data, dict) and not bool(data.get("_skipped", False))
@@ -178,29 +183,27 @@ class RagMultiRetrieveHandler(BaseHandler):
         hyde_result_valid = _is_valid_step_result(hyde_result)
         raw_scopes = scope_data.get("scopes") or scope_data.get("scope", "all")
         if isinstance(raw_scopes, list):
-            predicted_scopes = [s for s in raw_scopes if isinstance(s, str) and s.strip()]
+            predicted_scopes = [
+                s for s in raw_scopes if isinstance(s, str) and s.strip()
+            ]
             if not predicted_scopes:
                 predicted_scopes = ["all"]
+        elif isinstance(raw_scopes, str) and raw_scopes.strip():
+            predicted_scopes = [raw_scopes]
         else:
-            predicted_scopes = (
-                [raw_scopes]
-                if isinstance(raw_scopes, str) and raw_scopes.strip()
-                else ["all"]
-            )
+            predicted_scopes = ["all"]
 
         rewrite_data: dict[str, Any] = {
             "needs_retrieval": bool(scope_data.get("needs_retrieval", True)),
             "scopes": predicted_scopes,
             "scope_confidence": float(scope_data.get("scope_confidence", 1.0)),
             "out_of_scope_reason": str(scope_data.get("out_of_scope_reason", "")),
-            "rewritten_queries": (
-                rewrite_result.get("rewritten_queries", [])
-                if rewrite_result_valid
-                else []
-            ),
-            "hyde_passage": (
-                hyde_result.get("hyde_passage", "") if hyde_result_valid else ""
-            ),
+            "rewritten_queries": rewrite_result.get("rewritten_queries", [])
+            if rewrite_result_valid
+            else [],
+            "hyde_passage": hyde_result.get("hyde_passage", "")
+            if hyde_result_valid
+            else "",
         }
 
         rewrite_enabled = bool(
@@ -366,6 +369,15 @@ class RagMultiRetrieveHandler(BaseHandler):
                 if cap_int > 0:
                     scope_chunk_caps[scope_name] = cap_int
 
+        # Synthetic scope: a caller-provided broad scope queried alongside
+        # predicted leaf scopes but with score demotion. Distinct from
+        # scope_override (which replaces prediction entirely).
+        synthetic_scope_name = str(effective.get("synthetic_scope", "")).strip()
+        try:
+            synthetic_demotion = float(effective.get("synthetic_scope_demotion", 1.0))
+        except (TypeError, ValueError):
+            synthetic_demotion = 1.0
+
         # --- Scope resolution (fail-closed: invalid/uncertain → 0 chunks) ---
         explicit_prefixes_raw = effective.get("rag_source_prefixes")
         source_prefixes: list[str] | None = None
@@ -486,9 +498,37 @@ class RagMultiRetrieveHandler(BaseHandler):
                         resolved_scopes,
                         f"confidence={scope_confidence:.2f} < threshold={confidence_threshold:.2f}",
                     )
-                scope = resolved_scopes if len(resolved_scopes) > 1 else resolved_scopes[0]
+                # Extend with synthetic scope if provided and not already predicted.
+                if (
+                    synthetic_scope_name
+                    and catalog
+                    and synthetic_scope_name in catalog
+                    and synthetic_scope_name not in resolved_scopes
+                ):
+                    resolved_scopes.append(synthetic_scope_name)
+                    prefix_map = await fetch_scope_prefixes(base_url)
+                    child_labels = (
+                        resolve_child_scopes(
+                            synthetic_scope_name, resolved_scopes, prefix_map
+                        )
+                        if prefix_map
+                        else []
+                    )
+                    logger.info(
+                        "Step '%s': synthetic scope '%s' appended "
+                        "(demotion=%.2f, children=%s)",
+                        step.id,
+                        synthetic_scope_name,
+                        synthetic_demotion,
+                        child_labels,
+                    )
+                scope = (
+                    resolved_scopes if len(resolved_scopes) > 1 else resolved_scopes[0]
+                )
                 source_prefixes = None
-                search_scope = resolved_scopes if len(resolved_scopes) > 1 else resolved_scopes[0]
+                search_scope = (
+                    resolved_scopes if len(resolved_scopes) > 1 else resolved_scopes[0]
+                )
                 retrieval_mode = "scope"
 
         scope_key: str | None = scope if isinstance(scope, str) else None
@@ -558,6 +598,7 @@ class RagMultiRetrieveHandler(BaseHandler):
             ) from e
         _retrieval_start = _time.monotonic()
         chunk_scope_by_hash: dict[str, str] = {}
+        chunk_all_scopes: dict[str, set[str]] = {}
 
         async with make_async_client(base_url, timeout=rag_timeout) as client:
             results_per_query: list[list[_RetrievedChunk] | BaseException]
@@ -593,8 +634,9 @@ class RagMultiRetrieveHandler(BaseHandler):
                         per_query_errors.setdefault(q_idx, result)
                         continue
                     for chunk in result:
-                        chunk_scope_by_hash.setdefault(
-                            chunk.content_hash, scoped_label
+                        chunk_scope_by_hash.setdefault(chunk.content_hash, scoped_label)
+                        chunk_all_scopes.setdefault(chunk.content_hash, set()).add(
+                            scoped_label
                         )
                     per_query_chunks.setdefault(q_idx, []).extend(result)
 
@@ -658,6 +700,32 @@ class RagMultiRetrieveHandler(BaseHandler):
             )
 
         merged, merged_scores = _rrf_merge(successful, k=rrf_k, max_chunks=max_chunks)
+
+        # --- Synthetic scope demotion (post-RRF, pre-cap) ---
+        # Chunks found ONLY via the synthetic (broad) scope get their RRF
+        # score reduced so leaf-scope hits are preferred in ranking.
+        synthetic_demoted_count = 0
+        if synthetic_scope_name and synthetic_demotion < 1.0 and chunk_all_scopes:
+            for chunk in merged:
+                hit_scopes = chunk_all_scopes.get(chunk.content_hash)
+                if not hit_scopes:
+                    continue
+                if hit_scopes == {synthetic_scope_name}:
+                    old = merged_scores.get(chunk.content_hash, 0.0)
+                    merged_scores[chunk.content_hash] = old * synthetic_demotion
+                    synthetic_demoted_count += 1
+            if synthetic_demoted_count > 0:
+                merged.sort(
+                    key=lambda c: merged_scores.get(c.content_hash, 0.0),
+                    reverse=True,
+                )
+                logger.info(
+                    "Step '%s': synthetic scope demotion (×%.2f) applied to %d/%d chunks",
+                    step.id,
+                    synthetic_demotion,
+                    synthetic_demoted_count,
+                    len(merged),
+                )
 
         # Optional per-scope cap applied after RRF ranking, before junk filtering.
         if scope_chunk_caps:
@@ -858,7 +926,9 @@ class RagMultiRetrieveHandler(BaseHandler):
             }
             for c in merged
         ]
-        context_text = format_context(chunk_dicts) if chunk_dicts else _NO_RESULTS_SENTINEL
+        context_text = (
+            format_context(chunk_dicts) if chunk_dicts else _NO_RESULTS_SENTINEL
+        )
         if not context_text.strip():
             context_text = _NO_RESULTS_SENTINEL
 
@@ -926,6 +996,11 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "rag_scope_chunk_caps": scope_chunk_caps,
                     "source_diversity_max": source_diversity_max or None,
                     "source_diversity_dropped": source_diversity_dropped,
+                    "synthetic_scope": synthetic_scope_name or None,
+                    "synthetic_demotion": synthetic_demotion
+                    if synthetic_scope_name
+                    else None,
+                    "synthetic_demoted_count": synthetic_demoted_count,
                     "consumer_model": consumer_model or None,
                     "consumer_tier": consumer_tier,
                     "profile_applied": bool(
@@ -953,8 +1028,8 @@ class RagMultiRetrieveHandler(BaseHandler):
             context: The pipeline context.
             step: The current step configuration.
             reason: Short code for the rejection (e.g. invalid_scope_override).
-            scope: The rejected scope. Can be a single scope string or a list
-                of scope strings.
+            scope (str | list[str]): The rejected scope. Can be a single scope
+                string or a list of scope strings.
             details: Descriptive message about the rejection.
 
         Returns:

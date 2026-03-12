@@ -76,28 +76,11 @@ def _score_term(chunk_count: int, doc_count: int, total_docs: int) -> float:
     chunk_boost rewards thorough coverage within documents (0.3 weight).
     Falls back to chunk-only scoring when doc_count is 0 (un-backfilled).
     """
-    if total_docs > 0 and doc_count > 0:
-        idf = math.log(total_docs / doc_count)
-        chunk_boost = math.log(1 + chunk_count / doc_count) * 0.3
-        return idf + chunk_boost
-    if chunk_count <= 0:
-        return 0.0
-    return math.log(1 + chunk_count)
-
-
-def _entity_shape_boost(term: str) -> float:
-    """Score multiplier for terms with named-entity surface patterns.
-
-    Boosts coined phrases (hyphenated compounds, single all-lowercase tokens
-    that look like project names) over generic multi-word noun phrases.
-    Returns 1.0–1.3. CamelCase detection is ineffective here because
-    PropertyIndex normalizes keys via .lower().
-    """
-    if "-" in term and len(term.split("-")) >= 2:
-        return 1.3
-    if " " not in term:
-        return 1.2
-    return 1.0
+    if doc_count == 0:
+        return math.log(1 + chunk_count) if chunk_count > 0 else 0.0
+    idf = math.log(total_docs / doc_count)
+    chunk_boost = math.log(1 + chunk_count / doc_count) * 0.3
+    return idf + chunk_boost
 
 
 def load_corpus_hints(path: Path) -> dict[str, str]:
@@ -124,8 +107,11 @@ def load_corpus_hints(path: Path) -> dict[str, str]:
                     str(x).strip() for x in v if isinstance(x, str) and x
                 )
         return result
-    except Exception as e:
+    except (yaml.YAMLError, OSError) as e:
         logger.warning("Failed to load corpus hints from %s: %s", path, e)
+        return {}
+    except Exception as e:
+        logger.error("Unexpected error loading corpus hints from %s: %s", path, e)
         return {}
 
 
@@ -143,10 +129,7 @@ def get_hints_for_scopes(
         return ""
     if not scopes or scopes == ["both"]:
         return ", ".join(v for v in hints.values() if v)
-    parts: list[str] = []
-    for scope in scopes:
-        if scope in hints and hints[scope]:
-            parts.append(hints[scope])
+    parts = [hints[scope] for scope in scopes if scope in hints and hints[scope]]
     return ", ".join(parts) if parts else ", ".join(v for v in hints.values() if v)
 
 
@@ -203,55 +186,51 @@ def filter_hints_by_cooccurrence(
         return []
 
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            wb_conditions, wb_params = _build_word_boundary_conditions(query_terms)
+            if not wb_conditions:
+                return []
+
+            hint_keys: list[str] = []
+            for hint in hint_terms:
+                norm = hint.lower().strip()
+                if norm:
+                    hint_keys.append(f"prop.name@@{norm}")
+                    hint_keys.append(f"prop.topic@@{norm}")
+            if not hint_keys:
+                return []
+
+            where_clause = " OR ".join(wb_conditions)
+            _ = conn.execute(
+                "CREATE TEMP TABLE query_chunks AS"
+                " SELECT DISTINCT source, chunk_id FROM properties"
+                f" WHERE source != '' AND ({where_clause})",
+                wb_params,
+            )
+
+            key_ph = ",".join("?" for _ in hint_keys)
+            _ = conn.execute(
+                "CREATE TEMP TABLE hint_chunks AS"
+                " SELECT DISTINCT key, source, chunk_id FROM properties"
+                f" WHERE key IN ({key_ph})",
+                hint_keys,
+            )
+
+            key_overlaps = _chunk_level_overlap(conn, min_chunk_cooccurrence)
+
+            if not key_overlaps:
+                key_overlaps = _doc_level_overlap(conn)
+
+            if not key_overlaps:
+                return []
+
+            return _order_hints_by_overlap(hint_terms, key_overlaps)
     except sqlite3.OperationalError:
         logger.debug("Cannot open property index DB read-only: %s", db_path)
         return []
-
-    try:
-        wb_conditions, wb_params = _build_word_boundary_conditions(query_terms)
-        if not wb_conditions:
-            return []
-
-        hint_keys: list[str] = []
-        for hint in hint_terms:
-            norm = hint.lower().strip()
-            if norm:
-                hint_keys.append(f"prop.name@@{norm}")
-                hint_keys.append(f"prop.topic@@{norm}")
-        if not hint_keys:
-            return []
-
-        where_clause = " OR ".join(wb_conditions)
-        _ = conn.execute(
-            "CREATE TEMP TABLE query_chunks AS"
-            " SELECT DISTINCT source, chunk_id FROM properties"
-            f" WHERE source != '' AND ({where_clause})",
-            wb_params,
-        )
-
-        key_ph = ",".join("?" for _ in hint_keys)
-        _ = conn.execute(
-            "CREATE TEMP TABLE hint_chunks AS"
-            " SELECT DISTINCT key, source, chunk_id FROM properties"
-            f" WHERE key IN ({key_ph})",
-            hint_keys,
-        )
-
-        key_overlaps = _chunk_level_overlap(conn, min_chunk_cooccurrence)
-
-        if not key_overlaps:
-            key_overlaps = _doc_level_overlap(conn)
-
-        if not key_overlaps:
-            return []
-
-        return _order_hints_by_overlap(hint_terms, key_overlaps)
     except Exception:
         logger.debug("Co-occurrence query failed", exc_info=True)
         return []
-    finally:
-        conn.close()
 
 
 def _chunk_level_overlap(
@@ -314,14 +293,15 @@ async def update_corpus_hints(
     min_chunks_topic: int = 3,
     max_chunks_name: int = 50,
     max_chunks_topic: int = 30,
+    min_docs: int = 2,
     key_prefixes: list[str] | None = None,
     event_bus: EventBus | None = None,
 ) -> dict[str, str]:
     """Select discriminative terms per scope from the property index into corpus_hints.yaml.
 
     Scores terms with hybrid IDF + chunk-boost, applies band limits per prefix
-    type, filters a generic-terms blocklist, applies entity-shape boost for
-    names, and selects per-type budgets. Returns the generated hints dict.
+    type, filters a generic-terms blocklist, requires minimum document spread
+    (min_docs), and selects per-type budgets. Returns the generated hints dict.
     """
     prefixes = key_prefixes if key_prefixes is not None else _DEFAULT_KEY_PREFIXES
     total_chunks = property_index.get_total_chunks()
@@ -363,12 +343,11 @@ async def update_corpus_hints(
             for term, chunk_count, doc_count in term_counts:
                 if chunk_count < min_c or chunk_count > max_c:
                     continue
+                if doc_count > 0 and doc_count < min_docs:
+                    continue
                 if term.lower() in _GENERIC_BLOCKLIST:
                     continue
-                boost = _entity_shape_boost(term) if prefix == "prop.name@@" else 1.0
-                scored.append(
-                    (term, _score_term(chunk_count, doc_count, total_docs) * boost)
-                )
+                scored.append((term, _score_term(chunk_count, doc_count, total_docs)))
             scored.sort(key=lambda x: (-x[1], x[0]))
             winners.extend(scored[:budget])
 

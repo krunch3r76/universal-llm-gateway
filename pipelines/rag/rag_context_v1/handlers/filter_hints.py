@@ -53,20 +53,37 @@ class FilterCorpusHintsHandler(BaseHandler):
             str(t) for t in suggested_terms if isinstance(t, str) and t.strip()
         ]
 
-        min_chunk_cooccurrence: int = step.get_domain_field(
-            "min_chunk_cooccurrence", 2
-        )
+        scope_list: list[str] | None = None
+        if step.handler_inputs and "scopes" in step.handler_inputs:
+            scope_hints_raw: Any = self._resolve_input(
+                resolver, step, "scopes", step.handler_inputs
+            )
+            if isinstance(scope_hints_raw, str) and scope_hints_raw.strip():
+                scope_list = [scope_hints_raw.strip()]
+            elif isinstance(scope_hints_raw, list) and scope_hints_raw:
+                scope_list = [
+                    str(s)
+                    for s in scope_hints_raw
+                    if isinstance(s, str) and str(s).strip()
+                ]
+
+        min_chunk_cooccurrence: int = step.get_domain_field("min_chunk_cooccurrence", 2)
         max_hints: int = step.get_domain_field("max_hints", 7)
 
         hints_path = _resolve_hints_path()
         hints_map = load_corpus_hints(hints_path)
-        all_hints_text = get_hints_for_scopes(hints_map, scopes=None)
+        all_hints_text = get_hints_for_scopes(hints_map, scopes=scope_list)
         all_terms = [t.strip() for t in all_hints_text.split(",") if t.strip()]
 
         if not all_terms:
             self._emit_event(
-                context, step, query_terms, all_terms, [],
-                min_threshold=min_chunk_cooccurrence, cap_limit=max_hints,
+                context,
+                step,
+                query_terms,
+                all_terms,
+                [],
+                min_threshold=min_chunk_cooccurrence,
+                cap_limit=max_hints,
             )
             return StepOutput(
                 raw="",
@@ -74,51 +91,35 @@ class FilterCorpusHintsHandler(BaseHandler):
             )
 
         if not query_terms:
-            logger.info(
+            return self._return_fallback(
+                context,
+                step,
+                query_terms,
+                all_terms,
+                all_hints_text,
+                min_chunk_cooccurrence,
+                max_hints,
                 "Step '%s': no query terms — falling back to all %d hints",
-                step.id,
-                len(all_terms),
-            )
-            self._emit_event(
-                context, step, query_terms, all_terms, all_terms,
-                fallback=True, min_threshold=min_chunk_cooccurrence,
-                cap_limit=max_hints,
-            )
-            return StepOutput(
-                raw=all_hints_text,
-                json={
-                    "filtered_hints": all_hints_text,
-                    "original_count": len(all_terms),
-                    "filtered_count": len(all_terms),
-                    "fallback": True,
-                },
+                (step.id, len(all_terms)),
             )
 
         filtered = filter_hints_by_cooccurrence(
-            query_terms, all_terms,
+            query_terms,
+            all_terms,
             min_chunk_cooccurrence=min_chunk_cooccurrence,
         )
 
         if not filtered:
-            logger.info(
+            return self._return_fallback(
+                context,
+                step,
+                query_terms,
+                all_terms,
+                all_hints_text,
+                min_chunk_cooccurrence,
+                max_hints,
                 "Step '%s': no co-occurring hints for terms %s — falling back to all %d",
-                step.id,
-                query_terms[:5],
-                len(all_terms),
-            )
-            self._emit_event(
-                context, step, query_terms, all_terms, all_terms,
-                fallback=True, min_threshold=min_chunk_cooccurrence,
-                cap_limit=max_hints,
-            )
-            return StepOutput(
-                raw=all_hints_text,
-                json={
-                    "filtered_hints": all_hints_text,
-                    "original_count": len(all_terms),
-                    "filtered_count": len(all_terms),
-                    "fallback": True,
-                },
+                (step.id, query_terms[:5], len(all_terms)),
             )
 
         capped = max_hints > 0 and len(filtered) > max_hints
@@ -135,8 +136,13 @@ class FilterCorpusHintsHandler(BaseHandler):
             query_terms[:5],
         )
         self._emit_event(
-            context, step, query_terms, all_terms, filtered,
-            min_threshold=min_chunk_cooccurrence, capped=capped,
+            context,
+            step,
+            query_terms,
+            all_terms,
+            filtered,
+            min_threshold=min_chunk_cooccurrence,
+            capped=capped,
             cap_limit=max_hints,
         )
         return StepOutput(
@@ -145,6 +151,40 @@ class FilterCorpusHintsHandler(BaseHandler):
                 "filtered_hints": filtered_text,
                 "original_count": len(all_terms),
                 "filtered_count": len(filtered),
+            },
+        )
+
+    def _return_fallback(
+        self,
+        context: PipelineContext,
+        step: StepConfig,
+        query_terms: list[str],
+        all_terms: list[str],
+        all_hints_text: str,
+        min_threshold: int,
+        max_hints: int,
+        log_fmt: str,
+        log_args: tuple[object, ...],
+    ) -> StepOutput:
+        """Log, emit fallback event, and return StepOutput with all hints."""
+        logger.info(log_fmt, *log_args)
+        self._emit_event(
+            context,
+            step,
+            query_terms,
+            all_terms,
+            all_terms,
+            fallback=True,
+            min_threshold=min_threshold,
+            cap_limit=max_hints,
+        )
+        return StepOutput(
+            raw=all_hints_text,
+            json={
+                "filtered_hints": all_hints_text,
+                "original_count": len(all_terms),
+                "filtered_count": len(all_terms),
+                "fallback": True,
             },
         )
 
@@ -199,5 +239,8 @@ def _resolve_hints_path() -> Path:
         if path:
             return path
     except Exception:
-        pass
+        logger.debug(
+            "Could not load RAG config for corpus hints path, using default.",
+            exc_info=True,
+        )
     return _DEFAULT_HINTS_PATH

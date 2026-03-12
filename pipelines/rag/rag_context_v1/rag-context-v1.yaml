@@ -33,10 +33,11 @@ options:
     - "graph_modeling"
     - "temporal_provenance"
     - "belief_consistency"
-    - "knowledge_systems"
     - "llm_foundations"
-    - "all_research"
-    - "all"
+    # Synthetic/umbrella scopes (knowledge_systems, all_research, all) are
+    # NOT listed here. Callers pass them via `synthetic_scope` pipeline
+    # option; the handler queries them alongside predicted leaf subscopes
+    # with demotion.
   # Scope validation derives from RAG service scope registry (GET /scopes),
   # not a static list.  Invalid/unknown scopes are fail-closed (0 chunks).
   # Map model-invented scope labels (even when discouraged by prompt) to valid labels.
@@ -58,6 +59,11 @@ options:
                             # Example: {"graph_modeling": 8, "knowledge_systems": 4}
   bibliography_filter_threshold: 0.35  # 0 = disable junk filter; >0 = fraction of lines to treat as boilerplate/citations
   bibliography_filter_disable: false   # Explicit hard-disable flag; if true, overrides threshold
+  synthetic_scope: ""                   # Caller-provided broad scope queried alongside predicted
+                                       # leaf scopes but with demotion. Distinct from scope_override
+                                       # (which replaces prediction). E.g. "knowledge_systems".
+  synthetic_scope_demotion: 0.6        # Score multiplier for chunks found ONLY in the synthetic
+                                       # scope (0–1). 1.0 = no demotion.
   source_diversity_max: 3              # Max chunks per source document post-RRF; 0 = disabled.
                                        # Forces minority sources to surface when a dominant paper
                                        # saturates retrieval.
@@ -125,6 +131,9 @@ steps:
       task: rag_rewrite
       source: any       # local models qualify — enables laptop/CPU fallback
     prompt_ref: rag.rag_context_v1.analyze_scope
+    handler_inputs:
+      suggested_terms: "suggest_terms.json.terms"
+      corpus_hints: "filter_corpus_hints.json.filtered_hints"
     generation_parameters:
       temperature: 0.3
       max_tokens: 512
@@ -152,8 +161,15 @@ steps:
               description: "Empty string if in-scope; otherwise brief explanation of why the query does not match the corpus and what research area it maps to"
             rewrite_strategy:
               type: string
-              description: "2-5 sentence rewrite strategy tailored to this query's structure, injected into the rewrite generation prompt"
-          required: ["needs_retrieval", "scopes", "scope_confidence", "out_of_scope_reason", "rewrite_strategy"]
+              description: "2-5 sentence rewrite strategy with register diversification guidance, injected into the rewrite generation prompt"
+            must_include:
+              type: array
+              minItems: 0
+              maxItems: 3
+              items:
+                type: string
+              description: "1-3 high-signal tokens from suggested_terms or corpus_hints that MUST appear in at least one rewrite"
+          required: ["needs_retrieval", "scopes", "scope_confidence", "out_of_scope_reason", "rewrite_strategy", "must_include"]
 
   - name: generate_rewrites
     type: generate
@@ -166,6 +182,7 @@ steps:
     handler_inputs:
       scope: "analyze_scope.json.scopes"
       rewrite_strategy: "analyze_scope.json.rewrite_strategy"
+      must_include: "analyze_scope.json.must_include"
       suggested_terms: "suggest_terms.json.terms"
       corpus_hints: "filter_corpus_hints.json.filtered_hints"
     generation_parameters:
@@ -195,6 +212,9 @@ steps:
       source: any
     prompt_ref: rag.rag_context_v1.generate_hyde
     condition: "analyze_scope.json.get('needs_retrieval') and options.get('rewrite_enabled', True) and options.get('hyde_enabled', True)"
+    handler_inputs:
+      rewrite_strategy: "analyze_scope.json.rewrite_strategy"
+      must_include: "analyze_scope.json.must_include"
     generation_parameters:
       temperature: 0.3
       max_tokens: 256  # Keep HyDE passage concise for retrieval quality
