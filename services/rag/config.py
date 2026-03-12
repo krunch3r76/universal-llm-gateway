@@ -83,13 +83,32 @@ class RagConfig:
     baseline_extensions: tuple[str, ...] = BASELINE_EXTENSIONS
 
     def get_scope_for_path(self, file_path: str) -> str:
-        """Longest-prefix match over scopes; return scope name or 'all'."""
-        best: tuple[str, int] = ("all", 0)
+        """Longest-prefix match over scopes; leaf-preferred on ties.
+
+        When multiple scopes match at the same prefix length, prefer the
+        scope with fewer total prefixes (more specific leaf scope) over
+        umbrella scopes that aggregate many directories.
+
+        Returns:
+            The name of the best-matching scope, or 'all' if no scope matches.
+        """
+        best_length = 0
+        candidates: list[tuple[str, int]] = []
         for scope_name, scope_def in self.scopes.items():
             for prefix in scope_def.prefixes:
-                if file_path.startswith(prefix) and len(prefix) > best[1]:
-                    best = (scope_name, len(prefix))
-        return best[0]
+                if file_path.startswith(prefix):
+                    pl = len(prefix)
+                    if pl > best_length:
+                        best_length = pl
+                        candidates = [(scope_name, len(scope_def.prefixes))]
+                    elif pl == best_length:
+                        candidates.append((scope_name, len(scope_def.prefixes)))
+        if not candidates:
+            return "all"
+        if len(candidates) == 1:
+            return candidates[0][0]
+        candidates.sort(key=lambda x: x[1])
+        return candidates[0][0]
 
 
 def _normalize_extensions(raw_extensions: object) -> list[str]:

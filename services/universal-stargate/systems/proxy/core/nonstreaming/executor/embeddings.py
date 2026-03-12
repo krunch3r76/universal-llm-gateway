@@ -91,12 +91,12 @@ async def execute_embedding_request(
         fed_gateway = context.federated_gateway
         if not fed_gateway:
             raise HTTPException(
-                status_code=500,
+                status_code=503,
                 detail=error_envelope(
                     code=ErrorCode.RESOURCE_UNAVAILABLE,
                     message=f"No gateway available for model: {model_id}",
                     source="master",
-                    retryable=False,
+                    retryable=True,
                     data={"model_id": model_id},
                 ),
             )
@@ -116,18 +116,21 @@ async def execute_embedding_request(
         return result
     except Exception as e:
         release_routing_key_fn(resolved_request_id)
+        gateway_url = fed_gateway.remote_stargate_url if fed_gateway else "unknown"
+        gateway_id = fed_gateway.gateway_id if fed_gateway else "unknown"
         await emit_execution_failed(
             event_bus=event_bus,
-            url=fed_gateway.remote_stargate_url if fed_gateway else "unknown",
+            url=gateway_url,
             model_id=context.selected_model.routing_key,
             request_id=resolved_request_id,
-            gateway_id=fed_gateway.gateway_id if fed_gateway else "unknown",
+            gateway_id=gateway_id,
             error=str(e),
         )
         raise
     finally:
-        # Always release admission capacity, including early selection failures.
-        await release_capacity_token_fn(context)
+        # Release admission capacity only when a gateway was selected (token was acquired).
+        if fed_gateway is not None:
+            await release_capacity_token_fn(context)
 
 
 async def forward_embedding_request(

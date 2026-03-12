@@ -49,9 +49,11 @@ prompts:
         terms and corpus hints below. If they contain vocabulary from
         different registers (e.g. formal/academic terms alongside tool names,
         implementation terms, or specification names), the query spans
-        multiple registers. In that case, explicitly instruct the rewriter
-        to split rewrites across registers so each register is covered by
-        at least one rewrite.
+        multiple registers. If the corpus hints include a "Vocabulary by
+        register" section with labeled registers (practitioner, academic,
+        specification), use those labels directly in your rewrite strategy
+        instructions. Instruct the rewriter to allocate at least one rewrite
+        per register that has relevant terms.
       - Should rewrites diversify across facets, add comparison vocabulary,
         expand with close technical synonyms, use canonical terminology, or
         broaden with implementation/design language?
@@ -104,7 +106,9 @@ prompts:
          anchors or a very close technical synonym. If uncertain, omit.
       9. Register coverage: if the rewrite strategy calls for multiple
          vocabulary registers, split rewrites across them. Do not cluster
-         all rewrites in the same register.
+         all rewrites in the same register. If corpus hints include labeled
+         registers (practitioner, academic, specification), use the labels
+         and terms from the relevant registers to guide each rewrite.
       10. Must-include tokens: every token in the must_include list below
           MUST appear verbatim in at least one rewrite. These are
           high-signal retrieval anchors selected upstream.

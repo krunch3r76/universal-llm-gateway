@@ -126,7 +126,7 @@ steps:
 
   - name: analyze_scope
     type: generate
-    model_ref: qwen3_9b
+    model_ref: qwen3_14b
     model_requirements:
       task: rag_rewrite
       source: any       # local models qualify — enables laptop/CPU fallback
@@ -173,7 +173,7 @@ steps:
 
   - name: generate_rewrites
     type: generate
-    model_ref: qwen3_9b_reasoning
+    model_ref: qwen3_14b_reasoning
     model_requirements:
       task: rag_rewrite
       source: any

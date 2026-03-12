@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
+import re
 
 import httpx
 
@@ -13,15 +15,45 @@ logger = logging.getLogger(__name__)
 _embed_model: str = "bge-m3-q8-0-8192-cpu"
 _probe_payload: dict[str, object] = {"model": _embed_model, "input": ["probe"]}
 
+_CONTEXT_SUFFIX_RE = re.compile(r"-(\d+)(?:-(?:cpu|hybrid))?$")
+
+
+def _extract_context_suffix(model_id: str) -> int | None:
+    """Parse trailing context-size suffix from a synthetic model ID."""
+    m = _CONTEXT_SUFFIX_RE.search(model_id)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        logger.warning(
+            "Failed to parse context suffix as integer from model_id: %s", model_id
+        )
+        return None
+
 
 def configure(model_id: str) -> None:
-    """Set the embedding model ID from config. Call once at startup before any embed calls."""
+    """Set the embedding model ID from config. Call once at startup before any embed calls.
+
+    Validates the model ID is non-blank and logs the resolved context size
+    so operators can detect 4096-vs-8192 mismatches at startup.
+    """
     global _embed_model, _probe_payload
     if not model_id or not model_id.strip():
         raise ValueError(f"configure() received blank model_id: {model_id!r}")
     _embed_model = model_id
     _probe_payload = {"model": _embed_model, "input": ["probe"]}
-    logger.info("Embedding model configured: %s", _embed_model)
+
+    ctx = _extract_context_suffix(_embed_model)
+    if ctx is not None:
+        logger.info(
+            "Embedding model configured: %s (context=%d). "
+            "Verify this matches activated_gpu_contexts in the catalog entry.",
+            _embed_model,
+            ctx,
+        )
+    else:
+        logger.info("Embedding model configured: %s", _embed_model)
 
 
 _PROBE_INTERVAL_S = 2.0
@@ -80,7 +112,10 @@ _DEFAULT_INSTRUCTION = "Find relevant information about this topic"
 
 
 def _is_instruction_aware_model(model_id: str) -> bool:
-    """Detect whether the configured embedding model supports Instruct:/Query: format."""
+    """Detect whether the configured embedding model supports Instruct:/Query: format.
+
+    Currently determined by presence of 'qwen3-embedding' in the model ID.
+    """
     return "qwen3-embedding" in model_id.lower()
 
 
@@ -107,12 +142,25 @@ def _max_batch_tokens_for_model(model_id: str) -> int:
     """
     parts = model_id.rsplit("-", 1)
     if len(parts) == 2 and parts[1].isdigit():
-        return int(int(parts[1]) * _N_CTX_HEADROOM)
+        try:
+            return int(int(parts[1]) * _N_CTX_HEADROOM)
+        except ValueError:
+            logger.warning(
+                "Failed to parse context suffix as integer from model_id: %s", model_id
+            )
     return _FALLBACK_MAX_BATCH_TOKENS
 
 
 _EMBED_RETRY_ATTEMPTS = 3
 _EMBED_RETRY_BACKOFF_S = 1.0
+
+# Query-path retry tuning — shorter budget than index-path because
+# each query is latency-sensitive (pipeline fan-out of 5 queries).
+_QUERY_RETRY_ATTEMPTS = 4
+_QUERY_RETRY_BASE_S = 0.25
+_QUERY_RETRY_MAX_S = 3.0
+
+_TRANSIENT_STATUS_CODES = frozenset({502, 503, 429})
 
 # Cached from the first successful embedding response so zero-vector fallbacks
 # match the model's output dimension. Set once, never reset.
@@ -152,13 +200,20 @@ async def _handle_single_item_500(text: str, error_body: str) -> list[list[float
                 result = [item["embedding"] for item in response.json()["data"]]
                 _cache_embed_dim(result)
                 return result
-        except Exception:
-            pass
-        logger.error(
-            "Truncated text still failed embedding (model=%s, truncated_len=%d)",
-            _embed_model,
-            max_chars,
-        )
+        except Exception as retry_exc:
+            logger.error(
+                "Truncated text still failed embedding (model=%s, truncated_len=%d): %s",
+                _embed_model,
+                max_chars,
+                retry_exc,
+            )
+            # Fall through to zero-vector or raise below
+        else:
+            logger.error(
+                "Truncated text still failed embedding (model=%s, truncated_len=%d)",
+                _embed_model,
+                max_chars,
+            )
     else:
         logger.error(
             "Single text failed embedding (model=%s, len=%d chars); "
@@ -223,7 +278,8 @@ async def _post_embeddings(batch: list[str]) -> list[list[float]]:
             last_exc = exc
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             last_exc = exc
-        delay = _EMBED_RETRY_BACKOFF_S * (2**attempt)
+        base_delay = _EMBED_RETRY_BACKOFF_S * (2**attempt)
+        delay = base_delay * random.uniform(0.75, 1.25)
         logger.warning(
             "Embedding request failed (attempt %d/%d, %s); retrying in %.1fs",
             attempt + 1,
@@ -268,27 +324,99 @@ async def embed_chunks(texts: list[str]) -> list[list[float]]:
     return all_embeddings
 
 
-async def embed_query(text: str, scope: str | list[str] | None = None) -> list[float]:
-    """Embed a search query.
+class EmbeddingTransientError(Exception):
+    """Raised when embed_query retries are exhausted on transient failures."""
 
-    For instruction-aware models (Qwen3-Embedding): uses Instruct:/Query: format
-    with scope-specific instructions. For legacy models (bge-m3): uses search_query: prefix.
-    When scope is a list, the first scope is used for instruction selection.
+    def __init__(
+        self,
+        message: str,
+        *,
+        model_id: str,
+        attempts: int,
+        last_status: int | None,
+    ) -> None:
+        super().__init__(message)
+        self.model_id = model_id
+        self.attempts = attempts
+        self.last_status = last_status
+
+
+def _is_transient_status(status_code: int) -> bool:
+    return status_code in _TRANSIENT_STATUS_CODES
+
+
+async def embed_query(text: str, scope: str | list[str] | None = None) -> list[float]:
+    """Embed a search query with bounded jittered backoff on transient errors.
+
+    Retry policy: exponential backoff with ±25% jitter, capped at _QUERY_RETRY_MAX_S.
+    Retries on 502/503/429 and connection/timeout errors only.
+    Raises EmbeddingTransientError when retries are exhausted so callers can
+    distinguish transient unavailability from permanent errors.
     """
+    # When scope is a list, only the first element is used for instruction formatting.
     if isinstance(scope, list):
         effective_scope = scope[0] if scope else None
     else:
         effective_scope = scope
     if _is_instruction_aware_model(_embed_model):
-        instruction = _SCOPE_INSTRUCTIONS.get(effective_scope or "", _DEFAULT_INSTRUCTION)
+        instruction = _SCOPE_INSTRUCTIONS.get(
+            effective_scope or "", _DEFAULT_INSTRUCTION
+        )
         formatted = f"Instruct: {instruction}\nQuery: {text}"
     else:
         formatted = f"search_query: {text}"
 
-    response = await _client.post(
-        f"{GATEWAY_URL}/v1/embeddings",
-        json={"model": _embed_model, "input": [formatted]},
+    last_exc: Exception | None = None
+    last_status: int | None = None
+
+    for attempt in range(1, _QUERY_RETRY_ATTEMPTS + 1):
+        try:
+            response = await _client.post(
+                f"{GATEWAY_URL}/v1/embeddings",
+                json={"model": _embed_model, "input": [formatted]},
+            )
+            if _is_transient_status(response.status_code):
+                last_status = response.status_code
+                last_exc = httpx.HTTPStatusError(
+                    f"HTTP {response.status_code}",
+                    request=response.request,
+                    response=response,
+                )
+            else:
+                response.raise_for_status()
+                data = response.json()
+                return data["data"][0]["embedding"]
+        except httpx.HTTPStatusError as exc:
+            if not _is_transient_status(exc.response.status_code):
+                raise
+            last_status = exc.response.status_code
+            last_exc = exc
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            last_exc = exc
+
+        if attempt < _QUERY_RETRY_ATTEMPTS:
+            base_delay = _QUERY_RETRY_BASE_S * (2 ** (attempt - 1))
+            delay = min(base_delay, _QUERY_RETRY_MAX_S) * random.uniform(0.75, 1.25)
+            logger.warning(
+                "embed_query failed (attempt %d/%d, %s); retrying in %.2fs (model=%s)",
+                attempt,
+                _QUERY_RETRY_ATTEMPTS,
+                type(last_exc).__name__,
+                delay,
+                _embed_model,
+            )
+            await asyncio.sleep(delay)
+
+    logger.error(
+        "embed_query retries exhausted (%d attempts, last_status=%s, model=%s)",
+        _QUERY_RETRY_ATTEMPTS,
+        last_status,
+        _embed_model,
     )
-    response.raise_for_status()
-    data = response.json()
-    return data["data"][0]["embedding"]
+    raise EmbeddingTransientError(
+        f"Embedding query failed after {_QUERY_RETRY_ATTEMPTS} attempts "
+        f"(model={_embed_model}, last_status={last_status})",
+        model_id=_embed_model,
+        attempts=_QUERY_RETRY_ATTEMPTS,
+        last_status=last_status,
+    )

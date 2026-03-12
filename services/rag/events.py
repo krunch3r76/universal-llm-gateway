@@ -211,15 +211,14 @@ def rag_extraction_batch_completed(
         when all chunks succeed).
     extraction_model: model id used for extraction when configured.
     """
-    payload: dict[str, Any] = {
+    payload = {
         "file": file,
         "chunk_count": chunk_count,
         "successful": successful,
         "written": written,
         "duration_seconds": duration_seconds,
+        **({"extraction_model": extraction_model} if extraction_model is not None else {}),
     }
-    if extraction_model is not None:
-        payload["extraction_model"] = extraction_model
     return Event(signal="rag.extraction.batch.completed", payload=payload)
 
 
@@ -342,18 +341,15 @@ def rag_file_indexed(
         article_venue, published_date, article_doi when file is in article registry).
     bibliography_chunks: optional count of chunks tagged is_bibliography for this file.
     """
-    payload: dict[str, Any] = {
+    payload = {
         "file": file,
         "deleted": deleted,
         "indexed": indexed,
         "duration_seconds": duration_seconds,
+        **({"batch_start_ts": batch_start_ts} if batch_start_ts is not None else {}),
+        **({"document_metadata": document_metadata} if document_metadata is not None else {}),
+        **({"bibliography_chunks": bibliography_chunks} if bibliography_chunks is not None else {}),
     }
-    if batch_start_ts is not None:
-        payload["batch_start_ts"] = batch_start_ts
-    if document_metadata is not None:
-        payload["document_metadata"] = document_metadata
-    if bibliography_chunks is not None:
-        payload["bibliography_chunks"] = bibliography_chunks
     return Event(signal="rag.file.indexed", payload=payload)
 
 
@@ -438,6 +434,31 @@ def rag_orphan_purged(
     return Event(
         signal="rag.orphan.purged",
         payload={"files": files, "chunks": chunks},
+    )
+
+
+@event_factory
+def rag_search_embedding_failed(
+    *,
+    model_id: str,
+    attempts: int,
+    last_status: int | None,
+    query_len: int,
+    scope: str | list[str] | None,
+) -> Event:
+    """Emitted when embed_query retries are exhausted during a search request.
+
+    Proves transient embedding unavailability from event logs alone.
+    """
+    return Event(
+        signal="rag.search.embedding.failed",
+        payload={
+            "model_id": model_id,
+            "attempts": attempts,
+            "last_status": last_status,
+            "query_len": query_len,
+            "scope": scope,
+        },
     )
 
 

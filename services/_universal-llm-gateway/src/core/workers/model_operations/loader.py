@@ -1,5 +1,10 @@
-"""Model loading operations for WorkerController."""
+"""Model loading operations for WorkerController.
 
+Single-flight guarantee: concurrent callers requesting the same model_id
+coalesce onto one in-flight load future via _pending_loads.
+"""
+
+import asyncio
 from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
@@ -21,10 +26,15 @@ structured_logger = get_logger("universal_llm_gateway.model_loader")
 
 
 class ModelLoader:
-    """Handles model loading operations. Extracted from WorkerController."""
+    """Handles model loading operations. Extracted from WorkerController.
+
+    Single-flight: _pending_loads maps model_id → Future[bool].
+    First caller creates the future and runs _load_model_inner; followers await it.
+    """
 
     def __init__(self, controller: "WorkerController"):
         self._controller = controller
+        self._pending_loads: dict[str, asyncio.Future[bool]] = {}
 
     async def _validate_context_availability(self, model_id: str) -> tuple[bool, str]:
         """Verify resolved n_ctx matches the context encoded in the synthetic model ID.
@@ -57,7 +67,7 @@ class ModelLoader:
             return True, ""
 
         if actual_ctx != requested_ctx:
-            # After Task 1, this should never happen in normal operation.
+            # Should not happen after profile loader has selected the correct config.
             # If it does, something else in the stack is overriding n_ctx.
             logger.error(
                 f"❌ Context mismatch for {model_id}: "
@@ -86,8 +96,6 @@ class ModelLoader:
         try:
             resource_tracker = _get_resource_tracker()
 
-            # Validate context availability before touching tracker state.
-            # Fails loudly if resolved n_ctx ≠ requested context from synthetic ID.
             is_valid, ctx_error = await self._validate_context_availability(model_id)
             if not is_valid:
                 resource_tracker.set_model_error(model_id, ctx_error)
@@ -96,8 +104,6 @@ class ModelLoader:
             resource_tracker.register_model(model_id)
 
             if await self._controller.is_model_loaded(model_id):
-                # Model already loaded - do NOT call set_model_loaded here
-                # to avoid "loaded → loaded" invalid transition
                 return True
 
             if self._controller.auto_load_on_request:
@@ -114,17 +120,39 @@ class ModelLoader:
             return False
 
     async def load_model(self, model_id: str) -> bool:
-        """Load a model with resource tracking and event publishing."""
+        """Load a model with single-flight coalescing.
+
+        If a load for the same model_id is already in progress, await
+        that future instead of starting a duplicate load.
+        """
+        existing = self._pending_loads.get(model_id)
+        if existing is not None and not existing.done():
+            logger.info(f"🔗 Coalescing onto in-flight load for {model_id}")
+            return await existing
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[bool] = loop.create_future()
+        self._pending_loads[model_id] = future
+        try:
+            result = await self._load_model_inner(model_id)
+            future.set_result(result)
+            return result
+        except Exception as exc:
+            future.set_exception(exc)
+            raise
+        finally:
+            self._pending_loads.pop(model_id, None)
+
+    async def _load_model_inner(self, model_id: str) -> bool:
+        """Actual load logic — called at most once per model_id at a time."""
         try:
             resource_tracker = _get_resource_tracker()
             logger.info(f"📦 Loading model: {model_id}")
 
-            # Recommendation #1 & #7: Check resources and emit events in load layer
             resources_ok, resource_details = await preflight.check_resources_and_block(
                 self._controller, model_id
             )
             if not resources_ok:
-                # Emit MODEL_LOAD_BLOCKED event for observability (circuit breaker)
                 if self._controller.event_bus and resource_details:
                     from src.core.events.types import ModelLoadBlocked
 
@@ -140,7 +168,6 @@ class ModelLoader:
                         )
                     )
 
-                # Emit MODEL_LOAD_FAILED for Stargate notification (fast-fail)
                 model_info = resource_tracker.get_model_info(model_id)
                 error_msg = (
                     model_info.error_message if model_info else "Insufficient resources"
@@ -162,7 +189,6 @@ class ModelLoader:
             if not await load_flow.start_worker_if_needed(self._controller, model_id):
                 return False
 
-            # Send config and capture response with context_size
             config_result = await load_flow.send_model_config(
                 self._controller, model_id
             )
@@ -174,10 +200,8 @@ class ModelLoader:
 
             resource_tracker.set_model_loaded(model_id)
 
-            # Extract context_size from response (default to None if missing)
             context_size = config_result.get("context_size") if config_result else None
 
-            # Pass context_size to finalize_load
             await load_flow.finalize_load(
                 self._controller, model_id, vram_before, context_length=context_size
             )

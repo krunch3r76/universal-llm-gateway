@@ -23,7 +23,6 @@ metadata:
 loader:
   embedding: true
   embedding_task_default: search_document
-  pooling: last
 download:
   huggingface:
     repo: hugger7326/Qwen3-Embedding-8B-Q8_0-GGUF

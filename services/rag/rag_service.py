@@ -63,8 +63,13 @@ from services.rag.chunkers import Chunk, chunk_file
 from services.rag.config import RagConfig, load_config
 from services.rag.corpus_hints import update_corpus_hints
 from services.rag.directory_ops import purge_orphaned_chunks
+from services.rag.embeddings import (
+    EmbeddingTransientError,
+    embed_chunks,
+    embed_query,
+    wait_until_healthy,
+)
 from services.rag.embeddings import configure as configure_embeddings
-from services.rag.embeddings import embed_chunks, embed_query, wait_until_healthy
 from services.rag.events import (
     rag_article_registry_failed,
     rag_article_registry_loaded,
@@ -81,6 +86,7 @@ from services.rag.events import (
     rag_scope_rejected,
     rag_scope_resolved,
     rag_scopes_listed,
+    rag_search_embedding_failed,
     rag_search_executed,
     rag_search_no_results,
     rag_shutdown,
@@ -874,7 +880,26 @@ async def search(request: SearchRequest) -> SearchResponse:
         )
 
     collection = _get_collection()
-    query_embedding = await embed_query(request.query, scope=request.scope)
+    try:
+        query_embedding = await embed_query(request.query, scope=request.scope)
+    except EmbeddingTransientError as exc:
+        if _event_bus is not None:
+            asyncio.create_task(
+                _event_bus.publish_async_nowait(
+                    rag_search_embedding_failed(
+                        model_id=exc.model_id,
+                        attempts=exc.attempts,
+                        last_status=exc.last_status,
+                        query_len=len(request.query),
+                        scope=request.scope,
+                    )
+                )
+            )
+        raise HTTPException(
+            status_code=503,
+            detail=f"Embedding model temporarily unavailable after {exc.attempts} "
+            f"attempts (model={exc.model_id}, last_status={exc.last_status})",
+        )
 
     # ChromaDB >=1.0 dropped $regex on metadata and $contains is array-only,
     # so source_prefixes filtering is done in Python after the query.

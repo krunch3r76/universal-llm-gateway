@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,7 +73,7 @@ class PropertyIndex:
         self._seq = SequentialExecutor()
 
     def _migrate_add_scope(self, conn: sqlite3.Connection) -> None:
-        """Add scope column and index if absent (existing DBs from before this change)."""
+        """Add scope column and idx_scope index to properties if absent (backward compat)."""
         cols = {row[1] for row in conn.execute("PRAGMA table_info(properties)")}
         if "scope" not in cols:
             try:
@@ -86,7 +87,7 @@ class PropertyIndex:
                 raise
 
     def _migrate_add_source(self, conn: sqlite3.Connection) -> None:
-        """Add source column (file path) to properties for document frequency scoring."""
+        """Add source column and idx_properties_source index if absent (doc frequency scoring)."""
         cols = {row[1] for row in conn.execute("PRAGMA table_info(properties)")}
         if "source" not in cols:
             try:
@@ -101,27 +102,28 @@ class PropertyIndex:
                 conn.rollback()
                 raise
 
+    def _migrate_add_failed_extractions_columns(self, conn: sqlite3.Connection) -> None:
+        """Add attempt_count and permanent to failed_extractions if absent (backward compat)."""
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")}
+        if "attempt_count" not in cols:
+            conn.execute(
+                "ALTER TABLE failed_extractions"
+                " ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 1"
+            )
+            conn.commit()
+        if "permanent" not in cols:
+            conn.execute(
+                "ALTER TABLE failed_extractions"
+                " ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0"
+            )
+            conn.commit()
+
     async def start(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         try:
             conn.executescript(_SCHEMA_SQL)
-            # Migrate: add attempt_count if absent (existing DBs from before this change)
-            cols = {
-                row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")
-            }
-            if "attempt_count" not in cols:
-                conn.execute(
-                    "ALTER TABLE failed_extractions"
-                    " ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 1"
-                )
-                conn.commit()
-            if "permanent" not in cols:
-                conn.execute(
-                    "ALTER TABLE failed_extractions"
-                    " ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0"
-                )
-                conn.commit()
+            self._migrate_add_failed_extractions_columns(conn)
             self._migrate_add_scope(conn)
             self._migrate_add_source(conn)
             await self._seq.start()
@@ -166,18 +168,8 @@ class PropertyIndex:
 
     async def add_batch(self, entries: list[tuple[str, str]], source: str = "") -> None:
         """Add multiple (key, chunk_id) pairs in one transaction. Scope defaults to 'all'."""
-        normalized = [(k.lower(), cid, "all", source) for k, cid in entries]
-
-        async def _write() -> None:
-            conn = self._ensure_conn()
-            conn.executemany(
-                "INSERT OR IGNORE INTO properties (key, chunk_id, scope, source)"
-                " VALUES (?, ?, ?, ?)",
-                normalized,
-            )
-            conn.commit()
-
-        await self._seq.run(_write())
+        entries_with_scope = [(k, cid, "all", source) for k, cid in entries]
+        await self.add_batch_with_scope(entries_with_scope)
 
     async def add_batch_with_scope(
         self, entries: list[tuple[str, str, str, str]]
@@ -496,3 +488,53 @@ class PropertyIndex:
         for source, chunk_id in rows:
             result.setdefault(source, []).append(chunk_id)
         return result
+
+    def rescope_all(self, scope_resolver: Callable[[str], str]) -> tuple[int, int]:
+        """Re-resolve scope for all entries using the given resolver.
+
+        Returns (total_entries, updated_count). Uses a single transaction
+        for atomicity.
+        """
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT rowid, key, chunk_id, scope, source FROM properties"
+        ).fetchall()
+        updates: list[tuple[str, int]] = []
+        for rowid, key, chunk_id, old_scope, source in rows:
+            if not source:
+                continue
+            new_scope = scope_resolver(source)
+            if new_scope != old_scope:
+                updates.append((new_scope, rowid))
+        if updates:
+            conn.executemany(
+                "UPDATE properties SET scope = ? WHERE rowid = ?", updates
+            )
+            conn.commit()
+        return len(rows), len(updates)
+
+
+if __name__ == "__main__":
+    import sys
+
+    if "--rescope" in sys.argv:
+        from services.rag.config import load_config
+
+        config = load_config()
+        idx = PropertyIndex()
+        import asyncio
+
+        asyncio.run(idx.start())
+        try:
+            total, updated = idx.rescope_all(config.get_scope_for_path)
+            print(f"Rescoped {updated}/{total} property entries")
+            conn = idx._ensure_conn()
+            for row in conn.execute(
+                "SELECT scope, COUNT(*) FROM properties GROUP BY scope ORDER BY scope"
+            ).fetchall():
+                print(f"  {row[0]}: {row[1]}")
+        finally:
+            asyncio.run(idx.stop())
+    else:
+        print("Usage: python -m services.rag.property_index --rescope")
+        sys.exit(1)

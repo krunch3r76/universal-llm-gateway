@@ -1,4 +1,10 @@
-"""Model lifecycle RPC handlers (load/unload)."""
+"""Model lifecycle RPC handlers (load/unload).
+
+Single-flight guard: _load_lock prevents concurrent handle_load_model RPCs
+from double-initializing the engine within the same worker process.
+"""
+
+import asyncio
 
 from universal_concurrency import FifoCapacityGate
 from universal_logging import get_logger
@@ -15,6 +21,12 @@ class LoadHandlers:
 
     # Inference gate (initialized after engine load)
     _inference_gate: FifoCapacityGate | None = None
+    _load_lock: asyncio.Lock | None = None
+
+    def _get_load_lock(self) -> asyncio.Lock:
+        if self._load_lock is None:
+            self._load_lock = asyncio.Lock()
+        return self._load_lock
 
     def _init_inference_gate(self, request_id: str) -> None:
         """
@@ -141,16 +153,10 @@ class LoadHandlers:
         return context_size
 
     async def handle_load_model(self, params: dict) -> dict:
-        """
-        Handle load_model RPC request.
+        """Handle load_model RPC request with single-flight lock.
 
-        Orchestrates model loading: validation → config init → engine load → response.
-
-        Args:
-            params: RPC parameters including optional name/path overrides
-
-        Returns:
-            Success response with context_size from catalog metadata
+        Concurrent RPCs for the same worker serialize through _load_lock
+        so only one engine initialization runs at a time.
         """
         request_id = params.get("_request_id", "unknown")
         logger.info(
@@ -158,54 +164,57 @@ class LoadHandlers:
             f"Load model RPC received for {self.model_id}"
         )
 
-        rpc_name = params.get("name")
-        rpc_path = params.get("path")
+        async with self._get_load_lock():
+            rpc_name = params.get("name")
+            rpc_path = params.get("path")
 
-        # Check if model already loaded
-        if self.engine and self.engine.is_loaded():
-            self._validate_load_request_params(rpc_name, rpc_path, request_id)
+            # Double-check after acquiring lock — another RPC may have loaded it
+            if self.engine and self.engine.is_loaded():
+                self._validate_load_request_params(rpc_name, rpc_path, request_id)
 
-            logger.info(
-                f"✅ [worker] [request_id={request_id}] "
-                f"Model {self.model_id} already loaded"
-            )
+                logger.info(
+                    f"✅ [worker] [request_id={request_id}] "
+                    f"Model {self.model_id} already loaded"
+                )
 
-            context_size = self._extract_context_size_from_catalog(request_id)
-            result = {"success": True, "model_loaded": True}
-            if context_size is not None:
-                result["context_size"] = context_size
-            return result
-
-        try:
-            # Use model config if available, otherwise use params
-            if not self.model_config:
-                self.model_config = {
-                    "format": params.get("format", "vllm"),
-                    "name": rpc_name,
-                    "path": rpc_path or params.get("model_path", ""),
-                    "loader_config": params.get("loader_config", {}),
+                context_size = self._extract_context_size_from_catalog(request_id)
+                result = {
+                    "success": True,
+                    "model_loaded": True,
+                    **({"context_size": context_size} if context_size is not None else {}),
                 }
+                return result
 
-            logger.info(
-                f"🔧 [worker] [request_id={request_id}] "
-                f"Loading model engine for {self.model_id}"
-            )
-            await self._load_model_engine()
+            try:
+                if not self.model_config:
+                    self.model_config = {
+                        "format": params.get("format", "vllm"),
+                        "name": rpc_name,
+                        "path": rpc_path or params.get("model_path", ""),
+                        "loader_config": params.get("loader_config", {}),
+                    }
 
-            # Initialize inference gate after engine is loaded
-            self._init_inference_gate(request_id)
+                logger.info(
+                    f"🔧 [worker] [request_id={request_id}] "
+                    f"Loading model engine for {self.model_id}"
+                )
+                await self._load_model_engine()
 
-            context_size = self._extract_context_size_from_catalog(request_id)
-            result = {"success": True, "model_loaded": True}
-            if context_size is not None:
-                result["context_size"] = context_size
-            return result
+                self._init_inference_gate(request_id)
 
-        except Exception as e:
-            logger.error(
-                f"❌ [worker] [request_id={request_id}] Model loading error: {e}"
-            )
-            raise self._map_exception_to_engine_error(e)
+                context_size = self._extract_context_size_from_catalog(request_id)
+                result = {
+                    "success": True,
+                    "model_loaded": True,
+                    **({"context_size": context_size} if context_size is not None else {}),
+                }
+                return result
+
+            except Exception as e:
+                logger.error(
+                    f"❌ [worker] [request_id={request_id}] Model loading error: {e}"
+                )
+                raise self._map_exception_to_engine_error(e)
 
     def _validate_unload_model_request(self, params: dict) -> None:
         """

@@ -115,6 +115,82 @@ def load_corpus_hints(path: Path) -> dict[str, str]:
         return {}
 
 
+_DEFAULT_VOCABULARY_PATH = Path.home() / ".rag" / "scope_vocabulary.yaml"
+
+
+def load_scope_vocabulary(path: Path | None = None) -> dict[str, dict[str, list[str]]]:
+    """Load register-structured vocabulary from scope_vocabulary.yaml.
+
+    Expected format:
+        scope_vocabulary:
+          knowledge_management:
+            practitioner: ["Obsidian", "Zettelkasten", ...]
+            academic: ["PKG", "personal knowledge graph", ...]
+            specification: ["RDF", "OWL", ...]
+
+    Returns {scope: {register: [terms]}} or {} if missing/invalid.
+    """
+    if path is None:
+        path = _DEFAULT_VOCABULARY_PATH
+    if not path or not path.exists():
+        return {}
+    try:
+        raw: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return {}
+        vocab = raw.get("scope_vocabulary")
+        if not isinstance(vocab, dict):
+            return {}
+        result: dict[str, dict[str, list[str]]] = {}
+        for scope, registers in vocab.items():
+            if not isinstance(scope, str) or not isinstance(registers, dict):
+                continue
+            scope_regs: dict[str, list[str]] = {}
+            for reg, terms in registers.items():
+                if isinstance(reg, str) and isinstance(terms, list):
+                    scope_regs[reg] = [
+                        str(t) for t in terms if isinstance(t, str) and t.strip()
+                    ]
+            if scope_regs:
+                result[scope] = scope_regs
+        return result
+    except (yaml.YAMLError, OSError) as e:
+        logger.warning("Failed to load scope vocabulary from %s: %s", path, e)
+        return {}
+
+
+def format_register_hints(
+    vocabulary: dict[str, dict[str, list[str]]],
+    scopes: list[str] | None = None,
+) -> str:
+    """Format register-structured vocabulary for prompt injection.
+
+    Output example:
+      [knowledge_management] practitioner: Obsidian, Zettelkasten, PKM | academic: PKG, entity-centric | specification: RDF, OWL
+      [graph_modeling] practitioner: Neo4j, Cypher | academic: property graph, RDF | specification: SPARQL, Gremlin
+
+    If scopes is None, format all scopes. Skips scopes with no terms.
+    """
+    if not vocabulary:
+        return ""
+    target = (
+        vocabulary
+        if not scopes
+        else {s: vocabulary[s] for s in scopes if s in vocabulary}
+    )
+    if not target:
+        return ""
+    lines: list[str] = []
+    for scope, registers in sorted(target.items()):
+        parts: list[str] = []
+        for reg, terms in sorted(registers.items()):
+            if terms:
+                parts.append(f"{reg}: {', '.join(terms)}")
+        if parts:
+            lines.append(f"[{scope}] {' | '.join(parts)}")
+    return "\n".join(lines)
+
+
 def get_hints_for_scopes(
     hints: dict[str, str],
     scopes: list[str] | None = None,
@@ -139,8 +215,9 @@ def _build_word_boundary_conditions(
     """Build word-boundary SQL conditions for query terms.
 
     Returns (conditions, params) where each condition matches a query term
-    against prop.name@@ and prop.topic@@ keys using exact or word-boundary
-    LIKE patterns (not substring-within-word).
+    against keys prefixed with 'prop.name@@' or 'prop.topic@@' using exact
+    match or word-boundary LIKE patterns (e.g. key = ?, key LIKE ? %).
+    Terms are matched as whole words within the key, not substrings.
     """
     conditions: list[str] = []
     params: list[str] = []
@@ -304,8 +381,7 @@ async def update_corpus_hints(
     (min_docs), and selects per-type budgets. Returns the generated hints dict.
     """
     prefixes = key_prefixes if key_prefixes is not None else _DEFAULT_KEY_PREFIXES
-    total_chunks = property_index.get_total_chunks()
-    if total_chunks == 0:
+    if property_index.get_total_chunks() == 0:
         logger.warning("PropertyIndex has 0 chunks — skipping corpus hints update")
         return {}
 
@@ -431,9 +507,12 @@ def _cli_generate_hints() -> None:
             print(f"Total distinct chunks: {total_chunks}")
             print(f"Total distinct docs (source files): {total_docs}")
 
+            # Same defaults as update_corpus_hints for consistent diagnostic output.
+            min_chunks_name, max_chunks_name = 2, 50
+            min_chunks_topic, max_chunks_topic = 3, 30
             band_limits: dict[str, tuple[int, int]] = {
-                "prop.name@@": (2, 50),
-                "prop.topic@@": (3, 30),
+                "prop.name@@": (min_chunks_name, max_chunks_name),
+                "prop.topic@@": (min_chunks_topic, max_chunks_topic),
             }
             for prefix in _DEFAULT_KEY_PREFIXES:
                 all_terms = idx.get_term_counts_by_scope(prefix)

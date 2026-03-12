@@ -81,6 +81,9 @@ changelog/
 # Mature pipelines go in pipelines/ (tracked)
 pipelines.local/
 
+# RAG scope vocabulary (auto-generated, per-machine)
+scope_vocabulary.yaml
+
 # Development artifacts
 report.txt
 ATTRIBUTION.txt
@@ -105,3 +108,4 @@ docker/docs/
 
 tasks/
 terminals/
+snapshots/

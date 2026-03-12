@@ -93,20 +93,28 @@ async def create_embeddings(
             correlation_id=correlation_id,
         )
     except RuntimeError as e:
+        error_str = str(e).lower()
+        is_transient = "not loaded" in error_str or "not ready" in error_str
+        status = 503 if is_transient else 500
+        code = (
+            ErrorCode.RESOURCE_UNAVAILABLE
+            if is_transient
+            else ErrorCode.UNEXPECTED_ERROR
+        )
         logger.error(
-            f"Embedding generation failed: {e}",
+            f"Embedding generation failed (retryable={is_transient}): {e}",
             extra={"correlation_id": correlation_id},
         )
         raise HTTPException(
-            status_code=500,
+            status_code=status,
             detail=error_envelope(
-                code=ErrorCode.UNEXPECTED_ERROR,
+                code=code,
                 message=f"Embedding generation failed: {e}",
                 source="gateway",
-                retryable=False,
+                retryable=is_transient,
                 data={"model": model_id, "correlation_id": correlation_id},
             ),
-        )
+        ) from e
     except Exception as e:
         logger.error(
             f"Unexpected embedding error: {e}",
@@ -121,7 +129,7 @@ async def create_embeddings(
                 retryable=False,
                 data={"model": model_id, "correlation_id": correlation_id},
             ),
-        )
+        ) from e
 
     # Build response - validate result shape
     data_items = result.get("data")

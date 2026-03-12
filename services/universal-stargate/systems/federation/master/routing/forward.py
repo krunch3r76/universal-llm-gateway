@@ -189,6 +189,12 @@ class FederatedRequestForwarder:
             "federation": federation,
         }
 
+    def _get_endpoint(self, remote_stargate_url: str, path: str) -> str:
+        """Return path-only for Unix socket, full URL for HTTP."""
+        if remote_stargate_url.startswith("unix://"):
+            return path
+        return f"{remote_stargate_url}{path}"
+
     async def forward_request(
         self,
         gateway: FederatedGateway,
@@ -220,13 +226,7 @@ class FederatedRequestForwarder:
             return await self._cloud_forwarder.forward_request(request_body, request_id)
 
         client = self._get_client_for_url(gateway.remote_stargate_url)
-
-        # For Unix socket, use path-only endpoint
-        if gateway.remote_stargate_url.startswith("unix://"):
-            endpoint = "/api/v1/federation/inference"
-        else:
-            endpoint = f"{gateway.remote_stargate_url}/api/v1/federation/inference"
-
+        endpoint = self._get_endpoint(gateway.remote_stargate_url, "/api/v1/federation/inference")
         headers = self._build_headers(gateway.remote_stargate_id, hop_count, request_id)
         body = self._build_body(request_body, gateway, request_id, hop_count, hints)
 
@@ -255,13 +255,15 @@ class FederatedRequestForwarder:
             extra={"gateway_id": gateway.gateway_id, "request_id": request_id},
         )
 
-        # Only override client-level timeout if explicitly configured
-        timeout_kwargs: dict[str, Any] = {}
-        if hints and "timeout" in hints:
-            timeout_value = hints["timeout"]
-            if isinstance(timeout_value, int | float | str):
-                timeout_kwargs["timeout"] = float(timeout_value)
-                logger.debug("Using timeout hint: %ss", timeout_value)
+        timeout_kwargs = (
+            {"timeout": float(hints["timeout"])}
+            if hints
+            and "timeout" in hints
+            and isinstance(hints["timeout"], (int, float, str))
+            else {}
+        )
+        if timeout_kwargs:
+            logger.debug("Using timeout hint: %ss", hints.get("timeout"))
 
         response = await client.post(
             endpoint, json=body, headers=headers, **timeout_kwargs
@@ -306,13 +308,7 @@ class FederatedRequestForwarder:
             return
 
         client = self._get_client_for_url(gateway.remote_stargate_url)
-
-        # For Unix socket, use path-only endpoint
-        if gateway.remote_stargate_url.startswith("unix://"):
-            endpoint = "/api/v1/federation/inference"
-        else:
-            endpoint = f"{gateway.remote_stargate_url}/api/v1/federation/inference"
-
+        endpoint = self._get_endpoint(gateway.remote_stargate_url, "/api/v1/federation/inference")
         headers = self._build_headers(gateway.remote_stargate_id, hop_count, request_id)
         body = self._build_body(request_body, gateway, request_id, hop_count, hints)
 
@@ -345,12 +341,13 @@ class FederatedRequestForwarder:
             },
         )
 
-        # Only override client-level timeout if explicitly configured
-        timeout_kwargs: dict[str, Any] = {}
-        if hints and "timeout" in hints:
-            timeout_value = hints["timeout"]
-            if isinstance(timeout_value, int | float | str):
-                timeout_kwargs["timeout"] = float(timeout_value)
+        timeout_kwargs = (
+            {"timeout": float(hints["timeout"])}
+            if hints
+            and "timeout" in hints
+            and isinstance(hints["timeout"], (int, float, str))
+            else {}
+        )
 
         async with client.stream(
             "POST", endpoint, json=body, headers=headers, **timeout_kwargs
@@ -402,13 +399,7 @@ class FederatedRequestForwarder:
             }
 
         client = self._get_client_for_url(gateway.remote_stargate_url)
-
-        # For Unix socket, use path-only endpoint
-        if gateway.remote_stargate_url.startswith("unix://"):
-            endpoint = "/api/v1/federation/tokens/count"
-        else:
-            endpoint = f"{gateway.remote_stargate_url}/api/v1/federation/tokens/count"
-
+        endpoint = self._get_endpoint(gateway.remote_stargate_url, "/api/v1/federation/tokens/count")
         headers = self._build_headers(
             gateway.remote_stargate_id,
             hop_count=0,  # Token counting doesn't use hop semantics
@@ -453,15 +444,9 @@ class FederatedRequestForwarder:
         """
         try:
             client = self._get_client_for_url(gateway.remote_stargate_url)
-
-            # For Unix socket, use path-only endpoint
-            if gateway.remote_stargate_url.startswith("unix://"):
-                endpoint = "/api/v1/federation/models/load"
-            else:
-                endpoint = (
-                    f"{gateway.remote_stargate_url}/api/v1/federation/models/load"
-                )
-
+            endpoint = self._get_endpoint(
+                gateway.remote_stargate_url, "/api/v1/federation/models/load"
+            )
             headers = self._build_headers(
                 gateway.remote_stargate_id,
                 hop_count=0,
@@ -485,7 +470,7 @@ class FederatedRequestForwarder:
                 endpoint,
                 json=payload,
                 headers=headers,
-                timeout=httpx.Timeout(connect=10.0, read=175.0, write=10.0, pool=10.0),
+                timeout=httpx.Timeout(connect=10.0, read=190.0, write=10.0, pool=10.0),
             )
 
             if response.is_success:
@@ -543,14 +528,9 @@ class FederatedRequestForwarder:
         """
         try:
             client = self._get_client_for_url(gateway.remote_stargate_url)
-
-            if gateway.remote_stargate_url.startswith("unix://"):
-                endpoint = "/api/v1/federation/models/unload"
-            else:
-                endpoint = (
-                    f"{gateway.remote_stargate_url}/api/v1/federation/models/unload"
-                )
-
+            endpoint = self._get_endpoint(
+                gateway.remote_stargate_url, "/api/v1/federation/models/unload"
+            )
             headers = self._build_headers(
                 gateway.remote_stargate_id,
                 hop_count=0,
@@ -623,12 +603,7 @@ class FederatedRequestForwarder:
             )
 
         client = self._get_client_for_url(gateway.remote_stargate_url)
-
-        # Use path-only for Unix socket, full URL for HTTP
-        if gateway.remote_stargate_url.startswith("unix://"):
-            endpoint = "/api/v1/federation/inference"
-        else:
-            endpoint = f"{gateway.remote_stargate_url}/api/v1/federation/inference"
+        endpoint = self._get_endpoint(gateway.remote_stargate_url, "/api/v1/federation/inference")
 
         # Generate request_id if not provided
         req_id = request_id or str(uuid.uuid4())

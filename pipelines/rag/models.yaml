@@ -13,4 +13,12 @@ models:
     model: qwen3-32b-awq-32768
   gpt-oss:
     model: gpt-oss-20b-mxfp4-65536
-
+  qwen3_14b:
+    model: qwen3-14b-q4-k-m-40960
+    profile: qwen3-instruct
+  qwen3_14b_reasoning:
+    model: qwen3-14b-q4-k-m-40960
+    profile: qwen3-thinking
+  qwen3_27b:
+    model: qwen3-5-27b-q8-0-32768
+    profile: qwen3-instruct

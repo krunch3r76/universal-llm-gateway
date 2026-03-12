@@ -19,8 +19,10 @@ from universal_logging import get_logger
 
 from services.rag.corpus_hints import (
     filter_hints_by_cooccurrence,
+    format_register_hints,
     get_hints_for_scopes,
     load_corpus_hints,
+    load_scope_vocabulary,
 )
 
 if TYPE_CHECKING:
@@ -70,12 +72,19 @@ class FilterCorpusHintsHandler(BaseHandler):
         min_chunk_cooccurrence: int = step.get_domain_field("min_chunk_cooccurrence", 2)
         max_hints: int = step.get_domain_field("max_hints", 7)
 
+        vocabulary = load_scope_vocabulary()
+        register_text = format_register_hints(vocabulary, scopes=scope_list)
+
         hints_path = _resolve_hints_path()
         hints_map = load_corpus_hints(hints_path)
         all_hints_text = get_hints_for_scopes(hints_map, scopes=scope_list)
         all_terms = [t.strip() for t in all_hints_text.split(",") if t.strip()]
 
         if not all_terms:
+            parts = []
+            if register_text:
+                parts.append(f"Vocabulary by register:\n{register_text}")
+            combined = "\n\n".join(parts)
             self._emit_event(
                 context,
                 step,
@@ -86,8 +95,12 @@ class FilterCorpusHintsHandler(BaseHandler):
                 cap_limit=max_hints,
             )
             return StepOutput(
-                raw="",
-                json={"filtered_hints": "", "original_count": 0, "filtered_count": 0},
+                raw=combined,
+                json={
+                    "filtered_hints": combined,
+                    "original_count": 0,
+                    "filtered_count": 0,
+                },
             )
 
         if not query_terms:
@@ -97,6 +110,7 @@ class FilterCorpusHintsHandler(BaseHandler):
                 query_terms,
                 all_terms,
                 all_hints_text,
+                register_text,
                 min_chunk_cooccurrence,
                 max_hints,
                 "Step '%s': no query terms — falling back to all %d hints",
@@ -116,6 +130,7 @@ class FilterCorpusHintsHandler(BaseHandler):
                 query_terms,
                 all_terms,
                 all_hints_text,
+                register_text,
                 min_chunk_cooccurrence,
                 max_hints,
                 "Step '%s': no co-occurring hints for terms %s — falling back to all %d",
@@ -127,6 +142,12 @@ class FilterCorpusHintsHandler(BaseHandler):
             filtered = filtered[:max_hints]
 
         filtered_text = ", ".join(filtered)
+        parts = []
+        if filtered_text:
+            parts.append(filtered_text)
+        if register_text:
+            parts.append(f"Vocabulary by register:\n{register_text}")
+        combined = "\n\n".join(parts)
         logger.info(
             "Step '%s': filtered %d → %d hints%s for query terms %s",
             step.id,
@@ -146,9 +167,9 @@ class FilterCorpusHintsHandler(BaseHandler):
             cap_limit=max_hints,
         )
         return StepOutput(
-            raw=filtered_text,
+            raw=combined,
             json={
-                "filtered_hints": filtered_text,
+                "filtered_hints": combined,
                 "original_count": len(all_terms),
                 "filtered_count": len(filtered),
             },
@@ -161,6 +182,7 @@ class FilterCorpusHintsHandler(BaseHandler):
         query_terms: list[str],
         all_terms: list[str],
         all_hints_text: str,
+        register_text: str,
         min_threshold: int,
         max_hints: int,
         log_fmt: str,
@@ -168,6 +190,12 @@ class FilterCorpusHintsHandler(BaseHandler):
     ) -> StepOutput:
         """Log, emit fallback event, and return StepOutput with all hints."""
         logger.info(log_fmt, *log_args)
+        parts = []
+        if all_hints_text:
+            parts.append(all_hints_text)
+        if register_text:
+            parts.append(f"Vocabulary by register:\n{register_text}")
+        combined = "\n\n".join(parts)
         self._emit_event(
             context,
             step,
@@ -179,9 +207,9 @@ class FilterCorpusHintsHandler(BaseHandler):
             cap_limit=max_hints,
         )
         return StepOutput(
-            raw=all_hints_text,
+            raw=combined,
             json={
-                "filtered_hints": all_hints_text,
+                "filtered_hints": combined,
                 "original_count": len(all_terms),
                 "filtered_count": len(all_terms),
                 "fallback": True,
