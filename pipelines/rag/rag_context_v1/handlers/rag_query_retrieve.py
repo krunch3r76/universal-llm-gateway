@@ -37,8 +37,9 @@ from systems.pipeline.core.constants import (
     RAG_NO_RETRIEVAL_SENTINEL as _NO_RETRIEVAL_SENTINEL,
 )
 from systems.pipeline.core.events.step import (
+    RagCoverageSelectionApplied,
     RagMetadataBoostApplied,
-    RagNeighborExpansionCompleted,
+    RagNeighborExpansionApplied,
     RagQueryAnalysisCompleted,
     RagQueryRewriteCompleted,
     RagQueryRewriteSkipped,
@@ -853,7 +854,7 @@ class RagMultiRetrieveHandler(BaseHandler):
             neighbor_expansion_added = expansion_result.neighbors_added
             self._publish_bus_event(
                 context,
-                RagNeighborExpansionCompleted(
+                RagNeighborExpansionApplied(
                     pipeline_id=context.pipeline.id,
                     execution_id=context.execution_id,
                     step_name=step.name,
@@ -881,6 +882,7 @@ class RagMultiRetrieveHandler(BaseHandler):
         boost_enabled = bool(effective.get("metadata_boost_enabled", True))
         boost_weight = float(effective.get("metadata_boost_weight", 0.20))
         coverage_enabled = bool(effective.get("coverage_selection_enabled", False))
+        chunks_before_coverage_selection = len(merged)
 
         boost_result = apply_metadata_boost(
             chunks=merged,
@@ -894,6 +896,20 @@ class RagMultiRetrieveHandler(BaseHandler):
         )
         merged = boost_result.chunks
         merged_scores = boost_result.scores
+
+        if coverage_enabled:
+            self._publish_bus_event(
+                context,
+                RagCoverageSelectionApplied(
+                    pipeline_id=context.pipeline.id,
+                    execution_id=context.execution_id,
+                    step_name=step.name,
+                    enabled=True,
+                    applied=boost_result.applied,
+                    chunks_before=chunks_before_coverage_selection,
+                    chunks_after=len(merged),
+                ),
+            )
 
         self._publish_bus_event(
             context,

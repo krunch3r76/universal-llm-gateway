@@ -638,7 +638,7 @@ def RagRetrievalSourceDiversityLimited(  # noqa: N802
 
 
 @event_factory
-def RagNeighborExpansionCompleted(  # noqa: N802
+def RagNeighborExpansionApplied(  # noqa: N802
     pipeline_id: str,
     execution_id: str,
     step_name: str,
@@ -650,7 +650,7 @@ def RagNeighborExpansionCompleted(  # noqa: N802
     max_chunks: int,
     expansion_seconds: float,
 ) -> Event:
-    """Emitted after neighbor chunk expansion completes.
+    """Emitted after neighbor chunk expansion is applied.
 
     Emitted only when neighbor expansion is enabled, including zero-addition runs.
 
@@ -667,7 +667,7 @@ def RagNeighborExpansionCompleted(  # noqa: N802
         expansion_seconds: Wall-clock expansion duration
     """
     return Event(
-        signal="pipeline.rag.neighbor.expansion.completed",
+        signal="pipeline.rag.neighbor.expansion.applied",
         payload={
             "pipeline_id": pipeline_id,
             "execution_id": execution_id,
@@ -679,6 +679,41 @@ def RagNeighborExpansionCompleted(  # noqa: N802
             "expansion_n": expansion_n,
             "max_chunks": max_chunks,
             "expansion_seconds": expansion_seconds,
+        },
+    )
+
+
+@event_factory
+def RagCoverageSelectionApplied(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    enabled: bool,
+    applied: bool,
+    chunks_before: int,
+    chunks_after: int,
+) -> Event:
+    """Emitted after coverage-aware selection runs in metadata boost phase.
+
+    Payload:
+        pipeline_id: Pipeline identifier
+        execution_id: Current execution UUID
+        step_name: Step identifier
+        enabled: Whether coverage selection was enabled in effective options
+        applied: Whether metadata boost phase executed (False if skipped)
+        chunks_before: Chunk count before coverage-aware selection
+        chunks_after: Chunk count after coverage-aware selection
+    """
+    return Event(
+        signal="pipeline.rag.coverage.selection.applied",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "enabled": enabled,
+            "applied": applied,
+            "chunks_before": chunks_before,
+            "chunks_after": chunks_after,
         },
     )
 
@@ -933,6 +968,50 @@ def RagHintsFiltered(  # noqa: N802
             "min_threshold": min_threshold,
             "capped": capped,
             "cap_limit": cap_limit,
+        },
+    )
+
+
+@event_factory
+def RagGenerationContextRefined(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+    predicted_scopes: list[str],
+    original_must_include: list[str],
+    enriched_must_include: list[str],
+    scope_anchors_added: list[str],
+    flat_hint_count: int,
+    register_scopes_included: int,
+    register_scopes_total: int,
+) -> Event:
+    """Emitted after generation context is refined with scope-filtered vocabulary.
+
+    Payload:
+        pipeline_id: Pipeline identifier
+        execution_id: Current execution UUID
+        step_name: Step identifier
+        predicted_scopes: Scopes from analyze_scope used for filtering
+        original_must_include: must_include before enrichment
+        enriched_must_include: must_include after adding scope anchors
+        scope_anchors_added: Anchor terms added by enrichment
+        flat_hint_count: Co-occurrence-filtered flat hints count
+        register_scopes_included: Number of scopes in the filtered register vocabulary
+        register_scopes_total: Total scopes in the unfiltered register vocabulary
+    """
+    return Event(
+        signal="pipeline.rag.generation.context.refined",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+            "predicted_scopes": predicted_scopes,
+            "original_must_include": original_must_include,
+            "enriched_must_include": enriched_must_include,
+            "scope_anchors_added": scope_anchors_added,
+            "flat_hint_count": flat_hint_count,
+            "register_scopes_included": register_scopes_included,
+            "register_scopes_total": register_scopes_total,
         },
     )
 

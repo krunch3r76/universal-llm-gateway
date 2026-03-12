@@ -92,12 +92,15 @@ ATTRIBUTION.txt
 *.svg
 *.png
 
-# Documentation — only root README.md, CONTRIBUTING.md, and examples/adding-model-workflow-cpu.md are public
+# Documentation — root and selected scoped READMEs + architecture are public
 **/*.md
 !/README.md
 !/CONTRIBUTING.md
 !/examples/adding-model-workflow-cpu.md
 !/docs/architecture/*.md
+!services/rag/README.md
+!services/universal_cloud_proxy/README.md
+!services/mcp-server/README.md
 
 # Internal architecture/proposal notes
 **/proposals/

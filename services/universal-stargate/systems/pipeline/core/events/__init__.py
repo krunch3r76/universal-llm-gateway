@@ -37,15 +37,18 @@ from .lifecycle import (
 )
 from .recorder import EventRecorder
 from .step import (
+    RagCoverageSelectionApplied,
+    RagGenerationContextRefined,
     RagHintsFiltered,
     RagMetadataBoostApplied,
+    RagNeighborExpansionApplied,
     RagQueryAnalysisCompleted,
     RagQueryRewriteCompleted,
     RagQueryRewriteSkipped,
     RagRerankCompleted,
     RagRetrievalBibliographyFiltered,
-    RagRetrievalSourceDiversityLimited,
     RagRetrievalParamsResolved,
+    RagRetrievalSourceDiversityLimited,
     RagScopeRejected,
 )
 from .verification import (
@@ -110,7 +113,10 @@ __all__ = [
     "VerificationComplete",
     "VetoPassCompleted",
     # RAG
+    "RagGenerationContextRefined",
     "RagHintsFiltered",
+    "RagCoverageSelectionApplied",
+    "RagNeighborExpansionApplied",
     "RagQueryAnalysisCompleted",
     "RagQueryRewriteCompleted",
     "RagQueryRewriteSkipped",

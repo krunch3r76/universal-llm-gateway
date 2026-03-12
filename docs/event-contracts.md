@@ -417,7 +417,8 @@ pipeline.rag.retrieval.params.resolved
   └─> [parallel queries to RAG /search]
       └─> pipeline.rag.retrieval.bibliography.filtered?  (* after merge, before completed; when junk filter drops chunks)
       └─> pipeline.rag.retrieval.source.diversity.limited? (* after bibliography filter; when per-source cap drops chunks)
-      └─> pipeline.rag.neighbor.expansion.completed?     (* after junk filter, before metadata boost; when expansion enabled)
+      └─> pipeline.rag.neighbor.expansion.applied?       (* after junk filter, before metadata boost; when expansion enabled)
+      └─> pipeline.rag.coverage.selection.applied?       (* after metadata boost scoring; when coverage selection is enabled)
       └─> pipeline.rag.retrieval.completed | pipeline.rag.retrieval.failed
 ```
 
@@ -431,7 +432,8 @@ pipeline.rag.retrieval.params.resolved
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | Emitted when post-RRF junk/bibliography filter removes one or more chunks |
 | `pipeline.rag.retrieval.source.diversity.limited` | `pipeline_id`, `execution_id`, `step_name`, `per_source_limit`, `chunks_dropped`, `chunks_before`, `chunks_after` | Emitted when source-diversity cap removes chunks from dominant source documents |
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes` | Pre-retrieval: effective parameters after three-tier merge; `scope` may be string or array of strings (multiscope) |
-| `pipeline.rag.neighbor.expansion.completed` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | Neighbor chunk expansion result — emitted when expansion is enabled, even if zero neighbors were added |
+| `pipeline.rag.neighbor.expansion.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | Neighbor chunk expansion result — emitted when expansion is enabled, even if zero neighbors were added |
+| `pipeline.rag.coverage.selection.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `applied`, `chunks_before`, `chunks_after` | Coverage-aware selection outcome after metadata boost scoring (only emitted when coverage selection is enabled) |
 | `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added` | Post-retrieval: scope prediction + quality metrics (`neighbor_expansion_added` is optional and defaults to 0 when expansion is disabled) |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | All queries failed — no chunks to merge |
 
@@ -472,9 +474,15 @@ jq -c 'select(.signal == "pipeline.rag.retrieval.completed") |
    alias_normalized: .payload.fallback_triggered}' /tmp/pipeline-events/current.jsonl
 
 # Neighbor expansion activity
-jq -c 'select(.signal == "pipeline.rag.neighbor.expansion.completed") |
+jq -c 'select(.signal == "pipeline.rag.neighbor.expansion.applied") |
   {added: .payload.neighbors_added, fetched: .payload.neighbors_fetched,
    sources: .payload.sources_expanded, seconds: .payload.expansion_seconds}' \
+  /tmp/pipeline-events/current.jsonl
+
+# Coverage-selection activity
+jq -c 'select(.signal == "pipeline.rag.coverage.selection.applied") |
+  {enabled: .payload.enabled, applied: .payload.applied,
+   before: .payload.chunks_before, after: .payload.chunks_after}' \
   /tmp/pipeline-events/current.jsonl
 
 # Source-diversity cap impact
@@ -561,6 +569,27 @@ chunk-weighted co-occurrence with query-derived terms from suggest_terms.
 | `cap_limit` | int | Configured max_hints value (0 = no cap) |
 
 **Invariant**: `filtered_hint_count ≤ original_hint_count`
+
+### Generation Context Refinement
+
+**Signal**: `pipeline.rag.generation.context.refined`
+
+Emitted by `refine_generation_context` after scope-filtering register
+vocabulary and enriching must_include with corpus-validated anchors.
+Runs after `analyze_scope`, before `generate_rewrites`/`generate_hyde`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pipeline_id` | string | Pipeline ID |
+| `execution_id` | string | Execution ID |
+| `step_name` | string | Step name (`refine_generation_context`) |
+| `predicted_scopes` | string[] | Scopes from analyze_scope used for filtering |
+| `original_must_include` | string[] | must_include tokens before enrichment |
+| `enriched_must_include` | string[] | must_include tokens after adding scope anchors |
+| `scope_anchors_added` | string[] | New anchor terms added by enrichment |
+| `flat_hint_count` | int | Co-occurrence-filtered flat hints for predicted scopes |
+| `register_scopes_included` | int | Scopes in the filtered register vocabulary |
+| `register_scopes_total` | int | Total scopes in unfiltered register vocabulary |
 **Invariant**: `capped=true` ⟹ `filtered_hint_count ≤ cap_limit`
 **Note**: `fallback=true` ⟹ `filtered_hint_count = original_hint_count` (all hints kept as conservative default)
 
@@ -990,9 +1019,11 @@ Pipeline events flow to two sinks:
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | - |
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | - |
 | `pipeline.rag.retrieval.source.diversity.limited` | `pipeline_id`, `execution_id`, `step_name`, `per_source_limit`, `chunks_dropped`, `chunks_before`, `chunks_after` | - |
-| `pipeline.rag.neighbor.expansion.completed` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | - |
+| `pipeline.rag.neighbor.expansion.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | - |
+| `pipeline.rag.coverage.selection.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `applied`, `chunks_before`, `chunks_after` | - |
 | `pipeline.rag.rerank.completed` | `pipeline_id`, `execution_id`, `step_name`, `rerank_enabled`, `model_id`, `chunks_input`, `chunks_output`, `windows_evaluated`, `max_rank_movement_observed`, `total_rerank_seconds` | - |
 | `pipeline.rag.hints.filtered` | `pipeline_id`, `execution_id`, `step_name`, `query_terms`, `original_hint_count`, `filtered_hint_count`, `filtered_hints`, `fallback`, `scoring_mode`, `min_threshold`, `capped`, `cap_limit` | - |
+| `pipeline.rag.generation.context.refined` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scopes`, `original_must_include`, `enriched_must_include`, `scope_anchors_added`, `flat_hint_count`, `register_scopes_included`, `register_scopes_total` | - |
 
 **Note on `pipeline.step.failed` partial progress**: `prompt_tokens`, `completion_tokens`,
 and `model_call_count` are populated from all model calls completed before the failure,
