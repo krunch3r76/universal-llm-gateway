@@ -39,6 +39,7 @@ class ProviderConfig:
     native_tools: list[str] = field(default_factory=list)
     mcp_server_url: str | None = None
     mcp_auth_token: str | None = None
+    mcp_v2: bool = False
 
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
@@ -188,6 +189,8 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
                 raw_mcp_token,
             )
 
+    mcp_v2 = bool(entry.get("mcp_v2", False))
+
     return ProviderConfig(
         provider=provider,
         api_key=api_key,
@@ -198,6 +201,7 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
         native_tools=native_tools,
         mcp_server_url=mcp_server_url,
         mcp_auth_token=mcp_auth_token,
+        mcp_v2=mcp_v2,
     )
 
 

@@ -29,6 +29,7 @@ Entry point: ``chunk_file(path, target_chars=None)`` dispatches by file extensio
 """
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -268,13 +269,50 @@ def chunk_markdown(
     return _annotate_chunk_indices(chunks)
 
 
+_HEADER_MIN_PAGES = 3
+_HEADER_MIN_RATIO = 0.3
+
+
+def _strip_running_headers(
+    pages: list[str],
+    min_pages: int = _HEADER_MIN_PAGES,
+    min_ratio: float = _HEADER_MIN_RATIO,
+) -> list[str]:
+    """Remove repeating running headers/footers from per-page markdown.
+
+    Lines appearing on >= min_pages AND >= min_ratio of total pages are
+    classified as running headers (paper title, author line, conference
+    banner). Typically 2-5 unique lines per affected paper.
+    """
+    n = len(pages)
+    if n < min_pages:
+        return pages
+    line_counts: Counter[str] = Counter()
+    for page in pages:
+        seen: set[str] = set()
+        for line in page.splitlines():
+            stripped = line.strip()
+            if stripped and stripped not in seen:
+                seen.add(stripped)
+                line_counts[stripped] += 1
+    threshold = max(min_pages, int(n * min_ratio))
+    noise = {line for line, count in line_counts.items() if count >= threshold}
+    if not noise:
+        return pages
+    cleaned: list[str] = []
+    for page in pages:
+        kept = [ln for ln in page.splitlines() if ln.strip() not in noise]
+        cleaned.append("\n".join(kept))
+    return cleaned
+
+
 def chunk_pdf(
     path: str,
     *,
     target_chars: int = _CHUNK_CHARS_TARGET,
     pad_chars: int = _CHUNK_CHARS_PAD,
 ) -> list[Chunk]:
-    """Convert PDF to markdown via pymupdf4llm, then chunk as markdown."""
+    """Convert PDF to markdown via pymupdf4llm, strip running headers, then chunk."""
     try:
         import pymupdf4llm
     except ImportError as exc:
@@ -284,11 +322,20 @@ def chunk_pdf(
         ) from exc
 
     try:
-        markdown_text = pymupdf4llm.to_markdown(path)
+        page_data = pymupdf4llm.to_markdown(path, page_chunks=True)
     except Exception as e:
         raise RuntimeError(f"Failed to convert PDF '{path}' to markdown: {e}") from e
-    if isinstance(markdown_text, list):
-        markdown_text = "\n\n".join(str(item) for item in markdown_text)
+
+    if isinstance(page_data, list):
+        pages = [
+            p["text"] if isinstance(p, dict) and "text" in p else str(p)
+            for p in page_data
+        ]
+    else:
+        pages = [str(page_data)]
+
+    pages = _strip_running_headers(pages)
+    markdown_text = "\n\n".join(pages)
 
     return chunk_markdown(
         path, markdown_text, target_chars=target_chars, pad_chars=pad_chars

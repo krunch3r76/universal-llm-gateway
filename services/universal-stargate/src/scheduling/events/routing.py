@@ -1,4 +1,4 @@
-"""Routing metrics and decision event signals.
+"""Routing metrics and decision event signals for Stargate scheduling.
 
 Covers request routing, model load initiation/completion, token counting,
 and routing decision observability.
@@ -12,7 +12,10 @@ Signals:
     token.count.completed — token counting finished
     token.counting.failed — federated token counting failed
     scheduler.routing.decided — routing decision made by DecisionEngine
-    scheduler.routing.failed — routing failed (no gateway found)
+    scheduler.routing.failed — routing failed (permanent no-feasible-gateway)
+    scheduler.routing.queued — request entered pre-routing wait queue
+    scheduler.routing.dequeued — request admitted after pre-routing wait
+    scheduler.routing.timeout — pre-routing wait budget expired
     routing.overflow.triggered — overflow branch selected alternate gateway
     routing.overflow.failed — overflow branch failed to assign feasible target
 """
@@ -135,8 +138,9 @@ Payload: {
 
 ROUTING_DECISION_FAILED = "scheduler.routing.failed"
 """
-Routing decision failed - no gateway available.
-Emitted when no feasible gateway can be found.
+Routing decision failed - PERMANENT failure.
+Emitted when no feasible gateway can be found without retryable capacity wait,
+or when pre-routing queue timeout expires.
 
 Payload: {
     "model_id": str,
@@ -146,6 +150,47 @@ Payload: {
     "request_id": str | None,
     "timestamp": float,
     "reason": str
+}
+"""
+
+ROUTING_QUEUED = "scheduler.routing.queued"
+"""
+Request entered pre-routing wait queue (retryable constraint).
+Emitted once when a request begins waiting for capacity signal.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "constraint": str,
+    "gateway_id": str | None,
+    "timestamp": float
+}
+"""
+
+ROUTING_DEQUEUED = "scheduler.routing.dequeued"
+"""
+Request admitted after waiting for capacity signal.
+Emitted when gateway.resource.updated unblocks a queued request.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
+    "wait_ms": float,
+    "timestamp": float
+}
+"""
+
+ROUTING_TIMEOUT = "scheduler.routing.timeout"
+"""
+Pre-routing queue timeout expired before capacity became available.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "constraint": str,
+    "wait_ms": float,
+    "timestamp": float
 }
 """
 
@@ -500,6 +545,69 @@ def RoutingDecisionFailed(
             "request_id": request_id,
             "timestamp": timestamp,
             "reason": reason,
+        },
+    )
+
+
+@event_factory
+def RoutingQueued(
+    request_id: str,
+    model_id: str,
+    constraint: str,
+    timestamp: float,
+    gateway_id: str | None = None,
+) -> Event:
+    """Create ROUTING_QUEUED event."""
+    return Event(
+        signal=ROUTING_QUEUED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "constraint": constraint,
+            "gateway_id": gateway_id,
+            "timestamp": timestamp,
+        },
+    )
+
+
+@event_factory
+def RoutingDequeued(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    wait_ms: float,
+    timestamp: float,
+) -> Event:
+    """Create ROUTING_DEQUEUED event."""
+    return Event(
+        signal=ROUTING_DEQUEUED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "wait_ms": wait_ms,
+            "timestamp": timestamp,
+        },
+    )
+
+
+@event_factory
+def RoutingTimeout(
+    request_id: str,
+    model_id: str,
+    constraint: str,
+    wait_ms: float,
+    timestamp: float,
+) -> Event:
+    """Create ROUTING_TIMEOUT event."""
+    return Event(
+        signal=ROUTING_TIMEOUT,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "constraint": constraint,
+            "wait_ms": wait_ms,
+            "timestamp": timestamp,
         },
     )
 

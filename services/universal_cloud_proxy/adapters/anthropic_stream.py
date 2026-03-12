@@ -24,6 +24,8 @@ class StreamTranslator:
         self._tool_meta: dict[int, dict[str, str]] = {}
         self._current_event = ""
         self._finish_emitted = False
+        self._mcp_tool_names: list[str] = []
+        self._tool_search_ref_count: int = 0
 
     def _chunk(self, delta: dict[str, Any], finish: str | None = None) -> bytes:
         payload = {
@@ -73,14 +75,24 @@ class StreamTranslator:
                 return self._on_message_stop()
             case "error":
                 self._raise_error(payload, request, response)
+                return []
             case _:
                 return []
-        return []
 
     def finalize(self) -> list[bytes]:
         if not self._finish_emitted:
             return [b"data: [DONE]\n\n"]
         return []
+
+    @property
+    def mcp_meta(self) -> dict[str, Any]:
+        """MCP metadata collected during streaming, for post-stream event emission."""
+        meta: dict[str, Any] = {}
+        if self._mcp_tool_names:
+            meta["mcp_tool_names"] = self._mcp_tool_names
+        if self._tool_search_ref_count:
+            meta["tool_search_ref_count"] = self._tool_search_ref_count
+        return meta
 
     def _on_message_start(self, payload: dict[str, Any]) -> list[bytes]:
         msg = payload.get("message", {})
@@ -96,12 +108,19 @@ class StreamTranslator:
 
         block_type = str(block.get("type", ""))
 
-        # server_tool_use (e.g. dynamic filtering code execution inside
-        # web_search_20260209) runs on Anthropic's servers — the client never
-        # executes it and must not receive it as a tool_calls chunk.
-        if block_type == "server_tool_use":
+        skip_block_types = {
+            "server_tool_use",
+            "mcp_tool_use",
+            "tool_search_tool_result",
+            "tool_search_tool_result_error",
+        }
+        if block_type in skip_block_types:
+            if block_type == "mcp_tool_use":
+                self._mcp_tool_names.append(str(block.get("name", "")))
             return []
 
+        # mcp_tool_result blocks are not registered — their text deltas flow
+        # through the text path in _on_content_block_delta (delta.text).
         if block_type != "tool_use":
             return []
 

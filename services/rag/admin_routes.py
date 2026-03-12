@@ -234,6 +234,10 @@ def register_admin_routes(
                         len(stale_ids),
                     )
 
+        prop_idx = get_property_index_fn()
+        if prop_idx is not None:
+            await prop_idx.stamp_watermark("reindex")
+
         if eb:
             await eb.publish_async_nowait(
                 rag_directory_index_completed(

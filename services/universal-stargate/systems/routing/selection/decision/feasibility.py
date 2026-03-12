@@ -118,7 +118,8 @@ def evaluate_feasibility(
         requirements_lookup: MANDATORY function to look up (vram_mb, ram_mb)
                            for loading models (in-memory, no I/O)
         sticky: Whether this is sticky routing (affects capacity handling)
-        routing_key_tracker: For eviction protection of in-flight models
+        routing_key_tracker: For eviction protection and stale busy-model
+            reconciliation in eviction planning.
     """
     logger.info(
         f"🔍 Evaluating feasibility: {placement.model_id} on {gateway.name} "
@@ -238,7 +239,6 @@ def evaluate_feasibility(
         gateway,
         placement,
         requirements_lookup,
-        config=resource_margins_config,
         routing_key_tracker=routing_key_tracker,
     )
 

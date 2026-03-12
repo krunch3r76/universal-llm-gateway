@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+from universal_event_bus import EventBus
 
 from ..config import ProviderConfig
 from .anthropic import AnthropicAdapter
@@ -9,12 +10,14 @@ from .openai_compatible import OpenAICompatibleAdapter
 
 
 def create_provider_adapter(
-    config: ProviderConfig, client: httpx.AsyncClient
+    config: ProviderConfig,
+    client: httpx.AsyncClient,
+    *,
+    event_bus: EventBus | None = None,
 ) -> ProviderAdapter:
-    # Provider names are canonicalized at runtime to keep config inputs tolerant.
     provider = config.provider.strip().lower()
     match provider:
         case "anthropic":
-            return AnthropicAdapter(config=config, client=client)
+            return AnthropicAdapter(config=config, client=client, event_bus=event_bus)
         case _:
             return OpenAICompatibleAdapter(config=config, client=client)

@@ -25,6 +25,10 @@ from services.rag.property_index import PropertyIndex
 logger = logging.getLogger(__name__)
 
 _DEFAULT_KEY_PREFIXES = ["prop.name@@", "prop.topic@@"]
+_DEFAULT_MIN_CHUNKS_NAME = 2
+_DEFAULT_MAX_CHUNKS_NAME = 50
+_DEFAULT_MIN_CHUNKS_TOPIC = 3
+_DEFAULT_MAX_CHUNKS_TOPIC = 30
 
 _GENERIC_BLOCKLIST: frozenset[str] = frozenset(
     {
@@ -205,10 +209,11 @@ def get_hints_for_scopes(
     """
     if not hints:
         return ""
+    all_hints = ", ".join(v for v in hints.values() if v)
     if not scopes or scopes == ["both"]:
-        return ", ".join(v for v in hints.values() if v)
+        return all_hints
     parts = [hints[scope] for scope in scopes if scope in hints and hints[scope]]
-    return ", ".join(parts) if parts else ", ".join(v for v in hints.values() if v)
+    return ", ".join(parts) if parts else all_hints
 
 
 def _build_word_boundary_conditions(
@@ -357,8 +362,8 @@ def _order_hints_by_overlap(
     normalized_to_original: dict[str, str] = {}
     for hint in hint_terms:
         norm = hint.lower().strip()
-        if norm and norm not in normalized_to_original:
-            normalized_to_original[norm] = hint
+        if norm:
+            normalized_to_original.setdefault(norm, hint)
 
     scored: list[tuple[str, int]] = []
     for norm_term, score in term_scores.items():
@@ -375,10 +380,10 @@ async def update_corpus_hints(
     *,
     names_budget: int = 10,
     topics_budget: int = 8,
-    min_chunks_name: int = 2,
-    min_chunks_topic: int = 3,
-    max_chunks_name: int = 50,
-    max_chunks_topic: int = 30,
+    min_chunks_name: int = _DEFAULT_MIN_CHUNKS_NAME,
+    min_chunks_topic: int = _DEFAULT_MIN_CHUNKS_TOPIC,
+    max_chunks_name: int = _DEFAULT_MAX_CHUNKS_NAME,
+    max_chunks_topic: int = _DEFAULT_MAX_CHUNKS_TOPIC,
     min_docs: int = 2,
     key_prefixes: list[str] | None = None,
     event_bus: EventBus | None = None,
@@ -388,6 +393,7 @@ async def update_corpus_hints(
     Scores terms with hybrid IDF + chunk-boost, applies band limits per prefix
     type, filters a generic-terms blocklist, requires minimum document spread
     (min_docs), and selects per-type budgets. Returns the generated hints dict.
+    When `event_bus` is provided, emits `rag.corpus.hints.updated`.
     """
     prefixes = key_prefixes if key_prefixes is not None else _DEFAULT_KEY_PREFIXES
     if property_index.get_total_chunks() == 0:
@@ -526,15 +532,18 @@ def _cli_generate_hints() -> None:
             print(f"Total distinct docs (source files): {total_docs}")
 
             # Same defaults as update_corpus_hints for consistent diagnostic output.
-            min_chunks_name, max_chunks_name = 2, 50
-            min_chunks_topic, max_chunks_topic = 3, 30
             band_limits: dict[str, tuple[int, int]] = {
-                "prop.name@@": (min_chunks_name, max_chunks_name),
-                "prop.topic@@": (min_chunks_topic, max_chunks_topic),
+                "prop.name@@": (_DEFAULT_MIN_CHUNKS_NAME, _DEFAULT_MAX_CHUNKS_NAME),
+                "prop.topic@@": (
+                    _DEFAULT_MIN_CHUNKS_TOPIC,
+                    _DEFAULT_MAX_CHUNKS_TOPIC,
+                ),
             }
             for prefix in _DEFAULT_KEY_PREFIXES:
                 all_terms = idx.get_term_counts_by_scope(prefix)
-                min_c, max_c = band_limits.get(prefix, (2, 50))
+                min_c, max_c = band_limits.get(
+                    prefix, (_DEFAULT_MIN_CHUNKS_NAME, _DEFAULT_MAX_CHUNKS_NAME)
+                )
                 in_band = 0
                 blocked = 0
                 out = 0
@@ -553,7 +562,10 @@ def _cli_generate_hints() -> None:
                     f" {out} out-of-band, {has_doc_count}/{len(all_terms)} with doc freq"
                 )
 
-            return await update_corpus_hints(idx, hints_path)
+            result = await update_corpus_hints(idx, hints_path)
+            if result:
+                await idx.stamp_watermark("corpus_hints")
+            return result
         finally:
             await idx.stop()
 

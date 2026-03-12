@@ -119,7 +119,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
         http2=False,
     )
     adapters: dict[str, ProviderAdapter] = {
-        cfg.provider: create_provider_adapter(cfg, shared_client)
+        cfg.provider: create_provider_adapter(cfg, shared_client, event_bus=event_bus)
         for cfg in config.providers
     }
     forwarder = ProviderForwarder(adapters=adapters)

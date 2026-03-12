@@ -7,8 +7,8 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import argparse
+import asyncio
 import json
 import logging
 import random
@@ -390,6 +390,22 @@ async def run(args: argparse.Namespace) -> None:
     print(f"Failed count: {failed}")
 
 
+def _stamp_watermark() -> None:
+    """Record bibliography classification completion in the property index watermarks."""
+    from services.rag.property_index import PropertyIndex
+
+    async def _stamp() -> None:
+        idx = PropertyIndex()
+        await idx.start()
+        try:
+            await idx.stamp_watermark("bibliography")
+        finally:
+            await idx.stop()
+
+    asyncio.run(_stamp())
+    print("Watermark 'bibliography' stamped.")
+
+
 def main() -> None:
     args = parse_args()
     if args.update_batch_size <= 0:
@@ -403,6 +419,7 @@ def main() -> None:
     if args.timeout_seconds <= 0:
         raise ValueError("--timeout-seconds must be > 0")
     asyncio.run(run(args))
+    _stamp_watermark()
 
 
 if __name__ == "__main__":

@@ -631,6 +631,104 @@ async def _route_to_federated_gateway(
                             reason="overflow_load_failed",
                         )
 
+    if not selected_gateway and event_bus:
+        from src.scheduling.events.routing import (
+            RoutingDequeued,
+            RoutingQueued,
+            RoutingTimeout,
+        )
+
+        from .routing_wait import (
+            QUEUE_TIMEOUT_S,
+            extract_retryable_constraint,
+            wait_for_capacity_signal,
+        )
+
+        retryable_constraint = extract_retryable_constraint(trace)
+        if retryable_constraint:
+            queue_start = time.monotonic()
+            deadline = queue_start + QUEUE_TIMEOUT_S
+
+            await event_bus.publish_async_nowait(
+                RoutingQueued(
+                    request_id=context.request_id,
+                    model_id=str(model_id),
+                    constraint=retryable_constraint,
+                    timestamp=time.time(),
+                )
+            )
+
+            logger.info(
+                "⏳ Pre-routing queue: %s waiting for capacity "
+                "(constraint=%s, budget=%.1fs)",
+                model_id,
+                retryable_constraint,
+                QUEUE_TIMEOUT_S,
+            )
+
+            while not selected_gateway and time.monotonic() < deadline:
+                try:
+                    signaled = await wait_for_capacity_signal(
+                        event_bus=event_bus,
+                        model_id=str(model_id),
+                        request_id=context.request_id,
+                        deadline=deadline,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Pre-routing queue wait failed for %s: %s",
+                        model_id,
+                        exc,
+                    )
+                    break
+
+                selected_gateway, trace = decision_engine.select(
+                    gateways=gateways_for_routing,
+                    placement=placement,
+                    request_id=context.request_id,
+                    sticky=context.model_sticky,
+                    stability_tracker=stability_tracker,
+                )
+                if selected_gateway:
+                    wait_ms = (time.monotonic() - queue_start) * 1000.0
+                    await event_bus.publish_async_nowait(
+                        RoutingDequeued(
+                            request_id=context.request_id,
+                            model_id=str(model_id),
+                            gateway_id=selected_gateway.name,
+                            wait_ms=wait_ms,
+                            timestamp=time.time(),
+                        )
+                    )
+                    logger.info(
+                        "✅ Pre-routing dequeued: %s -> %s after %.0fms",
+                        model_id,
+                        selected_gateway.name,
+                        wait_ms,
+                    )
+                    break
+
+                if not signaled and time.monotonic() >= deadline:
+                    break
+
+            if not selected_gateway:
+                wait_ms = (time.monotonic() - queue_start) * 1000.0
+                await event_bus.publish_async_nowait(
+                    RoutingTimeout(
+                        request_id=context.request_id,
+                        model_id=str(model_id),
+                        constraint=retryable_constraint,
+                        wait_ms=wait_ms,
+                        timestamp=time.time(),
+                    )
+                )
+                logger.warning(
+                    "⏳ Pre-routing timeout: %s after %.0fms (constraint=%s)",
+                    model_id,
+                    wait_ms,
+                    retryable_constraint,
+                )
+
     # Admission control: acquire slot before proceeding.
     # Non-sticky overflow may perform a bounded pre-admission load on an
     # alternate gateway before this point.

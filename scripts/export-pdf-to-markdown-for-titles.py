@@ -34,6 +34,8 @@ MODELS_URL = "http://localhost:9999/v1/models"
 LLM_EXTRACT_MAX_CHARS = 3500
 # Fallback when no local model: free tier on OpenRouter (Stargate cloud proxy must be configured).
 OPENROUTER_FREE = "openrouter/free"
+# Cheap cloud model for sampling (used in consult, modularize, code_review). Low cost, good for title extraction.
+CHEAP_CLOUD_SAMPLE = "google/gemini-2.5-flash"
 
 
 def resolve_llm_model(timeout: float = 5.0) -> str:
@@ -47,7 +49,7 @@ def resolve_llm_model(timeout: float = 5.0) -> str:
             if mid and "/" not in mid:
                 return mid
     except Exception:
-        pass
+        return OPENROUTER_FREE
     return OPENROUTER_FREE
 
 
@@ -142,12 +144,18 @@ def main(
 
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
     if use_llm:
-        effective_model = resolve_llm_model() if model == "auto" else model
-        if "/" in effective_model:
-            print(f"Title extraction: LLM (model={effective_model}). Stargate must be running on localhost:9999.", flush=True)
+        model = resolve_llm_model() if model == "auto" else model
+        scope = "local" if "/" not in model else "cloud"
+        if scope == "local":
+            print(
+                f"Title extraction: LLM (model={model}, local). Stargate must be running on localhost:9999.",
+                flush=True,
+            )
         else:
-            print(f"Title extraction: LLM (model={effective_model}, local). Stargate must be running on localhost:9999.", flush=True)
-        model = effective_model
+            print(
+                f"Title extraction: LLM (model={model}). Stargate must be running on localhost:9999.",
+                flush=True,
+            )
     manifest: dict[str, dict[str, str]] = {}
     n = len(to_convert)
     for idx, (filename, entry) in enumerate(to_convert, 1):
@@ -210,7 +218,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         default="auto",
-        help="Model for --llm (default: auto = local if available, else openrouter/free). E.g. --model openrouter/free to force free cloud.",
+        help="Model for --llm (default: auto = local else openrouter/free). Cheap cloud: google/gemini-2.5-flash. Free: openrouter/free.",
     )
     parser.add_argument(
         "--limit",

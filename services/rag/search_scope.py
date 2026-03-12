@@ -30,9 +30,11 @@ import math
 import re
 from datetime import UTC, datetime
 
+import chromadb
 from fastapi import HTTPException
 
 from services.rag.config import RagConfig
+from services.rag.fts_index import FtsIndex
 from services.rag.models import RECENCY_DECAY_LAMBDA, SearchRequest
 from services.rag.property_index import PropertyIndex
 
@@ -55,15 +57,12 @@ def resolve_scope_request(
     scope_names: list[str]
     if request.scope is None:
         return request
-    if isinstance(request.scope, str):
-        scope_names = [request.scope]
-    else:
-        if len(request.scope) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="scope cannot be empty list",
-            )
-        scope_names = list(request.scope)
+    scope_names = [request.scope] if isinstance(request.scope, str) else request.scope
+    if not scope_names:
+        raise HTTPException(
+            status_code=400,
+            detail="scope cannot be empty list",
+        )
 
     loaded_config = require_loaded_config(config)
     merged_prefixes: list[str] = []
@@ -291,3 +290,141 @@ def apply_property_boost(
             boosted_distances.append(dist)
 
     return ids, chunks, metadatas, boosted_distances, hit_count
+
+
+# ---------------------------------------------------------------------------
+# BM25 sparse sidecar — rank-based fusion with dense results
+# ---------------------------------------------------------------------------
+
+_BM25_RRF_K = 20
+
+
+def apply_bm25_sidecar(
+    ids: list[str],
+    chunks: list[str],
+    metadatas: list[dict[str, str | int | float | bool]],
+    distances: list[float],
+    query: str,
+    fts: FtsIndex,
+    collection: chromadb.Collection,
+    source_prefixes: list[str] | None,
+    *,
+    bm25_limit: int = 30,
+    rrf_k: int = _BM25_RRF_K,
+) -> tuple[
+    list[str],
+    list[str],
+    list[dict[str, str | int | float | bool]],
+    list[float],
+    int,
+]:
+    """Merge BM25 results into the dense candidate set via mini-RRF.
+
+    Returns (ids, chunks, metadatas, distances, bm25_hit_count).
+    BM25-only chunks (not in dense set) are fetched from ChromaDB for their
+    document text and metadata, then inserted with a synthetic distance
+    derived from the RRF score relative to the dense tail.
+    """
+    cross_scope_threshold = 3
+
+    try:
+        if source_prefixes:
+            bm25_hits = fts.search_scoped(query, source_prefixes, limit=bm25_limit)
+            # Cross-scope fallback: when scoped BM25 returns very few hits,
+            # the query likely contains a term that exists elsewhere in the
+            # corpus. Unscoped BM25 surfaces cross-scope exact matches that
+            # dense retrieval also missed.
+            if len(bm25_hits) < cross_scope_threshold:
+                unscoped = fts.search(query, limit=bm25_limit)
+                seen = {cid for cid, _ in bm25_hits}
+                for cid, score in unscoped:
+                    if cid not in seen:
+                        bm25_hits.append((cid, score))
+                        seen.add(cid)
+        else:
+            bm25_hits = fts.search(query, limit=bm25_limit)
+    except Exception:
+        return ids, chunks, metadatas, distances, 0
+
+    if not bm25_hits:
+        return ids, chunks, metadatas, distances, 0
+
+    dense_set = set(ids)
+
+    # RRF scores for dense results (rank-only, score is 1/(k+rank+1))
+    rrf_scores: dict[str, float] = {}
+    for rank, cid in enumerate(ids):
+        rrf_scores[cid] = 1.0 / (rrf_k + rank + 1)
+
+    # Add BM25 RRF contribution
+    bm25_only_ids: list[str] = []
+    bm25_hit_count = 0
+    for bm25_rank, (cid, _score) in enumerate(bm25_hits):
+        bm25_rrf = 1.0 / (rrf_k + bm25_rank + 1)
+        rrf_scores[cid] = rrf_scores.get(cid, 0.0) + bm25_rrf
+        if cid in dense_set:
+            bm25_hit_count += 1
+        else:
+            bm25_only_ids.append(cid)
+
+    if not bm25_only_ids:
+        # All BM25 hits already in dense set — just re-sort by RRF
+        combined = sorted(
+            zip(ids, chunks, metadatas, distances, strict=True),
+            key=lambda t: rrf_scores.get(t[0], 0.0),
+            reverse=True,
+        )
+        return (
+            [t[0] for t in combined],
+            [t[1] for t in combined],
+            [t[2] for t in combined],
+            [t[3] for t in combined],
+            bm25_hit_count,
+        )
+
+    # Fetch BM25-only chunks from ChromaDB
+    try:
+        fetched = collection.get(ids=bm25_only_ids, include=["documents", "metadatas"])
+    except Exception:
+        return ids, chunks, metadatas, distances, bm25_hit_count
+
+    fetched_ids: list[str] = fetched.get("ids") or []
+    fetched_docs: list[str] = fetched.get("documents") or []
+    fetched_metas: list[dict[str, str | int | float | bool]] = (
+        fetched.get("metadatas") or []
+    )
+
+    # Synthetic distance: slightly worse than the worst dense result
+    tail_distance = max(distances) * 1.1 if distances else 1.0
+
+    all_ids = list(ids)
+    all_chunks = list(chunks)
+    all_metadatas = list(metadatas)
+    all_distances = list(distances)
+
+    fetched_map = {
+        fid: (doc, meta)
+        for fid, doc, meta in zip(fetched_ids, fetched_docs, fetched_metas, strict=True)
+    }
+    for cid in bm25_only_ids:
+        if cid in fetched_map:
+            doc, meta = fetched_map[cid]
+            all_ids.append(cid)
+            all_chunks.append(doc or "")
+            all_metadatas.append(meta)
+            all_distances.append(tail_distance)
+            bm25_hit_count += 1
+
+    # Re-sort everything by RRF score
+    combined = sorted(
+        zip(all_ids, all_chunks, all_metadatas, all_distances, strict=True),
+        key=lambda t: rrf_scores.get(t[0], 0.0),
+        reverse=True,
+    )
+    return (
+        [t[0] for t in combined],
+        [t[1] for t in combined],
+        [t[2] for t in combined],
+        [t[3] for t in combined],
+        bm25_hit_count,
+    )

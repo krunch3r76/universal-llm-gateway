@@ -246,3 +246,72 @@ def CloudProxyMcpConfigured(  # noqa: N802
         signal="cloud.proxy.mcp.configured",
         payload={"provider": provider, "mcp_server_url": mcp_server_url},
     )
+
+
+@event_factory
+def McpAdapterV2Configured(  # noqa: N802
+    *,
+    provider: str,
+    server_name: str,
+    always_loaded_count: int,
+    deferred_count: int,
+) -> Event:
+    """First request with mcp_v2=true built the toolset payload."""
+    return Event(
+        signal="mcp.adapter.v2.configured",
+        payload={
+            "provider": provider,
+            "server_name": server_name,
+            "always_loaded_count": always_loaded_count,
+            "deferred_count": deferred_count,
+        },
+    )
+
+
+@event_factory
+def McpAdapterRequestShape(  # noqa: N802
+    *,
+    provider: str,
+    model: str,
+    mcp_version: str,
+    tool_count: int,
+    mcp_tool_count: int,
+    has_tool_search: bool,
+) -> Event:
+    """Every MCP request — shape summary for v1/v2 migration tracking."""
+    return Event(
+        signal="mcp.adapter.request.shape",
+        payload={
+            "provider": provider,
+            "model": model,
+            "mcp_version": mcp_version,
+            "tool_count": tool_count,
+            "mcp_tool_count": mcp_tool_count,
+            "has_tool_search": has_tool_search,
+        },
+    )
+
+
+@event_factory
+def McpAdapterMcpToolUseSeen(  # noqa: N802
+    *,
+    tool_name: str,
+    server_name: str,
+) -> Event:
+    """Response contained an mcp_tool_use block (Anthropic-executed MCP tool)."""
+    return Event(
+        signal="mcp.adapter.mcp_tool_use.seen",
+        payload={"tool_name": tool_name, "server_name": server_name},
+    )
+
+
+@event_factory
+def McpAdapterToolSearchSeen(  # noqa: N802
+    *,
+    references_count: int,
+) -> Event:
+    """Response contained a tool_search_tool_result block."""
+    return Event(
+        signal="mcp.adapter.tool_search.seen",
+        payload={"references_count": references_count},
+    )

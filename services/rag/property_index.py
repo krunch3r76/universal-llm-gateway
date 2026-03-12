@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from universal_event_bus.actor.sequential import SequentialExecutor
+
+from services.rag.fts_index import FtsIndex
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,10 @@ CREATE TABLE IF NOT EXISTS failed_extractions (
 );
 CREATE INDEX IF NOT EXISTS idx_failed_source ON failed_extractions(source);
 CREATE INDEX IF NOT EXISTS idx_failed_permanent ON failed_extractions(permanent);
+CREATE TABLE IF NOT EXISTS watermarks (
+    step TEXT PRIMARY KEY,
+    completed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -71,6 +78,7 @@ class PropertyIndex:
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = None
         self._seq = SequentialExecutor()
+        self.fts = FtsIndex()
 
     def _migrate_add_scope(self, conn: sqlite3.Connection) -> None:
         """Add scope column and idx_scope index to properties if absent (backward compat)."""
@@ -80,7 +88,9 @@ class PropertyIndex:
                 conn.execute(
                     "ALTER TABLE properties ADD COLUMN scope TEXT NOT NULL DEFAULT 'all'"
                 )
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_scope ON properties(scope)")
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_scope ON properties(scope)"
+                )
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -132,9 +142,11 @@ class PropertyIndex:
             conn.close()
             raise
         self._conn = conn
+        self.fts.attach(conn, self._seq)
         logger.info("PropertyIndex started: %s", self._db_path)
 
     async def stop(self) -> None:
+        self.fts.detach()
         await self._seq.stop()
         if self._conn is not None:
             self._conn.close()
@@ -168,8 +180,9 @@ class PropertyIndex:
 
     async def add_batch(self, entries: list[tuple[str, str]], source: str = "") -> None:
         """Add multiple (key, chunk_id) pairs in one transaction. Scope defaults to 'all'."""
-        entries_with_scope = [(k, cid, "all", source) for k, cid in entries]
-        await self.add_batch_with_scope(entries_with_scope)
+        await self.add_batch_with_scope(
+            [(k, cid, "all", source) for k, cid in entries]
+        )
 
     async def add_batch_with_scope(
         self, entries: list[tuple[str, str, str, str]]
@@ -251,7 +264,7 @@ class PropertyIndex:
                 "   attempt_count = attempt_count + 1,"
                 "   permanent = MAX(permanent, excluded.permanent),"
                 "   recorded_at = datetime('now')",
-                (chunk_id, source, error, int(permanent)),
+                (chunk_id, source, error, permanent),
             )
             conn.commit()
 
@@ -283,6 +296,52 @@ class PropertyIndex:
             return cursor.rowcount
 
         return await self._seq.run(_write())
+
+    async def stamp_watermark(self, step: str) -> None:
+        """Record completion of a post-index enrichment step."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute(
+                "INSERT INTO watermarks (step, completed_at)"
+                " VALUES (?, datetime('now'))"
+                " ON CONFLICT(step) DO UPDATE SET completed_at = datetime('now')",
+                (step,),
+            )
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    def check_watermarks(
+        self, required: list[str], reference: str = "reindex"
+    ) -> list[str]:
+        """Return step names that are stale or missing relative to the reference watermark.
+
+        A step is stale when its completed_at < reference.completed_at, or when
+        the step has no watermark entry at all. If the reference itself is missing,
+        returns an empty list (no reindex has ever been stamped).
+        """
+        conn = self._ensure_conn()
+        ref_row = conn.execute(
+            "SELECT completed_at FROM watermarks WHERE step = ?", (reference,)
+        ).fetchone()
+        if ref_row is None:
+            return []
+        ref_ts = ref_row[0]
+        if not required:
+            return []
+        placeholders = ", ".join("?" for _ in required)
+        rows = conn.execute(
+            f"SELECT step, completed_at FROM watermarks WHERE step IN ({placeholders})",
+            required,
+        ).fetchall()
+        step_to_completed_at = {row[0]: row[1] for row in rows}
+        stale: list[str] = []
+        for step in required:
+            completed_at = step_to_completed_at.get(step)
+            if completed_at is None or completed_at < ref_ts:
+                stale.append(step)
+        return stale
 
     def get_pending_files(self) -> list[str]:
         """Return all files with in-flight or interrupted indexing.
@@ -484,10 +543,10 @@ class PropertyIndex:
             "SELECT source, chunk_id FROM failed_extractions WHERE permanent = 1"
             " ORDER BY source, chunk_id"
         ).fetchall()
-        result: dict[str, list[str]] = {}
+        result: defaultdict[str, list[str]] = defaultdict(list)
         for source, chunk_id in rows:
-            result.setdefault(source, []).append(chunk_id)
-        return result
+            result[source].append(chunk_id)
+        return dict(result)
 
     def rescope_all(self, scope_resolver: Callable[[str], str]) -> tuple[int, int]:
         """Re-resolve scope for all entries using the given resolver.
@@ -507,9 +566,7 @@ class PropertyIndex:
             if new_scope != old_scope:
                 updates.append((new_scope, rowid))
         if updates:
-            conn.executemany(
-                "UPDATE properties SET scope = ? WHERE rowid = ?", updates
-            )
+            conn.executemany("UPDATE properties SET scope = ? WHERE rowid = ?", updates)
             conn.commit()
         return len(rows), len(updates)
 

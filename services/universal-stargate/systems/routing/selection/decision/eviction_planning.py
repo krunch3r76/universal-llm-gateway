@@ -33,11 +33,38 @@ def _compute_non_evictable_vram_reserve_mb(vram_total_mb: int) -> int:
     )
 
 
+def _is_model_actually_busy(
+    gateway: "Gateway",
+    model_id: ModelId,
+    routing_key_tracker: "RoutingKeyTracker | None",
+    gw_keys_in_flight: set[str] | None = None,
+) -> bool:
+    """Return True iff the model is busy with verified in-flight requests."""
+    if model_id not in gateway.busy_models:
+        return False
+
+    if routing_key_tracker is None:
+        return True
+
+    keys_in_flight = (
+        gw_keys_in_flight
+        if gw_keys_in_flight is not None
+        else routing_key_tracker.get_routing_keys_in_flight(gateway.name)
+    )
+
+    model_is_actually_busy = model_id.routing_key in keys_in_flight
+    if not model_is_actually_busy:
+        logger.info(
+            f"📊 Stale busy_models detected: {model_id} on {gateway.name} "
+            f"is busy per telemetry but idle per routing tracker"
+        )
+    return model_is_actually_busy
+
+
 def _compute_eviction_plan(
     gateway: "Gateway",
     placement: "Placement",
     requirements_lookup: Callable[[ModelId], tuple[int, int]],
-    config: dict | None = None,
     routing_key_tracker: "RoutingKeyTracker | None" = None,
 ) -> EvictionPlanSummary | None:
     """
@@ -52,7 +79,6 @@ def _compute_eviction_plan(
         placement: Model placement requirements
         requirements_lookup: MANDATORY function to look up (vram_mb, ram_mb)
                            for loading models (in-memory, no I/O)
-        config: Reserved for future use (unused; margins not applied here)
         routing_key_tracker: Tracker for in-flight routing keys (eviction protection).
             REQUIRED for Master mode - prevents eviction of models with active requests.
 
@@ -102,44 +128,49 @@ def _compute_eviction_plan(
             f"reserved={vram_reserved}MB)"
         )
 
-    # Get idle models (loaded but not busy)
+    # Get in-flight keys scoped to this gateway. Global in-flight keys are not
+    # relevant for a per-gateway eviction decision.
+    gw_keys_in_flight: set[str] | None = None
+    if routing_key_tracker is not None:
+        gw_keys_in_flight = routing_key_tracker.get_routing_keys_in_flight(gateway.name)
+        logger.debug(
+            f"Per-gateway in-flight routing keys for {gateway.name}: "
+            f"{gw_keys_in_flight}"
+        )
+    else:
+        logger.debug("No routing_key_tracker provided - trusting busy_models telemetry")
+
+    actually_busy_models = {
+        mid
+        for mid in gateway.loaded_models
+        if _is_model_actually_busy(
+            gateway, mid, routing_key_tracker, gw_keys_in_flight
+        )
+    }
+
+    # Get idle models (loaded but not actually busy)
     idle_models = [
         mid
         for mid in gateway.loaded_models
-        if mid not in gateway.busy_models and mid not in gateway.loading_models
+        if mid not in actually_busy_models and mid not in gateway.loading_models
     ]
+    stale_busy_count = sum(
+        1
+        for mid in gateway.loaded_models
+        if mid in gateway.busy_models and mid not in actually_busy_models
+    )
 
     logger.debug(
         f"Eviction planning for {placement.model_id}: "
         f"loaded={list(gateway.loaded_models)}, "
         f"busy={list(gateway.busy_models)}, "
+        f"actually_busy={list(actually_busy_models)}, "
         f"idle={idle_models}"
     )
 
     if not idle_models:
         logger.debug("No idle models available for eviction")
         return None
-
-    # Filter out models with in-flight requests (eviction protection)
-    idle_before_inflight_filter = len(idle_models)
-    if routing_key_tracker is not None:
-        routing_keys_in_flight = (
-            routing_key_tracker.get_routing_keys_in_flight_globally()
-        )
-        idle_models = [
-            mid
-            for mid in idle_models
-            if str(mid.routing_key) not in routing_keys_in_flight
-        ]
-        logger.debug(
-            f"After filtering in-flight: {idle_models}, "
-            f"in_flight_keys={routing_keys_in_flight}"
-        )
-    else:
-        routing_keys_in_flight = set()
-        logger.debug("No routing_key_tracker provided - skipping in-flight filter")
-
-    inflight_filtered = idle_before_inflight_filter - len(idle_models)
 
     # Filter out variants of target model
     target_model_id = placement.model_id
@@ -152,8 +183,8 @@ def _compute_eviction_plan(
 
     logger.info(
         f"🔍 EVICTION CANDIDATES: {len(evictable)} evictable models "
-        f"(after filtering {len(list(gateway.busy_models))} busy, "
-        f"{inflight_filtered} in-flight, "
+        f"(after filtering {len(gateway.busy_models)} busy, "
+        f"{stale_busy_count} stale-busy reclassified idle, "
         f"{len(idle_models) - len(evictable)} same routing key)"
     )
 
@@ -239,7 +270,8 @@ def _compute_eviction_plan(
     logger.debug(
         f"Eviction estimate ({len(models_to_evict)}/{len(gateway.loaded_models)} "
         f"models): available_after={total_vram}MB VRAM, {total_ram}MB RAM "
-        f"(effective_free={effective_vram_free}MB + catalog_freed={catalog_freed_vram}MB, "
+        f"(effective_free={effective_vram_free}MB + "
+        f"catalog_freed={catalog_freed_vram}MB, "
         f"corrected_freed={corrected_freed_vram}MB)"
     )
 

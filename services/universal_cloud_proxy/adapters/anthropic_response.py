@@ -1,7 +1,8 @@
 """Anthropic response content -> OpenAI format translation.
 
-Handles text, tool_use, server_tool_use, native tool results (web_search,
-web_fetch, code_execution), and citation extraction.
+Handles text, tool_use, mcp_tool_use, mcp_tool_result, server_tool_use,
+native tool results (web_search, web_fetch, code_execution), tool_search,
+and citation extraction.
 """
 
 from __future__ import annotations
@@ -15,17 +16,20 @@ logger = logging.getLogger(__name__)
 
 def convert_response_content(
     content: Any,
-) -> tuple[dict[str, Any], str | None, list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], str | None, list[dict[str, Any]], dict[str, Any]]:
     """Convert Anthropic response content blocks to an OpenAI assistant message.
 
-    Returns (message_dict, finish_reason_override, citations).
+    Returns (message_dict, finish_reason_override, citations, mcp_meta).
+    mcp_meta keys: mcp_tool_names (list[str]), tool_search_ref_count (int).
     """
     if not isinstance(content, list):
-        return {"role": "assistant", "content": ""}, None, []
+        return {"role": "assistant", "content": ""}, None, [], {}
 
     text_parts: list[str] = []
     tool_calls: list[dict[str, Any]] = []
     citations: list[dict[str, Any]] = []
+    mcp_tool_names: list[str] = []
+    tool_search_ref_count: int = 0
 
     for block in content:
         if not isinstance(block, dict):
@@ -38,8 +42,14 @@ def convert_response_content(
                 if isinstance(text, str) and text:
                     text_parts.append(text)
 
-            case "tool_use" | "server_tool_use":
+            case "tool_use":
                 tool_calls.append(_tool_use_to_openai(block, index=len(tool_calls)))
+
+            case "server_tool_use" | "mcp_tool_use":
+                mcp_tool_names.append(str(block.get("name", "")))
+
+            case "mcp_tool_result":
+                _extract_mcp_result_text(block, text_parts)
 
             case "web_search_tool_result" | "web_fetch_tool_result":
                 rendered, extracted = _render_native_result(block)
@@ -51,6 +61,12 @@ def convert_response_content(
                 rendered = _render_code_result(block)
                 if rendered:
                     text_parts.append(rendered)
+
+            case "tool_search_tool_result":
+                tool_search_ref_count = len(block.get("tool_references", []))
+
+            case "tool_search_tool_result_error":
+                logger.warning("Tool search error: %s", block.get("error", "unknown"))
 
             case _:
                 logger.warning(
@@ -66,8 +82,14 @@ def convert_response_content(
     if tool_calls:
         message["tool_calls"] = tool_calls
 
+    mcp_meta: dict[str, Any] = {}
+    if mcp_tool_names:
+        mcp_meta["mcp_tool_names"] = mcp_tool_names
+    if tool_search_ref_count:
+        mcp_meta["tool_search_ref_count"] = tool_search_ref_count
+
     finish_override = "tool_calls" if tool_calls else None
-    return message, finish_override, citations
+    return message, finish_override, citations, mcp_meta
 
 
 def _tool_use_to_openai(block: dict[str, Any], index: int) -> dict[str, Any]:
@@ -155,3 +177,23 @@ def _render_code_result(block: dict[str, Any]) -> str:
                 continue
 
     return "\n".join(parts).strip()
+
+
+def _extract_mcp_result_text(block: dict[str, Any], text_parts: list[str]) -> None:
+    """Extract text from mcp_tool_result (Anthropic-executed, server-side).
+
+    Surfaces tool output inline so the client sees it as response text.
+    """
+    content = block.get("content")
+    if isinstance(content, str) and content:
+        text_parts.append(content)
+        return
+    if not isinstance(content, list):
+        return
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "text":
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                text_parts.append(text)

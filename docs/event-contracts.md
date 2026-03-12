@@ -722,6 +722,10 @@ jq -c 'select(.event_type == "combine_passages_completed") | {step: .step_name, 
 | `request.profile.resolved` | `request_id`, `model_id`, `profile_name` | `correlation_id` |
 | `request.capacity.timeout` | `request_id`, `model_id`, `timeout_seconds`, `retry_count`, `elapsed_s` | `pipeline_step_id` |
 | `request.client.disconnected` | `request_id`, `model_id`, `hop` | `correlation_id` |
+| `scheduler.routing.failed` | `model_id`, `candidate_count`, `evaluation_time_ms`, `timestamp`, `reason` | `original_model_id`, `request_id` |
+| `scheduler.routing.queued` | `request_id`, `model_id`, `constraint`, `timestamp` | `gateway_id` |
+| `scheduler.routing.dequeued` | `request_id`, `model_id`, `gateway_id`, `wait_ms`, `timestamp` | - |
+| `scheduler.routing.timeout` | `request_id`, `model_id`, `constraint`, `wait_ms`, `timestamp` | - |
 | `routing.resource.data.missing` | `request_id`, `model_id`, `gateway_ids` | - |
 | `routing.model.infeasible` | `request_id`, `model_id`, `gateway_constraints`, `excluded_gateway_ids` | - |
 | `routing.eviction.blocked.busy` | `request_id`, `model_id`, `gateway_id`, `loaded_count`, `busy_count`, `vram_free` | - |
@@ -735,6 +739,14 @@ jq -c 'select(.event_type == "combine_passages_completed") | {step: .step_name, 
 | `federated.request.prompt.transformation.applied` | `request_id`, `model_id`, `gateway_id`, `prompt_chars` | — |
 | `federated.request.prompt.transformation.failed`  | `request_id`, `model_id`, `gateway_id`, `error` | — |
 | `federated.request.prompt.transformation.skipped` | `request_id`, `model_id`, `gateway_id`, `reason` | — |
+
+### scheduler.routing.failed / queued / dequeued / timeout
+
+`scheduler.routing.failed` now represents permanent routing failure boundaries.
+Retryable pre-routing failures emit `scheduler.routing.queued` and wait for
+`gateway.resource.updated` signals. Successful wakeups emit
+`scheduler.routing.dequeued`; exhausted wait budget emits
+`scheduler.routing.timeout`.
 
 ### request.profile.resolved
 
@@ -972,6 +984,7 @@ provider HTTP failures.
 | `rag.directory.index.completed` | `path`, `total_files`, `indexed`, `deleted`, `unchanged`, `duplicates`, `errors` | emitted after all files in a directory index/reindex have been processed; absence after `rag.directory.index.started` indicates interrupted session |
 | `rag.scope.resolved` | `scope`, `prefix_count` | scope(s) resolved to prefixes; `scope`: str or array of strings |
 | `rag.scope.rejected` | `scope`, `reason`, `available` | scope validation failed |
+| `rag.post_index.stale` | `stale_steps` | startup: post-index enrichment steps stale after last reindex; operator should run runbook |
 | `rag.search.executed` | `query_len`, `top_k`, `results`, `scope` | search completed with ≥1 result; `scope`: str \| list[str] \| None |
 | `rag.search.no_results` | `query_len`, `scope` | search completed with 0 results; `scope`: str \| list[str] \| None |
 | `rag.corpus_hints.updated` | `path`, `scopes_updated`, `timestamp` | corpus_hints.yaml written after aggregation from property index |
@@ -1133,6 +1146,28 @@ Agents can correlate with `chain_trace.json` in `artifact_dir`.
 
 **`failure_kind`**: Populated on `selection_failed` runs. Values:
 `config_missing`, `http_error`, `network_error`, `empty_result`.
+
+## mcp.adapter.*
+
+MCP adapter signals track the v1→v2 migration and MCP tool execution visibility.
+
+### Signals
+
+| Signal | When | Required Payload |
+|---|---|---|
+| `mcp.adapter.v2.configured` | First request where `mcp_v2=true` builds toolset | `provider`, `server_name`, `always_loaded_count`, `deferred_count` |
+| `mcp.adapter.request.shape` | Every MCP request (v1 or v2) | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` |
+| `mcp.adapter.mcp_tool_use.seen` | Response contains `mcp_tool_use` block | `tool_name`, `server_name` |
+| `mcp.adapter.tool_search.seen` | Response contains `tool_search_tool_result` | `references_count` |
+
+### Invariants
+
+- `mcp.adapter.v2.configured` emits at most once per adapter instance lifetime
+- `mcp.adapter.request.shape` emits exactly once per MCP request
+- `mcp.adapter.mcp_tool_use.seen` emits once per `mcp_tool_use` block in the response
+  (a single response may have multiple MCP tool calls)
+- ∀ `mcp_tool_use` block in response: ¬ mapped to OpenAI `tool_calls` (server-executed)
+- ∀ `server_tool_use` block in response: ¬ mapped to OpenAI `tool_calls` (server-executed)
 
 ## Ordering Guarantees
 

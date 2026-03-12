@@ -81,6 +81,9 @@ class RagConfig:
     # Optional path to article_registry.yaml (filename → citation metadata for chunk enrichment).
     article_registry_path: Path | None = None
     baseline_extensions: tuple[str, ...] = BASELINE_EXTENSIONS
+    post_index_enforcement: str = "strict"
+    contextualize_model: str = ""
+    contextualize_max_concurrent: int = 32
 
     def get_scope_for_path(self, file_path: str) -> str:
         """Longest-prefix match over scopes; leaf-preferred on ties.
@@ -284,6 +287,24 @@ def load_config() -> RagConfig:
     raw_registry = parsed_root.get("article_registry_path")
     if isinstance(raw_registry, str) and raw_registry.strip():
         article_registry_path = Path(raw_registry.strip()).expanduser()
+    raw_enforcement = parsed_root.get("post_index_enforcement", "strict")
+    post_index_enforcement = (
+        raw_enforcement
+        if isinstance(raw_enforcement, str) and raw_enforcement in ("warn", "strict")
+        else "strict"
+    )
+    raw_ctx_model = parsed_root.get("contextualize_model")
+    if not isinstance(raw_ctx_model, str) or not raw_ctx_model.strip():
+        raise ValueError(
+            "rag.yaml: 'contextualize_model' is required. "
+            "Set it to the model ID used for chunk context generation "
+            "(e.g. 'qwen3-5-9b-q8-0-262144')."
+        )
+    contextualize_model = raw_ctx_model.strip()
+    raw_ctx_conc = parsed_root.get("contextualize_max_concurrent", 32)
+    contextualize_max_concurrent = (
+        int(raw_ctx_conc) if isinstance(raw_ctx_conc, int) and raw_ctx_conc > 0 else 32
+    )
     return RagConfig(
         watch_directories=watch_directories,
         scopes=scopes,
@@ -293,4 +314,7 @@ def load_config() -> RagConfig:
         corpus_hints_path=corpus_hints_path,
         article_registry_path=article_registry_path,
         baseline_extensions=BASELINE_EXTENSIONS,
+        post_index_enforcement=post_index_enforcement,
+        contextualize_model=contextualize_model,
+        contextualize_max_concurrent=contextualize_max_concurrent,
     )

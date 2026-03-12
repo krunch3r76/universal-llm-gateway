@@ -67,7 +67,11 @@ def classify_scope(
     terms: list[str],
     model: str,
 ) -> dict[str, list[str]] | None:
-    """Send classification prompt to Stargate and parse response."""
+    """Classify scope terms into practitioner/academic/specification registers.
+
+    Returns parsed register buckets on success, otherwise ``None`` when the
+    model call or JSON parsing fails.
+    """
     user_msg = (
         f"Scope: {scope}\n"
         f"Description: {description}\n"
@@ -177,6 +181,30 @@ def main() -> None:
     with open(args.output, "w", encoding="utf-8") as f:
         yaml.safe_dump(payload, f, default_flow_style=False, allow_unicode=True)
     print(f"\nWritten {len(result)} scopes to {args.output}")
+
+    _stamp_watermark()
+
+
+def _stamp_watermark() -> None:
+    """Record vocabulary classification completion in the property index watermarks."""
+    import asyncio
+
+    from services.rag.property_index import PropertyIndex
+
+    async def _stamp() -> None:
+        idx = PropertyIndex()
+        await idx.start()
+        try:
+            await idx.stamp_watermark("vocabulary")
+        finally:
+            await idx.stop()
+
+    try:
+        asyncio.run(_stamp())
+    except Exception as exc:
+        logger.error("Failed to stamp 'vocabulary' watermark: %s", exc)
+        raise
+    print("Watermark 'vocabulary' stamped.")
 
 
 if __name__ == "__main__":

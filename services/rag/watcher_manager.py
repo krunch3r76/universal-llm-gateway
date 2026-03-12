@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 # Interval is intentionally slow; this is a safety net, not a polling mechanism.
 _RECONCILE_INTERVAL_S = 60.0
 
+# Worker count for initial reindex queue. Each file's contextualization already
+# fans out up to max_concurrent LLM calls; keeping the file-level worker count
+# bounded prevents httpx connection pool exhaustion and Stargate capacity storms.
+_INITIAL_REINDEX_WORKERS = 8
+
 
 def _normalize_extensions(extensions: Sequence[str]) -> tuple[str, ...]:
     return tuple(
@@ -233,36 +238,75 @@ class WatcherManager:
         watch_directory: WatchDirectory,
         effective_extensions: tuple[str, ...],
     ) -> None:
-        file_total = 0
-        reindexed_total = 0
-        unchanged_total = 0
-
         walker = (
             watch_path.rglob("*") if watch_directory.recursive else watch_path.glob("*")
         )
         extensions = set(effective_extensions)
         exclude = watch_directory.exclude
+        file_paths: list[Path] = []
         for file_path in walker:
             if not file_path.is_file() or file_path.suffix.lower() not in extensions:
                 continue
             if any(fnmatch(file_path.name, pat) for pat in exclude):
                 continue
-            try:
-                result = await self._index_fn(file_path, watch_directory.chunk_tokens)
-                file_total += 1
-                if result.unchanged:
-                    unchanged_total += 1
-                else:
-                    reindexed_total += 1
-            except Exception as exc:
-                logger.warning("Initial reindex skipped for %s: %s", file_path, exc)
+            file_paths.append(file_path)
 
+        if not file_paths:
+            await self._emit(
+                rag_watch_initial_complete(
+                    path=str(watch_path), files=0, reindexed=0, unchanged=0
+                )
+            )
+            return
+
+        chunk_tokens = watch_directory.chunk_tokens
+        reindexed_total = 0
+        unchanged_total = 0
+        error_total = 0
+
+        queue: asyncio.Queue[Path | None] = asyncio.Queue()
+        for fp in file_paths:
+            queue.put_nowait(fp)
+
+        async def _worker() -> None:
+            nonlocal reindexed_total, unchanged_total, error_total
+            while True:
+                fp = await queue.get()
+                if fp is None:
+                    queue.task_done()
+                    return
+                try:
+                    result = await self._index_fn(fp, chunk_tokens)
+                    if result.unchanged:
+                        unchanged_total += 1
+                    else:
+                        reindexed_total += 1
+                except Exception as exc:
+                    logger.warning("Initial reindex skipped for %s: %s", fp, exc)
+                    error_total += 1
+                finally:
+                    queue.task_done()
+
+        n_workers = min(_INITIAL_REINDEX_WORKERS, len(file_paths))
+        workers = [
+            asyncio.create_task(_worker(), name=f"reindex-worker-{i}")
+            for i in range(n_workers)
+        ]
+
+        await queue.join()
+
+        for _ in workers:
+            queue.put_nowait(None)
+        await asyncio.gather(*workers)
+
+        file_total = len(file_paths) - error_total
         logger.info(
-            "Initial watch reindex complete: path=%s files=%d reindexed=%d unchanged=%d",
+            "Initial watch reindex complete: path=%s files=%d reindexed=%d unchanged=%d errors=%d",
             watch_path,
             file_total,
             reindexed_total,
             unchanged_total,
+            error_total,
         )
         await self._emit(
             rag_watch_initial_complete(

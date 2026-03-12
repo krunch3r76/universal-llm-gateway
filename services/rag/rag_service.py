@@ -61,6 +61,7 @@ from services.rag.article_registry import (
 from services.rag.chunk_filters import chunk_is_junk
 from services.rag.chunkers import Chunk, chunk_file
 from services.rag.config import RagConfig, load_config
+from services.rag.contextualize import contextualize_chunks
 from services.rag.corpus_hints import update_corpus_hints
 from services.rag.directory_ops import purge_orphaned_chunks
 from services.rag.embeddings import (
@@ -83,6 +84,7 @@ from services.rag.events import (
     rag_html_normalization_started,
     rag_orphan_purged,
     rag_pending_reconciled,
+    rag_post_index_stale,
     rag_scope_rejected,
     rag_scope_resolved,
     rag_scopes_listed,
@@ -113,6 +115,7 @@ from services.rag.models import (
 )
 from services.rag.property_index import PropertyIndex
 from services.rag.search_scope import (
+    apply_bm25_sidecar,
     apply_max_distance_filter,
     apply_property_boost,
     apply_recency_sort,
@@ -141,6 +144,12 @@ _registry: dict[str, ArticleEntry] | None = None
 
 # Serialize concurrent indexing of the same file path (watcher + API can race).
 _file_index_locks: dict[str, asyncio.Lock] = {}
+_post_index_stale: bool = False
+
+# Worker count for startup reconciliation of interrupted files.
+# Matches watcher_manager._INITIAL_REINDEX_WORKERS rationale: enough overlap
+# for contextualization/extraction LLM calls without drowning Stargate.
+_RECONCILE_WORKERS = 8
 
 
 def _article_event_kwargs(
@@ -319,6 +328,8 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
                 len(pending_files),
             )
             reconciled = cleared = failed_transient = failed_permanent = 0
+
+            queue: asyncio.Queue[str | None] = asyncio.Queue()
             for source in pending_files:
                 file_path = Path(source)
                 if not file_path.exists():
@@ -326,24 +337,48 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
                     logger.info("Pending file removed (deleted): %s", source)
                     cleared += 1
                     continue
-                try:
-                    chunk_tokens = _resolve_chunk_tokens_for_file(file_path, config)
-                    await _index_file(file_path, chunk_tokens=chunk_tokens)
-                    reconciled += 1
-                except (TimeoutError, ConnectionError) as e:
-                    logger.warning(
-                        "Transient error reconciling %s; will retry on next sweep: %s",
-                        source,
-                        e,
-                    )
-                    failed_transient += 1
-                except Exception:
-                    logger.error(
-                        "Permanent error reconciling %s; requires manual intervention",
-                        source,
-                        exc_info=True,
-                    )
-                    failed_permanent += 1
+                queue.put_nowait(source)
+
+            async def _reconcile_worker() -> None:
+                nonlocal reconciled, failed_transient, failed_permanent
+                while True:
+                    src = await queue.get()
+                    if src is None:
+                        queue.task_done()
+                        return
+                    try:
+                        ct = _resolve_chunk_tokens_for_file(Path(src), config)
+                        await _index_file(Path(src), chunk_tokens=ct)
+                        reconciled += 1
+                    except (TimeoutError, ConnectionError) as e:
+                        logger.warning(
+                            "Transient error reconciling %s; will retry on next sweep: %s",
+                            src,
+                            e,
+                        )
+                        failed_transient += 1
+                    except Exception:
+                        logger.error(
+                            "Permanent error reconciling %s; requires manual intervention",
+                            src,
+                            exc_info=True,
+                        )
+                        failed_permanent += 1
+                    finally:
+                        queue.task_done()
+
+            n_workers = min(_RECONCILE_WORKERS, queue.qsize()) if queue.qsize() else 0
+            workers = [
+                asyncio.create_task(_reconcile_worker(), name=f"reconcile-worker-{i}")
+                for i in range(n_workers)
+            ]
+
+            if workers:
+                await queue.join()
+                for _ in workers:
+                    queue.put_nowait(None)
+                await asyncio.gather(*workers)
+
             if _event_bus is not None:
                 await _event_bus.publish_async(
                     rag_pending_reconciled(
@@ -380,6 +415,22 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
             await _event_bus.publish_async(
                 rag_orphan_purged(files=files_purged, chunks=chunks_purged)
             )
+
+    # Post-index watermark freshness check.
+    post_index_steps = ["corpus_hints", "vocabulary", "bibliography"]
+    if _property_index is not None:
+        stale = _property_index.check_watermarks(post_index_steps)
+        if stale:
+            logger.error(
+                "Post-index enrichment stale after last reindex: %s  "
+                "Run: tasks/runbooks/rag-post-index-refresh.md",
+                stale,
+            )
+            if _event_bus is not None:
+                await _event_bus.publish_async(rag_post_index_stale(stale_steps=stale))
+            if config.post_index_enforcement != "warn":
+                global _post_index_stale
+                _post_index_stale = True
 
     await _watcher_manager.start(config)
 
@@ -512,6 +563,7 @@ async def _delete_file_impl(source: str) -> DeleteResult:
     if _property_index is not None:
         for chunk_id in existing_ids:
             await _property_index.remove_chunk(chunk_id)
+        await _property_index.fts.remove_batch(existing_ids)
 
     logger.info(
         "Watcher delete complete: source=%s deleted=%d", source, len(existing_ids)
@@ -775,11 +827,33 @@ async def _index_file_impl(
                     )
                 return IndexResult(deleted=0, indexed=0, unchanged=False, file=source)
 
+        # Contextual embeddings: prepend LLM-generated context for embedding only.
+        embed_texts = texts
+        if _config is not None and _config.contextualize_model:
+            contexts = await contextualize_chunks(
+                chunks,
+                source,
+                _config.contextualize_model,
+                max_concurrent=_config.contextualize_max_concurrent,
+            )
+            embed_texts = [
+                f"{ctx}\n\n{text}" if ctx else text
+                for ctx, text in zip(contexts, texts, strict=True)
+            ]
+            for i, ctx in enumerate(contexts):
+                if ctx:
+                    metadatas[i]["context_prefix"] = ctx
+                    metadatas[i]["contextualize_model"] = _config.contextualize_model
+
         # Embed before mutating: if embed raises, old chunks remain intact.
-        embeddings = await embed_chunks(texts)
+        embeddings = await embed_chunks(embed_texts)
         collection.upsert(
             ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
         )
+        if _property_index is not None:
+            await _property_index.fts.insert_batch(
+                [(cid, source, text) for cid, text in zip(ids, texts, strict=True)]
+            )
         if _property_index is not None and extraction_property_entries:
             try:
                 await _property_index.add_batch_with_scope(extraction_property_entries)
@@ -791,13 +865,11 @@ async def _index_file_impl(
         new_id_set = set(ids)
         stale_ids = [eid for eid in existing_ids if eid not in new_id_set]
         if stale_ids:
-            # Property index cleanup BEFORE ChromaDB delete.
-            # ∀ kill after remove_chunk, before collection.delete:
-            #   stale chunks remain in ChromaDB (no property refs) → reconcile deletes on restart.
-            # ∀ kill after collection.delete: impossible — property refs already cleaned.
+            # Property index + FTS cleanup BEFORE ChromaDB delete.
             if _property_index is not None:
                 for old_id in stale_ids:
                     await _property_index.remove_chunk(old_id)
+                await _property_index.fts.remove_batch(stale_ids)
             collection.delete(ids=stale_ids)
     except Exception as exc:
         if _event_bus is not None:
@@ -850,6 +922,11 @@ async def _index_file_impl(
 
 @app.post("/search", response_model=SearchResponse)
 async def search(request: SearchRequest) -> SearchResponse:
+    if _post_index_stale:
+        raise HTTPException(
+            status_code=503,
+            detail="Post-index enrichment stale. Run: tasks/runbooks/rag-post-index-refresh.md",
+        )
     original_scope = request.scope
     try:
         request = resolve_scope_request(request, _config)
@@ -942,6 +1019,19 @@ async def search(request: SearchRequest) -> SearchResponse:
         source_prefixes=request.source_prefixes,
         top_k=request.top_k,
     )
+
+    bm25_hits = 0
+    if _property_index is not None:
+        result_ids, chunks, metadatas, distances, bm25_hits = apply_bm25_sidecar(
+            ids=result_ids,
+            chunks=chunks,
+            metadatas=metadatas,
+            distances=distances,
+            query=request.query,
+            fts=_property_index.fts,
+            collection=collection,
+            source_prefixes=request.source_prefixes,
+        )
 
     property_hits = 0
     if _property_index is not None and _config is not None:

@@ -211,14 +211,15 @@ def rag_extraction_batch_completed(
         when all chunks succeed).
     extraction_model: model id used for extraction when configured.
     """
-    payload = {
+    payload: dict[str, object] = {
         "file": file,
         "chunk_count": chunk_count,
         "successful": successful,
         "written": written,
         "duration_seconds": duration_seconds,
-        **({"extraction_model": extraction_model} if extraction_model is not None else {}),
     }
+    if extraction_model is not None:
+        payload["extraction_model"] = extraction_model
     return Event(signal="rag.extraction.batch.completed", payload=payload)
 
 
@@ -341,15 +342,18 @@ def rag_file_indexed(
         article_venue, published_date, article_doi when file is in article registry).
     bibliography_chunks: optional count of chunks tagged is_bibliography for this file.
     """
-    payload = {
+    payload: dict[str, object] = {
         "file": file,
         "deleted": deleted,
         "indexed": indexed,
         "duration_seconds": duration_seconds,
-        **({"batch_start_ts": batch_start_ts} if batch_start_ts is not None else {}),
-        **({"document_metadata": document_metadata} if document_metadata is not None else {}),
-        **({"bibliography_chunks": bibliography_chunks} if bibliography_chunks is not None else {}),
     }
+    if batch_start_ts is not None:
+        payload["batch_start_ts"] = batch_start_ts
+    if document_metadata is not None:
+        payload["document_metadata"] = document_metadata
+    if bibliography_chunks is not None:
+        payload["bibliography_chunks"] = bibliography_chunks
     return Event(signal="rag.file.indexed", payload=payload)
 
 
@@ -434,6 +438,19 @@ def rag_orphan_purged(
     return Event(
         signal="rag.orphan.purged",
         payload={"files": files, "chunks": chunks},
+    )
+
+
+@event_factory
+def rag_post_index_stale(*, stale_steps: list[str]) -> Event:
+    """Emitted on startup when post-index enrichment steps are older than the last reindex.
+
+    ∀ step ∈ stale_steps: watermarks[step].completed_at < watermarks['reindex'].completed_at
+    or watermark is missing entirely. Operator should run the post-index refresh runbook.
+    """
+    return Event(
+        signal="rag.post_index.stale",
+        payload={"stale_steps": stale_steps},
     )
 
 
