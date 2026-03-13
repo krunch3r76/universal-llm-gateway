@@ -245,8 +245,6 @@ class FederatedGatewayManager(Sequential):
 
         new_catalog = gateway.available_models
         if old_catalog != new_catalog and self._event_bus:
-            import asyncio
-
             from src.scheduling.events import FederationGatewayCatalogChanged
 
             asyncio.create_task(
@@ -530,8 +528,6 @@ class FederatedGatewayManager(Sequential):
 
         # Emit staleness event if telemetry is stale
         if not is_fresh:
-            import asyncio
-
             from src.scheduling.events import FederationTelemetryMarkedStale
 
             # Get remote_id from gateway (guaranteed to exist since we have age)
@@ -1059,8 +1055,6 @@ class FederatedGatewayManager(Sequential):
                 f"📦 Catalog changed for gateway {gw.gateway_id}: "
                 f"{len(old_catalog)} → {len(new_catalog)} models"
             )
-            import asyncio
-
             from src.scheduling.events import FederationGatewayCatalogChanged
 
             asyncio.create_task(
@@ -1237,8 +1231,6 @@ class FederatedGatewayManager(Sequential):
 
         # Emit MODEL_UNLOADED event to EventBus (unified with local path)
         if self._event_bus:
-            import asyncio
-
             from src.scheduling.events import ModelUnloaded
 
             asyncio.create_task(
@@ -1535,8 +1527,6 @@ class FederatedGatewayManager(Sequential):
                     f"📦 Catalog changed for gateway {gateway_id}: "
                     f"{len(old_catalog)} → {len(new_catalog)} models"
                 )
-                import asyncio
-
                 from src.scheduling.events import FederationGatewayCatalogChanged
 
                 asyncio.create_task(

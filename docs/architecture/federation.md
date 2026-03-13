@@ -79,7 +79,7 @@ Remote computes deltas; Master applies via `apply_delta()` / `apply_snapshot()`.
 |---|---|---|
 | `FederatedGatewayManager` | `master/manager/federated_gateway_manager.py` | Gateway state from telemetry |
 | `FederatedRequestForwarder` | `master/routing/forward.py` | Forward requests to Remotes |
-| `DecisionEngine` | `systems/routing/selection/decision/engine.py` | Feasibility + scoring + selection |
+| `DecisionEngine` | `systems/routing/selection/decision/engine/` | Feasibility + scoring + selection |
 | `MasterTelemetryReceiver` | `master/telemetry/receiver.py` | Receives telemetry, updates manager |
 | `FederationIntegration` | `integration/core.py` | Mode-specific setup |
 | `LoadOrchestrator` | `master/orchestration/load_orchestrator.py` | Model load coordination, eviction |

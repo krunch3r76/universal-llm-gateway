@@ -38,7 +38,7 @@ Selection: `∃ T1 candidate ⟹ selected ∈ T1 ∨ (T2.score ≥ T1.score + ma
 3. **Selection rule** — pick highest-scoring feasible gateway
 4. **Sticky guard** — prevent concurrent race for sticky models (see below)
 
-**Source**: `selection/decision/engine.py`
+**Source**: `selection/decision/engine/` (package)
 
 ## Sticky Routing
 
@@ -142,7 +142,7 @@ Each `GATEWAY_RESOURCE_UPDATE` increments epoch and wakes all waiters.
 | `telemetry/freshness_waiter.py` | Epoch-based telemetry wait |
 | `selection/stargate_collector.py` | Federated stargate collection |
 | `selection/collector.py` | Placement requirements builder |
-| `selection/decision/engine.py` | `DecisionEngine.select()` (stateless) |
+| `selection/decision/engine/` | `DecisionEngine.select()` (stateless) |
 | `selection/decision/eviction_planning.py` | Eviction plan: idle model selection, VRAM source priority |
 | `selection/decision/stability.py` | `StickyPlacementTracker` |
 | `selection/decision/feasibility.py` | T0/T1/T2 classification |

@@ -926,7 +926,7 @@ code_changes:
   - file: gateways/types.py
     modification: Add FederatedGateway to Gateway union type
     
-  - file: systems/routing/selection/decision/engine.py
+  - file: systems/routing/selection/decision/engine/
     modification: Handle FederatedGateway in candidate collection
     
   - file: systems/routing/selection/decision/feasibility.py
@@ -1241,7 +1241,7 @@ services/universal-stargate/
 │   └── routing/                   # Gateway selection
 │       ├── selection/
 │       │   └── decision/
-│       │       ├── engine.py     # DecisionEngine
+│       │       ├── engine/        # DecisionEngine (package)
 │       │       ├── feasibility.py # T0/T1/T2 tiers
 │       │       └── scorer.py     # Utility scoring
 │       └── queue/                # Request queuing

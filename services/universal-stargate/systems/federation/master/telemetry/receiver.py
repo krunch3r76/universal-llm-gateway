@@ -7,6 +7,7 @@ INVARIANT: Only telemetry types are forwarded to callback
 INVARIANT: Non-telemetry types are logged and dropped
 """
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -77,8 +78,6 @@ class MasterTelemetryReceiver:
         # Request-scoped telemetry: publish to event bus, not gateway manager
         if msg_type == FederationMessageType.REQUEST_INFERENCE_STARTED.value:
             if self._event_bus is not None:
-                import asyncio
-
                 from src.scheduling.events import RequestInferenceStarted
 
                 request_id = data.get("request_id")
@@ -100,8 +99,6 @@ class MasterTelemetryReceiver:
 
         # Emit telemetry received event
         if self._event_bus:
-            import asyncio
-
             from src.scheduling.events import FederationTelemetryReceived
 
             # Extract model count and resource summary from telemetry data
