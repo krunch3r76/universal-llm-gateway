@@ -83,11 +83,19 @@ async def call_model(
         and map_iteration_request_id.
         All data is per-call (no instance state mutation).
 
+    Timeout propagation:
+        HTTP timeout (and hence the proxy's per-request retry budget) is
+        resolved as: ``step.handler_timeout_seconds`` > ``step.timeout_seconds``
+        > ``pipeline.options.timeout_seconds`` > None (client default).
+        When both step-level fields are unset, the pipeline-level fallback
+        ensures every pipeline request carries an ``X-Request-Timeout`` header.
+
     Raises:
         ContextExceededError: If prompt exceeds model context (pre-flight)
         ProxyClientError: If model call fails or response cannot be parsed
     """
     from ...events.inference import ModelInvocation
+    from ...dag import ContextExceededError
     from ...execution.proxy_client import ProxyClientError
 
     # AUTO-RESOLVE model alias to full ID (unless caller already resolved it)
@@ -102,17 +110,6 @@ async def call_model(
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
-
-    # Pre-flight: reject prompts that obviously exceed the model's context
-    _check_context_feasibility(
-        resolved_model_id,
-        messages,
-        step,
-        context,
-        system_prompt=system_prompt,
-        user_prompt=prompt,
-        publish_event=publish_event,
-    )
 
     resolved_cfg = {
         "temperature": temperature,
@@ -147,22 +144,60 @@ async def call_model(
             resolved_model_id, params["response_format"]
         )
 
-    # Build complete request body (captured for debugging/viewer)
+    # Build complete request body before pre-flight so failure events can include it
     request_body: dict[str, Any] = {
         "model": resolved_model_id,
         "messages": messages,
         "stream": False,
         **params,
     }
+    recorder = context.recorder
+    call_start = _time.monotonic()
 
-    # Determine HTTP timeout from step config
-    # Extra 30s buffer for network latency and server processing above step timeout
+    # Pre-flight: reject prompts that obviously exceed the model's context
+    try:
+        _check_context_feasibility(
+            resolved_model_id,
+            messages,
+            step,
+            context,
+            system_prompt=system_prompt,
+            user_prompt=prompt,
+            publish_event=publish_event,
+        )
+    except ContextExceededError as exc:
+        call_duration_ms = (_time.monotonic() - call_start) * 1000
+        recorder = context.recorder
+        if recorder:
+            recorder.emit(
+                ModelInvocation(
+                    step_name=step.name,
+                    model_id=resolved_model_id,
+                    call_label=call_label,
+                    system_prompt=system_prompt,
+                    user_prompt=prompt,
+                    request_body=request_body,
+                    error=f"ContextExceededError: {exc}",
+                    latency_ms=call_duration_ms,
+                    success=False,
+                    metadata=metadata,
+                )
+            )
+        raise
+
+    # Determine HTTP timeout: step-level > pipeline-level > None (client default).
+    # Propagated as X-Request-Timeout header so the proxy uses it as the
+    # per-request retry budget instead of its blanket upstream_retry_timeout.
     _http_timeout_buffer = 30
     http_timeout = None
     if step.handler_timeout_seconds:
         http_timeout = step.handler_timeout_seconds + _http_timeout_buffer
     elif step.timeout_seconds:
         http_timeout = step.timeout_seconds + _http_timeout_buffer
+    elif context.pipeline and getattr(context.pipeline, "options", None):
+        pipeline_timeout = getattr(context.pipeline.options, "timeout_seconds", None)
+        if pipeline_timeout is not None and pipeline_timeout > 0:
+            http_timeout = pipeline_timeout + _http_timeout_buffer
 
     # Resolve skip_token_counting: step overrides pipeline options
     skip_tc = step.skip_token_counting
@@ -177,16 +212,9 @@ async def call_model(
     effective_disable_profile = step.disable_profile
     if effective_disable_profile is None:
         effective_disable_profile = context.pipeline.options.disable_profile
-    effective_profile = step.profile
-    if effective_profile is None:
-        effective_profile = model_profile
-    if effective_profile is None:
-        effective_profile = context.pipeline.options.profile
+    effective_profile = step.profile or model_profile or context.pipeline.options.profile
     if model_profile and step.disable_profile is not True:
         effective_disable_profile = False
-
-    recorder = context.recorder
-    call_start = _time.monotonic()
 
     # Consume pre-generated request ID (if available) for the first call
     # of a map iteration — enables request.processing event correlation.

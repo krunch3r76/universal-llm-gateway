@@ -134,6 +134,21 @@ prompts:
         one: describe the pattern, name the methods or lines where it appears, suggest
         an extraction name and destination module. Use [] if no duplication exists.
 
+      ## CRITICAL VERIFICATION PROTOCOL (STRICT)
+
+      Before producing final JSON, you MUST perform this exact protocol:
+
+      1. Build a complete top-level symbol inventory from source_code:
+         - Include top-level functions, classes, and assignments/constants.
+         - Include private names (leading underscore) and public names.
+      2. Cross-check inventory against modules[].definitions:
+         - Mark each symbol as ASSIGNED, MISSING, or PHANTOM.
+         - Ensure every source symbol is ASSIGNED exactly once.
+      3. Emit a machine-parseable audit in `reasoning`:
+         - Format exactly:
+           "Symbol audit: <total> total symbols | <assigned> assigned | <missing> missing | <phantom> phantom"
+         - Output is valid only when missing=0 and phantom=0.
+
       ## Output
 
       Follow the instructions. Cross-check every definition against the source

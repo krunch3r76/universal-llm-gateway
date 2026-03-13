@@ -14,7 +14,7 @@ _client = httpx.AsyncClient(timeout=60.0)
 logger = logging.getLogger(__name__)
 
 _embed_model: str = "bge-m3-q8-0-8192-cpu"
-_probe_payload: dict[str, object] = {"model": _embed_model, "input": ["probe"]}
+_probe_payload: dict[str, str | list[str]] = {"model": _embed_model, "input": ["probe"]}
 _event_bus: EventBus | None = None
 
 _CONTEXT_SUFFIX_RE = re.compile(r"-(\d+)(?:-(?:cpu|hybrid))?$")
@@ -284,7 +284,7 @@ def _fallback_to_zero_vector(text_len: int) -> list[list[float]] | None:
     not yet been cached (dim unknown), forcing callers to raise instead of
     silently producing an invalid zero-length vector.
     """
-    from services.rag.events import rag_embedding_chunk_fallback
+    from services.rag.events.indexing import rag_embedding_chunk_fallback
 
     if _embed_dim is None:
         return None
@@ -430,11 +430,12 @@ async def embed_chunks(texts: list[str]) -> list[list[float]]:
 
 
 class _TransientEmbeddingError(Exception):
-    """Raised when an embedding 500 may be transient (VRAM pressure, model fault).
+    """Raised for potentially transient embedding backend failures.
 
-    Callers should retry with backoff. If all retries fail on a single-item batch,
-    the failure is content-specific — _post_embeddings substitutes a zero vector
-    rather than propagating.
+    This exception represents retryable conditions such as VRAM pressure or
+    transient model faults. Callers should retry with backoff. If a single-item
+    batch still fails after all retries, the failure is treated as content-
+    specific and _post_embeddings may substitute a zero vector fallback.
     """
 
 
@@ -469,7 +470,7 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
     """
     # When scope is a list, only the first element is used for instruction formatting.
     if isinstance(scope, list):
-        if len(scope) > 1:
+        if scope and len(scope) > 1:
             logger.warning(
                 "embed_query received multiple scopes; using first only: %s",
                 scope[0],
@@ -504,7 +505,18 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
             else:
                 response.raise_for_status()
                 data = response.json()
-                return data["data"][0]["embedding"]
+                embedding = data["data"][0]["embedding"]
+                if _event_bus is not None:
+                    from services.rag.events.query import rag_embedding_query_success
+
+                    _event_bus.publish_async_nowait(
+                        rag_embedding_query_success(
+                            model_id=_embed_model,
+                            query_len=len(text),
+                            scope=scope,
+                        )
+                    )
+                return embedding
         except httpx.HTTPStatusError as exc:
             if not _is_transient_status(exc.response.status_code):
                 raise
@@ -532,6 +544,18 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
         last_status,
         _embed_model,
     )
+    if _event_bus is not None:
+        from services.rag.events.query import rag_embedding_query_failed
+
+        _event_bus.publish_async_nowait(
+            rag_embedding_query_failed(
+                model_id=_embed_model,
+                attempts=_QUERY_RETRY_ATTEMPTS,
+                last_status=last_status,
+                query_len=len(text),
+                scope=scope,
+            )
+        )
     raise EmbeddingTransientError(
         f"Embedding query failed after {_QUERY_RETRY_ATTEMPTS} attempts "
         f"(model={_embed_model}, last_status={last_status})",

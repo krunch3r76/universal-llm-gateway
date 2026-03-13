@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -297,6 +298,7 @@ def _normalize_plan_data(raw: dict) -> dict:
     ]
 
     return {
+        "reasoning": raw.get("reasoning", ""),
         "improvements": improvements,
         "modules": modules,
         "implementation_guide": raw.get("implementation_guide", ""),
@@ -305,10 +307,11 @@ def _normalize_plan_data(raw: dict) -> dict:
 
 
 def _extract_source_definitions(path: Path) -> set[str]:
-    """Extract public top-level definition names from a Python file via AST.
+    """Extract top-level definition names from a Python file via AST.
 
-    Returns constants (UPPER_CASE module-level assignments), functions, and
-    classes. Private names (leading underscore) are excluded.
+    Returns functions, classes, and module-level assignments/constants.
+    Private names (leading underscore) are included to allow strict
+    coverage validation for split plans that move internal state.
     """
     try:
         tree = ast.parse(path.read_text(errors="replace"))
@@ -319,19 +322,60 @@ def _extract_source_definitions(path: Path) -> set[str]:
     for node in ast.iter_child_nodes(tree):
         match node:
             case ast.FunctionDef(name=name) | ast.AsyncFunctionDef(name=name):
-                if not name.startswith("_"):
-                    names.add(name)
+                names.add(name)
             case ast.ClassDef(name=name):
-                if not name.startswith("_"):
-                    names.add(name)
+                names.add(name)
             case ast.Assign(targets=targets):
                 for t in targets:
-                    if isinstance(t, ast.Name) and not t.id.startswith("_"):
+                    if isinstance(t, ast.Name):
                         names.add(t.id)
             case ast.AnnAssign(target=ast.Name(id=name)):
-                if not name.startswith("_"):
-                    names.add(name)
+                names.add(name)
     return names
+
+
+def _parse_symbol_audit(reasoning: str) -> tuple[int, int, int, int] | None:
+    """Parse required symbol audit line from model reasoning.
+
+    Expected format:
+      Symbol audit: <total> total symbols | <assigned> assigned | <missing> missing | <phantom> phantom
+    """
+    match = re.search(
+        r"Symbol audit:\s*(\d+)\s+total symbols\s*\|\s*(\d+)\s+assigned\s*\|\s*(\d+)\s+missing\s*\|\s*(\d+)\s+phantom",
+        reasoning,
+    )
+    if not match:
+        return None
+    total, assigned, missing, phantom = (int(part) for part in match.groups())
+    return total, assigned, missing, phantom
+
+
+def _validate_symbol_audit(
+    reasoning: str, source_defs: set[str], coverage_issues: list[str]
+) -> list[str]:
+    """Validate machine-parseable symbol audit from execute_split output."""
+    parsed = _parse_symbol_audit(reasoning)
+    if parsed is None:
+        return [
+            "AUDIT_MISSING: reasoning is missing required symbol audit line "
+            "(`Symbol audit: <total> total symbols | <assigned> assigned | <missing> missing | <phantom> phantom`)"
+        ]
+
+    total, assigned, missing, phantom = parsed
+    issues: list[str] = []
+    if total != len(source_defs):
+        issues.append(
+            f"AUDIT_TOTAL_MISMATCH: audit total={total} but source has {len(source_defs)} symbols"
+        )
+    if missing != 0 or phantom != 0:
+        issues.append(
+            f"AUDIT_NONZERO: audit reported missing={missing}, phantom={phantom}; both must be zero"
+        )
+    if coverage_issues and assigned != len(source_defs):
+        issues.append(
+            f"AUDIT_ASSIGNED_MISMATCH: audit assigned={assigned} but expected {len(source_defs)}"
+        )
+    return issues
 
 
 def _validate_plan_coverage(
@@ -366,15 +410,25 @@ def _validate_plan_coverage(
 
 def _write_structural_plan(
     plan_path: Path, target: Path, plan_data: dict, consumers: list[ConsumerInfo]
-) -> None:
+) -> tuple[list[str], list[str]]:
     """Format finalize JSON into structural plan for a Cursor agent."""
     plan_data = _normalize_plan_data(plan_data)
 
     source_defs = _extract_source_definitions(target)
     coverage_issues = _validate_plan_coverage(source_defs, plan_data.get("modules", []))
+    audit_issues = _validate_symbol_audit(
+        plan_data.get("reasoning", ""), source_defs, coverage_issues
+    )
     if coverage_issues:
         print(f"  WARNING: {len(coverage_issues)} coverage issue(s) in plan:", file=sys.stderr)
         for issue in coverage_issues:
+            print(f"    {issue}", file=sys.stderr)
+    if audit_issues:
+        print(
+            f"  WARNING: {len(audit_issues)} symbol audit issue(s) in plan:",
+            file=sys.stderr,
+        )
+        for issue in audit_issues:
             print(f"    {issue}", file=sys.stderr)
 
     lines: list[str] = [f"# Modularize Plan: {target}\n"]
@@ -386,6 +440,15 @@ def _write_structural_plan(
             "Resolve these before implementing:\n"
         )
         for issue in coverage_issues:
+            lines.append(f"- {issue}")
+        lines.append("")
+    if audit_issues:
+        lines.append("## ⚠️ SYMBOL AUDIT WARNINGS\n")
+        lines.append(
+            "The pipeline output did not include a valid symbol audit proving "
+            "zero missing/phantom symbols. Resolve before implementing:\n"
+        )
+        for issue in audit_issues:
             lines.append(f"- {issue}")
         lines.append("")
 
@@ -519,6 +582,7 @@ def _write_structural_plan(
     lines.append("")
 
     plan_path.write_text("\n".join(lines))
+    return coverage_issues, audit_issues
 
 
 def _run_plan(
@@ -579,7 +643,16 @@ def _run_plan(
         print(f"Error: Pipeline error: {plan_data['error']}", file=sys.stderr)
         sys.exit(1)
 
-    _write_structural_plan(plan_path, target, plan_data, consumers)
+    coverage_issues, audit_issues = _write_structural_plan(
+        plan_path, target, plan_data, consumers
+    )
+    if coverage_issues or audit_issues:
+        print(
+            "Error: Plan failed coverage/audit validation. "
+            "See warnings above and plan file for details.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     return plan_path
 
 

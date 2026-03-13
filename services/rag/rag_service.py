@@ -80,11 +80,10 @@ from services.rag.embeddings import (
 from services.rag.embeddings import (
     set_event_bus as set_embeddings_event_bus,
 )
-from services.rag.events import (
-    rag_article_registry_failed,
-    rag_article_registry_loaded,
-    rag_corpus_hints_update_failed,
-    rag_extraction_model_mismatch,
+from services.rag.events.extraction import rag_extraction_model_mismatch
+from services.rag.events.indexing import (
+    rag_article_content_hash_mismatch,
+    rag_contextualization_applied,
     rag_file_deleted,
     rag_file_indexed,
     rag_file_indexing_failed,
@@ -92,17 +91,25 @@ from services.rag.events import (
     rag_html_normalization_completed,
     rag_html_normalization_failed,
     rag_html_normalization_started,
+    rag_property_index_unavailable,
+)
+from services.rag.events.lifecycle import (
+    rag_article_registry_failed,
+    rag_article_registry_loaded,
     rag_orphan_purged,
     rag_pending_reconciled,
     rag_post_index_stale,
+    rag_shutdown,
+    rag_started,
+)
+from services.rag.events.query import (
+    rag_corpus_hints_update_failed,
     rag_scope_rejected,
     rag_scope_resolved,
     rag_scopes_listed,
     rag_search_embedding_failed,
     rag_search_executed,
     rag_search_no_results,
-    rag_shutdown,
-    rag_started,
 )
 from services.rag.extraction_wiring import (
     ExtractionResult,
@@ -114,7 +121,7 @@ from services.rag.indexing_helpers import (
     check_pdf_duplicate,
     file_hash,
 )
-from services.rag.knowledge_extractor import configure_concurrency
+from services.rag.knowledge_extractor import configure_timeouts
 from services.rag.models import (
     ChunkByIndexItem,
     ChunksByIndexRequest,
@@ -185,7 +192,9 @@ def _article_event_kwargs(
         "doi": "article_doi",
     }
     return {
-        key: value for attr, key in field_map.items() if (value := getattr(entry, attr))
+        key: str(value)
+        for attr, key in field_map.items()
+        if (value := getattr(entry, attr))
     }
 
 
@@ -318,7 +327,7 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
         if isinstance(config.index_workers, int)
         else DEFAULT_INDEX_WORKERS
     )
-    configure_concurrency(config.knowledge_extraction)
+    configure_timeouts(config.knowledge_extraction)
     _watcher_manager = WatcherManager(
         index_fn=_watcher_index_fn,
         delete_fn=_watcher_delete_fn,
@@ -406,11 +415,13 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
                             src,
                             exc_info=True,
                         )
+                        if _property_index is not None:
+                            await _property_index.clear_pending(src)
                         failed_permanent += 1
                     finally:
                         queue.task_done()
 
-            n_workers = min(worker_count, queue.qsize()) if queue.qsize() else 0
+            n_workers = min(worker_count, queue.qsize())
             workers = [
                 asyncio.create_task(_reconcile_worker(), name=f"reconcile-worker-{i}")
                 for i in range(n_workers)
@@ -495,14 +506,14 @@ def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | 
         Matching chunk_tokens override, or None when no watch directory matches.
     """
     resolved_file = file_path.expanduser().resolve()
-    baseline = {f".{ext.lower()}" for ext in config.baseline_extensions}
+    baseline: set[str] = {f".{ext.lower()}" for ext in config.baseline_extensions}
     for watch_directory in config.watch_directories:
         watch_path = Path(watch_directory.path).expanduser().resolve()
         if not resolved_file.is_relative_to(watch_path):
             continue
         if not watch_directory.recursive and resolved_file.parent != watch_path:
             continue
-        effective_extensions = (
+        effective_extensions: set[str] = (
             {f".{ext.lower()}" for ext in watch_directory.extensions}
             if watch_directory.extensions
             else baseline
@@ -569,7 +580,7 @@ async def _index_file(
                 file_path, metadata_overrides, chunk_tokens, source, force=force
             )
     finally:
-        if _file_index_locks.get(source) is lock and not lock.locked():
+        if _file_index_locks.get(source) is lock:
             _file_index_locks.pop(source, None)
 
 
@@ -588,7 +599,7 @@ async def _delete_file(file_path: Path) -> DeleteResult:
         async with lock:
             return await _delete_file_impl(source)
     finally:
-        if _file_index_locks.get(source) is lock and not lock.locked():
+        if _file_index_locks.get(source) is lock:
             _file_index_locks.pop(source, None)
 
 
@@ -644,9 +655,9 @@ async def _index_file_impl(
     is_html_file = file_path.suffix.lower() in {".html", ".htm"}
     raw = file_path.read_bytes()
     # Indexing must run after config load; else schema_version=0 can cause inconsistent hashing.
-    schema_version = (
-        _config.knowledge_extraction.schema_version if _config is not None else 0
-    )
+    if _config is None:
+        raise RuntimeError("RAG service configuration not loaded.")
+    schema_version = _config.knowledge_extraction.schema_version
     content_hash = file_hash(raw, schema_version=schema_version)
     prefix = content_hash[:16]
 
@@ -661,6 +672,14 @@ async def _index_file_impl(
                     entry.content_hash,
                     file_sha,
                 )
+                if _event_bus is not None:
+                    await _event_bus.publish_async_nowait(
+                        rag_article_content_hash_mismatch(
+                            file=source,
+                            expected_hash=entry.content_hash,
+                            actual_hash=file_sha,
+                        )
+                    )
 
     collection = _get_collection()
 
@@ -687,6 +706,8 @@ async def _index_file_impl(
     # ∀ exit path below: finally: clear_pending removes the entry only if we marked.
     prop_index = _property_index
     pending_marked = False
+    if prop_index is None and _event_bus is not None:
+        await _event_bus.publish_async_nowait(rag_property_index_unavailable(file=source))
     if prop_index is not None:
         await prop_index.mark_pending(source)
         pending_marked = True
@@ -894,6 +915,14 @@ async def _index_file_impl(
                 source,
                 _config.contextualize_model,
             )
+            if _event_bus is not None:
+                await _event_bus.publish_async_nowait(
+                    rag_contextualization_applied(
+                        file=source,
+                        chunk_count=len(contexts),
+                        model=_config.contextualize_model,
+                    )
+                )
             embed_texts = [
                 f"{ctx}\n\n{text}" if ctx else text
                 for ctx, text in zip(contexts, texts, strict=True)
@@ -944,6 +973,11 @@ async def _index_file_impl(
     finally:
         if pending_marked and prop_index is not None:
             await prop_index.clear_pending(source)
+        elif pending_marked and prop_index is None:
+            logger.error(
+                "Property index unavailable while clearing pending for source=%s",
+                source,
+            )
 
     await _maybe_update_corpus_hints()
     logger.info(
@@ -1244,6 +1278,9 @@ def _set_collection(col: chromadb.Collection) -> None:
 
     Args:
         col: ChromaDB collection object.
+
+    This exists for admin route wiring and tests that swap in an isolated
+    collection without re-running full application startup.
     """
     global _collection
     _collection = col

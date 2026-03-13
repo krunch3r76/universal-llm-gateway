@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 from services.rag.chunkers import Chunk
 from services.rag.config import KnowledgeExtractionConfig
-from services.rag.events import (
+from services.rag.events.extraction import (
     rag_extraction_batch_completed,
     rag_extraction_batch_skipped,
     rag_extraction_batch_started,
@@ -35,6 +35,7 @@ from services.rag.events import (
     rag_extraction_failed,
     rag_extraction_permanently_skipped,
     rag_extraction_recovery_completed,
+    rag_extraction_recovery_failed,
     rag_extraction_recovery_skipped,
 )
 from services.rag.knowledge_extractor import (
@@ -55,7 +56,8 @@ class ExtractionResult:
     """Result of a knowledge extraction run for one file (batch of chunks).
 
     entities/topics are counts; property_entries are (key, chunk_id, scope, source)
-    quads for the property index; success is True when partial or full write was done.
+    quads for the property index; success is True only when extraction metadata
+    was written (partial or full write) and false for all-or-nothing rollback.
     batch_start_ts: ISO-8601 timestamp when extraction batch started (for per-file duration).
     processing_seconds: Optional Stargate-derived work time (post-queue).
     queue_wait_seconds: Optional time from step start to first inference started.
@@ -196,7 +198,7 @@ async def run_extraction(
         active_chunks = [chunks[id_to_idx[cid]] for cid in active_ids]
         ids = active_ids
         chunks = active_chunks
-        id_to_idx = {cid: i for i, cid in enumerate(ids)}
+        # Keep id_to_idx mapping to original metadatas indices; do not rebuild
     # --- end permanent failure gate ---
 
     if event_bus is not None:
@@ -249,28 +251,24 @@ async def run_extraction(
             )
         return result
     duration = time.monotonic() - start
-    knowledge_list: list[ExtractedKnowledge | None]
-    if isinstance(extract_return, tuple) and len(extract_return) == 2:
-        knowledge_list, timing = extract_return
-        if isinstance(timing, dict):
-            result.processing_seconds = timing.get("processing_seconds")
-            result.queue_wait_seconds = timing.get("queue_wait_seconds")
-    elif isinstance(extract_return, list | tuple):
-        knowledge_list = list(extract_return)
-    else:
+    if not isinstance(extract_return, tuple) or len(extract_return) != 2:
         logger.error(
             "extract_knowledge_batch returned unexpected type %s for file %s",
             type(extract_return).__name__,
             file,
         )
         return result
-    if not isinstance(knowledge_list, list | tuple):
+    knowledge_list, timing = extract_return
+    if not isinstance(knowledge_list, list):
         logger.error(
-            "extract_knowledge_batch returned unexpected type %s for file %s",
+            "extract_knowledge_batch returned invalid list type %s for file %s",
             type(knowledge_list).__name__,
             file,
         )
         return result
+    if isinstance(timing, dict):
+        result.processing_seconds = timing.get("processing_seconds")
+        result.queue_wait_seconds = timing.get("queue_wait_seconds")
 
     staged: dict[str, ExtractedKnowledge] = {}
     for knowledge in knowledge_list:
@@ -511,6 +509,13 @@ async def recover_missing_extraction(
         logger.warning(
             "Recovery extraction failed for %s; will retry on next sweep", source
         )
+        if event_bus is not None:
+            _publish_event_nonblocking(
+                event_bus,
+                rag_extraction_recovery_failed(
+                    file=source, reason="recovery extraction returned unsuccessful"
+                ),
+            )
         return ext_result
 
     # Patch ChromaDB metadata in-place — embeddings and documents are unchanged.

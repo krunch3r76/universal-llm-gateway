@@ -25,10 +25,10 @@ Parsed results flow to two destinations:
 Invariant: ∀ file: (∀ chunk extracted in one call) ∨ (∀ chunk unextracted).
 Partial writes were implemented twice and reverted twice — see lessons.
 
-Concurrency: a module-level semaphore (configured via ``configure_concurrency``)
-bounds the number of concurrent extraction batches to prevent saturating the
-backend model when multiple index workers run in parallel. Per-batch HTTP
-timeouts scale with chunk count as a secondary protection.
+Per-batch HTTP timeouts scale with chunk count to fail fast when the backend
+model is saturated by concurrent index workers.  Concurrency is bounded at the
+queue/worker level (``index_workers`` in config), not here — this project uses
+queues for concurrency control, not semaphores or locks.
 """
 
 from __future__ import annotations
@@ -53,7 +53,6 @@ _client = httpx.AsyncClient(timeout=_PIPELINE_CEILING_S + 30.0)
 
 _MAX_RETRIES = 3
 _BACKOFF_BASE_S = 2.0
-_extraction_semaphore: asyncio.Semaphore | None = None
 _per_chunk_budget_s: float = 60.0
 _batch_overhead_s: float = 30.0
 
@@ -75,19 +74,18 @@ class BatchTimeoutError(Exception):
         self.timeout_seconds = timeout_seconds
 
 
-def configure_concurrency(config: KnowledgeExtractionConfig) -> None:
-    """Configure global extraction concurrency and timeout budgeting settings.
+def configure_timeouts(config: KnowledgeExtractionConfig) -> None:
+    """Set per-batch timeout budgets from config at RAG startup.
 
-    Called during RAG startup. The semaphore bounds in-flight extraction calls
-    across index workers, while timeout parameters define per-batch budgets.
+    Called once during ``_deferred_watcher_start``.  Per-batch HTTP timeouts
+    scale with chunk count (per_chunk * n + overhead, capped at pipeline ceiling)
+    so small batches fail fast under model saturation without penalising large ones.
     """
-    global _extraction_semaphore, _per_chunk_budget_s, _batch_overhead_s
-    _extraction_semaphore = asyncio.Semaphore(config.extraction_concurrency)
+    global _per_chunk_budget_s, _batch_overhead_s
     _per_chunk_budget_s = config.per_chunk_timeout_s
     _batch_overhead_s = config.batch_timeout_overhead_s
     logger.info(
-        "Extraction concurrency configured: semaphore=%d, per_chunk=%.0fs, overhead=%.0fs",
-        config.extraction_concurrency,
+        "Extraction timeouts configured: per_chunk=%.0fs, overhead=%.0fs",
         _per_chunk_budget_s,
         _batch_overhead_s,
     )
@@ -167,7 +165,11 @@ def _parse_one(
     *,
     chunk_id: str,
 ) -> ExtractedKnowledge | None:
-    """Parse a single extraction result dict using caller-owned chunk identity."""
+    """Parse one extraction payload item for a specific chunk identifier.
+
+    The chunk identity comes from caller-owned ordering, not model output.
+    Returns None only when the caller should treat the item as invalid.
+    """
     returned_chunk_id = data.get("chunk_id")
     if isinstance(returned_chunk_id, str) and returned_chunk_id != chunk_id:
         logger.warning(
@@ -221,7 +223,11 @@ def _parse_map_response(
     content: str,
     chunk_ids: list[str],
 ) -> list[ExtractedKnowledge | None]:
-    """Parse map output by iteration order instead of model-supplied chunk IDs."""
+    """Parse map output into per-chunk knowledge aligned by input order.
+
+    Model-supplied chunk IDs are not trusted for alignment; caller-provided
+    chunk_ids define the result ordering contract.
+    """
     try:
         items = json.loads(content)
     except json.JSONDecodeError:
@@ -361,10 +367,9 @@ async def extract_knowledge_batch(
 ) -> tuple[list[ExtractedKnowledge | None], dict[str, float]]:
     """Extract structured knowledge from all chunks in a file via one pipeline call.
 
-    Acquires the configured semaphore before calling Stargate, bounding concurrent
-    extraction batches across index workers. Timeout exceptions are translated to
-    BatchTimeoutError so callers can emit a dedicated timeout event and preserve
-    per-file all-or-nothing behavior.
+    HTTP timeout scales with chunk count so small batches fail fast under model
+    saturation.  Timeout exceptions are translated to BatchTimeoutError so callers
+    can emit a dedicated event and preserve per-file all-or-nothing behavior.
     """
     if not chunk_ids:
         return [], {}
@@ -378,18 +383,26 @@ async def extract_knowledge_batch(
         _per_chunk_budget_s * len(chunks) + _batch_overhead_s,
     )
 
-    async def _guarded_call() -> tuple[
-        list[ExtractedKnowledge | None], dict[str, float]
-    ]:
-        if _extraction_semaphore is not None:
-            async with _extraction_semaphore:
-                return await _call_extraction(chunks, chunk_ids, config)
-        return await _call_extraction(chunks, chunk_ids, config)
-
     last_exc: Exception | None = None
+
+    async def _retry_with_backoff(exc: Exception, attempt: int) -> None:
+        nonlocal last_exc
+        last_exc = exc
+        if attempt < _MAX_RETRIES - 1:
+            delay = _BACKOFF_BASE_S ** (attempt + 1)
+            logger.warning(
+                "Batch extraction attempt %d/%d failed (%s); retrying in %.1fs",
+                attempt + 1,
+                _MAX_RETRIES,
+                type(exc).__name__,
+                delay,
+                exc_info=True,
+            )
+            await asyncio.sleep(delay)
+
     for attempt in range(_MAX_RETRIES):
         try:
-            return await _guarded_call()
+            return await _call_extraction(chunks, chunk_ids, config)
         except httpx.TimeoutException:
             logger.warning(
                 "Batch extraction timed out (%d chunks, budget %.0fs); not retrying",
@@ -400,49 +413,21 @@ async def extract_knowledge_batch(
         except httpx.HTTPStatusError as exc:
             if _is_pipeline_not_registered(exc, config.pipeline):
                 return await _await_pipeline_registration(chunks, chunk_ids, config)
-            last_exc = exc
-            if attempt < _MAX_RETRIES - 1:
-                delay = _BACKOFF_BASE_S ** (attempt + 1)
-                logger.warning(
-                    "Batch extraction attempt %d/%d failed (%s); retrying in %.1fs",
-                    attempt + 1,
-                    _MAX_RETRIES,
-                    type(exc).__name__,
-                    delay,
-                    exc_info=True,
-                )
-                await asyncio.sleep(delay)
+            await _retry_with_backoff(exc, attempt)
         except httpx.RequestError as exc:
-            last_exc = exc
-            if attempt < _MAX_RETRIES - 1:
-                delay = _BACKOFF_BASE_S ** (attempt + 1)
-                logger.warning(
-                    "Batch extraction attempt %d/%d failed (%s); retrying in %.1fs",
-                    attempt + 1,
-                    _MAX_RETRIES,
-                    type(exc).__name__,
-                    delay,
-                    exc_info=True,
-                )
-                await asyncio.sleep(delay)
+            await _retry_with_backoff(exc, attempt)
         except Exception as exc:
-            last_exc = exc
-            if attempt < _MAX_RETRIES - 1:
-                delay = _BACKOFF_BASE_S ** (attempt + 1)
-                logger.warning(
-                    "Batch extraction attempt %d/%d failed (%s); retrying in %.1fs",
-                    attempt + 1,
-                    _MAX_RETRIES,
-                    type(exc).__name__,
-                    delay,
-                    exc_info=True,
-                )
-                await asyncio.sleep(delay)
+            await _retry_with_backoff(exc, attempt)
 
-    logger.warning(
-        "Batch extraction failed after %d attempts: %s",
-        _MAX_RETRIES,
-        last_exc,
-        exc_info=True,
-    )
+    if last_exc is not None:
+        logger.warning(
+            "Batch extraction failed after %d attempts: %s",
+            _MAX_RETRIES,
+            last_exc,
+            exc_info=True,
+        )
+    else:
+        logger.error(
+            "Batch extraction finished without success and without captured exception"
+        )
     return [None] * len(chunk_ids), {}

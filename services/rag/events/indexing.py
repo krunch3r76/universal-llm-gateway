@@ -1,0 +1,271 @@
+"""RAG indexing and storage event factories."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from universal_event_bus import Event, event_factory
+
+
+@event_factory
+def rag_property_index_rebuilt(
+    *,
+    collection: str,
+    count: int,
+) -> Event:
+    return Event(
+        signal="rag.property.index.rebuilt",
+        payload={"collection": collection, "count": count},
+    )
+
+
+@event_factory
+def rag_file_indexed(
+    *,
+    file: str,
+    deleted: int,
+    indexed: int,
+    duration_seconds: float = 0.0,
+    batch_start_ts: str | None = None,
+    document_metadata: dict[str, Any] | None = None,
+    bibliography_chunks: int | None = None,
+    processing_seconds: float | None = None,
+    queue_wait_seconds: float | None = None,
+) -> Event:
+    """Emitted after a file is fully indexed into both ChromaDB and the property index.
+
+    batch_start_ts: optional ISO-8601 when extraction started (enables per-file wall-clock duration).
+    document_metadata: optional dict for document-specific fields (e.g. article_title, article_authors,
+        article_venue, published_date, article_doi when file is in article registry).
+    bibliography_chunks: optional count of chunks tagged is_bibliography for this file.
+    processing_seconds: optional Stargate-derived work time (post-queue).
+    queue_wait_seconds: optional time from pipeline step start to first inference started.
+    """
+    return Event(
+        signal="rag.file.indexed",
+        payload={
+            "file": file,
+            "deleted": deleted,
+            "indexed": indexed,
+            "duration_seconds": duration_seconds,
+            **{
+                key: value
+                for key, value in {
+                    "batch_start_ts": batch_start_ts,
+                    "document_metadata": document_metadata,
+                    "bibliography_chunks": bibliography_chunks,
+                    "processing_seconds": processing_seconds,
+                    "queue_wait_seconds": queue_wait_seconds,
+                }.items()
+                if value is not None
+            },
+        },
+    )
+
+
+@event_factory
+def rag_file_deleted(
+    *,
+    file: str,
+    deleted: int,
+) -> Event:
+    """Emitted when all chunks for a file are deleted with no replacement (empty file)."""
+    return Event(
+        signal="rag.file.deleted",
+        payload={"file": file, "deleted": deleted},
+    )
+
+
+@event_factory
+def rag_file_skipped(
+    *,
+    file: str,
+    reason: str,
+) -> Event:
+    """Emitted when a file is skipped during indexing (unchanged or duplicate PDF)."""
+    return Event(
+        signal="rag.file.skipped",
+        payload={"file": file, "reason": reason},
+    )
+
+
+@event_factory
+def rag_file_indexing_failed(
+    *,
+    file: str,
+    error: str,
+) -> Event:
+    """Emitted when an unhandled error aborts file indexing."""
+    return Event(
+        signal="rag.file.indexing.failed",
+        payload={"file": file, "error": error},
+    )
+
+
+@event_factory
+def rag_file_deletion_failed(
+    *,
+    file: str,
+    error: str,
+) -> Event:
+    """Emitted when watcher-triggered file deletion cleanup fails."""
+    return Event(
+        signal="rag.file.deletion.failed",
+        payload={"file": file, "error": error},
+    )
+
+
+@event_factory
+def rag_article_content_hash_mismatch(
+    *,
+    file: str,
+    expected_hash: str,
+    actual_hash: str,
+) -> Event:
+    """Emitted when source bytes do not match article registry content_hash."""
+    return Event(
+        signal="rag.article.content.hash.mismatch",
+        payload={
+            "file": file,
+            "expected_hash": expected_hash,
+            "actual_hash": actual_hash,
+        },
+    )
+
+
+@event_factory
+def rag_property_index_unavailable(*, file: str) -> Event:
+    """Emitted when indexing continues without a property index instance."""
+    return Event(
+        signal="rag.property.index.unavailable",
+        payload={"file": file},
+    )
+
+
+@event_factory
+def rag_contextualization_applied(*, file: str, chunk_count: int, model: str) -> Event:
+    """Emitted when contextualized chunk prefixes are applied before embedding."""
+    return Event(
+        signal="rag.contextualization.applied",
+        payload={"file": file, "chunk_count": chunk_count, "model": model},
+    )
+
+
+@event_factory
+def rag_embedding_chunk_fallback(
+    *,
+    model: str,
+    text_len: int,
+    dim: int,
+) -> Event:
+    """Emitted when a single-item embedding batch fails all retries and a zero vector is substituted.
+
+    Signals a content-specific fault — the chunk is retained in the index with a
+    zero vector and is not retrievable by semantic search. Operators should monitor
+    the rate of this signal to detect sustained embedding degradation. text_len is
+    the character length of the failing text; dim matches the active model's output
+    dimension.
+    """
+    return Event(
+        signal="rag.embedding.chunk.fallback",
+        payload={"model": model, "text_len": text_len, "dim": dim},
+    )
+
+
+@event_factory
+def rag_html_normalization_started(*, file: str) -> Event:
+    """Emitted when HTML ingest enters the normalization pipeline."""
+    return Event(signal="rag.html.normalization.started", payload={"file": file})
+
+
+@event_factory
+def rag_html_normalization_completed(
+    *,
+    file: str,
+    output_chars: int,
+) -> Event:
+    """Emitted when HTML normalization succeeds with deterministic markdown output."""
+    return Event(
+        signal="rag.html.normalization.completed",
+        payload={"file": file, "output_chars": output_chars},
+    )
+
+
+@event_factory
+def rag_html_normalization_failed(*, file: str, error: str) -> Event:
+    """Emitted when HTML normalization fails and file is skipped from indexing."""
+    return Event(
+        signal="rag.html.normalization.failed",
+        payload={"file": file, "error": error},
+    )
+
+
+@event_factory
+def rag_directory_cleared(
+    *,
+    path: str,
+    sources_cleared: int,
+    chunks_cleared: int,
+) -> Event:
+    """Emitted after all chunks for sources under a directory are deleted.
+
+    Fired by POST /clear_directory and by reindex_directory when force=True
+    (upfront clear before re-indexing).
+    """
+    return Event(
+        signal="rag.directory.cleared",
+        payload={
+            "path": path,
+            "sources_cleared": sources_cleared,
+            "chunks_cleared": chunks_cleared,
+        },
+    )
+
+
+@event_factory
+def rag_directory_index_started(
+    *,
+    path: str,
+    total_files: int,
+) -> Event:
+    """Emitted before concurrent directory indexing dispatch begins.
+
+    ∀ concurrent reindex: emitted once, listing the directory and file count
+    so an interrupted session is diagnosable via the event log.
+    total_files: number of files that will be dispatched (before any are processed).
+    """
+    return Event(
+        signal="rag.directory.index.started",
+        payload={"path": path, "total_files": total_files},
+    )
+
+
+@event_factory
+def rag_directory_index_completed(
+    *,
+    path: str,
+    total_files: int,
+    indexed: int,
+    deleted: int,
+    unchanged: int,
+    duplicates: int,
+    errors: int,
+) -> Event:
+    """Emitted after all files in a directory index/reindex have been processed.
+
+    Absence of this signal following rag.directory.index.started indicates
+    an interrupted session — re-run reindex_directory to recover.
+    errors: files that raised an exception and were passed to on_index_error.
+    """
+    return Event(
+        signal="rag.directory.index.completed",
+        payload={
+            "path": path,
+            "total_files": total_files,
+            "indexed": indexed,
+            "deleted": deleted,
+            "unchanged": unchanged,
+            "duplicates": duplicates,
+            "errors": errors,
+        },
+    )

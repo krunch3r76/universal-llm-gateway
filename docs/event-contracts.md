@@ -207,7 +207,7 @@ rag.started
           └─> rag.extraction.batch.started   (* if extraction enabled and content changed)
               └─> rag.extraction.completed | rag.extraction.failed  (* N per chunk)
               └─> rag.extraction.permanently.skipped  (* ≤ M; when chunk crosses max_attempts)
-              └─> rag.extraction.batch.completed
+              └─> rag.extraction.batch.completed | rag.extraction.batch.timed.out
           └─> rag.extraction.batch.skipped    (* if all chunks permanently failed)
           └─> rag.embedding.chunk.fallback*   (* zero or more; chunk kept as zero vector on persistent embedding fault)
           └─> rag.file.indexed | rag.file.deleted | rag.file.indexing.failed
@@ -264,13 +264,14 @@ Payload semantics:
 
 ### RAG Extraction Batch Lifecycle
 
-**INVARIANT**: `rag.extraction.batch.started` ⟹ `rag.extraction.batch.completed` (same `file`)
+**INVARIANT**: `rag.extraction.batch.started` ⟹ (`rag.extraction.batch.completed` ∨ `rag.extraction.batch.timed.out`) (same `file`)
 
 | Signal | Required Payload | Description |
 |--------|-----------------|-------------|
 | `rag.extraction.batch.started` | `file`, `chunk_count` | Batch extraction initiated for a file |
 | `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | Batch extraction finished (successful ≤ chunk_count; written = 0 on partial failure). Optional payload: `extraction_model`. |
 | `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | Re-extraction triggered because existing chunks have different or missing extraction_model. |
+| `rag.extraction.batch.timed.out` | `file`, `chunk_count`, `timeout_seconds`, `duration_seconds` | Extraction batch exceeded dynamic timeout budget; all chunks recorded as transient failures |
 | `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | All chunks permanently failed — no pipeline call made |
 | `rag.extraction.failed` | `chunk_id`, `error` | Per-chunk extraction failure (expected iteration result missing or invalid after batch parsing) |
 | `rag.extraction.permanently.skipped` | `chunk_id`, `source`, `attempt_count` | Chunk crossed `max_extraction_attempts`; permanently abandoned. Persisted as `permanent=1` in `failed_extractions`. Emitted exactly once per chunk. |
@@ -1059,16 +1060,19 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.watch.started` | `path`, `extensions`, `recursive` | - |
 | `rag.watch.initial.started` | `path`, `total_files` | emitted once per watch path when startup sweep candidate list is finalized |
 | `rag.watch.initial.progress` | `path`, `total_files`, `processed`, `reindexed`, `unchanged`, `errors` | emitted on each terminal startup-file outcome; `processed` is monotonic |
-| `rag.watch.initial.complete` | `path`, `files`, `reindexed`, `unchanged`, `errors` | emitted once per watch path at end of startup sweep; invariant: total_files == reindexed + unchanged + errors; `files` excludes errored files |
+| `rag.watch.initial.complete` | `path`, `files`, `reindexed`, `unchanged`, `errors` | emitted once per watch path at end of startup sweep; invariant: total_files == reindexed + unchanged + errors; `files` includes errored files |
 | `rag.watch.reindex.complete` | `file`, `deleted`, `indexed`, `unchanged` | - |
+| `rag.watch.file.deleted` | `file`, `deleted` | watcher deleted all chunks for a source file removed from disk |
 | `rag.watch.reconcile.complete` | `path`, `recovered`, `unchanged` | - |
 | `rag.watch.stopped` | `watchers` | - |
 | `rag.extraction.batch.started` | `file`, `chunk_count` | - |
 | `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | `extraction_model` (optional) |
 | `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | re-extraction due to model mismatch |
+| `rag.extraction.batch.timed.out` | `file`, `chunk_count`, `timeout_seconds`, `duration_seconds` | dynamic per-batch timeout exceeded |
 | `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | all chunks exceeded max_attempts; no pipeline call |
 | `rag.extraction.recovery.completed` | `file`, `entities`, `topics` | recovery pass for missing extraction metadata completed successfully |
 | `rag.extraction.recovery.skipped` | `file`, `reason` | recovery skipped (e.g. no documents in ChromaDB, all chunks permanently failed) |
+| `rag.extraction.recovery.failed` | `file`, `reason` | recovery attempted but extraction metadata could not be committed |
 | `rag.extraction.completed` | `chunk_id`, `entities`, `topics` | - |
 | `rag.extraction.failed` | `chunk_id`, `error` | - |
 | `rag.property.index.rebuilt` | `collection`, `count` | - |
@@ -1081,19 +1085,32 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty) |
 | `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`} |
 | `rag.file.indexing.failed` | `file`, `error` | unhandled error aborted indexing for this file |
+| `rag.file.deletion.failed` | `file`, `error` | watcher-triggered delete cleanup failed; indexed rows may still exist |
+| `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
+| `rag.property.index.unavailable` | `file` | indexing proceeded without property index availability |
+| `rag.contextualization.applied` | `file`, `chunk_count`, `model` | contextual prefixes were applied before embedding |
 | `rag.embedding.chunk.fallback` | `model`, `text_len`, `dim` | chunk embedded as zero vector after all retry attempts exhausted; indicates content-specific model fault; chunk is indexed but not semantically retrievable |
 | `rag.html.normalization.started` | `file` | HTML ingest entered normalization pipeline (before chunking) |
 | `rag.html.normalization.completed` | `file`, `output_chars` | HTML normalization succeeded; output_chars = total chunk text length |
 | `rag.html.normalization.failed` | `file`, `error` | HTML normalization failed; file indexing aborted for this file |
 | `rag.directory.index.started` | `path`, `total_files` | emitted once before concurrent directory index/reindex dispatch; total_files = count of files to process |
 | `rag.directory.index.completed` | `path`, `total_files`, `indexed`, `deleted`, `unchanged`, `duplicates`, `errors` | emitted after all files in a directory index/reindex have been processed; absence after `rag.directory.index.started` indicates interrupted session |
+| `rag.directory.cleared` | `path`, `sources_cleared`, `chunks_cleared` | emitted after clear_directory (and force reindex pre-clear) removes directory-backed chunks |
 | `rag.scope.resolved` | `scope`, `prefix_count` | scope(s) resolved to prefixes; `scope`: str or array of strings |
 | `rag.scope.rejected` | `scope`, `reason`, `available` | scope validation failed |
+| `rag.scopes.listed` | `count` | scope registry listing completed |
 | `rag.post_index.stale` | `stale_steps` | startup: post-index enrichment steps stale after last reindex; operator should run runbook |
+| `rag.search.embedding.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | search embedding retries exhausted; request degraded/fails before vector search |
+| `rag.embedding.query.success` | `model_id`, `query_len`, `scope` | query embedding completed successfully |
+| `rag.embedding.query.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | query embedding retries exhausted before search |
 | `rag.search.executed` | `query_len`, `top_k`, `results`, `scope` | search completed with ≥1 result; `scope`: str \| list[str] \| None |
 | `rag.search.no_results` | `query_len`, `scope` | search completed with 0 results; `scope`: str \| list[str] \| None |
 | `rag.corpus_hints.updated` | `path`, `scopes_updated`, `timestamp` | corpus_hints.yaml written after aggregation from property index |
 | `rag.corpus_hints.update.failed` | `path`, `error` | corpus_hints.yaml update failed after indexing |
+| `rag.corpus.hints.load.failed` | `path`, `error` | corpus_hints.yaml could not be loaded |
+| `rag.scope.vocabulary.load.failed` | `path`, `error` | scope_vocabulary.yaml could not be loaded |
+| `rag.corpus.hints.filter.failed` | `error` | co-occurrence hint filtering failed |
+| `rag.corpus.hints.skipped` | `reason` | corpus-hints generation skipped intentionally |
 
 ### Doc Generate Events
 

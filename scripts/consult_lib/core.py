@@ -138,21 +138,20 @@ def _fetch_rag(
         rag_top_k: For direct search, number of chunks (default 5).
 
     Returns:
-        List of finding strings, or None on failure when use_pipeline=False.
+        List of finding strings, or None when retrieval is unavailable/empty.
 
-    ∀ error when use_pipeline=True: raise RuntimeError — the rag-context pipeline
-    was explicitly requested; silent fallback produces ungrounded output with no
-    visible signal to the caller.
-
-    ∀ error when use_pipeline=False (direct search): return None — direct search
-    is a best-effort path and its failure modes (socket absent, scope unknown) are
-    already surfaced as warnings.
+    Policy:
+        Retrieval is best-effort for both paths. Any retrieval failure degrades
+        to None with an explicit warning so consultation can continue with
+        "no relevant chunks" context instead of aborting.
     """
 
     def _handle_rag_error(msg: str) -> None:
-        if use_pipeline:
-            raise RuntimeError(msg)
         print(f"{msg} Skipping RAG.", file=sys.stderr)
+
+    def _is_timeout_error(msg: str) -> bool:
+        lowered = msg.lower()
+        return "timed out" in lowered or "timeout" in lowered
 
     if not rag_socket_present(rag_url):
         _handle_rag_error(
@@ -181,6 +180,7 @@ def _fetch_rag(
             question,
             stargate_url=stargate_url,
             rag_url=rag_url,
+            timeout=8.0,
             scope_override=scope,
             extra_pipeline_options=extra_pipeline_options,
         )
@@ -198,11 +198,20 @@ def _fetch_rag(
                     file=sys.stderr,
                 )
                 return None
-            raise RuntimeError(f"RAG pipeline failed: {error}")
+            if _is_timeout_error(error):
+                print("RAG: no relevant chunks", file=sys.stderr)
+                return None
+            print(
+                f"RAG pipeline failed: {error} (continuing without context)",
+                file=sys.stderr,
+            )
+            return None
         print(f"RAG: {error} (continuing without)", file=sys.stderr)
         return None
     if findings:
         print(f"RAG: {len(findings)} findings", file=sys.stderr)
+    else:
+        print("RAG: no relevant chunks", file=sys.stderr)
     return findings or None
 
 

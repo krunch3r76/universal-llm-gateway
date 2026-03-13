@@ -19,7 +19,13 @@ from pathlib import Path
 import yaml
 from universal_event_bus import EventBus
 
-from services.rag.events import rag_corpus_hints_updated
+from services.rag.events.query import (
+    rag_corpus_hints_filter_failed,
+    rag_corpus_hints_load_failed,
+    rag_corpus_hints_skipped,
+    rag_corpus_hints_updated,
+    rag_scope_vocabulary_load_failed,
+)
 from services.rag.property_index import PropertyIndex
 
 logger = logging.getLogger(__name__)
@@ -87,7 +93,9 @@ def _score_term(chunk_count: int, doc_count: int, total_docs: int) -> float:
     return idf + chunk_boost
 
 
-def load_corpus_hints(path: Path) -> dict[str, str]:
+def load_corpus_hints(
+    path: Path, event_bus: EventBus | None = None
+) -> dict[str, str]:
     """Read corpus hints from a YAML file.
 
     Expected top-level key: corpus_hints. Each value is scope name → string
@@ -113,6 +121,10 @@ def load_corpus_hints(path: Path) -> dict[str, str]:
         return result
     except (yaml.YAMLError, OSError) as e:
         logger.warning("Failed to load corpus hints from %s: %s", path, e)
+        if event_bus is not None:
+            event_bus.publish_async_nowait(
+                rag_corpus_hints_load_failed(path=str(path), error=str(e))
+            )
         return {}
     except Exception as e:
         logger.error(
@@ -124,7 +136,9 @@ def load_corpus_hints(path: Path) -> dict[str, str]:
 _DEFAULT_VOCABULARY_PATH = Path.home() / ".rag" / "scope_vocabulary.yaml"
 
 
-def load_scope_vocabulary(path: Path | None = None) -> dict[str, dict[str, list[str]]]:
+def load_scope_vocabulary(
+    path: Path | None = None, event_bus: EventBus | None = None
+) -> dict[str, dict[str, list[str]]]:
     """Load register-structured vocabulary from scope_vocabulary.yaml.
 
     Expected format:
@@ -162,6 +176,10 @@ def load_scope_vocabulary(path: Path | None = None) -> dict[str, dict[str, list[
         return result
     except (yaml.YAMLError, OSError) as e:
         logger.warning("Failed to load scope vocabulary from %s: %s", path, e)
+        if event_bus is not None:
+            event_bus.publish_async_nowait(
+                rag_scope_vocabulary_load_failed(path=str(path), error=str(e))
+            )
         return {}
 
 
@@ -250,6 +268,7 @@ def filter_hints_by_cooccurrence(
     db_path: Path | None = None,
     *,
     min_chunk_cooccurrence: int = 2,
+    event_bus: EventBus | None = None,
 ) -> list[str]:
     """Return hint terms that co-occur with query terms at chunk level.
 
@@ -313,11 +332,19 @@ def filter_hints_by_cooccurrence(
             finally:
                 _ = conn.execute("DROP TABLE IF EXISTS query_chunks")
                 _ = conn.execute("DROP TABLE IF EXISTS hint_chunks")
-    except sqlite3.OperationalError:
+    except sqlite3.OperationalError as exc:
         logger.debug("Cannot open property index DB read-only: %s", db_path)
+        if event_bus is not None:
+            event_bus.publish_async_nowait(
+                rag_corpus_hints_filter_failed(error=str(exc))
+            )
         return []
-    except Exception:
+    except Exception as exc:
         logger.debug("Co-occurrence query failed", exc_info=True)
+        if event_bus is not None:
+            event_bus.publish_async_nowait(
+                rag_corpus_hints_filter_failed(error=str(exc))
+            )
         return []
 
 
@@ -398,6 +425,10 @@ async def update_corpus_hints(
     prefixes = key_prefixes if key_prefixes is not None else _DEFAULT_KEY_PREFIXES
     if property_index.get_total_chunks() == 0:
         logger.warning("PropertyIndex has 0 chunks — skipping corpus hints update")
+        if event_bus is not None:
+            await event_bus.publish_async_nowait(
+                rag_corpus_hints_skipped(reason="property index has zero chunks")
+            )
         return {}
 
     total_docs = property_index.get_total_docs()
@@ -443,21 +474,22 @@ async def update_corpus_hints(
             winners.extend(scored[:budget])
 
         seen: set[str] = set()
-        deduped: list[tuple[str, float]] = []
+        deduped_terms: list[str] = []
         for term, score in sorted(winners, key=lambda x: (-x[1], x[0])):
             key = term.lower()
             if key not in seen:
                 seen.add(key)
-                deduped.append((term, score))
-        result[scope] = ", ".join(t for t, _ in deduped if t)
+                deduped_terms.append(term)
+        result[scope] = ", ".join(t for t in deduped_terms if t)
 
     _write_hints_file(hints_path, result)
     if event_bus is not None:
+        update_timestamp = datetime.now(UTC).isoformat()
         await event_bus.publish_async_nowait(
             rag_corpus_hints_updated(
                 path=str(hints_path),
                 scopes_updated=sorted(result),
-                timestamp=datetime.now(UTC).isoformat(),
+                timestamp=update_timestamp,
             )
         )
     return result
@@ -531,19 +563,12 @@ def _cli_generate_hints() -> None:
             print(f"Total distinct chunks: {total_chunks}")
             print(f"Total distinct docs (source files): {total_docs}")
 
-            # Same defaults as update_corpus_hints for consistent diagnostic output.
-            band_limits: dict[str, tuple[int, int]] = {
-                "prop.name@@": (_DEFAULT_MIN_CHUNKS_NAME, _DEFAULT_MAX_CHUNKS_NAME),
-                "prop.topic@@": (
-                    _DEFAULT_MIN_CHUNKS_TOPIC,
-                    _DEFAULT_MAX_CHUNKS_TOPIC,
-                ),
-            }
             for prefix in _DEFAULT_KEY_PREFIXES:
                 all_terms = idx.get_term_counts_by_scope(prefix)
-                min_c, max_c = band_limits.get(
-                    prefix, (_DEFAULT_MIN_CHUNKS_NAME, _DEFAULT_MAX_CHUNKS_NAME)
-                )
+                if prefix == "prop.topic@@":
+                    min_c, max_c = _DEFAULT_MIN_CHUNKS_TOPIC, _DEFAULT_MAX_CHUNKS_TOPIC
+                else:
+                    min_c, max_c = _DEFAULT_MIN_CHUNKS_NAME, _DEFAULT_MAX_CHUNKS_NAME
                 in_band = 0
                 blocked = 0
                 out = 0

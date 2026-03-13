@@ -182,7 +182,10 @@ def _retry_timeout_exception(
         )
     # Upstream: include last error context for diagnostics
     last_detail = last_exc.detail if isinstance(last_exc.detail, dict) else {}
-    data["last_upstream_error"] = last_detail.get("data", {})
+    last_upstream_error = last_detail.get("data")
+    data["last_upstream_error"] = (
+        last_upstream_error if isinstance(last_upstream_error, dict) else {}
+    )
     return HTTPException(
         status_code=502,
         detail=error_envelope(
@@ -251,55 +254,55 @@ async def process_chat_completion(
 
     if is_pipeline:
         logger.info("Routing to pipeline executor: %s", context.selected_model)
+        from systems.pipeline.core.dag import PipelineExecutionError
+        from systems.pipeline.core.execution.errors import PipelineError
+
+        execution_id: str | None = None
+        exec_header: dict[str, str] = {}
         try:
             return await proxy.pipeline_executor.execute(context)
-        except Exception as exc:
-            from systems.pipeline.core.dag import PipelineExecutionError
-            from systems.pipeline.core.execution.errors import PipelineError
-
-            execution_id: str | None = getattr(exc, "execution_id", None)
-            exec_header = (
-                {"X-Pipeline-Execution-Id": execution_id} if execution_id else {}
+        except PipelineError as exc:
+            execution_id = getattr(exc, "execution_id", None)
+            exec_header = {"X-Pipeline-Execution-Id": execution_id} if execution_id else {}
+            error_dict = exc.to_dict()
+            if execution_id:
+                error_dict["execution_id"] = execution_id
+            logger.error(
+                "Pipeline execution failed: %s - %s",
+                error_dict.get("error_type"),
+                str(exc),
+                exc_info=True,
             )
-
-            if isinstance(exc, PipelineError):
-                error_dict = exc.to_dict()
-                if execution_id:
-                    error_dict["execution_id"] = execution_id
-                logger.error(
-                    "Pipeline execution failed: %s - %s",
-                    error_dict.get("error_type"),
-                    str(exc),
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail={
-                        "error": error_dict,
-                        "pipeline_id": context.selected_model,
-                    },
-                    headers=exec_header,
-                ) from exc
-
-            if isinstance(exc, PipelineExecutionError):
-                error_detail: dict[str, object] = {
-                    "message": f"Internal server error: {exc}",
-                    "type": "internal_error",
-                    "code": "internal_server_error",
-                    "operation": "chat_completions",
-                }
-                if execution_id:
-                    error_detail["execution_id"] = execution_id
-                logger.error(
-                    "Pipeline execution error: %s (execution_id=%s)",
-                    exc,
-                    execution_id,
-                )
-                raise HTTPException(
-                    status_code=500,
-                    detail={"error": error_detail},
-                    headers=exec_header,
-                ) from exc
-            raise
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": error_dict,
+                    "pipeline_id": context.selected_model,
+                },
+                headers=exec_header,
+            ) from exc
+        except PipelineExecutionError as exc:
+            execution_id = getattr(exc, "execution_id", None)
+            exec_header = {"X-Pipeline-Execution-Id": execution_id} if execution_id else {}
+            error_detail: dict[str, object] = {
+                "message": f"Internal server error: {exc}",
+                "type": "internal_error",
+                "code": "internal_server_error",
+                "operation": "chat_completions",
+            }
+            if execution_id:
+                error_detail["execution_id"] = execution_id
+            logger.error(
+                "Pipeline execution error: %s (execution_id=%s)",
+                exc,
+                execution_id,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={"error": error_detail},
+                headers=exec_header,
+            ) from exc
 
     model_id = str(context.selected_model)
     request_short_id = getattr(context, "request_id", "unknown")[:8]
@@ -406,15 +409,23 @@ async def process_chat_completion(
                     if tracker is not None:
                         tracker.clear_binding(context.selected_model)
 
-                # Budget: capacity → long queue wait; upstream → short retry
-                effective_timeout = (
-                    capacity_timeout_s if is_capacity else upstream_timeout_s
-                )
-                # Cap by pipeline step timeout if present
+                # Per-request hint is authoritative when present (set by
+                # pipeline step timeout or explicit X-Request-Timeout header).
+                # For capacity errors, cap at queue_timeout to avoid spinning
+                # past the gateway's own queue budget.  For upstream errors
+                # the hint is used directly — the caller owns the deadline.
+                # Blanket defaults apply only for ad-hoc requests without a hint.
                 if context.request_timeout_hint:
-                    effective_timeout = min(
-                        effective_timeout, context.request_timeout_hint
-                    )
+                    if is_capacity:
+                        effective_timeout = min(
+                            context.request_timeout_hint, capacity_timeout_s
+                        )
+                    else:
+                        effective_timeout = context.request_timeout_hint
+                elif is_capacity:
+                    effective_timeout = capacity_timeout_s
+                else:
+                    effective_timeout = upstream_timeout_s
 
                 elapsed = time.monotonic() - retry_started
                 remaining = effective_timeout - elapsed

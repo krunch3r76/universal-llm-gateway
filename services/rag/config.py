@@ -43,8 +43,8 @@ class KnowledgeExtractionConfig:
 
     Extraction is integral to indexing — ∀ indexed file: extraction runs.
     To skip extraction entirely, disable indexing (automatic_indexing_enabled: false).
-    Concurrent extraction batches are bounded by extraction_concurrency to prevent
-    model saturation when multiple index workers fan out to the same backend.
+    Per-batch HTTP timeouts scale with chunk count to fail fast under model
+    saturation when multiple index workers fan out to the same backend.
     """
 
     pipeline: str = "rag-extraction"
@@ -55,7 +55,6 @@ class KnowledgeExtractionConfig:
     extraction_model: str = (
         ""  # Stored in chunk metadata; mismatch triggers re-extraction
     )
-    extraction_concurrency: int = 2
     per_chunk_timeout_s: float = 60.0
     batch_timeout_overhead_s: float = 30.0
 
@@ -189,36 +188,40 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
         logger.error("Invalid scopes type: expected mapping")
         return {}
 
+    # First pass: collect all prefixes from explicitly defined (non-union) scopes
+    # so union scopes can include prefixes defined anywhere in the config.
+    all_explicit_prefixes: set[str] = set()
+    for scope_name, scope_data in raw_scopes.items():
+        if not isinstance(scope_name, str) or not isinstance(scope_data, dict):
+            continue
+        if scope_data.get("union") is True:
+            continue
+        prefixes = _normalize_scope_prefixes(scope_name, scope_data.get("prefixes"))
+        if prefixes:
+            all_explicit_prefixes.update(prefixes)
+
     scopes: dict[str, ScopeDefinition] = {}
-    union_scopes: list[tuple[str, dict[str, object]]] = []
     for scope_name, scope_data in raw_scopes.items():
         if not isinstance(scope_name, str) or not isinstance(scope_data, dict):
             logger.warning("Skipping scope with invalid structure: %r", scope_name)
             continue
 
-        if scope_data.get("union") is True:
-            union_scopes.append((scope_name, scope_data))
-            continue
-
-        prefixes = _normalize_scope_prefixes(scope_name, scope_data.get("prefixes"))
-        if not prefixes:
-            continue
-
         description = scope_data.get("description", "")
-        scopes[scope_name] = ScopeDefinition(
-            prefixes=prefixes,
-            description=description if isinstance(description, str) else "",
-        )
+        description = description if isinstance(description, str) else ""
 
-    all_prefixes = sorted(
-        {prefix for scope in scopes.values() for prefix in scope.prefixes}
-    )
-    for union_name, union_data in union_scopes:
-        description = union_data.get("description", "")
-        scopes[union_name] = ScopeDefinition(
-            prefixes=all_prefixes,
-            description=description if isinstance(description, str) else "",
-        )
+        if scope_data.get("union") is True:
+            scopes[scope_name] = ScopeDefinition(
+                prefixes=sorted(all_explicit_prefixes),
+                description=description,
+            )
+        else:
+            prefixes = _normalize_scope_prefixes(scope_name, scope_data.get("prefixes"))
+            if not prefixes:
+                continue
+            scopes[scope_name] = ScopeDefinition(
+                prefixes=prefixes,
+                description=description,
+            )
     return scopes
 
 
@@ -237,11 +240,6 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
     max_attempts = raw.get("max_extraction_attempts", 3)
     raw_model = raw.get("extraction_model", "")
     extraction_model = str(raw_model) if isinstance(raw_model, str) else ""
-    raw_concurrency = raw.get("extraction_concurrency", 2)
-    extraction_concurrency = max(
-        1,
-        int(raw_concurrency) if isinstance(raw_concurrency, int) else 2,
-    )
     raw_per_chunk = raw.get("per_chunk_timeout_s", 60.0)
     per_chunk_timeout_s = max(
         1.0,
@@ -260,7 +258,6 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
         if isinstance(max_attempts, int)
         else 3,
         extraction_model=extraction_model,
-        extraction_concurrency=extraction_concurrency,
         per_chunk_timeout_s=per_chunk_timeout_s,
         batch_timeout_overhead_s=batch_timeout_overhead_s,
     )
@@ -277,17 +274,19 @@ def load_config() -> RagConfig:
     """Load ~/.gateway/rag.yaml and return parsed config."""
     config_path = _resolve_config_path()
     if config_path is None:
-        return RagConfig(watch_directories=[], scopes={}, contextualize_model="")
+        raise ValueError("rag.yaml not found at ~/.gateway/rag.yaml")
 
     try:
         loaded: object = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    except Exception:
+    except Exception as e:
         logger.error("Failed to parse RAG config: path=%s", config_path, exc_info=True)
-        return RagConfig(watch_directories=[], scopes={}, contextualize_model="")
+        raise ValueError(
+            f"Critical: Failed to load RAG configuration from {config_path}"
+        ) from e
 
     if not isinstance(loaded, dict):
         logger.error("Invalid RAG config root type: expected mapping")
-        return RagConfig(watch_directories=[], scopes={}, contextualize_model="")
+        raise ValueError("rag.yaml root must be a mapping")
     parsed_root: dict[str, object] = {
         key: value for key, value in loaded.items() if isinstance(key, str)
     }

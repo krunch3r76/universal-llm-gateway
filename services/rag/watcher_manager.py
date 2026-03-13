@@ -11,8 +11,11 @@ from universal_event_bus import Event, EventBus
 from universal_hot_reload.watcher import HotReloadWatcher
 
 from services.rag.config import BASELINE_EXTENSIONS, RagConfig, WatchDirectory
-from services.rag.events import (
+from services.rag.events.indexing import (
+    rag_file_deletion_failed,
     rag_file_indexing_failed,
+)
+from services.rag.events.lifecycle import (
     rag_watch_directory_missing,
     rag_watch_file_deleted,
     rag_watch_initial_complete,
@@ -105,9 +108,7 @@ class WatcherManager:
         self._watchers = []
         self._watch_configs = []
         configured_baseline = _normalize_extensions(config.baseline_extensions)
-        self._baseline_extensions = configured_baseline or _normalize_extensions(
-            BASELINE_EXTENSIONS
-        )
+        self._baseline_extensions = configured_baseline or _normalize_extensions(BASELINE_EXTENSIONS)
         for watch_directory in config.watch_directories:
             await self._start_one(watch_directory)
         if self._watch_configs:
@@ -192,9 +193,7 @@ class WatcherManager:
         await asyncio.sleep(self._reconcile_interval_s)
         while True:
             try:
-                for watch_directory, extensions in zip(
-                    self._watch_configs, ext_sets, strict=True
-                ):
+                for watch_directory, extensions in zip(self._watch_configs, ext_sets):
                     watch_path = Path(watch_directory.path).expanduser().resolve()
                     if not watch_path.exists():
                         continue
@@ -356,7 +355,7 @@ class WatcherManager:
             queue.put_nowait(None)
         await asyncio.gather(*workers)
 
-        file_total = total_files - error_total
+        file_total = reindexed_total + unchanged_total + error_total
         logger.info(
             "Initial watch reindex complete: path=%s files=%d reindexed=%d unchanged=%d errors=%d",
             watch_path,
@@ -394,7 +393,7 @@ class WatcherManager:
                 "Hot-reload reindex failed for %s: %s", file_path, exc, exc_info=True
             )
             await self._emit(
-                rag_file_indexing_failed(file=file_path, error=str(exc))
+                rag_file_indexing_failed(file=str(file_path), error=str(exc))
             )
             return
         logger.info(
@@ -423,9 +422,7 @@ class WatcherManager:
             logger.warning(
                 "Hot-reload delete failed for %s: %s", file_path, exc, exc_info=True
             )
-            await self._emit(
-                rag_file_indexing_failed(file=file_path, error=str(exc))
-            )
+            await self._emit(rag_file_deletion_failed(file=file_path, error=str(exc)))
             return
         logger.info(
             "Watcher delete complete: file=%s deleted=%d",

@@ -25,7 +25,7 @@ from services.rag.directory_ops import (
     find_removed_sources,
     index_directory_contents,
 )
-from services.rag.events import (
+from services.rag.events.indexing import (
     rag_directory_cleared,
     rag_directory_index_completed,
     rag_directory_index_started,
@@ -149,6 +149,13 @@ def register_admin_routes(
 ) -> APIRouter:
     """Register admin routes with the shared service state via closures."""
 
+    async def _index_single_file(request: IndexRequest) -> IndexResult:
+        return await index_file_fn(
+            _validate_file(request.path),
+            request.metadata_overrides,
+            force=request.force,
+        )
+
     async def _run_directory_index(
         dir_path: Path,
         extensions: set[str],
@@ -260,11 +267,7 @@ def register_admin_routes(
 
     @router.post("/index", response_model=IndexResult)
     async def index_file(request: IndexRequest) -> IndexResult:
-        return await index_file_fn(
-            _validate_file(request.path),
-            request.metadata_overrides,
-            force=request.force,
-        )
+        return await _index_single_file(request)
 
     @router.post("/index_directory", response_model=IndexDirectoryResponse)
     async def index_directory(
@@ -282,11 +285,7 @@ def register_admin_routes(
 
     @router.post("/reindex", response_model=IndexResult)
     async def reindex_file(request: IndexRequest) -> IndexResult:
-        return await index_file_fn(
-            _validate_file(request.path),
-            request.metadata_overrides,
-            force=request.force,
-        )
+        return await _index_single_file(request)
 
     @router.post("/reindex_directory", response_model=IndexDirectoryResponse)
     async def reindex_directory(
