@@ -211,16 +211,21 @@ def rag_extraction_batch_completed(
         when all chunks succeed).
     extraction_model: model id used for extraction when configured.
     """
-    payload: dict[str, object] = {
-        "file": file,
-        "chunk_count": chunk_count,
-        "successful": successful,
-        "written": written,
-        "duration_seconds": duration_seconds,
-    }
-    if extraction_model is not None:
-        payload["extraction_model"] = extraction_model
-    return Event(signal="rag.extraction.batch.completed", payload=payload)
+    return Event(
+        signal="rag.extraction.batch.completed",
+        payload={
+            "file": file,
+            "chunk_count": chunk_count,
+            "successful": successful,
+            "written": written,
+            "duration_seconds": duration_seconds,
+            **(
+                {"extraction_model": extraction_model}
+                if extraction_model is not None
+                else {}
+            ),
+        },
+    )
 
 
 @event_factory
@@ -342,19 +347,28 @@ def rag_file_indexed(
         article_venue, published_date, article_doi when file is in article registry).
     bibliography_chunks: optional count of chunks tagged is_bibliography for this file.
     """
-    payload: dict[str, object] = {
-        "file": file,
-        "deleted": deleted,
-        "indexed": indexed,
-        "duration_seconds": duration_seconds,
-    }
-    if batch_start_ts is not None:
-        payload["batch_start_ts"] = batch_start_ts
-    if document_metadata is not None:
-        payload["document_metadata"] = document_metadata
-    if bibliography_chunks is not None:
-        payload["bibliography_chunks"] = bibliography_chunks
-    return Event(signal="rag.file.indexed", payload=payload)
+    return Event(
+        signal="rag.file.indexed",
+        payload={
+            "file": file,
+            "deleted": deleted,
+            "indexed": indexed,
+            "duration_seconds": duration_seconds,
+            **(
+                {"batch_start_ts": batch_start_ts} if batch_start_ts is not None else {}
+            ),
+            **(
+                {"document_metadata": document_metadata}
+                if document_metadata is not None
+                else {}
+            ),
+            **(
+                {"bibliography_chunks": bibliography_chunks}
+                if bibliography_chunks is not None
+                else {}
+            ),
+        },
+    )
 
 
 @event_factory

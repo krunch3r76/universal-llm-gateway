@@ -308,6 +308,20 @@ async def embed_chunks(texts: list[str]) -> list[list[float]]:
 
     for text in texts:
         token_estimate = max(1, len(text) // _CHARS_PER_TOKEN)
+        if token_estimate > max_batch_tokens:
+            if batch:
+                all_embeddings.extend(await _post_embeddings(batch))
+                batch = []
+                batch_tokens = 0
+            logger.warning(
+                "Single text estimate exceeds batch cap (tokens=%d > cap=%d, model=%s); "
+                "sending as single-item batch for truncation/fallback handling",
+                token_estimate,
+                max_batch_tokens,
+                _embed_model,
+            )
+            all_embeddings.extend(await _post_embeddings([text]))
+            continue
         if batch and (
             len(batch) >= _EMBED_BATCH_SIZE
             or batch_tokens + token_estimate > max_batch_tokens

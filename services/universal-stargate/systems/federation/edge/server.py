@@ -107,7 +107,6 @@ class EdgeFederationServer:
         # Periodic heartbeat task (for preventing telemetry staleness)
         self._heartbeat_task: asyncio.Task[None] | None = None
 
-
         # Pending measurement requests awaiting response from Master
         self._pending_requests: dict[str, asyncio.Future[dict[str, Any]]] = {}
 
@@ -376,10 +375,31 @@ class EdgeFederationServer:
 
         try:
             async with self._peers_lock:
-                peers = list(self._authenticated_peers.values())
+                peers = list(self._authenticated_peers.items())
                 if not peers:
                     raise RuntimeError("No peers connected for VRAM measurement")
-            await peers[0].send_text(msg_json)
+            sent = False
+            for peer_id, websocket in peers:
+                try:
+                    await websocket.send_text(msg_json)
+                    sent = True
+                    break
+                except WebSocketDisconnect:
+                    logger.info(
+                        "Peer %s disconnected during VRAM request dispatch", peer_id
+                    )
+                    asyncio.create_task(self.handle_peer_disconnect(peer_id))
+                except Exception as e:
+                    logger.error(
+                        "Failed to send VRAM request to %s: %s - %s",
+                        peer_id,
+                        e.__class__.__name__,
+                        e,
+                    )
+            if not sent:
+                raise RuntimeError(
+                    "Failed to dispatch VRAM measurement request to peers"
+                )
 
             return await asyncio.wait_for(future, timeout=VRAM_REQUEST_TIMEOUT)
         finally:

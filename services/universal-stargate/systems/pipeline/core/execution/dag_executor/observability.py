@@ -304,7 +304,9 @@ class StepObservability:
 
         import traceback as tb_mod
 
-        tb_str = "".join(tb_mod.format_exception(error))
+        tb_str = "".join(
+            tb_mod.format_exception(type(error), error, error.__traceback__)
+        )
 
         recorder = self._executor.context.recorder
         if recorder:
