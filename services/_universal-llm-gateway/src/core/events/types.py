@@ -283,6 +283,37 @@ Payload:
     timestamp: float - Unix timestamp of drain initiation
 """
 
+VRAM_PHANTOM_DETECTED = "gateway.vram.phantom.detected"
+"""
+Emitted when hardware VRAM usage significantly exceeds tracked model VRAM.
+
+Payload:
+    hardware_used_mb: int - VRAM currently used according to hardware
+    catalog_used_mb: int - VRAM accounted by loaded/busy tracker models
+    discrepancy_mb: int - hardware_used_mb - catalog_used_mb
+    tracked_models: list[str] - Tracked loaded/busy models used for accounting
+"""
+
+PHANTOM_MODEL_DETECTED = "gateway.model.phantom.detected"
+"""
+Emitted when a running worker process is not tracked as LOADED/BUSY.
+
+Payload:
+    model_id: str - Model ID of phantom process
+    process_status: str - Runtime process status (e.g. "running")
+    tracker_status: str | None - Current ResourceTracker status if present
+"""
+
+PHANTOM_MODEL_CLEANED = "gateway.model.phantom.cleaned"
+"""
+Emitted after phantom cleanup attempt.
+
+Payload:
+    model_id: str - Model ID of phantom process
+    success: bool - Whether cleanup succeeded
+    vram_freed_mb: int | None - Estimated VRAM reclaimed by cleanup
+"""
+
 
 # ========== Compute Capacity Telemetry Event Signals ==========
 
@@ -702,18 +733,20 @@ def SystemResourcesUpdated(
     available_vram_mb: int,
     total_ram_mb: int,
     available_ram_mb: int,
-    loaded_models: list[str] | None = None,
     model_vram: dict[str, int] | None = None,
 ) -> Event:
     """
     Create SYSTEM_RESOURCES_UPDATED event.
+
+    Single-writer invariant: lifecycle state (loaded_models) is exclusively
+    from MODEL_LOADED / MODEL_UNLOADED discrete events. RESOURCE_UPDATE
+    carries only resource metrics and per-model VRAM measurements.
 
     Args:
         total_vram_mb: Total VRAM available in megabytes
         available_vram_mb: Currently available VRAM in megabytes
         total_ram_mb: Total RAM available in megabytes
         available_ram_mb: Currently available RAM in megabytes
-        loaded_models: List of currently loaded model IDs (for WebSocket forwarding)
         model_vram: Per-model actual VRAM consumption in MB (model_id → vram_mb).
             Populated from resource tracker measurements; used by Stargate eviction
             planner to replace stale load-time snapshots with current real values.
@@ -727,8 +760,6 @@ def SystemResourcesUpdated(
         "total_ram_mb": total_ram_mb,
         "available_ram_mb": available_ram_mb,
     }
-    if loaded_models is not None:
-        payload["loaded_models"] = loaded_models
     if model_vram is not None:
         payload["model_vram"] = model_vram
     return Event(
@@ -938,6 +969,59 @@ def GatewayDraining(
             "reason": reason,
             "timeout": timeout,
             "timestamp": timestamp,
+        },
+    )
+
+
+@event_factory
+def VramPhantomDetected(
+    hardware_used_mb: int,
+    catalog_used_mb: int,
+    discrepancy_mb: int,
+    tracked_models: list[str],
+) -> Event:
+    """Create VRAM_PHANTOM_DETECTED event."""
+    return Event(
+        signal=VRAM_PHANTOM_DETECTED,
+        payload={
+            "hardware_used_mb": hardware_used_mb,
+            "catalog_used_mb": catalog_used_mb,
+            "discrepancy_mb": discrepancy_mb,
+            "tracked_models": tracked_models,
+        },
+    )
+
+
+@event_factory
+def PhantomModelDetected(
+    model_id: str,
+    process_status: str,
+    tracker_status: str | None = None,
+) -> Event:
+    """Create PHANTOM_MODEL_DETECTED event."""
+    return Event(
+        signal=PHANTOM_MODEL_DETECTED,
+        payload={
+            "model_id": model_id,
+            "process_status": process_status,
+            "tracker_status": tracker_status,
+        },
+    )
+
+
+@event_factory
+def PhantomModelCleaned(
+    model_id: str,
+    success: bool,
+    vram_freed_mb: int | None = None,
+) -> Event:
+    """Create PHANTOM_MODEL_CLEANED event."""
+    return Event(
+        signal=PHANTOM_MODEL_CLEANED,
+        payload={
+            "model_id": model_id,
+            "success": success,
+            "vram_freed_mb": vram_freed_mb,
         },
     )
 

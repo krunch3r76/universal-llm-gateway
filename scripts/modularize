@@ -553,11 +553,32 @@ def _run_plan(
         },
         timeout=600.0,
     )
-    response.raise_for_status()
+
+    if response.status_code >= 400:
+        print(
+            f"Error: Pipeline returned HTTP {response.status_code}\n{response.text}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     result = response.json()
     content = result["choices"][0]["message"]["content"]
-    plan_data = json.loads(content)
+
+    if not content or not content.strip():
+        print("Error: Pipeline returned empty content", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        plan_data = json.loads(content)
+    except json.JSONDecodeError as exc:
+        print(f"Error: Pipeline returned non-JSON content: {exc}", file=sys.stderr)
+        print(f"Raw content (first 500 chars): {content[:500]}", file=sys.stderr)
+        sys.exit(1)
+
+    if isinstance(plan_data, dict) and "error" in plan_data:
+        print(f"Error: Pipeline error: {plan_data['error']}", file=sys.stderr)
+        sys.exit(1)
+
     _write_structural_plan(plan_path, target, plan_data, consumers)
     return plan_path
 

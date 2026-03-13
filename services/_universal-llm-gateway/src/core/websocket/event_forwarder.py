@@ -21,8 +21,11 @@ from ..events.types import (
     MODEL_LOADED,
     MODEL_LOADING_STARTED,
     MODEL_UNLOADED,
+    PHANTOM_MODEL_CLEANED,
+    PHANTOM_MODEL_DETECTED,
     REQUEST_INFERENCE_STARTED,
     SYSTEM_RESOURCES_UPDATED,
+    VRAM_PHANTOM_DETECTED,
 )
 from .connection_manager import StargateConnectionManager
 from .messages import (
@@ -38,8 +41,11 @@ from .messages import (
     create_model_loaded_message,
     create_model_loading_started_message,
     create_model_unloaded_message,
+    create_phantom_model_cleaned_message,
+    create_phantom_model_detected_message,
     create_request_inference_started_message,
     create_resource_update_message,
+    create_vram_phantom_detected_message,
 )
 
 if TYPE_CHECKING:
@@ -76,6 +82,9 @@ class WebSocketEventForwarder:
         # Compute capacity telemetry (orchestration observability)
         COMPUTE_CAPACITY_QUEUE_WAIT,
         COMPUTE_CAPACITY_QUEUE_ACQUIRED,
+        VRAM_PHANTOM_DETECTED,
+        PHANTOM_MODEL_DETECTED,
+        PHANTOM_MODEL_CLEANED,
     ]
 
     def __init__(
@@ -211,7 +220,9 @@ class WebSocketEventForwarder:
             )
             return None
 
-        sync_builders: dict[str, Callable[[dict[str, Any]], WebSocketMessage | None]] = {
+        sync_builders: dict[
+            str, Callable[[dict[str, Any]], WebSocketMessage | None]
+        ] = {
             MODEL_LOADING_STARTED: lambda p: create_model_loading_started_message(
                 model_id=p.get("model_id", "unknown")
             ),
@@ -265,6 +276,9 @@ class WebSocketEventForwarder:
                 queue_position_at_enqueue=p["queue_position_at_enqueue"],
                 timestamp_ms=p["timestamp_ms"],
             ),
+            VRAM_PHANTOM_DETECTED: self._build_vram_phantom_detected_message,
+            PHANTOM_MODEL_DETECTED: self._build_phantom_model_detected_message,
+            PHANTOM_MODEL_CLEANED: self._build_phantom_model_cleaned_message,
         }
         async_builders: dict[
             str, Callable[[dict[str, Any]], Awaitable[WebSocketMessage | None]]
@@ -305,15 +319,13 @@ class WebSocketEventForwarder:
         logger.info(
             f"📡 Forwarding SYSTEM_RESOURCES_UPDATED to Stargate: "
             f"available_vram={payload.get('available_vram_mb', 0)}MB, "
-            f"available_ram={payload.get('available_ram_mb', 0)}MB, "
-            f"loaded_models={payload.get('loaded_models', [])}"
+            f"available_ram={payload.get('available_ram_mb', 0)}MB"
         )
         return create_resource_update_message(
             available_vram_mb=payload.get("available_vram_mb", 0),
             available_ram_mb=payload.get("available_ram_mb", 0),
             total_vram_mb=payload.get("total_vram_mb"),
             total_ram_mb=payload.get("total_ram_mb"),
-            loaded_models=payload.get("loaded_models"),
             model_vram=payload.get("model_vram"),
         )
 
@@ -342,4 +354,32 @@ class WebSocketEventForwarder:
             reason=reason,
             models=models,
             catalog=catalog,
+        )
+
+    def _build_vram_phantom_detected_message(
+        self, payload: dict[str, Any]
+    ) -> WebSocketMessage:
+        return create_vram_phantom_detected_message(
+            hardware_used_mb=payload.get("hardware_used_mb", 0),
+            catalog_used_mb=payload.get("catalog_used_mb", 0),
+            discrepancy_mb=payload.get("discrepancy_mb", 0),
+            tracked_models=payload.get("tracked_models", []),
+        )
+
+    def _build_phantom_model_detected_message(
+        self, payload: dict[str, Any]
+    ) -> WebSocketMessage:
+        return create_phantom_model_detected_message(
+            model_id=payload.get("model_id", "unknown"),
+            process_status=payload.get("process_status", "unknown"),
+            tracker_status=payload.get("tracker_status"),
+        )
+
+    def _build_phantom_model_cleaned_message(
+        self, payload: dict[str, Any]
+    ) -> WebSocketMessage:
+        return create_phantom_model_cleaned_message(
+            model_id=payload.get("model_id", "unknown"),
+            success=bool(payload.get("success", False)),
+            vram_freed_mb=payload.get("vram_freed_mb"),
         )

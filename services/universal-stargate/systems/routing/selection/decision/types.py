@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from model_id import ModelId
@@ -86,6 +86,13 @@ class EvictionPlanSummary:
     hardware_used_vram_mb: int | None = None
     non_evictable_vram_reserve_mb: int = 0
     hardware_correction_applied: bool = False
+    # Hysteresis metadata (for event emission by async caller)
+    cooldown_protected_count: int = 0
+    demand_protected_count: int = 0
+    escape_hatch_used: bool = False
+    escape_reason: str | None = None
+    escape_cooldown_remaining_s: float | None = None
+    escape_model_id: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -104,6 +111,7 @@ class GatewayCandidate:
 
     # Matched affinity rule (if any)
     affinity_rule: AffinityRule | None = None
+    _cached_score: float = 0.0
 
     @property
     def utility_score(self) -> float:
@@ -111,7 +119,7 @@ class GatewayCandidate:
         if self.score_components is None:
             return 0.0
         # Score is pre-computed with weights
-        return getattr(self, "_cached_score", 0.0)
+        return self._cached_score
 
     @property
     def is_feasible(self) -> bool:
@@ -150,7 +158,7 @@ class DecisionTrace:
     # Sticky routing flag
     is_sticky: bool = True
 
-    def to_log_dict(self) -> dict:
+    def to_log_dict(self) -> dict[str, Any]:
         """Convert to dict for structured logging."""
         return {
             "model_id": self.model_id,
@@ -166,7 +174,7 @@ class DecisionTrace:
             "is_sticky": self.is_sticky,
         }
 
-    def to_detailed_dict(self) -> dict:
+    def to_detailed_dict(self) -> dict[str, Any]:
         """Convert to detailed dict including all candidates."""
         result = self.to_log_dict()
         result["candidates"] = [

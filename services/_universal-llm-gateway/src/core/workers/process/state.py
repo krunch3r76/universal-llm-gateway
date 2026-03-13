@@ -5,6 +5,7 @@ This container holds all shared state that multiple component managers
 need to access, ensuring consistency and clear ownership.
 """
 
+import os
 from dataclasses import dataclass, field
 
 from model_id import ModelId
@@ -75,3 +76,56 @@ class ProcessState:
     def remove_socket_path(self, model_id: str | ModelId) -> str | None:
         """Remove and return socket path for model, or None if not found."""
         return self.socket_paths.pop(_normalize_key(model_id), None)
+
+    @staticmethod
+    def _is_pid_running(pid: int | None) -> bool:
+        """Check process liveness without mutating supervisor state."""
+        if pid is None or pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+
+    def get_running_model_ids(self) -> list[str]:
+        """Return model_ids whose supervised process is currently alive."""
+        running: list[str] = []
+        for model_id, supervisor in self.supervisors.items():
+            try:
+                info = supervisor.get_worker_info()
+            except Exception:
+                continue
+            if self._is_pid_running(getattr(info, "pid", None)):
+                running.append(model_id)
+        return running
+
+    def get_all_worker_pids(self) -> list[int]:
+        """Return all alive worker PIDs tracked by supervisors."""
+        running_pids: list[int] = []
+        for supervisor in self.supervisors.values():
+            try:
+                info = supervisor.get_worker_info()
+            except Exception:
+                continue
+            pid = getattr(info, "pid", None)
+            if isinstance(pid, int) and self._is_pid_running(pid):
+                running_pids.append(pid)
+        return running_pids
+
+    def get_running_worker_processes(self) -> dict[str, int]:
+        """Return mapping of model_id -> alive worker PID."""
+        running: dict[str, int] = {}
+        for model_id, supervisor in self.supervisors.items():
+            try:
+                info = supervisor.get_worker_info()
+            except Exception:
+                continue
+            pid = getattr(info, "pid", None)
+            if isinstance(pid, int) and self._is_pid_running(pid):
+                running[model_id] = pid
+        return running

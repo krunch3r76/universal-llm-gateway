@@ -716,6 +716,10 @@ class WorkerController:
         """
         return [str(model_id) for model_id in self._process_state.supervisors.keys()]
 
+    def get_running_worker_processes(self) -> dict[str, int]:
+        """Return active worker processes as model_id -> pid mapping."""
+        return self._process_state.get_running_worker_processes()
+
     async def cleanup_orphaned_process(self, model_id: str) -> bool:
         """
         Clean up an orphaned process (manual intervention).

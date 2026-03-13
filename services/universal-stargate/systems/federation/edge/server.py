@@ -101,9 +101,6 @@ class EdgeFederationServer:
         # Connected and authenticated peers
         self._authenticated_peers: dict[str, WebSocket] = {}  # stargate_id → ws
 
-        # Lock for peer registration (async safe)
-        self._peers_lock = asyncio.Lock()
-
         # Periodic heartbeat task (for preventing telemetry staleness)
         self._heartbeat_task: asyncio.Task[None] | None = None
 
@@ -154,9 +151,8 @@ class EdgeFederationServer:
                 await self._send_auth_result(websocket, False, "Invalid API key")
                 return False
 
-        # Register authenticated peer
-        async with self._peers_lock:
-            self._authenticated_peers[peer_id] = websocket
+        # Register authenticated peer (atomic — no await between check and write)
+        self._authenticated_peers[peer_id] = websocket
 
         await self._send_auth_result(
             websocket,
@@ -214,13 +210,12 @@ class EdgeFederationServer:
 
     async def handle_peer_disconnect(self, peer_id: str) -> None:
         """Handle peer disconnection."""
-        async with self._peers_lock:
-            if peer_id in self._authenticated_peers:
-                del self._authenticated_peers[peer_id]
-                logger.info(
-                    f"⚠️ Peer {peer_id} disconnected "
-                    f"(remaining: {len(self._authenticated_peers)})"
-                )
+        if peer_id in self._authenticated_peers:
+            del self._authenticated_peers[peer_id]
+            logger.info(
+                f"⚠️ Peer {peer_id} disconnected "
+                f"(remaining: {len(self._authenticated_peers)})"
+            )
 
     # ─── Telemetry Caching & Forwarding ────────────────────────────────────
 
@@ -315,11 +310,10 @@ class EdgeFederationServer:
 
         # Update cached snapshot for model lifecycle events
         # This ensures late-joining peers receive current state
-        # Uses lock to prevent race conditions during concurrent updates
+        # (atomic — _update_cached_snapshot_model_state is synchronous, no await)
         model_id = data.get("model_id")
         if model_id:
-            async with self._peers_lock:
-                self._update_cached_snapshot_model_state(msg_type, model_id)
+            self._update_cached_snapshot_model_state(msg_type, model_id)
 
         # Broadcast to all authenticated peers
         await self._broadcast_to_peers(message)
@@ -338,9 +332,9 @@ class EdgeFederationServer:
 
         message_json = json.dumps(message)
 
-        async with self._peers_lock:
-            # Copy to avoid modification during iteration
-            peers = list(self._authenticated_peers.items())
+        # Snapshot to avoid modification during iteration
+        # (atomic — list() on dict is synchronous, no await)
+        peers = list(self._authenticated_peers.items())
 
         for peer_id, websocket in peers:
             try:
@@ -374,10 +368,10 @@ class EdgeFederationServer:
         self._pending_requests[request_id] = future
 
         try:
-            async with self._peers_lock:
-                peers = list(self._authenticated_peers.items())
-                if not peers:
-                    raise RuntimeError("No peers connected for VRAM measurement")
+            # Snapshot peers (atomic — no await between snapshot and check)
+            peers = list(self._authenticated_peers.items())
+            if not peers:
+                raise RuntimeError("No peers connected for VRAM measurement")
             sent = False
             for peer_id, websocket in peers:
                 try:

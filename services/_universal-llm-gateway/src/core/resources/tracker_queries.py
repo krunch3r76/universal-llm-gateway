@@ -23,6 +23,13 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _normalize_model_key(model_id: str | ModelId) -> str:
+    """Normalize model IDs using tracker canonical key logic."""
+    from src.core.resources.tracker import _normalize_key
+
+    return _normalize_key(model_id)
+
+
 def get_model_info(
     tracker: ResourceTracker, model_id: str | ModelId
 ) -> ModelResourceInfo | None:
@@ -30,9 +37,7 @@ def get_model_info(
 
     Uses normalized string key for consistent lookups.
     """
-    from src.core.resources.tracker import _normalize_key
-
-    return tracker._models.get(_normalize_key(model_id))
+    return tracker._models.get(_normalize_model_key(model_id))
 
 
 def get_all_models_info(tracker: ResourceTracker) -> dict[str, ModelResourceInfo]:
@@ -75,22 +80,20 @@ def get_operations_in_progress(tracker: ResourceTracker) -> dict[str, list[str]]
 
 def get_state_machine_status(
     tracker: ResourceTracker, model_id: str | ModelId
-) -> dict | None:
+) -> dict[str, Any] | None:
     """Get state machine status for a model."""
-    from model_id import ModelId
-
-    from src.core.resources.tracker import _normalize_key
-
-    key = _normalize_key(model_id)
+    key = _normalize_model_key(model_id)
 
     # Exact match first
     if key in tracker._state_machines:
         return tracker._state_machines[key].get_status()
 
     # Fallback: find by routing key
-    model = ModelId.parse(model_id) if isinstance(model_id, str) else model_id
+    from model_id import ModelId as RuntimeModelId
+
+    model = RuntimeModelId.parse(model_id) if isinstance(model_id, str) else model_id
     for tracked_key, sm in tracker._state_machines.items():
-        tracked_model = ModelId.parse(tracked_key)
+        tracked_model = RuntimeModelId.parse(tracked_key)
         if tracked_model.matches(model):
             return sm.get_status()
 
@@ -127,7 +130,6 @@ async def get_system_resources(tracker: ResourceTracker) -> SystemResourceInfo:
     catalog_used_vram = 0
     catalog_used_ram = 0
     loaded_models_list = []
-    loaded_model_ids = []  # For telemetry event payload
     model_vram: dict[str, int] = {}  # Per-model actual VRAM for eviction planning
     for model_id, info in tracker._models.items():
         if info.status in [ModelStatus.LOADED, ModelStatus.BUSY]:
@@ -136,7 +138,6 @@ async def get_system_resources(tracker: ResourceTracker) -> SystemResourceInfo:
             loaded_models_list.append(
                 f"{model_id}(status={info.status.value}, vram={info.vram_usage_mb}MB)"
             )
-            loaded_model_ids.append(model_id)
             if info.vram_usage_mb > 0:
                 model_vram[model_id] = info.vram_usage_mb
 
@@ -170,11 +171,10 @@ async def get_system_resources(tracker: ResourceTracker) -> SystemResourceInfo:
         try:
             from ..events.types import SystemResourcesUpdated
 
-            # Publish event with loaded models (reuse from earlier iteration)
             logger.info(
                 f"📤 Publishing SYSTEM_RESOURCES_UPDATED event: "
                 f"available_vram={available_vram}MB, available_ram={available_ram}MB, "
-                f"loaded_models={loaded_model_ids or 'NONE'}"
+                f"loaded_models={loaded_models_list or 'NONE'}"
             )
             await tracker.event_bus.publish_async_nowait(
                 SystemResourcesUpdated(
@@ -182,7 +182,6 @@ async def get_system_resources(tracker: ResourceTracker) -> SystemResourceInfo:
                     available_vram_mb=system_info.available_vram_mb,
                     total_ram_mb=system_info.total_ram_mb,
                     available_ram_mb=system_info.available_ram_mb,
-                    loaded_models=loaded_model_ids,
                     model_vram=model_vram or None,
                 )
             )

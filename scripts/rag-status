@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""RAG indexing status — snapshot and live tail modes.
+"""RAG indexing status — snapshot, live tail, and failure management.
 
 Usage:
     rag-status            # snapshot: current state
     rag-status --watch    # live tail: stream events as they arrive
     rag-status --summary  # compact one-liner (for scripting)
     rag-status --failures # permanently skipped chunks (from property index DB)
+    rag-status --reset    # clear pending journal + permanent extraction failures
+    rag-status --pending  # show files stuck in the pending journal
 """
 
 import argparse
@@ -37,7 +39,6 @@ def _load_events() -> list[dict[str, Any]]:
 
 
 def _basename(path: str) -> str:
-    """Return the base name of a path (filename or last path component)."""
     return Path(path).name
 
 
@@ -45,8 +46,9 @@ def _build_state(events: list[dict[str, Any]]) -> dict[str, Any]:
     """Derive current indexing state from the full event log."""
     started = False
     in_progress: dict[str, dict[str, Any]] = {}
-    completed_files: list[dict[str, Any]] = []
+    extracted_files: list[dict[str, Any]] = []
     indexed_files: list[dict[str, Any]] = []
+    failed_files: list[dict[str, Any]] = []
     current_batch: str | None = None
 
     for ev in events:
@@ -58,8 +60,9 @@ def _build_state(events: list[dict[str, Any]]) -> dict[str, Any]:
             case "rag.started":
                 started = True
                 in_progress = {}
-                completed_files = []
+                extracted_files = []
                 indexed_files = []
+                failed_files = []
 
             case "rag.extraction.batch.started":
                 f: str = p.get("file", "")
@@ -86,7 +89,7 @@ def _build_state(events: list[dict[str, Any]]) -> dict[str, Any]:
                     "duration_seconds": p.get("duration_seconds", 0.0),
                     "ts": ts,
                 }
-                completed_files.append(entry)
+                extracted_files.append(entry)
                 in_progress.pop(fname, None)
 
             case "rag.file.indexed":
@@ -99,24 +102,61 @@ def _build_state(events: list[dict[str, Any]]) -> dict[str, Any]:
                     }
                 )
 
+            case "rag.file.indexing.failed":
+                failed_files.append(
+                    {
+                        "file": p.get("file", ""),
+                        "error": p.get("error", "unknown"),
+                        "ts": ts,
+                    }
+                )
+
             case _:
                 pass
 
     return {
         "started": started,
         "in_progress": in_progress,
-        "completed_files": completed_files,
+        "extracted_files": extracted_files,
         "indexed_files": indexed_files,
+        "failed_files": failed_files,
         "current_batch": current_batch,
     }
 
 
 def _fmt_duration(secs: float) -> str:
-    """Format duration in seconds as human-readable string (e.g. '1.5s' or '2m05s')."""
     if secs < 60:
         return f"{secs:.1f}s"
     m, s = divmod(int(secs), 60)
-    return f"{m}m{s:02d}s"
+    if m < 60:
+        return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}h{m:02d}m{s:02d}s"
+
+
+def _short_error(error: str) -> str:
+    """Extract a short, informative error string from a full error message."""
+    if "503 Service Unavailable" in error:
+        return "503 embedding endpoint unavailable"
+    if "502 Bad Gateway" in error:
+        return "502 bad gateway"
+    if "504 Gateway Timeout" in error:
+        return "504 gateway timeout"
+    if "ReadTimeout" in error:
+        return "read timeout (model loading?)"
+    if "ConnectError" in error:
+        return "connection refused"
+    if "extraction failed below threshold" in error:
+        return "extraction below threshold"
+    if "Single-item embedding failed" in error:
+        return "embedding OOM (VRAM insufficient)"
+    if "CUDA" in error and "out of memory" in error:
+        return "CUDA OOM"
+    # Generic: take first line, truncate
+    first_line = error.split("\n")[0]
+    if len(first_line) > 60:
+        return first_line[:57] + "..."
+    return first_line
 
 
 def _print_snapshot(state: dict[str, Any]) -> None:
@@ -124,25 +164,32 @@ def _print_snapshot(state: dict[str, Any]) -> None:
         print("RAG service not started (no rag.started event found)")
         return
 
-    completed = state["completed_files"]
+    extracted = state["extracted_files"]
+    indexed = state["indexed_files"]
+    failed = state["failed_files"]
     in_prog = state["in_progress"]
 
-    total_chunks = sum(f["chunk_count"] for f in completed)
-    total_written = sum(f["written"] for f in completed)
-    total_duration = sum(f["duration_seconds"] for f in completed)
+    indexed_set = {f["file"] for f in indexed}
+    failed_set = {f["file"] for f in failed}
 
-    # --- Summary line ---
+    total_chunks = sum(f["chunk_count"] for f in extracted)
+    total_written = sum(f["written"] for f in extracted)
+    total_duration = sum(f["duration_seconds"] for f in extracted)
+
     status = "indexing" if in_prog else "idle"
-    print(f"Status : {status}")
-    print(f"Files  : {len(completed)} completed  |  {len(in_prog)} in progress")
-    print(f"Chunks : {total_written}/{total_chunks} written")
+    print(f"Status    : {status}")
+    print(
+        f"Extracted : {len(extracted)} files  |  {total_written}/{total_chunks} chunks"
+    )
+    print(f"Indexed   : {len(indexed)} files stored")
+    if failed:
+        print(f"Failed    : {len(failed)} files")
     if total_duration > 0:
-        print(f"Time   : {_fmt_duration(total_duration)} total extraction time")
+        print(f"Time      : {_fmt_duration(total_duration)} total extraction time")
     print()
 
-    # --- In-progress ---
     if in_prog:
-        print("In progress:")
+        print("In progress (extracting):")
         for f, info in in_prog.items():
             done = info["completed"]
             total = info["chunk_count"]
@@ -152,32 +199,50 @@ def _print_snapshot(state: dict[str, Any]) -> None:
             print(f"  [{bar}] {done}/{total}  {_basename(f)}")
         print()
 
-    # --- Completed files ---
-    if completed:
-        print("Completed files:")
-        for f in completed:
+    if extracted:
+        print("Extracted files:")
+        for f in extracted:
+            fname = f["file"]
             ok = f["written"] == f["chunk_count"]
-            mark = "✓" if ok else "!"
+            if fname in indexed_set:
+                mark = "✓"
+                status_tag = "indexed"
+            elif fname in failed_set:
+                mark = "✗"
+                err = next(
+                    (ff["error"] for ff in failed if ff["file"] == fname), ""
+                )
+                status_tag = _short_error(err)
+            elif ok:
+                mark = "…"
+                status_tag = "embedding"
+            else:
+                mark = "!"
+                status_tag = f"{f['written']}/{f['chunk_count']} chunks"
             line = (
-                f"  {mark} {_basename(f['file']):50s}"
-                f"  {f['written']:>3}/{f['chunk_count']:<3} chunks"
-                f"  {_fmt_duration(f['duration_seconds'])}"
+                f"  {mark} {_basename(fname):50s}"
+                f"  {f['written']:>3}/{f['chunk_count']:<3}"
+                f"  {_fmt_duration(f['duration_seconds']):>8s}"
+                f"  {status_tag}"
             )
             print(line)
 
 
 def _print_summary(state: dict[str, Any]) -> None:
-    """Single-line summary for scripting."""
     if not state["started"]:
         print("not_started")
         return
-    completed = state["completed_files"]
+    extracted = state["extracted_files"]
+    indexed = state["indexed_files"]
+    failed = state["failed_files"]
     in_prog = state["in_progress"]
-    total_written = sum(f["written"] for f in completed)
-    total_chunks = sum(f["chunk_count"] for f in completed)
+    total_written = sum(f["written"] for f in extracted)
+    total_chunks = sum(f["chunk_count"] for f in extracted)
     status = "indexing" if in_prog else "idle"
     print(
-        f"{status} files={len(completed)} chunks={total_written}/{total_chunks} in_progress={len(in_prog)}"
+        f"{status} extracted={len(extracted)} indexed={len(indexed)} "
+        f"failed={len(failed)} chunks={total_written}/{total_chunks} "
+        f"in_progress={len(in_prog)}"
     )
 
 
@@ -190,8 +255,9 @@ def _print_failures() -> None:
 
     conn = sqlite3.connect(str(DB_PATH))
     try:
-        # Check columns — handle DBs that predate the permanent column
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")}
+        cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")
+        }
         has_permanent = "permanent" in cols
 
         if has_permanent:
@@ -205,7 +271,6 @@ def _print_failures() -> None:
                 " WHERE permanent = 0 GROUP BY source ORDER BY source"
             ).fetchall()
         else:
-            # Fallback: no permanent column — show all failures with counts
             perm_rows = []
             transient_rows = conn.execute(
                 "SELECT source, COUNT(*) FROM failed_extractions"
@@ -219,12 +284,12 @@ def _print_failures() -> None:
         print(f"Transient failures  : {total_transient} chunks (will retry)")
         if not has_permanent:
             print(
-                "  (note: DB predates permanent column — retry vs permanent distinction unavailable)"
+                "  (note: DB predates permanent column — "
+                "retry vs permanent distinction unavailable)"
             )
         print()
 
         if perm_rows:
-            # Group by source file
             by_file: dict[str, list[tuple[str, int, str]]] = {}
             for source, chunk_id, attempt_count, recorded_at in perm_rows:
                 by_file.setdefault(source, []).append(
@@ -235,8 +300,10 @@ def _print_failures() -> None:
             for source, chunks in by_file.items():
                 print(f"  {_basename(source)}  ({len(chunks)} chunks)")
                 for chunk_id, attempt_count, recorded_at in chunks:
-                    ts = recorded_at[:16] if recorded_at else "?"
-                    print(f"    {chunk_id}  attempts={attempt_count}  last={ts}")
+                    ts_str = recorded_at[:16] if recorded_at else "?"
+                    print(
+                        f"    {chunk_id}  attempts={attempt_count}  last={ts_str}"
+                    )
             print()
 
         if transient_rows:
@@ -247,8 +314,68 @@ def _print_failures() -> None:
         conn.close()
 
 
+def _print_pending() -> None:
+    """Show files stuck in the pending journal."""
+    if not DB_PATH.exists():
+        print(f"Property index DB not found: {DB_PATH}")
+        return
+
+    conn = sqlite3.connect(str(DB_PATH))
+    try:
+        rows = conn.execute("SELECT file FROM pending ORDER BY file").fetchall()
+        if not rows:
+            print("No pending files.")
+            return
+        print(f"Pending files: {len(rows)}")
+        print()
+        for (f,) in rows:
+            exists = Path(f).exists()
+            mark = " " if exists else "✗"
+            print(f"  {mark} {_basename(f)}")
+        missing = sum(1 for (f,) in rows if not Path(f).exists())
+        if missing:
+            print(f"\n  ({missing} files no longer exist on disk)")
+    finally:
+        conn.close()
+
+
+def _reset() -> None:
+    """Clear pending journal and permanent extraction failures."""
+    if not DB_PATH.exists():
+        print(f"Property index DB not found: {DB_PATH}")
+        return
+
+    conn = sqlite3.connect(str(DB_PATH))
+    try:
+        pending_count = conn.execute("SELECT COUNT(*) FROM pending").fetchone()[0]
+        conn.execute("DELETE FROM pending")
+
+        cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")
+        }
+        perm_count = 0
+        if "permanent" in cols:
+            perm_count = conn.execute(
+                "SELECT COUNT(*) FROM failed_extractions WHERE permanent = 1"
+            ).fetchone()[0]
+            conn.execute("DELETE FROM failed_extractions WHERE permanent = 1")
+        else:
+            perm_count = conn.execute(
+                "SELECT COUNT(*) FROM failed_extractions"
+            ).fetchone()[0]
+            conn.execute("DELETE FROM failed_extractions")
+
+        conn.commit()
+        print(f"Cleared {pending_count} pending entries")
+        print(f"Cleared {perm_count} permanent extraction failures")
+        print()
+        print("On next RAG restart, all watched files will be re-evaluated")
+        print("by _initial_reindex (unchanged files skip quickly via hash check).")
+    finally:
+        conn.close()
+
+
 def _parse_ts(ts: str) -> float:
-    """Parse ISO timestamp to epoch seconds for elapsed-time math."""
     if not ts or "T" not in ts:
         return 0.0
     try:
@@ -263,11 +390,7 @@ def _file_index_duration_seconds(
     indexed_ts: str,
     batch_start_by_file: dict[str, float] | None = None,
 ) -> float | None:
-    """Per-file wall-clock seconds from batch start to indexed.
-
-    Prefer batch_start_ts from payload (set by RAG service after restart).
-    Fallback: use batch_start_by_file from earlier rag.extraction.batch.started events.
-    """
+    """Per-file wall-clock seconds from batch start to indexed."""
     batch_start = payload.get("batch_start_ts")
     if batch_start and indexed_ts:
         start = _parse_ts(batch_start)
@@ -285,14 +408,16 @@ def _file_index_duration_seconds(
 
 
 def _watch_mode() -> None:
-    """Stream new events as they arrive, formatted."""
+    """Stream events with clear phase labels.
+
+    Pipeline per file:  EXTRACT → CHUNKED → INDEXED (done)
+                                           → FAILED  (error)
+    """
     if not EVENT_FILE.exists():
         print(f"Waiting for {EVENT_FILE} ...", flush=True)
 
     seen = 0
-    # Elapsed "since start" uses directory index start (not first batch.started — files run in parallel).
     dir_start_ts: float | None = None
-    # Per-file batch start (for "to index" when payload has no batch_start_ts — works before RAG restart).
     batch_start_by_file: dict[str, float] = {}
     try:
         while True:
@@ -317,14 +442,17 @@ def _watch_mode() -> None:
                             dir_start_ts = None
                             batch_start_by_file.clear()
                             print(f"{ts}  [START   ]  RAG service started")
+
                         case "rag.directory.index.started":
                             if ts_full:
                                 dir_start_ts = _parse_ts(ts_full)
                             batch_start_by_file.clear()
                             nfiles = p.get("total_files", 0)
                             print(
-                                f"{ts}  [DIR     ]  directory index started  ({nfiles} files)"
+                                f"{ts}  [DIR     ]  "
+                                f"directory index started  ({nfiles} files)"
                             )
+
                         case "rag.extraction.batch.started":
                             path = p.get("file", "")
                             if path and ts_full:
@@ -333,24 +461,43 @@ def _watch_mode() -> None:
                                     batch_start_by_file[path] = t
                             n = p.get("chunk_count", 0)
                             print(
-                                f"{ts}  [BATCH   ]  {_basename(p.get('file', ''))}  ({n} chunks)"
+                                f"{ts}  [EXTRACT ]  "
+                                f"{_basename(path)}  ({n} chunks)"
                             )
+
                         case "rag.extraction.batch.completed":
+                            fname = p.get("file", "")
                             w = p.get("written", 0)
                             n = p.get("chunk_count", 0)
                             file_duration = p.get("duration_seconds", 0)
                             d = _fmt_duration(file_duration)
-                            mark = "✓" if w == n else "!"
+                            ok = w == n
+                            mark = "✓" if ok else "!"
                             since_start = ""
                             if dir_start_ts is not None and ts_full:
                                 end_ts = _parse_ts(ts_full)
                                 if end_ts > 0:
-                                    since_start = f"  {_fmt_duration(end_ts - dir_start_ts)} since dir start"
+                                    since_start = (
+                                        f"  {_fmt_duration(end_ts - dir_start_ts)}"
+                                        " since dir start"
+                                    )
+                            fail_count = n - w if n > w else 0
+                            fail_note = ""
+                            if fail_count:
+                                fail_note = (
+                                    f"  ({fail_count} extraction"
+                                    f" {'failure' if fail_count == 1 else 'failures'})"
+                                )
                             print(
-                                f"{ts}  [{mark} DONE  ]  {_basename(p.get('file', ''))}  {w}/{n} chunks  {d} to chunk{since_start}"
+                                f"{ts}  [{mark} CHUNK ]  "
+                                f"{_basename(fname)}  "
+                                f"{w}/{n} chunks  "
+                                f"{d}{since_start}{fail_note}"
                             )
+
                         case "rag.file.indexed":
                             idx = p.get("indexed", 0)
+                            bib = p.get("bibliography_chunks", 0)
                             file_dur = _file_index_duration_seconds(
                                 p, ts_full, batch_start_by_file
                             )
@@ -359,25 +506,81 @@ def _watch_mode() -> None:
                                 if file_dur is not None
                                 else p.get("duration_seconds", 0)
                             )
-                            d = _fmt_duration(display_secs) + " to index"
+                            d = _fmt_duration(display_secs)
                             path = p.get("file", "")
                             if path:
                                 batch_start_by_file.pop(path, None)
+                            bib_note = f"  ({bib} bib)" if bib else ""
                             print(
-                                f"{ts}  [INDEXED ]  {_basename(p.get('file', ''))}  ({idx} chunks stored)  {d}"
+                                f"{ts}  [✓ DONE  ]  "
+                                f"{_basename(path)}  "
+                                f"{idx} chunks stored  "
+                                f"{d}{bib_note}"
                             )
+
+                        case "rag.file.indexing.failed":
+                            path = p.get("file", "")
+                            error = p.get("error", "unknown")
+                            short = _short_error(error)
+                            print(
+                                f"{ts}  [✗ FAIL  ]  "
+                                f"{_basename(path)}  "
+                                f"{short}"
+                            )
+
+                        case "rag.extraction.failed":
+                            pass  # summarized in batch.completed via written/chunk_count
+
                         case "rag.extraction.permanently.skipped":
                             cid = p.get("chunk_id", "?")
                             src = _basename(p.get("source", "?"))
                             att = p.get("attempt_count", "?")
                             print(
-                                f"{ts}  [PERM ✗  ]  {src}  chunk={cid}  attempts={att}"
+                                f"{ts}  [PERM ✗  ]  "
+                                f"{src}  chunk={cid}  attempts={att}"
                             )
+
                         case "rag.extraction.completed":
-                            pass  # too noisy — skip per-chunk events in watch mode
+                            pass  # too noisy for watch mode
+
+                        case "rag.pending.reconciled":
+                            r = p.get("reconciled", 0)
+                            c = p.get("cleared", 0)
+                            ft = p.get("failed_transient", 0)
+                            fp = p.get("failed_permanent", 0)
+                            print(
+                                f"{ts}  [RECONC  ]  "
+                                f"{r} reconciled  "
+                                f"{c} cleared  "
+                                f"{ft} transient  "
+                                f"{fp} permanent"
+                            )
+
+                        case "rag.watch.initial.complete":
+                            nf = p.get("files", 0)
+                            ri = p.get("reindexed", 0)
+                            uc = p.get("unchanged", 0)
+                            print(
+                                f"{ts}  [SWEEP✓  ]  "
+                                f"{nf} files  "
+                                f"{ri} reindexed  "
+                                f"{uc} unchanged"
+                            )
+
+                        case "rag.post_index.stale":
+                            steps = p.get("stale_steps", [])
+                            print(
+                                f"{ts}  [⚠ STALE ]  "
+                                f"post-index steps overdue: "
+                                f"{', '.join(steps)}"
+                            )
+
                         case _:
                             if sig.startswith("rag."):
-                                print(f"{ts}  [{sig:<10}]  {json.dumps(p)}")
+                                print(
+                                    f"{ts}  [{sig}]  "
+                                    f"{json.dumps(p)}"
+                                )
 
                 seen = len(lines)
             time.sleep(WATCH_INTERVAL)
@@ -392,37 +595,39 @@ def main() -> None:
     )
     group = parser.add_mutually_exclusive_group()
     _ = group.add_argument(
-        "--watch",
-        "-w",
-        action="store_true",
+        "--watch", "-w", action="store_true",
         help="live tail — stream events as they arrive",
     )
     _ = group.add_argument(
-        "--summary", "-s", action="store_true", help="compact one-liner for scripting"
+        "--summary", "-s", action="store_true",
+        help="compact one-liner for scripting",
     )
     _ = group.add_argument(
-        "--failures",
-        "-f",
-        action="store_true",
+        "--failures", "-f", action="store_true",
         help="show permanently skipped chunks from the property index DB",
+    )
+    _ = group.add_argument(
+        "--pending", "-p", action="store_true",
+        help="show files stuck in the pending journal",
+    )
+    _ = group.add_argument(
+        "--reset", action="store_true",
+        help="clear pending journal + permanent extraction failures (run with RAG stopped)",
     )
     args = parser.parse_args()
 
     if args.watch:
         _watch_mode()
-        return
-
-    if args.failures:
+    elif args.summary:
+        _print_summary(_build_state(_load_events()))
+    elif args.failures:
         _print_failures()
-        return
-
-    events = _load_events()
-    state = _build_state(events)
-
-    if args.summary:
-        _print_summary(state)
+    elif args.pending:
+        _print_pending()
+    elif args.reset:
+        _reset()
     else:
-        _print_snapshot(state)
+        _print_snapshot(_build_state(_load_events()))
 
 
 if __name__ == "__main__":

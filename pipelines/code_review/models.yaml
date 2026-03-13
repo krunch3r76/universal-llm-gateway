@@ -2,4 +2,4 @@ models:
   review_model:
     model: google/gemini-2.5-flash
   validate_model:
-    model: mistralai/devstral-medium
+    model: google/gemini-2.5-flash

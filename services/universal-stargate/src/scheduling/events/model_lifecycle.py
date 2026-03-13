@@ -13,11 +13,14 @@ Signals:
     model.unloaded — model removed from gateway
     model.loading.started — model load in progress
     model.loading.failed — model load failed
+    model.loading.stuck — model load exceeded stuck TTL
     model.execution.started — one request started execution
     model.execution.completed — one request completed (triggers slot release)
     model.execution.failed — one request failed (triggers slot release)
     model.capacity.freed — wake-only; capacity likely increased
 """
+
+# ruff: noqa: N802
 
 from universal_event_bus import Event, event_factory
 
@@ -59,6 +62,19 @@ Payload: {
     "url": str,
     "model_id": str,
     "error": str
+}
+"""
+
+MODEL_LOADING_STUCK = "model.loading.stuck"
+"""
+A model was stuck in loading state beyond the TTL threshold.
+The loading reservation has been auto-cleared to unblock VRAM.
+
+Payload: {
+    "url": str,
+    "model_id": str,
+    "elapsed_s": float,
+    "ttl_s": float
 }
 """
 
@@ -230,6 +246,25 @@ def ModelLoadingFailed(
     return Event(
         signal=MODEL_LOADING_FAILED,
         payload=payload,
+    )
+
+
+@event_factory
+def ModelLoadingStuck(
+    url: str,
+    model_id: str,
+    elapsed_s: float,
+    ttl_s: float,
+) -> Event:
+    """Create MODEL_LOADING_STUCK event."""
+    return Event(
+        signal=MODEL_LOADING_STUCK,
+        payload={
+            "url": url,
+            "model_id": model_id,
+            "elapsed_s": elapsed_s,
+            "ttl_s": ttl_s,
+        },
     )
 
 

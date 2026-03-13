@@ -147,6 +147,22 @@ class ModelLoader:
         """Actual load logic — called at most once per model_id at a time."""
         try:
             resource_tracker = _get_resource_tracker()
+
+            # Guard: skip redundant load for models already on GPU.
+            # Prevents spurious MODEL_LOADING_STARTED that defeats TTL watchdogs.
+            from src.core.resources.types import ModelStatus
+
+            model_info = resource_tracker.get_model_info(model_id)
+            if model_info and model_info.status in (
+                ModelStatus.LOADED,
+                ModelStatus.BUSY,
+            ):
+                logger.info(
+                    f"Model {model_id} already {model_info.status.value}, "
+                    f"skipping redundant load"
+                )
+                return True
+
             logger.info(f"📦 Loading model: {model_id}")
 
             resources_ok, resource_details = await preflight.check_resources_and_block(

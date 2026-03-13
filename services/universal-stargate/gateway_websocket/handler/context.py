@@ -39,6 +39,7 @@ class HandlerContext:
     """Mutable reference to state._measured_model_vram.
     Populated only by RESOURCE_UPDATE model_vram."""
     busy_since: dict[str, float] = field(default_factory=dict)
+    loading_since: dict[str, float] = field(default_factory=dict)
 
     # Resources state (read-only, updated via reservation-aware setter)
     _resources: ResourcesData = field(default_factory=ResourcesData)

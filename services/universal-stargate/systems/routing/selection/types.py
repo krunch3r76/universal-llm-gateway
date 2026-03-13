@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypedDict
 
 from model_id import ModelId
 
@@ -30,6 +30,16 @@ class Placement:
     def primary_resource_mb(self) -> int:
         """The constrained resource for this placement."""
         return self.vram_mb if self.is_gpu else self.ram_mb
+
+
+class ModelDetails(TypedDict, total=False):
+    """Per-model routing metadata used by selection and eviction planning."""
+
+    last_inference_time: float | None
+    vram_usage: int
+    ram_usage: int
+    status: str
+    max_concurrent_requests: int
 
 
 @dataclass
@@ -56,7 +66,7 @@ class Gateway:
     node_id: str = ""  # Canonical node identity for affinity matching
 
     # Model details for eviction scoring (populated when include_model_details=True)
-    model_details: dict[ModelId, dict[str, Any]] = field(default_factory=dict)
+    model_details: dict[ModelId, ModelDetails] = field(default_factory=dict)
     """
     Model details including last_inference_time and resource usage.
 
@@ -78,6 +88,10 @@ class Gateway:
     """nvidia-smi-measured VRAM per loaded model.
     Populated from RESOURCE_UPDATE model_vram. Empty until first RESOURCE_UPDATE.
     Eviction planner prefers this over model_details."""
+
+    # Eviction hysteresis: monotonic timestamp when each model was loaded.
+    # Populated from FederatedGateway.model_loaded_at via collector.
+    model_loaded_at: dict[ModelId, float] = field(default_factory=dict)
 
     # Optional metrics for advanced scoring
     health_score: float = 1.0
@@ -122,13 +136,9 @@ class Gateway:
             (collector.py excludes models with missing requirements).
             Returns (0, 0) only if model_id not in model_details.
         """
-        if model_id in self.model_details:
-            details = self.model_details[model_id]
-            # No "or 0" needed - collector guarantees valid requirements
-            return (
-                details.get("vram_usage", 0),
-                details.get("ram_usage", 0),
-            )
+        details = self.model_details.get(model_id, {})
+        if details:
+            return (details.get("vram_usage", 0), details.get("ram_usage", 0))
         return (0, 0)
 
     def slack_after_fit(self, p: Placement) -> int:
@@ -188,7 +198,7 @@ class Stargate:
     last_heartbeat: float = 0.0
 
     # Model details for eviction scoring
-    model_details: dict[ModelId, dict[str, Any]] = field(default_factory=dict)
+    model_details: dict[ModelId, ModelDetails] = field(default_factory=dict)
 
     @property
     def telemetry_age_ms(self) -> int:

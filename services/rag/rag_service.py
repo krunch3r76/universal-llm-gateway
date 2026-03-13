@@ -42,6 +42,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 import chromadb
+import httpx
 from fastapi import FastAPI, HTTPException
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
@@ -201,6 +202,13 @@ async def _maybe_update_corpus_hints() -> None:
             e,
             exc_info=True,
         )
+        if _event_bus is not None:
+            await _event_bus.publish_async_nowait(
+                # Assuming a new event `rag_corpus_hints_update_failed` exists
+                # or a generic `rag_warning` event with details.
+                # For now, this is a placeholder.
+                rag_file_indexing_failed(file="corpus_hints_update", error=str(e))
+            )
 
 
 def _get_collection() -> chromadb.Collection:
@@ -350,13 +358,33 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
                         ct = _resolve_chunk_tokens_for_file(Path(src), config)
                         await _index_file(Path(src), chunk_tokens=ct)
                         reconciled += 1
-                    except (TimeoutError, ConnectionError) as e:
+                    except (
+                        TimeoutError,
+                        ConnectionError,
+                        httpx.TimeoutException,
+                        httpx.ConnectError,
+                    ) as e:
                         logger.warning(
-                            "Transient error reconciling %s; will retry on next sweep: %s",
+                            "Transient error reconciling %s; will retry on next sweep: %r",
                             src,
                             e,
                         )
                         failed_transient += 1
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code in (502, 503, 504):
+                            logger.warning(
+                                "Transient %d reconciling %s; will retry on next sweep",
+                                e.response.status_code,
+                                src,
+                            )
+                            failed_transient += 1
+                        else:
+                            logger.error(
+                                "Permanent HTTP error reconciling %s: %s",
+                                src,
+                                e,
+                            )
+                            failed_permanent += 1
                     except Exception:
                         logger.error(
                             "Permanent error reconciling %s; requires manual intervention",
@@ -446,7 +474,7 @@ def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | 
         Matching chunk_tokens override, or None when no watch directory matches.
     """
     resolved_file = file_path.expanduser().resolve()
-    baseline = {f".{ext.lower().lstrip('.')}" for ext in config.baseline_extensions}
+    baseline = {f".{ext.lower()}" for ext in config.baseline_extensions}
     for watch_directory in config.watch_directories:
         watch_path = Path(watch_directory.path).expanduser().resolve()
         if not resolved_file.is_relative_to(watch_path):
@@ -454,7 +482,7 @@ def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | 
         if not watch_directory.recursive and resolved_file.parent != watch_path:
             continue
         effective_extensions = (
-            {f".{ext.lower().lstrip('.')}" for ext in watch_directory.extensions}
+            {f".{ext.lower()}" for ext in watch_directory.extensions}
             if watch_directory.extensions
             else baseline
         )
@@ -797,7 +825,7 @@ async def _index_file_impl(
             extraction_entities = ext_result.entities
             extraction_topics = ext_result.topics
             extraction_property_entries = ext_result.property_entries
-            _batch_start_ts = getattr(ext_result, "batch_start_ts", None)
+            _batch_start_ts: str | None = getattr(ext_result, "batch_start_ts", None)
             file_batch_start_ts = (
                 _batch_start_ts if isinstance(_batch_start_ts, str) else None
             )
@@ -863,7 +891,7 @@ async def _index_file_impl(
                 raise
         # ∀ id ∈ existing_ids ∩ ids: already overwritten by upsert — do not re-delete.
         new_id_set = set(ids)
-        stale_ids = [eid for eid in existing_ids if eid not in new_id_set]
+        stale_ids = list(set(existing_ids) - new_id_set)
         if stale_ids:
             # Property index + FTS cleanup BEFORE ChromaDB delete.
             if _property_index is not None:
@@ -874,7 +902,10 @@ async def _index_file_impl(
     except Exception as exc:
         if _event_bus is not None:
             await _event_bus.publish_async_nowait(
-                rag_file_indexing_failed(file=source, error=str(exc))
+                rag_file_indexing_failed(
+                    file=source,
+                    error=f"{type(exc).__qualname__}: {exc}" if str(exc) else type(exc).__qualname__,
+                )
             )
         raise
     finally:
@@ -980,7 +1011,7 @@ async def search(request: SearchRequest) -> SearchResponse:
 
     # ChromaDB >=1.0 dropped $regex on metadata and $contains is array-only,
     # so source_prefixes filtering is done in Python after the query.
-    fetch_k = request.top_k * 5 if request.source_prefixes else request.top_k * 3
+    fetch_k = request.top_k * (5 if request.source_prefixes else 3)
 
     results = collection.query(
         query_embeddings=[query_embedding],
@@ -1094,21 +1125,14 @@ async def chunks_by_index(request: ChunksByIndexRequest) -> ChunksByIndexRespons
         if not group.chunk_indices:
             continue
         where_filter: dict[str, object]
-        if len(group.chunk_indices) == 1:
-            where_filter = {
-                "$and": [
-                    {"source": group.source},
-                    {"chunk_index": group.chunk_indices[0]},
-                ]
-            }
-        else:
-            where_filter = {
-                "$and": [
-                    {"source": group.source},
-                    {"chunk_index": {"$gte": min(group.chunk_indices)}},
-                    {"chunk_index": {"$lte": max(group.chunk_indices)}},
-                ]
-            }
+        # Assuming ChromaDB supports $in for integer metadata. If not, the original
+        # structure is necessary, but could be slightly cleaner.
+        where_filter = {
+            "$and": [
+                {"source": group.source},
+                {"chunk_index": {"$in": group.chunk_indices}},
+            ]
+        }
         try:
             raw = collection.get(
                 where=where_filter,

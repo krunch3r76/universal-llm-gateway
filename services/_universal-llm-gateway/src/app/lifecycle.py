@@ -21,6 +21,7 @@ try:
     from ..core.model_registry import ModelRegistry
     from ..core.resource_monitor import ResourceMonitor
     from ..core.resources import resource_tracker
+    from ..core.resources.vram_reconciler import VramReconciler
     from ..core.workers import WorkerController, set_worker_controller
     from ..core.workers.orphan_detector import OrphanedSocketDetector
     from ..core.workers.resource_tracker_crash_handler import (
@@ -40,6 +41,7 @@ except ImportError:
     from src.core.model_registry import ModelRegistry
     from src.core.resource_monitor import ResourceMonitor
     from src.core.resources import resource_tracker
+    from src.core.resources.vram_reconciler import VramReconciler
     from src.core.workers import WorkerController, set_worker_controller
     from src.core.workers.orphan_detector import OrphanedSocketDetector
     from src.core.workers.resource_tracker_crash_handler import (
@@ -107,7 +109,7 @@ async def graceful_shutdown(
     idle_event = asyncio.Event()
 
     # Register callback to set event when idle
-    async def on_idle_callback():
+    def on_idle_callback() -> None:
         idle_event.set()
 
     # Register callback BEFORE checking idle state to avoid race condition:
@@ -355,6 +357,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0912
         # Start worker controller
         await worker_controller.start()
 
+        vram_reconciler = VramReconciler(
+            resource_tracker=resource_tracker,
+            worker_controller=worker_controller,
+            event_bus=event_bus,
+        )
+        app.state.vram_reconciler = vram_reconciler
+        await vram_reconciler.start()
+
         # Clean up orphaned workers from previous gateway instance
         # Ensures Stargate coordinator state stays in sync with actual workers
         try:
@@ -561,6 +571,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0912
 
     # Check shutdown mode
     shutdown_mode = os.environ.get("GATEWAY_SHUTDOWN_MODE", "fast")
+
+    if hasattr(app.state, "vram_reconciler") and app.state.vram_reconciler:
+        try:
+            await app.state.vram_reconciler.stop()
+        except Exception as e:
+            if gateway_logger is not None:
+                gateway_logger.warning(f"Error stopping VRAM reconciler: {e}")
 
     if shutdown_mode == "graceful":
         graceful_timeout = float(os.environ.get("GATEWAY_GRACEFUL_TIMEOUT", "30"))

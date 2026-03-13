@@ -57,13 +57,16 @@ def _can_fit_after_eviction_including_busy(
     for loaded_model_id in gateway.loaded_models:
         measured_vram = gateway.model_measured_vram.get(loaded_model_id)
         catalog_vram, catalog_ram = gateway.get_model_resource_usage(loaded_model_id)
-        req_vram_mb, req_ram_mb = requirements_lookup(loaded_model_id)
+        # requirements_lookup provides the *catalog* requirements for the model.
+        # We use it here to ensure we account for the *minimum* resources a model
+        # would consume if it were loaded, even if measured_vram is absent.
+        catalog_req_vram_mb, catalog_req_ram_mb = requirements_lookup(loaded_model_id)
         effective_vram = (
             measured_vram
             if measured_vram is not None
-            else (req_vram_mb if req_vram_mb > 0 else catalog_vram)
+            else max(catalog_req_vram_mb, catalog_vram)
         )
-        effective_ram = req_ram_mb if req_ram_mb > 0 else catalog_ram
+        effective_ram = catalog_req_ram_mb if catalog_req_ram_mb > 0 else catalog_ram
         reclaimable_vram += max(effective_vram, 0)
         reclaimable_ram += max(effective_ram, 0)
 
@@ -89,6 +92,8 @@ def evaluate_feasibility(
     sticky: bool = True,
     routing_key_tracker: RoutingKeyTracker | None = None,
     is_gateway_available_fn: Callable[[str, str], bool] | None = None,
+    eviction_cooldown_s: float = 120.0,
+    has_demand: Callable[[str], bool] | None = None,
 ) -> tuple[
     FeasibilityTier,
     tuple[ConstraintFailure, ...],
@@ -104,7 +109,8 @@ def evaluate_feasibility(
     Invariant: tier == T0 ⟹ len(constraint_failures) > 0
     Invariant: tier == T2 ⟹ eviction_plan is not None
     Invariant (non-sticky): ¬sticky ⟹
-               T2_FEASIBLE_EVICT valid even when model loaded elsewhere
+               T2_FEASIBLE_EVICT valid even when model loaded elsewhere (i.e., routing can
+               move the model, and eviction on this gateway is still a valid path).
 
     Tier classification:
     - T0: Unhealthy, model not in catalog, cannot fit
@@ -120,6 +126,9 @@ def evaluate_feasibility(
         sticky: Whether this is sticky routing (affects capacity handling)
         routing_key_tracker: For eviction protection and stale busy-model
             reconciliation in eviction planning.
+        eviction_cooldown_s: Minimum seconds since load before a model is evictable.
+        has_demand: Callback returning True when routing queue has waiters for a
+            routing_key.
     """
     logger.info(
         f"🔍 Evaluating feasibility: {placement.model_id} on {gateway.name} "
@@ -139,7 +148,7 @@ def evaluate_feasibility(
                     details={"circuit_open": True, "model_id": str(placement.model_id)},
                 )
             )
-            return FeasibilityTier.T0_INFEASIBLE, tuple(failures), None
+            return FeasibilityTier.T0_INFEASIBLE, tuple(failures), None # No change for now, but consider refactoring if more return paths are added
 
     # Check 1: Gateway health
     if gateway.health_score < 0.5:
@@ -206,12 +215,11 @@ def evaluate_feasibility(
         f"fits on {gateway.name} without eviction"
     )
 
-    resource_margins_config = {"resource_margins": policy.resource_margins}
     has_resources, resource_failure = _check_resources(
         gateway,
         placement,
         requirements_lookup,
-        config=resource_margins_config,
+        config={"resource_margins": policy.resource_margins},
     )
 
     if has_resources:
@@ -240,10 +248,16 @@ def evaluate_feasibility(
         placement,
         requirements_lookup,
         routing_key_tracker=routing_key_tracker,
+        eviction_cooldown_s=eviction_cooldown_s,
+        has_demand=has_demand,
     )
 
     if eviction_plan is None:
-        if resource_failure is not None:
+        # If resource_failure exists, it's the primary reason for not fitting without eviction.
+        # We should ensure it's included, but avoid duplicating it if it's already implicitly
+        # covered by the more specific eviction-related failures.
+        # For now, append it if it's distinct and relevant.
+        if resource_failure is not None and resource_failure not in failures:
             failures.append(resource_failure)
 
         # Distinguish transient from permanent eviction failure.

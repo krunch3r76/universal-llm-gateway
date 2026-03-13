@@ -39,11 +39,11 @@ class HandlerRegistry:
     """
 
     # Maps step_type -> handler CLASS (not instance)
-    _generic_handler_classes: dict[str, type] = {}
+    _generic_handler_classes: dict[str, type[StepHandler]] = {}
     _initialized: bool = False
 
     @classmethod
-    def register_class(cls, handler_class: type) -> type:
+    def register_class(cls, handler_class: type[StepHandler]) -> type[StepHandler]:
         """
         Register a generic (fallback) step handler class.
 
@@ -68,7 +68,7 @@ class HandlerRegistry:
     @classmethod
     def get_class(
         cls, domain: str, step_type: str, *, variant: str = ""
-    ) -> type | None:
+    ) -> type[StepHandler] | None:
         """
         Get handler CLASS for (domain, variant, step_type).
 
@@ -84,7 +84,7 @@ class HandlerRegistry:
     @classmethod
     def get_class_or_raise(
         cls, domain: str, step_type: str, *, variant: str = ""
-    ) -> type:
+    ) -> type[StepHandler]:
         """Get handler class or raise KeyError (fail-fast)."""
         handler_class = cls.get_class(domain, step_type, variant=variant)
         if handler_class is None:
@@ -155,6 +155,24 @@ class HandlerRegistry:
         return router.list_handlers()
 
     @classmethod
+    def get_handler_dependency_fields(
+        cls, step_type: str, domain: str = ""
+    ) -> tuple[str, ...]:
+        """Return domain-field names that contain step-name references.
+
+        Used by StepConfig.computed_depends_on to discover implicit
+        dependencies declared by handlers (e.g. select_output.candidates).
+        """
+        cls._ensure_initialized()
+        try:
+            handler_class = cls.get_class_or_raise(
+                domain or "_generic", step_type, variant=""
+            )
+        except KeyError:
+            return ()
+        return getattr(handler_class, "dependency_fields", ())
+
+    @classmethod
     def _ensure_initialized(cls) -> None:
         """Ensure builtin and domain handlers are registered."""
         if cls._initialized:
@@ -174,7 +192,7 @@ class HandlerRegistry:
         )
 
 
-def register_handler(handler_class: type) -> type:
+def register_handler(handler_class: type[StepHandler]) -> type[StepHandler]:
     """
     Decorator to register a generic step handler class.
 

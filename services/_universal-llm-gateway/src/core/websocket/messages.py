@@ -28,6 +28,9 @@ class MessageType(str, Enum):
     COMPUTE_QUEUE_WAIT = "telemetry.compute.queue.wait"
     COMPUTE_QUEUE_ACQUIRED = "telemetry.compute.queue.acquired"
     REQUEST_INFERENCE_STARTED = "telemetry.request.inference.started"
+    VRAM_PHANTOM_DETECTED = "telemetry.vram.phantom.detected"
+    PHANTOM_MODEL_DETECTED = "telemetry.model.phantom.detected"
+    PHANTOM_MODEL_CLEANED = "telemetry.model.phantom.cleaned"
 
     # Stargate → Gateway
     PONG = "gateway.pong"
@@ -140,10 +143,13 @@ def create_resource_update_message(
     available_ram_mb: int,
     total_vram_mb: int | None = None,
     total_ram_mb: int | None = None,
-    loaded_models: list[str] | None = None,
     model_vram: dict[str, int] | None = None,
 ) -> WebSocketMessage:
-    """Create RESOURCE_UPDATE event message."""
+    """Create RESOURCE_UPDATE event message.
+
+    Single-writer invariant: loaded_models is NOT included here.
+    Lifecycle state comes exclusively from MODEL_LOADED / MODEL_UNLOADED events.
+    """
     data: dict[str, Any] = {
         "available_vram_mb": available_vram_mb,
         "available_ram_mb": available_ram_mb,
@@ -152,8 +158,6 @@ def create_resource_update_message(
         data["total_vram_mb"] = total_vram_mb
     if total_ram_mb is not None:
         data["total_ram_mb"] = total_ram_mb
-    if loaded_models is not None:
-        data["loaded_models"] = loaded_models
     if model_vram is not None:
         data["model_vram"] = model_vram
     return WebSocketMessage(type=MessageType.RESOURCE_UPDATE, data=data)
@@ -297,5 +301,55 @@ def create_request_inference_started_message(
             "model_id": model_id,
             "gateway_url": gateway_url,
             "correlation_id": correlation_id,
+        },
+    )
+
+
+def create_vram_phantom_detected_message(
+    hardware_used_mb: int,
+    catalog_used_mb: int,
+    discrepancy_mb: int,
+    tracked_models: list[str],
+) -> WebSocketMessage:
+    """Create VRAM phantom discrepancy telemetry message."""
+    return WebSocketMessage(
+        type=MessageType.VRAM_PHANTOM_DETECTED,
+        data={
+            "hardware_used_mb": hardware_used_mb,
+            "catalog_used_mb": catalog_used_mb,
+            "discrepancy_mb": discrepancy_mb,
+            "tracked_models": tracked_models,
+        },
+    )
+
+
+def create_phantom_model_detected_message(
+    model_id: str,
+    process_status: str,
+    tracker_status: str | None,
+) -> WebSocketMessage:
+    """Create phantom model detected telemetry message."""
+    return WebSocketMessage(
+        type=MessageType.PHANTOM_MODEL_DETECTED,
+        data={
+            "model_id": model_id,
+            "process_status": process_status,
+            "tracker_status": tracker_status,
+        },
+    )
+
+
+def create_phantom_model_cleaned_message(
+    model_id: str,
+    success: bool,
+    vram_freed_mb: int | None,
+) -> WebSocketMessage:
+    """Create phantom model cleaned telemetry message."""
+    return WebSocketMessage(
+        type=MessageType.PHANTOM_MODEL_CLEANED,
+        data={
+            "model_id": model_id,
+            "success": success,
+            "vram_freed_mb": vram_freed_mb,
         },
     )

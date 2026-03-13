@@ -1,0 +1,27 @@
+basename: devstral-medium
+full_model_id: mistralai/devstral-medium
+source: cloud
+latency_bucket: fast
+cost_bucket: cheap
+reasoning_depth: good
+tasks:
+  planning:
+    score: neutral
+    evidence:
+      - source: curated
+        detail: Code-specialized model; not designed for general planning tasks
+  code_architecture:
+    score: good
+    evidence:
+      - source: curated
+        detail: Strong code comprehension; solid at cross-file structural analysis
+  code_review:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Code-specialized model with precise bug detection and fix generation
+  research:
+    score: neutral
+    evidence:
+      - source: curated
+        detail: Code-focused; not suited for prose synthesis or research tasks

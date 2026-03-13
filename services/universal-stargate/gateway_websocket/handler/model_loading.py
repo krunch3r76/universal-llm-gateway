@@ -1,5 +1,6 @@
 """Handlers for model loading lifecycle events."""
 
+import time
 from typing import Any
 
 from model_id import ModelId
@@ -38,7 +39,17 @@ class ModelLoadingStartedHandler(SyncMessageHandler):
             logger.debug("MODEL_LOADING_STARTED missing model_id")
             return
 
+        # Guard: if model is already loaded, ignore spurious loading event.
+        # Prevents re-load attempts from defeating the TTL watchdog.
+        if model_id in ctx.loaded_models:
+            logger.info(
+                f"MODEL_LOADING_STARTED for {model_id} ignored — "
+                f"already in loaded_models (stale re-load attempt)"
+            )
+            return
+
         ctx.loading_models.add(model_id)
+        ctx.loading_since[model_id] = time.monotonic()
         logger.info(f"Model loading started on Gateway: {model_id}")
 
         if ctx.on_model_loading_started:
@@ -65,6 +76,7 @@ class ModelLoadedHandler(SyncMessageHandler):
 
         ctx.loaded_models.add(model_id)
         ctx.loading_models.discard(model_id)
+        _ = ctx.loading_since.pop(model_id, None)
 
         # Store resource usage for eviction planning
         vram_mb = data.get("vram_mb", 0)
@@ -115,6 +127,7 @@ class ModelLoadFailedHandler(SyncMessageHandler):
             return
 
         ctx.loading_models.discard(model_id)
+        _ = ctx.loading_since.pop(model_id, None)
         logger.error(f"Model load failed on Gateway: {model_id}: {error_message}")
 
         # Dispatch to model-specific callbacks first (LoadOutcomeTracker)
@@ -139,8 +152,6 @@ class ModelBusyHandler(SyncMessageHandler):
     """
 
     def handle(self, data: dict[str, Any], ctx: HandlerContext) -> None:
-        import time
-
         model_id = data.get("model_id")
         if not model_id:
             logger.debug("MODEL_BUSY missing model_id")

@@ -194,6 +194,7 @@ def build_handler_context(
         loading_models=state.loading_models,
         busy_models=state.busy_models,
         busy_since=state.busy_since,
+        loading_since=state.loading_since,
         models=state.models,
         catalog=state.catalog,
         model_last_inference=state.model_last_inference,

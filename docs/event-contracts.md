@@ -127,6 +127,13 @@ model.load.initiated
 
 **`federation.catalog.vram.drift`**: Emitted when `RESOURCE_UPDATE.model_vram` reveals that a loaded model's actual GPU VRAM (measured via nvidia-smi) diverges from the catalog estimate by >5%.
 
+**Single-writer invariant**: `RESOURCE_UPDATE` no longer carries `loaded_models` in its
+wire payload. Model lifecycle state (`loaded_models`, `busy_models`, `loading_models`)
+is exclusively maintained by discrete events (`MODEL_LOADED`, `MODEL_UNLOADED`,
+`MODEL_BUSY`, `MODEL_IDLE`, `MODEL_LOADING_STARTED`). Edge telemetry forwarding
+also strips `loaded_models`/`busy_models` from forwarded `RESOURCE_UPDATE` messages;
+lifecycle state is forwarded via dedicated callbacks instead.
+
 - Emitted per model per `RESOURCE_UPDATE` that carries `model_vram` and shows drift.
 - `drift_pct` = `|measured_mb - catalog_mb| / catalog_mb * 100`.
 - Threshold: 5% (hardcoded). Sustained drift indicates the catalog profile needs updating.
@@ -730,6 +737,10 @@ jq -c 'select(.event_type == "combine_passages_completed") | {step: .step_name, 
 | `routing.model.infeasible` | `request_id`, `model_id`, `gateway_constraints`, `excluded_gateway_ids` | - |
 | `routing.eviction.blocked.busy` | `request_id`, `model_id`, `gateway_id`, `loaded_count`, `busy_count`, `vram_free` | - |
 | `routing.eviction.insufficient.permanent` | `request_id`, `model_id`, `gateway_id`, `reason`, `failed_constraints` | - |
+| `routing.eviction.wait.started` | `request_id`, `model_id`, `timeout_s`, `queue_depth` | - |
+| `routing.eviction.wait.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms` | - |
+| `routing.eviction.wait.timeout` | `request_id`, `model_id`, `waited_ms` | - |
+| `routing.eviction.wait.cancelled` | `request_id`, `model_id`, `waited_ms` | - |
 | `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | - |
 | `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | - |
 | `routing.overflow.triggered` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `reason` | - |
@@ -739,6 +750,19 @@ jq -c 'select(.event_type == "combine_passages_completed") | {step: .step_name, 
 | `federated.request.prompt.transformation.applied` | `request_id`, `model_id`, `gateway_id`, `prompt_chars` | — |
 | `federated.request.prompt.transformation.failed`  | `request_id`, `model_id`, `gateway_id`, `error` | — |
 | `federated.request.prompt.transformation.skipped` | `request_id`, `model_id`, `gateway_id`, `reason` | — |
+| `scheduler.eviction.cooldown.blocked` | `model_id`, `gateway_id`, `evicted_model_id`, `escape_reason`, `timestamp` | `request_id`, `cooldown_remaining_s`, `candidates_in_cooldown`, `candidates_demand_protected` |
+| `scheduler.eviction.cooldown.applied` | `model_id`, `gateway_id`, `protected_count`, `cooldown_s`, `timestamp` | — |
+| `scheduler.eviction.demand.applied` | `model_id`, `gateway_id`, `protected_count`, `waiter_counts`, `timestamp` | — |
+
+### scheduler.eviction.cooldown.blocked / cooldown.applied / demand.applied
+
+Eviction hysteresis signals. When the eviction planner protects models from
+eviction due to cooldown window or routing queue demand, informational events
+are emitted. `scheduler.eviction.cooldown.applied` fires when ≥1 candidate
+was shielded by cooldown. `scheduler.eviction.demand.applied` fires when ≥1
+candidate had queued consumers. If ALL candidates are protected and the escape
+hatch activates, `scheduler.eviction.cooldown.blocked` fires with the evicted
+model and the reason the protection was overridden.
 
 ### scheduler.routing.failed / queued / dequeued / timeout
 
@@ -834,6 +858,22 @@ determines that resources are insufficient even with eviction.
 | `reason` | string | Human-readable primary failure reason |
 | `failed_constraints` | list[string] | Constraint names that failed |
 
+### routing.eviction.wait.* (pre-selection queue)
+
+When the DecisionEngine returns no gateway because of transient
+`eviction_blocked_by_busy_models` (busy models preventing eviction), the
+request enters a server-side wait queue instead of returning 503. These
+signals track the wait lifecycle.
+
+| Signal | When |
+|--------|------|
+| `routing.eviction.wait.started` | Request enters wait queue; payload includes `queue_depth` (current waiters) and `timeout_s` |
+| `routing.eviction.wait.resolved` | State changed, selection succeeded; payload includes `gateway_id` and `waited_ms` |
+| `routing.eviction.wait.timeout` | Wait budget expired before capacity became available |
+| `routing.eviction.wait.cancelled` | Client disconnected or task cancelled during wait |
+
+`queue_depth` in `.started` is a gauge for SRE capacity planning and monitoring.
+
 ### routing.upstream.all.excluded
 
 Emitted when upstream retry logic has excluded all gateways that can serve the
@@ -916,6 +956,7 @@ provider HTTP failures.
 | `model.unloaded` | `model_id` | `reason` |
 | `model.load.initiated` | `request_id`, `model_id` | `correlation_id` |
 | `model.load.completed` | `request_id`, `model_id`, `duration_ms` | `correlation_id` |
+| `model.loading.stuck` | `url`, `model_id`, `elapsed_s`, `ttl_s` | - |
 | `model.load.context.mismatch` | `model_id`, `requested_context`, `actual_context`, `reason` | - |
 
 **Note**: Execution-capacity signals (`model.execution.*` and
@@ -946,8 +987,11 @@ provider HTTP failures.
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `gateway.state.changed` | `url`, `connectivity`, `health` | `previous_connectivity`, `previous_health` |
-| `gateway.resource.updated` | `gateway_name`, `resources` | - |
+| `gateway.resource.updated` | `gateway_name`, `resources` | - | `loaded_models` derived from discrete MODEL_LOADED/MODEL_UNLOADED events, NOT from RESOURCE_UPDATE wire payload |
 | `gateway.snapshot.resource.gap` | `all_models_count`, `resource_models_count`, `gap_count`, `gap_cause` | `sample_missing` |
+| `gateway.vram.phantom.detected` | `hardware_used_mb`, `catalog_used_mb`, `discrepancy_mb`, `tracked_models` | - |
+| `gateway.model.phantom.detected` | `model_id`, `process_status` | `tracker_status` |
+| `gateway.model.phantom.cleaned` | `model_id`, `success` | `vram_freed_mb` |
 
 ### RAG Events
 

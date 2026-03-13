@@ -9,7 +9,7 @@ Invariant: ∀ candidate ∈ candidates: candidate is a step name in the DAG
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from universal_logging import get_logger
 
@@ -39,6 +39,7 @@ class SelectOutputHandler:
     """
 
     step_type = "select_output"
+    dependency_fields: ClassVar[tuple[str, ...]] = ("candidates",)
 
     async def execute(
         self,
@@ -73,12 +74,15 @@ class SelectOutputHandler:
             candidates,
             available,
         )
-        return StepOutput(
-            raw="",
-            json={"error": "No candidate step produced output"},
+        from ..dag import PipelineExecutionError
+
+        raise PipelineExecutionError(
+            f"Step '{step.id}': select_output exhausted all candidates. "
+            f"None produced output. Candidates: {candidates}, available: {available}"
         )
 
     def validate(self, step: StepConfig) -> list[str]:
+        """Validate the step configuration for SelectOutputHandler."""
         candidates = step.get_domain_field("candidates")
         if not candidates or not isinstance(candidates, list):
             return [

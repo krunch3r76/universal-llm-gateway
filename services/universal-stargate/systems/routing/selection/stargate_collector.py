@@ -9,6 +9,7 @@ Post-unification: All Gateway access via federation (no local Gateway).
 from __future__ import annotations
 
 import time
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
@@ -19,6 +20,20 @@ if TYPE_CHECKING:
     from .types import Gateway
 
 logger = get_logger(__name__)
+
+
+def _map_model_resources_to_details(
+    model_resources: dict[Any, dict[str, Any]],
+) -> dict[Any, dict[str, int]]:
+    """Normalize model_resources payload into routing model_details shape."""
+    return {
+        model_id: {
+            "vram_usage": int(res.get("vram_usage", 0)),
+            "ram_usage": int(res.get("ram_usage", 0)),
+            "max_concurrent_requests": int(res.get("max_concurrent_requests", 1)),
+        }
+        for model_id, res in model_resources.items()
+    }
 
 
 def stargate_to_gateway(stargate: Stargate) -> Gateway:
@@ -46,7 +61,7 @@ def stargate_to_gateway(stargate: Stargate) -> Gateway:
     # All gateways are federated - use gateway_id
     name = stargate.ref.gateway_id
 
-    return GatewayType(
+    gateway_obj = GatewayType(
         ref=stargate.ref,
         name=name,
         ram_free_mb=stargate.ram_free_mb,
@@ -64,10 +79,11 @@ def stargate_to_gateway(stargate: Stargate) -> Gateway:
         remote_stargate_id=stargate.ref.remote_stargate_id,
         node_id=getattr(stargate.ref, "node_id", ""),
     )
+    return gateway_obj
 
 
 def federated_gateways_to_routing_candidates(
-    federated_gateways: list,  # list[FederatedGateway]
+    federated_gateways: list,
 ) -> list[Gateway]:
     """
     Convert FederatedGateway instances directly to Gateway snapshots.
@@ -75,7 +91,7 @@ def federated_gateways_to_routing_candidates(
     For router-only Master mode where FederatedGatewayManager provides
     gateways directly without the intermediate Stargate abstraction.
 
-    Invariant: ∀ fg: gateway.name = fg.gateway_id
+    Invariant: ∀ fg: FederatedGateway, gateway.name = fg.gateway_id
 
     Args:
         federated_gateways: List of FederatedGateway from FederatedGatewayManager
@@ -87,15 +103,7 @@ def federated_gateways_to_routing_candidates(
 
     gateways = []
     for fg in federated_gateways:
-        # Map model_resources → model_details for eviction planning
-        model_details = {
-            model_id: {
-                "vram_usage": res.get("vram_usage", 0),
-                "ram_usage": res.get("ram_usage", 0),
-                "max_concurrent_requests": res.get("max_concurrent_requests", 1),
-            }
-            for model_id, res in fg.model_resources.items()
-        }
+        model_details = _map_model_resources_to_details(fg.model_resources)
 
         gateways.append(
             GatewayType(
@@ -113,6 +121,7 @@ def federated_gateways_to_routing_candidates(
                 telemetry_timestamp=fg.telemetry_timestamp,
                 last_heartbeat=fg.last_heartbeat,
                 model_details=model_details,
+                model_loaded_at=getattr(fg, "model_loaded_at", {}),
                 remote_stargate_id=fg.remote_stargate_id,
                 node_id=getattr(fg, "node_id", ""),
             )
@@ -134,9 +143,9 @@ def validate_stargate_pool(stargates: list[Stargate]) -> None:
     Raises:
         StargateCollisionError: If duplicates found
     """
-    ids = [sg.stargate_id for sg in stargates]
-    if len(ids) != len(set(ids)):
-        duplicates = {id for id in ids if ids.count(id) > 1}
+    counts = Counter(sg.stargate_id for sg in stargates)
+    duplicates = {stargate_id for stargate_id, count in counts.items() if count > 1}
+    if duplicates:
         raise StargateCollisionError(
             f"Duplicate stargate_id detected: {duplicates}. "
             "Each Stargate must have a unique ID."
@@ -164,15 +173,7 @@ def _collect_federated_stargates(
             f"catalog={len(fed_gw.available_models)}, "
             f"loaded={len(fed_gw.loaded_models)}"
         )
-        # model_resources → model_details: vram, ram, max_concurrent_requests
-        model_details = {
-            model_id: {
-                "vram_usage": res.get("vram_usage", 0),
-                "ram_usage": res.get("ram_usage", 0),
-                "max_concurrent_requests": res.get("max_concurrent_requests", 1),
-            }
-            for model_id, res in fed_gw.model_resources.items()
-        }
+        model_details = _map_model_resources_to_details(fed_gw.model_resources)
         logger.info(
             f"📊 [PHASE1] Stargate {fed_gw.gateway_id}: "
             f"model_resources={len(fed_gw.model_resources)}, "

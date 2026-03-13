@@ -61,7 +61,6 @@ class CloudProxyCatalogPoller:
         self._client = self._make_client(proxy_config.url)
         self._refresh_task: asyncio.Task[None] | None = None
         self._gateway_ids: list[str] = []
-        self._gateway_ids_lock: asyncio.Lock = asyncio.Lock()
         self._connected: bool = False
         self._last_connected_at: float | None = None
         # Extracted once at construction for fast socket-existence checks.
@@ -188,9 +187,8 @@ class CloudProxyCatalogPoller:
             await self._gateway_manager.register_cloud_gateway(gateway)
             current_ids.add(gateway.gateway_id)
 
-            async with self._gateway_ids_lock:
-                if gateway.gateway_id not in self._gateway_ids:
-                    self._gateway_ids.append(gateway.gateway_id)
+            if gateway.gateway_id not in self._gateway_ids:
+                self._gateway_ids.append(gateway.gateway_id)
 
             logger.info(
                 "Registered cloud gateway '%s': %d models via proxy",
@@ -199,9 +197,8 @@ class CloudProxyCatalogPoller:
             )
 
         # Prune gateways absent from this catalog iteration.
-        async with self._gateway_ids_lock:
-            stale = [gid for gid in self._gateway_ids if gid not in current_ids]
-            self._gateway_ids = [gid for gid in self._gateway_ids if gid in current_ids]
+        stale = [gid for gid in self._gateway_ids if gid not in current_ids]
+        self._gateway_ids = [gid for gid in self._gateway_ids if gid in current_ids]
 
         for gid in stale:
             logger.info("Pruned stale cloud gateway '%s' (absent from catalog)", gid)
@@ -271,8 +268,7 @@ class CloudProxyCatalogPoller:
             return
         from src.scheduling.events import CloudProxyAvailable
 
-        async with self._gateway_ids_lock:
-            ids_snapshot = list(self._gateway_ids)
+        ids_snapshot = list(self._gateway_ids)
         total_models = sum(
             len(gw.available_models)
             for gid in ids_snapshot
@@ -302,8 +298,7 @@ class CloudProxyCatalogPoller:
             return
         from src.scheduling.events import CloudProxyCatalogUpdated
 
-        async with self._gateway_ids_lock:
-            gateway_count = len(self._gateway_ids)
+        gateway_count = len(self._gateway_ids)
         await self._event_bus.publish_async(
             CloudProxyCatalogUpdated(
                 proxy_url=self._proxy_url,

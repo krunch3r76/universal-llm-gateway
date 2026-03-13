@@ -2,8 +2,10 @@
 Eviction planning for feasibility evaluation.
 
 Computes which models to evict to make room for a new model.
+Supports eviction hysteresis (cooldown + demand-aware protection).
 """
 
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -66,6 +68,8 @@ def _compute_eviction_plan(
     placement: "Placement",
     requirements_lookup: Callable[[ModelId], tuple[int, int]],
     routing_key_tracker: "RoutingKeyTracker | None" = None,
+    eviction_cooldown_s: float = 120.0,
+    has_demand: Callable[[str], bool] | None = None,
 ) -> EvictionPlanSummary | None:
     """
     Compute eviction plan to make room for model.
@@ -81,6 +85,10 @@ def _compute_eviction_plan(
                            for loading models (in-memory, no I/O)
         routing_key_tracker: Tracker for in-flight routing keys (eviction protection).
             REQUIRED for Master mode - prevents eviction of models with active requests.
+        eviction_cooldown_s: Minimum seconds a model must stay loaded before becoming
+            evictable. Prevents model thrashing livelock.
+        has_demand: Callback returning True if routing queue has waiters for a
+            routing_key. Models with demand are protected from eviction.
 
     Returns None if eviction cannot provide enough resources.
     """
@@ -131,21 +139,18 @@ def _compute_eviction_plan(
     # Get in-flight keys scoped to this gateway. Global in-flight keys are not
     # relevant for a per-gateway eviction decision.
     gw_keys_in_flight: set[str] | None = None
-    if routing_key_tracker is not None:
-        gw_keys_in_flight = routing_key_tracker.get_routing_keys_in_flight(gateway.name)
-        logger.debug(
-            f"Per-gateway in-flight routing keys for {gateway.name}: "
-            f"{gw_keys_in_flight}"
-        )
-    else:
+    if routing_key_tracker is None:
         logger.debug("No routing_key_tracker provided - trusting busy_models telemetry")
+    gw_keys_in_flight = routing_key_tracker.get_routing_keys_in_flight(gateway.name) if routing_key_tracker else None
+    logger.debug(
+        f"Per-gateway in-flight routing keys for {gateway.name}: "
+        f"{gw_keys_in_flight}"
+    )
 
     actually_busy_models = {
         mid
         for mid in gateway.loaded_models
-        if _is_model_actually_busy(
-            gateway, mid, routing_key_tracker, gw_keys_in_flight
-        )
+        if _is_model_actually_busy(gateway, mid, routing_key_tracker, gw_keys_in_flight)
     }
 
     # Get idle models (loaded but not actually busy)
@@ -190,6 +195,74 @@ def _compute_eviction_plan(
 
     if not evictable:
         logger.debug("No evictable models after filtering")
+        return None
+
+    # ---------------------------------------------------------------
+    # Hysteresis: cooldown + demand-aware filtering
+    # ---------------------------------------------------------------
+    now = time.monotonic()
+    cooldown_protected: list[ModelId] = []
+    past_cooldown: list[ModelId] = []
+    for mid in evictable:
+        elapsed = now - gateway.model_loaded_at.get(mid, 0.0)
+        if elapsed < eviction_cooldown_s:
+            cooldown_protected.append(mid)
+        else:
+            past_cooldown.append(mid)
+
+    if cooldown_protected:
+        logger.info(
+            f"🛡️ Cooldown protection: {len(cooldown_protected)} models "
+            f"within {eviction_cooldown_s}s window"
+        )
+
+    evictable = past_cooldown
+
+    demand_protected: list[ModelId] = []
+    if has_demand is not None and evictable:
+        still_evictable: list[ModelId] = []
+        for mid in evictable:
+            if has_demand(mid.routing_key):
+                demand_protected.append(mid)
+            else:
+                still_evictable.append(mid)
+        if demand_protected:
+            logger.info(
+                f"🛡️ Demand protection: {len(demand_protected)} models "
+                f"have queued consumers"
+            )
+        evictable = still_evictable
+
+    # Escape hatch: if both filters emptied the list but candidates exist,
+    # evict the least-harmful candidate to prevent starvation.
+    escape_hatch_used = False
+    escape_reason: str | None = None
+    escape_cooldown_remaining_s: float | None = None
+    escape_model_id: str | None = None
+
+    if not evictable and (cooldown_protected or demand_protected):
+        # Prefer demand-only protected (less disruptive), then oldest loaded
+        all_protected = demand_protected + sorted(
+            cooldown_protected,
+            key=lambda m: gateway.model_loaded_at.get(m, 0.0),
+        )
+        escape_candidate = all_protected[0]
+        evictable = [escape_candidate]
+        escape_hatch_used = True
+        escape_reason = "demand" if escape_candidate in demand_protected else "cooldown"
+        remaining_cooldown = eviction_cooldown_s - (
+            now - gateway.model_loaded_at.get(escape_candidate, 0.0)
+        )
+        escape_cooldown_remaining_s = max(0.0, remaining_cooldown)
+        escape_model_id = str(escape_candidate)
+        logger.warning(
+            f"⚠️ Escape hatch: all candidates protected, evicting "
+            f"{escape_candidate} (reason={escape_reason}, "
+            f"cooldown_remaining={escape_cooldown_remaining_s:.1f}s)"
+        )
+
+    if not evictable:
+        logger.debug("No evictable models after hysteresis filtering")
         return None
 
     # Collect effective VRAM per candidate (measured preferred over catalog)
@@ -316,7 +389,8 @@ def _compute_eviction_plan(
 
     # Calculate eviction cost
     eviction_count = len(models_to_evict)
-    # Placeholder cost - will be refined with policy weights
+    # TODO: Replace with a configurable, policy-driven cost model.
+    # For now, a simple heuristic: base penalty + penalty per evicted model.
     estimated_cost = -30.0 + (-20.0 * eviction_count)
 
     return EvictionPlanSummary(
@@ -328,4 +402,10 @@ def _compute_eviction_plan(
         hardware_used_vram_mb=hardware_used_vram_mb,
         non_evictable_vram_reserve_mb=non_evictable_vram_reserve_mb,
         hardware_correction_applied=hardware_correction_applied,
+        cooldown_protected_count=len(cooldown_protected),
+        demand_protected_count=len(demand_protected),
+        escape_hatch_used=escape_hatch_used,
+        escape_reason=escape_reason,
+        escape_cooldown_remaining_s=escape_cooldown_remaining_s,
+        escape_model_id=escape_model_id,
     )

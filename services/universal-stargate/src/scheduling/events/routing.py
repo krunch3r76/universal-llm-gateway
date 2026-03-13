@@ -18,6 +18,13 @@ Signals:
     scheduler.routing.timeout — pre-routing wait budget expired
     routing.overflow.triggered — overflow branch selected alternate gateway
     routing.overflow.failed — overflow branch failed to assign feasible target
+    scheduler.eviction.cooldown.blocked — escape hatch: all candidates protected
+    scheduler.eviction.cooldown.applied — cooldown filtered eviction candidates
+    scheduler.eviction.demand.applied — demand protected eviction candidates
+    routing.eviction.wait.started — request entered eviction wait queue
+    routing.eviction.wait.resolved — wait completed, selection succeeded
+    routing.eviction.wait.timeout — eviction wait timed out
+    routing.eviction.wait.cancelled — wait cancelled (client disconnect)
 """
 
 # ruff: noqa: N802
@@ -107,6 +114,43 @@ Payload: {
     "model_id": str,
     "gateway_id": str,
     "error": str
+}
+"""
+
+GATEWAY_VRAM_PHANTOM_DETECTED = "gateway.vram.phantom.detected"
+"""
+Forwarded from Gateway when hardware VRAM usage exceeds tracked model VRAM.
+
+Payload: {
+    "gateway_id": str,
+    "hardware_used_mb": int,
+    "catalog_used_mb": int,
+    "discrepancy_mb": int,
+    "tracked_models": list[str],
+}
+"""
+
+GATEWAY_PHANTOM_MODEL_DETECTED = "gateway.model.phantom.detected"
+"""
+Forwarded from Gateway when a running worker is not tracked as LOADED/BUSY.
+
+Payload: {
+    "gateway_id": str,
+    "model_id": str,
+    "process_status": str,
+    "tracker_status": str | None,
+}
+"""
+
+GATEWAY_PHANTOM_MODEL_CLEANED = "gateway.model.phantom.cleaned"
+"""
+Forwarded from Gateway after phantom cleanup attempt.
+
+Payload: {
+    "gateway_id": str,
+    "model_id": str,
+    "success": bool,
+    "vram_freed_mb": int | None,
 }
 """
 
@@ -557,7 +601,7 @@ def RoutingQueued(
     timestamp: float,
     gateway_id: str | None = None,
 ) -> Event:
-    """Create ROUTING_QUEUED event."""
+    """Emit when a request is queued waiting for a retryable routing condition."""
     return Event(
         signal=ROUTING_QUEUED,
         payload={
@@ -578,7 +622,7 @@ def RoutingDequeued(
     wait_ms: float,
     timestamp: float,
 ) -> Event:
-    """Create ROUTING_DEQUEUED event."""
+    """Emit when a queued request is dequeued and assigned to a gateway."""
     return Event(
         signal=ROUTING_DEQUEUED,
         payload={
@@ -599,7 +643,7 @@ def RoutingTimeout(
     wait_ms: float,
     timestamp: float,
 ) -> Event:
-    """Create ROUTING_TIMEOUT event."""
+    """Emit when a queued request exceeds wait timeout for its constraint."""
     return Event(
         signal=ROUTING_TIMEOUT,
         payload={
@@ -620,7 +664,7 @@ def RoutingOverflowTriggered(
     to_gateway: str,
     reason: str,
 ) -> Event:
-    """Create ROUTING_OVERFLOW_TRIGGERED event."""
+    """Emit when non-sticky overflow reroutes from one gateway to another."""
     return Event(
         signal=ROUTING_OVERFLOW_TRIGGERED,
         payload={
@@ -640,7 +684,7 @@ def RoutingOverflowFailed(
     tried_gateways: list[str],
     reason: str,
 ) -> Event:
-    """Create ROUTING_OVERFLOW_FAILED event."""
+    """Emit when overflow reroute cannot find a valid alternate gateway."""
     return Event(
         signal=ROUTING_OVERFLOW_FAILED,
         payload={
@@ -660,7 +704,7 @@ def ModelCapacityOverflowAssigned(
     to_gateway: str,
     depth_before: int,
 ) -> Event:
-    """Create MODEL_CAPACITY_OVERFLOW_ASSIGNED event."""
+    """Emit when a model request is overflow-assigned due to gateway capacity."""
     return Event(
         signal=MODEL_CAPACITY_OVERFLOW_ASSIGNED,
         payload={
@@ -680,7 +724,7 @@ def ModelLoadOverflowStarted(
     gateway_id: str,
     reason: str,
 ) -> Event:
-    """Create MODEL_LOAD_OVERFLOW_STARTED event."""
+    """Emit when overflow path starts cold-loading a model on another gateway."""
     return Event(
         signal=MODEL_LOAD_OVERFLOW_STARTED,
         payload={
@@ -688,5 +732,249 @@ def ModelLoadOverflowStarted(
             "model_id": model_id,
             "gateway_id": gateway_id,
             "reason": reason,
+        },
+    )
+
+
+# ========================================
+# Eviction Hysteresis Event Signals
+# ========================================
+
+EVICTION_COOLDOWN_BLOCKED = "scheduler.eviction.cooldown.blocked"
+"""
+All evictable candidates were protected (cooldown and/or demand).
+Escape hatch activated: least-harmful candidate evicted.
+
+Payload: {
+    "request_id": str | None,
+    "model_id": str,
+    "gateway_id": str,
+    "evicted_model_id": str,
+    "escape_reason": str,      # "cooldown" | "demand"
+    "cooldown_remaining_s": float | None,
+    "candidates_in_cooldown": int,
+    "candidates_demand_protected": int,
+    "timestamp": float
+}
+"""
+
+EVICTION_COOLDOWN_APPLIED = "scheduler.eviction.cooldown.applied"
+"""
+Eviction planner filtered candidates by cooldown — informational.
+Emitted when ≥1 model was protected by cooldown during eviction planning.
+
+Payload: {
+    "model_id": str,
+    "gateway_id": str,
+    "protected_count": int,
+    "cooldown_s": float,
+    "timestamp": float
+}
+"""
+
+EVICTION_DEMAND_APPLIED = "scheduler.eviction.demand.applied"
+"""
+Eviction planner filtered candidates by demand protection — informational.
+Emitted when ≥1 model was protected by routing queue demand.
+
+Payload: {
+    "model_id": str,
+    "gateway_id": str,
+    "protected_count": int,
+    "waiter_counts": dict[str, int],
+    "timestamp": float
+}
+"""
+
+# ========================================
+# Eviction wait queue (pre-selection queue)
+# ========================================
+
+ROUTING_EVICTION_WAIT_STARTED = "routing.eviction.wait.started"
+"""
+Request entered eviction wait queue (transient eviction_blocked_by_busy_models).
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "timeout_s": float,
+    "queue_depth": int
+}
+"""
+
+ROUTING_EVICTION_WAIT_RESOLVED = "routing.eviction.wait.resolved"
+"""
+Wait completed; selection succeeded after state change.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
+    "waited_ms": int
+}
+"""
+
+ROUTING_EVICTION_WAIT_TIMEOUT = "routing.eviction.wait.timeout"
+"""
+Eviction wait timed out before capacity became available.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "waited_ms": int
+}
+"""
+
+ROUTING_EVICTION_WAIT_CANCELLED = "routing.eviction.wait.cancelled"
+"""
+Client disconnected or task cancelled during eviction wait.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "waited_ms": int
+}
+"""
+
+
+@event_factory
+def EvictionCooldownBlocked(
+    model_id: str,
+    gateway_id: str,
+    evicted_model_id: str,
+    escape_reason: str,
+    timestamp: float,
+    request_id: str | None = None,
+    cooldown_remaining_s: float | None = None,
+    candidates_in_cooldown: int = 0,
+    candidates_demand_protected: int = 0,
+) -> Event:
+    """Emit when eviction uses escape hatch because all candidates were protected."""
+    return Event(
+        signal=EVICTION_COOLDOWN_BLOCKED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "evicted_model_id": evicted_model_id,
+            "escape_reason": escape_reason,
+            "cooldown_remaining_s": cooldown_remaining_s,
+            "candidates_in_cooldown": candidates_in_cooldown,
+            "candidates_demand_protected": candidates_demand_protected,
+            "timestamp": timestamp,
+        },
+    )
+
+
+@event_factory
+def EvictionCooldownApplied(
+    model_id: str,
+    gateway_id: str,
+    protected_count: int,
+    cooldown_s: float,
+    timestamp: float,
+) -> Event:
+    """Emit when cooldown protection filtered one or more eviction candidates."""
+    return Event(
+        signal=EVICTION_COOLDOWN_APPLIED,
+        payload={
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "protected_count": protected_count,
+            "cooldown_s": cooldown_s,
+            "timestamp": timestamp,
+        },
+    )
+
+
+@event_factory
+def EvictionDemandApplied(
+    model_id: str,
+    gateway_id: str,
+    protected_count: int,
+    waiter_counts: dict[str, int],
+    timestamp: float,
+) -> Event:
+    """Emit when demand protection filtered one or more eviction candidates."""
+    return Event(
+        signal=EVICTION_DEMAND_APPLIED,
+        payload={
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "protected_count": protected_count,
+            "waiter_counts": waiter_counts,
+            "timestamp": timestamp,
+        },
+    )
+
+
+@event_factory
+def RoutingEvictionWaitStarted(
+    request_id: str,
+    model_id: str,
+    timeout_s: float,
+    queue_depth: int,
+) -> Event:
+    """Emit when request enters eviction wait queue (transient eviction blocked)."""
+    return Event(
+        signal=ROUTING_EVICTION_WAIT_STARTED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "timeout_s": timeout_s,
+            "queue_depth": queue_depth,
+        },
+    )
+
+
+@event_factory
+def RoutingEvictionWaitResolved(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    waited_ms: int,
+) -> Event:
+    """Emit when eviction wait completed and selection succeeded."""
+    return Event(
+        signal=ROUTING_EVICTION_WAIT_RESOLVED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "waited_ms": waited_ms,
+        },
+    )
+
+
+@event_factory
+def RoutingEvictionWaitTimeout(
+    request_id: str,
+    model_id: str,
+    waited_ms: int,
+) -> Event:
+    """Emit when eviction wait timed out."""
+    return Event(
+        signal=ROUTING_EVICTION_WAIT_TIMEOUT,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "waited_ms": waited_ms,
+        },
+    )
+
+
+@event_factory
+def RoutingEvictionWaitCancelled(
+    request_id: str,
+    model_id: str,
+    waited_ms: int,
+) -> Event:
+    """Emit when eviction wait was cancelled (client disconnect / task cancel)."""
+    return Event(
+        signal=ROUTING_EVICTION_WAIT_CANCELLED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "waited_ms": waited_ms,
         },
     )

@@ -9,6 +9,7 @@ CRITICAL: Uses @sequential decorator for lock-free sequential execution.
          Must call start() before use and stop() on shutdown.
 """
 
+import asyncio
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,8 @@ if TYPE_CHECKING:
     from universal_event_bus import EventBus
 
     from systems.routing.capacity.pool import CapacityPool
+
+    from ...common.config.schema import RemoteStargateConfig
 
 logger = get_logger(__name__)
 
@@ -74,13 +77,56 @@ class FederatedGatewayManager(Sequential):
         self._http_polling_remotes: set[str] = set()
 
         # Remote configs by remote_stargate_id
-        self._remote_configs: dict[str, Any] = {}  # RemoteStargateConfig
+        self._remote_configs: dict[str, RemoteStargateConfig] = {}
+        self._stale_gateway_coercions = 0
 
         # Load failure tracking: gateway_id → {routing_key → monotonic_timestamp}
         # INV: routing_key ∈ _load_failed_models[gw] ∧ age < TTL ⟹ model ineligible
         # INV: cleared on gateway disconnect/reconnect, telemetry MODEL_LOADED, or TTL
         self._load_failed_models: dict[str, dict[str, float]] = {}
         self._load_failure_ttl_s: float = 120.0
+
+        # Pre-selection wait queue: wake waiters on state mutations
+        self._state_generation: int = 0
+        self._state_condition: asyncio.Condition = asyncio.Condition()
+
+    def get_state_version(self) -> int:
+        """Snapshot the current generation for wait-loop ordering."""
+        return self._state_generation
+
+    async def notify_state_change(self) -> None:
+        """Bump generation and wake all waiters. Called after state mutations."""
+        self._state_generation += 1
+        async with self._state_condition:
+            self._state_condition.notify_all()
+
+    async def wait_for_state_change(self, since_version: int, timeout_s: float) -> bool:
+        """Wait until generation > since_version or timeout.
+
+        Returns True if a state change occurred, False on timeout.
+        Uses manual loop to avoid asyncio.wait_for cancellation subtlety
+        with Condition (safe pattern for Python 3.12+).
+        """
+        deadline = asyncio.get_event_loop().time() + timeout_s
+        async with self._state_condition:
+            while self._state_generation <= since_version:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    return False
+                try:
+                    await asyncio.wait_for(
+                        self._state_condition.wait(),
+                        timeout=remaining,
+                    )
+                except TimeoutError:
+                    return False
+            return True
+
+    async def close(self) -> None:
+        """Wake all waiters so they exit on shutdown."""
+        self._state_generation += 1
+        async with self._state_condition:
+            self._state_condition.notify_all()
 
     async def start(self) -> None:
         """
@@ -115,26 +161,7 @@ class FederatedGatewayManager(Sequential):
                 if not gw.model_resources:
                     continue
                 seeded_gateways += 1
-                for model_id, res in gw.model_resources.items():
-                    max_concurrent_raw = res.get("max_concurrent_requests", 1)
-                    try:
-                        max_concurrent = int(max_concurrent_raw)
-                    except (TypeError, ValueError):
-                        logger.error(
-                            "Invalid max_concurrent_requests=%r for %s/%s; "
-                            "defaulting to 1",
-                            max_concurrent_raw,
-                            gw.gateway_id,
-                            model_id.routing_key,
-                        )
-                        max_concurrent = 1
-
-                    self._capacity_pool.set_capacity(
-                        gateway_id=gw.gateway_id,
-                        model_id=model_id.routing_key,
-                        max_concurrent=max_concurrent,
-                    )
-                    seeded_slots += 1
+                seeded_slots += self._seed_capacity_pool_for_gateway(gw)
 
         logger.info(
             "✅ Capacity pool wired to FederatedGatewayManager "
@@ -142,6 +169,59 @@ class FederatedGatewayManager(Sequential):
             seeded_slots,
             seeded_gateways,
         )
+
+    def _parse_max_concurrent(
+        self, gateway_id: str, model_id: ModelId, max_concurrent_raw: Any
+    ) -> int:
+        """Parse max_concurrent_requests with fail-loud logging and safe fallback."""
+        try:
+            return int(max_concurrent_raw)
+        except (TypeError, ValueError):
+            logger.error(
+                "Invalid max_concurrent_requests=%r for %s/%s; defaulting to 1",
+                max_concurrent_raw,
+                gateway_id,
+                model_id.routing_key,
+            )
+            return 1
+
+    def _restore_model_capacity(
+        self, gateway: FederatedGateway, model_id: ModelId
+    ) -> bool:
+        """Restore capacity ledger for one model if requirements are available."""
+        if not self._capacity_pool:
+            return False
+
+        res = gateway.model_resources.get(model_id)
+        if res is None:
+            logger.warning(
+                f"📊 Capacity pool: no model_resources for {model_id} on "
+                f"{gateway.gateway_id}, capacity not restored"
+            )
+            return False
+
+        max_concurrent = self._parse_max_concurrent(
+            gateway.gateway_id,
+            model_id,
+            res.get("max_concurrent_requests", 1),
+        )
+        self._capacity_pool.set_capacity(
+            gateway_id=gateway.gateway_id,
+            model_id=model_id.routing_key,
+            max_concurrent=max_concurrent,
+        )
+        return True
+
+    def _seed_capacity_pool_for_gateway(self, gateway: FederatedGateway) -> int:
+        """Seed capacity ledger from gateway model_resources; returns slot count."""
+        if not self._capacity_pool or not gateway.model_resources:
+            return 0
+
+        seeded = 0
+        for model_id in gateway.model_resources:
+            if self._restore_model_capacity(gateway, model_id):
+                seeded += 1
+        return seeded
 
     @sequential
     async def register_cloud_gateway(self, gateway: FederatedGateway) -> None:
@@ -161,24 +241,7 @@ class FederatedGatewayManager(Sequential):
 
         self._gateways[gateway.gateway_id] = gateway
 
-        if self._capacity_pool and gateway.model_resources:
-            for model_id, res in gateway.model_resources.items():
-                max_concurrent_raw = res.get("max_concurrent_requests", 1)
-                try:
-                    max_concurrent = int(max_concurrent_raw)
-                except (TypeError, ValueError):
-                    logger.error(
-                        "Invalid max_concurrent_requests=%r for %s/%s; defaulting to 1",
-                        max_concurrent_raw,
-                        gateway.gateway_id,
-                        model_id.routing_key,
-                    )
-                    max_concurrent = 1
-                self._capacity_pool.set_capacity(
-                    gateway_id=gateway.gateway_id,
-                    model_id=model_id.routing_key,
-                    max_concurrent=max_concurrent,
-                )
+        self._seed_capacity_pool_for_gateway(gateway)
 
         new_catalog = gateway.available_models
         if old_catalog != new_catalog and self._event_bus:
@@ -201,13 +264,14 @@ class FederatedGatewayManager(Sequential):
             gateway.gateway_id,
             len(new_catalog),
         )
+        await self.notify_state_change()
 
     def register_remote(
         self,
         remote_stargate_id: str,
         url: str,
         is_http_polling: bool = False,
-        config: Any = None,
+        config: "RemoteStargateConfig | None" = None,
     ) -> None:
         """
         Register a Remote Stargate URL for gateway creation.
@@ -252,12 +316,14 @@ class FederatedGatewayManager(Sequential):
         if isinstance(gateway, FederatedGateway):
             return gateway
 
+        self._stale_gateway_coercions += 1
         # Stale instance detected
         logger.error(
             f"🔄 STALE GATEWAY DETECTED: {gateway_id} - "
             f"type={type(gateway).__name__}. "
             f"Reconstructing from current class definition. "
-            f"This indicates hot reload or mixed deploy."
+            f"This indicates hot reload or mixed deploy. "
+            f"(coercions={self._stale_gateway_coercions})"
         )
 
         # Extract identity and state from stale instance
@@ -293,6 +359,8 @@ class FederatedGatewayManager(Sequential):
             # Preserve timestamps
             telemetry_timestamp=getattr(gateway, "telemetry_timestamp", 0.0),
             last_heartbeat=getattr(gateway, "last_heartbeat", 0.0),
+            # Preserve eviction hysteresis
+            model_loaded_at=getattr(gateway, "model_loaded_at", {}),
         )
 
         # Replace in registry
@@ -426,9 +494,7 @@ class FederatedGatewayManager(Sequential):
             return None
         return time.time() - gateway.telemetry_timestamp
 
-    def is_telemetry_fresh(
-        self, gateway_id: str, threshold_seconds: float
-    ) -> bool:
+    def is_telemetry_fresh(self, gateway_id: str, threshold_seconds: float) -> bool:
         """
         Check if telemetry is within freshness threshold.
 
@@ -529,6 +595,20 @@ class FederatedGatewayManager(Sequential):
             f"(loading_count={len(gw.loading_models)})"
         )
         return True
+
+    def clear_model_loading_optimistic(
+        self, gateway_id: str, model_id: ModelId
+    ) -> None:
+        """Synchronously clear optimistic loading mark for immediate visibility."""
+        gw = self._gateways.get(gateway_id)
+        if not gw:
+            return
+        if model_id in gw.loading_models:
+            gw.loading_models = gw.loading_models - {model_id}
+            logger.debug(
+                f"🔄 Cleared optimistic loading state for {model_id} on {gateway_id} "
+                f"(loading_count={len(gw.loading_models)})"
+            )
 
     @sequential
     async def mark_model_loading(self, gateway_id: str, model_id: ModelId) -> None:
@@ -766,19 +846,22 @@ class FederatedGatewayManager(Sequential):
 
         logger.debug(f"🔄 Telemetry event: remote_id={remote_id}, type={msg_type}")
 
-        # Parse message data (ModelId conversion at boundary)
-        parsed = parse_telemetry_payload(msg_type, data)
-
-        # Extract and validate source
-        source_data = parsed.get("source", {})
-        if not source_data:
-            logger.warning(f"📊 Telemetry missing source: {msg_type}")
-            return
-
         try:
+            # Parse message data (ModelId conversion at boundary)
+            parsed = parse_telemetry_payload(msg_type, data)
+
+            # Extract and validate source
+            source_data = parsed.get("source", {})
+            if not source_data:
+                logger.warning(f"📊 Telemetry missing source: {msg_type}")
+                return
+
             source = TelemetrySource.from_dict(source_data)
         except KeyError as e:
             logger.warning(f"📊 Invalid telemetry source: {e}")
+            return
+        except Exception as e:
+            logger.error(f"📊 Failed to parse telemetry payload: {e}", exc_info=True)
             return
 
         # Validate remote_id matches source (security: prevent spoofing)
@@ -847,6 +930,8 @@ class FederatedGatewayManager(Sequential):
                 f"(waking TelemetryFreshnessWaiter)"
             )
 
+        await self.notify_state_change()
+
     def _apply_gateway_snapshot(
         self, gw: FederatedGateway, parsed: dict[str, Any]
     ) -> None:
@@ -914,27 +999,11 @@ class FederatedGatewayManager(Sequential):
         gw.model_resources = state.get("model_resources", {})
 
         # Seed capacity pool from model_resources (admission control)
-        if self._capacity_pool and gw.model_resources:
-            for model_id, res in gw.model_resources.items():
-                max_concurrent_raw = res.get("max_concurrent_requests", 1)
-                try:
-                    max_concurrent = int(max_concurrent_raw)
-                except (TypeError, ValueError):
-                    logger.error(
-                        "Invalid max_concurrent_requests=%r for %s/%s; defaulting to 1",
-                        max_concurrent_raw,
-                        gw.gateway_id,
-                        model_id.routing_key,
-                    )
-                    max_concurrent = 1
-                self._capacity_pool.set_capacity(
-                    gateway_id=gw.gateway_id,
-                    model_id=model_id.routing_key,
-                    max_concurrent=max_concurrent,
-                )
+        seeded_slots = self._seed_capacity_pool_for_gateway(gw)
+        if seeded_slots:
             logger.debug(
                 f"📊 Capacity pool updated from GATEWAY_SNAPSHOT: "
-                f"{len(gw.model_resources)} models on {gw.gateway_id}"
+                f"{seeded_slots} models on {gw.gateway_id}"
             )
 
         # Debug logging for activation filtering verification
@@ -1031,11 +1100,20 @@ class FederatedGatewayManager(Sequential):
         This is for telemetry-driven updates. Optimistic local tracking happens
         via mark_model_loading() before RPC is sent.
 
-        If telemetry arrives before our local mark (unlikely), this still works.
+        Guard: if model is already in loaded_models, ignore the spurious
+        loading event to prevent re-load attempts from defeating TTL watchdogs.
         """
         model_id = parsed.get("model_id")
         if not model_id:
             return
+
+        if model_id in gw.loaded_models:
+            logger.debug(
+                f"MODEL_LOADING_STARTED for {model_id} on {gw.gateway_id} ignored — "
+                f"already in loaded_models"
+            )
+            return
+
         gw.loading_models = gw.loading_models | {model_id}
         logger.debug(
             f"📊 Telemetry MODEL_LOADING_STARTED: {model_id} on {gw.gateway_id} "
@@ -1069,41 +1147,23 @@ class FederatedGatewayManager(Sequential):
         gw.loaded_models = gw.loaded_models | {model_id}
         gw.loading_models = gw.loading_models - {model_id}
 
+        # Eviction hysteresis: record load timestamp (idempotent — keeps first)
+        if model_id not in gw.model_loaded_at:
+            import time as _time
+
+            gw.model_loaded_at[model_id] = _time.monotonic()
+
         # Telemetry confirms model loaded — clear any prior load failure
-        if isinstance(model_id, ModelId):
-            self._clear_model_load_failure(gw.gateway_id, model_id)
+        self._clear_model_load_failure(gw.gateway_id, model_id)
 
         # Restore capacity in ledger (symmetric with remove_model in unload handler).
         # model_resources persists across unload/reload cycles (populated from initial
         # snapshot only), so max_concurrent_requests is always available here.
-        if self._capacity_pool and isinstance(model_id, ModelId):
-            res = gw.model_resources.get(model_id)
-            if res is not None:
-                max_concurrent_raw = res.get("max_concurrent_requests", 1)
-                try:
-                    max_concurrent = int(max_concurrent_raw)
-                except (TypeError, ValueError):
-                    logger.error(
-                        "Invalid max_concurrent_requests=%r for %s/%s; defaulting to 1",
-                        max_concurrent_raw,
-                        gw.gateway_id,
-                        model_id.routing_key,
-                    )
-                    max_concurrent = 1
-                self._capacity_pool.set_capacity(
-                    gateway_id=gw.gateway_id,
-                    model_id=model_id.routing_key,
-                    max_concurrent=max_concurrent,
-                )
-                logger.debug(
-                    f"📊 Capacity pool: restored {gw.gateway_id}/{model_id} "
-                    f"max_concurrent={max_concurrent}"
-                )
-            else:
-                logger.warning(
-                    f"📊 Capacity pool: no model_resources for {model_id} on "
-                    f"{gw.gateway_id}, capacity not restored"
-                )
+        if self._restore_model_capacity(gw, model_id):
+            logger.debug(
+                f"📊 Capacity pool: restored {gw.gateway_id}/{model_id} "
+                f"max_concurrent_requests from model_resources"
+            )
 
         # Post-condition observation
         logger.debug(
@@ -1126,6 +1186,9 @@ class FederatedGatewayManager(Sequential):
         gw.loaded_models = gw.loaded_models - {model_id}
         gw.busy_models = gw.busy_models - {model_id}
         gw.loading_models = gw.loading_models - {model_id}
+
+        # Eviction hysteresis: clear load timestamp
+        gw.model_loaded_at.pop(model_id, None)
 
         # Remove capacity from ledger (admission control)
         if self._capacity_pool:
@@ -1206,6 +1269,7 @@ class FederatedGatewayManager(Sequential):
 
         if removed:
             logger.info(f"Removed {len(removed)} gateways from {remote_stargate_id}")
+            await self.notify_state_change()
         return removed
 
     # === HTTP Polling Ingestion (apply_delta / apply_snapshot) ===
@@ -1300,32 +1364,21 @@ class FederatedGatewayManager(Sequential):
         - Delta format: {"added": [...], "removed": [...]}
         - Full list format: [...]
         """
-        updates: dict[str, Any] = {}
+        model_fields = {
+            "loaded_models": gateway.loaded_models,
+            "busy_models": gateway.busy_models,
+            "available_models": gateway.available_models,
+        }
+        updates = {
+            field: self._apply_model_list_delta(current, delta[field])
+            for field, current in model_fields.items()
+            if field in delta
+        }
 
-        # Handle model list fields with added/removed format
-        if "loaded_models" in delta:
-            updates["loaded_models"] = self._apply_model_list_delta(
-                gateway.loaded_models, delta["loaded_models"]
-            )
-
-        if "busy_models" in delta:
-            updates["busy_models"] = self._apply_model_list_delta(
-                gateway.busy_models, delta["busy_models"]
-            )
-
-        if "available_models" in delta:
-            updates["available_models"] = self._apply_model_list_delta(
-                gateway.available_models, delta["available_models"]
-            )
-
-        # Handle scalar fields
-        for field in (
-            "active_requests",
-            "vram_free_mb",
-            "ram_free_mb",
-        ):
-            if field in delta:
-                updates[field] = delta[field]
+        scalar_fields = ("active_requests", "vram_free_mb", "ram_free_mb")
+        updates.update(
+            {field: delta[field] for field in scalar_fields if field in delta}
+        )
 
         return updates
 
@@ -1397,6 +1450,18 @@ class FederatedGatewayManager(Sequential):
                     f"removed {[str(m) for m in stale_loading]} "
                     f"(already in loaded_models)"
                 )
+
+            # Reconcile model_loaded_at with loaded_models changes
+            import time as _time
+
+            now = _time.monotonic()
+            old_loaded = gateway.loaded_models
+            new_loaded = updated_gateway.loaded_models
+            for mid in new_loaded - old_loaded:
+                if mid not in updated_gateway.model_loaded_at:
+                    updated_gateway.model_loaded_at[mid] = now
+            for mid in old_loaded - new_loaded:
+                updated_gateway.model_loaded_at.pop(mid, None)
 
             self._gateways[gateway_id] = updated_gateway
 
@@ -1496,29 +1561,16 @@ class FederatedGatewayManager(Sequential):
         Returns:
             Field updates to apply to gateway
         """
-        updates: dict[str, Any] = {}
+        model_fields = ("loaded_models", "busy_models", "available_models")
+        updates = {
+            field: frozenset(ModelId.parse(m) for m in snapshot[field])
+            for field in model_fields
+            if field in snapshot
+        }
 
-        if "loaded_models" in snapshot:
-            updates["loaded_models"] = frozenset(
-                ModelId.parse(m) for m in snapshot["loaded_models"]
-            )
-
-        if "busy_models" in snapshot:
-            updates["busy_models"] = frozenset(
-                ModelId.parse(m) for m in snapshot["busy_models"]
-            )
-
-        if "available_models" in snapshot:
-            updates["available_models"] = frozenset(
-                ModelId.parse(m) for m in snapshot["available_models"]
-            )
-
-        for field in (
-            "active_requests",
-            "vram_free_mb",
-            "ram_free_mb",
-        ):
-            if field in snapshot:
-                updates[field] = snapshot[field]
+        scalar_fields = ("active_requests", "vram_free_mb", "ram_free_mb")
+        updates.update(
+            {field: snapshot[field] for field in scalar_fields if field in snapshot}
+        )
 
         return updates

@@ -9,6 +9,7 @@ from typing import Any
 from universal_logging import get_logger
 
 from ..messages import InitData, ResourcesData
+from .state_watchdogs import expire_stale_busy_models, expire_stale_loading_models
 
 logger = get_logger(__name__)
 
@@ -24,6 +25,7 @@ class GatewayState:
     """
 
     BUSY_MODEL_TTL_SECONDS: float = 600.0  # 10 min — auto-clear stale busy state
+    LOADING_MODEL_TTL_SECONDS: float = 300.0  # 5 min — auto-clear stuck loading state
 
     def __init__(self) -> None:
         # Cached state from INIT + updates
@@ -33,6 +35,7 @@ class GatewayState:
         self._busy_models: set[str] = set()
         self._busy_since: dict[str, float] = {}  # model_id → monotonic timestamp
         self._loading_models: set[str] = set()
+        self._loading_since: dict[str, float] = {}  # model_id → monotonic timestamp
         self._resources: ResourcesData = ResourcesData()
         self._catalog: dict[str, Any] = {}
         self._model_last_inference: dict[str, float] = {}  # model_id -> timestamp
@@ -53,17 +56,8 @@ class GatewayState:
         self._last_gateway_vram_mb: int = 0  # Last RESOURCE_UPDATE from Gateway
         self._last_gateway_ram_mb: int = 0
 
-    # =========================================================================
-    # State Initialization
-    # =========================================================================
-
     def process_init(self, data: dict[str, Any]) -> None:
-        """
-        Process INIT message and cache state.
-
-        Resets all state from Gateway's authoritative snapshot.
-        Called once per connection after INIT message received.
-        """
+        """Process INIT message and refresh all cached state."""
         import time
 
         self._init_data = InitData.from_dict(data)
@@ -79,6 +73,7 @@ class GatewayState:
         now = _time.monotonic()
         self._busy_since = {m: now for m in self._busy_models}
         self._loading_models = set()  # Clear loading state on reconnect
+        self._loading_since = {}  # Clear loading timestamps on reconnect
         self._model_last_inference = {}  # Clear inference cache on reconnect
         self._model_details = {}  # Clear model details on reconnect
         self._measured_model_vram = {}  # Clear measured VRAM on reconnect
@@ -94,10 +89,6 @@ class GatewayState:
         now = time.time()
         self._last_resource_update = now
         self._last_heartbeat = now
-
-    # =========================================================================
-    # State Access (Read-Only, Instant)
-    # =========================================================================
 
     @property
     def gateway_name(self) -> str:
@@ -130,19 +121,7 @@ class GatewayState:
         return self._catalog.get("transformations", {})
 
     def get_resource_status(self, is_connected: bool) -> ResourcesData | None:
-        """
-        Get current resource status from real-time WebSocket state.
-
-        Args:
-            is_connected: Whether WebSocket is currently connected
-
-        Returns:
-            ResourcesData with metrics and model state, or None if disconnected.
-
-        Event-driven: automatically updated on RESOURCE_UPDATE/MODEL_LOADED/
-        UNLOADED events.
-        This is the ONLY source of resource status - no HTTP fallback.
-        """
+        """Get current resource status from event-driven WebSocket state."""
         if not is_connected:
             return None
 
@@ -184,7 +163,11 @@ class GatewayState:
 
         Event-driven: automatically updated on MODEL_LOADING_STARTED/
         MODEL_LOADED events.
+        Self-healing: auto-clears models loading longer than
+        LOADING_MODEL_TTL_SECONDS to prevent permanent VRAM reservation
+        from lost MODEL_LOADED/MODEL_LOAD_FAILED messages.
         """
+        self._expire_stale_loading_models()
         return frozenset(self._loading_models)
 
     def get_model_last_inference_time(self, model_id: str) -> float | None:
@@ -202,11 +185,7 @@ class GatewayState:
         self._last_heartbeat = time.time()
 
     def update_resource_timestamp(self) -> None:
-        """
-        Update resource freshness timestamp.
-
-        Called on RESOURCE_UPDATE, MODEL_* events.
-        """
+        """Update resource freshness timestamp from resource-affecting events."""
         import time
 
         now = time.time()
@@ -236,10 +215,6 @@ class GatewayState:
 
         return time.time() - self._last_resource_update < ttl_seconds
 
-    # =========================================================================
-    # State Mutation (Internal - Used by Handlers via Context)
-    # =========================================================================
-
     @property
     def models(self) -> set[str]:
         """Mutable reference for handlers."""
@@ -262,26 +237,29 @@ class GatewayState:
 
     def _expire_stale_busy_models(self) -> None:
         """Auto-clear busy models that exceeded the TTL without a MODEL_BUSY refresh."""
-        import time as _time
-
-        now = _time.monotonic()
-        stale = [
-            m
-            for m in self._busy_models
-            if now - self._busy_since.get(m, 0) > self.BUSY_MODEL_TTL_SECONDS
-        ]
-        for model_id in stale:
-            self._busy_models.discard(model_id)
-            self._busy_since.pop(model_id, None)
-            logger.warning(
-                f"Auto-cleared stale busy state for {model_id} "
-                f"(no MODEL_IDLE received within {self.BUSY_MODEL_TTL_SECONDS:.0f}s)"
-            )
+        expire_stale_busy_models(
+            self._busy_models,
+            self._busy_since,
+            self.BUSY_MODEL_TTL_SECONDS,
+        )
 
     @property
     def loading_models(self) -> set[str]:
         """Mutable reference for handlers."""
         return self._loading_models
+
+    @property
+    def loading_since(self) -> dict[str, float]:
+        """Mutable reference for loading timestamp tracking."""
+        return self._loading_since
+
+    def _expire_stale_loading_models(self) -> None:
+        """Auto-clear loading models that exceeded the TTL without completion."""
+        expire_stale_loading_models(
+            self._loading_models,
+            self._loading_since,
+            self.LOADING_MODEL_TTL_SECONDS,
+        )
 
     @property
     def catalog(self) -> dict[str, Any]:
@@ -312,9 +290,7 @@ class GatewayState:
     _VRAM_DRIFT_COOLDOWN_SECONDS: float = 3600.0
 
     def can_report_vram_drift(self, model_id: str) -> bool:
-        """Return True if drift for model_id may be reported (1h cooldown per model).
-        Marks the model as reported on True.
-        """
+        """Return True if VRAM drift for model_id may be reported."""
         now = time.monotonic()
         last = self._last_vram_drift_report.get(model_id, 0.0)
         if now - last > self._VRAM_DRIFT_COOLDOWN_SECONDS:
@@ -323,29 +299,13 @@ class GatewayState:
         return False
 
     def apply_reservation(self, *, vram_mb: int, ram_mb: int) -> None:
-        """
-        Apply resource reservation by incrementing reservation counters.
-
-        Called when RESOURCE_RESERVED event is received.
-
-        Args:
-            vram_mb: VRAM to reserve (keyword-only)
-            ram_mb: RAM to reserve (keyword-only)
-        """
+        """Apply reservation counters after RESOURCE_RESERVED."""
         self._reserved_vram_mb += vram_mb
         self._reserved_ram_mb += ram_mb
         self._recompute_effective_availability()
 
     def release_reservation(self, *, vram_mb: int, ram_mb: int) -> None:
-        """
-        Release resource reservation by decrementing reservation counters.
-
-        Called when RESOURCE_RELEASED event is received.
-
-        Args:
-            vram_mb: VRAM to release (keyword-only)
-            ram_mb: RAM to release (keyword-only)
-        """
+        """Release reservation counters after RESOURCE_RELEASED."""
         self._reserved_vram_mb = max(0, self._reserved_vram_mb - vram_mb)
         self._reserved_ram_mb = max(0, self._reserved_ram_mb - ram_mb)
         self._recompute_effective_availability()
@@ -356,18 +316,7 @@ class GatewayState:
         available_vram_mb: int | None,
         available_ram_mb: int | None,
     ) -> None:
-        """
-        Update resources from Gateway's RESOURCE_UPDATE message.
-
-        Stores Gateway-reported values and recomputes effective availability
-        by subtracting active reservations.
-
-        Invariant: effective_available = max(0, gateway_reported - reserved)
-
-        Args:
-            available_vram_mb: Gateway's reported available VRAM (keyword-only)
-            available_ram_mb: Gateway's reported available RAM (keyword-only)
-        """
+        """Update gateway-reported availability and recompute effective availability."""
         if available_vram_mb is not None:
             self._last_gateway_vram_mb = available_vram_mb
         if available_ram_mb is not None:
@@ -376,27 +325,13 @@ class GatewayState:
         self._recompute_effective_availability()
 
     def _recompute_effective_availability(self) -> None:
-        """
-        Recompute effective available resources from Gateway-reported and reservations.
-
-        Called after:
-        - RESOURCE_UPDATE (gateway_reported changes)
-        - RESOURCE_RESERVED (reserved increases)
-        - RESOURCE_RELEASED (reserved decreases)
-        """
+        """Recompute effective availability from gateway values and reservations."""
         effective_vram, effective_ram = self._compute_effective_available()
         self._log_reservation_impact(effective_vram, effective_ram)
         self._set_effective_resources(effective_vram, effective_ram)
 
     def _compute_effective_available(self) -> tuple[int, int]:
-        """
-        Compute effective available resources.
-
-        Returns:
-            (effective_vram_mb, effective_ram_mb)
-
-        Invariant: effective = max(0, gateway_reported - reserved)
-        """
+        """Compute effective available VRAM/RAM after reservation subtraction."""
         effective_vram = max(0, self._last_gateway_vram_mb - self._reserved_vram_mb)
         effective_ram = max(0, self._last_gateway_ram_mb - self._reserved_ram_mb)
         return effective_vram, effective_ram

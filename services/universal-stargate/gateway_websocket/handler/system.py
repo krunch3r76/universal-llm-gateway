@@ -55,20 +55,31 @@ class ResourceUpdateHandler(SyncMessageHandler):
         )
 
     def _sync_loaded_models(self, data: dict[str, Any], ctx: HandlerContext) -> None:
-        """Sync loaded_models, measured VRAM, and check for catalog drift."""
+        """Reconcile measured VRAM and check for catalog drift.
+
+        Single-writer invariant: loaded_models from RESOURCE_UPDATE is ignored.
+        Lifecycle state comes exclusively from MODEL_LOADED / MODEL_UNLOADED.
+        """
         if "loaded_models" in data:
-            newly_loaded = set(data["loaded_models"])
+            logger.debug(
+                "RESOURCE_UPDATE contained loaded_models — ignored "
+                "(lifecycle state from discrete events only)"
+            )
 
-            # Prune stale measured state using authoritative loaded_models.
-            stale_measured = set(ctx.measured_model_vram.keys()) - newly_loaded
-            for model_id in stale_measured:
-                _ = ctx.measured_model_vram.pop(model_id, None)
-                _ = ctx.model_details.pop(model_id, None)
+        # Prune stale measured VRAM using event-driven loaded_models (not payload).
+        current_loaded = set(ctx.loaded_models)
+        stale_measured = set(ctx.measured_model_vram.keys()) - current_loaded
+        for model_id in stale_measured:
+            _ = ctx.measured_model_vram.pop(model_id, None)
+            _ = ctx.model_details.pop(model_id, None)
 
-            ctx.loaded_models.clear()
-            ctx.loaded_models.update(newly_loaded)
-
+        # model_vram drift detection still uses payload data (per-model VRAM).
+        # Filter against event-driven loaded_models to avoid phantom drift alerts.
         model_vram: dict[str, int] | None = data.get("model_vram")
+        if not model_vram:
+            return
+
+        model_vram = {k: v for k, v in model_vram.items() if k in current_loaded}
         if not model_vram:
             return
 
@@ -82,10 +93,8 @@ class ResourceUpdateHandler(SyncMessageHandler):
         catalog_resources: dict[str, Any] = ctx.catalog.get("model_resources", {})
 
         for model_id, measured_mb in model_vram.items():
-            # Update measured-only store (partial update — preserve other models)
             ctx.measured_model_vram[model_id] = measured_mb
 
-            # Update mixed model_details for backward compatibility
             if model_id in ctx.model_details:
                 ctx.model_details[model_id]["vram_usage"] = measured_mb
             else:
@@ -94,7 +103,6 @@ class ResourceUpdateHandler(SyncMessageHandler):
                     "ram_usage": 0,
                 }
 
-            # Drift check: compare measured against catalog (1h cooldown per model)
             catalog_mb: int | None = catalog_resources.get(model_id, {}).get(
                 "vram_usage"
             )

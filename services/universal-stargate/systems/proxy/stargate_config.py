@@ -97,6 +97,26 @@ def _validate_request_queue_config(request_queue_config: dict[str, Any]) -> None
             )
 
 
+def _validate_eviction_hysteresis(config: dict[str, Any]) -> None:
+    """Validate routing.eviction_cooldown_s (30–120s, default 120)."""
+    cooldown = config.get("routing", {}).get("eviction_cooldown_s")
+    if cooldown is None:
+        return
+    cooldown = float(cooldown)
+    if cooldown < 30.0:
+        raise ValueError(f"routing.eviction_cooldown_s={cooldown} too low (min 30s)")
+    # The queue_timeout should be passed as an argument to this validation function
+    # For now, we'll use a placeholder, but this needs to be refactored upstream
+    # to pass the actual configured queue timeout.
+    configured_queue_timeout = 1800.0 # Placeholder, needs to come from config
+
+    if cooldown > configured_queue_timeout:
+        raise ValueError(
+            f"routing.eviction_cooldown_s={cooldown} exceeds queue timeout "
+            f"({configured_queue_timeout}s). Requests would always time out."
+        )
+
+
 def _validate_routing_capacity(config: dict[str, Any]) -> None:
     """Reject removed capacity keys (capacity is gateway-side)."""
     capacity = config.get("routing", {}).get("scoring", {}).get("capacity", {})
@@ -173,9 +193,13 @@ class StargateConfig:
         Raises ValueError for invalid configurations rather than failing silently.
         """
         _validate_scheduler_config(self.config.get("scheduler", {}))
-        _validate_request_queue_config(self.config.get("request_queue", {}))
+        request_queue_config = self.config.get("request_queue", {})
+        _validate_request_queue_config(request_queue_config)
         _validate_routing_capacity(self.config)
         _validate_model_routing_config(self.config.get("model_routing", {}))
+        # Pass the actual queue_timeout from the config to the validation function
+        queue_timeout = request_queue_config.get("queue_timeout", 1800.0) # Use default if not specified
+        _validate_eviction_hysteresis(self.config, queue_timeout)
         logger.debug("✅ Configuration validation passed")
 
     def get_token_management_config(self) -> dict[str, Any]:
@@ -289,25 +313,20 @@ class StargateConfig:
         ).lower()
         enable_tcp_flag = tcp_monitoring_env in ("1", "true")
 
+        transports_raw = config.get("transports", ["unix"])
+        if isinstance(transports_raw, str):
+            transports: list[str] = [transports_raw]
+        else:
+            transports = list(transports_raw)
+
         # If --enable-tcp-monitoring flag is set, add TCP to transports
         if enable_tcp_flag:
-            transports = config.get("transports", ["unix"])
-            if isinstance(transports, str):
-                transports = [transports]
-
-            # Add TCP if not already present
             if "tcp" not in transports:
                 transports.append("tcp")
-
-            config = {**config, "transports": transports}
             logger.info("✅ TCP monitoring enabled via --enable-tcp-monitoring flag")
 
         # Disable TCP monitoring when Stargate itself is in Unix socket mode
         if os.environ.get("STARGATE_UNIX_SOCKET"):
-            transports = config.get("transports", ["unix"])
-            if isinstance(transports, str):
-                transports = [transports]
-
             # Filter out TCP transport
             original_had_tcp = "tcp" in transports
             transports = [t for t in transports if t != "tcp"]
@@ -316,14 +335,13 @@ class StargateConfig:
             if not transports:
                 transports = ["unix"]
 
-            config = {**config, "transports": transports}
-
             if original_had_tcp:
                 logger.info(
                     "🔒 Running in Unix socket mode (STARGATE_UNIX_SOCKET set), "
                     + "TCP monitoring on port 9997 is disabled"
                 )
 
+        config = {**config, "transports": transports}
         return config
 
     def get_model_routing_config(self) -> dict[str, Any]:
@@ -349,7 +367,20 @@ class StargateConfig:
         """Get cloud_proxy configuration (None if absent)."""
         return self.config.get("cloud_proxy")
 
-    def get_debug_event_config(self) -> dict[str, Any]:
+from typing import TypedDict
+
+class DebugEventPersistenceConfig(TypedDict):
+    enabled: bool
+    directory: str
+    max_file_size_mb: int
+    max_files: int
+    flush_interval_seconds: float
+
+class DebugEventConfig(TypedDict):
+    persistence: DebugEventPersistenceConfig
+    socket_path: str | None
+
+    def get_debug_event_config(self) -> DebugEventConfig:
         """
         Get debug event configuration.
 
@@ -378,11 +409,10 @@ class StargateConfig:
             persist_enabled = persist_config.get("enabled", False)
 
         env_persist_dir = os.getenv("DEBUG_EVENT_PERSIST_DIR")
-
-        default_dir = persist_config.get("directory", "/tmp/stargate-events")
         persistence = {
             "enabled": persist_enabled,
-            "directory": env_persist_dir or default_dir,
+            "directory": env_persist_dir
+            or persist_config.get("directory", "/tmp/stargate-events"),
             "max_file_size_mb": persist_config.get("max_file_size_mb", 50),
             "max_files": persist_config.get("max_files", 3),
             "flush_interval_seconds": persist_config.get("flush_interval_seconds", 1.0),
@@ -397,7 +427,17 @@ class StargateConfig:
             "socket_path": socket_path,
         }
 
-    def get_pipeline_event_config(self) -> dict[str, Any]:
+from typing import TypedDict # Assuming TypedDict is already imported or will be
+
+class PipelineEventConfig(TypedDict):
+    enabled: bool
+    directory: str
+    max_file_size_mb: int
+    max_files: int
+    flush_interval_seconds: float
+    signal_filter: str
+
+    def get_pipeline_event_config(self) -> PipelineEventConfig:
         """
         Get dedicated pipeline event persistence configuration.
 

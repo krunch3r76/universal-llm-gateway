@@ -76,6 +76,7 @@ class ModelUnloadedHandler(SyncMessageHandler):
             return
 
         ctx.loaded_models.discard(model_id)
+        _ = ctx.loading_since.pop(model_id, None)  # Cleanup orphan loading timestamp
         _ = ctx.model_last_inference.pop(model_id, None)  # Cleanup cache
         _ = ctx.model_details.pop(model_id, None)  # Cleanup resource usage
         _ = ctx.measured_model_vram.pop(model_id, None)  # Cleanup measured VRAM

@@ -252,34 +252,19 @@ def create_resource_update_callback(
         """
         Forward RESOURCE_UPDATE to connected peers.
 
-        Note: We only send loaded_models/busy_models (dynamic state).
-        We do NOT send available_models/model_resources on every update
-        (Master preserves them from initial telemetry).
+        Single-writer invariant: RESOURCE_UPDATE carries metrics only.
+        Model lifecycle state (loaded_models, busy_models) is forwarded
+        via discrete callbacks (on_model_loaded, on_model_unloaded, etc.).
         """
-        # Minimal telemetry: just resource metrics and loaded/busy state
         enriched_data = data.copy()
 
         # Remove static data (should only be in initial telemetry)
         enriched_data.pop("available_models", None)
         enriched_data.pop("model_resources", None)
 
-        # Add dynamic model state (loaded/busy changes frequently)
-        # Use public API - fail fast if methods don't exist (code bug)
-        try:
-            loaded_models = list(ws_client.get_loaded_models())
-            busy_models = list(ws_client.get_busy_models())
-        except AttributeError as e:
-            logger.error(
-                f"❌ Gateway WebSocket client missing required method: {e}. "
-                f"This is a code bug - API mismatch."
-            )
-            raise ValueError(
-                f"Gateway WebSocket client missing required method: {e}. "
-                f"Check API compatibility."
-            ) from e
-
-        enriched_data["loaded_models"] = loaded_models
-        enriched_data["busy_models"] = busy_models
+        # Remove lifecycle state if present (from old Gateway versions)
+        enriched_data.pop("loaded_models", None)
+        enriched_data.pop("busy_models", None)
 
         await forward_callback(
             FederationMessageType.RESOURCE_UPDATE.value,

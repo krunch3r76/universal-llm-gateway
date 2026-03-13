@@ -50,15 +50,13 @@ class FederationRequestMetadata:
     hints: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        result = {
+        return {
             "source_stargate": self.source_stargate,
             "request_id": self.request_id,
             "hop_count": self.hop_count,
             "max_hops": self.max_hops,
+            **({"hints": self.hints} if self.hints else {}),
         }
-        if self.hints:
-            result["hints"] = self.hints
-        return result
 
 
 @dataclass(slots=True, kw_only=True)
@@ -135,6 +133,10 @@ class FederatedGateway:
 
     # HTTP polling flag (for Golem/disable_websocket remotes)
     is_http_polling: bool = False
+
+    # Eviction hysteresis: monotonic timestamp when each model was loaded.
+    # Populated by gateway manager from MODEL_LOADED telemetry.
+    model_loaded_at: dict[ModelId, float] = field(default_factory=dict)
 
     # Delta tracking (for HTTP polling)
     _last_sequence_number: int = field(default=0, init=False)

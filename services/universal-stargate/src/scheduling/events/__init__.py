@@ -104,6 +104,7 @@ from .model_lifecycle import (
     MODEL_LOADED,
     MODEL_LOADING_FAILED,
     MODEL_LOADING_STARTED,
+    MODEL_LOADING_STUCK,
     MODEL_UNLOADED,
     ModelCapacityFreed,
     ModelExecutionCompleted,
@@ -112,6 +113,7 @@ from .model_lifecycle import (
     ModelLoaded,
     ModelLoadingFailed,
     ModelLoadingStarted,
+    ModelLoadingStuck,
     ModelUnloaded,
 )
 from .pipeline import (
@@ -280,6 +282,7 @@ __all__ = [
     "MODEL_UNLOADED",
     "MODEL_LOADING_STARTED",
     "MODEL_LOADING_FAILED",
+    "MODEL_LOADING_STUCK",
     "MODEL_EXECUTION_STARTED",
     "MODEL_EXECUTION_COMPLETED",
     "MODEL_EXECUTION_FAILED",
@@ -288,6 +291,7 @@ __all__ = [
     "ModelUnloaded",
     "ModelLoadingStarted",
     "ModelLoadingFailed",
+    "ModelLoadingStuck",
     "ModelExecutionStarted",
     "ModelExecutionCompleted",
     "ModelExecutionFailed",

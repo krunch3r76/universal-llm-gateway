@@ -43,6 +43,12 @@ _CAPACITY_CONSTRAINTS: frozenset[str] = frozenset(
         "circuit_breaker",
     }
 )
+"""Capacity constraints that indicate temporary unavailability (retryable).
+Distinguished from permanent failures (is_healthy, has_model_available)
+to allow sticky guard to only block on transient conditions.
+circuit_breaker: temporary (OPEN→HALF_OPEN after recovery_timeout); model IS
+available but gateway is isolated. Treat as transient, not permanent failure.
+"""
 
 
 def _is_capacity_constrained(candidate: GatewayCandidate) -> bool:
@@ -75,6 +81,8 @@ class DecisionEngine:
         emit_traces: bool | None = None,
         routing_key_tracker: RoutingKeyTracker | None = None,
         is_gateway_available_fn: Callable[[str, str], bool] | None = None,
+        eviction_cooldown_s: float = 120.0,
+        has_demand: Callable[[str], bool] | None = None,
     ):
         self._policy = policy
         self._event_bus = event_bus
@@ -84,6 +92,8 @@ class DecisionEngine:
         )
         self._routing_key_tracker = routing_key_tracker
         self._is_gateway_available_fn = is_gateway_available_fn
+        self._eviction_cooldown_s = eviction_cooldown_s
+        self._has_demand = has_demand
 
     def select(
         self,
@@ -119,10 +129,7 @@ class DecisionEngine:
 
         # Determine sticky mode
         model_id = placement.model_id  # Already ModelId, no parse needed
-        # Convert to str for policy lookup
-        is_sticky = (
-            sticky if sticky is not None else self._policy.is_sticky(str(model_id))
-        )
+        is_sticky = sticky if sticky is not None else self._policy.is_sticky(model_id)
 
         # Find affinity rule
         affinity_rule = self._policy.find_affinity(model_id)  # Pass ModelId
@@ -165,6 +172,8 @@ class DecisionEngine:
                 sticky=is_sticky,
                 routing_key_tracker=self._routing_key_tracker,
                 is_gateway_available_fn=self._is_gateway_available_fn,
+                eviction_cooldown_s=self._eviction_cooldown_s,
+                has_demand=self._has_demand,
             )
 
             # Calculate utility for feasible gateways
@@ -183,17 +192,12 @@ class DecisionEngine:
                     sticky=is_sticky,
                 )
 
-            # Build eviction summary
-            eviction_summary = None
-            if eviction_plan:
-                eviction_summary = eviction_plan
-
             candidate = GatewayCandidate(
                 gateway=gateway,
                 tier=tier,
                 constraints_failed=failures,
                 score_components=score_components,
-                eviction_plan=eviction_summary,
+                eviction_plan=eviction_plan,
                 affinity_rule=(
                     affinity_rule
                     if affinity_rule and affinity_rule.node == gateway.node_id
@@ -201,8 +205,7 @@ class DecisionEngine:
                 ),
             )
 
-            # Store cached score for sorting
-            object.__setattr__(candidate, "_cached_score", cached_score)
+            # The utility_score property will calculate the score from score_components
 
             candidates.append(candidate)
 
@@ -280,18 +283,13 @@ class DecisionEngine:
                 gateway_name = candidate.gateway.name
                 tier_str = candidate.tier.name
                 if candidate.constraints_failed:
-                    # Show constraint failures
                     failures = [
                         f"{cf.constraint}:{cf.reason}"
                         for cf in candidate.constraints_failed
                     ]
-                    rejection_details.append(
-                        f"{gateway_name}[{tier_str}]: {', '.join(failures)}"
-                    )
+                    rejection_details.append(f"{gateway_name}[{tier_str}]: {', '.join(failures)}")
                 else:
-                    rejection_details.append(
-                        f"{gateway_name}[{tier_str}]: no constraints failed"
-                    )
+                    rejection_details.append(f"{gateway_name}[{tier_str}]: no constraints failed")
 
             logger.warning(
                 f"❌ No feasible gateway for {placement.model_id} | "
@@ -365,6 +363,10 @@ class DecisionEngine:
             c for c in candidates if c.tier == FeasibilityTier.T2_FEASIBLE_EVICT
         ]
 
+        # Sort by score within each tier (descending), with name tie-breaker
+        def sort_key(c: GatewayCandidate) -> tuple[float, str]:
+            return (-c.utility_score, c.gateway.name)
+
         # Apply hard affinity filter
         if hard_affinity:
             t1_affinity = [
@@ -373,18 +375,20 @@ class DecisionEngine:
             t2_affinity = [
                 c for c in t2_candidates if c.gateway.node_id == hard_affinity.node
             ]
+            t1_affinity_sorted = sorted(t1_affinity, key=sort_key)
+            t2_affinity_sorted = sorted(t2_affinity, key=sort_key)
 
-            # If affinity gateway is T1, use it
-            if t1_affinity:
+            # If affinity gateway is T1, use best-scored affinity candidate
+            if t1_affinity_sorted:
                 return (
-                    t1_affinity[0],
+                    t1_affinity_sorted[0],
                     f"hard_affinity={hard_affinity.node}, tier=T1",
                 )
 
-            # If affinity gateway is T2 and eviction allowed, use it
-            if t2_affinity and hard_affinity.evict_if_needed:
+            # If affinity gateway is T2 and eviction allowed, use best-scored candidate
+            if t2_affinity_sorted and hard_affinity.evict_if_needed:
                 return (
-                    t2_affinity[0],
+                    t2_affinity_sorted[0],
                     f"hard_affinity={hard_affinity.node}, tier=T2_eviction",
                 )
 
@@ -394,10 +398,6 @@ class DecisionEngine:
                 f"(no T1/T2 candidates). Returning None to trigger wait/error logic."
             )
             return None, f"hard_affinity={hard_affinity.node}_infeasible"
-
-        # Sort by score within each tier (descending), with name tie-breaker
-        def sort_key(c: GatewayCandidate) -> tuple[float, str]:
-            return (-c.utility_score, c.gateway.name)
 
         t1_sorted = sorted(t1_candidates, key=sort_key)
         t2_sorted = sorted(t2_candidates, key=sort_key)
@@ -475,11 +475,8 @@ class DecisionEngine:
             # Fire and forget - create task to avoid blocking
             try:
                 loop = asyncio.get_running_loop()
-                loop.call_soon(
-                    lambda: asyncio.create_task(
-                        self._event_bus.publish_async_nowait(event)
-                    )
-                )
+                task = asyncio.create_task(self._event_bus.publish_async_nowait(event))
+                task.add_done_callback(lambda t: logger.error("Event bus publish failed: %s", t.exception(), exc_info=True) if t.exception() else None)
             except RuntimeError as exc:
                 logger.warning(
                     "Failed to emit decision trace for %s: no running event loop (%s)",
@@ -501,6 +498,8 @@ def create_decision_engine(
     event_bus: Any = None,
     routing_key_tracker: RoutingKeyTracker | None = None,
     is_gateway_available_fn: Callable[[str, str], bool] | None = None,
+    eviction_cooldown_s: float = 120.0,
+    has_demand: Callable[[str], bool] | None = None,
 ) -> DecisionEngine:
     """Factory function for decision engine."""
     return DecisionEngine(
@@ -508,4 +507,6 @@ def create_decision_engine(
         event_bus=event_bus,
         routing_key_tracker=routing_key_tracker,
         is_gateway_available_fn=is_gateway_available_fn,
+        eviction_cooldown_s=eviction_cooldown_s,
+        has_demand=has_demand,
     )

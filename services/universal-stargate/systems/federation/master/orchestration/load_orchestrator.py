@@ -116,7 +116,6 @@ class FederatedLoadOrchestrator:
 
         # Single-flight mechanism
         self._pending_loads: dict[tuple[str, str], asyncio.Future[bool]] = {}
-        self._pending_lock = asyncio.Lock()
 
     def _track_routing_key(
         self, gateway_id: str, request_id: str, routing_key: str
@@ -289,29 +288,21 @@ class FederatedLoadOrchestrator:
                     "issuing idempotent load command for confirmation"
                 )
 
-            # Telemetry says not loaded or stale - proceed with explicit load
-            # SINGLE-FLIGHT: Atomic check-and-insert under single lock acquisition
-            # CRITICAL: No TOCTOU race - check and insert happen atomically
-            async with self._pending_lock:
-                if load_key in self._pending_loads:
-                    # Another caller is loading; we'll await their future
-                    # outside the lock.
-                    existing_future = self._pending_loads[load_key]
-                    if self._metrics:
-                        self._metrics.record_coalesced_caller()
-                    logger.debug(f"⏳ Coalescing with existing load: {load_key}")
-                else:
-                    # We're primary - create and register future atomically
-                    # NOTE: get_running_loop() required in async context
-                    # (get_event_loop() deprecated in 3.10+)
-                    future: asyncio.Future[bool] = (
-                        asyncio.get_running_loop().create_future()
-                    )
-                    self._pending_loads[load_key] = future
-                    existing_future = None
-                    if self._metrics:
-                        self._metrics.record_primary_caller()
-                    logger.debug(f"🔄 Primary loader for: {load_key}")
+            # Single-flight: check-and-insert is atomic (no await between them).
+            if load_key in self._pending_loads:
+                existing_future = self._pending_loads[load_key]
+                if self._metrics:
+                    self._metrics.record_coalesced_caller()
+                logger.debug(f"⏳ Coalescing with existing load: {load_key}")
+            else:
+                future: asyncio.Future[bool] = (
+                    asyncio.get_running_loop().create_future()
+                )
+                self._pending_loads[load_key] = future
+                existing_future = None
+                if self._metrics:
+                    self._metrics.record_primary_caller()
+                logger.debug(f"🔄 Primary loader for: {load_key}")
 
             if existing_future is not None:
                 # Await the existing load operation's result
@@ -418,11 +409,9 @@ class FederatedLoadOrchestrator:
                             gateway.gateway_id, model_id
                         )
 
-                # CRITICAL: Always cleanup pending future
-                # Defensive: only pop if it's still OUR future
-                async with self._pending_lock:
-                    if self._pending_loads.get(load_key) is future:
-                        self._pending_loads.pop(load_key, None)
+                # Cleanup pending future (atomic — no await between check and pop)
+                if self._pending_loads.get(load_key) is future:
+                    self._pending_loads.pop(load_key, None)
 
                 # If future wasn't resolved (e.g., task cancelled via
                 # CancelledError), resolve it now

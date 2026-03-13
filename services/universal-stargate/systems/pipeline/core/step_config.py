@@ -91,8 +91,11 @@ class StepConfig(BaseModel):
     @classmethod
     def normalize_map_config(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Normalize flat map_over/map_inputs fields into map_config."""
-        if not isinstance(values, dict):
-            return values
+        # Pydantic's model_validator(mode='before') typically ensures `values` is a dict
+        # if the model is being parsed from a dict. If it can be other types, the type hint
+        # should be `Any`. Assuming it's always a dict here.
+        # if not isinstance(values, dict):
+        #     return values
         if values.get("map_config") is not None:
             return values
 
@@ -124,8 +127,11 @@ class StepConfig(BaseModel):
     @classmethod
     def parse_handler_inputs(cls, v: dict[str, Any]) -> dict[str, InputBinding]:
         """Convert string/dict bindings to InputBinding objects."""
-        if not isinstance(v, dict):
-            return v
+        # Pydantic's field_validator(mode='before') typically ensures `v` is a dict
+        # if the field is being parsed from a dict. If it can be other types, the type hint
+        # should be `Any`. Assuming it's always a dict here.
+        # if not isinstance(v, dict):
+        #     return v
         result = {}
         for key, value in v.items():
             if isinstance(value, str):
@@ -146,8 +152,11 @@ class StepConfig(BaseModel):
     @classmethod
     def parse_handler_outputs(cls, v: dict[str, Any]) -> dict[str, OutputBinding]:
         """Convert string/dict specs to OutputBinding objects."""
-        if not isinstance(v, dict):
-            return v
+        # Pydantic's field_validator(mode='before') typically ensures `v` is a dict
+        # if the field is being parsed from a dict. If it can be other types, the type hint
+        # should be `Any`. Assuming it's always a dict here.
+        # if not isinstance(v, dict):
+        #     return v
         result = {}
         for key, value in v.items():
             if isinstance(value, str):
@@ -221,6 +230,15 @@ class StepConfig(BaseModel):
             from .conditions import extract_condition_deps
 
             deps |= extract_condition_deps(self.condition)
+
+        from .handlers.registry import HandlerRegistry
+
+        for field_name in HandlerRegistry.get_handler_dependency_fields(self.type):
+            field_val = self.get_domain_field(field_name)
+            if isinstance(field_val, list):
+                for item in field_val:
+                    if isinstance(item, str):
+                        deps.add(item)
 
         return list(deps)
 
@@ -298,6 +316,9 @@ class StepConfig(BaseModel):
         ∀ event-loop callers: use this variant so `model_requirements` selection
         yields while `/v1/models/select` is served by the same Stargate process.
         """
+        # Refactor to avoid duplication with get_target_model_id
+        # Common logic for model_ref_overrides and direct model_ref handling
+        # could be in a helper, with async-specific parts handled here.
         if model_ref_overrides and self.model_ref:
             override = model_ref_overrides.get(self.name) or model_ref_overrides.get(
                 self.model_ref

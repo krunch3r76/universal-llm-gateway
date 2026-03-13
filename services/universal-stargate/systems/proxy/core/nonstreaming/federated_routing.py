@@ -4,10 +4,13 @@ Federated gateway routing for Master mode.
 Handles gateway selection, model loading, and routing events.
 """
 
+import asyncio
 import time
 from typing import TYPE_CHECKING, Any
 
+from fastapi import HTTPException
 from universal_logging import get_logger
+from universal_protocol import ErrorCode
 
 from systems.federation.common.config.schema import EndpointCategory
 
@@ -25,16 +28,39 @@ from .selection_errors import (
 
 if TYPE_CHECKING:
     from model_id import ModelId
+    from universal_event_bus import EventBus
 
     from systems.federation.common.types import FederatedGateway
+    from systems.federation.master.circuit_breaker import FederationCircuitBreaker
+    from systems.federation.master.manager.federated_gateway_manager import (
+        FederatedGatewayManager,
+    )
+    from systems.federation.master.orchestration.load_orchestrator import (
+        FederatedLoadOrchestrator,
+    )
+    from systems.federation.master.routing.forward import FederatedRequestForwarder
+    from systems.federation.master.routing.orchestrator import MasterRequestTracker
+    from systems.routing.capacity.pool import CapacityPool
+    from systems.routing.selection.decision.stability import StickyPlacementTracker
 
     from .context import RequestContext
 
 logger = get_logger(__name__)
 
+# Eviction wait queue depth (for routing.eviction.wait.started payload and monitoring)
+_eviction_wait_queue_depth: int = 0
+
+
+async def _emit_event_safe(event_bus: "EventBus", event: Any, event_name: str) -> None:
+    """Emit event with debug-level failure logging."""
+    try:
+        await event_bus.publish_async_nowait(event)
+    except Exception as exc:
+        logger.debug(f"Failed to emit {event_name} event: {exc}")
+
 
 async def _emit_routing_resource_gap_event(
-    event_bus: Any,
+    event_bus: "EventBus",
     request_id: str,
     model_id: "ModelId",
     federated_gateways: list["FederatedGateway"],
@@ -56,18 +82,15 @@ async def _emit_routing_resource_gap_event(
         if model_id in fg.available_models and model_id not in fg.model_resources
     ]
     for gateway_id in gap_gateway_ids:
-        try:
-            await event_bus.publish_async_nowait(
-                RoutingResourceDataMissing(
-                    request_id=request_id,
-                    model_id=str(model_id),
-                    gateway_ids=[gateway_id],
-                )
-            )
-        except Exception as exc:
-            logger.debug(
-                f"Failed to emit routing resource gap event for {gateway_id}: {exc}"
-            )
+        await _emit_event_safe(
+            event_bus,
+            RoutingResourceDataMissing(
+                request_id=request_id,
+                model_id=str(model_id),
+                gateway_ids=[gateway_id],
+            ),
+            f"routing.resource.data.missing:{gateway_id}",
+        )
 
 
 def _build_constraint_summary(
@@ -95,7 +118,7 @@ def _build_constraint_summary(
 
 
 async def _emit_routing_model_infeasible_event(
-    event_bus: Any,
+    event_bus: "EventBus",
     request_id: str,
     model_id: "ModelId",
     trace: Any | None,
@@ -120,21 +143,20 @@ async def _emit_routing_model_infeasible_event(
             if c.constraints_failed
         ]
 
-    try:
-        await event_bus.publish_async_nowait(
-            RoutingModelInfeasible(
-                request_id=request_id,
-                model_id=str(model_id),
-                gateway_constraints=gateway_constraints,
-                excluded_gateway_ids=excluded_gateway_ids,
-            )
-        )
-    except Exception as exc:
-        logger.debug(f"Failed to emit routing model infeasible event: {exc}")
+    await _emit_event_safe(
+        event_bus,
+        RoutingModelInfeasible(
+            request_id=request_id,
+            model_id=str(model_id),
+            gateway_constraints=gateway_constraints,
+            excluded_gateway_ids=excluded_gateway_ids,
+        ),
+        "routing.model.infeasible",
+    )
 
 
 async def _emit_eviction_classification_event(
-    event_bus: Any,
+    event_bus: "EventBus",
     request_id: str,
     model_id: "ModelId",
     trace: Any | None,
@@ -173,34 +195,35 @@ async def _emit_eviction_classification_event(
         vram_free = selected.gateway.vram_free_mb
         failed_constraints = [f.constraint for f in selected.constraints_failed]
 
-    try:
-        if classification == "busy_blocked":
-            await event_bus.publish_async_nowait(
-                RoutingEvictionBlockedBusy(
-                    request_id=request_id,
-                    model_id=str(model_id),
-                    gateway_id=gateway_id,
-                    loaded_count=loaded_count,
-                    busy_count=busy_count,
-                    vram_free=vram_free,
-                )
-            )
-        elif classification == "permanent_insufficient":
-            await event_bus.publish_async_nowait(
-                RoutingEvictionInsufficientPermanent(
-                    request_id=request_id,
-                    model_id=str(model_id),
-                    gateway_id=gateway_id,
-                    reason=failure_reason,
-                    failed_constraints=failed_constraints,
-                )
-            )
-    except Exception as exc:
-        logger.debug(f"Failed to emit routing eviction classification event: {exc}")
+    if classification == "busy_blocked":
+        await _emit_event_safe(
+            event_bus,
+            RoutingEvictionBlockedBusy(
+                request_id=request_id,
+                model_id=str(model_id),
+                gateway_id=gateway_id,
+                loaded_count=loaded_count,
+                busy_count=busy_count,
+                vram_free=vram_free,
+            ),
+            "routing.eviction.blocked.busy",
+        )
+    elif classification == "permanent_insufficient":
+        await _emit_event_safe(
+            event_bus,
+            RoutingEvictionInsufficientPermanent(
+                request_id=request_id,
+                model_id=str(model_id),
+                gateway_id=gateway_id,
+                reason=failure_reason,
+                failed_constraints=failed_constraints,
+            ),
+            "routing.eviction.insufficient.permanent",
+        )
 
 
 async def _emit_overflow_triggered_event(
-    event_bus: Any,
+    event_bus: "EventBus",
     request_id: str,
     model_id: "ModelId",
     from_gateway: str,
@@ -210,22 +233,21 @@ async def _emit_overflow_triggered_event(
     """Emit routing.overflow.triggered for non-sticky spillover attempts."""
     from src.scheduling.events.routing import RoutingOverflowTriggered
 
-    try:
-        await event_bus.publish_async_nowait(
-            RoutingOverflowTriggered(
-                request_id=request_id,
-                model_id=str(model_id),
-                from_gateway=from_gateway,
-                to_gateway=to_gateway,
-                reason=reason,
-            )
-        )
-    except Exception as exc:
-        logger.debug(f"Failed to emit routing overflow triggered event: {exc}")
+    await _emit_event_safe(
+        event_bus,
+        RoutingOverflowTriggered(
+            request_id=request_id,
+            model_id=str(model_id),
+            from_gateway=from_gateway,
+            to_gateway=to_gateway,
+            reason=reason,
+        ),
+        "routing.overflow.triggered",
+    )
 
 
 async def _emit_overflow_failed_event(
-    event_bus: Any,
+    event_bus: "EventBus",
     request_id: str,
     model_id: "ModelId",
     tried_gateways: list[str],
@@ -234,21 +256,20 @@ async def _emit_overflow_failed_event(
     """Emit routing.overflow.failed when no alternate is feasible."""
     from src.scheduling.events.routing import RoutingOverflowFailed
 
-    try:
-        await event_bus.publish_async_nowait(
-            RoutingOverflowFailed(
-                request_id=request_id,
-                model_id=str(model_id),
-                tried_gateways=sorted(tried_gateways),
-                reason=reason,
-            )
-        )
-    except Exception as exc:
-        logger.debug(f"Failed to emit routing overflow failed event: {exc}")
+    await _emit_event_safe(
+        event_bus,
+        RoutingOverflowFailed(
+            request_id=request_id,
+            model_id=str(model_id),
+            tried_gateways=sorted(tried_gateways),
+            reason=reason,
+        ),
+        "routing.overflow.failed",
+    )
 
 
 async def _emit_overflow_load_started_event(
-    event_bus: Any,
+    event_bus: "EventBus",
     request_id: str,
     model_id: "ModelId",
     gateway_id: str,
@@ -257,21 +278,20 @@ async def _emit_overflow_load_started_event(
     """Emit model.load.overflow.started before overflow cold-load begins."""
     from src.scheduling.events.routing import ModelLoadOverflowStarted
 
-    try:
-        await event_bus.publish_async_nowait(
-            ModelLoadOverflowStarted(
-                request_id=request_id,
-                model_id=str(model_id),
-                gateway_id=gateway_id,
-                reason=reason,
-            )
-        )
-    except Exception as exc:
-        logger.debug(f"Failed to emit overflow load started event: {exc}")
+    await _emit_event_safe(
+        event_bus,
+        ModelLoadOverflowStarted(
+            request_id=request_id,
+            model_id=str(model_id),
+            gateway_id=gateway_id,
+            reason=reason,
+        ),
+        "model.load.overflow.started",
+    )
 
 
 async def _emit_overflow_assigned_event(
-    event_bus: Any,
+    event_bus: "EventBus",
     request_id: str,
     model_id: "ModelId",
     from_gateway: str,
@@ -281,33 +301,157 @@ async def _emit_overflow_assigned_event(
     """Emit model.capacity.overflow.assigned at admission boundary."""
     from src.scheduling.events.routing import ModelCapacityOverflowAssigned
 
-    try:
-        await event_bus.publish_async_nowait(
-            ModelCapacityOverflowAssigned(
-                request_id=request_id,
-                model_id=str(model_id),
-                from_gateway=from_gateway,
-                to_gateway=to_gateway,
-                depth_before=depth_before,
-            )
+    await _emit_event_safe(
+        event_bus,
+        ModelCapacityOverflowAssigned(
+            request_id=request_id,
+            model_id=str(model_id),
+            from_gateway=from_gateway,
+            to_gateway=to_gateway,
+            depth_before=depth_before,
+        ),
+        "model.capacity.overflow.assigned",
+    )
+
+
+async def _wait_and_retry_selection(
+    *,
+    federated_manager: "FederatedGatewayManager",
+    decision_engine: Any,
+    placement: Any,
+    context: "RequestContext",
+    event_bus: "EventBus | None",
+    timeout_s: float,
+    stability_tracker: "StickyPlacementTracker",
+) -> tuple[Any, Any, int]:
+    """Wait for model state changes, then re-run selection.
+
+    Epoch-before-select pattern: record generation → select → if fail, wait
+    for generation bump → repeat. Guarantees no missed wake-ups.
+    """
+    from src.scheduling.events.routing import (
+        RoutingEvictionWaitCancelled,
+        RoutingEvictionWaitResolved,
+        RoutingEvictionWaitStarted,
+        RoutingEvictionWaitTimeout,
+    )
+    from systems.routing.selection.stargate_collector import (
+        federated_gateways_to_routing_candidates,
+    )
+
+    global _eviction_wait_queue_depth
+    wait_start = time.monotonic()
+    max_iterations = 60
+    trace: Any = None
+
+    _eviction_wait_queue_depth += 1
+
+    if event_bus:
+        await _emit_event_safe(
+            event_bus,
+            RoutingEvictionWaitStarted(
+                request_id=context.request_id,
+                model_id=str(placement.model_id),
+                timeout_s=timeout_s,
+                queue_depth=_eviction_wait_queue_depth,
+            ),
+            "routing.eviction.wait.started",
         )
-    except Exception as exc:
-        logger.debug(f"Failed to emit overflow assignment event: {exc}")
+
+    try:
+        for _ in range(max_iterations):
+            elapsed_s = time.monotonic() - wait_start
+            if elapsed_s >= timeout_s:
+                break
+
+            state_version = federated_manager.get_state_version()
+
+            fresh_gateways = federated_manager.get_all_gateways()
+            gateways_for_retry = [
+                g
+                for g in federated_gateways_to_routing_candidates(fresh_gateways)
+                if g.name not in (context.excluded_gateway_ids or set())
+            ]
+
+            selected, trace = decision_engine.select(
+                gateways=gateways_for_retry,
+                placement=placement,
+                request_id=context.request_id,
+                sticky=context.model_sticky,
+                stability_tracker=stability_tracker,
+            )
+            if selected is not None:
+                waited_ms = int((time.monotonic() - wait_start) * 1000)
+                if event_bus:
+                    await _emit_event_safe(
+                        event_bus,
+                        RoutingEvictionWaitResolved(
+                            request_id=context.request_id,
+                            model_id=str(placement.model_id),
+                            gateway_id=selected.name,
+                            waited_ms=waited_ms,
+                        ),
+                        "routing.eviction.wait.resolved",
+                    )
+                return selected, trace, waited_ms
+
+            still_transient = any(
+                any(
+                    f.constraint == "eviction_blocked_by_busy_models"
+                    for f in c.constraints_failed
+                )
+                for c in (trace.candidates if trace else [])
+            )
+            if not still_transient:
+                break
+
+            remaining = max(0.1, timeout_s - (time.monotonic() - wait_start))
+            await federated_manager.wait_for_state_change(state_version, remaining)
+
+    except asyncio.CancelledError:
+        waited_ms = int((time.monotonic() - wait_start) * 1000)
+        if event_bus:
+            await _emit_event_safe(
+                event_bus,
+                RoutingEvictionWaitCancelled(
+                    request_id=context.request_id,
+                    model_id=str(placement.model_id),
+                    waited_ms=waited_ms,
+                ),
+                "routing.eviction.wait.cancelled",
+            )
+        raise
+
+    finally:
+        _eviction_wait_queue_depth -= 1
+
+    waited_ms = int((time.monotonic() - wait_start) * 1000)
+    if event_bus:
+        await _emit_event_safe(
+            event_bus,
+            RoutingEvictionWaitTimeout(
+                request_id=context.request_id,
+                model_id=str(placement.model_id),
+                waited_ms=waited_ms,
+            ),
+            "routing.eviction.wait.timeout",
+        )
+    return None, trace, waited_ms
 
 
 async def _route_to_federated_gateway(
     context: "RequestContext",
-    federated_manager,
-    federated_load_orchestrator,
-    federation_forwarder,
-    event_bus,
+    federated_manager: "FederatedGatewayManager | None",
+    federated_load_orchestrator: "FederatedLoadOrchestrator | None",
+    federation_forwarder: "FederatedRequestForwarder | None",
+    event_bus: "EventBus | None",
     routing_start_time: float,
-    routing_config: dict | None = None,
-    stability_tracker=None,
-    compute_type_tracker=None,
-    routing_key_tracker=None,
-    capacity_pool=None,
-    circuit_breaker=None,
+    routing_config: dict[str, Any] | None = None,
+    stability_tracker: "StickyPlacementTracker | None" = None,
+    compute_type_tracker: "MasterRequestTracker | None" = None,
+    routing_key_tracker: "MasterRequestTracker | None" = None,
+    capacity_pool: "CapacityPool | None" = None,
+    circuit_breaker: "FederationCircuitBreaker | None" = None,
 ) -> tuple[str | None, str | None]:
     """
     Router-only mode: Select and load model on federated gateway.
@@ -403,10 +547,7 @@ async def _route_to_federated_gateway(
         has_model_alternative = any(
             model_id in g.available_models or model_id in g.loaded_models for g in kept
         )
-        if kept and has_model_alternative:
-            logger.info("🚫 Routing: excluded %s", context.excluded_gateway_ids)
-            gateways_for_routing = kept
-        else:
+        if not kept or not has_model_alternative:
             # All gateways with the model have already returned upstream errors.
             # Bypassing exclusion would retry on the same failed gateway —
             # instead emit an event and fail non-retryably.
@@ -434,6 +575,8 @@ async def _route_to_federated_gateway(
                 list(context.excluded_gateway_ids),
                 upstream_errors=context.excluded_gateway_errors or None,
             )
+        logger.info("🚫 Routing: excluded %s", context.excluded_gateway_ids)
+        gateways_for_routing = kept
 
     # Exclude gateways with persistent load failures for this model+context
     load_failed_ids = [
@@ -483,6 +626,8 @@ async def _route_to_federated_gateway(
     from systems.routing.selection.decision import DecisionEngine
     from systems.routing.selection.decision.config import load_routing_policy
 
+    from .routing_wait import has_demand_for
+
     policy = load_routing_policy(routing_config or {})
 
     # Create availability callback for circuit breaker
@@ -490,12 +635,18 @@ async def _route_to_federated_gateway(
     if circuit_breaker:
         is_gateway_available_fn = circuit_breaker.is_request_allowed_sync
 
+    # Eviction hysteresis config
+    eviction_cooldown_s: float = float(
+        (routing_config or {}).get("routing", {}).get("eviction_cooldown_s", 120.0)
+    )
+
     decision_engine = DecisionEngine(
         policy=policy,
         event_bus=event_bus,
         routing_key_tracker=routing_key_tracker,
         is_gateway_available_fn=is_gateway_available_fn,
-        # Admission control: CapacityPool in systems/routing/capacity/
+        eviction_cooldown_s=eviction_cooldown_s,
+        has_demand=has_demand_for,
     )
 
     # Use DecisionEngine to select gateway
@@ -670,7 +821,7 @@ async def _route_to_federated_gateway(
                 try:
                     signaled = await wait_for_capacity_signal(
                         event_bus=event_bus,
-                        model_id=str(model_id),
+                        model_id=model_id.routing_key,
                         request_id=context.request_id,
                         deadline=deadline,
                     )
@@ -890,7 +1041,16 @@ async def _route_to_federated_gateway(
             # (engine picks a different gateway, guard blocks it) producing a spin loop.
             raise_gateway_capacity_error(selected_gateway.name)
         except Exception as e:
-            logger.error(f"❌ Admission queue acquire failed: {e}")
+            logger.error(
+                (
+                    "❌ Admission queue acquire failed for model=%s "
+                    "gateway=%s request_id=%s: %s"
+                ),
+                model_id.routing_key,
+                selected_gateway.name,
+                context.request_id,
+                e,
+            )
             stability_tracker.clear_binding(model_id)
             raise_gateway_capacity_error(selected_gateway.name)
 
@@ -1005,7 +1165,7 @@ async def _route_to_federated_gateway(
                 if failed & transient_constraints:
                     return True
                 if failed & resource_constraints:
-                    return "can_fit_with_eviction" not in failed
+                    return "can_fit_with_eviction" in failed
                 return False
 
             has_capacity_failure = any(
@@ -1167,21 +1327,48 @@ async def _route_to_federated_gateway(
             )
 
         if model_in_any_catalog:
-            # Model known but temporarily unroutable — retryable 503
-            constraint_summary = _build_constraint_summary(
-                trace,
-                federated_gateways,
-                context,
-            )
-            if event_bus:
-                await _emit_routing_model_infeasible_event(
-                    event_bus=event_bus,
-                    request_id=context.request_id,
-                    model_id=model_id,
-                    trace=trace,
-                    excluded_gateway_ids=list(context.excluded_gateway_ids),
+            has_transient_eviction_block = any(
+                any(
+                    f.constraint == "eviction_blocked_by_busy_models"
+                    for f in c.constraints_failed
                 )
-            raise_no_feasible_gateway_error(str(model_id), constraint_summary)
+                for c in (trace.candidates if trace else [])
+            )
+            if has_transient_eviction_block and federated_manager:
+                timeout_s = (routing_config or {}).get("eviction_wait_timeout_s", 300.0)
+                selected_gateway, trace, waited_ms = await _wait_and_retry_selection(
+                    federated_manager=federated_manager,
+                    decision_engine=decision_engine,
+                    placement=placement,
+                    context=context,
+                    event_bus=event_bus,
+                    timeout_s=timeout_s,
+                    stability_tracker=stability_tracker,
+                )
+                if selected_gateway is None:
+                    raise_capacity_error(
+                        str(model_id),
+                        {
+                            "reason": "eviction_queue_timeout",
+                            "waited_ms": waited_ms,
+                        },
+                    )
+            if selected_gateway is None:
+                # Model known but temporarily unroutable — retryable 503
+                constraint_summary = _build_constraint_summary(
+                    trace,
+                    federated_gateways,
+                    context,
+                )
+                if event_bus:
+                    await _emit_routing_model_infeasible_event(
+                        event_bus=event_bus,
+                        request_id=context.request_id,
+                        model_id=model_id,
+                        trace=trace,
+                        excluded_gateway_ids=list(context.excluded_gateway_ids),
+                    )
+                raise_no_feasible_gateway_error(str(model_id), constraint_summary)
 
         # Genuinely absent from all gateway catalogs
         raise_model_unavailable_error(str(model_id))
@@ -1197,6 +1384,64 @@ async def _route_to_federated_gateway(
         from systems.routing.selection.decision import FeasibilityTier
 
         from .eviction_execution import execute_master_eviction
+
+        # Emit eviction hysteresis events (planner is sync; async caller emits)
+        if event_bus and trace.candidates:
+            gw_name = selected_gateway.name
+            selected_candidate = next(
+                (c for c in trace.candidates if c.gateway.name == gw_name),
+                None,
+            )
+            plan = selected_candidate.eviction_plan if selected_candidate else None
+            if plan and plan.cooldown_protected_count > 0:
+                from src.scheduling.events.routing import EvictionCooldownApplied
+
+                await event_bus.publish_async_nowait(
+                    EvictionCooldownApplied(
+                        model_id=str(model_id),
+                        gateway_id=selected_gateway.name,
+                        protected_count=plan.cooldown_protected_count,
+                        cooldown_s=eviction_cooldown_s,
+                        timestamp=time.time(),
+                    )
+                )
+            if plan and plan.demand_protected_count > 0:
+                from src.scheduling.events.routing import EvictionDemandApplied
+
+                from .routing_wait import count_demand_for
+
+                waiter_counts = {}
+                for c in trace.candidates:
+                    if c.eviction_plan:
+                        for m in c.eviction_plan.models_to_evict:
+                            cnt = count_demand_for(m.routing_key)
+                            if cnt > 0:
+                                waiter_counts[m.routing_key] = cnt
+                await event_bus.publish_async_nowait(
+                    EvictionDemandApplied(
+                        model_id=str(model_id),
+                        gateway_id=selected_gateway.name,
+                        protected_count=plan.demand_protected_count,
+                        waiter_counts=waiter_counts,
+                        timestamp=time.time(),
+                    )
+                )
+            if plan and plan.escape_hatch_used:
+                from src.scheduling.events.routing import EvictionCooldownBlocked
+
+                await event_bus.publish_async_nowait(
+                    EvictionCooldownBlocked(
+                        model_id=str(model_id),
+                        gateway_id=selected_gateway.name,
+                        evicted_model_id=plan.escape_model_id or "",
+                        escape_reason=plan.escape_reason or "unknown",
+                        timestamp=time.time(),
+                        request_id=context.request_id,
+                        cooldown_remaining_s=plan.escape_cooldown_remaining_s,
+                        candidates_in_cooldown=plan.cooldown_protected_count,
+                        candidates_demand_protected=plan.demand_protected_count,
+                    )
+                )
 
         if trace.selection_tier == FeasibilityTier.T2_FEASIBLE_EVICT:
             eviction_ok = await execute_master_eviction(
@@ -1226,10 +1471,69 @@ async def _route_to_federated_gateway(
                     sticky=context.model_sticky,
                     request_id=context.request_id,
                 )
+            except HTTPException as e:
+                detail = e.detail if isinstance(e.detail, dict) else {}
+                # ∀ RESOURCE_UNAVAILABLE+retryable: transient VRAM pressure
+                # (catalog drift caused DecisionEngine to skip eviction planning).
+                # Enter the same
+                # state-change wait as Phase 7 pre-selection queue. Once MODEL_UNLOADED
+                # fires the wait resolves, re-selection finds VRAM free, retry succeeds.
+                # ¬ mark_load_failed — that is for permanent incompatibilities only.
+                if (
+                    detail.get("code") == ErrorCode.RESOURCE_UNAVAILABLE
+                    and detail.get("retryable", False)
+                    and federated_manager is not None
+                ):
+                    timeout_s = (routing_config or {}).get(
+                        "eviction_wait_timeout_s", 300.0
+                    )
+                    (
+                        selected_gateway,
+                        trace,
+                        waited_ms,
+                    ) = await _wait_and_retry_selection(
+                        federated_manager=federated_manager,
+                        decision_engine=decision_engine,
+                        placement=placement,
+                        context=context,
+                        event_bus=event_bus,
+                        timeout_s=timeout_s,
+                        stability_tracker=stability_tracker,
+                    )
+                    if selected_gateway is None:
+                        raise_capacity_error(
+                            str(model_id),
+                            {
+                                "reason": "eviction_queue_timeout_post_load_fail",
+                                "waited_ms": waited_ms,
+                            },
+                        )
+                    assert selected_gateway is not None
+                    # Re-attempt load on gateway selected after VRAM freed
+                    try:
+                        await federated_load_orchestrator.ensure_model_loaded_on_remote(
+                            selected_gateway.ref,
+                            model_id,
+                            sticky=context.model_sticky,
+                            request_id=context.request_id,
+                        )
+                    except Exception:
+                        if federated_manager is not None:
+                            federated_manager.mark_load_failed(
+                                selected_gateway.ref.gateway_id, model_id
+                            )
+                        raise
+                else:
+                    if federated_manager is not None:
+                        federated_manager.mark_load_failed(
+                            selected_gateway.ref.gateway_id, model_id
+                        )
+                    raise
             except Exception:
-                federated_manager.mark_load_failed(
-                    selected_gateway.ref.gateway_id, model_id
-                )
+                if federated_manager is not None:
+                    federated_manager.mark_load_failed(
+                        selected_gateway.ref.gateway_id, model_id
+                    )
                 raise
             logger.info(f"✅ Model {model_id} loaded on {selected_gateway.name}")
         else:
@@ -1278,7 +1582,7 @@ async def _route_to_federated_gateway(
             and optimistic_mark_model_id
             and federated_manager
         ):
-            await federated_manager.clear_model_loading(
+            federated_manager.clear_model_loading_optimistic(
                 optimistic_mark_gateway_id, optimistic_mark_model_id
             )
         # Release capacity token on pre-forward failure (eviction, load, etc.)

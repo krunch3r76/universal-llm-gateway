@@ -8,6 +8,7 @@ output: result
 options:
   timeout_seconds: 480
   max_sloc_per_module: 500
+  # description: "Maximum lines of code allowed per module after splitting or refactoring."
 
 steps:
   # Step 1: Analyze source and produce split instructions (or decline)
@@ -39,7 +40,7 @@ steps:
               type: string
               description: "Step-by-step instructions for the split. Empty string if can_split is false."
           required: [can_split, reasoning, instructions]
-    timeout_seconds: 120
+    timeout_seconds: 240
     retry_policy:
       max_attempts: 3
       backoff_strategy: exponential
@@ -143,7 +144,7 @@ steps:
                 type: string
               description: "Concrete duplicated patterns to consolidate: pattern description, where it appears, suggested extraction name, and destination module."
           required: [reasoning, improvements, modules, implementation_guide, deduplication_opportunities]
-    timeout_seconds: 180
+    timeout_seconds: 240
     retry_policy:
       max_attempts: 3
       backoff_strategy: exponential
@@ -182,7 +183,7 @@ steps:
               type: string
               description: "Step-by-step instructions covering refactors and any subsequent split. Empty if can_refactor is false."
           required: [can_refactor, reasoning, instructions]
-    timeout_seconds: 120
+    timeout_seconds: 240
     retry_policy:
       max_attempts: 3
       backoff_strategy: exponential
@@ -289,7 +290,7 @@ steps:
                 required: [file_path, description, definitions, module_size, constructor_signature, injected_state, imports_from_siblings, import_depth_delta, compatibility_note, init_reexports]
               minItems: 1
           required: [reasoning, refactors, resulting_split]
-    timeout_seconds: 180
+    timeout_seconds: 240
     retry_policy:
       max_attempts: 3
       backoff_strategy: exponential
@@ -304,4 +305,4 @@ steps:
     candidates:
       - execute_split
       - execute_refactor
-      - plan_split
+      - plan_split # Consider a dedicated 'decline' output if plan_split/refactor are both false

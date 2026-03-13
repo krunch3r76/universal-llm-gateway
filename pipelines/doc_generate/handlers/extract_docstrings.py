@@ -1,21 +1,19 @@
 """
-Deterministic extractor for doc-generate.
+Pipeline handler for doc-generate tree-sitter extraction.
 
-Reads a Python subsystem directory, extracts docstrings/signatures/imports using
-tree-sitter-python, and attaches any existing architecture document content.
+Thin adapter around ``doc_extraction`` library — adds pipeline-specific
+concerns (event emission, StepOutput wrapping, input validation).
 """
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import json
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, override
 
-import tree_sitter as _ts
-import tree_sitter_python as _tspython
+from doc_extraction import extract_subsystem_inventory
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -35,139 +33,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_PY_LANG: _ts.Language = _ts.Language(_tspython.language())
-_PY_PARSER = _ts.Parser(_PY_LANG)
-_STRING_NODE_TYPES = {"string", "concatenated_string"}
-_DEF_NODE_TYPES = {"function_definition", "async_function_definition"}
-
-
-def _repo_root() -> Path:
-    """Return repository root regardless of Stargate process cwd."""
-    # pipelines/doc_generate/handlers/extract_docstrings.py -> repo root
-    return Path(__file__).resolve().parents[3]
-
-
-def _decode(node: _ts.Node, source: bytes) -> str:
-    return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
-
-
-def _string_node_to_text(node: _ts.Node, source: bytes) -> str:
-    literal = _decode(node, source)
-    try:
-        value: object = ast.literal_eval(literal)
-    except (SyntaxError, ValueError):
-        return literal.strip()
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace").strip()
-    return str(value).strip()
-
-
-def _extract_docstring_from_block(block_node: _ts.Node | None, source: bytes) -> str:
-    if block_node is None or not block_node.children:
-        return ""
-    first_child = block_node.children[0]
-    if first_child.type != "expression_statement" or not first_child.children:
-        return ""
-    maybe_string = first_child.children[0]
-    if maybe_string.type in _STRING_NODE_TYPES:
-        return _string_node_to_text(maybe_string, source).strip()
-    return ""
-
-
-def _signature(node: _ts.Node, source: bytes) -> str:
-    body = node.child_by_field_name("body")
-    end_byte = body.start_byte if body is not None else node.end_byte
-    text = source[node.start_byte : end_byte].decode("utf-8", errors="replace").rstrip()
-    text = text.removesuffix(":")
-    return " ".join(text.split())
-
-
-def _extract_imports(module_node: _ts.Node, source: bytes) -> list[str]:
-    imports: list[str] = []
-    for child in module_node.children:
-        if child.type in {"import_statement", "import_from_statement"}:
-            imports.append(_decode(child, source).strip())
-    return imports
-
-
-def _extract_class_methods(class_node: _ts.Node, source: bytes) -> list[dict[str, Any]]:
-    methods: list[dict[str, Any]] = []
-    body = class_node.child_by_field_name("body")
-    if body is None:
-        return methods
-    for member in body.children:
-        if member.type not in _DEF_NODE_TYPES:
-            continue
-        method_name_node = member.child_by_field_name("name")
-        if method_name_node is None:
-            continue
-        methods.append(
-            {
-                "name": _decode(method_name_node, source),
-                "signature": _signature(member, source),
-                "docstring": _extract_docstring_from_block(
-                    member.child_by_field_name("body"), source
-                ),
-                "line": member.start_point[0] + 1,
-            }
-        )
-    return methods
-
-
-def _relative_path(path: Path, anchor: Path) -> str:
-    try:
-        return path.relative_to(anchor).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
-def _extract_file_inventory(py_file: Path, workspace_root: Path) -> dict[str, Any]:
-    source = py_file.read_bytes()
-    tree = _PY_PARSER.parse(source)
-    module_node = tree.root_node
-    module_docstring = _extract_docstring_from_block(module_node, source)
-
-    classes: list[dict[str, Any]] = []
-    functions: list[dict[str, Any]] = []
-    for child in module_node.children:
-        if child.type == "class_definition":
-            class_name_node = child.child_by_field_name("name")
-            if class_name_node is None:
-                continue
-            classes.append(
-                {
-                    "name": _decode(class_name_node, source),
-                    "signature": _signature(child, source),
-                    "docstring": _extract_docstring_from_block(
-                        child.child_by_field_name("body"), source
-                    ),
-                    "line": child.start_point[0] + 1,
-                    "methods": _extract_class_methods(child, source),
-                }
-            )
-        elif child.type in _DEF_NODE_TYPES:
-            fn_name_node = child.child_by_field_name("name")
-            if fn_name_node is None:
-                continue
-            functions.append(
-                {
-                    "name": _decode(fn_name_node, source),
-                    "signature": _signature(child, source),
-                    "docstring": _extract_docstring_from_block(
-                        child.child_by_field_name("body"), source
-                    ),
-                    "line": child.start_point[0] + 1,
-                }
-            )
-
-    return {
-        "path": _relative_path(py_file, workspace_root),
-        "module_docstring": module_docstring,
-        "imports": _extract_imports(module_node, source),
-        "classes": classes,
-        "functions": functions,
-    }
-
 
 def _error_output(step_id: str, message: str) -> StepOutput:
     return StepOutput(
@@ -184,6 +49,11 @@ def _publish_event(context: PipelineContext, event: object) -> None:
     if event_bus is None:
         return
     _ = asyncio.create_task(event_bus.publish_async_nowait(event))
+
+
+def _repo_root() -> Path:
+    """Return repository root regardless of Stargate process cwd."""
+    return Path(__file__).resolve().parents[3]
 
 
 class ExtractDocstringsHandler(BaseHandler):
@@ -273,8 +143,9 @@ class ExtractDocstringsHandler(BaseHandler):
             )
             return _error_output(step.id, msg)
 
-        py_files = sorted(target_dir.rglob("*.py"))
-        if not py_files:
+        result = extract_subsystem_inventory(target_dir, workspace_root)
+
+        if result["file_count"] == 0:
             _publish_event(
                 context,
                 doc_generate_python_empty(
@@ -283,46 +154,14 @@ class ExtractDocstringsHandler(BaseHandler):
                     subsystem_path=target_dir.as_posix(),
                 ),
             )
-        modules: list[dict[str, Any]] = []
-        classes: list[dict[str, Any]] = []
-        functions: list[dict[str, Any]] = []
-        imports: list[dict[str, str]] = []
 
-        for py_file in py_files:
-            file_inventory = _extract_file_inventory(py_file, workspace_root)
-            modules.append(
-                {
-                    "path": file_inventory["path"],
-                    "docstring": file_inventory["module_docstring"],
-                }
-            )
-            classes.extend(
-                {"path": file_inventory["path"], **cls}
-                for cls in file_inventory["classes"]
-            )
-            functions.extend(
-                {"path": file_inventory["path"], **fn}
-                for fn in file_inventory["functions"]
-            )
-            imports.extend(
-                {"path": file_inventory["path"], "import": import_stmt}
-                for import_stmt in file_inventory["imports"]
-            )
-
-        subsystem_name = target_dir.name
-        arch_doc = (
-            workspace_root / "docs" / "architecture" / f"{subsystem_name}.md"
-        ).resolve()
-        existing_doc = ""
-        arch_doc_rel = _relative_path(arch_doc, workspace_root)
-        if arch_doc.exists() and arch_doc.is_file():
-            existing_doc = arch_doc.read_text(encoding="utf-8")
+        if result["existing_doc"]:
             _publish_event(
                 context,
                 doc_generate_architecture_found(
                     execution_id=context.execution_id,
                     step_id=step.id,
-                    architecture_doc_path=arch_doc_rel,
+                    architecture_doc_path=result["architecture_doc_path"],
                 ),
             )
         else:
@@ -331,28 +170,17 @@ class ExtractDocstringsHandler(BaseHandler):
                 doc_generate_architecture_notfound(
                     execution_id=context.execution_id,
                     step_id=step.id,
-                    architecture_doc_path=arch_doc_rel,
+                    architecture_doc_path=result["architecture_doc_path"],
                 ),
             )
-
-        result: dict[str, Any] = {
-            "subsystem_path": target_dir.as_posix(),
-            "subsystem_name": subsystem_name,
-            "architecture_doc_path": arch_doc_rel,
-            "modules": modules,
-            "classes": classes,
-            "functions": functions,
-            "imports": imports,
-            "existing_doc": existing_doc,
-        }
 
         latency_ms = (time.monotonic() - start_time) * 1000
         logger.info(
             "Step '%s': extracted inventory for %d files (%d classes, %d functions)",
             step.id,
-            len(py_files),
-            len(classes),
-            len(functions),
+            result["file_count"],
+            len(result["classes"]),
+            len(result["functions"]),
         )
         _publish_event(
             context,
@@ -360,9 +188,9 @@ class ExtractDocstringsHandler(BaseHandler):
                 execution_id=context.execution_id,
                 step_id=step.id,
                 subsystem_path=target_dir.as_posix(),
-                file_count=len(py_files),
-                class_count=len(classes),
-                function_count=len(functions),
+                file_count=result["file_count"],
+                class_count=len(result["classes"]),
+                function_count=len(result["functions"]),
             ),
         )
         return StepOutput(
