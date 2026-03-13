@@ -76,6 +76,8 @@ class MapOutputCollection:
         *,
         output_positions: list[int] | None = None,
         total_count: int | None = None,
+        processing_seconds: float | None = None,
+        queue_wait_seconds: float | None = None,
     ) -> None:
         """
         Args:
@@ -83,13 +85,17 @@ class MapOutputCollection:
             keys: Optional list of iteration keys (same length as outputs)
             output_positions: Original iteration indices for each output
             total_count: Total number of iterations (including failures)
+            processing_seconds: Optional Stargate-derived work time (post-queue).
+            queue_wait_seconds: Optional time from step start to first inference.
         """
         self._outputs = tuple(outputs)  # Immutable
-        self._keys = tuple(keys) if keys else tuple([None] * len(outputs))
+        self._keys = tuple(keys) if keys is not None else tuple([None] * len(outputs))
         # Build key-to-index mapping for O(1) lookups
         self._key_map = {k: i for i, k in enumerate(self._keys) if k is not None}
         self._output_positions = tuple(output_positions) if output_positions else None
         self._total_count = total_count
+        self.processing_seconds = processing_seconds
+        self.queue_wait_seconds = queue_wait_seconds
 
     def all_outputs(self) -> list["StepOutput"]:
         """Return all outputs as list."""

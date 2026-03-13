@@ -169,14 +169,20 @@ async def run_initial_selection(
         for gateway in gateways_for_routing
         if federated_manager.is_load_failed(gateway.name, model_id)
     ]
-    if load_failed_ids:
+    inference_banned_ids = [
+        gateway.name
+        for gateway in gateways_for_routing
+        if federated_manager.is_inference_banned(gateway.name, model_id)
+    ]
+    excluded_ids = set(load_failed_ids) | set(inference_banned_ids)
+    if excluded_ids:
         eligible = [
             gateway
             for gateway in gateways_for_routing
-            if gateway.name not in load_failed_ids
+            if gateway.name not in excluded_ids
         ]
         if not eligible:
-            raise_load_failed_error(str(model_id), load_failed_ids)
+            raise_load_failed_error(str(model_id), sorted(excluded_ids))
         gateways_for_routing = eligible
 
     vram_mb = 0

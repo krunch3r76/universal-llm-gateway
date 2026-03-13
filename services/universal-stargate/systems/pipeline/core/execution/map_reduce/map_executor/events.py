@@ -18,6 +18,7 @@ from ....events.map import (
     MapIterationInferenceLost,
     MapIterationInferenceStarted,
     MapIterationStarted,
+    MapStepEmptyIterations,
     MapStepStarted,
 )
 from ....events.map import MapStepCompleted as BusMapStepCompleted
@@ -99,6 +100,17 @@ class MapEventPublisher:
         error = task.exception()
         if error is not None:
             logger.warning("Map event publish failed", exc_info=error)
+
+    def emit_empty_iterations(self) -> None:
+        """Emit MapStepEmptyIterations when map_over resolved to empty collection."""
+        pipeline_id, execution_id = self.get_event_context()
+        self.publish_event(
+            MapStepEmptyIterations(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                step_name=self._step.name,
+            )
+        )
 
     def emit_step_started(
         self,

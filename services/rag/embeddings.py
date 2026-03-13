@@ -6,6 +6,7 @@ import random
 import re
 
 import httpx
+from universal_event_bus import EventBus
 
 GATEWAY_URL = "http://localhost:9999"
 
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 _embed_model: str = "bge-m3-q8-0-8192-cpu"
 _probe_payload: dict[str, object] = {"model": _embed_model, "input": ["probe"]}
+_event_bus: EventBus | None = None
 
 _CONTEXT_SUFFIX_RE = re.compile(r"-(\d+)(?:-(?:cpu|hybrid))?$")
 
@@ -56,6 +58,26 @@ def configure(model_id: str) -> None:
         logger.info("Embedding model configured: %s", _embed_model)
 
 
+def set_event_bus(bus: EventBus) -> None:
+    """Inject the shared EventBus for emitting embedding telemetry signals.
+
+    Must be called once at startup after configure(). Re-registering the same
+    bus instance is a no-op; re-registering a different bus raises RuntimeError
+    to prevent silent bus replacement.
+    """
+    global _event_bus
+    if _event_bus is not None and _event_bus is not bus:
+        raise RuntimeError(
+            "Embedding event bus already initialised with a different instance"
+        )
+    _event_bus = bus
+
+
+async def close() -> None:
+    """Close the shared HTTP client during service shutdown."""
+    await _client.aclose()
+
+
 _PROBE_INTERVAL_S = 2.0
 _PROBE_TIMEOUT_S = 120.0
 
@@ -64,12 +86,14 @@ async def wait_until_healthy(
     timeout_s: float = _PROBE_TIMEOUT_S,
     interval_s: float = _PROBE_INTERVAL_S,
 ) -> None:
-    """Block until the embedding endpoint accepts requests.
+    """Block until the embedding endpoint accepts requests, and cache the
+    embedding dimension from the probe response for zero-vector fallbacks.
 
     ∀ t < timeout_s: retries on connection/HTTP errors (Stargate not yet ready).
     Raises TimeoutError if endpoint is still unhealthy after timeout_s seconds.
     """
-    deadline = asyncio.get_event_loop().time() + timeout_s
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
     attempt = 0
     while True:
         attempt += 1
@@ -80,10 +104,19 @@ async def wait_until_healthy(
                 timeout=5.0,
             )
             response.raise_for_status()
-            logger.info("Embedding endpoint healthy after %d attempt(s)", attempt)
+            data = response.json().get("data", [])
+            if data:
+                _cache_embed_dim([item["embedding"] for item in data])
+                logger.info(
+                    "Embedding endpoint healthy after %d attempt(s) (dim=%s)",
+                    attempt,
+                    _embed_dim,
+                )
+            else:
+                logger.info("Embedding endpoint healthy after %d attempt(s)", attempt)
             return
         except Exception as exc:
-            remaining = deadline - asyncio.get_event_loop().time()
+            remaining = deadline - loop.time()
             if remaining <= 0:
                 raise TimeoutError(
                     f"Embedding endpoint not healthy after {timeout_s}s"
@@ -140,14 +173,9 @@ def _max_batch_tokens_for_model(model_id: str) -> int:
     ∀ model_id ending in -<digits>: cap = digits * _N_CTX_HEADROOM.
     Fallback for models without a numeric suffix (e.g. bge-m3): _FALLBACK_MAX_BATCH_TOKENS.
     """
-    parts = model_id.rsplit("-", 1)
-    if len(parts) == 2 and parts[1].isdigit():
-        try:
-            return int(int(parts[1]) * _N_CTX_HEADROOM)
-        except ValueError:
-            logger.warning(
-                "Failed to parse context suffix as integer from model_id: %s", model_id
-            )
+    ctx = _extract_context_suffix(model_id)
+    if ctx is not None:
+        return int(ctx * _N_CTX_HEADROOM)
     return _FALLBACK_MAX_BATCH_TOKENS
 
 
@@ -168,6 +196,11 @@ _embed_dim: int | None = None
 
 
 def _cache_embed_dim(embeddings: list[list[float]]) -> None:
+    """Cache embedding dimension from first successful embedding response.
+
+    This value is intentionally write-once and then reused by zero-vector
+    fallback paths for failed single-chunk embeddings.
+    """
     global _embed_dim
     if _embed_dim is None and embeddings:
         _embed_dim = len(embeddings[0])
@@ -176,9 +209,12 @@ def _cache_embed_dim(embeddings: list[list[float]]) -> None:
 async def _handle_single_item_500(text: str, error_body: str) -> list[list[float]]:
     """Recover from a 500 on a single-item embedding batch.
 
-    Strategy: truncate to the model's safe character limit and retry once.
-    If still failing, substitute a zero vector (neutral in cosine space)
-    rather than aborting the entire file.
+    For oversized text (exceeds model's token limit): truncate and retry once,
+    then fall back to zero vector if available.
+
+    For within-limits text: the 500 indicates VRAM exhaustion or a transient
+    model error — raise _TransientEmbeddingError so the caller can retry with
+    backoff while the routing system evicts the competing model.
     """
     max_chars = _max_batch_tokens_for_model(_embed_model) * _CHARS_PER_TOKEN
 
@@ -200,6 +236,13 @@ async def _handle_single_item_500(text: str, error_body: str) -> list[list[float
                 result = [item["embedding"] for item in response.json()["data"]]
                 _cache_embed_dim(result)
                 return result
+            logger.error(
+                "Truncated text retry returned non-200 status %d "
+                "(model=%s, truncated_len=%d)",
+                response.status_code,
+                _embed_model,
+                max_chars,
+            )
         except Exception as retry_exc:
             logger.error(
                 "Truncated text still failed embedding (model=%s, truncated_len=%d): %s",
@@ -207,43 +250,75 @@ async def _handle_single_item_500(text: str, error_body: str) -> list[list[float
                 max_chars,
                 retry_exc,
             )
-            # Fall through to zero-vector or raise below
-        else:
-            logger.error(
-                "Truncated text still failed embedding (model=%s, truncated_len=%d)",
-                _embed_model,
-                max_chars,
+
+        if _embed_dim is not None:
+            logger.warning(
+                "Substituting zero vector (dim=%d) for failed embedding", _embed_dim
             )
-    else:
-        logger.error(
-            "Single text failed embedding (model=%s, len=%d chars); "
-            "unrecoverable model error. Error: %s",
-            _embed_model,
-            len(text),
-            error_body,
+            return [[0.0] * _embed_dim]
+
+        raise RuntimeError(
+            f"Single-item embedding failed and embedding dimension unknown "
+            f"(model={_embed_model}, text_len={len(text)})"
         )
 
-    if _embed_dim is not None:
-        logger.warning(
-            "Substituting zero vector (dim=%d) for failed embedding", _embed_dim
-        )
-        return [[0.0] * _embed_dim]
-
-    raise RuntimeError(
-        f"Single-item embedding failed and embedding dimension unknown "
-        f"(model={_embed_model}, text_len={len(text)})"
+    logger.warning(
+        "Single text within limits (len=%d <= %d chars) failed with 500 "
+        "(model=%s) — transient error (VRAM pressure or model fault); retrying. Error: %s",
+        len(text),
+        max_chars,
+        _embed_model,
+        error_body,
+    )
+    raise _TransientEmbeddingError(
+        f"Embedding 500 on within-limits text (model={_embed_model}, "
+        f"text_len={len(text)})"
     )
 
 
-async def _post_embeddings(batch: list[str]) -> list[list[float]]:
-    """POST a single batch to the embedding endpoint with retry on transient errors.
+def _fallback_to_zero_vector(text_len: int) -> list[list[float]] | None:
+    """Return a zero vector for a chunk that exhausted all embedding retry attempts.
 
-    Retries on connection failures and 503 (service temporarily unavailable).
+    Logs the substitution at WARNING level and emits rag.embedding.chunk.fallback
+    when the event bus is configured. Returns None if the embedding dimension has
+    not yet been cached (dim unknown), forcing callers to raise instead of
+    silently producing an invalid zero-length vector.
+    """
+    from services.rag.events import rag_embedding_chunk_fallback
+
+    if _embed_dim is None:
+        return None
+    logger.warning(
+        "Single-item embedding failed after %d attempts (model=%s, text_len=%d) — "
+        "content-specific fault; substituting zero vector (dim=%d)",
+        _EMBED_RETRY_ATTEMPTS,
+        _embed_model,
+        text_len,
+        _embed_dim,
+    )
+    if _event_bus is not None:
+        _event_bus.publish_async_nowait(
+            rag_embedding_chunk_fallback(
+                model=_embed_model,
+                text_len=text_len,
+                dim=_embed_dim,
+            )
+        )
+    return [[0.0] * _embed_dim]
+
+
+async def _post_embeddings(batch: list[str]) -> list[list[float]]:
+    """POST a single batch to the embedding endpoint with retry and fallback.
+
+    Retry policy: up to _EMBED_RETRY_ATTEMPTS attempts with jittered exponential
+    backoff on _TransientEmbeddingError, 502/503/429, and connection/timeout errors.
     On 500 with a multi-item batch: splits in half and recurses. The Gateway wraps
-    llama-server overflow errors as "Internal embedding error" (the raw overflow body
-    is only in container logs), so we cannot distinguish overflow from other 500s —
-    splitting is the only safe recovery for multi-item batches.
-    Single-item 500s: truncate and retry once, then zero-vector fallback.
+    llama-server overflow errors as "Internal embedding error" (raw overflow body is
+    only in container logs), so overflow cannot be distinguished from other 500s —
+    binary splitting is the only safe recovery for multi-item batches.
+    Single-item 500s: delegate to _handle_single_item_500 (truncate + retry once,
+    then _TransientEmbeddingError). After all retries exhausted for a single-item
+    batch: _fallback_to_zero_vector (emits rag.embedding.chunk.fallback if bus set).
     """
     last_exc: Exception | None = None
     for attempt in range(_EMBED_RETRY_ATTEMPTS):
@@ -272,8 +347,10 @@ async def _post_embeddings(batch: list[str]) -> list[list[float]]:
             result = [item["embedding"] for item in response.json()["data"]]
             _cache_embed_dim(result)
             return result
+        except _TransientEmbeddingError as exc:
+            last_exc = exc
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code != 503:
+            if exc.response.status_code not in _TRANSIENT_STATUS_CODES:
                 raise
             last_exc = exc
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
@@ -289,6 +366,20 @@ async def _post_embeddings(batch: list[str]) -> list[list[float]]:
         )
         await asyncio.sleep(delay)
     if last_exc is not None:
+        # A single-item batch that fails every attempt is a content-specific failure,
+        # not transient VRAM pressure (which clears between retries).
+        if isinstance(last_exc, _TransientEmbeddingError) and len(batch) == 1:
+            fallback = _fallback_to_zero_vector(len(batch[0]))
+            if fallback is not None:
+                return fallback
+            logger.error(
+                "Single-item embedding failed after %d attempts (model=%s, "
+                "text_len=%d) — embedding dimension unknown, cannot produce "
+                "zero-vector fallback",
+                _EMBED_RETRY_ATTEMPTS,
+                _embed_model,
+                len(batch[0]),
+            )
         raise last_exc
     raise RuntimeError("Embedding request failed without capturing an exception")
 
@@ -338,6 +429,15 @@ async def embed_chunks(texts: list[str]) -> list[list[float]]:
     return all_embeddings
 
 
+class _TransientEmbeddingError(Exception):
+    """Raised when an embedding 500 may be transient (VRAM pressure, model fault).
+
+    Callers should retry with backoff. If all retries fail on a single-item batch,
+    the failure is content-specific — _post_embeddings substitutes a zero vector
+    rather than propagating.
+    """
+
+
 class EmbeddingTransientError(Exception):
     """Raised when embed_query retries are exhausted on transient failures."""
 
@@ -369,6 +469,11 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
     """
     # When scope is a list, only the first element is used for instruction formatting.
     if isinstance(scope, list):
+        if len(scope) > 1:
+            logger.warning(
+                "embed_query received multiple scopes; using first only: %s",
+                scope[0],
+            )
         effective_scope = scope[0] if scope else None
     else:
         effective_scope = scope

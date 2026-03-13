@@ -466,7 +466,7 @@ class DAGExecutor:
         collection = await executor.execute()
         latency_ms = (time.time() - start_time) * 1000
 
-        self.context.set_output(step.id, collection)  # type: ignore[arg-type]
+        self.context.set_output(step.id, collection)
         return StepOutput(
             raw=f"Map step completed with {len(collection)} outputs",
             json={"outputs": [o.json for o in collection.all_outputs()]},

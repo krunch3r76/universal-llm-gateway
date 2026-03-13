@@ -34,6 +34,8 @@ reviewer_requirements:
   source: cloud
   min_context: 32768
   tags: [code, reasoning]
+  health_scoring: true
+  selection_sticky_key: consult-review
   validate_grounding: true
 
 planner: |

@@ -84,33 +84,23 @@ class PropertyIndex:
         """Add scope column and idx_scope index to properties if absent (backward compat)."""
         cols = {row[1] for row in conn.execute("PRAGMA table_info(properties)")}
         if "scope" not in cols:
-            try:
-                conn.execute(
-                    "ALTER TABLE properties ADD COLUMN scope TEXT NOT NULL DEFAULT 'all'"
-                )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_scope ON properties(scope)"
-                )
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
+            conn.execute(
+                "ALTER TABLE properties ADD COLUMN scope TEXT NOT NULL DEFAULT 'all'"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_scope ON properties(scope)")
+            conn.commit()
 
     def _migrate_add_source(self, conn: sqlite3.Connection) -> None:
         """Add source column and idx_properties_source index if absent (doc frequency scoring)."""
         cols = {row[1] for row in conn.execute("PRAGMA table_info(properties)")}
         if "source" not in cols:
-            try:
-                conn.execute(
-                    "ALTER TABLE properties ADD COLUMN source TEXT NOT NULL DEFAULT ''"
-                )
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_properties_source ON properties(source)"
-                )
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
+            conn.execute(
+                "ALTER TABLE properties ADD COLUMN source TEXT NOT NULL DEFAULT ''"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_properties_source ON properties(source)"
+            )
+            conn.commit()
 
     def _migrate_add_failed_extractions_columns(self, conn: sqlite3.Connection) -> None:
         """Add attempt_count and permanent to failed_extractions if absent (backward compat)."""
@@ -276,6 +266,28 @@ class PropertyIndex:
         async def _write() -> None:
             conn = self._ensure_conn()
             conn.execute("DELETE FROM failed_extractions WHERE source = ?", (source,))
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    async def clear_failures_for_ids(self, source: str, chunk_ids: list[str]) -> None:
+        """Remove failure records for the given chunk IDs of a source file.
+
+        Used when a partial write succeeds: clear only the chunks that were
+        written so failed chunks retain their attempt count for retry.
+        """
+        if not chunk_ids:
+            return
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            placeholders = ",".join("?" * len(chunk_ids))
+            conn.execute(
+                "DELETE FROM failed_extractions WHERE source = ? AND chunk_id IN ("
+                + placeholders
+                + ")",
+                (source, *chunk_ids),
+            )
             conn.commit()
 
         await self._seq.run(_write())
@@ -560,6 +572,8 @@ class PropertyIndex:
         ).fetchall()
         updates: list[tuple[str, int]] = []
         for rowid, key, chunk_id, old_scope, source in rows:
+            # Entries with empty source are legacy/unbackfilled rows.
+            # They are intentionally skipped to avoid resolver behavior ambiguity.
             if not source:
                 continue
             new_scope = scope_resolver(source)

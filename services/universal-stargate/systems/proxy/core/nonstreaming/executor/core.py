@@ -127,6 +127,46 @@ class RequestExecutor:
                 federation_forwarder=self._federation_forwarder,
             )
 
+        async def _oom_recovery(*, gateway, model_id, request_id):
+            from .oom_recovery import attempt_oom_recovery
+
+            request_tracker = None
+            if self._federation_integration is not None:
+                request_tracker = self._federation_integration.request_tracker
+
+            return await attempt_oom_recovery(
+                gateway=gateway,
+                model_id=model_id,
+                federated_manager=self._federated_manager,
+                federation_forwarder=self._federation_forwarder,
+                request_tracker=request_tracker,
+                event_bus=self.event_bus,
+                request_id=request_id,
+            )
+
+        def _oom_ban(*, gateway_id, model_id, request_id):
+            from src.scheduling.events.routing import (
+                OomInferenceBanned,
+                OomRecoveryFailed,
+            )
+
+            if self._federated_manager is not None:
+                self._federated_manager.mark_inference_banned(gateway_id, model_id)
+            if self.event_bus:
+                self.event_bus.publish_async_nowait(
+                    OomRecoveryFailed(
+                        request_id=request_id,
+                        model_id=model_id.routing_key,
+                        gateway_id=gateway_id,
+                    )
+                )
+                self.event_bus.publish_async_nowait(
+                    OomInferenceBanned(
+                        model_id=model_id.routing_key,
+                        gateway_id=gateway_id,
+                    )
+                )
+
         return await _exec(
             model_id,
             request_body,
@@ -136,6 +176,8 @@ class RequestExecutor:
             release_capacity_token_fn=self._release_capacity_token,
             forward_embedding_fn=_forward,
             event_bus=self.event_bus,
+            oom_recovery_fn=_oom_recovery if self._federated_manager else None,
+            oom_ban_fn=_oom_ban if self._federated_manager else None,
         )
 
     # ------------------------------------------------------------------
@@ -269,6 +311,7 @@ class RequestExecutor:
                 federation_integration=self._federation_integration,
                 event_bus=self.event_bus,
                 release_capacity_token=self._release_capacity_token,
+                federated_manager=self._federated_manager,
             )
 
             # Non-streaming: release token now (response fully built).

@@ -60,6 +60,8 @@ async def execute_embedding_request(
     release_capacity_token_fn: Callable[[RequestContext], Awaitable[None]],
     forward_embedding_fn: Callable[..., Awaitable[dict[str, Any]]],
     event_bus: EventBus,
+    oom_recovery_fn: Callable[..., Awaitable[bool]] | None = None,
+    oom_ban_fn: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
     """
     Execute an embedding request via federation.
@@ -131,11 +133,39 @@ async def execute_embedding_request(
                 ),
             )
 
-        result = await forward_embedding_fn(
-            gateway=fed_gateway,
-            request_body=request_body,
-            request_id=resolved_request_id,
-        )
+        try:
+            result = await forward_embedding_fn(
+                gateway=fed_gateway,
+                request_body=request_body,
+                request_id=resolved_request_id,
+            )
+        except HTTPException as fwd_exc:
+            if fwd_exc.status_code != 500 or oom_recovery_fn is None:
+                raise
+
+            recovered = await oom_recovery_fn(
+                gateway=fed_gateway,
+                model_id=parsed_model_id,
+                request_id=resolved_request_id,
+            )
+            if not recovered:
+                raise
+
+            try:
+                result = await forward_embedding_fn(
+                    gateway=fed_gateway,
+                    request_body=request_body,
+                    request_id=resolved_request_id,
+                )
+            except HTTPException as retry_exc:
+                if retry_exc.status_code == 500 and oom_ban_fn is not None:
+                    oom_ban_fn(
+                        gateway_id=fed_gateway.gateway_id,
+                        model_id=parsed_model_id,
+                        request_id=resolved_request_id,
+                    )
+                raise
+
         await emit_execution_completed(
             event_bus=event_bus,
             url=fed_gateway.remote_stargate_url,

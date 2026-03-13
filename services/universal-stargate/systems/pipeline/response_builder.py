@@ -25,7 +25,11 @@ def _collect_resolved_models(
     execution_order: list[str] | None,
 ) -> list[str]:
     """Collect resolved model_id from each step output, in execution order."""
-    order = execution_order or list(pipeline_context.outputs)
+    order = (
+        execution_order
+        if execution_order is not None
+        else list(pipeline_context.outputs.keys())
+    )
     result: list[str] = []
     for step_id in order:
         out = pipeline_context.outputs.get(step_id)
@@ -81,18 +85,24 @@ class ResponseBuilder:
             Clients maintain conversation history as with standard OpenAI API.
             No conversation history is returned in the response.
         """
+        def _aggregate_tokens(output_obj: Any) -> tuple[int, int]:
+            if isinstance(output_obj, MapOutputCollection):
+                prompt = sum(inner.prompt_tokens for inner in output_obj.all_outputs())
+                completion = sum(
+                    inner.completion_tokens for inner in output_obj.all_outputs()
+                )
+                return prompt, completion
+            if isinstance(output_obj, StepOutput):
+                return output_obj.prompt_tokens, output_obj.completion_tokens
+            return 0, 0
+
         # Aggregate token usage from all steps (handles MapOutputCollection)
         prompt_tokens = 0
         completion_tokens = 0
         for out in pipeline_context.outputs.values():
-            if isinstance(out, MapOutputCollection):
-                # Sum tokens from all outputs in the collection
-                for inner_out in out.all_outputs():
-                    prompt_tokens += inner_out.prompt_tokens
-                    completion_tokens += inner_out.completion_tokens
-            elif isinstance(out, StepOutput):
-                prompt_tokens += out.prompt_tokens
-                completion_tokens += out.completion_tokens
+            p, c = _aggregate_tokens(out)
+            prompt_tokens += p
+            completion_tokens += c
         total_tokens = prompt_tokens + completion_tokens
 
         # Build OpenAI-compliant response body
@@ -122,6 +132,19 @@ class ResponseBuilder:
             ),
         }
 
+        # Optional: Stargate-derived timing for RAG (post-queue processing time)
+        for out in pipeline_context.outputs.values():
+            if isinstance(out, MapOutputCollection):
+                ps = getattr(out, "processing_seconds", None)
+                if ps is not None and isinstance(ps, int | float):
+                    body["pipeline_timing"] = {
+                        "processing_seconds": round(ps, 3),
+                        "queue_wait_seconds": round(
+                            getattr(out, "queue_wait_seconds", 0) or 0, 3
+                        ),
+                    }
+                    break
+
         # Optional: Include alternates in non-standard extension
         # (only if explicitly enabled and client expects it)
         if pipeline.options.include_alternates:
@@ -136,6 +159,45 @@ class ResponseBuilder:
         # Optional: per-step token breakdown (order by execution_order when provided)
         include_step_stats = pipeline.options.get("include_step_stats", False)
         if include_step_stats:
+            def _build_step_stats(
+                step_id: str, output_obj: Any
+            ) -> dict[str, Any] | None:
+                if isinstance(output_obj, MapOutputCollection):
+                    inners = output_obj.all_outputs()
+                    map_prompt = sum(o.prompt_tokens for o in inners)
+                    map_comp = sum(o.completion_tokens for o in inners)
+                    map_calls = sum(getattr(o, "model_call_count", 0) for o in inners)
+                    latencies = [o.latency_ms for o in inners]
+                    first_model = next(
+                        (o.model_id for o in inners if getattr(o, "model_id", None)),
+                        None,
+                    )
+                    return {
+                        "step": step_id,
+                        "prompt_tokens": map_prompt,
+                        "completion_tokens": map_comp,
+                        "total_tokens": map_prompt + map_comp,
+                        "latency_ms": round(max(latencies, default=0.0), 1),
+                        "model_calls": map_calls or len(inners),
+                        **({"model_id": first_model} if first_model else {}),
+                    }
+                if isinstance(output_obj, StepOutput):
+                    step_total = output_obj.prompt_tokens + output_obj.completion_tokens
+                    return {
+                        "step": step_id,
+                        "prompt_tokens": output_obj.prompt_tokens,
+                        "completion_tokens": output_obj.completion_tokens,
+                        "total_tokens": step_total,
+                        "latency_ms": round(output_obj.latency_ms, 1),
+                        "model_calls": getattr(output_obj, "model_call_count", 0),
+                        **(
+                            {"model_id": output_obj.model_id}
+                            if output_obj.model_id
+                            else {}
+                        ),
+                    }
+                return None
+
             step_stats: list[dict[str, Any]] = []
             order = (
                 execution_order if execution_order else list(pipeline_context.outputs)
@@ -144,42 +206,9 @@ class ResponseBuilder:
                 out = pipeline_context.outputs.get(step_id)
                 if out is None:
                     continue
-                if isinstance(out, MapOutputCollection):
-                    map_prompt = sum(o.prompt_tokens for o in out.all_outputs())
-                    map_comp = sum(o.completion_tokens for o in out.all_outputs())
-                    map_calls = sum(
-                        getattr(o, "model_call_count", 0) for o in out.all_outputs()
-                    )
-                    latencies = [o.latency_ms for o in out.all_outputs()]
-                    inners = out.all_outputs()
-                    first_model = next(
-                        (o.model_id for o in inners if getattr(o, "model_id", None)),
-                        None,
-                    )
-                    step_stats.append(
-                        {
-                            "step": step_id,
-                            "prompt_tokens": map_prompt,
-                            "completion_tokens": map_comp,
-                            "total_tokens": map_prompt + map_comp,
-                            "latency_ms": round(max(latencies, default=0.0), 1),
-                            "model_calls": map_calls or len(list(out.all_outputs())),
-                            **({"model_id": first_model} if first_model else {}),
-                        }
-                    )
-                elif isinstance(out, StepOutput):
-                    step_total = out.prompt_tokens + out.completion_tokens
-                    step_stats.append(
-                        {
-                            "step": step_id,
-                            "prompt_tokens": out.prompt_tokens,
-                            "completion_tokens": out.completion_tokens,
-                            "total_tokens": step_total,
-                            "latency_ms": round(out.latency_ms, 1),
-                            "model_calls": getattr(out, "model_call_count", 0),
-                            **({"model_id": out.model_id} if out.model_id else {}),
-                        }
-                    )
+                stats = _build_step_stats(step_id, out)
+                if stats is not None:
+                    step_stats.append(stats)
             if "pipeline" not in body:
                 body["pipeline"] = {}
             body["pipeline"]["step_stats"] = step_stats

@@ -121,33 +121,63 @@ class CapacityPool:
             logger.info(f"Capacity: {gateway_id}/{model_id}: {old} → {max_concurrent}")
 
     def remove_gateway(self, gateway_id: str) -> None:
-        """Remove all capacity for a disconnected gateway."""
+        """Remove all capacity slots for a disconnected gateway.
+
+        Defers physical deletion of slots that still have in-flight requests,
+        setting their capacity to 0 instead. Cleanup happens in _release when
+        each slot's in_flight drains to 0.
+        """
         slots = [s for s in self._capacity if s.gateway_id == gateway_id]
+        removed = 0
+        deferred = 0
         for slot in slots:
             in_flight = self._in_flight.get(slot, 0)
             if in_flight > 0:
+                self._capacity[slot] = 0
+                deferred += 1
                 logger.warning(
-                    f"Gateway {gateway_id} removed with {in_flight} in-flight "
-                    f"on {slot.model_id}"
+                    "Gateway %s: slot %s zeroed with %d in-flight (deferred removal)",
+                    gateway_id,
+                    slot.model_id,
+                    in_flight,
                 )
-            del self._capacity[slot]
-            del self._in_flight[slot]
+            else:
+                del self._capacity[slot]
+                del self._in_flight[slot]
+                removed += 1
         if slots:
-            logger.info(f"Removed {len(slots)} slots for {gateway_id}")
+            logger.info(
+                "Gateway %s: %d slot(s) removed, %d deferred",
+                gateway_id,
+                removed,
+                deferred,
+            )
 
     def remove_model(self, gateway_id: str, model_id: str) -> None:
-        """Remove capacity for an unloaded model on a gateway."""
+        """Mark a model's capacity as zero on a gateway after telemetry reports unload.
+
+        If requests are still in-flight on the slot, defers physical deletion of
+        the tracking entries until _release drains in_flight to 0. Setting capacity
+        to 0 prevents new admissions while preserving the in_flight counter so
+        active token releases can decrement correctly and trigger _dispatch.
+        """
         slot = _Slot(gateway_id=gateway_id, model_id=model_id)
         if slot not in self._capacity:
             return
         in_flight = self._in_flight.get(slot, 0)
         if in_flight > 0:
+            self._capacity[slot] = 0
             logger.warning(
-                f"Model {model_id} on {gateway_id} removed with {in_flight} in-flight"
+                "Model %s on %s: capacity zeroed with %d in-flight "
+                "(deferred removal until drained)",
+                model_id,
+                gateway_id,
+                in_flight,
             )
-        del self._capacity[slot]
-        del self._in_flight[slot]
-        logger.info(f"Removed capacity: {gateway_id}/{model_id}")
+        else:
+            del self._capacity[slot]
+            del self._in_flight[slot]
+            logger.info("Removed capacity: %s/%s", gateway_id, model_id)
 
     # ── Queries ──
 
@@ -400,42 +430,72 @@ class CapacityPool:
     # ── Release ──
 
     async def _release(self, token: CapacityToken) -> None:
-        """Release a token's slot and dispatch waiting requests."""
+        """Return a capacity slot and dispatch waiting requests.
+
+        Always invokes _dispatch even when the in-flight counter is already at
+        zero (invariant violation from a prior remove_model race) — the model
+        queue may have serviceable waiters on other gateways.
+
+        Cleans up deferred zero-capacity slots once in-flight drains to zero.
+        """
         slot = _Slot(gateway_id=token.gateway_id, model_id=token.model_id)
         in_flight = self._in_flight.get(slot, 0)
+
         if in_flight <= 0:
             logger.error(
-                f"Invariant: releasing {token.request_id} but in_flight=0 "
-                f"on {token.gateway_id}/{token.model_id}"
+                "Invariant: releasing %s but in_flight=%d on %s/%s "
+                "(proceeding to dispatch anyway)",
+                token.request_id,
+                in_flight,
+                token.gateway_id,
+                token.model_id,
             )
-            return
-        self._in_flight[slot] = in_flight - 1
-        logger.debug(
-            f"Released: {token.request_id} on {token.gateway_id}/{token.model_id} "
-            f"(held {token.held_ms:.0f}ms)"
-        )
+        else:
+            self._in_flight[slot] = in_flight - 1
+            logger.debug(
+                "Released: %s on %s/%s (held %.0fms)",
+                token.request_id,
+                token.gateway_id,
+                token.model_id,
+                token.held_ms,
+            )
+
+        current = self._in_flight.get(slot, 0)
+        if current == 0 and self._capacity.get(slot, -1) == 0:
+            del self._capacity[slot]
+            del self._in_flight[slot]
+            logger.info(
+                "Deferred slot cleanup: %s/%s drained",
+                token.gateway_id,
+                token.model_id,
+            )
+
         await self._dispatch(token.model_id)
 
     async def _dispatch(self, model_id: str) -> None:
-        """Dispatch waiters from head of model queue.
+        """Evaluate the full FIFO queue and assign capacity to serviceable waiters.
+
+        Skips waiters whose allowed_gateway_ids have no available slots instead
+        of stopping at the first unservable one (head-of-line blocking fix).
+        Unservable waiters are retained in queue order for future dispatch calls.
 
         Handles cancelled waiters: Task.cancel() cancels the underlying future,
-        so we must skip them before reserving a slot via _try_immediate.
-        Also guards against the narrow race where cancellation occurs between
-        _try_immediate and set_result.
+        so we skip them to avoid incrementing in_flight for unclaimed slots.
+        Guards against the narrow race where cancellation arrives between
+        _try_immediate (which increments in_flight) and set_result.
         """
         queue = self._queues.get(model_id)
         if not queue:
             return
 
+        unservable: deque[_Waiter] = deque()
         dispatched = 0
-        while queue:
-            waiter = queue[0]
+        skipped = 0
 
-            # Task.cancel() propagates to the future — skip cancelled waiters
-            # to avoid incrementing in_flight for a slot nobody will claim.
+        while queue:
+            waiter = queue.popleft()
+
             if waiter.future.done():
-                queue.popleft()
                 continue
 
             gw_id = self._try_immediate(
@@ -444,11 +504,10 @@ class CapacityPool:
                 waiter.allowed_gateway_ids,
             )
             if gw_id is None:
-                break
-            queue.popleft()
+                unservable.append(waiter)
+                skipped += 1
+                continue
 
-            # Guard: cancellation may have arrived between _try_immediate
-            # (which incremented in_flight) and here.
             if not waiter.future.done():
                 waiter.future.set_result(gw_id)
                 dispatched += 1
@@ -456,17 +515,25 @@ class CapacityPool:
                 slot = _Slot(gateway_id=gw_id, model_id=model_id)
                 self._in_flight[slot] = max(0, self._in_flight.get(slot, 0) - 1)
                 logger.warning(
-                    f"Cancelled between admit and set_result: "
-                    f"{waiter.request_id} on {gw_id}/{model_id} "
-                    f"— released slot"
+                    "Cancelled between admit and set_result: "
+                    "%s on %s/%s — released slot",
+                    waiter.request_id,
+                    gw_id,
+                    model_id,
                 )
 
         if dispatched > 0:
             logger.info(
-                f"Dispatched {dispatched} waiter(s) for {model_id} "
-                f"({len(queue)} remain)"
+                "Dispatched %d waiter(s) for %s (%d skipped, %d remain)",
+                dispatched,
+                model_id,
+                skipped,
+                len(unservable),
             )
-        if not queue:
+
+        if unservable:
+            self._queues[model_id] = unservable
+        else:
             self._queues.pop(model_id, None)
 
     # ── Diagnostics ──

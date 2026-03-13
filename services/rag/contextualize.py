@@ -11,7 +11,8 @@ because their context prefixes anchor them to different documents.
 
 Architecture:
   - Sends each chunk to a small LLM (e.g. qwen3-5-9b) via Stargate
-  - Uses asyncio.Semaphore for concurrency control (matches model slot count)
+  - Stargate queues requests based on the model's parallel_slots —
+    no application-level concurrency control needed
   - Returns context strings; empty string on per-chunk failure (graceful)
 """
 
@@ -78,7 +79,6 @@ async def contextualize_chunks(
     source: str,
     model: str,
     *,
-    max_concurrent: int = 32,
     timeout_s: float = 30.0,
 ) -> list[str]:
     """Generate context prefixes for chunks via LLM.
@@ -87,11 +87,14 @@ async def contextualize_chunks(
     contextual retrieval findings). Neighboring chunk excerpts are included
     to help the LLM resolve references and identify structural position.
 
+    Concurrency is bounded by Stargate's slot-based request queuing — the
+    model's parallel_slots config determines how many requests run on the
+    GPU simultaneously; excess requests wait in Stargate's capacity queue.
+
     Args:
         chunks: Chunks to contextualize.
         source: Source file path (included in the prompt for document identity).
         model: Model ID for context generation (e.g. qwen3-5-9b-q8-0-262144).
-        max_concurrent: Concurrency limit (should match model slot count).
         timeout_s: Per-chunk timeout in seconds.
 
     Returns:
@@ -100,19 +103,17 @@ async def contextualize_chunks(
     if not chunks:
         return []
 
-    sem = asyncio.Semaphore(max_concurrent)
     results: list[str] = [""] * len(chunks)
 
     async def _generate_one(idx: int) -> None:
-        async with sem:
-            try:
-                user_msg = _build_chunk_context(idx, chunks, source)
-                context = await _call_llm(user_msg, model, timeout_s)
-                results[idx] = context
-            except Exception:
-                logger.warning(
-                    "Contextualization failed for chunk %d of %s", idx, source
-                )
+        try:
+            user_msg = _build_chunk_context(idx, chunks, source)
+            context = await _call_llm(user_msg, model, timeout_s)
+            results[idx] = context
+        except Exception:
+            logger.warning(
+                "Contextualization failed for chunk %d of %s", idx, source
+            )
 
     tasks = [asyncio.create_task(_generate_one(i)) for i in range(len(chunks))]
     await asyncio.gather(*tasks)

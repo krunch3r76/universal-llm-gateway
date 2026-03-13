@@ -46,6 +46,12 @@ class MapIterationHandlerProtocol(Protocol):
     async def execute(self, step: StepConfig, context: Any) -> Any: ...
 
 
+class _EventPayloadProtocol(Protocol):
+    """Minimal event shape required for request boundary correlation."""
+
+    payload: dict[str, Any]
+
+
 class MapExecutor:
     """
     Executes map steps with fan-out parallelism.
@@ -77,7 +83,16 @@ class MapExecutor:
         checkpoint_manager: CheckpointManager | None = None,
         cancel_callback: Callable[[str, str | None], Awaitable[bool]] | None = None,
     ) -> None:
-        """Initialize map execution dependencies for one map step."""
+        """Initialize map execution dependencies for a single map step.
+
+        Args:
+            step: Map step configuration for this executor.
+            handler: Per-iteration handler implementation.
+            resolver: Namespace resolver used for map input preparation.
+            runtime: Shared execution runtime used to derive iteration runtime state.
+            checkpoint_manager: Optional checkpoint manager for iteration caching.
+            cancel_callback: Optional cancellation callback for fail-fast paths.
+        """
         self._step = step
         self._handler = handler
         self._runtime = runtime
@@ -112,6 +127,7 @@ class MapExecutor:
         total = len(iteration_items)
 
         if total == 0:
+            self._event_publisher.emit_empty_iterations()
             logger.warning(
                 "[%s] Map step has 0 iterations (empty map_over collection). "
                 "Returning empty MapOutputCollection.",
@@ -242,11 +258,26 @@ class MapExecutor:
             met_threshold=met_threshold,
         )
 
+        processing_seconds = None
+        queue_wait_seconds = None
+        first_inference_at = None
+        for ctx in iteration_context.values():
+            t = ctx.get("inference_started_at")
+            if isinstance(t, int | float):
+                first_inference_at = (
+                    t if first_inference_at is None else min(first_inference_at, t)
+                )
+        if first_inference_at is not None:
+            queue_wait_seconds = first_inference_at - start_time
+            processing_seconds = max(0.0, duration - queue_wait_seconds)
+
         return MapOutputCollection(
             list(outputs),
             keys=output_keys,
             output_positions=output_positions,
             total_count=total,
+            processing_seconds=processing_seconds,
+            queue_wait_seconds=queue_wait_seconds,
         )
 
     def _subscribe_inference_start(
@@ -307,12 +338,12 @@ class MapExecutor:
                 return
             ctx["fallback_boundary_at"] = time.monotonic()
 
-        async def _on_request_inference_started(event: Any) -> None:
+        async def _on_request_inference_started(event: _EventPayloadProtocol) -> None:
             rid = event.payload.get("request_id")
             if rid in request_id_to_idx:
                 _on_primary(rid)
 
-        async def _on_request_processing(event: Any) -> None:
+        async def _on_request_processing(event: _EventPayloadProtocol) -> None:
             rid = event.payload.get("request_id")
             if rid in request_id_to_idx:
                 _on_fallback(rid)
@@ -443,7 +474,11 @@ class MapExecutor:
             if model_ref:
                 iteration_context[index]["model_id"] = model_ref
 
-        ctx = iteration_context.get(index, {}) if iteration_context else {}
+        ctx = (
+            iteration_context[index]
+            if iteration_context and index in iteration_context
+            else {}
+        )
         self._event_publisher.emit_iteration_started(
             index=index,
             model_id=ctx.get("model_id"),

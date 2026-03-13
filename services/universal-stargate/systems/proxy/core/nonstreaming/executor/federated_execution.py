@@ -45,6 +45,7 @@ async def execute_federated_request(
     federation_integration: Any,
     event_bus: Any,
     release_capacity_token: Any,
+    federated_manager: Any | None = None,
 ) -> Response:
     """
     Dispatch a federated request to streaming or non-streaming execution.
@@ -232,6 +233,7 @@ async def execute_federated_request(
             federation_integration,
             federation_forwarder,
             event_bus,
+            federated_manager=federated_manager,
         )
 
         if federation_circuit_breaker:

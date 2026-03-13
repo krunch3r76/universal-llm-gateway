@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from fastapi import Request
 
+    from ..execution.map_reduce import MapOutputCollection
     from ..execution.proxy_client import ProxyClient
     from ..schemas import PipelineSpec, SourceInput, StepConfig
     from .builtin.types import ModelCallResult
@@ -336,23 +337,28 @@ class PipelineContext:
         """Get text outputs from multiple steps (for candidates)."""
         return {sid: self.outputs[sid].text for sid in step_ids if sid in self.outputs}
 
-    def set_output(self, step_id: str, output: StepOutput) -> None:
+    def set_output(
+        self, step_id: str, output: StepOutput | MapOutputCollection
+    ) -> None:
         """
         Record output from a completed step.
 
         WARNING: Only DAGExecutor should call this method.
         Handlers MUST return StepOutput, not call this directly.
+
+        Accepts MapOutputCollection for map steps (stored for wildcard resolution
+        by the input resolver). Provenance is only populated for StepOutput.
         """
-        output.step_id = step_id
+        if isinstance(output, StepOutput):
+            output.step_id = step_id
 
-        # Populate provenance if not already set and model_id is present
-        if output.provenance is None and output.model_id:
-            from provenance import create_provenance
+            if output.provenance is None and output.model_id:
+                from provenance import create_provenance
 
-            output.provenance = create_provenance(
-                model_id=output.model_id,
-                step_id=output.step_id,
-            ).to_dict()
+                output.provenance = create_provenance(
+                    model_id=output.model_id,
+                    step_id=output.step_id,
+                ).to_dict()
 
         self.outputs[step_id] = output
 

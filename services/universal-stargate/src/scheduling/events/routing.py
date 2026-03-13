@@ -978,3 +978,105 @@ def RoutingEvictionWaitCancelled(
             "waited_ms": waited_ms,
         },
     )
+
+
+# ========================================
+# OOM Recovery Signals
+# ========================================
+
+ROUTING_INFERENCE_OOM_RECOVERY_STARTED = "routing.inference.oom.recovery.started"
+"""
+OOM recovery initiated: evicting idle models after inference 500.
+Payload: request_id, model_id, gateway_id, evicting_count, evicting_models
+"""
+
+ROUTING_INFERENCE_OOM_RECOVERY_SUCCEEDED = "routing.inference.oom.recovery.succeeded"
+"""
+OOM recovery succeeded: retry after eviction returned a non-500 response.
+Payload: request_id, model_id, gateway_id, evicted_count
+"""
+
+ROUTING_INFERENCE_OOM_RECOVERY_FAILED = "routing.inference.oom.recovery.failed"
+"""
+OOM recovery failed: retry after eviction still returned 500.
+Model will be banned on this gateway for the session.
+Payload: request_id, model_id, gateway_id
+"""
+
+ROUTING_INFERENCE_OOM_BANNED = "routing.inference.oom.banned"
+"""
+Model banned on gateway for session after OOM recovery failure.
+Payload: model_id, gateway_id
+"""
+
+
+@event_factory
+def OomRecoveryStarted(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    evicting_count: int,
+    evicting_models: list[str],
+) -> Event:
+    """Emit when OOM recovery begins (evicting idle models)."""
+    return Event(
+        signal=ROUTING_INFERENCE_OOM_RECOVERY_STARTED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "evicting_count": evicting_count,
+            "evicting_models": evicting_models,
+        },
+    )
+
+
+@event_factory
+def OomRecoverySucceeded(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    evicted_count: int,
+) -> Event:
+    """Emit when retry after OOM recovery succeeds."""
+    return Event(
+        signal=ROUTING_INFERENCE_OOM_RECOVERY_SUCCEEDED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "evicted_count": evicted_count,
+        },
+    )
+
+
+@event_factory
+def OomRecoveryFailed(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+) -> Event:
+    """Emit when retry after OOM recovery still returns 500."""
+    return Event(
+        signal=ROUTING_INFERENCE_OOM_RECOVERY_FAILED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+        },
+    )
+
+
+@event_factory
+def OomInferenceBanned(
+    model_id: str,
+    gateway_id: str,
+) -> Event:
+    """Emit when a model is banned on a gateway after OOM recovery failure."""
+    return Event(
+        signal=ROUTING_INFERENCE_OOM_BANNED,
+        payload={
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+        },
+    )

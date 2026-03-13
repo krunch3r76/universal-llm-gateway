@@ -282,6 +282,23 @@ def MapTimeoutWarning(  # noqa: N802
 
 
 @event_factory
+def MapStepEmptyIterations(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    step_name: str,
+) -> Event:
+    """Emitted when map_over resolves to an empty collection (0 iterations)."""
+    return Event(
+        signal="pipeline.map.step.empty.iterations",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_name": step_name,
+        },
+    )
+
+
+@event_factory
 def MapStepCompleted(  # noqa: N802
     pipeline_id: str,
     execution_id: str,

@@ -61,7 +61,7 @@ from services.rag.article_registry import (
 )
 from services.rag.chunk_filters import chunk_is_junk
 from services.rag.chunkers import Chunk, chunk_file
-from services.rag.config import RagConfig, load_config
+from services.rag.config import DEFAULT_INDEX_WORKERS, RagConfig, load_config
 from services.rag.contextualize import contextualize_chunks
 from services.rag.corpus_hints import update_corpus_hints
 from services.rag.directory_ops import purge_orphaned_chunks
@@ -71,7 +71,15 @@ from services.rag.embeddings import (
     embed_query,
     wait_until_healthy,
 )
-from services.rag.embeddings import configure as configure_embeddings
+from services.rag.embeddings import (
+    close as close_embeddings,
+)
+from services.rag.embeddings import (
+    configure as configure_embeddings,
+)
+from services.rag.embeddings import (
+    set_event_bus as set_embeddings_event_bus,
+)
 from services.rag.events import (
     rag_article_registry_failed,
     rag_article_registry_loaded,
@@ -96,12 +104,17 @@ from services.rag.events import (
     rag_shutdown,
     rag_started,
 )
-from services.rag.extraction_wiring import recover_missing_extraction, run_extraction
+from services.rag.extraction_wiring import (
+    ExtractionResult,
+    recover_missing_extraction,
+    run_extraction,
+)
 from services.rag.indexing_helpers import (
     all_ids_match_prefix,
     check_pdf_duplicate,
     file_hash,
 )
+from services.rag.knowledge_extractor import configure_concurrency
 from services.rag.models import (
     ChunkByIndexItem,
     ChunksByIndexRequest,
@@ -148,11 +161,6 @@ _registry: dict[str, ArticleEntry] | None = None
 _file_index_locks: dict[str, asyncio.Lock] = {}
 _post_index_stale: bool = False
 
-# Worker count for startup reconciliation of interrupted files.
-# Matches watcher_manager._INITIAL_REINDEX_WORKERS rationale: enough overlap
-# for contextualization/extraction LLM calls without drowning Stargate.
-_RECONCILE_WORKERS = 8
-
 
 def _article_event_kwargs(
     registry: dict[str, ArticleEntry], source: str
@@ -169,18 +177,16 @@ def _article_event_kwargs(
     entry = get_article_entry(registry, source)
     if entry is None:
         return {}
-    out: dict[str, str] = {}
-    if entry.title:
-        out["article_title"] = entry.title
-    if entry.authors:
-        out["article_authors"] = entry.authors
-    if entry.venue:
-        out["article_venue"] = entry.venue
-    if entry.published_date:
-        out["published_date"] = entry.published_date
-    if entry.doi:
-        out["article_doi"] = entry.doi
-    return out
+    field_map = {
+        "title": "article_title",
+        "authors": "article_authors",
+        "venue": "article_venue",
+        "published_date": "published_date",
+        "doi": "article_doi",
+    }
+    return {
+        key: value for attr, key in field_map.items() if (value := getattr(entry, attr))
+    }
 
 
 async def _maybe_update_corpus_hints() -> None:
@@ -253,6 +259,7 @@ async def _startup() -> None:
     await _event_bus.publish_async(rag_started())
     _config = load_config()
     configure_embeddings(_config.embedding_model)
+    set_embeddings_event_bus(_event_bus)
     _property_index = PropertyIndex()
     await _property_index.start()
     if _config.article_registry_path is not None:
@@ -306,10 +313,17 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
     async def _watcher_delete_fn(path: Path) -> DeleteResult:
         return await _delete_file(path)
 
+    worker_count = (
+        config.index_workers
+        if isinstance(config.index_workers, int)
+        else DEFAULT_INDEX_WORKERS
+    )
+    configure_concurrency(config.knowledge_extraction)
     _watcher_manager = WatcherManager(
         index_fn=_watcher_index_fn,
         delete_fn=_watcher_delete_fn,
         event_bus=_event_bus,
+        index_workers=worker_count,
     )
     try:
         await wait_until_healthy()
@@ -396,7 +410,7 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
                     finally:
                         queue.task_done()
 
-            n_workers = min(_RECONCILE_WORKERS, queue.qsize()) if queue.qsize() else 0
+            n_workers = min(worker_count, queue.qsize()) if queue.qsize() else 0
             workers = [
                 asyncio.create_task(_reconcile_worker(), name=f"reconcile-worker-{i}")
                 for i in range(n_workers)
@@ -406,7 +420,13 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
                 await queue.join()
                 for _ in workers:
                     queue.put_nowait(None)
-                await asyncio.gather(*workers)
+                worker_results = await asyncio.gather(*workers, return_exceptions=True)
+                for worker_result in worker_results:
+                    if isinstance(worker_result, BaseException):
+                        logger.error(
+                            "Pending reconcile worker raised unexpectedly: %r",
+                            worker_result,
+                        )
 
             if _event_bus is not None:
                 await _event_bus.publish_async(
@@ -509,6 +529,7 @@ async def _shutdown() -> None:
     if _property_index is not None:
         await _property_index.stop()
         _property_index = None
+    await close_embeddings()
     if _watcher_manager is not None:
         await _watcher_manager.stop()
         _watcher_manager = None
@@ -519,7 +540,7 @@ async def _shutdown() -> None:
 # ---------------------------------------------------------------------------
 
 
-_TOKEN_ESTIMATE = 4  # Chars per token approximation for chunk sizing.
+_CHARS_PER_TOKEN = 4  # Approximate characters per token for chunk sizing.
 
 
 async def _index_file(
@@ -664,9 +685,10 @@ async def _index_file_impl(
     # Register in pending journal before any early-return so the startup reconciler
     # can recover this file if the service is killed at any point after this line.
     # ∀ exit path below: finally: clear_pending removes the entry only if we marked.
+    prop_index = _property_index
     pending_marked = False
-    if _property_index is not None:
-        await _property_index.mark_pending(source)
+    if prop_index is not None:
+        await prop_index.mark_pending(source)
         pending_marked = True
 
     try:
@@ -677,7 +699,7 @@ async def _index_file_impl(
             existing_metadatas = [
                 m for m in (existing.get("metadatas") or []) if isinstance(m, dict)
             ]
-            if _config is not None and _property_index is not None:
+            if _config is not None and prop_index is not None:
                 expected_model = _config.knowledge_extraction.extraction_model
                 has_model_mismatch = bool(expected_model) and any(
                     m.get("extraction_model") != expected_model
@@ -698,7 +720,7 @@ async def _index_file_impl(
                     existing_ids=existing_ids,
                     existing_metadatas=existing_metadatas,
                     config=_config.knowledge_extraction,
-                    property_index=_property_index,
+                    property_index=prop_index,
                     event_bus=_event_bus,
                     scope=scope,
                 )
@@ -715,6 +737,12 @@ async def _index_file_impl(
                                     _article_event_kwargs(_registry, source)
                                     if _registry is not None
                                     else None
+                                ),
+                                processing_seconds=getattr(
+                                    ext_result, "processing_seconds", None
+                                ),
+                                queue_wait_seconds=getattr(
+                                    ext_result, "queue_wait_seconds", None
                                 ),
                             )
                         )
@@ -740,7 +768,7 @@ async def _index_file_impl(
                 if isinstance(chunk_hash, str) and isinstance(indexed_at, str):
                     existing_timestamps[chunk_hash] = indexed_at
 
-        target_chars = chunk_tokens * _TOKEN_ESTIMATE if chunk_tokens else None
+        target_chars = chunk_tokens * _CHARS_PER_TOKEN if chunk_tokens else None
         if is_html_file and _event_bus is not None:
             await _event_bus.publish_async_nowait(
                 rag_html_normalization_started(file=source)
@@ -761,9 +789,10 @@ async def _index_file_impl(
         if not chunks:
             if existing_ids:
                 # Property index cleanup before ChromaDB delete (same order as main path).
-                if _property_index is not None:
+                if prop_index is not None:
                     for old_id in existing_ids:
-                        await _property_index.remove_chunk(old_id)
+                        await prop_index.remove_chunk(old_id)
+                    await prop_index.fts.remove_batch(existing_ids)
                 collection.delete(ids=existing_ids)
             logger.info(
                 "Index complete: file=%s deleted=%d indexed=0",
@@ -810,7 +839,8 @@ async def _index_file_impl(
         extraction_topics = 0
         extraction_property_entries: list[tuple[str, str, str, str]] = []
         file_batch_start_ts: str | None = None
-        if _config is not None and _property_index is not None:
+        ext_result: ExtractionResult | None = None
+        if _config is not None and prop_index is not None:
             scope = _config.get_scope_for_path(source)
             ext_result = await run_extraction(
                 file=source,
@@ -818,7 +848,7 @@ async def _index_file_impl(
                 chunks=chunks,
                 metadatas=metadatas,
                 config=_config.knowledge_extraction,
-                property_index=_property_index,
+                property_index=prop_index,
                 event_bus=_event_bus,
                 apply_property_index=False,
                 scope=scope,
@@ -826,9 +856,9 @@ async def _index_file_impl(
             extraction_entities = ext_result.entities
             extraction_topics = ext_result.topics
             extraction_property_entries = ext_result.property_entries
-            _batch_start_ts: str | None = getattr(ext_result, "batch_start_ts", None)
+            ext_batch_start = getattr(ext_result, "batch_start_ts", None)
             file_batch_start_ts = (
-                _batch_start_ts if isinstance(_batch_start_ts, str) else None
+                ext_batch_start if isinstance(ext_batch_start, str) else None
             )
 
             bibliography_ids = {
@@ -863,7 +893,6 @@ async def _index_file_impl(
                 chunks,
                 source,
                 _config.contextualize_model,
-                max_concurrent=_config.contextualize_max_concurrent,
             )
             embed_texts = [
                 f"{ctx}\n\n{text}" if ctx else text
@@ -879,39 +908,42 @@ async def _index_file_impl(
         collection.upsert(
             ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
         )
-        if _property_index is not None:
-            await _property_index.fts.insert_batch(
+        if prop_index is not None:
+            await prop_index.fts.insert_batch(
                 [(cid, source, text) for cid, text in zip(ids, texts, strict=True)]
             )
-        if _property_index is not None and extraction_property_entries:
+        if prop_index is not None and extraction_property_entries:
             try:
-                await _property_index.add_batch_with_scope(extraction_property_entries)
+                await prop_index.add_batch_with_scope(extraction_property_entries)
             except Exception:
                 # Compensation: keep old chunks untouched by rolling back new upsert.
                 collection.delete(ids=ids)
+                await prop_index.fts.remove_batch(ids)
                 raise
         # ∀ id ∈ existing_ids ∩ ids: already overwritten by upsert — do not re-delete.
         new_id_set = set(ids)
         stale_ids = list(set(existing_ids) - new_id_set)
         if stale_ids:
             # Property index + FTS cleanup BEFORE ChromaDB delete.
-            if _property_index is not None:
+            if prop_index is not None:
                 for old_id in stale_ids:
-                    await _property_index.remove_chunk(old_id)
-                await _property_index.fts.remove_batch(stale_ids)
+                    await prop_index.remove_chunk(old_id)
+                await prop_index.fts.remove_batch(stale_ids)
             collection.delete(ids=stale_ids)
     except Exception as exc:
         if _event_bus is not None:
             await _event_bus.publish_async_nowait(
                 rag_file_indexing_failed(
                     file=source,
-                    error=f"{type(exc).__qualname__}: {exc}" if str(exc) else type(exc).__qualname__,
+                    error=f"{type(exc).__qualname__}: {exc}"
+                    if str(exc)
+                    else type(exc).__qualname__,
                 )
             )
         raise
     finally:
-        if pending_marked and _property_index is not None:
-            await _property_index.clear_pending(source)
+        if pending_marked and prop_index is not None:
+            await prop_index.clear_pending(source)
 
     await _maybe_update_corpus_hints()
     logger.info(
@@ -935,6 +967,8 @@ async def _index_file_impl(
                     if _registry is not None
                     else None
                 ),
+                processing_seconds=getattr(ext_result, "processing_seconds", None),
+                queue_wait_seconds=getattr(ext_result, "queue_wait_seconds", None),
             )
         )
     return IndexResult(
@@ -954,6 +988,11 @@ async def _index_file_impl(
 
 @app.post("/search", response_model=SearchResponse)
 async def search(request: SearchRequest) -> SearchResponse:
+    """Execute hybrid vector+property retrieval over indexed RAG chunks.
+
+    Raises 503 when post-index enrichment is stale (enforcement mode) or when
+    embedding retries are exhausted. Raises 400 when requested scope is invalid.
+    """
     if _post_index_stale:
         raise HTTPException(
             status_code=503,
@@ -978,13 +1017,11 @@ async def search(request: SearchRequest) -> SearchResponse:
             )
         raise
 
-    if original_scope is not None and _event_bus is not None:
+    if _event_bus is not None and original_scope is not None:
         resolved_prefixes = request.source_prefixes or []
-        asyncio.create_task(
-            _event_bus.publish_async_nowait(
-                rag_scope_resolved(
-                    scope=original_scope, prefix_count=len(resolved_prefixes)
-                )
+        _event_bus.publish_async_nowait(
+            rag_scope_resolved(
+                scope=original_scope, prefix_count=len(resolved_prefixes)
             )
         )
 
@@ -993,15 +1030,13 @@ async def search(request: SearchRequest) -> SearchResponse:
         query_embedding = await embed_query(request.query, scope=request.scope)
     except EmbeddingTransientError as exc:
         if _event_bus is not None:
-            asyncio.create_task(
-                _event_bus.publish_async_nowait(
-                    rag_search_embedding_failed(
-                        model_id=exc.model_id,
-                        attempts=exc.attempts,
-                        last_status=exc.last_status,
-                        query_len=len(request.query),
-                        scope=request.scope,
-                    )
+            _event_bus.publish_async_nowait(
+                rag_search_embedding_failed(
+                    model_id=exc.model_id,
+                    attempts=exc.attempts,
+                    last_status=exc.last_status,
+                    query_len=len(request.query),
+                    scope=request.scope,
                 )
             )
         raise HTTPException(
@@ -1102,7 +1137,7 @@ async def search(request: SearchRequest) -> SearchResponse:
                 scope=request.scope,
             )
         )
-        asyncio.create_task(_event_bus.publish_async_nowait(event))
+        _event_bus.publish_async_nowait(event)
 
     return SearchResponse(
         chunks=chunks,

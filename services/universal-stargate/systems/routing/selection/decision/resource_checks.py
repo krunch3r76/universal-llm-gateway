@@ -156,12 +156,14 @@ def _check_resources(
 
     margins = config.get("resource_margins", {}) if config else {}
     ram_margin_pct = margins.get("ram_margin_pct", 3)
-    vram_margin_pct = margins.get("vram_margin_pct", 2)
+    vram_margin_pct = margins.get("vram_margin_pct", 5)
+    vram_headroom_mb = int(margins.get("vram_headroom_mb", 2048))
     ram_margin = 1.0 + ram_margin_pct / 100
     vram_margin = 1.0 + vram_margin_pct / 100
 
     ram_needed = int(gw_ram_mb * ram_margin)
-    vram_needed = int(gw_vram_mb * vram_margin)
+    vram_pct = int(gw_vram_mb * vram_margin)
+    vram_needed = (vram_pct + vram_headroom_mb) if gw_vram_mb > 0 else 0
 
     # Calculate resources reserved by loading models (exclude target)
     vram_reserved = 0
@@ -212,10 +214,13 @@ def _check_resources(
             f"effective={effective_ram_free}MB (model loading in progress)"
         )
 
-    # Check VRAM with loading reservation
+    # Check VRAM with loading reservation (includes absolute headroom floor)
     if gw_vram_mb > 0 and effective_vram_free < vram_needed:
         margin_info = (
-            f" (+ {(vram_margin - 1) * 100:.0f}% margin)" if vram_margin > 1.0 else ""
+            f" (+ {(vram_margin - 1) * 100:.0f}% margin"
+            f" + {vram_headroom_mb}MB headroom)"
+            if vram_margin > 1.0 or vram_headroom_mb > 0
+            else ""
         )
         reserved_info = (
             f" ({vram_reserved}MB reserved by {len(loading_details)} loading model(s))"

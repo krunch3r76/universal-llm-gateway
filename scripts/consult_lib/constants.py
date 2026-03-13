@@ -13,8 +13,6 @@ DEFAULT_MODELS: list[str] = [
     "google/gemini-2.5-flash",
 ]
 
-REVIEWER_DEFAULT_MODELS: list[str] = ["qwen/qwen3-coder"]
-
 # Resolved once at import time; overridable via env for tests.
 STARGATE_URL: str = os.getenv("STARGATE_URL", DEFAULT_STARGATE_URL).rstrip("/")
 

@@ -96,6 +96,123 @@ async def _forward_via_tracker_or_forwarder(
     return response_content, {}, 200
 
 
+async def _forward_or_recover(
+    *,
+    forward_fn: Any,
+    fed_gateway: FederatedGateway,
+    model_id: Any,
+    federated_manager: Any,
+    federation_forwarder: Any,
+    request_tracker: Any,
+    event_bus: Any,
+    request_id: str,
+) -> tuple[Any, dict[str, str], int]:
+    """Forward with one OOM recovery attempt on 500.
+
+    Returns (content, headers, status_code) on success or non-recoverable error.
+    Raises httpx.HTTPStatusError for non-500 HTTP errors.
+    Raises httpx.TimeoutException on timeout.
+    """
+    from .oom_recovery import attempt_oom_recovery
+
+    # First attempt
+    first_error: httpx.HTTPStatusError | None = None
+    try:
+        content, headers, status = await forward_fn()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code != 500:
+            raise
+        content, headers, status = (
+            extract_upstream_error_payload(e.response),
+            {},
+            500,
+        )
+        first_error = e
+
+    if status != 500:
+        return content, headers, status
+
+    # 500 detected — attempt OOM recovery
+    recovered = await attempt_oom_recovery(
+        gateway=fed_gateway,
+        model_id=model_id,
+        federated_manager=federated_manager,
+        federation_forwarder=federation_forwarder,
+        request_tracker=request_tracker,
+        event_bus=event_bus,
+        request_id=request_id,
+    )
+
+    if not recovered:
+        if first_error is not None:
+            raise first_error
+        return content, headers, status
+
+    # Retry after eviction
+    try:
+        content, headers, status = await forward_fn()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 500:
+            _ban_and_emit(
+                federated_manager=federated_manager,
+                model_id=model_id,
+                gateway_id=fed_gateway.gateway_id,
+                event_bus=event_bus,
+                request_id=request_id,
+            )
+        raise
+
+    if status == 500:
+        _ban_and_emit(
+            federated_manager=federated_manager,
+            model_id=model_id,
+            gateway_id=fed_gateway.gateway_id,
+            event_bus=event_bus,
+            request_id=request_id,
+        )
+    elif event_bus:
+        from src.scheduling.events.routing import OomRecoverySucceeded
+
+        event_bus.publish_async_nowait(
+            OomRecoverySucceeded(
+                request_id=request_id,
+                model_id=model_id.routing_key,
+                gateway_id=fed_gateway.gateway_id,
+                evicted_count=0,
+            )
+        )
+
+    return content, headers, status
+
+
+def _ban_and_emit(
+    *,
+    federated_manager: Any,
+    model_id: Any,
+    gateway_id: str,
+    event_bus: Any,
+    request_id: str,
+) -> None:
+    """Ban model on gateway and emit failure + ban events."""
+    from src.scheduling.events.routing import OomInferenceBanned, OomRecoveryFailed
+
+    federated_manager.mark_inference_banned(gateway_id, model_id)
+    if event_bus:
+        event_bus.publish_async_nowait(
+            OomRecoveryFailed(
+                request_id=request_id,
+                model_id=model_id.routing_key,
+                gateway_id=gateway_id,
+            )
+        )
+        event_bus.publish_async_nowait(
+            OomInferenceBanned(
+                model_id=model_id.routing_key,
+                gateway_id=gateway_id,
+            )
+        )
+
+
 async def _execute_federated_nonstreaming(
     context: RequestContext,
     fed_gateway: FederatedGateway,
@@ -107,6 +224,8 @@ async def _execute_federated_nonstreaming(
     federation_integration: Any,
     federation_forwarder: Any,
     event_bus: Any,
+    *,
+    federated_manager: Any | None = None,
 ) -> Response:
     """
     Forward a non-streaming request and return a JSONResponse.
@@ -139,22 +258,47 @@ async def _execute_federated_nonstreaming(
         )
 
     try:
-        (
-            response_content,
-            response_headers,
-            response_status_code,
-        ) = await _forward_via_tracker_or_forwarder(
-            fed_gateway,
-            request_body,
-            hop_count,
-            request_id,
-            endpoint_category,
-            str(context.selected_model),
-            hints,
-            federation_integration,
-            federation_forwarder,
-            context,
+        request_tracker = (
+            federation_integration.request_tracker
+            if federation_integration is not None
+            else None
         )
+
+        async def _do_forward():
+            return await _forward_via_tracker_or_forwarder(
+                fed_gateway,
+                request_body,
+                hop_count,
+                request_id,
+                endpoint_category,
+                str(context.selected_model),
+                hints,
+                federation_integration,
+                federation_forwarder,
+                context,
+            )
+
+        if federated_manager is not None:
+            (
+                response_content,
+                response_headers,
+                response_status_code,
+            ) = await _forward_or_recover(
+                forward_fn=_do_forward,
+                fed_gateway=fed_gateway,
+                model_id=context.selected_model,
+                federated_manager=federated_manager,
+                federation_forwarder=federation_forwarder,
+                request_tracker=request_tracker,
+                event_bus=event_bus,
+                request_id=request_id,
+            )
+        else:
+            (
+                response_content,
+                response_headers,
+                response_status_code,
+            ) = await _do_forward()
 
         await write_response_snapshot(
             response_content, context.request_id, stage="response-from-gateway"

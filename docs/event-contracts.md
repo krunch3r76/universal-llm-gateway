@@ -184,7 +184,11 @@ request.processing
 
 ### RAG Watcher Lifecycle
 
-**INVARIANT**: `rag.watch.started` ⟹ `rag.watch.initial.complete` (same `path`)
+**INVARIANT**: `rag.watch.started` ⟹ `rag.watch.initial.started` ⟹ `rag.watch.initial.complete` (same `path`).
+
+**INVARIANT**: `rag.watch.initial.started` ⟹ `rag.watch.initial.progress*` ⟹ `rag.watch.initial.complete` where `progress*` is zero or more events.
+
+**INVARIANT**: for each `rag.watch.initial.progress`, `processed = reindexed + unchanged + errors` and `processed <= total_files`.
 
 **INVARIANT**: if watch path is invalid, emit `rag.watch.directory.missing` and do not emit `rag.watch.started` for that path.
 
@@ -195,7 +199,9 @@ rag.started
   └─> rag.pending.reconciled?               (* emitted once if pending files found at startup)
   └─> rag.orphan.purged                     (* always emitted; files=0 when nothing to purge)
   └─> rag.watch.directory.missing | rag.watch.started
-      └─> rag.watch.initial.complete
+      └─> rag.watch.initial.started
+          └─> rag.watch.initial.progress*   (* zero or more, monotonic processed count *)
+          └─> rag.watch.initial.complete
       └─> rag.watch.reindex.complete*        (* zero or more)
           └─> rag.file.skipped               (* if unchanged or duplicate PDF)
           └─> rag.extraction.batch.started   (* if extraction enabled and content changed)
@@ -203,12 +209,15 @@ rag.started
               └─> rag.extraction.permanently.skipped  (* ≤ M; when chunk crosses max_attempts)
               └─> rag.extraction.batch.completed
           └─> rag.extraction.batch.skipped    (* if all chunks permanently failed)
+          └─> rag.embedding.chunk.fallback*   (* zero or more; chunk kept as zero vector on persistent embedding fault)
           └─> rag.file.indexed | rag.file.deleted | rag.file.indexing.failed
       └─> rag.watch.reconcile.complete*      (* zero or more)
   └─> rag.property.index.rebuilt             (* after rebuild from metadata)
   └─> rag.shutdown
       └─> rag.watch.stopped
 ```
+
+Note: `rag.watch.initial.complete.files` remains a legacy success count that excludes errored files. `total_files` in `rag.watch.initial.started` and `rag.watch.initial.progress` counts all scheduled candidates.
 
 **INVARIANT**: ∀ file indexing attempt: exactly one of `rag.file.indexed`, `rag.file.deleted`,
 `rag.file.skipped`, or `rag.file.indexing.failed` is emitted — these are mutually exclusive.
@@ -752,6 +761,10 @@ jq -c 'select(.event_type == "combine_passages_completed") | {step: .step_name, 
 | `routing.eviction.wait.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms` | - |
 | `routing.eviction.wait.timeout` | `request_id`, `model_id`, `waited_ms` | - |
 | `routing.eviction.wait.cancelled` | `request_id`, `model_id`, `waited_ms` | - |
+| `routing.inference.oom.recovery.started` | `request_id`, `model_id`, `gateway_id`, `evicting_count`, `evicting_models` | - |
+| `routing.inference.oom.recovery.succeeded` | `request_id`, `model_id`, `gateway_id`, `evicted_count` | - |
+| `routing.inference.oom.recovery.failed` | `request_id`, `model_id`, `gateway_id` | - |
+| `routing.inference.oom.banned` | `model_id`, `gateway_id` | - |
 | `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | - |
 | `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | - |
 | `routing.overflow.triggered` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `reason` | - |
@@ -885,6 +898,17 @@ sticky/non-sticky failure split. These signals track the wait lifecycle.
 | `routing.eviction.wait.cancelled` | Client disconnected or task cancelled during wait |
 
 `queue_depth` in `.started` is a gauge for SRE capacity planning and monitoring.
+
+### OOM Recovery
+
+**INVARIANT**: `routing.inference.oom.recovery.started` ⟹ (`routing.inference.oom.recovery.succeeded` ∨ `routing.inference.oom.recovery.failed`)
+
+| Signal | Payload | Description |
+|--------|---------|-------------|
+| `routing.inference.oom.recovery.started` | request_id, model_id, gateway_id, evicting_count, evicting_models | Inference 500 detected; evicting idle models |
+| `routing.inference.oom.recovery.succeeded` | request_id, model_id, gateway_id, evicted_count | Retry after eviction succeeded |
+| `routing.inference.oom.recovery.failed` | request_id, model_id, gateway_id | Retry after eviction still failed |
+| `routing.inference.oom.banned` | model_id, gateway_id | Model banned on gateway for session |
 
 ### routing.upstream.all.excluded
 
@@ -1033,7 +1057,9 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.shutdown` | - | - |
 | `rag.watch.directory.missing` | `path` | - |
 | `rag.watch.started` | `path`, `extensions`, `recursive` | - |
-| `rag.watch.initial.complete` | `path`, `files`, `reindexed`, `unchanged` | - |
+| `rag.watch.initial.started` | `path`, `total_files` | emitted once per watch path when startup sweep candidate list is finalized |
+| `rag.watch.initial.progress` | `path`, `total_files`, `processed`, `reindexed`, `unchanged`, `errors` | emitted on each terminal startup-file outcome; `processed` is monotonic |
+| `rag.watch.initial.complete` | `path`, `files`, `reindexed`, `unchanged`, `errors` | emitted once per watch path at end of startup sweep; invariant: total_files == reindexed + unchanged + errors; `files` excludes errored files |
 | `rag.watch.reindex.complete` | `file`, `deleted`, `indexed`, `unchanged` | - |
 | `rag.watch.reconcile.complete` | `path`, `recovered`, `unchanged` | - |
 | `rag.watch.stopped` | `watchers` | - |
@@ -1041,6 +1067,8 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | `extraction_model` (optional) |
 | `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | re-extraction due to model mismatch |
 | `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | all chunks exceeded max_attempts; no pipeline call |
+| `rag.extraction.recovery.completed` | `file`, `entities`, `topics` | recovery pass for missing extraction metadata completed successfully |
+| `rag.extraction.recovery.skipped` | `file`, `reason` | recovery skipped (e.g. no documents in ChromaDB, all chunks permanently failed) |
 | `rag.extraction.completed` | `chunk_id`, `entities`, `topics` | - |
 | `rag.extraction.failed` | `chunk_id`, `error` | - |
 | `rag.property.index.rebuilt` | `collection`, `count` | - |
@@ -1049,10 +1077,11 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
 | `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
 | `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |
-| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `bibliography_chunks` (int — count of chunks tagged `is_bibliography` for this file) |
+| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `bibliography_chunks` (int — count of chunks tagged `is_bibliography` for this file) |
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty) |
 | `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`} |
 | `rag.file.indexing.failed` | `file`, `error` | unhandled error aborted indexing for this file |
+| `rag.embedding.chunk.fallback` | `model`, `text_len`, `dim` | chunk embedded as zero vector after all retry attempts exhausted; indicates content-specific model fault; chunk is indexed but not semantically retrievable |
 | `rag.html.normalization.started` | `file` | HTML ingest entered normalization pipeline (before chunking) |
 | `rag.html.normalization.completed` | `file`, `output_chars` | HTML normalization succeeded; output_chars = total chunk text length |
 | `rag.html.normalization.failed` | `file`, `error` | HTML normalization failed; file indexing aborted for this file |
@@ -1153,6 +1182,7 @@ tracking across long-running map steps. Failed/timeout/cancelled iterations emit
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `pipeline.map.started` | `pipeline_id`, `execution_id`, `step_name`, `total_iterations`, `timeout_seconds`, `threshold` | - |
+| `pipeline.map.step.empty.iterations` | `pipeline_id`, `execution_id`, `step_name` | emitted when map_over resolves to empty collection (0 iterations); no iterations run |
 | `pipeline.map.iteration.started` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `model_id`, `gateway_id` | `request_id` |
 | `pipeline.map.iteration.inference.started` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `request_id`, `model_id`, `queue_wait_seconds` | - |
 | `pipeline.map.iteration.inference.fallback` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `request_id`, `fallback_signal`, `reason` | - |

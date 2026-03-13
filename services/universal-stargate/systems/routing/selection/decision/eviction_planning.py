@@ -70,29 +70,31 @@ def _compute_eviction_plan(
     routing_key_tracker: "RoutingKeyTracker | None" = None,
     eviction_cooldown_s: float = 120.0,
     has_demand: Callable[[str], bool] | None = None,
+    resource_margins: dict[str, float] | None = None,
 ) -> EvictionPlanSummary | None:
-    """
-    Compute eviction plan to make room for model.
+    """Compute an eviction plan that frees enough VRAM/RAM to load a model
+    with full runtime headroom margins.
 
-    Invariant: eviction feasibility uses raw catalog requirements (no margin).
-    The margin is enforced by the direct availability check in resource_checks.py
-    before eviction is attempted. Applying it again here would double-count.
+    The deficit includes percentage margins and an absolute headroom floor
+    matching _check_resources, so the eviction plan frees enough for the
+    post-eviction resource check to pass without a wasted eviction cycle.
 
     Args:
-        gateway: Gateway to compute eviction plan for
-        placement: Model placement requirements
-        requirements_lookup: MANDATORY function to look up (vram_mb, ram_mb)
-                           for loading models (in-memory, no I/O)
-        routing_key_tracker: Tracker for in-flight routing keys (eviction protection).
-            REQUIRED for Master mode - prevents eviction of models with active requests.
-        eviction_cooldown_s: Minimum seconds a model must stay loaded before becoming
-            evictable. Prevents model thrashing livelock.
-        has_demand: Callback returning True if routing queue has waiters for a
-            routing_key. Models with demand are protected from eviction.
+        gateway: Gateway to compute eviction plan for.
+        placement: Model placement requirements.
+        requirements_lookup: Function to look up (vram_mb, ram_mb) for loading
+            models (in-memory, no I/O).
+        routing_key_tracker: Tracker for in-flight routing keys (eviction
+            protection). Required for Master mode.
+        eviction_cooldown_s: Minimum seconds a model must stay loaded before
+            becoming evictable. Prevents model thrashing livelock.
+        has_demand: Callback returning True if routing queue has waiters for
+            a routing_key. Models with demand are protected from eviction.
+        resource_margins: Margin config dict (vram_margin_pct, vram_headroom_mb,
+            ram_margin_pct). Defaults applied if None.
 
     Returns None if eviction cannot provide enough resources.
     """
-    # Per-gateway figures are authoritative; placement hint is overridden here
     resolved = resolve_gateway_requirements(gateway, placement)
     if isinstance(resolved, ConstraintFailure):
         logger.error(f"Eviction planning blocked: {resolved.reason}")
@@ -277,6 +279,17 @@ def _compute_eviction_plan(
         )
         evictable_with_resources.append((model_id, vram_usage, ram_usage))
 
+    # Compute full target including margins and headroom floor, matching
+    # _check_resources so the post-eviction resource check passes.
+    _margins = resource_margins or {}
+    vram_margin_pct = _margins.get("vram_margin_pct", 5)
+    vram_headroom_mb = int(_margins.get("vram_headroom_mb", 2048))
+    ram_margin_pct = _margins.get("ram_margin_pct", 3)
+
+    vram_pct = int(gw_vram_mb * (1.0 + vram_margin_pct / 100))
+    vram_target = (vram_pct + vram_headroom_mb) if gw_vram_mb > 0 else 0
+    ram_target = int(gw_ram_mb * (1.0 + ram_margin_pct / 100))
+
     # Greedy minimum eviction: largest VRAM first → fewest models evicted
     # ∀ plan: |models_to_evict| is minimal — stop as soon as freed ≥ deficit
     evictable_with_resources.sort(key=lambda x: (-x[1], -x[2]))
@@ -290,10 +303,10 @@ def _compute_eviction_plan(
         catalog_freed_vram += vram_usage
         freed_ram_catalog += ram_usage
         vram_covered = gw_vram_mb <= 0 or (
-            effective_vram_free + catalog_freed_vram >= gw_vram_mb
+            effective_vram_free + catalog_freed_vram >= vram_target
         )
         ram_covered = gw_ram_mb <= 0 or (
-            effective_ram_free + freed_ram_catalog >= gw_ram_mb
+            effective_ram_free + freed_ram_catalog >= ram_target
         )
         if vram_covered and ram_covered:
             break
@@ -359,23 +372,21 @@ def _compute_eviction_plan(
         f"total_available={total_ram}MB RAM (need {gw_ram_mb}MB)"
     )
 
-    # Check BOTH resources for hybrid models (vram_mb > 0 AND ram_mb > 0).
-    # Compare against raw catalog requirements (no margin): the catalog value is
-    # authoritative for what the model physically needs; the margin is already
-    # enforced by the direct availability check before eviction is attempted.
-    if gw_vram_mb > 0 and total_vram < gw_vram_mb:
+    # Check BOTH resources against margin+headroom targets so post-eviction
+    # _check_resources will pass.
+    if gw_vram_mb > 0 and total_vram < vram_target:
         logger.warning(
             f"❌ EVICTION FAILED for {placement.model_id}: "
-            f"Insufficient VRAM even with eviction - need {gw_vram_mb}MB, "
-            f"can only get {total_vram}MB (current free: {gateway.vram_free_mb}MB + "
+            f"Insufficient VRAM - need {vram_target}MB (margin+headroom), "
+            f"can only get {total_vram}MB (free: {gateway.vram_free_mb}MB + "
             f"freeable: {corrected_freed_vram}MB from {len(models_to_evict)} models)"
         )
         return None
-    if gw_ram_mb > 0 and total_ram < gw_ram_mb:
+    if gw_ram_mb > 0 and total_ram < ram_target:
         logger.warning(
             f"❌ EVICTION FAILED for {placement.model_id}: "
-            f"Insufficient RAM even with eviction - need {gw_ram_mb}MB, "
-            f"can only get {total_ram}MB (current free: {gateway.ram_free_mb}MB + "
+            f"Insufficient RAM - need {ram_target}MB (incl. margin), "
+            f"can only get {total_ram}MB (free: {gateway.ram_free_mb}MB + "
             f"freeable: {freed_ram_catalog}MB from {len(models_to_evict)} models)"
         )
         return None

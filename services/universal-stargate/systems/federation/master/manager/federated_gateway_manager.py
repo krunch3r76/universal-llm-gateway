@@ -542,7 +542,7 @@ class FederatedGatewayManager(Sequential):
         )
 
         # Emit staleness event if telemetry is stale
-        if not is_fresh:
+        if not is_fresh and self._event_bus:
             from src.scheduling.events import FederationTelemetryMarkedStale
 
             # Get remote_id from gateway (guaranteed to exist since we have age)
@@ -1063,7 +1063,7 @@ class FederatedGatewayManager(Sequential):
             if removed:
                 logger.debug(f"  ➖ Removed: {list(removed)[:10]}")
 
-        # Update ALL fields (catalog + resources + activation)
+        # Update ALL fields (catalog + resources + activation + model lifecycle)
         gw.ram_free_mb = state["ram_free_mb"]
         gw.vram_free_mb = state["vram_free_mb"]
         gw.ram_total_mb = state["ram_total_mb"]
@@ -1075,6 +1075,40 @@ class FederatedGatewayManager(Sequential):
         gw.activated_contexts = state.get("activated_contexts", {})
         gw.active_requests = state.get("active_requests", 0)
         gw.model_resources = state.get("model_resources", {})
+
+        # GATEWAY_SNAPSHOT is the authoritative initial state: seed model lifecycle.
+        # Unlike RESOURCE_UPDATE (which preserves single-writer invariant for discrete
+        # events), the snapshot IS the initial state — models loaded before the snapshot
+        # have no discrete MODEL_LOADED event path to the Master.
+        snapshot_loaded: frozenset[ModelId] = state.get("loaded_models", frozenset())
+        snapshot_busy: frozenset[ModelId] = state.get("busy_models", frozenset())
+
+        prev_loaded = gw.loaded_models
+        gw.loaded_models = snapshot_loaded
+        gw.busy_models = snapshot_busy
+        gw.loading_models = gw.loading_models - snapshot_loaded
+
+        # Seed eviction hysteresis for newly-visible loaded models
+        import time as _time
+
+        now = _time.monotonic()
+        for mid in snapshot_loaded - prev_loaded:
+            if mid not in gw.model_loaded_at:
+                gw.model_loaded_at[mid] = now
+            self._clear_model_load_failure(gw.gateway_id, mid)
+            if self._restore_model_capacity(gw, mid):
+                logger.debug(
+                    f"📊 Capacity pool: restored {gw.gateway_id}/{mid} from snapshot"
+                )
+        # Clean hysteresis for models no longer loaded
+        for mid in prev_loaded - snapshot_loaded:
+            gw.model_loaded_at.pop(mid, None)
+
+        logger.info(
+            f"📊 GATEWAY_SNAPSHOT model lifecycle: {gw.gateway_id} "
+            f"loaded={len(snapshot_loaded)}, busy={len(snapshot_busy)} "
+            f"(prev_loaded={len(prev_loaded)})"
+        )
 
         # Seed capacity pool from model_resources (admission control)
         seeded_slots = self._seed_capacity_pool_for_gateway(gw)
@@ -1102,17 +1136,18 @@ class FederatedGatewayManager(Sequential):
                 gw.gateway_id,
                 available_count,
             )
-            from src.scheduling.events import FederationActivationFilteredEmpty
+            if self._event_bus:
+                from src.scheduling.events import FederationActivationFilteredEmpty
 
-            asyncio.create_task(
-                self._event_bus.publish_async_nowait(
-                    FederationActivationFilteredEmpty(
-                        gateway_id=gw.gateway_id,
-                        available_count=available_count,
-                        activated_count=activated_count,
+                asyncio.create_task(
+                    self._event_bus.publish_async_nowait(
+                        FederationActivationFilteredEmpty(
+                            gateway_id=gw.gateway_id,
+                            available_count=available_count,
+                            activated_count=activated_count,
+                        )
                     )
                 )
-            )
 
         # Publish catalog change event (for pipeline system to reload)
         if catalog_changed:

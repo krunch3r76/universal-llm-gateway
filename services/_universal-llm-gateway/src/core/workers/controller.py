@@ -401,6 +401,24 @@ class WorkerController:
     async def is_process_alive(self, model_id: str) -> bool:
         return await self._lifecycle_manager.is_process_alive(model_id)
 
+    async def check_engine_health(self, model_id: str) -> bool:
+        """Check if the model's inference engine is alive (not just the worker process).
+
+        Sends a ``health`` RPC to the worker which checks
+        ``engine.is_loaded()`` — returns True only when the underlying
+        llama-server (or other engine subprocess) is running.
+        """
+        supervisor = self._process_state.get_supervisor(model_id)
+        if not supervisor:
+            return False
+        try:
+            result = await supervisor.execute_command(
+                {"command_type": "health"}, timeout=5.0
+            )
+            return bool(result and result.get("status") == "ready")
+        except Exception:
+            return False
+
     async def get_process_status(self, model_id: str):
         sup = self._process_state.get_supervisor(model_id)
         if not sup:

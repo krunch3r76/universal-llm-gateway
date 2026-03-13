@@ -48,9 +48,11 @@ def _can_fit_after_eviction_including_busy(
 
     margins = resource_margins or {}
     ram_margin_pct = int(margins.get("ram_margin_pct", 3))
-    vram_margin_pct = int(margins.get("vram_margin_pct", 2))
+    vram_margin_pct = int(margins.get("vram_margin_pct", 5))
+    vram_headroom_mb = int(margins.get("vram_headroom_mb", 2048))
     ram_needed = int(gw_ram_mb * (1.0 + ram_margin_pct / 100))
-    vram_needed = int(gw_vram_mb * (1.0 + vram_margin_pct / 100))
+    vram_pct = int(gw_vram_mb * (1.0 + vram_margin_pct / 100))
+    vram_needed = (vram_pct + vram_headroom_mb) if gw_vram_mb > 0 else 0
 
     reclaimable_vram = gateway.vram_free_mb
     reclaimable_ram = gateway.ram_free_mb
@@ -250,6 +252,7 @@ def evaluate_feasibility(
         routing_key_tracker=routing_key_tracker,
         eviction_cooldown_s=eviction_cooldown_s,
         has_demand=has_demand,
+        resource_margins=policy.resource_margins,
     )
 
     if eviction_plan is None:

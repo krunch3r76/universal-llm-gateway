@@ -43,6 +43,8 @@ class KnowledgeExtractionConfig:
 
     Extraction is integral to indexing — ∀ indexed file: extraction runs.
     To skip extraction entirely, disable indexing (automatic_indexing_enabled: false).
+    Concurrent extraction batches are bounded by extraction_concurrency to prevent
+    model saturation when multiple index workers fan out to the same backend.
     """
 
     pipeline: str = "rag-extraction"
@@ -53,9 +55,13 @@ class KnowledgeExtractionConfig:
     extraction_model: str = (
         ""  # Stored in chunk metadata; mismatch triggers re-extraction
     )
+    extraction_concurrency: int = 2
+    per_chunk_timeout_s: float = 60.0
+    batch_timeout_overhead_s: float = 30.0
 
 
 DEFAULT_EMBEDDING_MODEL = "bge-m3-q8-0-8192-cpu"
+DEFAULT_INDEX_WORKERS = 8
 _BASELINE_EXTENSIONS: tuple[str, ...] = (
     ".md",
     ".txt",
@@ -76,14 +82,14 @@ class RagConfig:
         default_factory=KnowledgeExtractionConfig
     )
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
+    index_workers: int = DEFAULT_INDEX_WORKERS
     # Optional path to corpus_hints.yaml (scope → vocabulary hints for suggest_terms).
     corpus_hints_path: Path | None = None
     # Optional path to article_registry.yaml (filename → citation metadata for chunk enrichment).
     article_registry_path: Path | None = None
     baseline_extensions: tuple[str, ...] = BASELINE_EXTENSIONS
     post_index_enforcement: str = "strict"
-    contextualize_model: str = ""
-    contextualize_max_concurrent: int = 32
+    contextualize_model: str
 
     def get_scope_for_path(self, file_path: str) -> str:
         """Longest-prefix match over scopes; leaf-preferred on ties.
@@ -141,10 +147,10 @@ def _parse_watch_directories(raw_watchers: object) -> list[WatchDirectory]:
         if not isinstance(path, str) or not path.strip():
             logger.warning("Skipping watch entry without valid path: %r", item)
             continue
-        recursive_value = item.get("recursive", True)
-        recursive = recursive_value if isinstance(recursive_value, bool) else True
-        raw_chunk_tokens = item.get("chunk_tokens")
-        chunk_tokens = raw_chunk_tokens if isinstance(raw_chunk_tokens, int) else None
+        recursive_raw = item.get("recursive", True)
+        recursive = recursive_raw if isinstance(recursive_raw, bool) else True
+        chunk_tokens_raw = item.get("chunk_tokens")
+        chunk_tokens = chunk_tokens_raw if isinstance(chunk_tokens_raw, int) else None
         raw_exclude = item.get("exclude")
         exclude = [
             e
@@ -217,6 +223,12 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
 
 
 def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
+    """Parse knowledge_extraction config with validation and safe clamping.
+
+    Missing or malformed fields fall back to defaults. Concurrency is clamped
+    to at least one, per-chunk timeout to at least one second, and timeout
+    overhead to a non-negative value.
+    """
     if not isinstance(raw, dict):
         return KnowledgeExtractionConfig()
     pipeline = raw.get("pipeline", "rag-extraction")
@@ -225,6 +237,21 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
     max_attempts = raw.get("max_extraction_attempts", 3)
     raw_model = raw.get("extraction_model", "")
     extraction_model = str(raw_model) if isinstance(raw_model, str) else ""
+    raw_concurrency = raw.get("extraction_concurrency", 2)
+    extraction_concurrency = max(
+        1,
+        int(raw_concurrency) if isinstance(raw_concurrency, int) else 2,
+    )
+    raw_per_chunk = raw.get("per_chunk_timeout_s", 60.0)
+    per_chunk_timeout_s = max(
+        1.0,
+        float(raw_per_chunk) if isinstance(raw_per_chunk, int | float) else 60.0,
+    )
+    raw_overhead = raw.get("batch_timeout_overhead_s", 30.0)
+    batch_timeout_overhead_s = max(
+        0.0,
+        float(raw_overhead) if isinstance(raw_overhead, int | float) else 30.0,
+    )
     return KnowledgeExtractionConfig(
         pipeline=str(pipeline) if isinstance(pipeline, str) else "rag-extraction",
         schema_version=int(schema_version) if isinstance(schema_version, int) else 1,
@@ -233,6 +260,9 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
         if isinstance(max_attempts, int)
         else 3,
         extraction_model=extraction_model,
+        extraction_concurrency=extraction_concurrency,
+        per_chunk_timeout_s=per_chunk_timeout_s,
+        batch_timeout_overhead_s=batch_timeout_overhead_s,
     )
 
 
@@ -247,17 +277,17 @@ def load_config() -> RagConfig:
     """Load ~/.gateway/rag.yaml and return parsed config."""
     config_path = _resolve_config_path()
     if config_path is None:
-        return RagConfig(watch_directories=[], scopes={})
+        return RagConfig(watch_directories=[], scopes={}, contextualize_model="")
 
     try:
         loaded: object = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     except Exception:
         logger.error("Failed to parse RAG config: path=%s", config_path, exc_info=True)
-        return RagConfig(watch_directories=[], scopes={})
+        return RagConfig(watch_directories=[], scopes={}, contextualize_model="")
 
     if not isinstance(loaded, dict):
         logger.error("Invalid RAG config root type: expected mapping")
-        return RagConfig(watch_directories=[], scopes={})
+        return RagConfig(watch_directories=[], scopes={}, contextualize_model="")
     parsed_root: dict[str, object] = {
         key: value for key, value in loaded.items() if isinstance(key, str)
     }
@@ -274,6 +304,12 @@ def load_config() -> RagConfig:
         raw_model.strip()
         if isinstance(raw_model, str) and raw_model.strip()
         else DEFAULT_EMBEDDING_MODEL
+    )
+    raw_index_workers = parsed_root.get("index_workers", DEFAULT_INDEX_WORKERS)
+    index_workers = (
+        raw_index_workers
+        if isinstance(raw_index_workers, int) and raw_index_workers > 0
+        else DEFAULT_INDEX_WORKERS
     )
     raw_indexing = parsed_root.get("automatic_indexing_enabled", True)
     automatic_indexing_enabled = (
@@ -301,20 +337,16 @@ def load_config() -> RagConfig:
             "(e.g. 'qwen3-5-9b-q8-0-262144')."
         )
     contextualize_model = raw_ctx_model.strip()
-    raw_ctx_conc = parsed_root.get("contextualize_max_concurrent", 32)
-    contextualize_max_concurrent = (
-        int(raw_ctx_conc) if isinstance(raw_ctx_conc, int) and raw_ctx_conc > 0 else 32
-    )
     return RagConfig(
         watch_directories=watch_directories,
         scopes=scopes,
         automatic_indexing_enabled=automatic_indexing_enabled,
         knowledge_extraction=knowledge_extraction,
         embedding_model=embedding_model,
+        index_workers=index_workers,
         corpus_hints_path=corpus_hints_path,
         article_registry_path=article_registry_path,
         baseline_extensions=BASELINE_EXTENSIONS,
         post_index_enforcement=post_index_enforcement,
         contextualize_model=contextualize_model,
-        contextualize_max_concurrent=contextualize_max_concurrent,
     )

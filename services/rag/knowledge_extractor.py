@@ -24,6 +24,11 @@ Parsed results flow to two destinations:
 
 Invariant: ∀ file: (∀ chunk extracted in one call) ∨ (∀ chunk unextracted).
 Partial writes were implemented twice and reverted twice — see lessons.
+
+Concurrency: a module-level semaphore (configured via ``configure_concurrency``)
+bounds the number of concurrent extraction batches to prevent saturating the
+backend model when multiple index workers run in parallel. Per-batch HTTP
+timeouts scale with chunk count as a secondary protection.
 """
 
 from __future__ import annotations
@@ -41,20 +46,51 @@ logger = logging.getLogger(__name__)
 
 STARGATE_URL = "http://localhost:9999"
 
-# Pipeline timeout is 3600s (rag-extraction-v2.yaml timeout_seconds: 3600).
-# The HTTP client must exceed that ceiling to avoid cutting the connection
-# before the pipeline finishes a large batch. Add 30s drain buffer.
-_PIPELINE_TIMEOUT_S = 3600.0
-_CLIENT_TIMEOUT_S = _PIPELINE_TIMEOUT_S + 30.0  # 3630s: pipeline ceiling + drain buffer
-_client = httpx.AsyncClient(timeout=_CLIENT_TIMEOUT_S)
+# Pipeline YAML ceiling (rag-extraction-v2.yaml timeout_seconds: 3600).
+# The default client timeout remains a safety net; per-batch timeouts override it.
+_PIPELINE_CEILING_S = 3600.0
+_client = httpx.AsyncClient(timeout=_PIPELINE_CEILING_S + 30.0)
 
 _MAX_RETRIES = 3
 _BACKOFF_BASE_S = 2.0
+_extraction_semaphore: asyncio.Semaphore | None = None
+_per_chunk_budget_s: float = 60.0
+_batch_overhead_s: float = 30.0
 
 # Pipeline registration window: pipelines register 5–10s after Stargate starts
 # accepting requests. MODEL_NOT_FOUND 404s during this window are transient.
 _PIPELINE_REGISTRATION_TIMEOUT_S = 60.0
 _PIPELINE_REGISTRATION_POLL_S = 3.0
+
+
+class BatchTimeoutError(Exception):
+    """Raised when a batch exceeds the configured dynamic timeout budget.
+
+    The timeout budget is attached so callers can emit observability events
+    with the actual limit that was exceeded for this specific batch.
+    """
+
+    def __init__(self, timeout_seconds: float) -> None:
+        super().__init__(f"Extraction batch timed out after {timeout_seconds:.0f}s")
+        self.timeout_seconds = timeout_seconds
+
+
+def configure_concurrency(config: KnowledgeExtractionConfig) -> None:
+    """Configure global extraction concurrency and timeout budgeting settings.
+
+    Called during RAG startup. The semaphore bounds in-flight extraction calls
+    across index workers, while timeout parameters define per-batch budgets.
+    """
+    global _extraction_semaphore, _per_chunk_budget_s, _batch_overhead_s
+    _extraction_semaphore = asyncio.Semaphore(config.extraction_concurrency)
+    _per_chunk_budget_s = config.per_chunk_timeout_s
+    _batch_overhead_s = config.batch_timeout_overhead_s
+    logger.info(
+        "Extraction concurrency configured: semaphore=%d, per_chunk=%.0fs, overhead=%.0fs",
+        config.extraction_concurrency,
+        _per_chunk_budget_s,
+        _batch_overhead_s,
+    )
 
 
 def _is_pipeline_not_registered(exc: Exception, pipeline_model: str) -> bool:
@@ -78,18 +114,24 @@ def _is_pipeline_not_registered(exc: Exception, pipeline_model: str) -> bool:
 
 @dataclass(slots=True, kw_only=True)
 class Facet:
+    """Key-value facet for an entity (e.g. port: 9999, role: master)."""
+
     name: str
     value: str
 
 
 @dataclass(slots=True, kw_only=True)
 class Relation:
+    """Directed edge between entities (subject → predicate → target)."""
+
     predicate: str
     target: str
 
 
 @dataclass(slots=True, kw_only=True)
 class Entity:
+    """Named concept with types, facets, and relations for one chunk."""
+
     name: str
     type: list[str]
     facets: list[Facet] = field(default_factory=list)
@@ -182,7 +224,7 @@ def _parse_map_response(
     """Parse map output by iteration order instead of model-supplied chunk IDs."""
     try:
         items = json.loads(content)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError:
         logger.error("Map response is not valid JSON")
         return [None] * len(chunk_ids)
 
@@ -222,8 +264,16 @@ async def _call_extraction(
     chunks: list[dict[str, str]],
     chunk_ids: list[str],
     config: KnowledgeExtractionConfig,
-) -> list[ExtractedKnowledge | None]:
-    """Single extraction HTTP call. Raises on non-2xx."""
+) -> tuple[list[ExtractedKnowledge | None], dict[str, float]]:
+    """Execute one extraction HTTP call with a dynamic per-batch timeout.
+
+    Timeout is computed as ``per_chunk_budget * chunk_count + overhead``, then
+    capped by the pipeline ceiling. Raises on non-2xx HTTP responses.
+    """
+    batch_timeout = min(
+        _PIPELINE_CEILING_S + _batch_overhead_s,
+        _per_chunk_budget_s * len(chunks) + _batch_overhead_s,
+    )
     response = await _client.post(
         f"{STARGATE_URL}/v1/chat/completions",
         json={
@@ -231,18 +281,21 @@ async def _call_extraction(
             "messages": [{"role": "user", "content": "extract"}],
             "pipeline_options": {"chunks": chunks},
         },
+        timeout=batch_timeout,
     )
     response.raise_for_status()
     body = response.json()
     content = body["choices"][0]["message"]["content"]
-    return _parse_map_response(content, chunk_ids)
+    parsed = _parse_map_response(content, chunk_ids)
+    timing = body.get("pipeline_timing") or {}
+    return parsed, timing
 
 
 async def _await_pipeline_registration(
     chunks: list[dict[str, str]],
     chunk_ids: list[str],
     config: KnowledgeExtractionConfig,
-) -> list[ExtractedKnowledge | None]:
+) -> tuple[list[ExtractedKnowledge | None], dict[str, float]]:
     """Poll until the pipeline model registers or the deadline expires.
 
     Called when the first MODEL_NOT_FOUND 404 is seen — the pipeline has not
@@ -263,7 +316,7 @@ async def _await_pipeline_registration(
                 config.pipeline,
                 _PIPELINE_REGISTRATION_TIMEOUT_S,
             )
-            return [None] * len(chunk_ids)
+            return [None] * len(chunk_ids), {}
         try:
             result = await _call_extraction(chunks, chunk_ids, config)
             logger.info(
@@ -272,45 +325,107 @@ async def _await_pipeline_registration(
                 remaining,
             )
             return result
-        except Exception as exc:
+        except httpx.HTTPStatusError as exc:
             if not _is_pipeline_not_registered(exc, config.pipeline):
                 logger.warning(
-                    "Non-registration error while waiting for pipeline: %s",
+                    "Unexpected HTTP error while waiting for pipeline: %s",
                     exc,
                     exc_info=True,
                 )
-                return [None] * len(chunk_ids)
+                return [None] * len(chunk_ids), {}
             logger.debug(
                 "Pipeline '%s' still not registered; %.0fs remaining",
                 config.pipeline,
                 remaining,
             )
+        except httpx.RequestError as exc:
+            logger.error(
+                "Network error during pipeline registration wait: %s",
+                exc,
+                exc_info=True,
+            )
+            return [None] * len(chunk_ids), {}
+        except Exception as exc:
+            logger.error(
+                "Unexpected non-HTTP error during pipeline registration wait: %s",
+                exc,
+                exc_info=True,
+            )
+            return [None] * len(chunk_ids), {}
 
 
 async def extract_knowledge_batch(
     chunk_ids: list[str],
     chunk_texts: list[str],
     config: KnowledgeExtractionConfig,
-) -> list[ExtractedKnowledge | None]:
+) -> tuple[list[ExtractedKnowledge | None], dict[str, float]]:
     """Extract structured knowledge from all chunks in a file via one pipeline call.
 
-    Returns list indexed to match input order; None for failed/missing chunks.
+    Acquires the configured semaphore before calling Stargate, bounding concurrent
+    extraction batches across index workers. Timeout exceptions are translated to
+    BatchTimeoutError so callers can emit a dedicated timeout event and preserve
+    per-file all-or-nothing behavior.
     """
     if not chunk_ids:
-        return []
+        return [], {}
 
     chunks = [
         {"id": cid, "text": text}
         for cid, text in zip(chunk_ids, chunk_texts, strict=True)
     ]
+    batch_timeout = min(
+        _PIPELINE_CEILING_S + _batch_overhead_s,
+        _per_chunk_budget_s * len(chunks) + _batch_overhead_s,
+    )
+
+    async def _guarded_call() -> tuple[
+        list[ExtractedKnowledge | None], dict[str, float]
+    ]:
+        if _extraction_semaphore is not None:
+            async with _extraction_semaphore:
+                return await _call_extraction(chunks, chunk_ids, config)
+        return await _call_extraction(chunks, chunk_ids, config)
 
     last_exc: Exception | None = None
     for attempt in range(_MAX_RETRIES):
         try:
-            return await _call_extraction(chunks, chunk_ids, config)
-        except Exception as exc:
+            return await _guarded_call()
+        except httpx.TimeoutException:
+            logger.warning(
+                "Batch extraction timed out (%d chunks, budget %.0fs); not retrying",
+                len(chunk_ids),
+                batch_timeout,
+            )
+            raise BatchTimeoutError(batch_timeout)
+        except httpx.HTTPStatusError as exc:
             if _is_pipeline_not_registered(exc, config.pipeline):
                 return await _await_pipeline_registration(chunks, chunk_ids, config)
+            last_exc = exc
+            if attempt < _MAX_RETRIES - 1:
+                delay = _BACKOFF_BASE_S ** (attempt + 1)
+                logger.warning(
+                    "Batch extraction attempt %d/%d failed (%s); retrying in %.1fs",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    type(exc).__name__,
+                    delay,
+                    exc_info=True,
+                )
+                await asyncio.sleep(delay)
+        except httpx.RequestError as exc:
+            last_exc = exc
+            if attempt < _MAX_RETRIES - 1:
+                delay = _BACKOFF_BASE_S ** (attempt + 1)
+                logger.warning(
+                    "Batch extraction attempt %d/%d failed (%s); retrying in %.1fs",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    type(exc).__name__,
+                    delay,
+                    exc_info=True,
+                )
+                await asyncio.sleep(delay)
+        except Exception as exc:
             last_exc = exc
             if attempt < _MAX_RETRIES - 1:
                 delay = _BACKOFF_BASE_S ** (attempt + 1)
@@ -330,4 +445,4 @@ async def extract_knowledge_batch(
         last_exc,
         exc_info=True,
     )
-    return [None] * len(chunk_ids)
+    return [None] * len(chunk_ids), {}

@@ -30,11 +30,18 @@ from services.rag.events import (
     rag_extraction_batch_completed,
     rag_extraction_batch_skipped,
     rag_extraction_batch_started,
+    rag_extraction_batch_timed_out,
     rag_extraction_completed,
     rag_extraction_failed,
     rag_extraction_permanently_skipped,
+    rag_extraction_recovery_completed,
+    rag_extraction_recovery_skipped,
 )
-from services.rag.knowledge_extractor import ExtractedKnowledge, extract_knowledge_batch
+from services.rag.knowledge_extractor import (
+    BatchTimeoutError,
+    ExtractedKnowledge,
+    extract_knowledge_batch,
+)
 from services.rag.property_index import PropertyIndex
 
 logger = logging.getLogger(__name__)
@@ -50,6 +57,8 @@ class ExtractionResult:
     entities/topics are counts; property_entries are (key, chunk_id, scope, source)
     quads for the property index; success is True when partial or full write was done.
     batch_start_ts: ISO-8601 timestamp when extraction batch started (for per-file duration).
+    processing_seconds: Optional Stargate-derived work time (post-queue).
+    queue_wait_seconds: Optional time from step start to first inference started.
     """
 
     entities: int = 0
@@ -57,6 +66,8 @@ class ExtractionResult:
     property_entries: list[tuple[str, str, str, str]] = field(default_factory=list)
     success: bool = field(default=False)
     batch_start_ts: str | None = None
+    processing_seconds: float | None = None
+    queue_wait_seconds: float | None = None
 
 
 def build_property_entries(
@@ -64,33 +75,42 @@ def build_property_entries(
 ) -> list[tuple[str, str, str, str]]:
     """Build (key, chunk_id, scope, source) quads from extracted knowledge.
 
-    Keys use prefixes: prop.name@@ (entity names), prop.type@@ (entity types),
-    prop.facet@@ (facets), prop.rel@@ (relations), prop.topic@@ (topics).
+    Keys use prefixes: prop.name@@{entity.name} (entity names),
+    prop.type@@{etype} (entity types),
+    prop.facet@@{facet.name}:{facet.value} (facets),
+    prop.rel@@{entity.name}>{relation.predicate}>{relation.target} (relations),
+    prop.topic@@{topic} (topics).
     """
-    return [
-        (f"prop.name@@{entity.name}", chunk_id, scope, source)
-        for entity in knowledge.entities
-    ] + [
-        (f"prop.type@@{etype}", chunk_id, scope, source)
-        for entity in knowledge.entities
-        for etype in entity.type
-    ] + [
-        (f"prop.facet@@{facet.name}:{facet.value}", chunk_id, scope, source)
-        for entity in knowledge.entities
-        for facet in entity.facets
-    ] + [
-        (
-            f"prop.rel@@{entity.name}>{relation.predicate}>{relation.target}",
-            chunk_id,
-            scope,
-            source,
-        )
-        for entity in knowledge.entities
-        for relation in entity.relations
-    ] + [
-        (f"prop.topic@@{topic}", chunk_id, scope, source)
-        for topic in knowledge.topics
-    ]
+    return (
+        [
+            (f"prop.name@@{entity.name}", chunk_id, scope, source)
+            for entity in knowledge.entities
+        ]
+        + [
+            (f"prop.type@@{etype}", chunk_id, scope, source)
+            for entity in knowledge.entities
+            for etype in entity.type
+        ]
+        + [
+            (f"prop.facet@@{facet.name}:{facet.value}", chunk_id, scope, source)
+            for entity in knowledge.entities
+            for facet in entity.facets
+        ]
+        + [
+            (
+                f"prop.rel@@{entity.name}>{relation.predicate}>{relation.target}",
+                chunk_id,
+                scope,
+                source,
+            )
+            for entity in knowledge.entities
+            for relation in entity.relations
+        ]
+        + [
+            (f"prop.topic@@{topic}", chunk_id, scope, source)
+            for topic in knowledge.topics
+        ]
+    )
 
 
 def _publish_event_nonblocking(event_bus: EventBus, event: Event) -> None:
@@ -187,12 +207,70 @@ async def run_extraction(
         )
 
     start = time.monotonic()
-    knowledge_list = await extract_knowledge_batch(
-        chunk_ids=ids,
-        chunk_texts=[c.text for c in chunks],
-        config=config,
-    )
+    try:
+        extract_return = await extract_knowledge_batch(
+            chunk_ids=ids,
+            chunk_texts=[c.text for c in chunks],
+            config=config,
+        )
+    except BatchTimeoutError as exc:
+        duration = time.monotonic() - start
+        timeout_error = f"batch extraction timeout ({exc.timeout_seconds:.0f}s)"
+        logger.warning(
+            "Extraction batch timed out for %s (%d chunks, %.0fs budget)",
+            file,
+            len(ids),
+            exc.timeout_seconds,
+        )
+        for chunk_id in ids:
+            await property_index.record_failure(
+                chunk_id=chunk_id,
+                source=file,
+                error=timeout_error,
+                permanent=False,
+            )
+            if event_bus is not None:
+                _publish_event_nonblocking(
+                    event_bus,
+                    rag_extraction_failed(
+                        chunk_id=chunk_id,
+                        error=timeout_error,
+                    ),
+                )
+        if event_bus is not None:
+            _publish_event_nonblocking(
+                event_bus,
+                rag_extraction_batch_timed_out(
+                    file=file,
+                    chunk_count=len(ids),
+                    timeout_seconds=exc.timeout_seconds,
+                    duration_seconds=duration,
+                ),
+            )
+        return result
     duration = time.monotonic() - start
+    knowledge_list: list[ExtractedKnowledge | None]
+    if isinstance(extract_return, tuple) and len(extract_return) == 2:
+        knowledge_list, timing = extract_return
+        if isinstance(timing, dict):
+            result.processing_seconds = timing.get("processing_seconds")
+            result.queue_wait_seconds = timing.get("queue_wait_seconds")
+    elif isinstance(extract_return, list | tuple):
+        knowledge_list = list(extract_return)
+    else:
+        logger.error(
+            "extract_knowledge_batch returned unexpected type %s for file %s",
+            type(extract_return).__name__,
+            file,
+        )
+        return result
+    if not isinstance(knowledge_list, list | tuple):
+        logger.error(
+            "extract_knowledge_batch returned unexpected type %s for file %s",
+            type(knowledge_list).__name__,
+            file,
+        )
+        return result
 
     staged: dict[str, ExtractedKnowledge] = {}
     for knowledge in knowledge_list:
@@ -206,8 +284,11 @@ async def run_extraction(
 
     failed_ids = [cid for cid in ids if cid not in staged]
     successful = len(staged)
+    # Threshold applied to the active (non-permanently-failed) chunk set.
     failure_ratio = len(failed_ids) / len(ids) if ids else 0.0
     accept_partial = bool(failed_ids) and failure_ratio <= _FAILURE_THRESHOLD
+
+    failure_counts_snapshot = property_index.get_failure_counts(file)
 
     if failed_ids:
         if accept_partial:
@@ -228,9 +309,7 @@ async def run_extraction(
                 len(ids),
             )
         for chunk_id in failed_ids:
-            new_attempt_count = (
-                property_index.get_failure_counts(file).get(chunk_id, 0) + 1
-            )
+            new_attempt_count = failure_counts_snapshot.get(chunk_id, 0) + 1
             is_permanent = new_attempt_count >= config.max_extraction_attempts
             await property_index.record_failure(
                 chunk_id=chunk_id,
@@ -282,8 +361,12 @@ async def run_extraction(
         result.property_entries = all_property_entries
         written = len(staged)
         result.success = True
-        # Clear failure records for this file — successful extraction supersedes them.
-        await property_index.clear_failures_for(file)
+        # Clear failure records: full write clears all; partial write clears only
+        # successful chunk IDs so failed chunks keep their attempt count for retry.
+        if accept_partial:
+            await property_index.clear_failures_for_ids(file, list(staged.keys()))
+        else:
+            await property_index.clear_failures_for(file)
     else:
         written = 0
 
@@ -328,12 +411,9 @@ async def recover_missing_extraction(
     """
     needs_recovery = any(
         "extraction_schema_version" not in m for m in existing_metadatas
-    ) or (
-        bool(config.extraction_model)
-        and any(
-            m.get("extraction_model") != config.extraction_model
-            for m in existing_metadatas
-        )
+    ) or any(
+        config.extraction_model and m.get("extraction_model") != config.extraction_model
+        for m in existing_metadatas
     )
     if not needs_recovery:
         return None
@@ -359,19 +439,54 @@ async def recover_missing_extraction(
                     max_attempts=max_attempts,
                 ),
             )
-        return ExtractionResult()
+            _publish_event_nonblocking(
+                event_bus,
+                rag_extraction_recovery_skipped(
+                    file=source, reason="all chunks permanently failed"
+                ),
+            )
+        return None
 
     with_docs = collection.get(ids=existing_ids, include=["documents", "metadatas"])
-    docs: list[str] = with_docs.get("documents") or []
-    metadatas_from_db: list[Any] = with_docs.get("metadatas") or []
-    metadatas: list[dict[str, Any]] = [
-        m for m in metadatas_from_db if isinstance(m, dict)
+    raw_ids: list[str] = with_docs.get("ids") or []
+    raw_docs: list[str] = with_docs.get("documents") or []
+    raw_metadatas: list[Any] = with_docs.get("metadatas") or []
+    if len(raw_ids) != len(raw_docs) or len(raw_ids) != len(raw_metadatas):
+        logger.warning(
+            "Recovery skipped for %s: inconsistent ChromaDB payload lengths "
+            "(ids=%d docs=%d metadatas=%d)",
+            source,
+            len(raw_ids),
+            len(raw_docs),
+            len(raw_metadatas),
+        )
+        if event_bus is not None:
+            _publish_event_nonblocking(
+                event_bus,
+                rag_extraction_recovery_skipped(
+                    file=source, reason="inconsistent ChromaDB payload lengths"
+                ),
+            )
+        return None
+    aligned: list[tuple[str, str, dict[str, Any]]] = [
+        (i, d, m)
+        for i, d, m in zip(raw_ids, raw_docs, raw_metadatas, strict=True)
+        if isinstance(m, dict)
     ]
-    ids: list[str] = with_docs.get("ids") or []
+    ids: list[str] = [t[0] for t in aligned]
+    docs: list[str] = [t[1] for t in aligned]
+    metadatas: list[dict[str, Any]] = [t[2] for t in aligned]
 
     if not docs:
         logger.warning("Recovery: no documents found in ChromaDB for %s", source)
-        return ExtractionResult()
+        if event_bus is not None:
+            _publish_event_nonblocking(
+                event_bus,
+                rag_extraction_recovery_skipped(
+                    file=source, reason="no documents in ChromaDB"
+                ),
+            )
+        return None
 
     # run_extraction only uses chunk.text — minimal Chunk objects are sufficient.
     chunks = [Chunk(text=doc, metadata={}) for doc in docs]
@@ -410,4 +525,13 @@ async def recover_missing_extraction(
         ext_result.entities,
         ext_result.topics,
     )
+    if event_bus is not None:
+        _publish_event_nonblocking(
+            event_bus,
+            rag_extraction_recovery_completed(
+                file=source,
+                entities=ext_result.entities,
+                topics=ext_result.topics,
+            ),
+        )
     return ext_result

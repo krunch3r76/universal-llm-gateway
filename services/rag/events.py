@@ -1,3 +1,11 @@
+"""RAG service event factories.
+
+All public functions are decorated with @event_factory and return an Event
+with a dot-namespaced signal and a structured payload. Optional payload fields
+are omitted (not set to None) when not provided; consumers must treat absence
+and None as equivalent.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -34,13 +42,52 @@ def rag_watch_directory_missing(*, path: str) -> Event:
 
 
 @event_factory
+def rag_watch_initial_started(*, path: str, total_files: int) -> Event:
+    """Emitted once per watch path when startup sweep candidate list is finalized."""
+    return Event(
+        signal="rag.watch.initial.started",
+        payload={"path": path, "total_files": total_files},
+    )
+
+
+@event_factory
+def rag_watch_initial_progress(
+    *,
+    path: str,
+    total_files: int,
+    processed: int,
+    reindexed: int,
+    unchanged: int,
+    errors: int,
+) -> Event:
+    """Emitted on each terminal file result during startup sweep with monotonic counters."""
+    return Event(
+        signal="rag.watch.initial.progress",
+        payload={
+            "path": path,
+            "total_files": total_files,
+            "processed": processed,
+            "reindexed": reindexed,
+            "unchanged": unchanged,
+            "errors": errors,
+        },
+    )
+
+
+@event_factory
 def rag_watch_initial_complete(
     *,
     path: str,
     files: int,
     reindexed: int,
     unchanged: int,
+    errors: int,
 ) -> Event:
+    """Emitted once per watch path at end of startup sweep.
+
+    Invariant: total_files (from progress) == reindexed + unchanged + errors.
+    files is the count of files considered (excludes invalid paths).
+    """
     return Event(
         signal="rag.watch.initial.complete",
         payload={
@@ -48,6 +95,7 @@ def rag_watch_initial_complete(
             "files": files,
             "reindexed": reindexed,
             "unchanged": unchanged,
+            "errors": errors,
         },
     )
 
@@ -220,9 +268,11 @@ def rag_extraction_batch_completed(
             "written": written,
             "duration_seconds": duration_seconds,
             **(
-                {"extraction_model": extraction_model}
-                if extraction_model is not None
-                else {}
+                {
+                    key: value
+                    for key, value in {"extraction_model": extraction_model}.items()
+                    if value is not None
+                }
             ),
         },
     )
@@ -247,6 +297,33 @@ def rag_extraction_model_mismatch(
 
 
 @event_factory
+def rag_extraction_recovery_completed(
+    *,
+    file: str,
+    entities: int,
+    topics: int,
+) -> Event:
+    """Emitted when a recovery pass for missing extraction metadata completes successfully."""
+    return Event(
+        signal="rag.extraction.recovery.completed",
+        payload={"file": file, "entities": entities, "topics": topics},
+    )
+
+
+@event_factory
+def rag_extraction_recovery_skipped(
+    *,
+    file: str,
+    reason: str,
+) -> Event:
+    """Emitted when recovery was skipped (e.g. no documents in ChromaDB, all chunks permanently failed)."""
+    return Event(
+        signal="rag.extraction.recovery.skipped",
+        payload={"file": file, "reason": reason},
+    )
+
+
+@event_factory
 def rag_extraction_batch_skipped(
     *,
     file: str,
@@ -266,6 +343,30 @@ def rag_extraction_batch_skipped(
             "chunk_count": chunk_count,
             "skipped_count": skipped_count,
             "max_attempts": max_attempts,
+        },
+    )
+
+
+@event_factory
+def rag_extraction_batch_timed_out(
+    *,
+    file: str,
+    chunk_count: int,
+    timeout_seconds: float,
+    duration_seconds: float,
+) -> Event:
+    """Emitted when an extraction batch exceeds its dynamic per-batch timeout.
+
+    Timeout scales with chunk_count and configured overhead. All chunks in the
+    batch are recorded as transient failures and retried on a future sweep.
+    """
+    return Event(
+        signal="rag.extraction.batch.timed.out",
+        payload={
+            "file": file,
+            "chunk_count": chunk_count,
+            "timeout_seconds": timeout_seconds,
+            "duration_seconds": duration_seconds,
         },
     )
 
@@ -339,6 +440,8 @@ def rag_file_indexed(
     batch_start_ts: str | None = None,
     document_metadata: dict[str, Any] | None = None,
     bibliography_chunks: int | None = None,
+    processing_seconds: float | None = None,
+    queue_wait_seconds: float | None = None,
 ) -> Event:
     """Emitted after a file is fully indexed into both ChromaDB and the property index.
 
@@ -346,6 +449,8 @@ def rag_file_indexed(
     document_metadata: optional dict for document-specific fields (e.g. article_title, article_authors,
         article_venue, published_date, article_doi when file is in article registry).
     bibliography_chunks: optional count of chunks tagged is_bibliography for this file.
+    processing_seconds: optional Stargate-derived work time (post-queue).
+    queue_wait_seconds: optional time from pipeline step start to first inference started.
     """
     return Event(
         signal="rag.file.indexed",
@@ -354,19 +459,17 @@ def rag_file_indexed(
             "deleted": deleted,
             "indexed": indexed,
             "duration_seconds": duration_seconds,
-            **(
-                {"batch_start_ts": batch_start_ts} if batch_start_ts is not None else {}
-            ),
-            **(
-                {"document_metadata": document_metadata}
-                if document_metadata is not None
-                else {}
-            ),
-            **(
-                {"bibliography_chunks": bibliography_chunks}
-                if bibliography_chunks is not None
-                else {}
-            ),
+            **{
+                key: value
+                for key, value in {
+                    "batch_start_ts": batch_start_ts,
+                    "document_metadata": document_metadata,
+                    "bibliography_chunks": bibliography_chunks,
+                    "processing_seconds": processing_seconds,
+                    "queue_wait_seconds": queue_wait_seconds,
+                }.items()
+                if value is not None
+            },
         },
     )
 
@@ -407,6 +510,27 @@ def rag_file_indexing_failed(
     return Event(
         signal="rag.file.indexing.failed",
         payload={"file": file, "error": error},
+    )
+
+
+@event_factory
+def rag_embedding_chunk_fallback(
+    *,
+    model: str,
+    text_len: int,
+    dim: int,
+) -> Event:
+    """Emitted when a single-item embedding batch fails all retries and a zero vector is substituted.
+
+    Signals a content-specific fault — the chunk is retained in the index with a
+    zero vector and is not retrievable by semantic search. Operators should monitor
+    the rate of this signal to detect sustained embedding degradation. text_len is
+    the character length of the failing text; dim matches the active model's output
+    dimension.
+    """
+    return Event(
+        signal="rag.embedding.chunk.fallback",
+        payload={"model": model, "text_len": text_len, "dim": dim},
     )
 
 
