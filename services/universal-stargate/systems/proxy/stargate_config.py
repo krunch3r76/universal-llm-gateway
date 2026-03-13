@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import yaml
 from universal_logging import get_logger
@@ -97,19 +97,16 @@ def _validate_request_queue_config(request_queue_config: dict[str, Any]) -> None
             )
 
 
-def _validate_eviction_hysteresis(config: dict[str, Any]) -> None:
-    """Validate routing.eviction_cooldown_s (30–120s, default 120)."""
+def _validate_eviction_hysteresis(
+    config: dict[str, Any], configured_queue_timeout: float
+) -> None:
+    """Validate routing.eviction_cooldown_s against queue timeout."""
     cooldown = config.get("routing", {}).get("eviction_cooldown_s")
     if cooldown is None:
         return
     cooldown = float(cooldown)
     if cooldown < 30.0:
         raise ValueError(f"routing.eviction_cooldown_s={cooldown} too low (min 30s)")
-    # The queue_timeout should be passed as an argument to this validation function
-    # For now, we'll use a placeholder, but this needs to be refactored upstream
-    # to pass the actual configured queue timeout.
-    configured_queue_timeout = 1800.0 # Placeholder, needs to come from config
-
     if cooldown > configured_queue_timeout:
         raise ValueError(
             f"routing.eviction_cooldown_s={cooldown} exceeds queue timeout "
@@ -197,8 +194,10 @@ class StargateConfig:
         _validate_request_queue_config(request_queue_config)
         _validate_routing_capacity(self.config)
         _validate_model_routing_config(self.config.get("model_routing", {}))
-        # Pass the actual queue_timeout from the config to the validation function
-        queue_timeout = request_queue_config.get("queue_timeout", 1800.0) # Use default if not specified
+        # Pass configured queue timeout to hysteresis validation.
+        queue_timeout = request_queue_config.get(
+            "queue_timeout", 1800.0
+        )  # Use default if not specified
         _validate_eviction_hysteresis(self.config, queue_timeout)
         logger.debug("✅ Configuration validation passed")
 
@@ -367,20 +366,7 @@ class StargateConfig:
         """Get cloud_proxy configuration (None if absent)."""
         return self.config.get("cloud_proxy")
 
-from typing import TypedDict
-
-class DebugEventPersistenceConfig(TypedDict):
-    enabled: bool
-    directory: str
-    max_file_size_mb: int
-    max_files: int
-    flush_interval_seconds: float
-
-class DebugEventConfig(TypedDict):
-    persistence: DebugEventPersistenceConfig
-    socket_path: str | None
-
-    def get_debug_event_config(self) -> DebugEventConfig:
+    def get_debug_event_config(self) -> dict[str, Any]:
         """
         Get debug event configuration.
 
@@ -427,17 +413,7 @@ class DebugEventConfig(TypedDict):
             "socket_path": socket_path,
         }
 
-from typing import TypedDict # Assuming TypedDict is already imported or will be
-
-class PipelineEventConfig(TypedDict):
-    enabled: bool
-    directory: str
-    max_file_size_mb: int
-    max_files: int
-    flush_interval_seconds: float
-    signal_filter: str
-
-    def get_pipeline_event_config(self) -> PipelineEventConfig:
+    def get_pipeline_event_config(self) -> "PipelineEventConfig":
         """
         Get dedicated pipeline event persistence configuration.
 
@@ -471,3 +447,25 @@ class PipelineEventConfig(TypedDict):
             "flush_interval_seconds": persist_config.get("flush_interval_seconds", 0.5),
             "signal_filter": "pipeline.",
         }
+
+
+class DebugEventPersistenceConfig(TypedDict):
+    enabled: bool
+    directory: str
+    max_file_size_mb: int
+    max_files: int
+    flush_interval_seconds: float
+
+
+class DebugEventConfig(TypedDict):
+    persistence: DebugEventPersistenceConfig
+    socket_path: str | None
+
+
+class PipelineEventConfig(TypedDict):
+    enabled: bool
+    directory: str
+    max_file_size_mb: int
+    max_files: int
+    flush_interval_seconds: float
+    signal_filter: str

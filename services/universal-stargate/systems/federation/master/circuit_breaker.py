@@ -10,11 +10,14 @@ STATE_MACHINE: CLOSED → OPEN → HALF_OPEN → CLOSED
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from universal_event_bus import EventBus
 
 
 class CircuitState(StrEnum):
@@ -58,15 +61,37 @@ class FederationCircuitBreaker:
         recovery_timeout_seconds: float = 30.0,
         half_open_max_requests: int = 3,
         gateway_failure_model_threshold: int = 3,
+        event_bus: "EventBus | None" = None,
     ):
         self._failure_threshold = failure_threshold
         self._recovery_timeout = recovery_timeout_seconds
         self._half_open_max = half_open_max_requests
         self._gateway_failure_model_threshold = gateway_failure_model_threshold
+        self._event_bus = event_bus
 
         self._circuits: dict[tuple[str, str], CircuitStats] = {}
         self._half_open_requests: dict[tuple[str, str], int] = {}
         self._gateway_wide_open: dict[str, float] = {}
+
+    async def _emit_rejected(
+        self,
+        gateway_id: str,
+        model_id: str,
+        reason: str,
+    ) -> None:
+        if self._event_bus is None:
+            return
+        from src.scheduling.events.federation_signaling import (
+            FederationCircuitBreakerRequestRejected,
+        )
+
+        await self._event_bus.publish_async_nowait(
+            FederationCircuitBreakerRequestRejected(
+                gateway_id=gateway_id,
+                model_id=model_id,
+                reason=reason,
+            )
+        )
 
     def _pair_key(self, gateway_id: str, model_id: str) -> tuple[str, str]:
         return (gateway_id, model_id)
@@ -131,6 +156,11 @@ class FederationCircuitBreaker:
             logger.warning(
                 f"🔴 Gateway-wide circuit OPEN for {gateway_id} - rejecting request"
             )
+            await self._emit_rejected(
+                gateway_id=gateway_id,
+                model_id=model_id,
+                reason="gateway_wide_open",
+            )
             return False
 
         pair_key = self._pair_key(gateway_id, model_id)
@@ -147,6 +177,11 @@ class FederationCircuitBreaker:
             logger.warning(
                 f"🔴 Circuit OPEN for {gateway_id}/{model_id} - rejecting request"
             )
+            await self._emit_rejected(
+                gateway_id=gateway_id,
+                model_id=model_id,
+                reason="model_circuit_open",
+            )
             return False
 
         # HALF_OPEN - allow limited requests
@@ -154,6 +189,11 @@ class FederationCircuitBreaker:
         if half_open_count >= self._half_open_max:
             logger.debug(
                 f"🟡 Circuit HALF_OPEN limit reached for {gateway_id}/{model_id}"
+            )
+            await self._emit_rejected(
+                gateway_id=gateway_id,
+                model_id=model_id,
+                reason="half_open_limit_reached",
             )
             return False
 

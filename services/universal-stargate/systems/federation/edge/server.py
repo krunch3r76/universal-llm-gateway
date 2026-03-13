@@ -144,11 +144,39 @@ class EdgeFederationServer:
             if not expected_key:
                 logger.warning(f"Auth failed: {peer_id} not in allowed_peers")
                 await self._send_auth_result(websocket, False, "Unknown peer")
+                if self._event_bus is not None:
+                    from src.scheduling.events.federation_signaling import (
+                        FederationPeerAuthFailed,
+                    )
+
+                    asyncio.create_task(
+                        self._event_bus.publish_async_nowait(
+                            FederationPeerAuthFailed(
+                                peer_id=peer_id,
+                                reason="unknown_peer",
+                            )
+                        ),
+                        name="emit-federation-peer-auth-failed",
+                    )
                 return False
 
             if api_key != expected_key:
                 logger.warning(f"Auth failed: Invalid API key for {peer_id}")
                 await self._send_auth_result(websocket, False, "Invalid API key")
+                if self._event_bus is not None:
+                    from src.scheduling.events.federation_signaling import (
+                        FederationPeerAuthFailed,
+                    )
+
+                    asyncio.create_task(
+                        self._event_bus.publish_async_nowait(
+                            FederationPeerAuthFailed(
+                                peer_id=peer_id,
+                                reason="invalid_api_key",
+                            )
+                        ),
+                        name="emit-federation-peer-auth-failed",
+                    )
                 return False
 
         # Register authenticated peer (atomic — no await between check and write)
@@ -162,6 +190,24 @@ class EdgeFederationServer:
         )
 
         logger.info(f"✅ Peer {peer_id} authenticated")
+        if self._event_bus is not None:
+            from src.scheduling.events.federation_signaling import (
+                FederationConnectionAuthenticated,
+            )
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    FederationConnectionAuthenticated(
+                        remote_id=peer_id,
+                        method=(
+                            "disabled"
+                            if not self._config.federation_auth_enabled
+                            else "api_key"
+                        ),
+                    )
+                ),
+                name="emit-federation-connection-authenticated",
+            )
 
         # Send cached GATEWAY_SNAPSHOT to new peer (contains catalog for routing)
         if self._cached_gateway_snapshot:
@@ -212,10 +258,25 @@ class EdgeFederationServer:
         """Handle peer disconnection."""
         if peer_id in self._authenticated_peers:
             del self._authenticated_peers[peer_id]
+            remaining = len(self._authenticated_peers)
             logger.info(
                 f"⚠️ Peer {peer_id} disconnected "
-                f"(remaining: {len(self._authenticated_peers)})"
+                f"(remaining: {remaining})"
             )
+            if self._event_bus is not None:
+                from src.scheduling.events.federation_signaling import (
+                    FederationPeerDisconnected,
+                )
+
+                asyncio.create_task(
+                    self._event_bus.publish_async_nowait(
+                        FederationPeerDisconnected(
+                            peer_id=peer_id,
+                            remaining_peers=remaining,
+                        )
+                    ),
+                    name="emit-federation-peer-disconnected",
+                )
 
     # ─── Telemetry Caching & Forwarding ────────────────────────────────────
 
@@ -377,6 +438,21 @@ class EdgeFederationServer:
                 try:
                     await websocket.send_text(msg_json)
                     sent = True
+                    if self._event_bus is not None:
+                        from src.scheduling.events.federation_signaling import (
+                            FederationVramRequestSent,
+                        )
+
+                        asyncio.create_task(
+                            self._event_bus.publish_async_nowait(
+                                FederationVramRequestSent(
+                                    request_id=request_id,
+                                    peer_id=peer_id,
+                                    device_index=device_index,
+                                )
+                            ),
+                            name="emit-federation-vram-request-sent",
+                        )
                     break
                 except WebSocketDisconnect:
                     logger.info(
@@ -391,6 +467,20 @@ class EdgeFederationServer:
                         e,
                     )
             if not sent:
+                if self._event_bus is not None:
+                    from src.scheduling.events.federation_signaling import (
+                        FederationVramRequestFailed,
+                    )
+
+                    asyncio.create_task(
+                        self._event_bus.publish_async_nowait(
+                            FederationVramRequestFailed(
+                                request_id=request_id,
+                                reason="no_peer_dispatch_succeeded",
+                            )
+                        ),
+                        name="emit-federation-vram-request-failed",
+                    )
                 raise RuntimeError(
                     "Failed to dispatch VRAM measurement request to peers"
                 )
@@ -405,8 +495,36 @@ class EdgeFederationServer:
         future = self._pending_requests.get(request_id)
         if future and not future.done():
             future.set_result(data)
+            if self._event_bus is not None:
+                from src.scheduling.events.federation_signaling import (
+                    FederationVramResponseReceived,
+                )
+
+                asyncio.create_task(
+                    self._event_bus.publish_async_nowait(
+                        FederationVramResponseReceived(
+                            request_id=request_id,
+                            matched=True,
+                        )
+                    ),
+                    name="emit-federation-vram-response-received",
+                )
             return True
         logger.warning(f"No pending request for measurement response {request_id}")
+        if self._event_bus is not None:
+            from src.scheduling.events.federation_signaling import (
+                FederationVramResponseReceived,
+            )
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    FederationVramResponseReceived(
+                        request_id=request_id,
+                        matched=False,
+                    )
+                ),
+                name="emit-federation-vram-response-unmatched",
+            )
         return False
 
     # ─── Gateway Telemetry Wiring ──────────────────────────────────────────
@@ -463,6 +581,20 @@ class EdgeFederationServer:
         logger.info(
             f"✅ Gateway telemetry wired for Edge forwarding (gateway={gateway_url})"
         )
+        if self._event_bus is not None:
+            from src.scheduling.events.federation_signaling import (
+                FederationTelemetryWired,
+            )
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    FederationTelemetryWired(
+                        gateway_url=gateway_url,
+                        gateway_id=self._source.gateway_id,
+                    )
+                ),
+                name="emit-federation-telemetry-wired",
+            )
 
     def _send_initial_telemetry(
         self, ws_client: GatewayWebSocketClient, gateway_url: str
@@ -558,3 +690,14 @@ class EdgeFederationServer:
             "data": payload,
         }
         await self._broadcast_to_peers(message)
+        if self._event_bus is not None:
+            from src.scheduling.events.federation_signaling import (
+                FederationRequestInferenceStartedForwarded,
+            )
+
+            await self._event_bus.publish_async_nowait(
+                FederationRequestInferenceStartedForwarded(
+                    request_id=payload.get("request_id"),
+                    peer_count=len(self._authenticated_peers),
+                )
+            )

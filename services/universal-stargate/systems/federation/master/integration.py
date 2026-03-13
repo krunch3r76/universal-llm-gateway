@@ -297,6 +297,7 @@ class MasterIntegration:
             failure_threshold=cb_config.failure_threshold,
             recovery_timeout_seconds=cb_config.recovery_timeout_seconds,
             half_open_max_requests=cb_config.half_open_max_requests,
+            event_bus=self._event_bus,
         )
 
     async def _start_master_connections(

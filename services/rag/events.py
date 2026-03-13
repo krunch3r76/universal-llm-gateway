@@ -545,6 +545,19 @@ def rag_corpus_hints_updated(
 
 
 @event_factory
+def rag_corpus_hints_update_failed(
+    *,
+    path: str,
+    error: str,
+) -> Event:
+    """Emitted when corpus_hints.yaml update fails after indexing."""
+    return Event(
+        signal="rag.corpus_hints.update.failed",
+        payload={"path": path, "error": error},
+    )
+
+
+@event_factory
 def rag_directory_cleared(
     *,
     path: str,

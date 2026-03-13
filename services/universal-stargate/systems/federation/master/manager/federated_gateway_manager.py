@@ -879,6 +879,16 @@ class FederatedGatewayManager(Sequential):
 
         # Pre-condition observation (for observability)
         pre_loaded_models = gw.loaded_models
+        model_lifecycle_types = {
+            FederationMessageType.MODEL_LOADING_STARTED.value,
+            FederationMessageType.MODEL_LOADED.value,
+            FederationMessageType.MODEL_LOAD_FAILED.value,
+            FederationMessageType.MODEL_UNLOADED.value,
+            FederationMessageType.MODEL_BUSY.value,
+            FederationMessageType.MODEL_IDLE.value,
+        }
+        is_model_lifecycle_event = msg_type in model_lifecycle_types
+        model_id_for_event = parsed.get("model_id")
 
         # Update based on message type
         if msg_type == FederationMessageType.GATEWAY_SNAPSHOT.value:
@@ -905,11 +915,39 @@ class FederatedGatewayManager(Sequential):
         # Update timestamps (CRITICAL: prevents gateway from becoming unreachable)
         self._update_telemetry_timestamps(gw)
 
+        if self._event_bus and msg_type == FederationMessageType.RESOURCE_UPDATE.value:
+            from src.scheduling.events.federation_signaling import (
+                FederationResourceUpdated,
+            )
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    FederationResourceUpdated(
+                        gateway_id=gateway_id,
+                        vram_free_mb=gw.vram_free_mb,
+                        ram_free_mb=gw.ram_free_mb,
+                    )
+                )
+            )
+
+        if self._event_bus and is_model_lifecycle_event and model_id_for_event:
+            from src.scheduling.events.federation_signaling import (
+                FederationModelLifecycleEvent,
+            )
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    FederationModelLifecycleEvent(
+                        gateway_id=gateway_id,
+                        msg_type=msg_type,
+                        model_id=str(model_id_for_event),
+                    )
+                )
+            )
+
         # Publish GATEWAY_RESOURCE_UPDATE for TelemetryFreshnessWaiter integration
         # This wakes waiting requests in Master mode sticky queue wait
         if self._event_bus:
-            import asyncio
-
             from src.scheduling.events import GatewayResourceUpdate
 
             asyncio.create_task(
@@ -1266,6 +1304,19 @@ class FederatedGatewayManager(Sequential):
                 self.clear_load_failures(gateway_id)
                 del self._gateways[gateway_id]
                 removed.append(gateway_id)
+                if self._event_bus:
+                    from src.scheduling.events.federation_signaling import (
+                        FederatedGatewayRemoved,
+                    )
+
+                    asyncio.create_task(
+                        self._event_bus.publish_async_nowait(
+                            FederatedGatewayRemoved(
+                                gateway_id=gateway_id,
+                                remote_id=remote_stargate_id,
+                            )
+                        )
+                    )
 
         if removed:
             logger.info(f"Removed {len(removed)} gateways from {remote_stargate_id}")

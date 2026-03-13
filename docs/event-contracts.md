@@ -981,6 +981,13 @@ provider HTTP failures.
 | `federation.load.failed` | `request_id`, `remote_id`, `model_id`, `error` | `correlation_id` |
 | `federation.orchestrator.decided` | `request_id`, `decision_type`, `target`, `reason` | `correlation_id`, `alternatives_considered` |
 | `federation.orchestrator.evicted` | `target_remote`, `model_id`, `reason` | - |
+| `federation.peer.auth_failed` | `peer_id`, `reason` | edge peer auth failed (unknown_peer, invalid_api_key) |
+| `federation.peer.disconnected` | `peer_id`, `remaining_peers` | authenticated peer disconnected from edge |
+| `federation.telemetry.wired` | `gateway_url`, `gateway_id` | edge finished wiring local gateway telemetry |
+| `federation.request.inference_started.forwarded` | `request_id`, `peer_count` | edge forwarded request.inference.started to peers |
+| `federation.model.lifecycle_event` | `gateway_id`, `msg_type`, `model_id` | master applied federated model lifecycle telemetry |
+| `federation.resource.updated` | `gateway_id`, `vram_free_mb`, `ram_free_mb` | master applied RESOURCE_UPDATE from edge |
+| `federation.circuit_breaker.request_rejected` | `gateway_id`, `model_id`, `reason` | request rejected (gateway_wide_open, model_circuit_open, half_open_limit_reached) |
 
 ### Gateway Events
 
@@ -1032,6 +1039,7 @@ provider HTTP failures.
 | `rag.search.executed` | `query_len`, `top_k`, `results`, `scope` | search completed with ≥1 result; `scope`: str \| list[str] \| None |
 | `rag.search.no_results` | `query_len`, `scope` | search completed with 0 results; `scope`: str \| list[str] \| None |
 | `rag.corpus_hints.updated` | `path`, `scopes_updated`, `timestamp` | corpus_hints.yaml written after aggregation from property index |
+| `rag.corpus_hints.update.failed` | `path`, `error` | corpus_hints.yaml update failed after indexing |
 
 ### Doc Generate Events
 

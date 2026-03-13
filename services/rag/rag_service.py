@@ -75,6 +75,7 @@ from services.rag.embeddings import configure as configure_embeddings
 from services.rag.events import (
     rag_article_registry_failed,
     rag_article_registry_loaded,
+    rag_corpus_hints_update_failed,
     rag_extraction_model_mismatch,
     rag_file_deleted,
     rag_file_indexed,
@@ -204,10 +205,10 @@ async def _maybe_update_corpus_hints() -> None:
         )
         if _event_bus is not None:
             await _event_bus.publish_async_nowait(
-                # Assuming a new event `rag_corpus_hints_update_failed` exists
-                # or a generic `rag_warning` event with details.
-                # For now, this is a placeholder.
-                rag_file_indexing_failed(file="corpus_hints_update", error=str(e))
+                rag_corpus_hints_update_failed(
+                    path=str(_config.corpus_hints_path),
+                    error=str(e),
+                )
             )
 
 
