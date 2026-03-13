@@ -22,6 +22,8 @@ from src.scheduling.events import (
 from .fetcher import TelemetryResponse
 
 if TYPE_CHECKING:
+    from universal_event_bus import EventBus
+
     from ....master.manager.federated_gateway_manager import FederatedGatewayManager
 
 logger = get_logger(__name__)
@@ -37,7 +39,7 @@ class TelemetryApplicator:
     def __init__(
         self,
         gateway_manager: FederatedGatewayManager,
-        event_bus: Any,
+        event_bus: EventBus,
     ):
         self._gateway_manager = gateway_manager
         self._event_bus = event_bus
@@ -53,32 +55,48 @@ class TelemetryApplicator:
         else:
             await self._apply_delta(response)
 
-        # Emit telemetry received event
-        import asyncio
-
+        # Emit telemetry received event with disambiguation fields
         from src.scheduling.events import FederationTelemetryReceived
 
-        # Extract model count and resource summary
         model_count = 0
         resource_summary: dict[str, Any] = {}
+        catalog_model_count: int | None = None
+        loaded_model_count: int | None = None
+        msg_type: str
+
         if response.update_type == "snapshot":
+            msg_type = "GATEWAY_SNAPSHOT"
             state = response.data.get("state", response.data)
-            available_models = state.get("available_models", [])
-            model_count = (
-                len(available_models) if isinstance(available_models, list) else 0
-            )
+            available = state.get("available_models", [])
+            catalog_model_count = len(available) if isinstance(available, list) else 0
+            model_count = catalog_model_count
+            count_source = "snapshot_available_models"
             resource_summary = {
-                "vram_free_mb": state.get("vram_free_mb", 0),
-                "ram_free_mb": state.get("ram_free_mb", 0),
+                "available_vram_mb": state.get(
+                    "available_vram_mb",
+                    state.get("vram_free_mb", 0),
+                ),
+                "available_ram_mb": state.get(
+                    "available_ram_mb",
+                    state.get("ram_free_mb", 0),
+                ),
             }
-        elif response.update_type == "delta":
+        else:
+            msg_type = "RESOURCE_UPDATE"
             changes = response.data.get("changes", {})
-            loaded_models = changes.get("loaded_models", [])
-            if isinstance(loaded_models, list):
-                model_count = len(loaded_models)
+            loaded = changes.get("loaded_models", [])
+            loaded_model_count = len(loaded) if isinstance(loaded, list) else 0
+            model_count = loaded_model_count
+            count_source = "message_loaded_models"
             resource_summary = {
-                "vram_free_mb": changes.get("vram_free_mb", 0),
-                "ram_free_mb": changes.get("ram_free_mb", 0),
+                "available_vram_mb": changes.get(
+                    "available_vram_mb",
+                    changes.get("vram_free_mb", 0),
+                ),
+                "available_ram_mb": changes.get(
+                    "available_ram_mb",
+                    changes.get("ram_free_mb", 0),
+                ),
             }
 
         asyncio.create_task(
@@ -87,6 +105,10 @@ class TelemetryApplicator:
                     remote_id=response.remote_stargate_id,
                     model_count=model_count,
                     resource_summary=resource_summary,
+                    msg_type=msg_type,
+                    catalog_model_count=catalog_model_count,
+                    loaded_model_count=loaded_model_count,
+                    count_source=count_source,
                 )
             )
         )
@@ -131,6 +153,9 @@ class TelemetryApplicator:
         Send heartbeat update for 204 No Content responses.
 
         Keeps gateway timestamp fresh even when no changes.
+
+        Args:
+            gateway_id: Gateway identifier to mark as alive.
         """
         if not gateway_id:
             return

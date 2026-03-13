@@ -83,6 +83,7 @@ class DAGExecutor:
 
         Called when client disconnects or external cancellation is requested.
         """
+        cancelled_steps: list[str] = []
         for step_id, task in list(self._pending_tasks.items()):
             if not task.done():
                 task.cancel()
@@ -90,16 +91,20 @@ class DAGExecutor:
                     await task
                 except asyncio.CancelledError:
                     pass
+                cancelled_steps.append(step_id)
 
             node = self.nodes.get(step_id)
             if node:
                 target_model = await self._model_coordination.resolve_target_model(node)
-                if target_model:
-                    self._model_coordination.on_cancelled_step(
-                        step_id=step_id, target_model=target_model
-                    )
+                self._model_coordination.on_cancelled_step(
+                    step_id=step_id,
+                    target_model=target_model,
+                )
 
         self._pending_tasks.clear()
+        self._observability.emit_pipeline_execution_cancelled(
+            cancelled_steps=cancelled_steps,
+        )
         await self.shutdown()
 
     async def execute(self) -> None:
@@ -117,36 +122,48 @@ class DAGExecutor:
 
         while not self._all_done():
             if deadline and time.time() >= deadline:
-                incomplete = [
-                    n.step.id
-                    for n in self.nodes.values()
-                    if n.state
-                    not in (StepState.COMPLETED, StepState.SKIPPED, StepState.FAILED)
-                ]
+                incomplete = self._incomplete_step_ids()
+                timeout_value = (
+                    float(timeout_seconds) if timeout_seconds is not None else 0.0
+                )
+                self._observability.emit_pipeline_execution_timed_out(
+                    timeout_seconds=timeout_value,
+                    incomplete_steps=incomplete,
+                )
                 raise PipelineExecutionError(
                     f"Pipeline execution exceeded timeout of {timeout_seconds}s. "
                     f"Incomplete steps: {incomplete}"
                 )
 
-            launched = await self._process_ready_steps()
+            progress = await self._process_ready_steps()
             if self._pending_tasks:
                 await self._await_and_handle_completions()
-            elif not launched and not self._pending_tasks and not self._all_done():
-                incomplete = [
-                    n.step.id
-                    for n in self.nodes.values()
-                    if n.state
-                    not in (StepState.COMPLETED, StepState.SKIPPED, StepState.FAILED)
-                ]
+            elif not progress and not self._pending_tasks and not self._all_done():
+                incomplete = self._incomplete_step_ids()
+                self._observability.emit_pipeline_deadlock_detected(
+                    incomplete_steps=incomplete,
+                    pending_task_count=0,
+                )
                 raise PipelineExecutionError(
                     "Deadlock detected: no runnable steps and no pending tasks. "
                     f"Incomplete steps: {incomplete}"
                 )
-            elif not launched:
-                await asyncio.sleep(0.1)
+
+        state_counts = self._step_state_counts()
+        self._observability.emit_pipeline_dag_execution_completed(
+            completed_count=state_counts[StepState.COMPLETED],
+            skipped_count=state_counts[StepState.SKIPPED],
+            failed_count=state_counts[StepState.FAILED],
+            total_steps=len(self.nodes),
+        )
 
     async def _process_ready_steps(self) -> bool:
-        """Filter and launch ready steps."""
+        """Filter and launch ready steps.
+
+        Returns True when any progress is made in this pass:
+        - one or more steps launched, or
+        - one or more ready steps transitioned to SKIPPED.
+        """
         ready_steps = [
             node for node in self.nodes.values() if node.state == StepState.READY
         ]
@@ -154,10 +171,12 @@ class DAGExecutor:
             return False
 
         steps_to_launch = await self._filter_ready_steps(ready_steps)
+        skip_progress = any(node.state == StepState.SKIPPED for node in ready_steps)
         if not steps_to_launch:
-            return False
+            return skip_progress
 
-        return await self._launch_steps(steps_to_launch)
+        launched = await self._launch_steps(steps_to_launch)
+        return launched or skip_progress
 
     async def _launch_steps(self, steps_to_launch: list[StepNode]) -> bool:
         """Launch selected steps as asyncio tasks."""
@@ -173,10 +192,20 @@ class DAGExecutor:
                     logger.debug(
                         f"Step '{node.step.id}' waiting for model {lock_model}"
                     )
+                    self._observability.emit_pipeline_step_model_deferred(
+                        step_id=node.step.id,
+                        model_id=lock_model,
+                        reason="gate_unavailable",
+                    )
                     continue
                 if lock_model in models_in_use_this_iteration:
                     logger.debug(
                         f"Step '{node.step.id}' deferred: model already claimed"
+                    )
+                    self._observability.emit_pipeline_step_model_deferred(
+                        step_id=node.step.id,
+                        model_id=lock_model,
+                        reason="gate_already_claimed",
                     )
                     continue
 
@@ -201,7 +230,7 @@ class DAGExecutor:
 
         steps_to_launch: list[StepNode] = []
         for node in ready_steps:
-            should_execute, condition_expr = await self._should_execute_step(node.step)
+            should_execute, condition_expr = self._should_execute_step(node.step)
             if condition_expr is not None:
                 self._observability.emit_condition_evaluated(
                     node=node,
@@ -247,27 +276,46 @@ class DAGExecutor:
         )
 
         for task in done:
-            step_id = task.get_name().replace("step-", "")
-            del self._pending_tasks[step_id]
+            step_id = task.get_name().removeprefix("step-")
+            node = self.nodes.get(step_id)
+            if node is None:
+                for remaining_task in self._pending_tasks.values():
+                    _ = remaining_task.cancel()
+                raise PipelineExecutionError(
+                    f"Completed task has unknown step id: {step_id}"
+                )
 
-            node = self.nodes[step_id]
+            _ = self._pending_tasks.pop(step_id, None)
             target_model = await self._model_coordination.resolve_target_model(node)
-            self._model_coordination.on_step_finished(
-                step_id=step_id, target_model=target_model
-            )
 
             try:
                 task.result()
+                self._model_coordination.on_step_finished(
+                    step_id=step_id,
+                    target_model=target_model,
+                    outcome="success",
+                )
             except Exception as e:
                 logger.error(f"Step '{step_id}' failed: {e}", exc_info=True)
                 node.state = StepState.FAILED
                 node.error = e
+                self._model_coordination.on_step_finished(
+                    step_id=step_id,
+                    target_model=target_model,
+                    outcome="failure",
+                )
+                if target_model:
+                    self._observability.emit_pipeline_model_gate_released_on_failure(
+                        step_id=step_id,
+                        model_id=target_model,
+                        error_type=type(e).__name__,
+                    )
 
                 for remaining_task in self._pending_tasks.values():
                     _ = remaining_task.cancel()
                 raise PipelineExecutionError(f"Step '{step_id}' failed: {e}") from e
 
-    async def _should_execute_step(self, step: StepConfig) -> tuple[bool, str | None]:
+    def _should_execute_step(self, step: StepConfig) -> tuple[bool, str | None]:
         """Check if step should execute based on enabled flag and condition."""
         if not step.get_domain_field("enabled", True):
             return False, "enabled: false"
@@ -418,7 +466,7 @@ class DAGExecutor:
         collection = await executor.execute()
         latency_ms = (time.time() - start_time) * 1000
 
-        self.context.outputs[step.name] = collection  # type: ignore
+        self.context.set_output(step.id, collection)  # type: ignore[arg-type]
         return StepOutput(
             raw=f"Map step completed with {len(collection)} outputs",
             json={"outputs": [o.json for o in collection.all_outputs()]},
@@ -426,7 +474,11 @@ class DAGExecutor:
         )
 
     def _propagate_completion(self, completed_step_id: str) -> None:
-        """Mark dependent steps as ready if all their deps are done."""
+        """Mark dependents ready when all prerequisites are terminal-success states.
+
+        Dependency satisfaction intentionally excludes FAILED prerequisites; only
+        COMPLETED/SKIPPED permit downstream execution.
+        """
         node = self.nodes[completed_step_id]
         for dependent_id in node.dependents:
             dependent = self.nodes[dependent_id]
@@ -438,6 +490,15 @@ class DAGExecutor:
                 dependent.state = StepState.READY
                 logger.debug(f"Step '{dependent_id}' now ready")
 
+    def _incomplete_step_ids(self) -> list[str]:
+        """Return non-terminal step IDs for timeout/deadlock diagnostics."""
+        return [
+            node.step.id
+            for node in self.nodes.values()
+            if node.state
+            not in (StepState.COMPLETED, StepState.SKIPPED, StepState.FAILED)
+        ]
+
     def _all_done(self) -> bool:
         """Check if all steps are complete."""
         return all(
@@ -445,3 +506,9 @@ class DAGExecutor:
             for node in self.nodes.values()
         )
 
+    def _step_state_counts(self) -> dict[StepState, int]:
+        """Count terminal and intermediate step states for completion telemetry."""
+        counts: dict[StepState, int] = {state: 0 for state in StepState}
+        for node in self.nodes.values():
+            counts[node.state] += 1
+        return counts

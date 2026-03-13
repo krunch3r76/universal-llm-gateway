@@ -151,8 +151,6 @@ class FederatedGateway:
         """Age of last RESOURCE_UPDATE in milliseconds (for observability/scoring)."""
         if self.is_cloud:
             return 0
-        if self.telemetry_timestamp == 0.0:
-            return 0
         return int((time.time() - self.telemetry_timestamp) * 1000)
 
     @property
@@ -215,10 +213,10 @@ def parse_telemetry_payload(_msg_type: str, data: dict[str, Any]) -> dict[str, A
     if "model_id" in parsed:
         try:
             parsed["model_id"] = ModelId.parse(parsed["model_id"])
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             logger.warning(f"Failed to parse model_id: {e}")
 
-    # List fields -> frozenset[ModelId]
+    # List fields -> frozenset[ModelId] (per-item tolerant: drop bad, keep good)
     list_fields = (
         "loaded_models",
         "busy_models",
@@ -228,13 +226,21 @@ def parse_telemetry_payload(_msg_type: str, data: dict[str, Any]) -> dict[str, A
     )
     for field_name in list_fields:
         if field_name in parsed and isinstance(parsed[field_name], list):
-            try:
-                parsed[field_name] = frozenset(
-                    ModelId.parse(m) for m in parsed[field_name]
+            valid: list[ModelId] = []
+            dropped = 0
+            for raw in parsed[field_name]:
+                try:
+                    valid.append(ModelId.parse(raw))
+                except (TypeError, ValueError):
+                    dropped += 1
+            if dropped:
+                logger.warning(
+                    "Dropped %d/%d malformed entries in %s",
+                    dropped,
+                    dropped + len(valid),
+                    field_name,
                 )
-            except Exception as e:
-                logger.warning(f"Failed to parse {field_name}: {e}")
-                parsed[field_name] = frozenset()
+            parsed[field_name] = frozenset(valid)
 
     # PHASE 2 FIX: Parse model_resources dict (ModelId keys)
     # model_resources: {model_id_str: {vram_usage: int, ram_usage: int}}
@@ -244,7 +250,7 @@ def parse_telemetry_payload(_msg_type: str, data: dict[str, Any]) -> dict[str, A
                 ModelId.parse(model_id): resource_dict
                 for model_id, resource_dict in parsed["model_resources"].items()
             }
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             logger.warning(f"Failed to parse model_resources: {e}")
             parsed["model_resources"] = {}
 
@@ -255,7 +261,7 @@ def parse_telemetry_payload(_msg_type: str, data: dict[str, Any]) -> dict[str, A
                 ModelId.parse(model_id): vram_mb
                 for model_id, vram_mb in parsed["model_vram"].items()
             }
-        except Exception as e:
+        except (TypeError, ValueError) as e:
             logger.warning(f"Failed to parse model_vram: {e}")
             parsed["model_vram"] = {}
 

@@ -147,6 +147,178 @@ class StepObservability:
             )
         )
 
+    def emit_pipeline_execution_timed_out(
+        self,
+        *,
+        timeout_seconds: float,
+        incomplete_steps: list[str],
+    ) -> None:
+        """Emit timeout boundary before pipeline timeout failure is raised."""
+        from src.scheduling.events import PipelineExecutionTimedOut
+
+        pipeline_id, execution_id = self.get_event_context()
+        self.publish_event(
+            PipelineExecutionTimedOut(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                timeout_seconds=timeout_seconds,
+                incomplete_steps=incomplete_steps,
+            )
+        )
+
+    def emit_pipeline_deadlock_detected(
+        self,
+        *,
+        incomplete_steps: list[str],
+        pending_task_count: int,
+    ) -> None:
+        """Emit deadlock boundary before deadlock failure is raised."""
+        from src.scheduling.events import PipelineDeadlockDetected
+
+        pipeline_id, execution_id = self.get_event_context()
+        self.publish_event(
+            PipelineDeadlockDetected(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                incomplete_steps=incomplete_steps,
+                pending_task_count=pending_task_count,
+            )
+        )
+
+    def emit_pipeline_execution_cancelled(self, *, cancelled_steps: list[str]) -> None:
+        """Emit cancellation summary once task cancellation has completed."""
+        from src.scheduling.events import PipelineExecutionCancelled
+
+        pipeline_id, execution_id = self.get_event_context()
+        self.publish_event(
+            PipelineExecutionCancelled(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                cancelled_steps=cancelled_steps,
+            )
+        )
+
+    def emit_pipeline_step_model_deferred(
+        self,
+        *,
+        step_id: str,
+        model_id: str,
+        reason: str,
+    ) -> None:
+        """Emit model-gate deferral for a runnable step."""
+        from src.scheduling.events import PipelineStepModelDeferred
+
+        pipeline_id, execution_id = self.get_event_context()
+        self.publish_event(
+            PipelineStepModelDeferred(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                step_id=step_id,
+                model_id=model_id,
+                reason=reason,
+            )
+        )
+
+    def emit_pipeline_model_gate_claimed(self, *, step_id: str, model_id: str) -> None:
+        """Emit event when a model gate claim is acquired for a step."""
+        from src.scheduling.events import PipelineModelGateClaimed
+
+        pipeline_id, execution_id = self.get_event_context()
+        self.publish_event(
+            PipelineModelGateClaimed(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                step_id=step_id,
+                model_id=model_id,
+            )
+        )
+
+    def emit_pipeline_model_gate_released(
+        self,
+        *,
+        step_id: str,
+        model_id: str,
+        outcome: str,
+    ) -> None:
+        """Emit event when a model gate claim is released for a step."""
+        from src.scheduling.events import PipelineModelGateReleased
+
+        pipeline_id, execution_id = self.get_event_context()
+        self.publish_event(
+            PipelineModelGateReleased(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                step_id=step_id,
+                model_id=model_id,
+                outcome=outcome,
+            )
+        )
+
+    def emit_pipeline_model_gate_released_on_failure(
+        self,
+        *,
+        step_id: str,
+        model_id: str,
+        error_type: str,
+    ) -> None:
+        """Emit failure-boundary gate release event for failed step execution."""
+        from src.scheduling.events import PipelineModelGateReleasedOnFailure
+
+        pipeline_id, execution_id = self.get_event_context()
+        self.publish_event(
+            PipelineModelGateReleasedOnFailure(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                step_id=step_id,
+                model_id=model_id,
+                error_type=error_type,
+            )
+        )
+
+    def emit_pipeline_model_registry_lookup_failed(
+        self,
+        *,
+        step_id: str,
+        model_ref: str,
+        error: str,
+    ) -> None:
+        """Emit event when model registry resolution fails for a step."""
+        from src.scheduling.events import PipelineModelRegistryLookupFailed
+
+        pipeline_id, execution_id = self.get_event_context()
+        self.publish_event(
+            PipelineModelRegistryLookupFailed(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                step_id=step_id,
+                model_ref=model_ref,
+                error=error,
+            )
+        )
+
+    def emit_pipeline_dag_execution_completed(
+        self,
+        *,
+        completed_count: int,
+        skipped_count: int,
+        failed_count: int,
+        total_steps: int,
+    ) -> None:
+        """Emit final DAG completion summary after all terminal states reached."""
+        from src.scheduling.events import PipelineDagExecutionCompleted
+
+        pipeline_id, execution_id = self.get_event_context()
+        self.publish_event(
+            PipelineDagExecutionCompleted(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                completed_count=completed_count,
+                skipped_count=skipped_count,
+                failed_count=failed_count,
+                total_steps=total_steps,
+            )
+        )
+
     def emit_step_inputs(self, *, node: StepNode) -> None:
         """Capture and emit step inputs for recorder observability."""
         recorder = self._executor.context.recorder

@@ -157,7 +157,6 @@ class RequestExecutor:
             federated_load_orchestrator=self._federated_load_orchestrator,
             routing_config=self._routing_config,
             stability_tracker=self._stability_tracker,
-            compute_type_tracker=request_tracker,
             routing_key_tracker=request_tracker,
             capacity_pool=self._capacity_pool,
             circuit_breaker=self._federation_circuit_breaker,
@@ -275,7 +274,14 @@ class RequestExecutor:
             # Non-streaming: release token now (response fully built).
             # Streaming: released inside stream_generator_with_cleanup's finally block.
             if not isinstance(response, StreamingResponse):
-                await self._release_capacity_token(context)
+                try:
+                    await self._release_capacity_token(context)
+                except Exception:
+                    logger.warning(
+                        "Failed to release capacity token for request %s",
+                        context.request_id,
+                        exc_info=True,
+                    )
 
             return response
 

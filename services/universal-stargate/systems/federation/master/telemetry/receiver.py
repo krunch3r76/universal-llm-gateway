@@ -87,7 +87,7 @@ class MasterTelemetryReceiver:
                         self._event_bus.publish_async_nowait(
                             RequestInferenceStarted(
                                 request_id=request_id,
-                                model_id=model_id,
+                                model_id=str(model_id),
                                 gateway_url=data.get("gateway_url", "unknown"),
                                 correlation_id=data.get("correlation_id"),
                             )
@@ -97,33 +97,47 @@ class MasterTelemetryReceiver:
 
         logger.info(f"Processing telemetry from {remote_id}: {msg_type}")
 
-        # Emit telemetry received event
+        await self._on_telemetry(remote_id, msg_type, data)
+
+        # Emit telemetry received event AFTER applying to manager state
         if self._event_bus:
             from src.scheduling.events import FederationTelemetryReceived
 
-            # Extract model count and resource summary from telemetry data
             model_count = 0
             resource_summary: dict[str, Any] = {}
+            catalog_model_count: int | None = None
+            loaded_model_count: int | None = None
+            count_source: str
 
-            # GATEWAY_SNAPSHOT: full catalog + resources
             if msg_type == FederationMessageType.GATEWAY_SNAPSHOT.value:
-                available_models = data.get("available_models", [])
-                if isinstance(available_models, list):
-                    model_count = len(available_models)
+                available = data.get("available_models", [])
+                catalog_model_count = (
+                    len(available) if isinstance(available, list) else 0
+                )
+                model_count = catalog_model_count
+                count_source = "snapshot_available_models"
                 resource_summary = {
                     "available_vram_mb": data.get("available_vram_mb", 0),
                     "available_ram_mb": data.get("available_ram_mb", 0),
                 }
 
-            # RESOURCE_UPDATE: resources + loaded model count
             elif msg_type == FederationMessageType.RESOURCE_UPDATE.value:
-                loaded_models = data.get("loaded_models", [])
-                if isinstance(loaded_models, list):
-                    model_count = len(loaded_models)
+                loaded = data.get("loaded_models", [])
+                loaded_model_count = len(loaded) if isinstance(loaded, list) else 0
+                model_count = loaded_model_count
+                count_source = "message_loaded_models"
                 resource_summary = {
-                    "available_vram_mb": data.get("available_vram_mb", 0),
-                    "available_ram_mb": data.get("available_ram_mb", 0),
+                    "available_vram_mb": data.get(
+                        "available_vram_mb",
+                        data.get("vram_free_mb", 0),
+                    ),
+                    "available_ram_mb": data.get(
+                        "available_ram_mb",
+                        data.get("ram_free_mb", 0),
+                    ),
                 }
+            else:
+                count_source = "unknown"
 
             asyncio.create_task(
                 self._event_bus.publish_async_nowait(
@@ -131,8 +145,10 @@ class MasterTelemetryReceiver:
                         remote_id=remote_id,
                         model_count=model_count,
                         resource_summary=resource_summary,
+                        msg_type=msg_type,
+                        catalog_model_count=catalog_model_count,
+                        loaded_model_count=loaded_model_count,
+                        count_source=count_source,
                     )
                 )
             )
-
-        await self._on_telemetry(remote_id, msg_type, data)

@@ -12,7 +12,7 @@ CRITICAL: Uses @sequential decorator for lock-free sequential execution.
 import asyncio
 import time
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from model_id import ModelId
 from universal_event_bus import Sequential, sequential
@@ -36,6 +36,18 @@ if TYPE_CHECKING:
     from ...common.config.schema import RemoteStargateConfig
 
 logger = get_logger(__name__)
+
+
+class GatewayStatus(TypedDict):
+    """Snapshot fields returned by get_gateway_status_full()."""
+
+    enabled: bool
+    is_connected: bool
+    total_vram_mb: int
+    available_vram_mb: int
+    total_ram_mb: int
+    available_ram_mb: int
+    models: list[str]
 
 
 class FederatedGatewayManager(Sequential):
@@ -86,16 +98,21 @@ class FederatedGatewayManager(Sequential):
         self._load_failed_models: dict[str, dict[str, float]] = {}
         self._load_failure_ttl_s: float = 120.0
 
+        # Inference ban: gateway_id → set of routing_keys
+        # INV: routing_key ∈ _inference_banned[gw] ⟹ model excluded from selection
+        # INV: cleared on gateway disconnect/reconnect only (session lifetime)
+        self._inference_banned: dict[str, set[str]] = {}
+
         # Pre-selection wait queue: wake waiters on state mutations
         self._state_generation: int = 0
         self._state_condition: asyncio.Condition = asyncio.Condition()
 
     def get_state_version(self) -> int:
-        """Snapshot the current generation for wait-loop ordering."""
+        """Return the monotonic state generation used by waiters for ordering."""
         return self._state_generation
 
     async def notify_state_change(self) -> None:
-        """Bump generation and wake all waiters. Called after state mutations."""
+        """Advance generation and wake waiters after each state mutation commit."""
         self._state_generation += 1
         async with self._state_condition:
             self._state_condition.notify_all()
@@ -378,7 +395,7 @@ class FederatedGatewayManager(Sequential):
         """Get gateways that are not unreachable (no signal within TTL)."""
 
         healthy = []
-        unreachable = []
+        unreachable_count = 0
 
         for gateway_id, gw in list(self._gateways.items()):
             # Coerce stale instances before evaluation
@@ -386,20 +403,18 @@ class FederatedGatewayManager(Sequential):
 
             if gw.is_unreachable:
                 age_ms = gw.heartbeat_age_ms
-                unreachable.append((gw.gateway_id, age_ms))
-            else:
-                healthy.append(gw)
+                unreachable_count += 1
+                logger.warning(
+                    f"⚠️ Gateway {gw.gateway_id} is UNREACHABLE "
+                    f"(no signal for {age_ms}ms, threshold=60000ms)"
+                )
+                continue
 
-        # Log unreachable gateways as warnings
-        for gateway_id, age_ms in unreachable:
-            logger.warning(
-                f"⚠️ Gateway {gateway_id} is UNREACHABLE "
-                f"(no signal for {age_ms}ms, threshold=60000ms)"
-            )
+            healthy.append(gw)
 
         logger.info(
             f"🔍 get_healthy_gateways() returning {len(healthy)} gateways "
-            f"(total: {len(self._gateways)}, unreachable: {len(unreachable)})"
+            f"(total: {len(self._gateways)}, unreachable: {unreachable_count})"
         )
         for gw in healthy:
             logger.info(
@@ -410,7 +425,7 @@ class FederatedGatewayManager(Sequential):
 
     # === Query Methods for Orchestration ===
 
-    def get_gateway_status_full(self) -> dict[str, dict[str, Any]]:
+    def get_gateway_status_full(self) -> dict[str, GatewayStatus]:
         """
         Get full status of all federated gateways including VRAM/RAM capacity
         and models.
@@ -425,7 +440,7 @@ class FederatedGatewayManager(Sequential):
             - available_ram_mb: int
             - models: list[str] (available models on this gateway)
         """
-        result = {}
+        result: dict[str, GatewayStatus] = {}
         for gw in self._gateways.values():
             result[gw.gateway_id] = {
                 "enabled": True,
@@ -712,6 +727,35 @@ class FederatedGatewayManager(Sequential):
         if removed:
             logger.info(
                 "🔓 Cleared %d load failure(s) for %s", len(removed), gateway_id
+            )
+
+    # === Inference Ban (Session Lifetime) ===
+
+    def mark_inference_banned(self, gateway_id: str, model_id: "ModelId") -> None:
+        """Ban a model on a gateway for the remainder of the session.
+
+        Called when OOM recovery fails — the model cannot run even with an
+        exclusive GPU, indicating a persistent VRAM mismatch.
+        """
+        banned = self._inference_banned.setdefault(gateway_id, set())
+        banned.add(model_id.routing_key)
+        logger.warning(
+            "🚫 Inference banned (session): %s on %s (%d total ban(s))",
+            model_id,
+            gateway_id,
+            len(banned),
+        )
+
+    def is_inference_banned(self, gateway_id: str, model_id: "ModelId") -> bool:
+        """Check whether a model is banned from inference on a gateway."""
+        return model_id.routing_key in self._inference_banned.get(gateway_id, set())
+
+    def clear_inference_bans(self, gateway_id: str) -> None:
+        """Clear all inference bans for a gateway (called on disconnect/reconnect)."""
+        removed = self._inference_banned.pop(gateway_id, None)
+        if removed:
+            logger.info(
+                "🔓 Cleared %d inference ban(s) for %s", len(removed), gateway_id
             )
 
     def _clear_model_load_failure(self, gateway_id: str, model_id: ModelId) -> None:
@@ -1040,14 +1084,35 @@ class FederatedGatewayManager(Sequential):
                 f"{seeded_slots} models on {gw.gateway_id}"
             )
 
-        # Debug logging for activation filtering verification
+        # Activation diagnostics
         activated_is_none = activated_models is None
         activated_count = 0 if activated_is_none else len(activated_models)
+        available_count = len(new_catalog)
         logger.debug(
             f"📋 GATEWAY_SNAPSHOT activation: gateway={gw.gateway_id}, "
-            f"available={len(new_catalog)}, activated={activated_count}, "
+            f"available={available_count}, activated={activated_count}, "
             f"activated_is_none={activated_is_none}"
         )
+
+        # Strict-empty diagnostic: available > 0 but explicit activated == ∅
+        if not activated_is_none and activated_count == 0 and available_count > 0:
+            logger.warning(
+                "⚠️ Gateway %s has %d available models but activated_models "
+                "is explicitly empty — models will be hidden from /v1/models",
+                gw.gateway_id,
+                available_count,
+            )
+            from src.scheduling.events import FederationActivationFilteredEmpty
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    FederationActivationFilteredEmpty(
+                        gateway_id=gw.gateway_id,
+                        available_count=available_count,
+                        activated_count=activated_count,
+                    )
+                )
+            )
 
         # Publish catalog change event (for pipeline system to reload)
         if catalog_changed:
@@ -1294,6 +1359,7 @@ class FederatedGatewayManager(Sequential):
                     self._capacity_pool.remove_gateway(gateway_id)
                     logger.debug(f"📊 Capacity pool: removed gateway {gateway_id}")
                 self.clear_load_failures(gateway_id)
+                self.clear_inference_bans(gateway_id)
                 del self._gateways[gateway_id]
                 removed.append(gateway_id)
                 if self._event_bus:
@@ -1425,10 +1491,15 @@ class FederatedGatewayManager(Sequential):
 
         return updates
 
+    @staticmethod
+    def _parse_model_ids(values: list[str]) -> frozenset[ModelId]:
+        """Parse a string list into canonical ModelId objects."""
+        return frozenset(ModelId.parse(value) for value in values)
+
     def _apply_model_list_delta(
         self,
         current: frozenset[ModelId],
-        value: dict[str, Any] | list[str],
+        value: dict[str, list[str]] | list[str],
     ) -> frozenset[ModelId]:
         """
         Apply delta to a model list field.
@@ -1440,15 +1511,17 @@ class FederatedGatewayManager(Sequential):
         Returns:
             Updated frozenset of ModelId
         """
-        if isinstance(value, dict) and "added" in value and "removed" in value:
+        if isinstance(value, dict):
             # Delta format: merge added/removed
             result = set(current)
-            result.update(ModelId.parse(m) for m in value["added"])
-            result.difference_update(ModelId.parse(m) for m in value["removed"])
+            added = value.get("added", [])
+            removed = value.get("removed", [])
+            result.update(self._parse_model_ids(added))
+            result.difference_update(self._parse_model_ids(removed))
             return frozenset(result)
-        else:
-            # Full list format (snapshot or reconnect)
-            return frozenset(ModelId.parse(m) for m in value)
+
+        # Full list format (snapshot or reconnect)
+        return self._parse_model_ids(value)
 
     def _commit_gateway_update(
         self,
@@ -1469,6 +1542,7 @@ class FederatedGatewayManager(Sequential):
         if updates:
             # Detect catalog changes (available_models)
             old_catalog = gateway.available_models
+            new_catalog = old_catalog
             catalog_changed = False
 
             if "available_models" in updates:
@@ -1604,7 +1678,7 @@ class FederatedGatewayManager(Sequential):
         """
         model_fields = ("loaded_models", "busy_models", "available_models")
         updates = {
-            field: frozenset(ModelId.parse(m) for m in snapshot[field])
+            field: self._parse_model_ids(snapshot[field])
             for field in model_fields
             if field in snapshot
         }

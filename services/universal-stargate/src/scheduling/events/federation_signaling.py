@@ -10,6 +10,7 @@ Signals:
     federation.telemetry.received — Master received telemetry from remote
     federation.telemetry.marked.stale — telemetry exceeded staleness threshold
     federation.telemetry.applied — telemetry applied to Master state
+    federation.activation.filtered.empty — available > 0 but activated == ∅
     federation.routing.delegated — Master delegated request to remote
     federation.routing.routed.local — Master routed request locally
     federation.routing.rejected — Master rejected request (no target)
@@ -42,26 +43,27 @@ FEDERATION_ROUTING_ROUTED_LOCAL = "federation.routing.routed.local"
 FEDERATION_ROUTING_REJECTED = "federation.routing.rejected"
 
 # Peer auth/lifecycle
-FEDERATION_PEER_AUTH_FAILED = "federation.peer.auth_failed"
+FEDERATION_PEER_AUTH_FAILED = "federation.peer.auth.failed"
 FEDERATION_PEER_DISCONNECTED = "federation.peer.disconnected"
 
 # Request forwarding / telemetry reconciliation
 FEDERATION_REQUEST_INFERENCE_STARTED_FORWARDED = (
-    "federation.request.inference_started.forwarded"
+    "federation.request.inference.forwarded"
 )
-FEDERATION_MODEL_LIFECYCLE_EVENT = "federation.model.lifecycle_event"
+FEDERATION_MODEL_LIFECYCLE_EVENT = "federation.model.lifecycle"
 FEDERATION_RESOURCE_UPDATED = "federation.resource.updated"
-FEDERATED_GATEWAY_REMOVED = "federated_gateway.removed"
+FEDERATED_GATEWAY_REMOVED = "federation.gateway.removed"
 
 # VRAM measurement orchestration (edge <-> master)
-FEDERATION_VRAM_REQUEST_SENT = "federation.vram_request.sent"
-FEDERATION_VRAM_REQUEST_FAILED = "federation.vram_request.failed"
-FEDERATION_VRAM_RESPONSE_RECEIVED = "federation.vram_response.received"
+FEDERATION_VRAM_REQUEST_SENT = "federation.vram.request.sent"
+FEDERATION_VRAM_REQUEST_FAILED = "federation.vram.request.failed"
+FEDERATION_VRAM_RESPONSE_RECEIVED = "federation.vram.response.received"
+
+# Activation diagnostics
+FEDERATION_ACTIVATION_FILTERED_EMPTY = "federation.activation.filtered.empty"
 
 # Circuit-breaker request admission
-FEDERATION_CIRCUIT_BREAKER_REQUEST_REJECTED = (
-    "federation.circuit_breaker.request_rejected"
-)
+FEDERATION_CIRCUIT_BREAKER_REQUEST_REJECTED = "federation.circuit.breaker.rejected"
 
 
 # ========================================
@@ -115,8 +117,16 @@ def FederationTelemetryReceived(
     model_count: int,
     resource_summary: dict[str, Any],
     telemetry_age_ms: int | None = None,
+    msg_type: str | None = None,
+    catalog_model_count: int | None = None,
+    loaded_model_count: int | None = None,
+    count_source: str | None = None,
 ) -> Event:
-    """Master received telemetry from Remote/Edge."""
+    """Master received telemetry from Remote/Edge.
+
+    Disambiguation fields (msg_type, catalog_model_count, loaded_model_count,
+    count_source) clarify what model_count represents per message type.
+    """
     payload: dict[str, Any] = {
         "remote_id": remote_id,
         "model_count": model_count,
@@ -124,6 +134,14 @@ def FederationTelemetryReceived(
     }
     if telemetry_age_ms is not None:
         payload["telemetry_age_ms"] = telemetry_age_ms
+    if msg_type is not None:
+        payload["msg_type"] = msg_type
+    if catalog_model_count is not None:
+        payload["catalog_model_count"] = catalog_model_count
+    if loaded_model_count is not None:
+        payload["loaded_model_count"] = loaded_model_count
+    if count_source is not None:
+        payload["count_source"] = count_source
     return Event(signal=FEDERATION_TELEMETRY_RECEIVED, payload=payload)
 
 
@@ -213,7 +231,7 @@ def FederationPeerAuthFailed(
     peer_id: str,
     reason: str,
 ) -> Event:
-    """Inbound peer auth failed on edge federation server."""
+    """Record rejected peer authentication with stable reason text for forensics."""
     return Event(
         signal=FEDERATION_PEER_AUTH_FAILED,
         payload={"peer_id": peer_id, "reason": reason},
@@ -225,7 +243,7 @@ def FederationPeerDisconnected(
     peer_id: str,
     remaining_peers: int,
 ) -> Event:
-    """Authenticated peer disconnected from edge federation server."""
+    """Record authenticated peer disconnect and expose remaining peer cardinality."""
     return Event(
         signal=FEDERATION_PEER_DISCONNECTED,
         payload={"peer_id": peer_id, "remaining_peers": remaining_peers},
@@ -237,7 +255,7 @@ def FederationTelemetryWired(
     gateway_url: str,
     gateway_id: str,
 ) -> Event:
-    """Edge finished wiring local gateway telemetry forwarding."""
+    """Confirm telemetry bridge wiring so master-side freshness waits can proceed."""
     return Event(
         signal=FEDERATION_TELEMETRY_WIRED,
         payload={"gateway_url": gateway_url, "gateway_id": gateway_id},
@@ -249,7 +267,7 @@ def FederationRequestInferenceStartedForwarded(
     request_id: str | None,
     peer_count: int,
 ) -> Event:
-    """Edge forwarded request.inference.started to federation peers."""
+    """Emit fanout confirmation for request-start signals forwarded to peers."""
     return Event(
         signal=FEDERATION_REQUEST_INFERENCE_STARTED_FORWARDED,
         payload={"request_id": request_id, "peer_count": peer_count},
@@ -262,7 +280,7 @@ def FederationModelLifecycleEvent(
     msg_type: str,
     model_id: str,
 ) -> Event:
-    """Master applied federated model lifecycle telemetry event."""
+    """Capture lifecycle telemetry application for model-state reconciliation traces."""
     return Event(
         signal=FEDERATION_MODEL_LIFECYCLE_EVENT,
         payload={
@@ -279,7 +297,7 @@ def FederationResourceUpdated(
     vram_free_mb: int,
     ram_free_mb: int,
 ) -> Event:
-    """Master applied a RESOURCE_UPDATE from a federated gateway."""
+    """Capture resource refresh used by admission and routing feasibility logic."""
     return Event(
         signal=FEDERATION_RESOURCE_UPDATED,
         payload={
@@ -295,7 +313,7 @@ def FederatedGatewayRemoved(
     gateway_id: str,
     remote_id: str,
 ) -> Event:
-    """Master removed a gateway after remote disconnect."""
+    """Record remote disconnect teardown after gateway removal from manager state."""
     return Event(
         signal=FEDERATED_GATEWAY_REMOVED,
         payload={"gateway_id": gateway_id, "remote_id": remote_id},
@@ -308,7 +326,7 @@ def FederationVramRequestSent(
     peer_id: str,
     device_index: int,
 ) -> Event:
-    """Edge sent VRAM snapshot request to a connected peer."""
+    """Track outbound VRAM probe dispatch to peer/device pairing for correlation."""
     return Event(
         signal=FEDERATION_VRAM_REQUEST_SENT,
         payload={
@@ -324,7 +342,7 @@ def FederationVramRequestFailed(
     request_id: str,
     reason: str,
 ) -> Event:
-    """Edge failed to dispatch VRAM request to any peer."""
+    """Record VRAM probe dispatch failure with explicit operational reason."""
     return Event(
         signal=FEDERATION_VRAM_REQUEST_FAILED,
         payload={"request_id": request_id, "reason": reason},
@@ -336,10 +354,27 @@ def FederationVramResponseReceived(
     request_id: str,
     matched: bool,
 ) -> Event:
-    """Edge resolved (or failed to resolve) VRAM response to pending request."""
+    """Capture VRAM probe response correlation success or orphaned-response mismatch."""
     return Event(
         signal=FEDERATION_VRAM_RESPONSE_RECEIVED,
         payload={"request_id": request_id, "matched": matched},
+    )
+
+
+@event_factory
+def FederationActivationFilteredEmpty(
+    gateway_id: str,
+    available_count: int,
+    activated_count: int,
+) -> Event:
+    """Gateway has available models but activation list is explicitly empty."""
+    return Event(
+        signal=FEDERATION_ACTIVATION_FILTERED_EMPTY,
+        payload={
+            "gateway_id": gateway_id,
+            "available_count": available_count,
+            "activated_count": activated_count,
+        },
     )
 
 
@@ -349,7 +384,7 @@ def FederationCircuitBreakerRequestRejected(
     model_id: str,
     reason: str,
 ) -> Event:
-    """Circuit-breaker rejected request admission."""
+    """Expose circuit-breaker admission guard outcomes for rejected model requests."""
     return Event(
         signal=FEDERATION_CIRCUIT_BREAKER_REQUEST_REJECTED,
         payload={"gateway_id": gateway_id, "model_id": model_id, "reason": reason},

@@ -27,7 +27,6 @@ async def select_gateway_and_load_model(
     federated_load_orchestrator=None,
     routing_config: dict | None = None,
     stability_tracker=None,
-    compute_type_tracker=None,
     routing_key_tracker=None,
     capacity_pool=None,
     circuit_breaker=None,
@@ -52,7 +51,6 @@ async def select_gateway_and_load_model(
         event_bus: Event bus for emitting routing events
         federated_manager: FederatedGatewayManager for router-only mode
         federated_load_orchestrator: Orchestrator for loading models on remote
-        compute_type_tracker: MasterRequestTracker for capacity reservation
         routing_key_tracker: MasterRequestTracker for routing key eviction protection
         circuit_breaker: Optional FederationCircuitBreaker for availability checks
 
@@ -90,7 +88,6 @@ async def select_gateway_and_load_model(
             routing_start_time=routing_start_time,
             routing_config=routing_config,
             stability_tracker=stability_tracker,
-            compute_type_tracker=compute_type_tracker,
             routing_key_tracker=routing_key_tracker,
             capacity_pool=capacity_pool,
             circuit_breaker=circuit_breaker,

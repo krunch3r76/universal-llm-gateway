@@ -11,8 +11,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from .dag import StepNode, StepState
+from .dag import DAGBuilder, StepNode, StepState
 from .execution import DAGExecutor, ModelUsageTracker
+from .handlers.protocol import StepOutput
 from .schemas import StepConfig
 
 
@@ -72,7 +73,6 @@ async def test_model_coordination_serializes_same_model():
     nodes = _build_nodes(steps)
     context = _build_context(registry)
     executor = DAGExecutor(nodes, context)
-    executor._ensure_proxy_client = AsyncMock(return_value=MagicMock())
 
     # Patch _execute_step to use mock
     executor._execute_step = mock_execute_step
@@ -86,15 +86,13 @@ async def test_model_coordination_serializes_same_model():
 
     # Verify: step3 could run in parallel (different model)
     step3_start_idx = execution_log.index("step3_start")
-    # step3 should start before step1 ends (parallel execution)
-    assert step3_start_idx < step1_end_idx or step3_start_idx < execution_log.index(
-        "step2_end"
-    )
+    assert step3_start_idx < step1_end_idx
+    assert step3_start_idx < step2_start_idx
 
 
 @pytest.mark.asyncio
 async def test_model_released_on_step_failure():
-    """Ensure model is marked available even if step throws exception."""
+    """Fail-fast keeps dependent work from launching after model step failure."""
     steps = [
         StepConfig(id="step1", type="generate", model_ref="ref1", depends_on=[]),
         StepConfig(id="step2", type="generate", model_ref="ref1", depends_on=[]),
@@ -116,7 +114,6 @@ async def test_model_released_on_step_failure():
     nodes = _build_nodes(steps)
     context = _build_context(registry)
     executor = DAGExecutor(nodes, context)
-    executor._ensure_proxy_client = AsyncMock(return_value=MagicMock())
     executor._execute_step = mock_execute_step
 
     # Execute (step1 fails; executor is fail-fast)
@@ -128,6 +125,7 @@ async def test_model_released_on_step_failure():
     # Verify fail-fast behavior: step2 should not run after step1 failure.
     assert "step1_start" in execution_log
     assert "step2_start" not in execution_log
+    assert nodes["step1"].state == StepState.FAILED
 
 
 @pytest.mark.asyncio
@@ -151,7 +149,6 @@ async def test_no_model_steps_run_freely():
     nodes = _build_nodes(steps)
     context = _build_context(registry)
     executor = DAGExecutor(nodes, context)
-    executor._ensure_proxy_client = AsyncMock(return_value=MagicMock())
     executor._execute_step = mock_execute_step
 
     await executor.execute()
@@ -185,13 +182,153 @@ async def test_registry_missing_model_ref():
     nodes = _build_nodes(steps)
     context = _build_context(registry)
     executor = DAGExecutor(nodes, context)
-    executor._ensure_proxy_client = AsyncMock(return_value=MagicMock())
     executor._execute_step = mock_execute_step
 
     await executor.execute()
 
     # Verify: Step executed despite registry error
     assert "step1_executed" in execution_log
+
+
+@pytest.mark.asyncio
+async def test_result_completes_on_split_path_without_deadlock():
+    """Split path: execute_split runs, refactor branch skips, result still completes."""
+    steps = [
+        StepConfig(id="plan_split", type="generate"),
+        StepConfig(
+            id="execute_split",
+            type="generate",
+            condition="plan_split.json.get('can_split') == True",
+        ),
+        StepConfig(
+            id="plan_refactor",
+            type="generate",
+            condition="plan_split.json.get('can_split') == False",
+        ),
+        StepConfig(
+            id="execute_refactor",
+            type="generate",
+            condition="plan_refactor.json.get('can_refactor') == True",
+        ),
+        StepConfig(
+            id="result",
+            type="select_output",
+            candidates=["execute_split", "execute_refactor", "plan_split"],
+        ),
+    ]
+
+    nodes = DAGBuilder(steps).build()
+    context = _build_context(MagicMock())
+    context.outputs = {}
+    context.set_output = lambda step_id, output: context.outputs.__setitem__(
+        step_id, output
+    )
+    context.get_output = lambda step_id: context.outputs.get(step_id)
+    context.recorder = None
+    context.execution_id = "exec-split"
+    context.drain_step_calls = lambda _step_name: []
+    context._proxy = None
+
+    executor = DAGExecutor(nodes, context)
+    executor._ensure_proxy_client = AsyncMock(return_value=MagicMock())
+
+    async def mock_execute_step(node):
+        if node.step.id == "plan_split":
+            output = StepOutput(raw="split-plan", json={"can_split": True})
+        elif node.step.id == "execute_split":
+            output = StepOutput(raw="split-result", json={"text": "split-result"})
+        elif node.step.id == "result":
+            selected = context.get_output("execute_split")
+            if selected is None:
+                raise AssertionError("result ran before execute_split output existed")
+            output = StepOutput(raw=selected.raw, json=selected.json)
+        else:
+            raise AssertionError(f"Unexpected executed step: {node.step.id}")
+
+        context.set_output(node.step.id, output)
+        node.state = StepState.COMPLETED
+        executor._propagate_completion(node.step.id)
+
+    executor._execute_step = mock_execute_step
+    await executor.execute()
+
+    assert nodes["result"].state == StepState.COMPLETED
+    assert context.get_output("result") is not None
+    assert context.get_output("result").raw == "split-result"
+
+
+@pytest.mark.asyncio
+async def test_result_completes_on_refactor_path_without_deadlock():
+    """Refactor path: execute_split skips, execute_refactor runs, result completes."""
+    steps = [
+        StepConfig(id="plan_split", type="generate"),
+        StepConfig(
+            id="execute_split",
+            type="generate",
+            condition="plan_split.json.get('can_split') == True",
+        ),
+        StepConfig(
+            id="plan_refactor",
+            type="generate",
+            condition="plan_split.json.get('can_split') == False",
+        ),
+        StepConfig(
+            id="execute_refactor",
+            type="generate",
+            condition="plan_refactor.json.get('can_refactor') == True",
+        ),
+        StepConfig(
+            id="result",
+            type="select_output",
+            candidates=["execute_split", "execute_refactor", "plan_split"],
+        ),
+    ]
+
+    nodes = DAGBuilder(steps).build()
+    context = _build_context(MagicMock())
+    context.outputs = {}
+    context.set_output = lambda step_id, output: context.outputs.__setitem__(
+        step_id, output
+    )
+    context.get_output = lambda step_id: context.outputs.get(step_id)
+    context.recorder = None
+    context.execution_id = "exec-refactor"
+    context.drain_step_calls = lambda _step_name: []
+    context._proxy = None
+
+    executor = DAGExecutor(nodes, context)
+    executor._ensure_proxy_client = AsyncMock(return_value=MagicMock())
+
+    async def mock_execute_step(node):
+        if node.step.id == "plan_split":
+            output = StepOutput(raw="no-split", json={"can_split": False})
+        elif node.step.id == "plan_refactor":
+            output = StepOutput(raw="refactor-plan", json={"can_refactor": True})
+        elif node.step.id == "execute_refactor":
+            output = StepOutput(
+                raw="refactor-result",
+                json={"text": "refactor-result"},
+            )
+        elif node.step.id == "result":
+            selected = context.get_output("execute_refactor")
+            if selected is None:
+                raise AssertionError(
+                    "result ran before execute_refactor output existed"
+                )
+            output = StepOutput(raw=selected.raw, json=selected.json)
+        else:
+            raise AssertionError(f"Unexpected executed step: {node.step.id}")
+
+        context.set_output(node.step.id, output)
+        node.state = StepState.COMPLETED
+        executor._propagate_completion(node.step.id)
+
+    executor._execute_step = mock_execute_step
+    await executor.execute()
+
+    assert nodes["result"].state == StepState.COMPLETED
+    assert context.get_output("result") is not None
+    assert context.get_output("result").raw == "refactor-result"
 
 
 def test_model_usage_tracker_can_acquire():

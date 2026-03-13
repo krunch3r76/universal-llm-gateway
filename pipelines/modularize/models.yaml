@@ -1,5 +1,5 @@
 models:
   plan_model:
-    model: google/gemini-2.5-flash
+    model: anthropic/claude-sonnet-4.6
   execute_model:
-    model: google/gemini-2.5-flash
+    model: anthropic/claude-sonnet-4.6

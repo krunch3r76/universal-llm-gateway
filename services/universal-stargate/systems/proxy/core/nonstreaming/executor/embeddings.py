@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Protocol
 
 from fastapi import HTTPException
 from universal_logging import get_logger
@@ -20,17 +21,45 @@ from ..context import RequestContext
 
 logger = get_logger(__name__)
 
+if TYPE_CHECKING:
+    from universal_event_bus import EventBus
+
+
+class _RequestTrackerLike(Protocol):
+    async def forward_embedding(
+        self,
+        *,
+        gateway: Any,
+        request_body: dict[str, Any],
+        model_id: str,
+        request_id: str,
+    ) -> dict[str, Any]: ...
+
+
+class _FederationIntegrationLike(Protocol):
+    request_tracker: _RequestTrackerLike | None
+
+
+class _FederationForwarderLike(Protocol):
+    async def forward_embedding_request(
+        self,
+        *,
+        gateway: Any,
+        request_body: dict[str, Any],
+        request_id: str,
+    ) -> dict[str, Any]: ...
+
 
 async def execute_embedding_request(
     model_id: str,
     request_body: dict[str, Any],
     request_id: str | None,
     *,
-    select_gateway_fn: Any,
-    release_routing_key_fn: Any,
-    release_capacity_token_fn: Any,
-    forward_embedding_fn: Any,
-    event_bus: Any,
+    select_gateway_fn: Callable[[RequestContext], Awaitable[None]],
+    release_routing_key_fn: Callable[[str], None],
+    release_capacity_token_fn: Callable[[RequestContext], Awaitable[None]],
+    forward_embedding_fn: Callable[..., Awaitable[dict[str, Any]]],
+    event_bus: EventBus,
 ) -> dict[str, Any]:
     """
     Execute an embedding request via federation.
@@ -84,6 +113,7 @@ async def execute_embedding_request(
     # CRITICAL: Pre-set endpoint category — http_request is None for programmatic
     # calls so routing cannot derive it; wrong key causes capacity reservation leak.
     context.routing_endpoint_category = EndpointCategory.EMBEDDING
+    context.model_sticky = False
 
     fed_gateway = None
     try:
@@ -115,7 +145,6 @@ async def execute_embedding_request(
         )
         return result
     except Exception as e:
-        release_routing_key_fn(resolved_request_id)
         gateway_url = fed_gateway.remote_stargate_url if fed_gateway else "unknown"
         gateway_id = fed_gateway.gateway_id if fed_gateway else "unknown"
         await emit_execution_failed(
@@ -128,7 +157,9 @@ async def execute_embedding_request(
         )
         raise
     finally:
-        # Release admission capacity only when a gateway was selected (token was acquired).
+        release_routing_key_fn(resolved_request_id)
+        # Release admission capacity only when a gateway was selected
+        # (token was acquired).
         if fed_gateway is not None:
             await release_capacity_token_fn(context)
 
@@ -138,8 +169,8 @@ async def forward_embedding_request(
     request_body: dict[str, Any],
     request_id: str,
     *,
-    federation_integration: Any,
-    federation_forwarder: Any,
+    federation_integration: _FederationIntegrationLike | None,
+    federation_forwarder: _FederationForwarderLike | None,
 ) -> dict[str, Any]:
     """
     Forward an embedding request to a federated gateway.

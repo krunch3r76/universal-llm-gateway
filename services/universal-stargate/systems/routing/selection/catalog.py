@@ -106,7 +106,7 @@ def get_all_available_models(
 
 
 def _get_local_activated_models(
-    gateway_manager: SingleGatewayManager,
+    gateway_manager: SingleGatewayManager | None,
 ) -> set[str] | None:
     """
     Get activated models from local gateway using WebSocket cache.
@@ -117,6 +117,9 @@ def _get_local_activated_models(
     Returns:
         Set of activated model IDs, or None if gateway not connected
     """
+    if gateway_manager is None:
+        return None
+
     local_gateway = gateway_manager.get_gateway()
     if not local_gateway or not local_gateway.client.is_connected():
         return None
@@ -133,12 +136,13 @@ def _get_local_activated_models(
     # Apply activation filtering
     from gateways.filtering import ActivationInfo, filter_by_activation
 
-    activated_contexts_info: dict[str, ActivationInfo] = {}
-    for model_id, contexts_data in activated_contexts.items():
-        activated_contexts_info[model_id] = ActivationInfo(
+    activated_contexts_info: dict[str, ActivationInfo] = {
+        model_id: ActivationInfo(
             cpu=contexts_data.get("cpu"),
             gpu=contexts_data.get("gpu"),
         )
+        for model_id, contexts_data in activated_contexts.items()
+    }
 
     resources = local_gateway.client.get_ws_resources()
     gateway_resources = {
@@ -188,12 +192,27 @@ def _get_federated_activated_models(
             }
             activated_count = available_count
 
-        # Debug logging for activation filtering verification
-        logger.debug(
-            f"📋 Federated activation: gateway={federated_gateway.gateway_id}, "
-            f"available={available_count}, activated={activated_count}, "
-            f"activated_is_none={activated_is_none}"
-        )
+        if activated_is_none:
+            logger.debug(
+                "📋 Federated activation: gateway=%s, "
+                "available=%d, activated=fallback (no activation data)",
+                federated_gateway.gateway_id,
+                available_count,
+            )
+        elif activated_count == 0 and available_count > 0:
+            logger.warning(
+                "⚠️ Strict activation filter: gateway=%s has %d available "
+                "models but activated_models is explicitly empty — hiding all",
+                federated_gateway.gateway_id,
+                available_count,
+            )
+        else:
+            logger.debug(
+                "📋 Federated activation: gateway=%s, available=%d, activated=%d",
+                federated_gateway.gateway_id,
+                available_count,
+                activated_count,
+            )
 
         activated_sets.append(remote_set)
 
@@ -275,13 +294,30 @@ def get_model_context_metadata(
             for mid, res in fed_gw.model_resources.items():
                 mid_str = str(mid)
                 ctx_raw = res.get("context_length")
-                if ctx_raw and mid_str not in metadata:
-                    ctx_int = int(ctx_raw)
-                    entry: dict[str, int] = {"context_length": ctx_int}
-                    eff_raw = res.get("effective_context_per_slot")
-                    if eff_raw:
-                        entry["effective_context_per_slot"] = int(eff_raw)
+                if not ctx_raw:
+                    continue
+
+                entry: dict[str, int] = {"context_length": int(ctx_raw)}
+                eff_raw = res.get("effective_context_per_slot")
+                if eff_raw:
+                    entry["effective_context_per_slot"] = int(eff_raw)
+
+                existing = metadata.get(mid_str)
+                if existing is None:
                     metadata[mid_str] = entry
+                    continue
+
+                if entry["context_length"] > existing.get("context_length", 0):
+                    metadata[mid_str] = entry
+                    continue
+
+                if (
+                    entry.get("effective_context_per_slot", 0)
+                    > existing.get("effective_context_per_slot", 0)
+                ):
+                    metadata[mid_str]["effective_context_per_slot"] = entry[
+                        "effective_context_per_slot"
+                    ]
 
     return metadata
 

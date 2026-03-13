@@ -58,13 +58,28 @@ class StepModelCoordinator:
         if cache_key in self._resolved_target_models:
             return self._resolved_target_models[cache_key]
 
-        resolved = await node.step.get_target_model_id_async(
-            self._executor.context._registry,
-            domain=self._executor.context.pipeline.domain,
-            search_path=self._executor.context.pipeline.source_search_path,
-            model_ref_overrides=model_ref_overrides,
-            context=self._executor.context,
-        )
+        try:
+            resolved = await node.step.get_target_model_id_async(
+                self._executor.context._registry,
+                domain=self._executor.context.pipeline.domain,
+                search_path=self._executor.context.pipeline.source_search_path,
+                model_ref_overrides=model_ref_overrides,
+                context=self._executor.context,
+            )
+        except KeyError as exc:
+            model_ref = node.step.model_ref or "unknown"
+            self._executor._observability.emit_pipeline_model_registry_lookup_failed(
+                step_id=node.step.id,
+                model_ref=model_ref,
+                error=str(exc),
+            )
+            logger.warning(
+                "Model registry lookup failed for step '%s' (model_ref=%s): %s",
+                node.step.id,
+                model_ref,
+                exc,
+            )
+            resolved = None
         self._resolved_target_models[cache_key] = resolved
         return resolved
 
@@ -98,18 +113,37 @@ class StepModelCoordinator:
         if lock_model:
             self._model_tracker.acquire(lock_model, step_id)
             models_in_use_this_iteration.add(lock_model)
+            self._executor._observability.emit_pipeline_model_gate_claimed(
+                step_id=step_id,
+                model_id=lock_model,
+            )
         if target_model:
             self.register_global_tracking(target_model, step_id)
 
-    def on_step_finished(self, *, step_id: str, target_model: str | None) -> None:
+    def on_step_finished(
+        self,
+        *,
+        step_id: str,
+        target_model: str | None,
+        outcome: str = "success",
+    ) -> None:
         """Release local/global tracking for a finished step."""
         self._model_tracker.release(target_model, step_id)
         if target_model:
+            self._executor._observability.emit_pipeline_model_gate_released(
+                step_id=step_id,
+                model_id=target_model,
+                outcome=outcome,
+            )
             self.unregister_global_tracking(target_model, step_id)
 
     def on_cancelled_step(self, *, step_id: str, target_model: str | None) -> None:
         """Release tracking for a cancelled step."""
-        self.on_step_finished(step_id=step_id, target_model=target_model)
+        self.on_step_finished(
+            step_id=step_id,
+            target_model=target_model,
+            outcome="cancelled",
+        )
 
     def register_global_tracking(self, model_id: str, step_id: str) -> None:
         """

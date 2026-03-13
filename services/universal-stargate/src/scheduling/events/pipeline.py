@@ -5,12 +5,23 @@ and domain verification step lifecycle.
 
 Signals:
     pipeline.registry.unavailable — pipeline skipped; model deps unresolvable
+    pipeline.execution.timed.out — execution exceeded configured timeout
+    pipeline.deadlock.detected — no runnable steps and no pending tasks
+    pipeline.execution.cancelled — execution cancelled by external trigger
+    pipeline.step.model.deferred — runnable step deferred by model gate
+    pipeline.model.gate.claimed — model gate claimed for step execution
+    pipeline.model.gate.released — model gate released after terminal step outcome
+    pipeline.model.gate.failure.release — failure boundary release marker
+    pipeline.model.registry.lookup.failed — model_ref lookup failed in registry
+    pipeline.dag.execution.completed — all DAG nodes reached terminal states
     pipeline.step.embedding.started — embedding step began
     pipeline.step.embedding.completed — embeddings retrieved successfully
     pipeline.step.embedding.failed — embedding request failed
     pipeline.step.domain.verification.started — domain verification began
     pipeline.step.domain.verification.completed — domain verification finished
 """
+
+# ruff: noqa: N802
 
 from universal_event_bus import Event, event_factory
 
@@ -19,6 +30,20 @@ from universal_event_bus import Event, event_factory
 # ========================================
 
 PIPELINE_REGISTRY_UNAVAILABLE = "pipeline.registry.unavailable"
+# ========================================
+# Pipeline DAG Coordination Events
+# ========================================
+
+PIPELINE_EXECUTION_TIMED_OUT = "pipeline.execution.timed.out"
+PIPELINE_DEADLOCK_DETECTED = "pipeline.deadlock.detected"
+PIPELINE_EXECUTION_CANCELLED = "pipeline.execution.cancelled"
+PIPELINE_STEP_MODEL_DEFERRED = "pipeline.step.model.deferred"
+PIPELINE_MODEL_GATE_CLAIMED = "pipeline.model.gate.claimed"
+PIPELINE_MODEL_GATE_RELEASED = "pipeline.model.gate.released"
+PIPELINE_MODEL_GATE_RELEASED_ON_FAILURE = "pipeline.model.gate.failure.release"
+PIPELINE_MODEL_REGISTRY_LOOKUP_FAILED = "pipeline.model.registry.lookup.failed"
+PIPELINE_DAG_EXECUTION_COMPLETED = "pipeline.dag.execution.completed"
+
 """
 Pipeline permanently skipped — required models missing after deferred retry.
 
@@ -139,6 +164,187 @@ def pipeline_registry_unavailable(
         payload={
             "pipeline_id": pipeline_id,
             "missing_models": missing_models,
+        },
+    )
+
+
+@event_factory
+def PipelineExecutionTimedOut(
+    pipeline_id: str,
+    execution_id: str,
+    timeout_seconds: float,
+    incomplete_steps: list[str],
+) -> Event:
+    """Emit timeout boundary for DAG execution with pending step identifiers."""
+    return Event(
+        signal=PIPELINE_EXECUTION_TIMED_OUT,
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "timeout_seconds": timeout_seconds,
+            "incomplete_steps": incomplete_steps,
+        },
+    )
+
+
+@event_factory
+def PipelineDeadlockDetected(
+    pipeline_id: str,
+    execution_id: str,
+    incomplete_steps: list[str],
+    pending_task_count: int,
+) -> Event:
+    """Emit deadlock boundary when scheduler can no longer make forward progress."""
+    return Event(
+        signal=PIPELINE_DEADLOCK_DETECTED,
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "incomplete_steps": incomplete_steps,
+            "pending_task_count": pending_task_count,
+        },
+    )
+
+
+@event_factory
+def PipelineExecutionCancelled(
+    pipeline_id: str,
+    execution_id: str,
+    cancelled_steps: list[str],
+) -> Event:
+    """Emit cancellation summary when an execution is externally cancelled."""
+    return Event(
+        signal=PIPELINE_EXECUTION_CANCELLED,
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "cancelled_steps": cancelled_steps,
+        },
+    )
+
+
+@event_factory
+def PipelineStepModelDeferred(
+    pipeline_id: str,
+    execution_id: str,
+    step_id: str,
+    model_id: str,
+    reason: str,
+) -> Event:
+    """Emit step deferral due to model admission-gate constraints."""
+    return Event(
+        signal=PIPELINE_STEP_MODEL_DEFERRED,
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "model_id": model_id,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def PipelineModelGateClaimed(
+    pipeline_id: str,
+    execution_id: str,
+    step_id: str,
+    model_id: str,
+) -> Event:
+    """Emit model gate claim acquisition for a step transition to running."""
+    return Event(
+        signal=PIPELINE_MODEL_GATE_CLAIMED,
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "model_id": model_id,
+        },
+    )
+
+
+@event_factory
+def PipelineModelGateReleased(
+    pipeline_id: str,
+    execution_id: str,
+    step_id: str,
+    model_id: str,
+    outcome: str,
+) -> Event:
+    """Emit model gate release for success, failure, or cancellation outcomes."""
+    return Event(
+        signal=PIPELINE_MODEL_GATE_RELEASED,
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "model_id": model_id,
+            "outcome": outcome,
+        },
+    )
+
+
+@event_factory
+def PipelineModelGateReleasedOnFailure(
+    pipeline_id: str,
+    execution_id: str,
+    step_id: str,
+    model_id: str,
+    error_type: str,
+) -> Event:
+    """Emit explicit failure-boundary release marker for model gate observability."""
+    return Event(
+        signal=PIPELINE_MODEL_GATE_RELEASED_ON_FAILURE,
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "model_id": model_id,
+            "error_type": error_type,
+        },
+    )
+
+
+@event_factory
+def PipelineModelRegistryLookupFailed(
+    pipeline_id: str,
+    execution_id: str,
+    step_id: str,
+    model_ref: str,
+    error: str,
+) -> Event:
+    """Emit registry lookup failure for a step model_ref before execution launch."""
+    return Event(
+        signal=PIPELINE_MODEL_REGISTRY_LOOKUP_FAILED,
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "model_ref": model_ref,
+            "error": error,
+        },
+    )
+
+
+@event_factory
+def PipelineDagExecutionCompleted(
+    pipeline_id: str,
+    execution_id: str,
+    completed_count: int,
+    skipped_count: int,
+    failed_count: int,
+    total_steps: int,
+) -> Event:
+    """Emit terminal DAG completion summary after all steps settle."""
+    return Event(
+        signal=PIPELINE_DAG_EXECUTION_COMPLETED,
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "completed_count": completed_count,
+            "skipped_count": skipped_count,
+            "failed_count": failed_count,
+            "total_steps": total_steps,
         },
     )
 

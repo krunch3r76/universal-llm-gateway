@@ -340,6 +340,17 @@ logged at DEBUG level in `MasterRequestTracker`.
 
 **INVARIANT**: `pipeline.step.started` ⟹ (`pipeline.step.completed` ∨ `pipeline.step.failed` ∨ `pipeline.step.skipped`)
 
+**INVARIANT**: `pipeline.execution.timed.out` and `pipeline.deadlock.detected` are
+failure-boundary signals emitted immediately before the corresponding
+`PipelineExecutionError` is raised.
+
+**INVARIANT**: `pipeline.model.gate.claimed` ⟹
+(`pipeline.model.gate.released` ∨ `pipeline.model.gate.failure.release`)
+for the same `pipeline_id` + `execution_id` + `step_id` + `model_id`.
+
+**INVARIANT**: `pipeline.dag.execution.completed` is emitted exactly once when all
+steps are terminal (`COMPLETED` ∪ `SKIPPED` ∪ `FAILED`).
+
 ```
 pipeline.started
   └─> pipeline.step.condition.evaluated? (if step has condition)
@@ -862,8 +873,9 @@ determines that resources are insufficient even with eviction.
 
 When the DecisionEngine returns no gateway because of transient
 `eviction_blocked_by_busy_models` (busy models preventing eviction), the
-request enters a server-side wait queue instead of returning 503. These
-signals track the wait lifecycle.
+request enters a server-side wait queue instead of returning 503. Applies to
+both sticky and non-sticky models because the check runs before the
+sticky/non-sticky failure split. These signals track the wait lifecycle.
 
 | Signal | When |
 |--------|------|
@@ -970,7 +982,7 @@ provider HTTP failures.
 | `federation.connection.authenticated` | `remote_id`, `method` | - |
 | `federation.connection.lost` | `remote_id`, `reason` | - |
 | `federation.snapshot.sent` | `gateway_id`, `all_models_count`, `available_models_count`, `gap_count` | - |
-| `federation.telemetry.received` | `remote_id`, `model_count` | `resource_summary`, `telemetry_age_ms` |
+| `federation.telemetry.received` | `remote_id`, `model_count` | `resource_summary`, `telemetry_age_ms`, `msg_type`, `catalog_model_count`, `loaded_model_count`, `count_source` |
 | `federation.telemetry.applied` | `remote_id`, `changes` | - |
 | `federation.telemetry.marked.stale` | `remote_id`, `age_seconds`, `threshold_seconds` | - |
 | `federation.routing.delegated` | `request_id`, `target_remote`, `model_id` | `correlation_id`, `reason` |
@@ -981,13 +993,26 @@ provider HTTP failures.
 | `federation.load.failed` | `request_id`, `remote_id`, `model_id`, `error` | `correlation_id` |
 | `federation.orchestrator.decided` | `request_id`, `decision_type`, `target`, `reason` | `correlation_id`, `alternatives_considered` |
 | `federation.orchestrator.evicted` | `target_remote`, `model_id`, `reason` | - |
-| `federation.peer.auth_failed` | `peer_id`, `reason` | edge peer auth failed (unknown_peer, invalid_api_key) |
+| `federation.peer.auth.failed` | `peer_id`, `reason` | edge peer auth failed (unknown_peer, invalid_api_key) |
 | `federation.peer.disconnected` | `peer_id`, `remaining_peers` | authenticated peer disconnected from edge |
 | `federation.telemetry.wired` | `gateway_url`, `gateway_id` | edge finished wiring local gateway telemetry |
-| `federation.request.inference_started.forwarded` | `request_id`, `peer_count` | edge forwarded request.inference.started to peers |
-| `federation.model.lifecycle_event` | `gateway_id`, `msg_type`, `model_id` | master applied federated model lifecycle telemetry |
+| `federation.request.inference.forwarded` | `request_id`, `peer_count` | edge forwarded request.inference.started to peers |
+| `federation.model.lifecycle` | `gateway_id`, `msg_type`, `model_id` | master applied federated model lifecycle telemetry |
 | `federation.resource.updated` | `gateway_id`, `vram_free_mb`, `ram_free_mb` | master applied RESOURCE_UPDATE from edge |
-| `federation.circuit_breaker.request_rejected` | `gateway_id`, `model_id`, `reason` | request rejected (gateway_wide_open, model_circuit_open, half_open_limit_reached) |
+| `federation.activation.filtered.empty` | `gateway_id`, `available_count`, `activated_count` | gateway has available models but activated_models is explicitly empty — all hidden from /v1/models |
+| `federation.circuit.breaker.rejected` | `gateway_id`, `model_id`, `reason` | request rejected (gateway_wide_open, model_circuit_open, half_open_limit_reached) |
+
+**`federation.telemetry.received` disambiguation fields**: `model_count` is the
+backward-compatible count scoped by message type. The optional fields clarify its
+source: `msg_type` (`GATEWAY_SNAPSHOT` or `RESOURCE_UPDATE`), `count_source`
+(`snapshot_available_models` or `message_loaded_models`), `catalog_model_count`
+(set on snapshots), and `loaded_model_count` (set on resource updates — may be 0
+when edge strips `loaded_models` from the wire payload).
+
+**`federation.activation.filtered.empty`**: Diagnostic signal emitted during
+`GATEWAY_SNAPSHOT` application when a gateway reports `available_models > 0` but
+`activated_models` is an explicitly empty set. Under strict activation semantics
+this means all models are hidden from `/v1/models` for that gateway.
 
 ### Gateway Events
 
@@ -1063,11 +1088,20 @@ Pipeline events flow to two sinks:
 | `pipeline.completed` | `pipeline_id`, `execution_id`, `duration_seconds`, `step_count`, `output_step` | - |
 | `pipeline.failed` | `pipeline_id`, `execution_id`, `duration_seconds`, `error`, `failed_step` | - |
 | `pipeline.cancelled` | `pipeline_id`, `execution_id`, `duration_seconds`, `reason`, `completed_steps`, `pending_steps` | - |
+| `pipeline.execution.timed.out` | `pipeline_id`, `execution_id`, `timeout_seconds`, `incomplete_steps` | emitted before timeout failure raise |
+| `pipeline.deadlock.detected` | `pipeline_id`, `execution_id`, `incomplete_steps`, `pending_task_count` | emitted before deadlock failure raise |
+| `pipeline.execution.cancelled` | `pipeline_id`, `execution_id`, `cancelled_steps` | external cancellation summary |
 | `pipeline.step.started` | `pipeline_id`, `execution_id`, `step_name`, `step_type`, `model_id`, `is_map_step` | - |
 | `pipeline.step.completed` | `pipeline_id`, `execution_id`, `step_name`, `duration_seconds`, `output_length`, `prompt_tokens`, `completion_tokens`, `model_call_count` | `exit_code` (shell steps only) |
 | `pipeline.step.failed` | `pipeline_id`, `execution_id`, `step_name`, `duration_seconds`, `error`, `prompt_tokens`, `completion_tokens`, `model_call_count` | - |
 | `pipeline.step.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | - |
 | `pipeline.step.condition.evaluated` | `pipeline_id`, `execution_id`, `step_name`, `condition`, `result`, `available_outputs` | - |
+| `pipeline.step.model.deferred` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `reason` | deferral due to model admission gate |
+| `pipeline.model.gate.claimed` | `pipeline_id`, `execution_id`, `step_id`, `model_id` | step acquired model gate |
+| `pipeline.model.gate.released` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `outcome` | gate released (`success`\|`failure`\|`cancelled`) |
+| `pipeline.model.gate.failure.release` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `error_type` | explicit failure-boundary release marker |
+| `pipeline.model.registry.lookup.failed` | `pipeline_id`, `execution_id`, `step_id`, `model_ref`, `error` | model_ref lookup failure |
+| `pipeline.dag.execution.completed` | `pipeline_id`, `execution_id`, `completed_count`, `skipped_count`, `failed_count`, `total_steps` | terminal DAG summary |
 | `pipeline.step.model.fallback` | `pipeline_id`, `execution_id`, `step_name`, `primary_model`, `fallback_model`, `primary_error_type`, `fallback_attempt`, `total_fallbacks`, `succeeded` | emitted only for fallback-eligible failures |
 | `pipeline.step.model.fallback.suppressed` | `pipeline_id`, `execution_id`, `step_name`, `primary_error_type`, `suppression_reason` | fallback intentionally not attempted due to deterministic local error |
 | `pipeline.generation.params.filtered` | `step_name`, `model_id`, `removed_keys`, `allowed_keys` | - |
