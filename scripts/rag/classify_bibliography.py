@@ -300,7 +300,7 @@ async def classify_batch(
     return out
 
 
-async def run(args: argparse.Namespace) -> None:
+async def run(args: argparse.Namespace) -> bool:
     profile = PROFILES[args.target]
     collection, records = load_chunks(
         chroma_path=args.chroma_path,
@@ -316,7 +316,7 @@ async def run(args: argparse.Namespace) -> None:
     total = len(records)
     if total == 0:
         print("No chunks found; nothing to classify.")
-        return
+        return False
 
     print(f"Loaded {total} chunks from '{args.collection}' at {args.chroma_path}")
     print(f"Target: {args.target} -> metadata_key={profile.metadata_key}")
@@ -388,6 +388,7 @@ async def run(args: argparse.Namespace) -> None:
     print(f"Junk count: {junk_count}")
     print(f"Clean count: {clean_count}")
     print(f"Failed count: {failed}")
+    return True
 
 
 def _stamp_watermark() -> None:
@@ -418,8 +419,9 @@ def main() -> None:
         raise ValueError("--max-retries must be >= 0")
     if args.timeout_seconds <= 0:
         raise ValueError("--timeout-seconds must be > 0")
-    asyncio.run(run(args))
-    _stamp_watermark()
+    did_work = asyncio.run(run(args))
+    if did_work:
+        _stamp_watermark()
 
 
 if __name__ == "__main__":

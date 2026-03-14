@@ -7,6 +7,7 @@ Usage:
   query-events --op pipeline-trace --execution-id c4c7448d
   query-events --op operations
   query-events --sql "SELECT signal, COUNT(*) c FROM events GROUP BY signal ORDER BY c DESC LIMIT 20"
+  query-events --sql "SELECT * FROM events WHERE execution_id = ?" --sql-param c4c7448d
   query-events --subscribe --filter signal=federation.*
 """
 
@@ -37,6 +38,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Operation param as key=value (repeatable)",
     )
     p.add_argument("--sql", help="Raw SQL query (SELECT only)")
+    p.add_argument(
+        "--sql-param",
+        action="append",
+        default=[],
+        help="Bind parameter for --sql query (repeatable, positional order)",
+    )
     p.add_argument(
         "--subscribe",
         action="store_true",
@@ -124,6 +131,8 @@ def main() -> None:
             body = {"type": "operation", "name": args.op, "params": params}
     elif args.sql:
         body = {"type": "sql", "sql": args.sql, "limit": args.limit}
+        if args.sql_param:
+            body["params"] = args.sql_param
     else:
         body = {"type": "operations"}
 

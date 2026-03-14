@@ -36,6 +36,14 @@ Read-only access to the mounted project directory. Only git-tracked, non-binary 
 | `read_project_file` | Read file contents with line range support |
 | `search_project` | Grep project files with regex |
 
+### Pipeline Consultation (`tools/pipeline_consult.py`)
+
+RAG-grounded prompt-engineering advice for pipeline steps. Queries step metadata from the event service, auto-detects RAG scope from the model tier, and runs the `consult-prompt-engineer` pipeline via Stargate.
+
+| Tool | Purpose |
+|------|---------|
+| `pipeline_consult` | Get expert prompt-engineering advice for a pipeline step issue |
+
 ### RAG (`tools/rag.py`)
 
 Routes queries through Stargate's RAG pipelines via `host.docker.internal:9999`.
@@ -172,6 +180,7 @@ Covers request lifecycle, tool invocations, browser sessions, SSE stream lifecyc
 | `mcp_events.py` | Event emission helpers |
 | `tools/filesystem.py` | Sandboxed file read/write/edit/delete |
 | `tools/project.py` | Read-only project browsing (git-tracked files) |
+| `tools/pipeline_consult.py` | RAG-grounded prompt consultation |
 | `tools/rag.py` | RAG pipeline integration via Stargate |
 | `tools/web.py` | Brave Search + URL fetch with SSRF guard |
 | `tools/clip.py` | Bookmarklet clip access |

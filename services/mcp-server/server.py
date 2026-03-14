@@ -29,12 +29,14 @@ from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
+
 from tools.browser import register_browser_tools
 from tools.clip import normalize_clip_content, register_clip_tools
 from tools.context import register_context_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
 from tools.pipeline import register_pipeline_tools
+from tools.pipeline_consult import register_pipeline_consult_tools
 from tools.project import register_project_tools
 from tools.quality import register_quality_tools
 from tools.rag import register_rag_tools
@@ -386,6 +388,7 @@ def _build_server() -> FastMCP:
     register_sqlite_tools(mcp)
     register_event_tools(mcp)
     register_pipeline_tools(mcp)
+    register_pipeline_consult_tools(mcp)
     register_quality_tools(mcp)
 
     @mcp.tool()

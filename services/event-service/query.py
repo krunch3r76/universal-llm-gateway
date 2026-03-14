@@ -34,7 +34,9 @@ async def query_handler(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
     if not isinstance(data_raw, dict):
-        return web.json_response({"error": "Request body must be a JSON object"}, status=400)
+        return web.json_response(
+            {"error": "Request body must be a JSON object"}, status=400
+        )
     data: dict[str, Any] = data_raw
 
     query_type = data.get("type", "")
@@ -110,10 +112,14 @@ async def _structured_query(data: dict[str, Any], store: EventStore) -> web.Resp
     """Handle structured filter queries."""
     filt = data.get("filter", {})
     if not isinstance(filt, dict):
-        return web.json_response({"error": "Field 'filter' must be an object"}, status=400)
+        return web.json_response(
+            {"error": "Field 'filter' must be an object"}, status=400
+        )
     limit_raw = data.get("limit", 100)
     if not isinstance(limit_raw, int):
-        return web.json_response({"error": "Field 'limit' must be an integer"}, status=400)
+        return web.json_response(
+            {"error": "Field 'limit' must be an integer"}, status=400
+        )
     limit = min(limit_raw, _MAX_QUERY_ROWS)
     since = data.get("since")
     if since is not None and not isinstance(since, str):
@@ -175,7 +181,12 @@ async def _structured_query(data: dict[str, Any], store: EventStore) -> web.Resp
 
 
 async def _raw_sql(data: dict[str, Any], store: EventStore) -> web.Response:
-    """Handle raw SQL queries (restricted to SELECT/EXPLAIN)."""
+    """Handle raw SQL queries (restricted to SELECT/EXPLAIN).
+
+    Accepts optional ``params`` list for parameterized queries::
+
+        {"type": "sql", "sql": "SELECT * FROM events WHERE execution_id = ?", "params": ["abc123"]}
+    """
     sql = data.get("sql", "").strip()
     if not sql:
         return web.json_response({"error": "Empty SQL"}, status=400)
@@ -187,6 +198,13 @@ async def _raw_sql(data: dict[str, Any], store: EventStore) -> web.Response:
             status=403,
         )
 
+    raw_params = data.get("params", [])
+    if not isinstance(raw_params, list):
+        return web.json_response(
+            {"error": "Field 'params' must be a list of bind values"},
+            status=400,
+        )
+
     limit = min(data.get("limit", 100), _MAX_QUERY_ROWS)
-    rows = await store.query(sql, limit=limit)
+    rows = await store.query(sql, tuple(raw_params), limit=limit)
     return web.json_response({"type": "result", "rows": rows, "count": len(rows)})

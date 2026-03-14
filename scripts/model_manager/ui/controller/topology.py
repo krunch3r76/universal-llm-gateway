@@ -8,7 +8,6 @@ import asyncio
 import json
 import logging
 import secrets
-import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -268,7 +267,7 @@ async def deploy_remote(
 # Event-driven relay readiness
 # ---------------------------------------------------------------------------
 
-_EVENTS_FILE = Path("/tmp/stargate-events/current.jsonl")
+_EVENTS_QUERY_SOCKET = Path("/tmp/universal-protocol/events-query.sock")
 _CONNECTION_EVENT = "federation.connection.established"
 
 
@@ -287,17 +286,14 @@ async def wait_for_relay_connected(
 ) -> RelayConnectionResult:
     """Wait for a relay to appear in master's model sources after deploy.
 
-    Runs event-tail (if events file exists) and HTTP poll concurrently; returns
-    as soon as either confirms. The concurrent approach handles the race
-    where the relay reconnects before we start tailing the events file.
+    Runs WebSocket event subscription (if event service is available) and
+    HTTP poll concurrently; returns as soon as either confirms. The concurrent
+    approach handles the race where the relay reconnects before we start
+    subscribing.
     """
     tasks: list[asyncio.Task[bool]] = []
-    if _EVENTS_FILE.exists():
-        tasks.append(
-            asyncio.create_task(
-                asyncio.to_thread(_tail_events_for_connection, remote_id, timeout)
-            )
-        )
+    if _EVENTS_QUERY_SOCKET.exists():
+        tasks.append(asyncio.create_task(_subscribe_for_connection(remote_id, timeout)))
     tasks.append(
         asyncio.create_task(
             _poll_master_for_relay(remote_id, master_port, timeout, interval)
@@ -321,27 +317,42 @@ async def wait_for_relay_connected(
     )
 
 
-def _tail_events_for_connection(remote_id: str, timeout: float) -> bool:
-    """Blocking: tail JSONL event log for a matching connection event."""
-    with _EVENTS_FILE.open() as fh:
-        fh.seek(0, 2)
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            line = fh.readline()
-            if line:
-                if not (line := line.strip()):
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if (
-                    event.get("signal") == _CONNECTION_EVENT
-                    and event.get("payload", {}).get("remote_id") == remote_id
+async def _subscribe_for_connection(remote_id: str, timeout: float) -> bool:
+    """Subscribe to event service WebSocket for a matching connection event."""
+    import aiohttp
+
+    connector = aiohttp.UnixConnector(path=str(_EVENTS_QUERY_SOCKET))
+    try:
+        async with (
+            aiohttp.ClientSession(connector=connector) as session,
+            session.ws_connect(
+                "http://localhost/v1/subscribe",
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as ws,
+        ):
+            await ws.send_json(
+                {
+                    "type": "subscribe",
+                    "filter": {"signal": _CONNECTION_EVENT},
+                }
+            )
+
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(msg.data)
+                    except json.JSONDecodeError:
+                        continue
+                    payload = data.get("payload", {})
+                    if payload.get("remote_id") == remote_id:
+                        return True
+                elif msg.type in (
+                    aiohttp.WSMsgType.CLOSED,
+                    aiohttp.WSMsgType.ERROR,
                 ):
-                    return True
-            else:
-                time.sleep(0.5)
+                    break
+    except (TimeoutError, OSError, aiohttp.ClientError) as e:
+        logger.debug("WebSocket subscription failed: %s", e)
     return False
 
 

@@ -157,16 +157,24 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                 resp.raise_for_status()
                 pipelines_data = resp.json()
         except httpx.ConnectError as e:
-            logger.exception("Stargate connection failed during pipeline validation for %s", pipeline)
+            logger.exception(
+                "Stargate connection failed during pipeline validation for %s", pipeline
+            )
             return {"valid": False, "errors": [f"Stargate not reachable: {e}"]}
         except httpx.HTTPStatusError as e:
-            logger.exception("HTTP status error during pipeline validation for %s: %s", pipeline, e.response.status_code)
+            logger.exception(
+                "HTTP status error during pipeline validation for %s: %s",
+                pipeline,
+                e.response.status_code,
+            )
             return {
                 "valid": False,
                 "errors": [f"Pipeline API error: {e.response.status_code}"],
             }
         except Exception as e:
-            logger.exception("Unexpected error during pipeline validation for %s", pipeline)
+            logger.exception(
+                "Unexpected error during pipeline validation for %s", pipeline
+            )
             return {"valid": False, "errors": [f"Validation failed: {e}"]}
 
         pipelines = pipelines_data.get("pipelines", {})

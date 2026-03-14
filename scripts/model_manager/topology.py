@@ -3,7 +3,6 @@
 import json
 import logging
 import sys
-import time
 import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -213,103 +212,104 @@ def _hostname_from_url(url: str) -> str:
         return "unknown"
 
 
-_EVENTS_FILE = Path("/tmp/stargate-events/current.jsonl")
-# A relay broadcasting telemetry within this window is considered connected.
+_EVENTS_QUERY_SOCKET = Path("/tmp/universal-protocol/events-query.sock")
 _TELEMETRY_RECENCY_S = 30.0
 
 
+def _query_event_service(
+    sql: str,
+    params: list[object] | None = None,
+    *,
+    limit: int = 100,
+) -> list[dict[str, object]]:
+    """Query event service via UDS. Returns rows or empty list on failure."""
+    import httpx
+
+    if not _EVENTS_QUERY_SOCKET.exists():
+        return []
+    transport = httpx.HTTPTransport(uds=str(_EVENTS_QUERY_SOCKET))
+    body: dict[str, object] = {"type": "sql", "sql": sql, "limit": limit}
+    if params:
+        body["params"] = params
+    try:
+        with httpx.Client(transport=transport, timeout=5.0) as client:
+            resp = client.post("http://localhost/v1/query", json=body)
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("rows", [])
+    except Exception as e:
+        logger.warning("Event service query failed: %s", e)
+        return []
+
+
 def probe_recent_relay_states(
-    events_file: Path = _EVENTS_FILE,
     *,
     recency_seconds: float = _TELEMETRY_RECENCY_S,
 ) -> dict[str, str]:
-    """Return best-known relay state reason keyed by remote_id."""
-    if not events_file.exists():
-        return {}
+    """Return best-known relay state reason keyed by remote_id.
 
-    cutoff = time.time() - recency_seconds
+    Queries the event service for recent connection.lost and
+    telemetry.marked.stale signals.
+    """
+    sql = (
+        "SELECT signal, payload FROM events "
+        "WHERE signal IN ("
+        "  'federation.connection.lost', "
+        "  'federation.telemetry.marked.stale'"
+        ") "
+        f"AND timestamp >= datetime('now', '-{int(recency_seconds)} seconds') "
+        "ORDER BY seq DESC LIMIT 50"
+    )
+    rows = _query_event_service(sql, limit=50)
+
     states: dict[str, str] = {}
-    try:
-        with events_file.open("rb") as fh:
-            fh.seek(0, 2)
-            size = fh.tell()
-            fh.seek(max(0, size - 16384))
-            tail = fh.read().decode(errors="replace")
-    except OSError as e:
-        logger.warning("Could not read events file %s: %s", events_file, e)
-        return {}
-
-    for line in tail.splitlines():
-        line = line.strip()
-        if not line:
+    for row in rows:
+        payload_raw = row.get("payload", "")
+        if not payload_raw:
             continue
         try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
+            payload = (
+                json.loads(payload_raw) if isinstance(payload_raw, str) else payload_raw
+            )
+        except (json.JSONDecodeError, TypeError):
             continue
-
-        ts_str = event.get("timestamp", "")
-        try:
-            ts = datetime.fromisoformat(ts_str).timestamp()
-        except (ValueError, TypeError):
-            continue
-        if ts < cutoff:
-            continue
-
-        signal = event.get("signal")
-        payload = event.get("payload", {})
         remote_id = payload.get("remote_id")
-        if not remote_id:
-            continue
-
-        if signal == "federation.connection.lost":
-            states[remote_id] = "no_recent_telemetry"
-        elif signal == "federation.telemetry.marked.stale":
-            states[remote_id] = "no_recent_telemetry"
+        if isinstance(remote_id, str) and remote_id:
+            states.setdefault(remote_id, "no_recent_telemetry")
 
     return states
 
 
-def probe_connected_relays(events_file: Path = _EVENTS_FILE) -> set[str]:
+def probe_connected_relays() -> set[str]:
     """Return remote_ids that sent federation.telemetry.received recently.
 
-    Scans the tail of the master's events file for recent telemetry signals.
-    A relay present here is live even when it has zero models loaded — the
-    model-source probe alone cannot distinguish "connected, no models" from
-    "unreachable".
+    Queries the event service for recent telemetry signals. A relay present
+    here is live even when it has zero models loaded — the model-source probe
+    alone cannot distinguish "connected, no models" from "unreachable".
     """
-    if not events_file.exists():
-        return set()
+    sql = (
+        "SELECT payload FROM events "
+        "WHERE signal = 'federation.telemetry.received' "
+        f"AND timestamp >= datetime('now', '-{int(_TELEMETRY_RECENCY_S)} seconds') "
+        "ORDER BY seq DESC LIMIT 50"
+    )
+    rows = _query_event_service(sql, limit=50)
+
     connected: set[str] = set()
-    cutoff = time.time() - _TELEMETRY_RECENCY_S
-    try:
-        # Read from near the end; telemetry arrives every ~5 s so 4 KB is ample.
-        with events_file.open("rb") as fh:
-            fh.seek(0, 2)
-            size = fh.tell()
-            fh.seek(max(0, size - 4096))
-            tail = fh.read().decode(errors="replace")
-        for line in tail.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if event.get("signal") != "federation.telemetry.received":
-                continue
-            ts_str: str = event.get("timestamp", "")
-            try:
-                ts = datetime.fromisoformat(ts_str).timestamp()
-            except (ValueError, TypeError):
-                continue
-            if ts >= cutoff:
-                remote_id = event.get("payload", {}).get("remote_id", "")
-                if remote_id:
-                    connected.add(remote_id)
-    except OSError as e:
-        logger.warning("Could not read events file %s: %s", events_file, e)
+    for row in rows:
+        payload_raw = row.get("payload", "")
+        if not payload_raw:
+            continue
+        try:
+            payload = (
+                json.loads(payload_raw) if isinstance(payload_raw, str) else payload_raw
+            )
+        except (json.JSONDecodeError, TypeError):
+            continue
+        remote_id = payload.get("remote_id")
+        if isinstance(remote_id, str) and remote_id:
+            connected.add(remote_id)
+
     return connected
 
 

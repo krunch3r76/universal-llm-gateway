@@ -332,15 +332,25 @@ Models are defined in `config/models/{type}/{engine}/{model-id}.yaml` with struc
 
 ## Event Observability
 
-Every major subsystem emits structured JSONL events for debugging and monitoring.
+All services publish structured events to the centralized **Event Service** (SQLite-backed, Docker container). Query via CLI or MCP tool:
 
-| Event Stream | Path | Scope |
+```bash
+scripts/query-events --op recent-failures --limit 10
+scripts/query-events --op pipeline-trace --execution-id ID
+scripts/query-events --op noise-profile --minutes 5
+scripts/query-events --sql "SELECT signal, COUNT(*) c FROM events GROUP BY signal ORDER BY c DESC LIMIT 20"
+scripts/query-events --subscribe --filter signal=pipeline.*   # live WebSocket
+```
+
+MCP agents use `query_observability` for the same queries. See [`docs/event-service.md`](docs/event-service.md) for the full API.
+
+| Publisher | Source field | Key signals |
 |---|---|---|
-| Stargate | `/tmp/stargate-events/current.jsonl` | Routing, federation, proxy lifecycle |
-| Pipeline | `/tmp/pipeline-events/current.jsonl` | Per-step metrics, handler execution |
-| RAG | `/tmp/rag-events/current.jsonl` | Indexing, search, extraction |
-| Cloud Proxy | `/tmp/cloud-proxy-events/current.jsonl` | Provider requests, catalog refreshes |
-| Gateway | `/tmp/_universal-gateway-events/current.jsonl` | Worker lifecycle, model loading |
+| Stargate | `stargate` | `request.*`, `federation.*`, `pipeline.*` |
+| Gateway | `gateway` | `gateway.resource.*`, `model.*` |
+| RAG | `rag` | `rag.started`, `rag.watch.*`, `rag.search.*` |
+| Cloud Proxy | `cloud-proxy` | `cloud.proxy.*`, `mcp.adapter.*` |
+| MCP Server | `mcp-server` | `mcp.request.*`, `mcp.tool.*`, `mcp.pipeline.consult.*` |
 
 ## Project Structure
 
