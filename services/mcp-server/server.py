@@ -20,7 +20,7 @@ import sys
 import time
 from asyncio.transports import BaseTransport
 from pathlib import Path
-from typing import cast, override
+from typing import Any, cast, override
 
 import uvicorn
 from fastmcp import FastMCP
@@ -29,12 +29,14 @@ from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
-
 from tools.browser import register_browser_tools
 from tools.clip import normalize_clip_content, register_clip_tools
 from tools.context import register_context_tools
+from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
+from tools.pipeline import register_pipeline_tools
 from tools.project import register_project_tools
+from tools.quality import register_quality_tools
 from tools.rag import register_rag_tools
 from tools.sqlite import register_sqlite_tools
 from tools.web import register_web_tools
@@ -107,7 +109,9 @@ def _patch_sse_lifecycle_events() -> None:
                 duration_s=round(duration, 3),
                 reason="clean",
             )
-            logger.info("SSE stream ended cleanly after %.1fs", duration)
+            # Only log streams that did real work; sub-100ms = ListTools handshake.
+            if duration >= 0.1:
+                logger.info("SSE stream ended cleanly after %.1fs", duration)
 
     EventSourceResponse._stream_response = _stream_with_events  # type: ignore[method-assign]
 
@@ -222,10 +226,36 @@ class BearerAuthMiddleware:
         method = request.method
         t0 = monotonic_now()
 
+        # Peek at the request body for POST /mcp to extract the MCP method name.
+        # Tee the receive callable so the inner app can still read the full body.
+        mcp_method = ""
+        if method == "POST":
+            msg = await receive()
+            body = msg.get("body", b"")
+            more = msg.get("more_body", False)
+            if body:
+                import json as _json  # noqa: PLC0415
+                try:
+                    mcp_method = _json.loads(body).get("method", "") or ""
+                except Exception:
+                    pass
+            orig_receive = receive
+            _body_sent = False
+
+            async def _tee_receive() -> dict:
+                nonlocal _body_sent
+                if not _body_sent:
+                    _body_sent = True
+                    return msg
+                return await orig_receive()
+
+            receive = _tee_receive
+
         record(
             "mcp.request.started",
             method=method,
             client_ip=client_ip,
+            mcp_method=mcp_method,
         )
 
         try:
@@ -354,6 +384,9 @@ def _build_server() -> FastMCP:
     else:
         logger.info("Browser tools disabled (ENABLE_BROWSER_TOOLS=false)")
     register_sqlite_tools(mcp)
+    register_event_tools(mcp)
+    register_pipeline_tools(mcp)
+    register_quality_tools(mcp)
 
     @mcp.tool()
     def health() -> dict[str, str]:
@@ -363,21 +396,37 @@ def _build_server() -> FastMCP:
     return mcp
 
 
-def main() -> None:
-    from universal_logging.utc_formatter import UTCFormatter
+class _UTCFormatter(logging.Formatter):
+    """Logging formatter that renders asctime in UTC."""
 
+    converter = time.gmtime
+
+
+def main() -> None:
+    utc_fmt = _UTCFormatter(
+        fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%SZ",
+    )
     stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(
-        UTCFormatter(
-            fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
-            datefmt="%Y-%m-%dT%H:%M:%SZ",
-        )
-    )
-    logging.basicConfig(
-        level=logging.INFO,
-        handlers=[stream_handler],
-        force=True,
-    )
+    stream_handler.setFormatter(utc_fmt)
+    logging.basicConfig(level=logging.INFO, handlers=[stream_handler], force=True)
+
+    # Apply UTC formatter to uvicorn's own loggers so none slip through
+    # with localtime or the default no-timestamp format.
+    for _uvicorn_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        _uv_logger = logging.getLogger(_uvicorn_logger_name)
+        _uv_logger.handlers.clear()
+        _uv_logger.addHandler(stream_handler)
+        _uv_logger.propagate = False
+
+    # Suppress high-volume internal chatter from fastmcp / MCP protocol layers.
+    # These fire on every request and are fully covered by mcp.request.* events.
+    for _quiet_logger in (
+        "mcp.server.lowlevel.server",
+        "mcp.server.streamable_http_manager",
+        "mcp.server.sse",
+    ):
+        logging.getLogger(_quiet_logger).setLevel(logging.WARNING)
 
     for cert_path in (_CERT_FILE, _KEY_FILE):
         if not os.path.exists(cert_path):
@@ -388,7 +437,11 @@ def main() -> None:
     mcp = _build_server()
 
     # Wrap the FastMCP ASGI app with bearer auth middleware
-    asgi_app = mcp.http_app(transport="streamable-http")
+    # stateless_http=True: each POST is self-contained (no session ID tracking).
+    # Anthropic's API client creates a new session per interaction rather than
+    # reusing Mcp-Session-Id across the SSE stream and tool call POSTs, so
+    # stateful mode silently drops all tool calls (routed to empty sessions).
+    asgi_app = mcp.http_app(transport="streamable-http", stateless_http=True)
     protected_app = BearerAuthMiddleware(asgi_app, token=auth_token)
 
     logger.info("Starting MCP server on %s:%d", _HOST, _PORT)
@@ -399,6 +452,7 @@ def main() -> None:
         ssl_certfile=_CERT_FILE,
         ssl_keyfile=_KEY_FILE,
         log_level="info",
+        access_log=False,
         timeout_keep_alive=1800,
     )
     config.load()
@@ -408,7 +462,10 @@ def main() -> None:
     class KeepaliveProtocol(orig_protocol_class):
         @override
         def connection_made(self, transport: BaseTransport) -> None:
-            sock = cast(socket.socket | None, transport.get_extra_info("socket"))
+            # get_extra_info('socket') returns a TransportSocket, which wraps the raw socket
+            # We cast to Any to avoid importing asyncio.TransportSocket if not strictly needed,
+            # as we only use it to pass to _set_tcp_keepalive which expects socket.socket.
+            sock = cast(Any | None, transport.get_extra_info("socket"))
             if sock is not None:
                 _set_tcp_keepalive(sock)
             super().connection_made(transport)

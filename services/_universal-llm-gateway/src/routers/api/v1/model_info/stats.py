@@ -1,5 +1,7 @@
 """GET /api/v1/model_info/stats - Model statistics endpoint"""
 
+from universal_logging import get_logger
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.core.model_registry import ModelRegistry
@@ -7,6 +9,7 @@ from src.routers.dependencies import get_model_metadata_adapter, get_model_regis
 from src.routers.model_metadata_adapter import ModelMetadataAdapter
 
 router = APIRouter(prefix="/v1/model_info", tags=["Debug & Administration"])
+logger = get_logger(__name__)
 
 
 @router.get("/stats", tags=["Debug & Administration"])
@@ -31,33 +34,34 @@ async def get_model_stats(
     try:
         model_counts = model_registry.get_model_count()
 
-        # Get format breakdown
-        format_counts = {}
-        type_counts = {}
+        # Get format breakdown from model_loaders_config
+        format_counts: dict[str, int] = {}
+        type_counts: dict[str, int] = {}
 
-        for model_metadata in model_registry.models_to_metadata.values():
-            # Count by format
-            format_type = model_metadata.format
+        models_data = model_registry.model_loaders_config.get("models", {})
+        for model_id, model_data in models_data.items():
+            if not isinstance(model_data, dict):
+                continue
+            info = model_data.get("info", {})
+            format_type = info.get("format") or "unknown"
             format_counts[format_type] = format_counts.get(format_type, 0) + 1
 
-            # Count by model type (from metadata)
-            # Get the full model config to access the family/type info
-            model_config = model_registry.get_model_config(model_metadata.name)
+            model_config = model_registry.get_model_config(model_id)
             model_type = metadata_adapter.get_model_type_from_config(
-                model_metadata.name, model_config
+                model_id, model_config or {}
             )
             type_counts[model_type] = type_counts.get(model_type, 0) + 1
 
         return {
             "total_models": model_counts["total"],
             "enabled_models": model_counts["enabled"],
-            "loaded_models": model_counts["loaded"],
-            "aliases_count": model_counts["aliases"],
+            "disabled_models": model_counts["disabled"],
             "format_breakdown": format_counts,
             "type_breakdown": type_counts,
         }
 
     except Exception as e:
+        logger.exception("Error getting model stats")
         raise HTTPException(
             status_code=500, detail=f"Error getting model stats: {str(e)}"
         )

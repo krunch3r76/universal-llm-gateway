@@ -61,10 +61,10 @@ They are not re-emitted on master to reduce event noise.
 
 ```bash
 # Find all coordination events
-jq -c 'select(.role == "coordination")' /tmp/stargate-events/current.jsonl
+scripts/query-events --sql "SELECT signal, role, scope, payload FROM events WHERE role='coordination' ORDER BY seq DESC LIMIT 100"
 
 # Find node-scoped events (only visible at originating node)
-jq -c 'select(.scope == "node")' /tmp/stargate-events/current.jsonl
+scripts/query-events --sql "SELECT signal, role, scope, payload FROM events WHERE scope='node' ORDER BY seq DESC LIMIT 100"
 ```
 
 ## Correlation Fields
@@ -219,15 +219,10 @@ authoritative `model_resources`.
 
 ```bash
 # Capacity fallback events (indicates GATEWAY_SNAPSHOT timing issue)
-jq -c 'select(.signal == "federation.capacity.fallback.applied")' \
-  /tmp/stargate-events/current.jsonl
+scripts/query-events --sql "SELECT signal, payload FROM events WHERE signal='federation.capacity.fallback.applied' ORDER BY seq DESC LIMIT 50"
 
 # Verify fallback was later corrected by snapshot
-jq -c 'select(.signal == "federation.capacity.fallback.applied" or
-  (.signal == "federation.telemetry.received" and
-   .payload.msg_type == "telemetry.gateway.snapshot")) |
-  {signal, gw: .payload.gateway_id, model: .payload.model_id}' \
-  /tmp/stargate-events/current.jsonl
+scripts/query-events --sql "SELECT signal, payload FROM events WHERE signal='federation.capacity.fallback.applied' OR (signal='federation.telemetry.received' AND json_extract(payload, '$.msg_type')='telemetry.gateway.snapshot') ORDER BY seq DESC LIMIT 100"
 ```
 
 ### Federated Prompt Transformation Contract
@@ -565,58 +560,8 @@ Payload semantics:
 **Debugging queries**:
 
 ```bash
-# Consumer tier resolution and parameter impact
-jq -c 'select(.signal == "pipeline.rag.retrieval.params.resolved") |
-  {tier: .payload.consumer_tier, model: .payload.consumer_model,
-   class: .payload.profile_class, top_k: .payload.top_k_per_query,
-   max_chunks: .payload.max_chunks}' /tmp/pipeline-events/current.jsonl
-
-# Scope rejection events (fail-closed — invalid, low-confidence, or catalog unavailable)
-jq -c 'select(.signal == "pipeline.rag.scope.rejected") |
-  {reason: .payload.reason, scope: .payload.scope,
-   details: .payload.details}' /tmp/pipeline-events/current.jsonl
-
-# Scope prediction accuracy (alias normalization only — no broad fallback)
-jq -c 'select(.signal == "pipeline.rag.retrieval.completed") |
-  {scope: .payload.predicted_scope, confidence: .payload.scope_confidence,
-   alias_normalized: .payload.fallback_triggered}' /tmp/pipeline-events/current.jsonl
-
-# Neighbor expansion activity
-jq -c 'select(.signal == "pipeline.rag.neighbor.expansion.applied") |
-  {added: .payload.neighbors_added, fetched: .payload.neighbors_fetched,
-   sources: .payload.sources_expanded, seconds: .payload.expansion_seconds}' \
-  /tmp/pipeline-events/current.jsonl
-
-# Coverage-selection activity
-jq -c 'select(.signal == "pipeline.rag.coverage.selection.applied") |
-  {enabled: .payload.enabled, applied: .payload.applied,
-   before: .payload.chunks_before, after: .payload.chunks_after}' \
-  /tmp/pipeline-events/current.jsonl
-
-# Source-diversity cap impact
-jq -c 'select(.signal == "pipeline.rag.retrieval.source.diversity.limited") |
-  {limit: .payload.per_source_limit, dropped: .payload.chunks_dropped,
-   before: .payload.chunks_before, after: .payload.chunks_after}' \
-  /tmp/pipeline-events/current.jsonl
-
-# Low-quality retrievals (low RRF max or any zero-result query)
-jq -c 'select(.signal == "pipeline.rag.retrieval.completed" and
-  (.payload.rrf_score_max < 0.02 or .payload.zero_result_queries > 0)) |
-  {scope: .payload.predicted_scope, max_rrf: .payload.rrf_score_max,
-   zero_queries: .payload.zero_result_queries, chunks: .payload.chunks_after_merge}' \
-  /tmp/pipeline-events/current.jsonl
-
-# Retrieval latency distribution
-jq -c 'select(.signal == "pipeline.rag.retrieval.completed") |
-  {step: .payload.step_name, seconds: .payload.total_retrieval_seconds,
-   chunks: .payload.chunks_after_merge}' /tmp/pipeline-events/current.jsonl
-
-# Retrieval failures
-jq -c 'select(.signal == "pipeline.rag.retrieval.failed")' /tmp/pipeline-events/current.jsonl
-
-# Out-of-scope skips (query unanswerable from active corpus)
-jq -c 'select(.signal == "pipeline.rag.retrieval.skipped") |
-  {reason: .payload.reason, oos: .payload.out_of_scope_reason}' /tmp/pipeline-events/current.jsonl
+# Retrieve all RAG retrieval pipeline events for an execution
+scripts/query-events --op pipeline-trace --execution-id ID
 ```
 
 ### RAG LLM Reranking
@@ -641,17 +586,8 @@ Payload semantics:
 **Debugging queries**:
 
 ```bash
-# Reranking activity
-jq -c 'select(.signal == "pipeline.rag.rerank.completed") |
-  {enabled: .payload.rerank_enabled, windows: .payload.windows_evaluated,
-   max_move: .payload.max_rank_movement_observed, seconds: .payload.total_rerank_seconds}' \
-  /tmp/pipeline-events/current.jsonl
-
-# Reranking latency when enabled
-jq -c 'select(.signal == "pipeline.rag.rerank.completed" and .payload.rerank_enabled) |
-  {model: .payload.model_id, seconds: .payload.total_rerank_seconds,
-   chunks: .payload.chunks_input, windows: .payload.windows_evaluated}' \
-  /tmp/pipeline-events/current.jsonl
+# Reranking metrics for one execution
+scripts/query-events --op pipeline-trace --execution-id ID
 ```
 
 ### Corpus Hint Filtering
@@ -1216,9 +1152,8 @@ this means all models are hidden from `/v1/models` for that gateway.
 
 ### Pipeline Events
 
-Pipeline events flow to two sinks:
-- `/tmp/stargate-events/current.jsonl` — all signals
-- `/tmp/pipeline-events/current.jsonl` — `pipeline.*` signals only (low-noise, for pipeline debugging)
+Pipeline events are persisted to the Event Service and can be queried with
+`scripts/query-events --op pipeline-trace --execution-id ID`.
 
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
@@ -1347,7 +1282,7 @@ consult.call.started
 **Correlation**: `call_id` (UUID) links started→finished pairs. `execution_id`
 (from `X-Pipeline-Execution-Id` response header) correlates with
 `pipeline.step.started`/`pipeline.step.completed` events in
-`/tmp/pipeline-events/current.jsonl` for actual model resolution.
+the Event Service for actual model resolution.
 
 **`selected_models`**: For pipeline calls, `selected_models` in the started
 event may be empty (server-side selection); the finished event resolves actual
@@ -1394,6 +1329,54 @@ MCP adapter signals track the v1→v2 migration and MCP tool execution visibilit
 - ∀ `mcp_tool_use` block in response: ¬ mapped to OpenAI `tool_calls` (server-executed)
 - ∀ `server_tool_use` block in response: ¬ mapped to OpenAI `tool_calls` (server-executed)
 
+## MCP Server Signals
+
+The internet-facing MCP server (`source: "mcp-server"`) publishes to the
+event service over the same `/tmp/universal-protocol/events.sock` socket.
+
+| Signal | Payload fields | Description |
+|---|---|---|
+| `mcp.request.started` | `method`, `client_ip` | HTTP request received at `/mcp` |
+| `mcp.request.completed` | `method`, `client_ip`, `duration_s` | Request completed normally |
+| `mcp.request.failed` | `method`, `client_ip`, `duration_s`, `error`, `exc_type` | Request raised an exception |
+| `mcp.sse.stream.started` | — | SSE stream opened |
+| `mcp.sse.stream.ended` | `duration_s`, `reason` | SSE stream closed cleanly |
+| `mcp.sse.stream.aborted` | `duration_s`, `reason`, `exc_type` | SSE stream dropped on error |
+| `mcp.tool.file.edited` | `sandbox`, `path`, `operation`, `content_chars` | `edit_file` completed |
+| `mcp.tool.file.edit_failed` | `sandbox`, `path`, `operation`, `reason`, `error_message` | `edit_file` failed |
+| `mcp.tool.file.deleted` | `sandbox`, `path` | `delete_file` completed |
+
+Query example — all tool calls in last 5 minutes:
+```
+scripts/query-events --sql "SELECT ts_unix_ms, signal, json_extract(payload,'$.path') path FROM events WHERE source='mcp-server' AND signal LIKE 'mcp.tool.%' AND ts_unix_ms > (unixepoch()-300)*1000 ORDER BY seq"
+```
+
+## Event Service Self-Health Signals
+
+The event service emits its own lifecycle and error signals via the same
+event bus. These are routed to the `events` table like all other events.
+
+| Signal | Role | Scope | Description |
+|---|---|---|---|
+| `event.service.started` | coordination | global | Event service process started, DB opened |
+| `event.service.stopped` | coordination | global | Event service graceful shutdown |
+| `events.db.write.failed` | observation | node | SQLite batch insert failed (e.g. disk full) |
+| `events.dropped.subscribe` | observation | node | Subscriber queue full, oldest event dropped |
+
+### Request Snapshot Signals
+
+Request snapshots provide structured before/after records for pipeline
+evaluation. The event service routes `request.snapshot.*` signals to both
+the `events` table (for querying) and the `request_snapshots` table (for
+structured lifecycle queries).
+
+| Signal | Phase | Description |
+|---|---|---|
+| `request.snapshot.received` | received | Raw request as received by Stargate |
+| `request.snapshot.routed` | routed | Routing decision (model, gateway, profile) |
+| `request.snapshot.completed` | completed | Response body for non-streaming requests |
+| `request.snapshot.failed` | failed | Error details on failure |
+
 ## Ordering Guarantees
 
 1. **Monotonic IDs**: Event `id` field is strictly increasing within a single Stargate instance
@@ -1420,18 +1403,8 @@ jq -s '
 ' events.jsonl
 
 # Find pipeline steps that started but never completed (stuck or timed out)
-jq -s '
-  [.[] | select(.signal == "pipeline.step.started") | .payload.step_name] as $started |
-  [.[] | select(.signal | test("pipeline.step.(completed|failed|skipped)")) | .payload.step_name] as $finished |
-  $started - $finished
-' /tmp/pipeline-events/current.jsonl
+scripts/query-events --sql "SELECT payload FROM events WHERE signal LIKE 'pipeline.step.%' ORDER BY seq DESC LIMIT 500"
 
 # Timed-out steps with partial token counts
-jq -c 'select(.signal == "pipeline.step.failed") | {
-  step: .payload.step_name,
-  error: .payload.error,
-  duration: .payload.duration_seconds,
-  tokens: (.payload.prompt_tokens + .payload.completion_tokens),
-  calls: .payload.model_call_count
-}' /tmp/pipeline-events/current.jsonl
+scripts/query-events --sql "SELECT payload FROM events WHERE signal='pipeline.step.failed' ORDER BY seq DESC LIMIT 200"
 ```

@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Refresh MCP tool descriptors for the Cursor agent context.
+#
+# Fetches the live tool list from the MCP server and writes per-tool JSON
+# descriptor files to the Cursor mcps/ directory. The agent (Cursor AI)
+# reads these files at session start to discover available tools.
+#
+# Run after:
+#   - New tools are added to the MCP server
+#   - Tool descriptions or schemas are changed
+#   - The MCP server is rebuilt/redeployed
+#   - A new Cursor workspace project directory is used
+#
+# Usage:
+#   ./scripts/refresh-cursor-mcp-descriptors
+#
+# After running, reload the Cursor window (Ctrl+Shift+P → Developer: Reload Window)
+# for the agent to pick up changes.
+
+set -euo pipefail
+
+MCP_URL="https://mcp.k-1.me/mcp"
+MCP_TOKEN="c6df64a99d24a17e88104497fc21543e4f0d09fbe748bbebaf728ab93f0fa6cc"
+MCPS_DIR="/home/io/.cursor/projects/mnt-torus-projects-universal-llm-gateway/mcps/universal-gateway"
+TOOLS_DIR="${MCPS_DIR}/tools"
+
+echo "Fetching tool list from ${MCP_URL}..."
+
+RESPONSE=$(curl -sf -X POST "${MCP_URL}" \
+  -H "Authorization: Bearer ${MCP_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+  | grep "^data:" | sed 's/^data: //')
+
+if [ -z "${RESPONSE}" ]; then
+  echo "ERROR: No response from MCP server. Is it running?" >&2
+  echo "  Check: docker ps | grep mcp-server" >&2
+  echo "  Check: curl -sk https://mcp.k-1.me/health" >&2
+  exit 1
+fi
+
+mkdir -p "${TOOLS_DIR}"
+
+COUNT=$(echo "${RESPONSE}" | python3 -c "
+import sys, json, os
+
+data = json.load(sys.stdin)
+tools = data['result']['tools']
+base = '${TOOLS_DIR}'
+
+# Remove stale descriptors not in current tool list
+current_names = {t['name'] for t in tools}
+for f in os.listdir(base):
+    if f.endswith('.json'):
+        name = f[:-5]
+        if name not in current_names:
+            os.remove(os.path.join(base, f))
+            print(f'  removed stale: {name}', file=sys.stderr)
+
+for tool in tools:
+    fname = os.path.join(base, tool['name'] + '.json')
+    descriptor = {
+        'name': tool['name'],
+        'description': tool['description'],
+        'inputSchema': tool['inputSchema'],
+    }
+    with open(fname, 'w') as f:
+        json.dump(descriptor, f, indent=2)
+
+print(len(tools))
+")
+
+echo "Wrote ${COUNT} tool descriptors to ${TOOLS_DIR}"
+echo ""
+echo "Server metadata: ${MCPS_DIR}/SERVER_METADATA.json"
+cat "${MCPS_DIR}/SERVER_METADATA.json" 2>/dev/null || echo "(missing — run once to create)"
+
+echo ""
+echo "Next step: reload Cursor window (Ctrl+Shift+P → Developer: Reload Window)"
+echo "The agent will pick up the new descriptors on next session start."

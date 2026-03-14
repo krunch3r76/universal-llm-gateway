@@ -16,6 +16,10 @@ from src.scheduling.events import (
     RequestFailed,
     RequestProcessing,
     RequestProfileResolved,
+    RequestSnapshotCompleted,
+    RequestSnapshotFailed,
+    RequestSnapshotReceived,
+    RequestSnapshotRouted,
 )
 
 # Import from service root to avoid "beyond top-level package" error
@@ -240,6 +244,23 @@ async def process_chat_completion(
         skip_token_counting=skip_token_counting,
     )
 
+    if proxy.event_bus:
+        try:
+            msgs = [
+                m.model_dump() if hasattr(m, "model_dump") else m
+                for m in (chat_request.messages or [])
+            ]
+            await proxy.event_bus.publish_async_nowait(
+                RequestSnapshotReceived(
+                    request_id=context.request_id,
+                    model_id=target_model,
+                    messages=msgs[:10],
+                    is_pipeline=is_pipeline,
+                )
+            )
+        except Exception as exc:
+            logger.exception("Failed to publish RequestSnapshotReceived event")
+
     if proxy.monitor:
         try:
             profile_name = getattr(context, "request_profile", None)
@@ -263,7 +284,9 @@ async def process_chat_completion(
             return await proxy.pipeline_executor.execute(context)
         except PipelineError as exc:
             execution_id = getattr(exc, "execution_id", None)
-            exec_header = {"X-Pipeline-Execution-Id": execution_id} if execution_id else {}
+            exec_header = (
+                {"X-Pipeline-Execution-Id": execution_id} if execution_id else {}
+            )
             error_dict = exc.to_dict()
             if execution_id:
                 error_dict["execution_id"] = execution_id
@@ -283,7 +306,9 @@ async def process_chat_completion(
             ) from exc
         except PipelineExecutionError as exc:
             execution_id = getattr(exc, "execution_id", None)
-            exec_header = {"X-Pipeline-Execution-Id": execution_id} if execution_id else {}
+            exec_header = (
+                {"X-Pipeline-Execution-Id": execution_id} if execution_id else {}
+            )
             error_detail: dict[str, object] = {
                 "message": f"Internal server error: {exc}",
                 "type": "internal_error",
@@ -331,6 +356,14 @@ async def process_chat_completion(
                     model_id=model_id,
                 )
             )
+            await proxy.event_bus.publish_async_nowait(
+                RequestSnapshotRouted(
+                    request_id=context.request_id,
+                    model_id=model_id,
+                    gateway_id=getattr(context, "target_gateway_id", "") or "",
+                    profile_name=profile_name,
+                )
+            )
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.debug("Failed to emit REQUEST_PROCESSING event: %s", exc)
 
@@ -364,6 +397,7 @@ async def process_chat_completion(
                     request_short_id,
                 )
 
+                duration = time.time() - start_time
                 if proxy.event_bus:
                     try:
                         await proxy.event_bus.publish_async_nowait(
@@ -371,9 +405,36 @@ async def process_chat_completion(
                                 request_id=context.request_id,
                                 gateway_url=proxy.gateway_url,
                                 model_id=model_id,
-                                duration=time.time() - start_time,
+                                duration=duration,
                             )
                         )
+                        resp_body = getattr(response, "body", b"")
+                        if isinstance(resp_body, bytes):
+                            import json as _json
+
+                            try:
+                                resp_data = _json.loads(resp_body)
+                                choices = resp_data.get("choices", [])
+                                content = (
+                                    choices[0].get("message", {}).get("content", "")
+                                    if choices
+                                    else ""
+                                )
+                                await proxy.event_bus.publish_async_nowait(
+                                    RequestSnapshotCompleted(
+                                        request_id=context.request_id,
+                                        model_id=model_id,
+                                        gateway_id=getattr(
+                                            context, "target_gateway_id", ""
+                                        )
+                                        or "",
+                                        content=content,
+                                        usage=resp_data.get("usage"),
+                                        duration_s=duration,
+                                    )
+                                )
+                            except Exception:
+                                pass
                     except Exception as exc:  # pragma: no cover - defensive logging
                         logger.debug("Failed to emit REQUEST_COMPLETED event: %s", exc)
 
@@ -488,6 +549,17 @@ async def process_chat_completion(
                         gateway_url=proxy.gateway_url,
                         model_id=model_id,
                         error=str(exc),
+                    )
+                )
+                error_code = None
+                if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
+                    error_code = exc.detail.get("code")
+                await proxy.event_bus.publish_async_nowait(
+                    RequestSnapshotFailed(
+                        request_id=context.request_id,
+                        model_id=model_id,
+                        error=str(exc),
+                        error_code=error_code,
                     )
                 )
             except Exception as emit_err:  # pragma: no cover - defensive logging

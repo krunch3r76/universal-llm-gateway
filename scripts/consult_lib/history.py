@@ -14,8 +14,7 @@ DEFAULT_HISTORY_PATH = Path("/tmp/consult-history/current.jsonl")
 _PIPELINE_SUMMARY_ROOT = Path("/tmp/logs/universal-stargate/pipeline_summaries")
 _RECORDER_EVENT_TYPES = {"step_output_captured", "step_started", "step_failed"}
 
-# Default path — mirrors event-debugging_ws.mdc; override via PIPELINE_EVENT_PERSIST=false
-# disables pipeline events server-side but does not affect this reader.
+# Legacy local pipeline event stream path used by consult history fallback.
 _PIPELINE_EVENTS_PATH = Path("/tmp/pipeline-events/current.jsonl")
 
 # Step names that represent primary LLM calls across all consult pipelines:
@@ -119,7 +118,10 @@ def extract_pipeline_step_records(
                         wall_clock=event.get("wall_clock"),
                     )
                 )
-    except OSError:
+    except OSError as e:
+        # Log the error for observability
+        # import logging
+        # logging.error(f"Error reading recorder file {recorder_file}: {e}")
         return []
     return records
 
@@ -202,7 +204,10 @@ def resolve_pipeline_models(
                 if isinstance(model_id, str) and model_id and model_id not in seen:
                     seen.add(model_id)
                     models.append(model_id)
-    except OSError:
+    except OSError as e:
+        # Log the error for observability
+        # import logging
+        # logging.error(f"Error reading pipeline events file {_PIPELINE_EVENTS_PATH}: {e}")
         return []
     return models
 

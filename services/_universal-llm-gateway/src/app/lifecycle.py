@@ -6,8 +6,6 @@ import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
-
 from fastapi import FastAPI
 
 try:
@@ -17,6 +15,7 @@ try:
     from ..core.config_loader import ConfigLoader, get_config_loader
     from ..core.config_manager import ConfigManager
     from ..core.events import EventBus, MinimalEventDebugBroadcaster
+    from ..core.gateway_config import GatewayConfig
     from ..core.hot_reload import HotReloadManager
     from ..core.model_registry import ModelRegistry
     from ..core.resource_monitor import ResourceMonitor
@@ -37,6 +36,7 @@ except ImportError:
     from src.core.config_loader import ConfigLoader, get_config_loader
     from src.core.config_manager import ConfigManager
     from src.core.events import EventBus, MinimalEventDebugBroadcaster
+    from src.core.gateway_config import GatewayConfig
     from src.core.hot_reload import HotReloadManager
     from src.core.model_registry import ModelRegistry
     from src.core.resource_monitor import ResourceMonitor
@@ -203,7 +203,7 @@ async def initialize_components(
     ModelRegistry,
     ModelMetadataAdapter,
     WorkerController,
-    Any,  # GatewayConfig
+    GatewayConfig,
     ResourceMonitor,
 ]:
     """Initialize all components including the event bus"""
@@ -228,29 +228,19 @@ async def initialize_components(
         "EVENT_DEBUG_SOCKET", "/tmp/universal-llm-gateway-events.sock"
     )
 
-    # Event persistence (JSONL files)
-    persistence_config = {
-        "enabled": True,
-        "directory": "/tmp/_universal-gateway-events",
-        "max_file_size_mb": 50,
-        "max_files": 3,
-        "flush_interval_seconds": 1.0,
-    }
-
     debug_broadcaster = MinimalEventDebugBroadcaster(
         socket_path=socket_path,
-        persistence_config=persistence_config,
+        uds_publish_path="/tmp/universal-protocol/events.sock",
     )
     event_bus.set_debug_broadcaster(debug_broadcaster)
 
-    # Start debug server to enable event persistence
+    # Start debug server for live debug socket + event service publishing
     await debug_broadcaster.start_debug_server()
 
     gateway_logger.info(
-        "EventBus initialized with debug broadcasting and event persistence"
+        "EventBus initialized with debug broadcasting and event service publishing"
     )
     gateway_logger.info(f"  Socket: {socket_path}")
-    gateway_logger.info(f"  Events: {persistence_config['directory']}/current.jsonl")
 
     # Initialize model registry
     model_registry = ModelRegistry(models_config)
@@ -432,7 +422,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0912
         gateway_logger.info(
             f"Universal LLM Gateway startup completed: "
             f"version={__version__}, "
-            f"models_loaded={len(model_registry.models_to_metadata)}, "
+            f"models_available={len(model_registry.get_available_synthetic_model_ids())}, "
             f"models_valid={valid_count}, "
             f"phase=2-Process_Isolation_Architecture"
         )
@@ -534,18 +524,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0912
                 print(f"WARNING: Failed to start WebSocket event forwarder: {e}")
 
     except Exception as e:
-        # Log the error with full stack trace
-        # Use fallback if logger not initialized yet (early startup failure)
+        # Log the error with full stack trace.
         if gateway_logger is not None:
             gateway_logger.error(
                 f"Failed to start Universal LLM Gateway: {e}", exc_info=True
             )
         else:
-            print(f"ERROR: Failed to start Universal LLM Gateway: {e}")
-            import traceback
+            # Fallback for extremely early startup failures before logger is ready.
+            import logging
 
-            traceback.print_exc()
-        # Re-raise to preserve the original stack trace
+            logging.basicConfig(level=logging.ERROR)
+            logging.error(
+                f"Failed to start Universal LLM Gateway (early error): {e}",
+                exc_info=True,
+            )
+        # Re-raise to preserve the original stack trace.
         raise
 
     # DIAGNOSTIC: Log before yield

@@ -57,13 +57,7 @@ async def _startup() -> None:
     )
     state._event_bus = EventBus()
     state._broadcaster = MinimalEventDebugBroadcaster(
-        persistence_config={
-            "enabled": True,
-            "directory": "/tmp/rag-events",
-            "max_file_size_mb": 10,
-            "max_files": 2,
-            "flush_interval_seconds": 1.0,
-        },
+        uds_publish_path="/tmp/universal-protocol/events.sock",
     )
     state._event_bus.set_debug_broadcaster(state._broadcaster)
     await state._broadcaster.start_debug_server()
@@ -99,7 +93,7 @@ async def _startup() -> None:
                         error=str(e),
                     )
                 )
-            state._registry = None # Assuming state._registry is typed as Optional[ArticleRegistry]
+            state._registry = None
     if state._config.automatic_indexing_enabled and state._config.watch_directories:
         state._init_task = asyncio.create_task(
             _deferred_watcher_start(state._config), name="rag-watcher-init"
@@ -194,10 +188,11 @@ async def _reconcile_pending(config: RagConfig) -> None:
                         e,
                     )
                     failed_permanent += 1
-            except Exception:
+            except Exception as e:
                 logger.error(
-                    "Permanent error reconciling %s; requires manual intervention",
+                    "Permanent error reconciling %s; requires manual intervention: %s",
                     src,
+                    e,
                     exc_info=True,
                 )
                 if state._property_index is not None:
@@ -285,6 +280,7 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
         delete_fn=_watcher_delete_fn,
         event_bus=state._event_bus,
         index_workers=worker_count,
+        reconcile_interval_s=config.reconcile_interval_s,
     )
     try:
         await wait_until_healthy()
@@ -367,7 +363,8 @@ async def _shutdown() -> None:
     if state._broadcaster is not None:
         await state._broadcaster.stop_debug_server()
         state._broadcaster = None
-    state._event_bus = None
+    if state._event_bus is not None:
+        state._event_bus = None
     if state._property_index is not None:
         await state._property_index.stop()
         state._property_index = None

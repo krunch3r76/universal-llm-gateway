@@ -11,7 +11,6 @@ from typing import Any
 import yaml
 from universal_logging import get_logger
 
-from .types import PipelineEventConfig
 from .validators import (
     _validate_eviction_hysteresis,
     _validate_model_routing_config,
@@ -214,55 +213,12 @@ class StargateConfig:
         return self.config.get("cloud_proxy")
 
     def get_debug_event_config(self) -> dict[str, Any]:
-        """Return debug event persistence/socket settings after env-var override
-        resolution.
-        """
+        """Return debug event socket settings after env-var override resolution."""
         config = self.config.get("debug_events", {})
-        persist_config = config.get("persistence", {})
-
-        env_persist_raw = os.getenv("DEBUG_EVENT_PERSIST")
-        if env_persist_raw is not None:
-            persist_enabled = env_persist_raw.lower() in ("true", "1")
-        else:
-            persist_enabled = persist_config.get("enabled", False)
-
-        env_persist_dir = os.getenv("DEBUG_EVENT_PERSIST_DIR")
-        persistence = {
-            "enabled": persist_enabled,
-            "directory": env_persist_dir
-            or persist_config.get("directory", "/tmp/stargate-events"),
-            "max_file_size_mb": persist_config.get("max_file_size_mb", 50),
-            "max_files": persist_config.get("max_files", 3),
-            "flush_interval_seconds": persist_config.get("flush_interval_seconds", 1.0),
-        }
 
         env_socket = os.getenv("DEBUG_EVENT_SOCKET")
         socket_path = env_socket or config.get("socket_path")
 
         return {
-            "persistence": persistence,
             "socket_path": socket_path,
-        }
-
-    def get_pipeline_event_config(self) -> PipelineEventConfig:
-        """Return dedicated pipeline-event persistence settings with env
-        override support.
-        """
-        config = self.config.get("pipeline_events", {})
-        persist_config = config.get("persistence", {})
-
-        env_enabled = os.getenv("PIPELINE_EVENT_PERSIST")
-        enabled = (
-            env_enabled.lower() in ("true", "1")
-            if env_enabled is not None
-            else persist_config.get("enabled", True)
-        )
-
-        return {
-            "enabled": enabled,
-            "directory": persist_config.get("directory", "/tmp/pipeline-events"),
-            "max_file_size_mb": persist_config.get("max_file_size_mb", 10),
-            "max_files": persist_config.get("max_files", 2),
-            "flush_interval_seconds": persist_config.get("flush_interval_seconds", 0.5),
-            "signal_filter": "pipeline.",
         }

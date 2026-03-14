@@ -78,6 +78,13 @@ def _atexit_handler() -> None:
                 asyncio.run(
                     _atexit_event_bus.publish_async(CloudProxyShutdown(reason="crash"))
                 )
+            except RuntimeError as exc:
+                logger.debug(
+                    "Failed to publish crash shutdown event: %s "
+                    "(event loop likely unavailable during interpreter shutdown)",
+                    exc,
+                    exc_info=True,
+                )
             except Exception:
                 logger.debug("Failed to publish crash shutdown event", exc_info=True)
         logger.warning(
@@ -98,13 +105,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
     event_bus = EventBus()
     _atexit_event_bus = event_bus
     broadcaster = MinimalEventDebugBroadcaster(
-        persistence_config={
-            "enabled": True,
-            "directory": "/tmp/cloud-proxy-events",
-            "max_file_size_mb": 10,
-            "max_files": 2,
-            "flush_interval_seconds": 1.0,
-        },
+        uds_publish_path="/tmp/universal-protocol/events.sock",
     )
     event_bus.set_debug_broadcaster(broadcaster)
     await broadcaster.start_debug_server()
@@ -529,6 +530,7 @@ async def chat_completions(request: Request) -> Response:
             adapter_type="unknown",
         )
         raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+
     try:
         adapter = forwarder.adapter_type(provider_catalog.provider)
     except ValueError as exc:

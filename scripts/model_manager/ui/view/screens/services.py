@@ -47,6 +47,13 @@ class ServicesScreen(Screen):
         height: auto;
         padding: 1 2;
     }
+    #svc-buttons .svc-button-row {
+        height: auto;
+        margin-bottom: 1;
+    }
+    #svc-buttons .svc-button-row:last-of-type {
+        margin-bottom: 0;
+    }
     #svc-buttons Button {
         margin: 0 1;
         opacity: 100%;
@@ -88,6 +95,7 @@ class ServicesScreen(Screen):
             yield Static("  Cloud Px: checking...", id="svc-cp")
             yield Static("  Sidecar:  checking...", id="svc-sidecar")
             yield Static("  MCP:      —", id="svc-mcp")
+            yield Static("  Events:   checking...", id="svc-events")
 
         with Vertical(id="build-options"):
             yield Select(
@@ -97,27 +105,38 @@ class ServicesScreen(Screen):
             )
             yield Static("", id="build-flags")
 
-        with Horizontal(id="svc-buttons"):
-            yield Button("Build Image", id="btn-build", variant="primary")
-            yield Button("Start Gateway", id="btn-start-gw", variant="success")
-            yield Button(
-                "Stop Gateway", id="btn-stop-gw", variant="error", disabled=True
-            )
-            yield Button("Start Stargate", id="btn-start-sg", variant="success")
-            yield Button(
-                "Stop Stargate", id="btn-stop-sg", variant="error", disabled=True
-            )
-            yield Button("Start RAG", id="btn-start-rag", variant="success")
-            yield Button("Stop RAG", id="btn-stop-rag", variant="error", disabled=True)
-            yield Button("Start Cloud Proxy", id="btn-start-cp", variant="success")
-            yield Button(
-                "Stop Cloud Proxy", id="btn-stop-cp", variant="error", disabled=True
-            )
-            yield Button("Start Sidecar", id="btn-start-sidecar", variant="success")
-            yield Button(
-                "Stop Sidecar", id="btn-stop-sidecar", variant="error", disabled=True
-            )
-            yield Button("Restart Local", id="btn-restart-local", variant="warning")
+        with Vertical(id="svc-buttons"):
+            with Horizontal(classes="svc-button-row"):
+                yield Button("Build Image", id="btn-build", variant="primary")
+                yield Button("Start Gateway", id="btn-start-gw", variant="success")
+                yield Button(
+                    "Stop Gateway", id="btn-stop-gw", variant="error", disabled=True
+                )
+                yield Button("Start Stargate", id="btn-start-sg", variant="success")
+                yield Button(
+                    "Stop Stargate", id="btn-stop-sg", variant="error", disabled=True
+                )
+            with Horizontal(classes="svc-button-row"):
+                yield Button("Start RAG", id="btn-start-rag", variant="success")
+                yield Button("Stop RAG", id="btn-stop-rag", variant="error", disabled=True)
+                yield Button("Start Cloud Proxy", id="btn-start-cp", variant="success")
+                yield Button(
+                    "Stop Cloud Proxy", id="btn-stop-cp", variant="error", disabled=True
+                )
+                yield Button("Start Sidecar", id="btn-start-sidecar", variant="success")
+                yield Button(
+                    "Stop Sidecar", id="btn-stop-sidecar", variant="error", disabled=True
+                )
+            with Horizontal(classes="svc-button-row"):
+                yield Button("Start Events", id="btn-start-events", variant="success")
+                yield Button(
+                    "Stop Events", id="btn-stop-events", variant="error", disabled=True
+                )
+                yield Button("Start MCP", id="btn-start-mcp", variant="success")
+                yield Button(
+                    "Stop MCP", id="btn-stop-mcp", variant="error", disabled=True
+                )
+                yield Button("Restart Local", id="btn-restart-local", variant="warning")
 
         yield LogStream(id="svc-log")
 
@@ -193,6 +212,20 @@ class ServicesScreen(Screen):
                     self.run_worker(self._start_sidecar(), exclusive=True)
                 else:
                     self.run_worker(self._stop_sidecar(), exclusive=True)
+            case "btn-start-events" | "btn-stop-events":
+                self.query_one("#btn-start-events", Button).disabled = True
+                self.query_one("#btn-stop-events", Button).disabled = True
+                if event.button.id == "btn-start-events":
+                    self.run_worker(self._start_event_service(), exclusive=True)
+                else:
+                    self.run_worker(self._stop_event_service(), exclusive=True)
+            case "btn-start-mcp" | "btn-stop-mcp":
+                self.query_one("#btn-start-mcp", Button).disabled = True
+                self.query_one("#btn-stop-mcp", Button).disabled = True
+                if event.button.id == "btn-start-mcp":
+                    self.run_worker(self._start_mcp(), exclusive=True)
+                else:
+                    self.run_worker(self._stop_mcp(), exclusive=True)
             case "btn-restart-local":
                 self.run_worker(self._restart_local(), exclusive=True)
             case "btn-refresh":
@@ -233,8 +266,8 @@ class ServicesScreen(Screen):
                             else "  RAG failed chunks: 0"
                         )
                         self.query_one("#svc-rag-failed", Static).update(label)
-            except Exception:
-                pass
+            except Exception as e:
+                self.log(f"Error polling RAG service: {e}")
             await asyncio.sleep(self._POLL_INTERVAL)
 
     def _refresh_status(self) -> None:
@@ -273,14 +306,25 @@ class ServicesScreen(Screen):
             self.query_one("#svc-mcp", Static).update(
                 f"  MCP:      {mcp.detail or mcp.status}"
             )
+            mcp_up = mcp.status.value == "running"
+            self.query_one("#btn-start-mcp", Button).disabled = mcp_up
+            self.query_one("#btn-stop-mcp", Button).disabled = not mcp_up
         else:
             self.query_one("#svc-mcp", Static).update("  MCP:      (not configured)")
+            self.query_one("#btn-start-mcp", Button).disabled = True
+            self.query_one("#btn-stop-mcp", Button).disabled = True
+
+        events = svc.service_state.check_event_service()
+        self.query_one("#svc-events", Static).update(
+            f"  Events:   {events.detail or events.status}"
+        )
 
         gw_exists = gw.status.value != "stopped"
         sg_up = sg.status.value == "running"
         rag_up = rag.status.value == "running"
         cp_up = cp.status.value == "running"
         sidecar_up = sidecar.status.value == "running"
+        events_up = events.status.value == "running"
         self.query_one("#btn-start-gw", Button).disabled = gw_exists
         self.query_one("#btn-stop-gw", Button).disabled = not gw_exists
         self.query_one("#btn-start-sg", Button).disabled = sg_up
@@ -291,6 +335,8 @@ class ServicesScreen(Screen):
         self.query_one("#btn-stop-cp", Button).disabled = not cp_up
         self.query_one("#btn-start-sidecar", Button).disabled = sidecar_up
         self.query_one("#btn-stop-sidecar", Button).disabled = not sidecar_up
+        self.query_one("#btn-start-events", Button).disabled = events_up
+        self.query_one("#btn-stop-events", Button).disabled = not events_up
 
     def _update_build_flags(self) -> None:
         scope_sel = self.query_one("#build-scope", Select)
@@ -420,4 +466,32 @@ class ServicesScreen(Screen):
         result = await svc.sidecar.stop()
         self.query_one("#svc-log", LogStream).write_line(result)
         await asyncio.sleep(1)
+        self._refresh_status()
+
+    async def _start_event_service(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.start_event_service()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _stop_event_service(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.stop_event_service()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _start_mcp(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.start_mcp()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _stop_mcp(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.stop_mcp()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
         self._refresh_status()

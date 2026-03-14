@@ -25,9 +25,6 @@ All configuration files, environment variables, and paths.
 | `STARGATE_ENABLE_TCP_MONITORING` | Enable TCP monitoring on 9997 | false |
 | `FEDERATION_KEY` | Edge federation API key | — |
 | `FEDERATION_KEY_EDGE_*` | Per-edge federation keys | — |
-| `DEBUG_EVENT_PERSIST` | Enable event persistence | true |
-| `DEBUG_EVENT_PERSIST_DIR` | Event persistence directory | `/tmp/stargate-events` |
-| `PIPELINE_EVENT_PERSIST` | Pipeline event persistence | true |
 | `DATA_DIR` | Request snapshot base directory | — |
 | `LOG_DIR` | Log base directory | `/tmp/logs/universal-stargate` |
 
@@ -145,9 +142,7 @@ Fields: `auth_token` (bearer token for client auth), `data_dir` (host path mount
 
 | Source | Path |
 |---|---|
-| Stargate events | `/tmp/stargate-events/current.jsonl` |
-| Pipeline events | `/tmp/pipeline-events/current.jsonl` |
-| RAG events | `/tmp/rag-events/current.jsonl` |
+| Host events | Event Service (`scripts/query-events`) |
 | Edge Stargate events | Container: `/tmp/stargate-events/current.jsonl` |
 | Edge Gateway events | Container: `/tmp/_universal-gateway-events/current.jsonl` |
 

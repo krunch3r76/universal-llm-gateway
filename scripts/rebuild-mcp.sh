@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Rebuild MCP server image (no cache) and start the container.
+# Reads MCP_PROJECT_DIR, MCP_AUTH_TOKEN, etc. from ~/.gateway/mcp.yaml.
+# Usage: ./scripts/rebuild-mcp.sh [from repo root or any subdir]
+
+set -e
+
+MCP_YAML="${MCP_YAML:-$HOME/.gateway/mcp.yaml}"
+if [[ ! -f "$MCP_YAML" ]]; then
+  echo "MCP config not found: $MCP_YAML" >&2
+  exit 1
+fi
+
+# Export env vars from mcp.yaml (matches build_mcp_env from service_config)
+eval "$(python3 -c "
+import os, shlex, yaml
+from pathlib import Path
+cfg = yaml.safe_load(Path(os.environ.get('MCP_YAML', str(Path.home() / '.gateway/mcp.yaml'))).read_text()) or {}
+token = (cfg.get('auth_token') or '').strip()
+if not token:
+    print('auth_token missing or empty in MCP config', file=__import__('sys').stderr)
+    raise SystemExit(1)
+project_dir = (cfg.get('project_dir') or '').strip()
+if not project_dir:
+    print('project_dir missing or empty in MCP config', file=__import__('sys').stderr)
+    raise SystemExit(1)
+data_dir = str(Path(cfg.get('data_dir', '~/mcp-data')).expanduser())
+print('export MCP_AUTH_TOKEN=' + shlex.quote(token))
+print('export MCP_PROJECT_DIR=' + shlex.quote(project_dir))
+print('export MCP_DATA_DIR=' + shlex.quote(data_dir))
+print('export ENABLE_BROWSER_TOOLS=' + shlex.quote('true' if cfg.get('enable_browser_tools') else 'false'))
+print('export ENABLE_CONTEXT_TOOLS=true')
+tasks = (cfg.get('tasks_access') or 'ro').strip().lower()
+if tasks == 'rw':
+    print('export MCP_TASKS_MOUNT_MODE=rw')
+    print('export TASKS_READ_ONLY=false')
+else:
+    print('export MCP_TASKS_MOUNT_MODE=ro')
+    print('export TASKS_READ_ONLY=true')
+brave = (cfg.get('BRAVE_SEARCH_API_KEY') or cfg.get('brave_search_api_key') or '').strip()
+if brave:
+    print('export BRAVE_SEARCH_API_KEY=' + shlex.quote(brave))
+fp = (cfg.get('firefox_profile_dir') or '').strip()
+if fp:
+    print('export FIREFOX_PROFILE_DIR=' + shlex.quote(str(Path(fp).expanduser())))
+")"
+
+cd "$MCP_PROJECT_DIR"
+COMPOSE_BASE="-f docker/compose/mcp-server.yml"
+if [[ "$ENABLE_BROWSER_TOOLS" == "true" ]]; then
+  COMPOSE_FILES="$COMPOSE_BASE -f docker/compose/mcp-server-browser.override.yml"
+else
+  COMPOSE_FILES="$COMPOSE_BASE"
+fi
+
+echo "Building MCP server (no cache)..."
+docker compose $COMPOSE_FILES build --no-cache mcp-server
+
+echo "Starting MCP server..."
+docker compose $COMPOSE_FILES up -d mcp-server
+
+echo "Done. Check: docker ps --filter name=mcp-server"

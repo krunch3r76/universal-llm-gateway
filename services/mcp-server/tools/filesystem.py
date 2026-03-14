@@ -117,19 +117,38 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         dest = _safe_path(path)
         suffix = dest.suffix.lower()
         if suffix not in _ALLOWED_WRITE_SUFFIXES:
+            record(
+                "mcp.tool.file.write_failed",
+                path=path,
+                reason="unsupported_format",
+                suffix=suffix,
+            )
             raise ValueError(
                 f"Unsupported format {suffix!r}. "
                 f"Allowed: {', '.join(sorted(_ALLOWED_WRITE_SUFFIXES))}"
             )
-        match suffix:
-            case ".docx":
-                _write_docx(dest, content)
-            case ".pdf":
-                _write_pdf(dest, content)
-            case _:
-                _write_plain(dest, content)
+        try:
+            match suffix:
+                case ".docx":
+                    _write_docx(dest, content)
+                case ".pdf":
+                    _write_pdf(dest, content)
+                case _:
+                    _write_plain(dest, content)
+        except OSError as exc:
+            record(
+                "mcp.tool.file.write_failed",
+                path=path,
+                resolved=str(dest),
+                reason="os_error",
+                error=str(exc),
+                error_type=type(exc).__name__
+            )
+            logger.exception("write_file: OS error writing %s", dest) # Use logger.exception to include traceback
+            raise
 
-        logger.info("write_file: wrote %s (%d chars)", dest, len(content))
+        record("mcp.tool.file.written", path=path, resolved=str(dest), chars=len(content))
+        logger.debug("write_file: wrote %s (%d chars)", dest, len(content))
         return {"status": "written", "path": str(dest)}
 
     @mcp.tool()
@@ -165,7 +184,8 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             case _:
                 content = _read_plain(src)
 
-        logger.info("read_file: read %s (%d chars)", src, len(content))
+        record("mcp.tool.file.read", path=path, resolved=str(src), chars=len(content))
+        logger.debug("read_file: read %s (%d chars)", src, len(content))
         return {"content": content, "path": str(src)}
 
     @mcp.tool()
@@ -248,7 +268,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
                 reason=reason,
                 error_message=str(exc),
             )
-            logger.warning("edit_file failed on %s: %s", path, exc)
+            logger.exception("edit_file failed on %s", path)
             raise
 
     @mcp.tool()
@@ -293,5 +313,6 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         files = sorted(
             str(p.relative_to(_SANDBOX_ROOT)) for p in target.rglob("*") if p.is_file()
         )
-        logger.info("list_files: %s → %d files", target, len(files))
+        record("mcp.tool.file.listed", directory=directory or ".", count=len(files))
+        logger.debug("list_files: %s → %d files", target, len(files))
         return {"files": files}

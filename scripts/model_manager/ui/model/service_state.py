@@ -317,6 +317,16 @@ class ServiceState:
             status=ServiceStatus.STOPPED,
         )
 
+    def check_event_service(self) -> ServiceInfo:
+        """Check event service container status."""
+        info = self._check_named_container("event-service", service_name="Events")
+        if info:
+            return info
+        return ServiceInfo(
+            name="Events",
+            status=ServiceStatus.STOPPED,
+        )
+
     def _check_named_container(
         self, name: str, *, service_name: str = "Gateway"
     ) -> ServiceInfo | None:
@@ -406,7 +416,6 @@ class ServiceState:
         Two inspect calls: container → image SHA, image SHA → Created timestamp.
         Returns '' on any error so callers degrade gracefully.
         """
-        import re
         from datetime import datetime
 
         try:
@@ -433,7 +442,6 @@ class ServiceState:
             if r2.returncode != 0:
                 return ""
             raw = r2.stdout.strip()
-            raw = re.sub(r"(\.\d{6})\d+", r"\1", raw)
             dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             if dt.year < 2000:
                 return ""
@@ -472,13 +480,22 @@ class ServiceState:
             return None
         try:
             return int(path.read_text().strip())
-        except (ValueError, OSError):
+        except ValueError:
+            logger.warning("Invalid PID contents in %s", path)
+            return None
+        except OSError as exc:
+            logger.warning("Failed reading PID file %s: %s", path, exc)
             return None
 
     @staticmethod
     def _pid_alive(pid: int) -> bool:
         try:
             os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Process exists but is not signalable by current user.
             return True
         except OSError:
             return False

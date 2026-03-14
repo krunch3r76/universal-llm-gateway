@@ -5,11 +5,9 @@ import surface while splitting configuration concerns into focused modules.
 """
 
 from .config import StargateConfig
-from .types import DebugEventConfig, DebugEventPersistenceConfig, PipelineEventConfig
+from .types import DebugEventConfig
 
 __all__ = [
     "StargateConfig",
-    "DebugEventPersistenceConfig",
     "DebugEventConfig",
-    "PipelineEventConfig",
 ]

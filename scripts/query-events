@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Query the event service — operations, SQL, and WebSocket subscriptions.
+
+Usage:
+  query-events --op recent-failures --limit 10
+  query-events --op noise-profile --minutes 5
+  query-events --op pipeline-trace --execution-id c4c7448d
+  query-events --op operations
+  query-events --sql "SELECT signal, COUNT(*) c FROM events GROUP BY signal ORDER BY c DESC LIMIT 20"
+  query-events --subscribe --filter signal=federation.*
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+from typing import Any
+
+_QUERY_SOCKET = "/tmp/universal-protocol/events-query.sock"
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Query the event service over UDS.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    p.add_argument(
+        "--op", help="Named operation (e.g. recent-failures, pipeline-trace)"
+    )
+    p.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        help="Operation param as key=value (repeatable)",
+    )
+    p.add_argument("--sql", help="Raw SQL query (SELECT only)")
+    p.add_argument(
+        "--subscribe",
+        action="store_true",
+        help="Subscribe to live events via WebSocket",
+    )
+    p.add_argument(
+        "--filter",
+        action="append",
+        default=[],
+        help="Subscription filter as key=value (repeatable)",
+    )
+    p.add_argument("--limit", type=int, default=100, help="Max rows (default 100)")
+    p.add_argument("--socket", default=_QUERY_SOCKET, help="Query UDS socket path")
+    p.add_argument("--compact", action="store_true", help="Compact JSON output")
+    return p
+
+
+def _parse_kv(items: list[str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            print(f"Invalid key=value: {item}", file=sys.stderr)
+            sys.exit(1)
+        k, v = item.split("=", 1)
+        result[k.strip()] = v.strip()
+    return result
+
+
+def _query(socket_path: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Synchronous HTTP POST to event service over UDS."""
+    import httpx
+
+    transport = httpx.HTTPTransport(uds=socket_path)
+    with httpx.Client(transport=transport, timeout=10.0) as client:
+        resp = client.post("http://localhost/v1/query", json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def _subscribe(
+    socket_path: str, event_filter: dict[str, str], compact: bool
+) -> None:
+    """Connect via WebSocket and stream events."""
+    import aiohttp
+
+    connector = aiohttp.UnixConnector(path=socket_path)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        async with session.ws_connect("http://localhost/v1/subscribe") as ws:
+            sub_msg: dict[str, Any] = {"type": "subscribe"}
+            if event_filter:
+                sub_msg["filter"] = event_filter
+            await ws.send_json(sub_msg)
+
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    indent = None if compact else 2
+                    print(json.dumps(data, indent=indent, default=str))
+                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    break
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+    indent = None if args.compact else 2
+
+    if args.subscribe:
+        event_filter = _parse_kv(args.filter)
+        try:
+            asyncio.run(_subscribe(args.socket, event_filter, args.compact))
+        except KeyboardInterrupt:
+            pass
+        return
+
+    if args.op:
+        params = _parse_kv(args.param)
+        if args.op == "operations":
+            body: dict[str, Any] = {"type": "operations"}
+        else:
+            for k, v in params.items():
+                try:
+                    params[k] = int(v)
+                except ValueError:
+                    pass
+            body = {"type": "operation", "name": args.op, "params": params}
+    elif args.sql:
+        body = {"type": "sql", "sql": args.sql, "limit": args.limit}
+    else:
+        body = {"type": "operations"}
+
+    try:
+        result = _query(args.socket, body)
+    except FileNotFoundError:
+        print(
+            "Event service socket not found. Is the event service running?",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except Exception as e:
+        print(f"Query failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(json.dumps(result, indent=indent, default=str))
+
+
+if __name__ == "__main__":
+    main()

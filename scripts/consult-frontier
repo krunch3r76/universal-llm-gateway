@@ -5,6 +5,9 @@
 # and an extended timeout. Called by agents executing the /consult-plan
 # Cursor command (step 6: deep call) — not invoked directly by users.
 #
+# Cost: gpt-5.4 is used instead of gpt-5.4-pro (~12× cheaper: $2.50/$15 vs $30/$180 per 1M tokens).
+# Reserve gpt-5.4-pro for extremely difficult problems (invoke with explicit --models if needed).
+#
 # Usage:
 #   consult-frontier "Describe the change" -f relevant/files...
 #   consult-frontier -Q /tmp/question.txt -f services/foo/ -o /tmp/plan.md
@@ -17,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 FRONTIER_MODELS=(
     openai/o3
-    openai/gpt-5.4-pro
+    openai/gpt-5.4
     google/gemini-3.1-pro-preview
     x-ai/grok-4
 )

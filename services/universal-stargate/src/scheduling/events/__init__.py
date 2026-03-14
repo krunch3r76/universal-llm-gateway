@@ -242,6 +242,16 @@ from .routing_failures import (
     RoutingResourceDataMissing,
     RoutingUpstreamAllExcluded,
 )
+from .snapshot import (
+    REQUEST_SNAPSHOT_COMPLETED,
+    REQUEST_SNAPSHOT_FAILED,
+    REQUEST_SNAPSHOT_RECEIVED,
+    REQUEST_SNAPSHOT_ROUTED,
+    RequestSnapshotCompleted,
+    RequestSnapshotFailed,
+    RequestSnapshotReceived,
+    RequestSnapshotRouted,
+)
 from .system import (
     SYSTEM_SHUTDOWN,
     SYSTEM_STARTED,
@@ -447,6 +457,15 @@ __all__ = [
     "pipeline_registry_unavailable",
     "pipeline_step_domain_verification_started",
     "pipeline_step_domain_verification_completed",
+    # ── snapshot ─────────────────────────────────────────────────────────────
+    "REQUEST_SNAPSHOT_RECEIVED",
+    "REQUEST_SNAPSHOT_ROUTED",
+    "REQUEST_SNAPSHOT_COMPLETED",
+    "REQUEST_SNAPSHOT_FAILED",
+    "RequestSnapshotReceived",
+    "RequestSnapshotRouted",
+    "RequestSnapshotCompleted",
+    "RequestSnapshotFailed",
     # ── system ───────────────────────────────────────────────────────────────
     "SYSTEM_STARTED",
     "SYSTEM_SHUTDOWN",

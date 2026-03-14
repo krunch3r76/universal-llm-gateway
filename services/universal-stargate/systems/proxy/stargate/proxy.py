@@ -163,44 +163,24 @@ class StargateProxy:
         auth_config = self.config.get_authorization_config()
         self.authorization_manager = AuthorizationManager(auth_config)
 
-        # Debug event broadcasting (persistence enabled by default for agent debugging)
+        # Debug event broadcasting + event service publishing
         self._debug_broadcaster = None
         debug_config = self.config.get_debug_event_config()
-
-        # Persistence takes priority (agent debugging)
-        persistence_config = debug_config.get("persistence", {})
-        pipeline_persistence_config = self.config.get_pipeline_event_config()
         socket_path = debug_config.get("socket_path")
 
-        # Create broadcaster if socket or persistence enabled
-        if any([
-            socket_path,
-            persistence_config.get("enabled"),
-            pipeline_persistence_config.get("enabled"),
-        ]):
+        # UDS path for event service publishing (always enabled)
+        uds_publish_path = "/tmp/universal-protocol/events.sock"
+
+        # Create broadcaster if socket or event service publishing is enabled
+        if socket_path or uds_publish_path:
             from universal_event_bus import MinimalEventDebugBroadcaster
 
             self._debug_broadcaster = MinimalEventDebugBroadcaster(
                 socket_path=socket_path,
-                persistence_config=persistence_config
-                if persistence_config.get("enabled")
-                else None,
-                pipeline_persistence_config=pipeline_persistence_config
-                if pipeline_persistence_config.get("enabled")
-                else None,
+                uds_publish_path=uds_publish_path,
             )
             if socket_path:
                 logger.info("Debug event socket enabled: %s", socket_path)
-            if persistence_config.get("enabled"):
-                logger.info(
-                    "Debug event persistence enabled: %s",
-                    persistence_config["directory"],
-                )
-            if pipeline_persistence_config.get("enabled"):
-                logger.info(
-                    "Pipeline event persistence enabled: %s",
-                    pipeline_persistence_config["directory"],
-                )
 
         self.event_bus = EventBus(debug_broadcaster=self._debug_broadcaster)
 
@@ -517,6 +497,14 @@ class StargateProxy:
             "model": model_id,
             "input": input_texts,
         }
+
+        if self.request_executor is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Request executor unavailable for embedding requests",
+            )
+        if self.request_executor is None:
+            raise HTTPException(status_code=500, detail="Request executor unavailable for embedding requests")
 
         # Use pre-initialized RequestExecutor (from component_factory)
         result = await self.request_executor.execute_embedding_request(

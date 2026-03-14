@@ -4,6 +4,7 @@ import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from universal_logging import get_logger
 
 from src.core.errors import (
     GatewayError,
@@ -17,6 +18,7 @@ from src.core.workers import WorkerController
 from src.routers.dependencies import get_model_registry, get_worker_controller
 
 router = APIRouter(prefix="/v1/models", tags=["Model Management"])
+logger = get_logger(__name__)
 
 
 @router.post("/{model_id}/load")
@@ -59,8 +61,8 @@ async def load_model(
     request_id: str = str(uuid.uuid4())[:8]
 
     try:
-        # Verify model exists in registry
-        if model_id not in model_registry.models_to_metadata:
+        # Verify model exists in catalog
+        if not model_registry.find_config_key_for_openai_id(model_id):
             raise HTTPException(
                 status_code=404,
                 detail=f"Model '{model_id}' not found in registry. Use /v1/models to see available models.",
@@ -97,9 +99,6 @@ async def load_model(
             if current_status == "error":
                 error_msg = model_info.error_message or "Model is in error state"
                 # Log the previous error for debugging
-                from universal_logging import get_logger
-
-                logger = get_logger(__name__)
                 logger.info(
                     f"Model '{model_id}' is in ERROR state: {error_msg}. "
                     f"Allowing retry - error state will be cleared."
@@ -183,6 +182,7 @@ async def load_model(
         }
         raise create_error_response(e, 500, context)
     except Exception as e:
+        logger.exception("Unhandled error during model loading") # Added logging
         # Generic error with enhanced details
         context = {
             "operation": "model_loading",

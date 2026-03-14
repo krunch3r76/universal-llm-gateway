@@ -80,7 +80,9 @@ class ServiceController:
         if proc is None or proc.returncode is not None:
             return "No build in progress."
         try:
-            pgid = proc.pgid if hasattr(proc, "pgid") else proc.pid
+            # The build process is started with start_new_session=True,
+            # so its PGID is its PID.
+            pgid = proc.pid
             os.killpg(pgid, signal.SIGTERM)
             try:
                 await asyncio.wait_for(proc.wait(), timeout=_PGID_KILL_TIMEOUT)
@@ -269,9 +271,7 @@ class ServiceController:
                     start_new_session=True,
                 )
         except OSError as e:
-            logger.error(
-                "Failed to start Stargate subprocess or open log file: %s", e
-            )
+            logger.error("Failed to start Stargate subprocess or open log file: %s", e)
             return f"Failed to start Stargate: {e}"
 
         try:
@@ -401,6 +401,58 @@ class ServiceController:
 
         return await self.start_mcp()
 
+    async def start_event_service(self) -> str:
+        """Start event service container via docker compose."""
+        compose_path = self._root / "docker" / "compose" / "event-service.yml"
+        if not compose_path.exists():
+            return f"Compose file not found: {compose_path}"
+
+        result = await asyncio.create_subprocess_exec(
+            "docker",
+            "compose",
+            "-f",
+            str(compose_path),
+            "up",
+            "-d",
+            "--force-recreate",
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output = await result.communicate()
+        text = output[0].decode(errors="replace") if output[0] else ""
+        if result.returncode == 0:
+            return f"Event service started.\n{text}"
+        logger.error(
+            "Failed to start event service (exit %d):\n%s", result.returncode, text
+        )
+        return f"Failed to start event service (exit {result.returncode}).\n{text}"
+
+    async def stop_event_service(self) -> str:
+        """Stop and remove event service container."""
+        compose_path = self._root / "docker" / "compose" / "event-service.yml"
+        if not compose_path.exists():
+            return "Compose file not found: docker/compose/event-service.yml"
+
+        result = await asyncio.create_subprocess_exec(
+            "docker",
+            "compose",
+            "-f",
+            str(compose_path),
+            "down",
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output = await result.communicate()
+        text = output[0].decode(errors="replace") if output[0] else ""
+        if result.returncode == 0:
+            return f"Event service stopped.\n{text}"
+        logger.error(
+            "Failed to stop event service (exit %d):\n%s", result.returncode, text
+        )
+        return f"Failed to stop event service (exit {result.returncode}).\n{text}"
+
     async def check_mcp(self) -> str:
         """Return docker ps output for the mcp-server container."""
         result = await asyncio.create_subprocess_exec(
@@ -430,7 +482,6 @@ class ServiceController:
         """
         pid_file = GATEWAY_DIR / "stargate.pid"
         port = ServiceState.STARGATE_PORT
-        port_open = self._service_state._port_open(port)
 
         recorded_pid: int | None = None
         if pid_file.exists():
@@ -440,9 +491,9 @@ class ServiceController:
                 logger.error("Corrupt PID file %s: %s", pid_file, e)
                 pid_file.unlink(missing_ok=True)
 
-        if recorded_pid is not None and self._service_state._pid_alive(
-            recorded_pid
-        ):
+        if recorded_pid is not None and self._service_state._pid_alive(recorded_pid):
+            # PID is alive, now check if it's actually listening on the port
+            port_open = self._service_state._port_open(port)
             if not port_open:
                 pid_file.unlink(missing_ok=True)
                 return (
@@ -452,6 +503,7 @@ class ServiceController:
             return await self._kill_and_wait(recorded_pid, pid_file)
 
         pid_file.unlink(missing_ok=True)
+        port_open = self._service_state._port_open(port)
         if not port_open:
             return "Stargate is not running."
 

@@ -24,7 +24,6 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - ${MCP_DATA_DIR:-~/mcp-data}/files:/data/files:rw
       - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}:/data/project:ro
-      - /tmp/mcp-events:/tmp/mcp-events:rw
       # tasks mount mode: "ro" (default) or "rw"
       - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}/tasks:/data/tasks:${MCP_TASKS_MOUNT_MODE:-ro}
       - /tmp/universal-protocol:/tmp/universal-protocol
@@ -49,6 +48,8 @@ services:
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
       - SQLITE_CONFIG_PATH=/data/sqlite-config.yaml
       - STARGATE_URL=${STARGATE_URL:-http://host.docker.internal:9999}
+      # Event service socket — /tmp/universal-protocol is already mounted above
+      - EVENTS_SOCK=/tmp/universal-protocol/events.sock
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:

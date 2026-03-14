@@ -4,12 +4,12 @@ Event broadcaster for debugging Universal Stargate event-driven architecture.
 Broadcasts all events to Unix socket clients for real-time monitoring and debugging.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from universal_logging import get_logger
@@ -28,190 +28,91 @@ class DebugClient:
     connected: bool = True
 
 
-class FileEventWriter:
-    """
-    Non-blocking file writer for event persistence with rotation.
+class UDSEventPublisher:
+    """Non-blocking publisher that sends events to the event service over UDS.
 
-    Architecture:
-    - Events buffered to asyncio.Queue (zero-copy from event path)
-    - Background task drains queue and writes to disk
-    - File ops via run_in_executor (no event loop blocking)
+    Auto-reconnects on connection loss (handles event service restarts).
+    Buffers events locally when disconnected; flushes on reconnect.
+    Fire-and-forget: publishing never blocks the event path.
 
-    INVARIANT: ∀ event ⟹ eventually_written (async, non-blocking)
-    INVARIANT: total_disk_usage ≤ max_file_size_mb × max_files
     INVARIANT: ¬blocking_io_on_event_path
+    INVARIANT: buffer_size ≤ maxsize (oldest dropped on overflow)
     """
 
-    def __init__(
-        self,
-        directory: str,
-        *,
-        signal_filter: str | None = None,
-        max_file_size_mb: int = 50,
-        max_files: int = 3,
-        flush_interval_seconds: float = 1.0,
-    ):
-        self.directory = Path(directory)
-        self._signal_filter = signal_filter
-        self.max_file_size_bytes = max_file_size_mb * 1024 * 1024
-        self.max_files = max_files
-        self.flush_interval = flush_interval_seconds
-
-        self._queue: asyncio.Queue[str] | None = None
-        self._file_path: Path | None = None
-        self._current_size = 0
+    def __init__(self, socket_path: str, *, maxsize: int = 500) -> None:
+        self._socket_path = socket_path
+        self._buffer: asyncio.Queue[str] = asyncio.Queue(maxsize=maxsize)
+        self._writer: asyncio.StreamWriter | None = None
         self._running = False
-        self._writer_task: asyncio.Task | None = None
-        self._executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="event_writer"
-        )
+        self._flush_task: asyncio.Task[None] | None = None
+        self._dropped = 0
 
     async def start(self) -> None:
-        """Start the file writer."""
-        loop = asyncio.get_event_loop()
-
-        # Create queue (deferred from __init__ to avoid RuntimeError)
-        self._queue = asyncio.Queue(maxsize=10000)
-
-        # Create directory (blocking op in executor)
-        await loop.run_in_executor(
-            self._executor, lambda: self.directory.mkdir(parents=True, exist_ok=True)
-        )
-
-        self._file_path = self.directory / "current.jsonl"
-
-        # Clear all event logs on startup
-        def _clear_logs() -> None:
-            if self._file_path and self._file_path.exists():
-                self._file_path.unlink()
-            for i in range(1, self.max_files + 1):
-                old_file = self.directory / f"current.{i}.jsonl"
-                if old_file.exists():
-                    old_file.unlink()
-
-        await loop.run_in_executor(self._executor, _clear_logs)
-        self._current_size = 0
-
         self._running = True
-        self._writer_task = asyncio.create_task(self._writer_loop())
-        logger.info(f"FileEventWriter started: {self._file_path}")
+        self._flush_task = asyncio.create_task(self._connect_and_flush())
+        logger.info("UDSEventPublisher started: %s", self._socket_path)
 
     async def stop(self) -> None:
-        """Stop the file writer and flush remaining events."""
         self._running = False
-
-        # Signal writer to stop (only if queue exists)
-        if self._queue:
-            await self._queue.put("")  # Sentinel
-
-        if self._writer_task:
+        if self._flush_task:
+            self._flush_task.cancel()
             try:
-                await asyncio.wait_for(self._writer_task, timeout=5.0)
-            except TimeoutError:
-                self._writer_task.cancel()
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+        if self._writer:
+            self._writer.close()
+            try:
+                await self._writer.wait_closed()
+            except (OSError, asyncio.CancelledError) as e:
+                logger.debug("Error waiting for writer to close: %s", e)
+        logger.info("UDSEventPublisher stopped (dropped=%d)", self._dropped)
 
-        self._executor.shutdown(wait=False)
-        logger.info("FileEventWriter stopped")
-
-    async def write_event(self, event: dict[str, Any]) -> None:
-        """Queue an event for writing (non-blocking)."""
-        if not self._running or not self._queue:
+    def publish_nowait(self, event_dict: dict[str, Any]) -> None:
+        """Queue an event for publishing (non-blocking, fire-and-forget)."""
+        if not self._running:
             return
-        if self._signal_filter and not event.get("signal", "").startswith(
-            self._signal_filter
-        ):
-            return
-
-        json_line = json.dumps(event) + "\n"
+        line = json.dumps(event_dict) + "\n"
         try:
-            self._queue.put_nowait(json_line)
+            self._buffer.put_nowait(line)
         except asyncio.QueueFull:
-            # Drop oldest events if queue full (better than blocking)
-            logger.debug("Event queue full, dropping event")
-
-    async def _writer_loop(self) -> None:
-        """Background task that drains queue and writes to disk."""
-        if not self._queue:
-            return
-
-        loop = asyncio.get_event_loop()
-        buffer: list[str] = []
-        last_flush = asyncio.get_event_loop().time()
-
-        while self._running or not self._queue.empty():
             try:
-                # Wait for event with timeout
-                try:
-                    line = await asyncio.wait_for(
-                        self._queue.get(), timeout=self.flush_interval
-                    )
-                    if line == "":  # Sentinel
-                        break
-                    buffer.append(line)
-                except TimeoutError:
-                    pass
+                self._buffer.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self._buffer.put_nowait(line)
+            except asyncio.QueueFull:
+                pass
+            self._dropped += 1
 
-                # Flush if interval elapsed or buffer large enough
-                now = loop.time()
-                if buffer and (
-                    now - last_flush >= self.flush_interval or len(buffer) >= 100
-                ):
-                    await self._flush_buffer(buffer)
-                    buffer = []
-                    last_flush = now
+    async def _connect_and_flush(self) -> None:
+        """Background loop: connect to UDS, drain buffer, reconnect on failure."""
+        while self._running:
+            try:
+                _, self._writer = await asyncio.open_unix_connection(self._socket_path)
+            except (FileNotFoundError, ConnectionRefusedError, OSError):
+                await asyncio.sleep(2.0)
+                continue
 
-            except Exception as e:
-                logger.exception(f"Error in writer loop: {e}")
-
-        # Final flush
-        if buffer:
-            await self._flush_buffer(buffer)
-
-    async def _flush_buffer(self, lines: list[str]) -> None:
-        """Flush buffered lines to disk (via executor)."""
-        if not lines or not self._file_path:
-            return
-
-        loop = asyncio.get_event_loop()
-        content = "".join(lines)
-        content_size = len(content.encode("utf-8"))
-
-        def _write_sync():
-            with open(self._file_path, "a", encoding="utf-8") as f:
-                f.write(content)
-
-        await loop.run_in_executor(self._executor, _write_sync)
-        self._current_size += content_size
-
-        # Check rotation
-        if self._current_size >= self.max_file_size_bytes:
-            await self._rotate()
-
-    async def _rotate(self) -> None:
-        """Rotate log files (via executor)."""
-        loop = asyncio.get_event_loop()
-
-        def _rotate_sync():
-            # Delete oldest file if it would exceed max_files
-            oldest_path = self.directory / f"current.{self.max_files}.jsonl"
-            if oldest_path.exists():
-                oldest_path.unlink()
-
-            # Shift existing files (from max_files-1 down to 1)
-            for i in range(self.max_files - 1, 0, -1):
-                old_path = self.directory / f"current.{i}.jsonl"
-                new_path = self.directory / f"current.{i + 1}.jsonl"
-                if old_path.exists():
-                    old_path.rename(new_path)
-
-            # Move current to .1
-            if self._file_path and self._file_path.exists():
-                self._file_path.rename(self.directory / "current.1.jsonl")
-
-        await loop.run_in_executor(self._executor, _rotate_sync)
-        self._file_path = self.directory / "current.jsonl"
-        self._current_size = 0
-        logger.debug("Event log rotated")
+            try:
+                while self._running:
+                    try:
+                        line = await asyncio.wait_for(self._buffer.get(), timeout=1.0)
+                    except TimeoutError:
+                        continue
+                    self._writer.write(line.encode("utf-8"))
+                    await self._writer.drain()
+            except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                logger.debug("UDS connection lost, reconnecting... Error: %s", e)
+                if self._writer:
+                    self._writer.close()
+                    try:
+                        await self._writer.wait_closed()
+                    except Exception:
+                        pass
+                self._writer = None
+                await asyncio.sleep(1.0)
 
 
 class MinimalEventDebugBroadcaster:
@@ -222,7 +123,7 @@ class MinimalEventDebugBroadcaster:
     - Purely async implementation
     - Non-blocking event broadcasting
     - Unix socket transport (optional)
-    - File persistence (default enabled)
+    - UDS publishing to event service (optional)
     - Graceful degradation when no clients connected
     - Automatic client connection management
     """
@@ -231,43 +132,19 @@ class MinimalEventDebugBroadcaster:
         self,
         socket_path: str | None = None,
         *,
-        persistence_config: dict[str, Any] | None = None,
-        pipeline_persistence_config: dict[str, Any] | None = None,
+        uds_publish_path: str | None = None,
     ):
         self.socket_path = socket_path
         self.debug_clients: list[DebugClient] = []
         self.server_socket: asyncio.Server | None = None
         self._running = False
 
-        # File persistence (can work independently of socket)
-        self._file_writer: FileEventWriter | None = None
-        if persistence_config and persistence_config.get("enabled"):
-            self._file_writer = FileEventWriter(
-                directory=persistence_config["directory"],
-                signal_filter=persistence_config.get("signal_filter"),
-                max_file_size_mb=persistence_config.get("max_file_size_mb", 50),
-                max_files=persistence_config.get("max_files", 3),
-                flush_interval_seconds=persistence_config.get(
-                    "flush_interval_seconds", 1.0
-                ),
-            )
-
-        self._pipeline_file_writer: FileEventWriter | None = None
-        if pipeline_persistence_config and pipeline_persistence_config.get("enabled"):
-            self._pipeline_file_writer = FileEventWriter(
-                directory=pipeline_persistence_config["directory"],
-                signal_filter=pipeline_persistence_config.get("signal_filter"),
-                max_file_size_mb=pipeline_persistence_config.get(
-                    "max_file_size_mb", 10
-                ),
-                max_files=pipeline_persistence_config.get("max_files", 2),
-                flush_interval_seconds=pipeline_persistence_config.get(
-                    "flush_interval_seconds", 0.5
-                ),
-            )
+        self._uds_publisher: UDSEventPublisher | None = None
+        if uds_publish_path:
+            self._uds_publisher = UDSEventPublisher(uds_publish_path)
 
     async def start_debug_server(self):
-        """Start Unix socket server and file writer."""
+        """Start Unix socket server and UDS publisher."""
         self._running = True  # Set FIRST so broadcast_event works
 
         # Start socket server (optional)
@@ -279,14 +156,14 @@ class MinimalEventDebugBroadcaster:
                 logger.info(f"🔍 Debug Events Server started on {self.socket_path}")
                 # Start background cleanup task (only if socket enabled)
                 asyncio.create_task(self._cleanup_disconnected_clients())
-            except Exception as e:
-                logger.error(f"❌ Failed to start debug events server: {e}")
+            except (OSError, ConnectionRefusedError) as e:
+                logger.error(f"❌ Failed to start debug events server on {self.socket_path}: {e}")
+            except Exception:
+                logger.exception("❌ An unexpected error occurred while starting debug events server.")
 
-        # Start file writer (independent of socket)
-        if self._file_writer:
-            await self._file_writer.start()
-        if self._pipeline_file_writer:
-            await self._pipeline_file_writer.start()
+        # Start UDS publisher to event service (independent of socket)
+        if self._uds_publisher:
+            await self._uds_publisher.start()
 
     async def _handle_client_connection(self, reader, writer):
         """Handle new debug client connection"""
@@ -302,7 +179,7 @@ class MinimalEventDebugBroadcaster:
         )
 
     async def broadcast_event(self, event: Any):
-        """Broadcast event to socket clients AND write to file.
+        """Broadcast event to socket clients and event service publisher.
 
         Args:
             event: The event object to broadcast. Can be an instance of
@@ -332,11 +209,9 @@ class MinimalEventDebugBroadcaster:
                 "source": "universal_stargate",
             }
 
-        # Write to file FIRST (always, if enabled) - primary use case
-        if self._file_writer:
-            await self._file_writer.write_event(debug_event)
-        if self._pipeline_file_writer:
-            await self._pipeline_file_writer.write_event(debug_event)
+        # Publish to event service UDS (non-blocking, fire-and-forget)
+        if self._uds_publisher:
+            self._uds_publisher.publish_nowait(debug_event)
 
         # Broadcast to socket clients (skip if no clients - secondary)
         if self.debug_clients:
@@ -387,11 +262,15 @@ class MinimalEventDebugBroadcaster:
                 active_clients = []
 
                 for client in self.debug_clients:
-                    # Remove clients that haven't been seen for 30 seconds
-                    if (current_time - client.last_seen) < 30:
+                    # Remove clients that haven't been seen for 30s or are explicitly disconnected
+                    if client.connected and (current_time - client.last_seen) < 30:
                         active_clients.append(client)
                     else:
-                        logger.debug("🧹 Cleaning up disconnected debug client")
+                        logger.debug(
+                            "🧹 Cleaning up disconnected debug client (connected=%s, last_seen=%s)",
+                            client.connected,
+                            client.last_seen,
+                        )
 
                 self.debug_clients = active_clients
 
@@ -399,14 +278,12 @@ class MinimalEventDebugBroadcaster:
                 logger.exception(f"❌ Error in client cleanup: {e}")
 
     async def stop_debug_server(self):
-        """Stop debug server and file writer gracefully."""
+        """Stop debug server and UDS publisher gracefully."""
         self._running = False
 
-        # Stop file writer FIRST (capture final events)
-        if self._file_writer:
-            await self._file_writer.stop()
-        if self._pipeline_file_writer:
-            await self._pipeline_file_writer.stop()
+        # Stop UDS publisher
+        if self._uds_publisher:
+            await self._uds_publisher.stop()
 
         # Stop socket server
         if self.server_socket:
@@ -417,8 +294,8 @@ class MinimalEventDebugBroadcaster:
         for client in self.debug_clients:
             try:
                 await client.transport.close()
-            except Exception:
-                pass
+            except (OSError, asyncio.CancelledError) as e:
+                logger.debug("Error closing client transport: %s", e)
 
         logger.info("🔍 Debug Events Server stopped")
 
@@ -434,10 +311,7 @@ class SimpleTransportWrapper:
     async def send(self, message: dict[str, Any]) -> bool:
         """Send a message using JSONL framing."""
         if self.writer.is_closing():
-            self._connected = False
             raise ConnectionError("Not connected: Writer is closing")
-        if not self._connected:
-            raise ConnectionError("Not connected")
 
         try:
             # Add timestamp if not present
@@ -454,18 +328,16 @@ class SimpleTransportWrapper:
             return True
 
         except Exception as e:
-            self._connected = False
             raise ConnectionError(f"Send failed: {e}") from e
 
     async def close(self):
         """Close the transport connection."""
-        if not self._connected:
+        if self.writer is None:
             return
-
-        self._connected = False
-
+        if self.writer.is_closing():
+            return
         try:
             self.writer.close()
             await self.writer.wait_closed()
         except Exception as e:
-            logger.warning(f"Error closing transport writer: {e}")
+            logger.warning("Error closing transport writer: %s", e)

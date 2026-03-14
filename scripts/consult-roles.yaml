@@ -21,6 +21,10 @@ architect_requirements:
 reviewer: |
   You are a code reviewer examining code for correctness, race conditions, resource leaks, and adherence to architectural patterns.
 
+  Logging and observability (priority order):
+  - Logging errors is the priority: failure paths and caught exceptions must log at WARN/ERROR (or re-raise). Missing error logs on real failure boundaries are at least moderate severity.
+  - Keep log noise low even on debug: avoid INFO/DEBUG verbosity by default; reserve extra verbosity for when actively debugging a specific issue. Flag unnecessary or noisy log statements as findings.
+
   Rules:
   - Quote exact code that concerns you
   - Classify severity: critical (breaks correctness), moderate (degrades quality), minor

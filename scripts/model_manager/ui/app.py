@@ -33,7 +33,6 @@ from .view.widgets.status_bar import StatusBar
 logger = logging.getLogger(__name__)
 
 _TUI_LOG_PATH = Path("/tmp/logs/tui/tui.log")
-_TUI_EVENT_DIR = "/tmp/tui-events"
 
 
 class ModelManagerApp(App):
@@ -107,14 +106,7 @@ class ModelManagerApp(App):
             self.notify(warning, severity="error", timeout=15)
         self.push_screen("home")
 
-        self._broadcaster = MinimalEventDebugBroadcaster(
-            persistence_config={
-                "enabled": True,
-                "directory": _TUI_EVENT_DIR,
-                "max_file_size_mb": 10,
-                "max_files": 3,
-            }
-        )
+        self._broadcaster = MinimalEventDebugBroadcaster()
         self._event_bus = EventBus(debug_broadcaster=self._broadcaster)
         await self._broadcaster.start_debug_server()
         await self._event_bus.publish_async(TuiStarted(pid=os.getpid()))
@@ -125,7 +117,7 @@ class ModelManagerApp(App):
         if self._broadcaster is not None:
             await self._broadcaster.stop_debug_server()
 
-    def push_screen(  # type: ignore[override]
+    def push_screen(
         self, screen: str, kwargs: dict | None = None
     ) -> None:
         match screen:
@@ -155,8 +147,15 @@ def run() -> None:
     """Entry point for the TUI."""
     import logging
 
-    # Avoid polluting the TUI with DEBUG logs from httpx/httpcore (e.g. UDS probes).
-    for _logger in ("httpcore", "httpcore.connection", "httpx", "urllib3"):
+    # Avoid polluting the TUI with DEBUG/INFO from probes and third-party libs.
+    for _logger in (
+        "httpcore",
+        "httpcore.connection",
+        "httpx",
+        "urllib3",
+        "scripts.model_manager.ui.controller.service_ctl",
+        "scripts.model_manager.ui.model.service_state",
+    ):
         logging.getLogger(_logger).setLevel(logging.WARNING)
 
     _TUI_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -168,4 +167,8 @@ def run() -> None:
         ts = datetime.now(UTC).isoformat()
         with _TUI_LOG_PATH.open("a") as fh:
             fh.write(f"\n[{ts}] TUI crashed:\n{tb}\n")
-        raise
+        # Optionally, display an error message in the TUI before exiting
+        # app.bell()
+        # app.push_screen(ErrorScreen(message="An unexpected error occurred. See logs for details."))
+        # Or, if the intention is to just log and let the process terminate naturally:
+        # sys.exit(1) # Or similar controlled exit

@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 # Reconciliation: re-sweep watched dirs to recover files missed by initial sweep.
 # ∀ file ∈ watched_dir: if not in index → index now.
-# Interval is intentionally slow; this is a safety net, not a polling mechanism.
-_RECONCILE_INTERVAL_S = 60.0
+# Interval is configurable via RagConfig.reconcile_interval_s; 0 = disabled.
+_RECONCILE_INTERVAL_S = 300.0
 
 
 def _normalize_extensions(extensions: Sequence[str]) -> tuple[str, ...]:
@@ -111,7 +111,7 @@ class WatcherManager:
         self._baseline_extensions = configured_baseline or _normalize_extensions(BASELINE_EXTENSIONS)
         for watch_directory in config.watch_directories:
             await self._start_one(watch_directory)
-        if self._watch_configs:
+        if self._watch_configs and self._reconcile_interval_s > 0:
             self._reconcile_task = asyncio.create_task(
                 self._reconcile_loop(), name="rag-watcher-reconcile"
             )
@@ -186,12 +186,12 @@ class WatcherManager:
         This covers files that failed indexing during startup (e.g. embedding race).
         """
         # watch_configs is immutable after start(); precompute once.
-        ext_sets = [
-            frozenset(_effective_extensions(wd, self._baseline_extensions))
-            for wd in self._watch_configs
-        ]
         await asyncio.sleep(self._reconcile_interval_s)
         while True:
+            ext_sets = [
+                frozenset(_effective_extensions(wd, self._baseline_extensions))
+                for wd in self._watch_configs
+            ]
             try:
                 for watch_directory, extensions in zip(self._watch_configs, ext_sets):
                     watch_path = Path(watch_directory.path).expanduser().resolve()

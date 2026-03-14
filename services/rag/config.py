@@ -93,6 +93,9 @@ class RagConfig:
     # Model ID for per-chunk context generation before embedding. Omitted → use default (on).
     # Set to "" to explicitly disable contextualization.
     contextualize_model: str = DEFAULT_CONTEXTUALIZE_MODEL
+    # Seconds between watcher reconcile sweeps (recover files missed by inotify). 0 = disabled.
+    # Higher values reduce idle CPU; default 300 (5 min).
+    reconcile_interval_s: float = 300.0
 
     def get_scope_for_path(self, file_path: str) -> str:
         """Longest-prefix match over scopes; leaf-preferred on ties.
@@ -282,10 +285,10 @@ def load_config() -> RagConfig:
 
     try:
         loaded: object = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    except Exception as e:
+    except yaml.YAMLError as e:
         logger.error("Failed to parse RAG config: path=%s", config_path, exc_info=True)
         raise ValueError(
-            f"Critical: Failed to load RAG configuration from {config_path}"
+            f"Critical: Failed to load RAG configuration from {config_path}: {e}"
         ) from e
 
     if not isinstance(loaded, dict):
@@ -341,6 +344,11 @@ def load_config() -> RagConfig:
         contextualize_model = raw_ctx_model.strip()
     else:
         contextualize_model = DEFAULT_CONTEXTUALIZE_MODEL
+    raw_reconcile = parsed_root.get("reconcile_interval_s", 300.0)
+    if isinstance(raw_reconcile, (int, float)) and raw_reconcile >= 0:
+        reconcile_interval_s = float(raw_reconcile)
+    else:
+        reconcile_interval_s = 300.0
     return RagConfig(
         watch_directories=watch_directories,
         scopes=scopes,
@@ -353,4 +361,5 @@ def load_config() -> RagConfig:
         baseline_extensions=BASELINE_EXTENSIONS,
         post_index_enforcement=post_index_enforcement,
         contextualize_model=contextualize_model,
+        reconcile_interval_s=reconcile_interval_s,
     )

@@ -348,13 +348,13 @@ start_gateway() {
         # Unix socket mode
         exec python3 src/main.py \
             --unix-socket "${GATEWAY_UNIX_SOCKET}" \
-            --log-level trace
+            --log-level info
     else
         # TCP mode
         exec python3 -m uvicorn src.main:app \
             --host "${GATEWAY_HOST}" \
             --port "${GATEWAY_PORT}" \
-            --log-level trace \
+            --log-level info \
 	--timeout-keep-alive 3600 \
 	--timeout-graceful-shutdown 120 \
             --no-access-log
@@ -416,7 +416,7 @@ start_stargate() {
         # Unix socket mode
         exec python3 -m uvicorn systems.proxy.app:app \
             --uds "${STARGATE_UNIX_SOCKET}" \
-            --log-level trace \
+            --log-level info \
     --timeout-keep-alive 3600 \
     --timeout-graceful-shutdown 120 \
             --no-access-log
@@ -425,7 +425,7 @@ start_stargate() {
         exec python3 -m uvicorn systems.proxy.app:app \
             --host "${STARGATE_HOST}" \
             --port "${STARGATE_PORT}" \
-            --log-level trace \
+            --log-level info \
     --timeout-keep-alive 3600 \
     --timeout-graceful-shutdown 120 \
             --no-access-log
@@ -520,7 +520,7 @@ start_both() {
             # Unix socket mode
             python3 src/main.py \
                 --unix-socket "${GATEWAY_UNIX_SOCKET}" \
-                --log-level trace \
+                --log-level info \
     --timeout-keep-alive 3600 \
     --timeout-graceful-shutdown 120
         else
@@ -528,7 +528,7 @@ start_both() {
             python3 -m uvicorn src.main:app \
                 --host "${GATEWAY_HOST}" \
                 --port "${GATEWAY_PORT}" \
-                --log-level trace \
+                --log-level info \
     --timeout-keep-alive 3600 \
     --timeout-graceful-shutdown 120 \
                 --no-access-log
@@ -565,7 +565,7 @@ start_both() {
 
             python3 -m uvicorn systems.proxy.app:app \
                 --uds "${EDGE_STARGATE_SOCKET}" \
-                --log-level trace \
+                --log-level info \
                 --timeout-keep-alive 3600 \
                 --timeout-graceful-shutdown 120 \
                 --no-access-log
@@ -588,7 +588,7 @@ start_both() {
             # Unix socket mode
             python3 -m uvicorn systems.proxy.app:app \
                 --uds "${STARGATE_UNIX_SOCKET}" \
-                --log-level trace \
+                --log-level info \
     --timeout-keep-alive 3600 \
     --timeout-graceful-shutdown 120 \
                 --no-access-log
@@ -597,7 +597,7 @@ start_both() {
             python3 -m uvicorn systems.proxy.app:app \
                 --host "${STARGATE_HOST}" \
                 --port "${STARGATE_PORT}" \
-                --log-level trace \
+                --log-level info \
     --timeout-keep-alive 3600 \
     --timeout-graceful-shutdown 120 \
                 --no-access-log
