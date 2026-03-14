@@ -11,10 +11,60 @@ All events follow this structure:
   "type": "stargate_event",
   "signal": "string",
   "payload": {},
+  "role": "observation | coordination",
+  "scope": "global | node",
   "timestamp": "ISO-8601",
   "id": "integer (monotonic)",
   "source": "universal_stargate"
 }
+```
+
+## Signal Classification
+
+Events carry `role` and `scope` fields (defaults: `observation`, `global`).
+Validated by `@event_factory` at call time.
+
+| Field | Values | Semantics |
+|-------|--------|-----------|
+| `role` | `coordination` | Consumed by state machines, admission control, queues. Suppressing breaks correctness. |
+| `role` | `observation` | Debugging/monitoring only. Safe to suppress, deduplicate, or scope to originating node. |
+| `scope` | `node` | Meaningful only where the action originates. Not re-emitted on master. |
+| `scope` | `global` | Needs master-level visibility. Available in master event stream. |
+
+### Coordination Events
+
+Signals that MUST carry `role="coordination"`. Suppressing these breaks system correctness.
+
+| Signal | Consumer | Coordination Role |
+|--------|----------|-------------------|
+| `model.execution.completed` | CapacityWaiter, GatewayTracker | Slot release, queue wake |
+| `model.execution.failed` | CapacityWaiter, GatewayTracker | Slot release, queue wake |
+| `model.capacity.freed` | CapacityWaiter | Queue wake (model unloaded) |
+| `model.loaded` | SequentialLoader | Load completion |
+| `model.unloaded` | SequentialLoader | Unload completion |
+| `model.loading.failed` | SequentialLoader | Load failure |
+
+All signals not listed above default to `role="observation"` and are safe to suppress,
+deduplicate, or scope to the originating node.
+
+### Node-Scoped Signals
+
+Signals with `scope="node"` exist only at the originating node (edge container or remote host).
+They are not re-emitted on master to reduce event noise.
+
+| Signal | Origin | Why node-scoped |
+|--------|--------|-----------------|
+| `gateway.resource.updated` | Edge gateway | VRAM/RAM state churn from telemetry processing |
+| `federation.model.lifecycle` | Edge gateway | Busy/idle flapping per slot transition |
+
+### Querying by Classification
+
+```bash
+# Find all coordination events
+jq -c 'select(.role == "coordination")' /tmp/stargate-events/current.jsonl
+
+# Find node-scoped events (only visible at originating node)
+jq -c 'select(.scope == "node")' /tmp/stargate-events/current.jsonl
 ```
 
 ## Correlation Fields

@@ -10,10 +10,21 @@ Signals:
     federation.telemetry.received — Master received telemetry from remote
     federation.telemetry.marked.stale — telemetry exceeded staleness threshold
     federation.telemetry.applied — telemetry applied to Master state
+    federation.telemetry.wired — telemetry bridge wiring confirmed
     federation.activation.filtered.empty — available > 0 but activated == ∅
     federation.routing.delegated — Master delegated request to remote
     federation.routing.routed.local — Master routed request locally
     federation.routing.rejected — Master rejected request (no target)
+    federation.peer.auth.failed — remote authentication failed
+    federation.peer.disconnected — authenticated remote disconnected
+    federation.request.inference.forwarded — inference request forwarded to peers
+    federation.model.lifecycle — model lifecycle event occurred
+    federation.resource.updated — resource telemetry updated
+    federation.gateway.removed — federated gateway removed
+    federation.vram.request.sent — VRAM probe request sent
+    federation.vram.request.failed — VRAM probe request failed
+    federation.vram.response.received — VRAM probe response received
+    federation.circuit.breaker.rejected — request rejected by circuit breaker
 """
 
 # ruff: noqa: N802
@@ -78,12 +89,11 @@ def FederationConnectionEstablished(
     latency_ms: int | None = None,
 ) -> Event:
     """Remote Stargate connected to Master."""
-    payload: dict[str, Any] = {
+    payload = {
         "remote_id": remote_id,
         "transport": transport,
+        **({"latency_ms": latency_ms} if latency_ms is not None else {}),
     }
-    if latency_ms is not None:
-        payload["latency_ms"] = latency_ms
     return Event(signal=FEDERATION_CONNECTION_ESTABLISHED, payload=payload)
 
 
@@ -127,21 +137,28 @@ def FederationTelemetryReceived(
     Disambiguation fields (msg_type, catalog_model_count, loaded_model_count,
     count_source) clarify what model_count represents per message type.
     """
-    payload: dict[str, Any] = {
+    payload = {
         "remote_id": remote_id,
         "model_count": model_count,
         "resource_summary": resource_summary,
+        **(
+            {"telemetry_age_ms": telemetry_age_ms}
+            if telemetry_age_ms is not None
+            else {}
+        ),
+        **({"msg_type": msg_type} if msg_type is not None else {}),
+        **(
+            {"catalog_model_count": catalog_model_count}
+            if catalog_model_count is not None
+            else {}
+        ),
+        **(
+            {"loaded_model_count": loaded_model_count}
+            if loaded_model_count is not None
+            else {}
+        ),
+        **({"count_source": count_source} if count_source is not None else {}),
     }
-    if telemetry_age_ms is not None:
-        payload["telemetry_age_ms"] = telemetry_age_ms
-    if msg_type is not None:
-        payload["msg_type"] = msg_type
-    if catalog_model_count is not None:
-        payload["catalog_model_count"] = catalog_model_count
-    if loaded_model_count is not None:
-        payload["loaded_model_count"] = loaded_model_count
-    if count_source is not None:
-        payload["count_source"] = count_source
     return Event(signal=FEDERATION_TELEMETRY_RECEIVED, payload=payload)
 
 
@@ -182,13 +199,12 @@ def FederationRoutingDelegated(
     reason: str | None = None,
 ) -> Event:
     """Master delegated request to Remote Stargate."""
-    payload: dict[str, Any] = {
+    payload = {
         "request_id": request_id,
         "target_remote": target_remote,
         "model_id": model_id,
+        **({"reason": reason} if reason is not None else {}),
     }
-    if reason:
-        payload["reason"] = reason
     return Event(signal=FEDERATION_ROUTING_DELEGATED, payload=payload)
 
 
@@ -288,6 +304,7 @@ def FederationModelLifecycleEvent(
             "msg_type": msg_type,
             "model_id": model_id,
         },
+        scope="node",
     )
 
 

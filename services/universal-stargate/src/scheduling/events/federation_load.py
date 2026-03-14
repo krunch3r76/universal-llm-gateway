@@ -6,8 +6,7 @@ decisions (route/load/queue/reject/evict), and catalog change detection
 
 Also contains federation variants of gateway.resource.updated and
 model.loaded/unloaded that use gateway_id instead of url — these reuse
-the same signal strings but carry different payload shapes suitable for
-the federation control plane.
+the existing signal strings with federation-specific payload shapes.
 
 Signals:
     federation.catalog.changed — federated gateway catalog changed
@@ -17,12 +16,10 @@ Signals:
     federation.load.failed — remote failed to load model
     federation.orchestrator.decided — orchestrator routing/load decision
     federation.orchestrator.evicted — orchestrator evicted model from remote
-    gateway.resource.updated (federation variant) — minimal wake-up signal
-    model.loaded (federation variant) — gateway_id payload for federation
-    model.unloaded (federation variant) — gateway_id payload for federation
+    gateway.resource.updated (federation variant) — reuse signal, federation payload
+    model.loaded (federation variant) — reuse signal, federation payload
+    model.unloaded (federation variant) — reuse signal, federation payload
 """
-
-from typing import Any
 
 from model_id import ModelId
 from universal_event_bus import Event, event_factory
@@ -102,15 +99,14 @@ def FederationGatewayCatalogChanged(
         Gateway identification uses gateway_id, not URL. Master routes via
         Edge Stargate URL, never direct to Gateway.
     """
-    payload: dict[str, Any] = {
+    payload = {
         "gateway_id": gateway_id,
         "old_model_count": old_model_count,
         "new_model_count": new_model_count,
+        "event_type": event_type,
+        "models": models,
     }
-    if event_type is not None:
-        payload["event_type"] = event_type
-    if models is not None:
-        payload["models"] = models
+    payload = {k: v for k, v in payload.items() if v is not None}
     return Event(
         signal=FEDERATION_GATEWAY_CATALOG_CHANGED,
         payload=payload,
@@ -136,7 +132,7 @@ def FederationCatalogVramDrift(  # noqa: N802
         drift_pct: Percent drift between measured and catalog values
 
     Returns:
-        Event with FederationCatalogVramDrift signal
+        Event with FEDERATION_CATALOG_VRAM_DRIFT signal.
     """
     return Event(
         signal=FEDERATION_CATALOG_VRAM_DRIFT,
@@ -245,15 +241,26 @@ def FederationOrchestratorDecided(
     reason: str,
     alternatives_considered: list[str] | None = None,
 ) -> Event:
-    """Orchestrator made a routing/load decision."""
-    payload: dict[str, Any] = {
+    """Orchestrator made a routing/load decision.
+
+    Args:
+        request_id: Identifier for the original request.
+        decision_type: Type of decision (e.g. 'route', 'load', 'queue', 'reject').
+        target: Target of the decision (e.g. remote ID, or None if rejected).
+        reason: Explanation for the decision.
+        alternatives_considered: Optional list of other options considered.
+
+    Returns:
+        Event with FEDERATION_ORCHESTRATOR_DECIDED signal.
+    """
+    payload = {
         "request_id": request_id,
         "decision_type": decision_type,
         "target": target,
         "reason": reason,
+        "alternatives_considered": alternatives_considered,
     }
-    if alternatives_considered is not None:
-        payload["alternatives_considered"] = alternatives_considered
+    payload = {k: v for k, v in payload.items() if v is not None}
     return Event(signal=FEDERATION_ORCHESTRATOR_DECIDED, payload=payload)
 
 
@@ -308,6 +315,7 @@ def FederationGatewayResourceUpdateSignal(
             "gateway_id": gateway_id,
             "source": source,
         },
+        scope="node",
     )
 
 

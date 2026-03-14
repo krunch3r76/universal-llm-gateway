@@ -14,6 +14,8 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from .event import Event
+
 logger = get_logger(__name__)
 
 
@@ -21,7 +23,7 @@ logger = get_logger(__name__)
 class DebugClient:
     """Represents a connected debug client."""
 
-    transport: Any
+    transport: "SimpleTransportWrapper"
     last_seen: float
     connected: bool = True
 
@@ -159,7 +161,7 @@ class FileEventWriter:
                     last_flush = now
 
             except Exception as e:
-                logger.debug(f"Error in writer loop: {e}")
+                logger.exception(f"Error in writer loop: {e}")
 
         # Final flush
         if buffer:
@@ -289,12 +291,9 @@ class MinimalEventDebugBroadcaster:
     async def _handle_client_connection(self, reader, writer):
         """Handle new debug client connection"""
         client = DebugClient(
-            transport=None,  # We'll set this up properly
+            transport=SimpleTransportWrapper(reader, writer),
             last_seen=time.time(),
         )
-
-        # Create a simple transport wrapper
-        client.transport = SimpleTransportWrapper(reader, writer)
         client.connected = True
 
         self.debug_clients.append(client)
@@ -303,12 +302,14 @@ class MinimalEventDebugBroadcaster:
         )
 
     async def broadcast_event(self, event: Any):
-        """Broadcast event to socket clients AND write to file."""
+        """Broadcast event to socket clients AND write to file.
+
+        Args:
+            event: The event object to broadcast. Can be an instance of
+                `Event` or any other type.
+        """
         if not self._running:
             return
-
-        # Import Event here to avoid circular dependency
-        from .event import Event
 
         # Build debug_event dict
         if isinstance(event, Event):
@@ -316,6 +317,8 @@ class MinimalEventDebugBroadcaster:
                 "type": "stargate_event",
                 "signal": event.signal,
                 "payload": event.payload,
+                "role": event.role,
+                "scope": event.scope,
                 "timestamp": event.timestamp,
                 "id": event.id,
                 "source": "universal_stargate",
@@ -371,7 +374,7 @@ class MinimalEventDebugBroadcaster:
             logger.debug("⏰ Debug client timeout - marking as disconnected")
             client.connected = False
         except Exception as e:
-            logger.debug(f"❌ Debug client error: {e}")
+            logger.warning(f"❌ Debug client error: {e}")
             client.connected = False
 
     async def _cleanup_disconnected_clients(self):
@@ -393,7 +396,7 @@ class MinimalEventDebugBroadcaster:
                 self.debug_clients = active_clients
 
             except Exception as e:
-                logger.error(f"❌ Error in client cleanup: {e}")
+                logger.exception(f"❌ Error in client cleanup: {e}")
 
     async def stop_debug_server(self):
         """Stop debug server and file writer gracefully."""
@@ -430,8 +433,11 @@ class SimpleTransportWrapper:
 
     async def send(self, message: dict[str, Any]) -> bool:
         """Send a message using JSONL framing."""
+        if self.writer.is_closing():
+            self._connected = False
+            raise ConnectionError("Not connected: Writer is closing")
         if not self._connected:
-            raise Exception("Not connected")
+            raise ConnectionError("Not connected")
 
         try:
             # Add timestamp if not present
@@ -449,7 +455,7 @@ class SimpleTransportWrapper:
 
         except Exception as e:
             self._connected = False
-            raise Exception(f"Send failed: {e}")
+            raise ConnectionError(f"Send failed: {e}") from e
 
     async def close(self):
         """Close the transport connection."""
@@ -461,5 +467,5 @@ class SimpleTransportWrapper:
         try:
             self.writer.close()
             await self.writer.wait_closed()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error closing transport writer: {e}")

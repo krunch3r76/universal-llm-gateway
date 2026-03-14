@@ -169,16 +169,17 @@ def ModelLoaded(
         ram_mb: Optional RAM usage in MB
 
     Returns:
-        Event with ModelLoaded signal
+        Event with MODEL_LOADED signal.
     """
-    payload: dict[str, object] = {"url": url, "model_id": model_id}
-    if gateway_name is not None:
-        payload["gateway_name"] = gateway_name
-    if vram_mb is not None:
-        payload["vram_mb"] = vram_mb
-    if ram_mb is not None:
-        payload["ram_mb"] = ram_mb
-    return Event(signal=MODEL_LOADED, payload=payload)
+    payload = {
+        "url": url,
+        "model_id": model_id,
+        "gateway_name": gateway_name,
+        "vram_mb": vram_mb,
+        "ram_mb": ram_mb,
+    }
+    payload = {k: v for k, v in payload.items() if v is not None}
+    return Event(signal=MODEL_LOADED, payload=payload, role="coordination")
 
 
 @event_factory
@@ -196,12 +197,15 @@ def ModelUnloaded(
         gateway_name: Optional gateway name (for enriched events)
 
     Returns:
-        Event with ModelUnloaded signal
+        Event with MODEL_UNLOADED signal.
     """
-    payload: dict[str, object] = {"url": url, "model_id": model_id}
-    if gateway_name is not None:
-        payload["gateway_name"] = gateway_name
-    return Event(signal=MODEL_UNLOADED, payload=payload)
+    payload = {
+        "url": url,
+        "model_id": model_id,
+        "gateway_name": gateway_name,
+    }
+    payload = {k: v for k, v in payload.items() if v is not None}
+    return Event(signal=MODEL_UNLOADED, payload=payload, role="coordination")
 
 
 @event_factory
@@ -238,14 +242,19 @@ def ModelLoadingFailed(
         gateway_name: Optional gateway name (for enriched events)
 
     Returns:
-        Event with ModelLoadingFailed signal
+        Event with MODEL_LOADING_FAILED signal.
     """
-    payload: dict[str, object] = {"url": url, "model_id": model_id, "error": error}
-    if gateway_name is not None:
-        payload["gateway_name"] = gateway_name
+    payload = {
+        "url": url,
+        "model_id": model_id,
+        "error": error,
+        "gateway_name": gateway_name,
+    }
+    payload = {k: v for k, v in payload.items() if v is not None}
     return Event(
         signal=MODEL_LOADING_FAILED,
         payload=payload,
+        role="coordination",
     )
 
 
@@ -256,7 +265,17 @@ def ModelLoadingStuck(
     elapsed_s: float,
     ttl_s: float,
 ) -> Event:
-    """Create MODEL_LOADING_STUCK event."""
+    """Signal that model load exceeded stuck TTL; reservation cleared.
+
+    Args:
+        url: Gateway URL.
+        model_id: Model that was stuck in loading.
+        elapsed_s: Time in seconds the model has been stuck.
+        ttl_s: Threshold time in seconds after which the model is considered stuck.
+
+    Returns:
+        Event with MODEL_LOADING_STUCK signal.
+    """
     return Event(
         signal=MODEL_LOADING_STUCK,
         payload={
@@ -323,6 +342,7 @@ def ModelExecutionCompleted(
             "request_id": request_id,
             "gateway_id": gateway_id,
         },
+        role="coordination",
     )
 
 
@@ -356,6 +376,7 @@ def ModelExecutionFailed(
             "gateway_id": gateway_id,
             "error": error,
         },
+        role="coordination",
     )
 
 
@@ -374,4 +395,5 @@ def ModelCapacityFreed(url: str, model_id: str) -> Event:
     return Event(
         signal=MODEL_CAPACITY_FREED,
         payload={"url": url, "model_id": model_id},
+        role="coordination",
     )

@@ -15,6 +15,8 @@ def ModelExecutionCompleted(model_id: str) -> Event: ...
 
 Signal format: `^[a-z]+(\.[a-z]+){1,4}$` (e.g., `model.execution.completed`).
 
+Events carry `role` (coordination | observation) and `scope` (node | global). See `docs/event-contracts.md` § Signal Classification.
+
 ## Publish Modes
 
 | Mode | Use case | Blocks? |

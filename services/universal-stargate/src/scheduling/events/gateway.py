@@ -2,6 +2,7 @@
 
 Covers gateway connectivity/health transitions, retry telemetry,
 resource updates (VRAM/RAM), and resource reservation lifecycle.
+Uses universal_event_bus.Event and @event_factory for all signals.
 
 Signals:
     gateway.state.changed — unified connectivity + health transition
@@ -10,6 +11,8 @@ Signals:
     resource.reserved — VRAM/RAM reserved for model load
     resource.released — reservation released (completed/expired/cancelled)
 """
+
+from typing import Literal
 
 from universal_event_bus import Event, event_factory
 
@@ -103,15 +106,14 @@ Payload: {
 @event_factory
 def GatewayStateChanged(
     url: str,
-    connectivity: str,
-    health: str,
+    connectivity: Literal["reachable", "unreachable"],
+    health: Literal["healthy", "unhealthy", "unknown"],
     transition_type: str,
     previous_connectivity: str | None = None,
     previous_health: str | None = None,
     check_duration_ms: int = 0,
 ) -> Event:
-    """
-    Create GATEWAY_STATE_CHANGED event.
+    """Signal a change in a gateway's connectivity or health state.
 
     Args:
         url: Gateway URL
@@ -150,8 +152,7 @@ def GatewayRetryAttempted(
     error_message: str,
     backoff_delay_ms: int,
 ) -> Event:
-    """
-    Create GATEWAY_RETRY_ATTEMPTED event.
+    """Signal that a gateway request retry was attempted.
 
     Args:
         gateway_url: Gateway URL
@@ -191,8 +192,7 @@ def GatewayResourceUpdate(
     loaded_models: list[str],
     busy_models: list[str],
 ) -> Event:
-    """
-    Create GATEWAY_RESOURCE_UPDATE event.
+    """Signal an update to a gateway's resource info (VRAM/RAM/models).
 
     Args:
         url: Gateway URL
@@ -217,6 +217,7 @@ def GatewayResourceUpdate(
             "loaded_models": loaded_models,
             "busy_models": busy_models,
         },
+        scope="node",
     )
 
 
@@ -229,8 +230,7 @@ def ResourceReserved(
     ram_mb: int,
     timeout_seconds: float,
 ) -> Event:
-    """
-    Create RESOURCE_RESERVED event.
+    """Signal that resources have been reserved for a model load operation.
 
     Args:
         gateway_name: Gateway name
@@ -263,10 +263,9 @@ def ResourceReleased(
     reservation_id: str,
     vram_mb: int,
     ram_mb: int,
-    reason: str,
+    reason: Literal["completed", "expired", "cancelled"],
 ) -> Event:
-    """
-    Create RESOURCE_RELEASED event.
+    """Signal that previously reserved resources have been released.
 
     Args:
         gateway_name: Gateway name
@@ -274,10 +273,10 @@ def ResourceReleased(
         reservation_id: Unique reservation ID
         vram_mb: VRAM released in MB
         ram_mb: RAM released in MB
-        reason: "completed" | "expired" | "cancelled"
+        reason: Release reason (completed, expired, or cancelled).
 
     Returns:
-        Event with ResourceReleased signal
+        Event with RESOURCE_RELEASED signal.
     """
     return Event(
         signal=RESOURCE_RELEASED,

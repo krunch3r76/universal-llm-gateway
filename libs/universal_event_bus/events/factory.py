@@ -1,10 +1,10 @@
-"""
-Event factory decorator for enforcing factory function pattern.
+"""Event factory decorator for enforcing factory function pattern.
 
 Provides @event_factory decorator that allows Event construction within
 factory functions while preventing direct Event() construction elsewhere.
 
-Also validates event signal format (dot-notation) at creation time.
+Validates at creation time: signal format (dot-notation), role (one of
+'coordination', 'observation'), and scope (one of 'node', 'global').
 """
 
 import threading
@@ -12,10 +12,14 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any
 
+from .event import Event
 from .validation import validate_event_signal
 
 # Thread-local flag for Event construction authorization
 _allow_construction = threading.local()
+
+_VALID_ROLES = frozenset({"coordination", "observation"})
+_VALID_SCOPES = frozenset({"node", "global"})
 
 
 def event_factory[F: Callable[..., Any]](func: F) -> F:
@@ -25,7 +29,7 @@ def event_factory[F: Callable[..., Any]](func: F) -> F:
     Automatically manages thread-local construction flag to allow
     Event() construction within the decorated function.
 
-    Also validates that the event signal follows dot-notation spec.
+    Also validates signal format (dot-notation), role, and scope at call time.
 
     Example:
         from universal_event_bus import Event, event_factory
@@ -36,6 +40,7 @@ def event_factory[F: Callable[..., Any]](func: F) -> F:
             return Event(
                 signal="model.execution.completed",
                 payload={"model_id": model_id},
+                role="coordination",
             )
 
     Args:
@@ -46,17 +51,15 @@ def event_factory[F: Callable[..., Any]](func: F) -> F:
 
     Raises:
         TypeError: If decorated function doesn't return Event instance
-        ValueError: If event signal doesn't match dot-notation spec
+        ValueError: If event signal, role, or scope is invalid
     """
 
     @wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def wrapper(*args: Any, **kwargs: Any) -> Event:
         _allow_construction.value = True
         try:
             event = func(*args, **kwargs)
             # Verify factory actually returns an Event
-            from .event import Event
-
             if not isinstance(event, Event):
                 raise TypeError(
                     f"Factory function {func.__name__} must return Event instance, "
@@ -65,6 +68,17 @@ def event_factory[F: Callable[..., Any]](func: F) -> F:
 
             # Validate signal format (dot-notation)
             validate_event_signal(event.signal)
+
+            if event.role not in _VALID_ROLES:
+                raise ValueError(
+                    f"Invalid event role '{event.role}' for signal '{event.signal}'. "
+                    f"Must be one of: {', '.join(sorted(_VALID_ROLES))}"
+                )
+            if event.scope not in _VALID_SCOPES:
+                raise ValueError(
+                    f"Invalid event scope '{event.scope}' for signal '{event.signal}'. "
+                    f"Must be one of: {', '.join(sorted(_VALID_SCOPES))}"
+                )
 
             return event
         finally:
