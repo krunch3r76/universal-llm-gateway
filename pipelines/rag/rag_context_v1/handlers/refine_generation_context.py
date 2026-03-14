@@ -54,9 +54,7 @@ class RefineGenerationContextHandler(BaseHandler):
 
         scopes = self._resolve_list_input(resolver, step, "scopes")
         must_include = self._resolve_list_input(resolver, step, "must_include")
-        suggested_terms = self._resolve_list_input(
-            resolver, step, "suggested_terms"
-        )
+        suggested_terms = self._resolve_list_input(resolver, step, "suggested_terms")
 
         max_anchors: int = step.get_domain_field("max_scope_anchors", 2)
         min_cooccurrence: int = step.get_domain_field("min_chunk_cooccurrence", 1)
@@ -170,6 +168,13 @@ class RefineGenerationContextHandler(BaseHandler):
         return errors
 
 
+_REGISTER_PRIORITY: dict[str, int] = {
+    "specification": 0,
+    "practitioner": 1,
+    "academic": 2,
+}
+
+
 def _select_scope_anchors(
     vocabulary: dict[str, dict[str, list[str]]],
     scopes: list[str],
@@ -180,9 +185,10 @@ def _select_scope_anchors(
 ) -> list[str]:
     """Select discriminative scope-specific anchor terms for must_include.
 
-    Gathers all terms from predicted scopes' vocabulary (all registers),
-    filters out terms already in must_include or query, validates via
-    co-occurrence with suggested_terms, and returns the top candidates.
+    Gathers terms from predicted scopes' vocabulary in register-priority
+    order (specification → practitioner → academic), filters out terms
+    already in must_include or query, validates via co-occurrence with
+    suggested_terms, and returns the top candidates.
     """
     if not scopes or not vocabulary or max_anchors <= 0:
         return []
@@ -193,15 +199,17 @@ def _select_scope_anchors(
     candidates: list[str] = []
     for scope in scopes:
         scope_regs = vocabulary.get(scope, {})
-        for _register, terms in scope_regs.items():
-            for term in terms:
+        for register in sorted(scope_regs, key=lambda r: _REGISTER_PRIORITY.get(r, 99)):
+            for term in scope_regs[register]:
                 clean = term.rstrip("*").strip()
                 if not clean:
                     continue
                 cl = clean.lower()
                 if cl in existing_lower or cl in query_lower:
                     continue
-                if any(cl in q for q in query_lower) or any(q in cl for q in existing_lower):
+                if any(cl in q for q in query_lower) or any(
+                    q in cl for q in existing_lower
+                ):
                     continue
                 candidates.append(clean)
 

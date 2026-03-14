@@ -263,8 +263,9 @@ A local semantic search and knowledge management service backed by ChromaDB. The
 - **File Watching**: Automatically re-indexes changed files via inotify.
 - **Local Embeddings**: Uses a local model via the Gateway. No external API calls.
 - **PDF Deduplication**: Content-hash (`pdf_hash`) dedup across files.
+- **Post-Index Enrichment**: After corpus indexing, operator-driven workflows rebuild corpus hints from the property index, LLM-classify scope vocabulary registers, and tag bibliography/noise chunks. Watermarks track enrichment freshness; `post_index_enforcement: strict` blocks search until enrichment is current. See [Post-Index Refresh Runbook](tasks/runbooks/rag-post-index-refresh.md).
 
-Config: `~/.gateway/rag.yaml`. Store: `~/.rag/store/`.
+Config: `~/.gateway/rag.yaml`. Store: `~/.rag/store/`. Enrichment artifacts: `~/.rag/corpus_hints.yaml`, `~/.rag/scope_vocabulary.yaml`.
 
 ## Cloud Proxy
 

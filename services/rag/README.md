@@ -110,6 +110,7 @@ knowledge_extraction:
 automatic_indexing_enabled: true
 corpus_hints_path: ~/.gateway/corpus_hints.yaml
 article_registry_path: ~/.gateway/article_registry.yaml
+post_index_enforcement: strict   # strict | warn — strict returns 503 until enrichment is current
 ```
 
 ### Key Options
@@ -122,13 +123,44 @@ article_registry_path: ~/.gateway/article_registry.yaml
 | `knowledge_extraction` | LLM extraction config — pipeline, boost factor, retry limits |
 | `corpus_hints_path` | Scope-specific vocabulary hints for retrieval tuning |
 | `article_registry_path` | Citation metadata (title, authors, venue, DOI, published_date) per file |
+| `post_index_enforcement` | `strict` (default): return 503 on search until post-index enrichment watermarks are current. `warn`: log ERROR at startup but continue serving |
+| `contextualize_model` | Model ID for per-chunk context generation before embedding. Omit for default (on); set to `""` to disable |
+| `reconcile_interval_s` | Seconds between watcher reconcile sweeps. Default 300 (5 min). 0 = disabled |
 
 ## Storage
 
 | Path | Contents |
 |------|----------|
 | `~/.rag/store/` | ChromaDB persistent data |
-| `~/.rag/store/property_index.db` | SQLite property inverted index |
+| `~/.rag/store/property_index.db` | SQLite property inverted index (entities, topics, relations, watermarks) |
+| `~/.rag/corpus_hints.yaml` | Scope-specific vocabulary hints aggregated from the property index |
+| `~/.rag/scope_vocabulary.yaml` | LLM-classified vocabulary registers (`practitioner`, `academic`, `specification`) per scope |
+
+## Post-Index Enrichment
+
+Indexing handles chunk extraction, embedding, knowledge extraction, and per-chunk `is_bibliography` tagging automatically. After a large corpus refresh, three manual enrichment steps rebuild derived artifacts:
+
+1. **Corpus hints** (`python -m services.rag.corpus_hints`) — aggregates terms from the property index per scope and writes `~/.rag/corpus_hints.yaml`.
+2. **Scope vocabulary** (`scripts/rag/classify_vocabulary.py`) — LLM-classifies corpus hint terms into register categories and writes `~/.rag/scope_vocabulary.yaml`.
+3. **Bibliography classification** (`scripts/rag/classify_bibliography.py`) — LLM-classifies chunks and writes boolean metadata keys (`is_bibliography`, `is_non_intelligible`) into ChromaDB. Resumable by metadata key.
+
+Each step stamps a watermark in `property_index.db`. When `post_index_enforcement: strict` (default), the service returns 503 on search requests until all watermarks are current relative to the last reindex. In `warn` mode, an ERROR is logged at startup but search continues.
+
+Verify watermark freshness:
+
+```bash
+sqlite3 ~/.rag/store/property_index.db "SELECT * FROM watermarks ORDER BY step"
+```
+
+Full procedure: [Post-Index Refresh Runbook](../../tasks/runbooks/rag-post-index-refresh.md).
+
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/rag/classify_vocabulary.py` | LLM-classify scope vocabulary registers from corpus hints |
+| `scripts/rag/classify_bibliography.py` | LLM-classify chunk-level bibliography/noise metadata |
+| `scripts/rag/ingest-arxiv` | Ingest arXiv papers into the RAG corpus |
 
 ## Events
 
