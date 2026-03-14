@@ -17,7 +17,12 @@ import httpx
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
 from services.rag.article_registry import (
-    load_registry as load_article_registry,
+    load_registry as load_article_registry_yaml,
+)
+from services.rag.article_registry import (
+    load_registry_from_db,
+    replace_article_rows,
+    to_article_rows,
 )
 from services.rag.config import DEFAULT_INDEX_WORKERS, RagConfig, load_config
 from services.rag.directory_ops import purge_orphaned_chunks
@@ -67,29 +72,49 @@ async def _startup() -> None:
     set_embeddings_event_bus(state._event_bus)
     state._property_index = PropertyIndex()
     await state._property_index.start()
-    if state._config.article_registry_path is not None:
+    if state._property_index is not None:
+        db_path = state._property_index.db_path
         try:
-            state._registry = await asyncio.to_thread(
-                load_article_registry, state._config.article_registry_path
-            )
+            state._registry = await asyncio.to_thread(load_registry_from_db, db_path)
+            legacy_path = state._config.article_registry_path
+            if (
+                not state._registry
+                and legacy_path is not None
+                and legacy_path.exists()
+            ):
+                logger.info(
+                    "Articles table empty; importing one-time legacy registry from %s",
+                    legacy_path,
+                )
+                yaml_registry = await asyncio.to_thread(
+                    load_article_registry_yaml, legacy_path
+                )
+                if yaml_registry:
+                    rows = to_article_rows(
+                        yaml_registry,
+                        source_root=legacy_path.parent,
+                        scope_resolver=state._config.get_scope_for_path,
+                    )
+                    await asyncio.to_thread(replace_article_rows, db_path, rows)
+                    state._registry = yaml_registry
             if state._event_bus is not None:
                 await state._event_bus.publish_async(
                     rag_article_registry_loaded(
-                        path=str(state._config.article_registry_path),
-                        article_count=len(state._registry),
+                        path=str(db_path),
+                        article_count=len(state._registry) if state._registry else 0,
                     )
                 )
         except Exception as e:
             logger.error(
-                "Failed to load article registry from %s: %s",
-                state._config.article_registry_path,
+                "Failed to load article registry from metadata DB %s: %s",
+                db_path,
                 e,
                 exc_info=True,
             )
             if state._event_bus is not None:
                 await state._event_bus.publish_async(
                     rag_article_registry_failed(
-                        path=str(state._config.article_registry_path),
+                        path=str(db_path),
                         error=str(e),
                     )
                 )

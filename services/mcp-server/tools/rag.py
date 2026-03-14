@@ -26,6 +26,9 @@ _STARGATE_URL = os.environ.get("STARGATE_URL", "http://host.docker.internal:9999
 _CONTEXT_TIMEOUT = 90.0
 _ANSWER_TIMEOUT = 180.0
 _SCOPES_TIMEOUT = 15.0
+_RAG_METADATA_DB = os.environ.get(
+    "RAG_METADATA_DB_PATH", "/data/rag-store/rag_metadata.db"
+)
 
 
 def _pipeline_call(
@@ -121,7 +124,7 @@ def _normalize_scope_override(
         return None, None
 
     if isinstance(scope, list):
-        normalized = [s.strip() for s in scope if s.strip()]
+        normalized = [s.strip() for s in scope if isinstance(s, str) and s.strip()]
         if not normalized:
             return None, "Invalid scope list: no scopes provided."
         return normalized, None
@@ -136,6 +139,68 @@ def _normalize_scope_override(
     if len(normalized) == 1:
         return normalized[0], None
     return normalized, None
+
+
+def _normalize_prefix_override(
+    prefix: str | list[str] | None,
+) -> tuple[list[str] | None, str | None]:
+    """Normalize optional source-prefix filters for RAG pipeline options."""
+    if prefix is None:
+        return None, None
+    if isinstance(prefix, list):
+        normalized = [p.strip() for p in prefix if isinstance(p, str) and p.strip()]
+        if not normalized:
+            return None, "Invalid prefix list: no prefixes provided."
+        return normalized, None
+    normalized = [p.strip() for p in prefix.split(",") if p.strip()]
+    if not normalized:
+        return None, "Invalid prefix list: no prefixes provided."
+    return normalized, None
+
+
+def _scope_metadata_from_db() -> dict[str, dict[str, Any]]:
+    """Return optional per-scope metadata from rag_metadata.db.
+
+    Missing DB files, missing tables, and malformed/corrupt database states
+    degrade to an empty mapping so `rag_list_scopes` still returns registry data.
+    """
+    import contextlib
+    import sqlite3
+
+    if not os.path.exists(_RAG_METADATA_DB):
+        return {}
+
+    try:
+        with contextlib.closing(
+            sqlite3.connect(f"file:{_RAG_METADATA_DB}?mode=ro", uri=True)
+        ) as conn:
+            article_rows = conn.execute(
+                "SELECT scope, COUNT(*) AS article_count FROM articles GROUP BY scope"
+            ).fetchall()
+            topic_rows = conn.execute(
+                "SELECT scope, term FROM corpus_hints "
+                "WHERE prefix = 'prop.topic@@' "
+                "ORDER BY scope ASC, score DESC, term ASC"
+            ).fetchall()
+    except sqlite3.Error:
+        logger.exception(
+            "Failed to enrich scopes from metadata DB %s", _RAG_METADATA_DB
+        )
+        return {}
+
+    result: dict[str, dict[str, Any]] = {}
+    for scope, article_count in article_rows:
+        if isinstance(scope, str):
+            result.setdefault(scope, {})["article_count"] = int(article_count)
+    for scope, term in topic_rows:
+        if not (isinstance(scope, str) and isinstance(term, str)):
+            continue
+        topics = cast(
+            list[str], result.setdefault(scope, {}).setdefault("top_topics", [])
+        )
+        if len(topics) < 5 and term not in topics:
+            topics.append(term)
+    return result
 
 
 def register_rag_tools(mcp: FastMCP) -> None:
@@ -198,19 +263,30 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         scopes_typed = cast(dict[str, object], scopes_obj)
         scope_names = sorted(scopes_typed.keys())
+        db_metadata = _scope_metadata_from_db()
+        details: dict[str, object] = {}
+        for scope_name in scope_names:
+            raw_detail = scopes_typed.get(scope_name)
+            if isinstance(raw_detail, dict):
+                detail = dict(raw_detail)
+            else:
+                detail = {}
+            detail.update(db_metadata.get(scope_name, {}))
+            details[scope_name] = detail
         duration = monotonic_now() - t0
         record(
             "mcp.rag.scopes.completed",
             duration_s=round(duration, 3),
             count=len(scope_names),
         )
-        return {"scopes": scope_names, "details": scopes_obj}
+        return {"scopes": scope_names, "details": details}
 
     @mcp.tool()
     def rag_search(
         query: str,
         top_k: int = 20,
         scope: str | list[str] | None = None,
+        prefix: str | list[str] | None = None,
     ) -> dict[str, str]:
         """Search the knowledge base and return raw context chunks.
 
@@ -232,6 +308,9 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 or list of scope strings (e.g. "research",
                 "research, knowledge_systems",
                 ["research_small_llm", "knowledge_systems"]).
+            prefix: Source path prefix filter as a comma-separated string or
+                list (e.g. "/docs/research", ["/docs/research", "/docs/engram"]).
+                Mutually exclusive with scope.
 
         Returns:
             On success: {"context": "<assembled context with source labels>",
@@ -239,18 +318,30 @@ def register_rag_tools(mcp: FastMCP) -> None:
             On error:   {"error": "<message>"}
         """
         pipeline_options: dict[str, Any] = {}
-        if scope:
-            scope_override, scope_error = _normalize_scope_override(scope)
-            if scope_error:
-                return {"error": scope_error}
+        scope_override, scope_error = _normalize_scope_override(scope)
+        prefixes, prefix_error = _normalize_prefix_override(prefix)
+        if scope_error:
+            return {"error": scope_error}
+        if prefix_error:
+            return {"error": prefix_error}
+        if scope_override is not None and prefixes is not None:
+            return {"error": "scope and prefix are mutually exclusive; set only one."}
+        if scope_override is not None:
             pipeline_options["scope_override"] = scope_override
+        if prefixes is not None:
+            pipeline_options["rag_source_prefixes"] = prefixes
         if top_k != 20:
             pipeline_options["rag_max_chunks"] = top_k
 
+        record_args: dict[str, Any] = {
+            "pipeline": "rag-context",
+            "query": query,
+            "scope": scope,
+        }
+        if prefixes is not None:
+            record_args["prefix"] = prefixes
         t0 = monotonic_now()
-        record(
-            "mcp.rag.pipeline.called", pipeline="rag-context", query=query, scope=scope
-        )
+        record("mcp.rag.pipeline.called", **record_args)
 
         try:
             result = _pipeline_call(
@@ -285,13 +376,15 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 empty=True,
                 query=query,
                 scope=scope,
+                prefix=prefixes,
             )
             return {"error": "Pipeline returned empty results."}
 
         logger.info(
-            "rag_search: query=%r scope=%s → %d chars in %.1fs",
+            "rag_search: query=%r scope=%s prefix=%s → %d chars in %.1fs",
             query,
             scope,
+            prefixes,
             len(content),
             duration,
         )
@@ -300,6 +393,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
             pipeline="rag-context",
             duration_s=round(duration, 3),
             content_length=len(content),
+            scope=scope,
+            prefix=prefixes,
         )
         return {"context": content, "pipeline": "rag-context"}
 
@@ -307,6 +402,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
     def rag_answer(
         question: str,
         scope: str | list[str] | None = None,
+        prefix: str | list[str] | None = None,
         deep: bool = False,
     ) -> dict[str, str]:
         """Ask a specific question and get a grounded, synthesized answer.
@@ -331,6 +427,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 or list of scope strings (e.g. "research",
                 "research, knowledge_systems",
                 ["research", "research_small_llm"]).
+            prefix: Source path prefix filter as a comma-separated string or
+                list. Mutually exclusive with scope.
             deep: Use iterative retrieval for complex questions (default False).
 
         Returns:
@@ -339,20 +437,29 @@ def register_rag_tools(mcp: FastMCP) -> None:
         """
         pipeline = "rag-answer-deep" if deep else "rag-answer"
         pipeline_options: dict[str, Any] = {}
-        if scope:
-            scope_override, scope_error = _normalize_scope_override(scope)
-            if scope_error:
-                return {"error": scope_error}
+        scope_override, scope_error = _normalize_scope_override(scope)
+        prefixes, prefix_error = _normalize_prefix_override(prefix)
+        if scope_error:
+            return {"error": scope_error}
+        if prefix_error:
+            return {"error": prefix_error}
+        if scope_override is not None and prefixes is not None:
+            return {"error": "scope and prefix are mutually exclusive; set only one."}
+        if scope_override is not None:
             pipeline_options["scope_override"] = scope_override
+        if prefixes is not None:
+            pipeline_options["rag_source_prefixes"] = prefixes
 
         t0 = monotonic_now()
-        record(
-            "mcp.rag.pipeline.called",
-            pipeline=pipeline,
-            query=question,
-            scope=scope,
-            deep=deep,
-        )
+        record_args: dict[str, Any] = {
+            "pipeline": pipeline,
+            "query": question,
+            "scope": scope,
+            "deep": deep,
+        }
+        if prefixes is not None:
+            record_args["prefix"] = prefixes
+        record("mcp.rag.pipeline.called", **record_args)
 
         try:
             result = _pipeline_call(
@@ -387,14 +494,17 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 empty=True,
                 query=question,
                 scope=scope,
+                prefix=prefixes,
                 deep=deep,
             )
             return {"error": "Pipeline returned empty results."}
 
         logger.info(
-            "rag_answer: question=%r pipeline=%s → %d chars in %.1fs",
+            "rag_answer: question=%r pipeline=%s scope=%s prefix=%s → %d chars in %.1fs",
             question,
             pipeline,
+            scope,
+            prefixes,
             len(content),
             duration,
         )
@@ -403,5 +513,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
             pipeline=pipeline,
             duration_s=round(duration, 3),
             content_length=len(content),
+            scope=scope,
+            prefix=prefixes,
+            deep=deep,
         )
         return {"answer": content, "pipeline": pipeline}

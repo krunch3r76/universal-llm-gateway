@@ -1,18 +1,33 @@
-"""Article registry: map source filenames to citation metadata for chunk enrichment.
+"""Article registry helpers for YAML migration and DB-backed runtime lookups.
 
-Registry YAML is read at RAG startup; lookup by filename at index time.
-Not watched for changes — load once.
+Runtime uses the SQLite ``articles`` table as the source of truth. YAML parsing
+is retained only for one-time migration during startup when the DB table is
+empty and a legacy registry file exists.
 """
 
 from __future__ import annotations
 
+import contextlib
+import logging
+import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-__all__ = ["ArticleEntry", "load_registry", "get_entry", "lookup_article"]
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "ArticleEntry",
+    "load_registry",
+    "load_registry_from_db",
+    "replace_article_rows",
+    "get_entry",
+    "lookup_article",
+    "to_article_rows",
+]
 
 
 @dataclass(slots=True)
@@ -22,6 +37,7 @@ class ArticleEntry:
     venue: str = ""
     published_date: str = ""
     doi: str = ""
+    abstract: str = ""
     content_hash: str = ""
     subdirectory: str = ""
 
@@ -47,10 +63,69 @@ def load_registry(path: Path) -> dict[str, ArticleEntry]:
             venue=_str(v.get("venue")),
             published_date=_str(v.get("published_date")),
             doi=_str(v.get("doi")),
+            abstract=_str(v.get("abstract")),
             content_hash=_str(v.get("content_hash")),
             subdirectory=_str(v.get("subdirectory")),
         )
     return result
+
+
+def load_registry_from_db(db_path: Path) -> dict[str, ArticleEntry]:
+    """Load article metadata from SQLite keyed by filename for runtime lookups."""
+    if not db_path.exists():
+        return {}
+    try:
+        with contextlib.closing(
+            sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        ) as conn:
+            rows = conn.execute(
+                "SELECT filename, title, authors, venue, published_date, doi, "
+                "abstract, content_hash, subdirectory "
+                "FROM articles ORDER BY filename ASC"
+            ).fetchall()
+    except sqlite3.Error as exc:
+        logger.warning("Failed to load article registry from DB %s: %s", db_path, exc)
+        return {}
+    result: dict[str, ArticleEntry] = {}
+    for row in rows:
+        filename = _str(row[0]).strip()
+        if not filename:
+            continue
+        result[filename] = ArticleEntry(
+            title=_str(row[1]),
+            authors=_str(row[2]),
+            venue=_str(row[3]),
+            published_date=_str(row[4]),
+            doi=_str(row[5]),
+            abstract=_str(row[6]),
+            content_hash=_str(row[7]),
+            subdirectory=_str(row[8]),
+        )
+    return result
+
+
+def replace_article_rows(
+    db_path: Path, rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str]]
+) -> None:
+    """Replace all rows in the SQLite ``articles`` table in one transaction."""
+    if not db_path.exists():
+        return
+    with contextlib.closing(sqlite3.connect(str(db_path))) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("DELETE FROM articles")
+            if rows:
+                conn.executemany(
+                    "INSERT INTO articles ("
+                    "source_path, filename, title, authors, venue, published_date, "
+                    "doi, abstract, scope, content_hash, subdirectory"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    rows,
+                )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
 
 
 def _str(x: Any) -> str:
@@ -76,3 +151,32 @@ def lookup_article(
         "published_date": entry.published_date,
         "article_doi": entry.doi,
     }
+
+
+def to_article_rows(
+    registry: dict[str, ArticleEntry],
+    *,
+    source_root: Path,
+    scope_resolver: Callable[[str], str],
+) -> list[tuple[str, str, str, str, str, str, str, str, str, str, str]]:
+    """Convert filename-keyed article metadata into normalized SQLite article row tuples."""
+    rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str]] = []
+    for filename, entry in registry.items():
+        source_path = str((source_root / filename).resolve())
+        scope = scope_resolver(source_path)
+        rows.append(
+            (
+                source_path,
+                filename,
+                entry.title,
+                entry.authors,
+                entry.venue,
+                entry.published_date,
+                entry.doi,
+                entry.abstract,
+                scope,
+                entry.content_hash,
+                entry.subdirectory,
+            )
+        )
+    return rows

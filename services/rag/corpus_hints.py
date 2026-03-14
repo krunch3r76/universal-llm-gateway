@@ -1,14 +1,12 @@
-"""Load and format corpus hints for RAG suggest_terms prompt injection.
+"""Load and format corpus hints for RAG prompt injection.
 
-Hints are scope → comma-separated vocabulary strings, read from a YAML file.
-Used at query time to give the suggest_terms step current corpus vocabulary
-without hardcoding domain terms. update_corpus_hints() populates the file
-from the property index using discriminative IDF scoring.
+Runtime readers and writers use normalized rows in the metadata database so
+retrieval hot paths avoid YAML parsing and file-level artifact drift.
 """
 
 from __future__ import annotations
 
-import fcntl
+import contextlib
 import logging
 import math
 import sqlite3
@@ -16,7 +14,6 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-import yaml
 from universal_event_bus import EventBus
 
 from services.rag.events.query import (
@@ -35,6 +32,7 @@ _DEFAULT_MIN_CHUNKS_NAME = 2
 _DEFAULT_MAX_CHUNKS_NAME = 50
 _DEFAULT_MIN_CHUNKS_TOPIC = 3
 _DEFAULT_MAX_CHUNKS_TOPIC = 30
+_DEFAULT_METADATA_DB_PATH = Path.home() / ".rag" / "store" / "rag_metadata.db"
 
 _GENERIC_BLOCKLIST: frozenset[str] = frozenset(
     {
@@ -94,93 +92,85 @@ def _score_term(chunk_count: int, doc_count: int, total_docs: int) -> float:
 
 
 def load_corpus_hints(
-    path: Path, event_bus: EventBus | None = None
+    db_path: Path | None = None, event_bus: EventBus | None = None
 ) -> dict[str, str]:
-    """Read corpus hints from a YAML file.
+    """Read corpus hints from the metadata database.
 
-    Expected top-level key: corpus_hints. Each value is scope name → string
-    (comma-separated terms). Returns {} if path is missing or invalid.
+    Returns ``{scope: "term1, term2, ..."}`` ordered by scope ASC, score DESC,
+    term ASC. Missing DB files, absent tables, or read errors return an empty
+    mapping.
     """
-    if not path or not path.exists():
+    resolved = db_path or _DEFAULT_METADATA_DB_PATH
+    if not resolved.exists():
         return {}
     try:
-        raw: object = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            return {}
-        hints_obj = raw.get("corpus_hints")
-        if not isinstance(hints_obj, dict):
-            return {}
-        result: dict[str, str] = {}
-        for k, v in hints_obj.items():
-            if isinstance(k, str) and isinstance(v, str):
-                result[k] = v.strip()
-            elif isinstance(k, str) and isinstance(v, list):
-                result[k] = ", ".join(
-                    str(x).strip() for x in v if isinstance(x, str) and x
-                )
-        return result
-    except (yaml.YAMLError, OSError) as e:
-        logger.warning("Failed to load corpus hints from %s: %s", path, e)
+        with contextlib.closing(
+            sqlite3.connect(f"file:{resolved}?mode=ro", uri=True)
+        ) as conn:
+            rows = conn.execute(
+                "SELECT scope, term FROM corpus_hints "
+                "ORDER BY scope ASC, score DESC, term ASC"
+            ).fetchall()
+    except sqlite3.Error as e:
+        logger.warning("Failed to load corpus hints from DB %s: %s", resolved, e)
         if event_bus is not None:
             event_bus.publish_async_nowait(
-                rag_corpus_hints_load_failed(path=str(path), error=str(e))
+                rag_corpus_hints_load_failed(path=str(resolved), error=str(e))
             )
         return {}
     except Exception as e:
         logger.error(
-            "Unexpected error loading corpus hints from %s: %s", path, e, exc_info=True
+            "Unexpected error loading corpus hints from DB %s: %s",
+            resolved,
+            e,
+            exc_info=True,
         )
         return {}
-
-
-_DEFAULT_VOCABULARY_PATH = Path.home() / ".rag" / "scope_vocabulary.yaml"
+    grouped: dict[str, list[str]] = defaultdict(list)
+    for scope, term in rows:
+        if isinstance(scope, str) and isinstance(term, str) and term.strip():
+            grouped[scope].append(term.strip())
+    return {scope: ", ".join(terms) for scope, terms in grouped.items()}
 
 
 def load_scope_vocabulary(
-    path: Path | None = None, event_bus: EventBus | None = None
+    db_path: Path | None = None, event_bus: EventBus | None = None
 ) -> dict[str, dict[str, list[str]]]:
-    """Load register-structured vocabulary from scope_vocabulary.yaml.
+    """Load register-structured vocabulary from the metadata database.
 
-    Expected format:
-        scope_vocabulary:
-          knowledge_systems:
-            practitioner: ["Obsidian", "Zettelkasten", ...]
-            academic: ["PKG", "personal knowledge graph", ...]
-            specification: ["RDF", "OWL", ...]
-
-    Returns {scope: {register: [terms]}} or {} if missing/invalid.
+    Returns ``{scope: {register: [terms]}}`` with deterministic ordering and
+    empty mapping fallback on missing DB files or read failures.
     """
-    if path is None:
-        path = _DEFAULT_VOCABULARY_PATH
-    if not path or not path.exists():
+    resolved = db_path or _DEFAULT_METADATA_DB_PATH
+    if not resolved.exists():
         return {}
     try:
-        raw: object = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            return {}
-        vocab = raw.get("scope_vocabulary")
-        if not isinstance(vocab, dict):
-            return {}
-        result: dict[str, dict[str, list[str]]] = {}
-        for scope, registers in vocab.items():
-            if not isinstance(scope, str) or not isinstance(registers, dict):
-                continue
-            scope_regs: dict[str, list[str]] = {}
-            for reg, terms in registers.items():
-                if isinstance(reg, str) and isinstance(terms, list):
-                    scope_regs[reg] = [
-                        str(t) for t in terms if isinstance(t, str) and t.strip()
-                    ]
-            if scope_regs:
-                result[scope] = scope_regs
-        return result
-    except (yaml.YAMLError, OSError) as e:
-        logger.warning("Failed to load scope vocabulary from %s: %s", path, e)
+        with contextlib.closing(
+            sqlite3.connect(f"file:{resolved}?mode=ro", uri=True)
+        ) as conn:
+            rows = conn.execute(
+                "SELECT scope, register, term FROM scope_vocabulary "
+                "ORDER BY scope ASC, register ASC, term ASC"
+            ).fetchall()
+    except sqlite3.Error as e:
+        logger.warning("Failed to load scope vocabulary from DB %s: %s", resolved, e)
         if event_bus is not None:
             event_bus.publish_async_nowait(
-                rag_scope_vocabulary_load_failed(path=str(path), error=str(e))
+                rag_scope_vocabulary_load_failed(path=str(resolved), error=str(e))
             )
         return {}
+    result: defaultdict[str, defaultdict[str, list[str]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for scope, register, term in rows:
+        if (
+            isinstance(scope, str)
+            and isinstance(register, str)
+            and isinstance(term, str)
+            and term.strip()
+        ):
+            result[scope][register].append(term.strip())
+    return {scope: dict(registers) for scope, registers in result.items()}
 
 
 def format_register_hints(
@@ -283,13 +273,15 @@ def filter_hints_by_cooccurrence(
         return []
 
     if db_path is None:
-        db_path = Path.home() / ".rag" / "store" / "property_index.db"
+        db_path = _DEFAULT_METADATA_DB_PATH
     if not db_path.exists():
         logger.debug("Property index DB not found at %s", db_path)
         return []
 
     try:
-        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        with contextlib.closing(
+            sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        ) as conn:
             wb_conditions, wb_params = _build_word_boundary_conditions(query_terms)
             if not wb_conditions:
                 return []
@@ -403,7 +395,6 @@ def _order_hints_by_overlap(
 
 async def update_corpus_hints(
     property_index: PropertyIndex,
-    hints_path: Path,
     *,
     names_budget: int = 10,
     topics_budget: int = 8,
@@ -415,12 +406,11 @@ async def update_corpus_hints(
     key_prefixes: list[str] | None = None,
     event_bus: EventBus | None = None,
 ) -> dict[str, str]:
-    """Select discriminative terms per scope from the property index into corpus_hints.yaml.
+    """Persist discriminative scope hints to metadata SQLite tables.
 
-    Scores terms with hybrid IDF + chunk-boost, applies band limits per prefix
-    type, filters a generic-terms blocklist, requires minimum document spread
-    (min_docs), and selects per-type budgets. Returns the generated hints dict.
-    When `event_bus` is provided, emits `rag.corpus.hints.updated`.
+    The function computes per-scope winners for configured key prefixes, writes
+    normalized rows into ``corpus_hints``, and returns ``scope -> CSV terms`` for
+    prompt-oriented call sites that need an in-memory representation.
     """
     prefixes = key_prefixes if key_prefixes is not None else _DEFAULT_KEY_PREFIXES
     if property_index.get_total_chunks() == 0:
@@ -455,13 +445,14 @@ async def update_corpus_hints(
             if term:
                 scope_prefix_terms[scope][prefix].append((term, chunk_count, doc_count))
 
+    rows_for_db: list[tuple[str, str, float, str]] = []
     result: dict[str, str] = {}
     for scope, prefix_terms in scope_prefix_terms.items():
-        winners: list[tuple[str, float]] = []
+        winners: list[tuple[str, float, str]] = []
         for prefix, term_counts in prefix_terms.items():
             min_c, max_c = band_limits.get(prefix, (min_chunks_name, max_chunks_name))
             budget = budgets.get(prefix, names_budget)
-            scored: list[tuple[str, float]] = []
+            scored: list[tuple[str, float, str]] = []
             for term, chunk_count, doc_count in term_counts:
                 if chunk_count < min_c or chunk_count > max_c:
                     continue
@@ -469,43 +460,33 @@ async def update_corpus_hints(
                     continue
                 if term.lower() in _GENERIC_BLOCKLIST:
                     continue
-                scored.append((term, _score_term(chunk_count, doc_count, total_docs)))
+                score = _score_term(chunk_count, doc_count, total_docs)
+                scored.append((term, score, prefix))
             scored.sort(key=lambda x: (-x[1], x[0]))
             winners.extend(scored[:budget])
 
         seen: set[str] = set()
         deduped_terms: list[str] = []
-        for term, score in sorted(winners, key=lambda x: (-x[1], x[0])):
+        for term, score, prefix in sorted(winners, key=lambda x: (-x[1], x[0])):
             key = term.lower()
-            if key not in seen:
-                seen.add(key)
-                deduped_terms.append(term)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped_terms.append(term)
+            rows_for_db.append((scope, term, score, prefix))
         result[scope] = ", ".join(t for t in deduped_terms if t)
 
-    _write_hints_file(hints_path, result)
+    await property_index.replace_corpus_hints_rows(rows_for_db)
     if event_bus is not None:
         update_timestamp = datetime.now(UTC).isoformat()
         await event_bus.publish_async_nowait(
             rag_corpus_hints_updated(
-                path=str(hints_path),
+                path=str(property_index.db_path),
                 scopes_updated=sorted(result),
                 timestamp=update_timestamp,
             )
         )
     return result
-
-
-def _write_hints_file(hints_path: Path, hints: dict[str, str]) -> None:
-    """Atomically write corpus_hints.yaml with file locking."""
-    hints_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"corpus_hints": hints}
-    with open(hints_path, "w", encoding="utf-8") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        try:
-            yaml.safe_dump(payload, f, default_flow_style=False, allow_unicode=True)
-            f.flush()
-        finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def _build_chunk_source_map() -> dict[str, str]:
@@ -544,7 +525,6 @@ def _cli_generate_hints() -> None:
     import sys
 
     do_backfill = "--backfill" in sys.argv
-    hints_path = Path.home() / ".rag" / "corpus_hints.yaml"
 
     chunk_to_source: dict[str, str] | None = None
     if do_backfill:
@@ -587,7 +567,7 @@ def _cli_generate_hints() -> None:
                     f" {out} out-of-band, {has_doc_count}/{len(all_terms)} with doc freq"
                 )
 
-            result = await update_corpus_hints(idx, hints_path)
+            result = await update_corpus_hints(idx)
             if result:
                 await idx.stamp_watermark("corpus_hints")
             return result
@@ -604,14 +584,7 @@ def _cli_generate_hints() -> None:
         term_list = [t.strip() for t in terms.split(",") if t.strip()]
         print(f"  {scope}: {len(term_list)} terms")
 
-    print(f"\nWritten to: {hints_path}")
-    print("\n--- YAML output ---")
-    yaml.safe_dump(
-        {"corpus_hints": result},
-        sys.stdout,
-        default_flow_style=False,
-        allow_unicode=True,
-    )
+    print(f"\nWritten DB rows to: {Path.home() / '.rag' / 'store' / 'rag_metadata.db'}")
 
 
 if __name__ == "__main__":

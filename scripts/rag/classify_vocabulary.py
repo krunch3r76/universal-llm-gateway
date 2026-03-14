@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Classify corpus hint terms into vocabulary registers per scope.
 
-Reads per-scope IDF terms from corpus_hints.yaml, sends each scope's terms
-through an LLM classification prompt, and writes register-structured output
-to scope_vocabulary.yaml.
+Reads per-scope IDF terms from the metadata database, sends each scope's terms
+through an LLM classification prompt, and writes register-structured output to
+the ``scope_vocabulary`` table in the metadata database.
 
 Usage:
     python scripts/rag/classify_vocabulary.py [--model MODEL_ID] [--dry-run]
@@ -15,10 +15,8 @@ import argparse
 import json
 import logging
 import sys
-from pathlib import Path
 
 import requests
-import yaml
 
 from services.rag.config import load_config
 from services.rag.corpus_hints import load_corpus_hints
@@ -27,8 +25,6 @@ logger = logging.getLogger(__name__)
 
 STARGATE_URL = "http://localhost:9999/v1/chat/completions"
 DEFAULT_MODEL = "rag-context"  # Will be overridden; we use a direct model
-OUTPUT_PATH = Path.home() / ".rag" / "scope_vocabulary.yaml"
-
 CLASSIFICATION_PROMPT = """\
 You are classifying vocabulary terms for a RAG retrieval system.
 Given a scope name, its description, and a list of IDF-scored terms extracted
@@ -115,19 +111,10 @@ def main() -> None:
         action="store_true",
         help="Print plan without calling LLM",
     )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=OUTPUT_PATH,
-        help="Output path",
-    )
     args = parser.parse_args()
 
     config = load_config()
-    hints_path = getattr(config, "corpus_hints_path", None) or (
-        Path.home() / ".rag" / "corpus_hints.yaml"
-    )
-    hints_map = load_corpus_hints(hints_path)
+    hints_map = load_corpus_hints()
 
     if not hints_map:
         print(
@@ -140,7 +127,7 @@ def main() -> None:
     for scope_name, scope_def in config.scopes.items():
         scope_descriptions[scope_name] = getattr(scope_def, "description", "") or ""
 
-    print(f"Loaded {len(hints_map)} scopes from corpus_hints.yaml")
+    print(f"Loaded {len(hints_map)} scopes from rag_metadata.db corpus_hints table")
     for scope, text in sorted(hints_map.items()):
         terms = [t.strip() for t in text.split(",") if t.strip()]
         desc = scope_descriptions.get(scope, "")
@@ -176,13 +163,31 @@ def main() -> None:
         print("\nNo scopes classified successfully.", file=sys.stderr)
         sys.exit(1)
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"scope_vocabulary": result}
-    with open(args.output, "w", encoding="utf-8") as f:
-        yaml.safe_dump(payload, f, default_flow_style=False, allow_unicode=True)
-    print(f"\nWritten {len(result)} scopes to {args.output}")
+    _write_scope_vocabulary_db(result)
+    print(f"\nWritten DB rows for {len(result)} scopes to ~/.rag/store/rag_metadata.db")
 
     _stamp_watermark()
+
+
+def _write_scope_vocabulary_db(vocabulary: dict[str, dict[str, list[str]]]) -> None:
+    """Persist register-structured vocabulary to the metadata SQLite database."""
+    import asyncio
+
+    from services.rag.property_index import PropertyIndex
+
+    async def _write() -> None:
+        idx = PropertyIndex()
+        await idx.start()
+        try:
+            await idx.replace_scope_vocabulary(vocabulary)
+        finally:
+            await idx.stop()
+
+    try:
+        asyncio.run(_write())
+    except Exception as exc:
+        logger.error("Failed to write scope vocabulary to SQLite: %s", exc)
+        raise
 
 
 def _stamp_watermark() -> None:

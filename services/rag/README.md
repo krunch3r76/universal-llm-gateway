@@ -184,7 +184,7 @@ post_index_enforcement: strict   # strict | warn — strict returns 503 until en
 | Path | Contents |
 |------|----------|
 | `~/.rag/store/` | ChromaDB persistent data |
-| `~/.rag/store/property_index.db` | SQLite property inverted index (entities, topics, relations, watermarks) |
+| `~/.rag/store/rag_metadata.db` | SQLite metadata store (property index + corpus_hints + scope_vocabulary + articles + watermarks) |
 | `~/.rag/corpus_hints.yaml` | Scope-specific vocabulary hints aggregated from the property index |
 | `~/.rag/scope_vocabulary.yaml` | LLM-classified vocabulary registers (`practitioner`, `academic`, `specification`) per scope |
 
@@ -196,12 +196,12 @@ Indexing handles chunk extraction, embedding, knowledge extraction, and per-chun
 2. **Scope vocabulary** (`scripts/rag/classify_vocabulary.py`) — LLM-classifies corpus hint terms into register categories and writes `~/.rag/scope_vocabulary.yaml`.
 3. **Bibliography classification** (`scripts/rag/classify_bibliography.py`) — LLM-classifies chunks and writes boolean metadata keys (`is_bibliography`, `is_non_intelligible`) into ChromaDB. Resumable by metadata key.
 
-Each step stamps a watermark in `property_index.db`. When `post_index_enforcement: strict` (default), the service returns 503 on search requests until all watermarks are current relative to the last reindex. In `warn` mode, an ERROR is logged at startup but search continues.
+Each step stamps a watermark in `rag_metadata.db`. When `post_index_enforcement: strict` (default), the service returns 503 on search requests until all watermarks are current relative to the last reindex. In `warn` mode, an ERROR is logged at startup but search continues.
 
 Verify watermark freshness:
 
 ```bash
-sqlite3 ~/.rag/store/property_index.db "SELECT * FROM watermarks ORDER BY step"
+sqlite3 ~/.rag/store/rag_metadata.db "SELECT * FROM watermarks ORDER BY step"
 ```
 
 Full procedure: [Post-Index Refresh Runbook](../../tasks/runbooks/rag-post-index-refresh.md).

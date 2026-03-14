@@ -13,7 +13,6 @@ co-occurrence infrastructure.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, override
 
 from systems.pipeline.core.events.step import RagGenerationContextRefined
@@ -35,8 +34,6 @@ if TYPE_CHECKING:
     from systems.pipeline.core.schemas import StepConfig
 
 logger = get_logger(__name__)
-
-_DEFAULT_HINTS_PATH = Path.home() / ".rag" / "corpus_hints.yaml"
 
 
 class RefineGenerationContextHandler(BaseHandler):
@@ -67,8 +64,7 @@ class RefineGenerationContextHandler(BaseHandler):
             sum(1 for s in scopes if s in vocabulary) if scopes else register_total
         )
 
-        hints_path = _resolve_hints_path()
-        hints_map = load_corpus_hints(hints_path)
+        hints_map = load_corpus_hints()
         flat_text = get_hints_for_scopes(hints_map, scopes=scopes)
         flat_terms = [t.strip() for t in flat_text.split(",") if t.strip()]
 
@@ -238,29 +234,10 @@ def _select_scope_anchors(
     )
 
     if validated:
-        # Co-occurrence is a threshold filter only — preserve register-priority order
+        # Co-occurrence is a threshold filter only; preserve register-priority order
         # from `unique` rather than using the co-occurrence-sorted result.
         validated_lower = {v.lower() for v in validated}
         priority_ordered = [c for c in unique if c.lower() in validated_lower]
         return priority_ordered[:max_anchors]
 
     return unique[:max_anchors]
-
-
-def _resolve_hints_path() -> Path:
-    """Resolve corpus hints YAML path from RAG config (services.rag.config) or default."""
-    try:
-        from services.rag.config import load_config
-
-        config = load_config()
-        path = getattr(config, "corpus_hints_path", None)
-        if path:
-            return path
-    except ImportError:
-        logger.debug("RAG config module not found, using default corpus hints path.")
-    except Exception:
-        logger.warning(
-            "Failed to load RAG config for corpus hints path, using default.",
-            exc_info=True,
-        )
-    return _DEFAULT_HINTS_PATH

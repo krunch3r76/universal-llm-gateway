@@ -8,7 +8,6 @@ no co-occurrence is found (conservative — avoids empty prompt).
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, override
 
 from systems.pipeline.core.events.step import RagHintsFiltered
@@ -30,8 +29,6 @@ if TYPE_CHECKING:
     from systems.pipeline.core.schemas import StepConfig
 
 logger = get_logger(__name__)
-
-_DEFAULT_HINTS_PATH = Path.home() / ".rag" / "corpus_hints.yaml"
 
 
 class FilterCorpusHintsHandler(BaseHandler):
@@ -75,8 +72,7 @@ class FilterCorpusHintsHandler(BaseHandler):
         vocabulary = load_scope_vocabulary()
         register_text = format_register_hints(vocabulary, scopes=scope_list)
 
-        hints_path = _resolve_hints_path()
-        hints_map = load_corpus_hints(hints_path)
+        hints_map = load_corpus_hints()
         all_hints_text = get_hints_for_scopes(hints_map, scopes=scope_list)
         all_terms = [t.strip() for t in all_hints_text.split(",") if t.strip()]
 
@@ -255,20 +251,3 @@ class FilterCorpusHintsHandler(BaseHandler):
                 f"Step '{step.id}' missing 'suggested_terms' in handler_inputs"
             )
         return errors
-
-
-def _resolve_hints_path() -> Path:
-    """Resolve corpus hints YAML path from RAG config or default."""
-    try:
-        from services.rag.config import load_config
-
-        config = load_config()
-        path = getattr(config, "corpus_hints_path", None)
-        if path:
-            return path
-    except Exception:
-        logger.debug(
-            "Could not load RAG config for corpus hints path, using default.",
-            exc_info=True,
-        )
-    return _DEFAULT_HINTS_PATH

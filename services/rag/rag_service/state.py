@@ -65,31 +65,25 @@ def _article_event_kwargs(
 
 
 async def _maybe_update_corpus_hints() -> None:
-    """Refresh corpus hints from property index when configured.
+    """Refresh corpus hints from property index after successful indexing.
 
     This helper must never fail indexing operations; failures are logged and
     emitted as events for observability while allowing the request path to
     continue.
     """
-    if _config is None or _config.corpus_hints_path is None or _property_index is None:
+    if _property_index is None:
         return
     try:
         await update_corpus_hints(
             _property_index,
-            _config.corpus_hints_path,
             event_bus=_event_bus,
         )
     except Exception as e:
-        logger.warning(
-            "Failed to update corpus hints at %s: %s",
-            _config.corpus_hints_path,
-            e,
-            exc_info=True,
-        )
+        logger.warning("Failed to update corpus hints: %s", e, exc_info=True)
         if _event_bus is not None:
             await _event_bus.publish_async_nowait(
                 rag_corpus_hints_update_failed(
-                    path=str(_config.corpus_hints_path),
+                    path=str(_property_index.db_path),
                     error=str(e),
                 )
             )

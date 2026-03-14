@@ -15,6 +15,7 @@ can inspect structural failures (e.g. max_tokens exceeded) without tailing logs.
 from __future__ import annotations
 
 import logging
+import shutil
 import sqlite3
 from collections import defaultdict
 from collections.abc import Callable
@@ -27,19 +28,24 @@ from services.rag.fts_index import FtsIndex
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path.home() / ".rag" / "store" / "property_index.db"
+_DEFAULT_DB_PATH = Path.home() / ".rag" / "store" / "rag_metadata.db"
+_LEGACY_DB_PATH = Path.home() / ".rag" / "store" / "property_index.db"
 
-_SCHEMA_SQL = """
+_V1_BASELINE_SQL = """
 CREATE TABLE IF NOT EXISTS properties (
     key TEXT NOT NULL,
     chunk_id TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'all',
+    source TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (key, chunk_id)
 );
 CREATE INDEX IF NOT EXISTS idx_key ON properties(key);
 CREATE INDEX IF NOT EXISTS idx_chunk ON properties(chunk_id);
+
 CREATE TABLE IF NOT EXISTS pending (
     file TEXT NOT NULL PRIMARY KEY
 );
+
 CREATE TABLE IF NOT EXISTS failed_extractions (
     chunk_id TEXT NOT NULL PRIMARY KEY,
     source TEXT NOT NULL,
@@ -49,10 +55,54 @@ CREATE TABLE IF NOT EXISTS failed_extractions (
     recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_failed_source ON failed_extractions(source);
-CREATE INDEX IF NOT EXISTS idx_failed_permanent ON failed_extractions(permanent);
 CREATE TABLE IF NOT EXISTS watermarks (
     step TEXT PRIMARY KEY,
     completed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+_V2_METADATA_SQL = """
+CREATE TABLE IF NOT EXISTS corpus_hints (
+    scope TEXT NOT NULL,
+    term TEXT NOT NULL,
+    score REAL NOT NULL,
+    prefix TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (scope, term)
+);
+CREATE INDEX IF NOT EXISTS idx_corpus_hints_scope ON corpus_hints(scope);
+
+CREATE TABLE IF NOT EXISTS scope_vocabulary (
+    scope TEXT NOT NULL,
+    register TEXT NOT NULL,
+    term TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (scope, register, term)
+);
+CREATE INDEX IF NOT EXISTS idx_scope_vocabulary_scope ON scope_vocabulary(scope);
+
+CREATE TABLE IF NOT EXISTS articles (
+    source_path TEXT PRIMARY KEY,
+    filename TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    authors TEXT NOT NULL DEFAULT '',
+    venue TEXT NOT NULL DEFAULT '',
+    published_date TEXT NOT NULL DEFAULT '',
+    doi TEXT NOT NULL DEFAULT '',
+    abstract TEXT NOT NULL DEFAULT '',
+    scope TEXT NOT NULL DEFAULT 'all',
+    content_hash TEXT NOT NULL DEFAULT '',
+    subdirectory TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_articles_scope ON articles(scope);
+"""
+
+_CREATE_SCHEMA_VERSION_SQL = """
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+    description TEXT NOT NULL
 );
 """
 
@@ -80,52 +130,102 @@ class PropertyIndex:
         self._seq = SequentialExecutor()
         self.fts = FtsIndex()
 
-    def _migrate_add_scope(self, conn: sqlite3.Connection) -> None:
-        """Add scope column and idx_scope index to properties if absent (backward compat)."""
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(properties)")}
-        if "scope" not in cols:
+    @property
+    def db_path(self) -> Path:
+        """Return the active SQLite path for metadata + property index storage."""
+        return self._db_path
+
+    def _migration_v1_baseline(self, conn: sqlite3.Connection) -> None:
+        """Create baseline schema and backfill columns missing in legacy databases."""
+        conn.executescript(_V1_BASELINE_SQL)
+        self._ensure_legacy_columns(conn)
+
+    def _ensure_legacy_columns(self, conn: sqlite3.Connection) -> None:
+        """Backfill columns from pre-versioned installs before stamping version 1.
+
+        Pre-versioned databases may already have tables created from an older schema.
+        CREATE TABLE IF NOT EXISTS will not retrofit those columns, so we ALTER TABLE
+        where needed to preserve one authoritative schema state.
+        """
+        props_cols = {row[1] for row in conn.execute("PRAGMA table_info(properties)")}
+        if "scope" not in props_cols:
             conn.execute(
                 "ALTER TABLE properties ADD COLUMN scope TEXT NOT NULL DEFAULT 'all'"
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_scope ON properties(scope)")
-            conn.commit()
-
-    def _migrate_add_source(self, conn: sqlite3.Connection) -> None:
-        """Add source column and idx_properties_source index if absent (doc frequency scoring)."""
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(properties)")}
-        if "source" not in cols:
+        if "source" not in props_cols:
             conn.execute(
                 "ALTER TABLE properties ADD COLUMN source TEXT NOT NULL DEFAULT ''"
             )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_scope ON properties(scope)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_properties_source ON properties(source)"
+        )
+
+        failed_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")
+        }
+        if "attempt_count" not in failed_cols:
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_properties_source ON properties(source)"
+                "ALTER TABLE failed_extractions "
+                "ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 1"
+            )
+        if "permanent" not in failed_cols:
+            conn.execute(
+                "ALTER TABLE failed_extractions "
+                "ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0"
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_failed_permanent ON failed_extractions(permanent)"
+        )
+
+    def _migration_v2_metadata(self, conn: sqlite3.Connection) -> None:
+        """Create normalized metadata tables used by dual-write generators."""
+        conn.executescript(_V2_METADATA_SQL)
+
+    def _apply_migrations(self, conn: sqlite3.Connection) -> None:
+        """Apply ordered migrations and stamp schema_version rows transactionally."""
+        conn.execute(_CREATE_SCHEMA_VERSION_SQL)
+        current = conn.execute(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_version"
+        ).fetchone()[0]
+        migrations: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
+            (1, "baseline tables + indexes + legacy column backfill", self._migration_v1_baseline),
+            (
+                2,
+                "metadata tables: corpus_hints, scope_vocabulary, articles",
+                self._migration_v2_metadata,
+            ),
+        ]
+        for version, description, fn in migrations:
+            if version <= current:
+                continue
+            fn(conn)
+            conn.execute(
+                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                (version, description),
             )
             conn.commit()
 
-    def _migrate_add_failed_extractions_columns(self, conn: sqlite3.Connection) -> None:
-        """Add attempt_count and permanent to failed_extractions if absent (backward compat)."""
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")}
-        if "attempt_count" not in cols:
-            conn.execute(
-                "ALTER TABLE failed_extractions"
-                " ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 1"
-            )
-            conn.commit()
-        if "permanent" not in cols:
-            conn.execute(
-                "ALTER TABLE failed_extractions"
-                " ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0"
-            )
-            conn.commit()
+    def _migrate_legacy_db_path(self) -> None:
+        """Rename legacy property_index DB + sidecars to the metadata DB path."""
+        if self._db_path != _DEFAULT_DB_PATH:
+            return
+        if self._db_path.exists() or not _LEGACY_DB_PATH.exists():
+            return
+        for suffix in ("", "-wal", "-shm"):
+            src = Path(f"{_LEGACY_DB_PATH}{suffix}")
+            dst = Path(f"{self._db_path}{suffix}")
+            if src.exists():
+                shutil.move(str(src), str(dst))
+        logger.info("Migrated legacy DB %s -> %s", _LEGACY_DB_PATH, self._db_path)
 
     async def start(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._migrate_legacy_db_path()
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
         try:
-            conn.executescript(_SCHEMA_SQL)
-            self._migrate_add_failed_extractions_columns(conn)
-            self._migrate_add_scope(conn)
-            self._migrate_add_source(conn)
+            self._apply_migrations(conn)
             await self._seq.start()
         except Exception as e:
             logger.exception("Failed to start PropertyIndex: %s", e)
@@ -308,6 +408,63 @@ class PropertyIndex:
             return cursor.rowcount
 
         return await self._seq.run(_write())
+
+    async def replace_corpus_hints_rows(
+        self, rows: list[tuple[str, str, float, str]]
+    ) -> None:
+        """Atomically replace all corpus hints rows used for dual-write parity.
+
+        Uses an explicit transaction (BEGIN IMMEDIATE/COMMIT) to avoid a visible
+        empty-table window for readers while replacing table contents.
+        """
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute("DELETE FROM corpus_hints")
+                if rows:
+                    conn.executemany(
+                        "INSERT INTO corpus_hints (scope, term, score, prefix)"
+                        " VALUES (?, ?, ?, ?)",
+                        rows,
+                    )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+        await self._seq.run(_write())
+
+    async def replace_scope_vocabulary(
+        self, vocabulary: dict[str, dict[str, list[str]]]
+    ) -> None:
+        """Atomically replace scope vocabulary rows from register-structured scope-term payload maps."""
+        rows: list[tuple[str, str, str]] = []
+        for scope, registers in sorted(vocabulary.items()):
+            for register, terms in sorted(registers.items()):
+                for term in terms:
+                    normalized = term.strip()
+                    if normalized:
+                        rows.append((scope, register, normalized))
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute("DELETE FROM scope_vocabulary")
+                if rows:
+                    conn.executemany(
+                        "INSERT INTO scope_vocabulary (scope, register, term)"
+                        " VALUES (?, ?, ?)",
+                        rows,
+                    )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+        await self._seq.run(_write())
 
     async def stamp_watermark(self, step: str) -> None:
         """Record completion of a post-index enrichment step."""
