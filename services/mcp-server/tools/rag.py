@@ -211,8 +211,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
         merging, and property index boost — significantly richer than raw
         vector search.
 
-        Available scopes: "project", "research", "all_research",
-        "rag_systems", "code_retrieval", "workflows", "prompting",
+        Available scopes: "project", "research", "research_small_llm",
+        "all_research", "rag_systems", "code_retrieval", "workflows",
         "graph_modeling", "temporal_provenance", "belief_consistency",
         "knowledge_systems", "both", "all".
 
@@ -222,7 +222,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             scope: Named scope filter as single string, comma-separated string,
                 or list of scope strings (e.g. "research",
                 "research, knowledge_systems",
-                ["all_research", "knowledge_systems"]).
+                ["research_small_llm", "knowledge_systems"]).
 
         Returns:
             On success: {"context": "<assembled context with source labels>",
@@ -307,8 +307,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
         Set deep=True for complex multi-faceted questions that benefit from
         iterative retrieval (up to 2 gap-filling passes).
 
-        Available scopes: "project", "research", "all_research",
-        "rag_systems", "code_retrieval", "workflows", "prompting",
+        Available scopes: "project", "research", "research_small_llm",
+        "all_research", "rag_systems", "code_retrieval", "workflows",
         "graph_modeling", "temporal_provenance", "belief_consistency",
         "knowledge_systems", "both", "all".
 
@@ -317,7 +317,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             scope: Named scope filter as single string, comma-separated string,
                 or list of scope strings (e.g. "research",
                 "research, knowledge_systems",
-                ["research", "knowledge_systems"]).
+                ["research", "research_small_llm"]).
             deep: Use iterative retrieval for complex questions (default False).
 
         Returns:

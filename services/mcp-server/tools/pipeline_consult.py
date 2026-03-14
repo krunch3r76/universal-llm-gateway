@@ -102,15 +102,15 @@ def _extract_step_metadata(execution_id: str, step_name: str) -> dict[str, Any]:
 def _detect_scope(model_id: str | None) -> str:
     """Auto-detect RAG scope from model tier.
 
-    Cloud models ("/" in ID) → llm_prompting (frontier prompting research).
-    Local models → small_llm_prompting (small model prompting techniques).
-    Unknown → prompting (tier-agnostic union).
+    Cloud models ("/" in ID) → research (frontier prompting research).
+    Local models → research_small_llm (small model prompting techniques).
+    Unknown → research (broader coverage).
     """
     if model_id is None:
-        return "prompting"
+        return "research"
     if "/" in model_id:
-        return "llm_prompting"
-    return "small_llm_prompting"
+        return "research"
+    return "research_small_llm"
 
 
 def register_pipeline_consult_tools(mcp: FastMCP) -> None:
@@ -139,8 +139,8 @@ def register_pipeline_consult_tools(mcp: FastMCP) -> None:
             step_name: Name of the step to consult about.
             problem: Detailed description of the issue, ideally including
                      prompt text and model output excerpts.
-            scope: Override auto-detected RAG scope (e.g. 'prompting',
-                   'llm_prompting', 'small_llm_prompting').
+            scope: Override auto-detected RAG scope (e.g. 'research',
+                   'research_small_llm', 'workflows').
 
         Returns:
             On success: {"advice": "...", "scope_used": "...", "model": "...",

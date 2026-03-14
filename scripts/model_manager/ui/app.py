@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import traceback
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
 from scripts.model_manager.ensure_venv import find_workspace_root
 
+from .api_server import ManageAPIServer
 from .controller.onboarding import OnboardingController
 from .controller.service_ctl import ServiceController
 from .model.catalog_state import CatalogState
@@ -46,6 +48,7 @@ class ModelManagerApp(App):
         Binding("ctrl+c", "quit", "Quit", show=False),
     ]
 
+    # Screen id → screen class for push_screen("home"), etc.
     SCREENS = {
         "home": HomeScreen,
         "catalog": CatalogScreen,
@@ -78,6 +81,7 @@ class ModelManagerApp(App):
         )
         self._event_bus: EventBus | None = None
         self._broadcaster: MinimalEventDebugBroadcaster | None = None
+        self._api_server: ManageAPIServer | None = None
 
     @property
     def catalog(self) -> CatalogState:
@@ -111,21 +115,32 @@ class ModelManagerApp(App):
         await self._broadcaster.start_debug_server()
         await self._event_bus.publish_async(TuiStarted(pid=os.getpid()))
 
+        self._api_server = ManageAPIServer(self._service_controller, self._event_bus)
+        try:
+            await self._api_server.start()
+        except Exception as e:
+            logger.exception("Failed to start Manage API server: %s", e)
+            self._api_server = None
+
     async def on_unmount(self) -> None:
+        if self._api_server is not None:
+            try:
+                await self._api_server.stop()
+            except Exception as e:
+                logger.exception("Error stopping Manage API server: %s", e)
         if self._event_bus is not None:
             await self._event_bus.publish_async(TuiExited(reason="quit"))
         if self._broadcaster is not None:
             await self._broadcaster.stop_debug_server()
 
-    def push_screen(
-        self, screen: str, kwargs: dict | None = None
-    ) -> None:
+    def push_screen(self, screen: str, kwargs: dict | None = None) -> None:
+        kwargs = kwargs or {}
         match screen:
             case "download":
-                model_id = (kwargs or {}).get("model_id", "")
+                model_id = kwargs.get("model_id", "")
                 super().push_screen(DownloadScreen(model_id=model_id))
             case "measure":
-                model_id = (kwargs or {}).get("model_id", "")
+                model_id = kwargs.get("model_id", "")
                 training_ctx = 0
                 model_info = self._catalog.get(model_id)
                 if model_info:
@@ -167,8 +182,9 @@ def run() -> None:
         ts = datetime.now(UTC).isoformat()
         with _TUI_LOG_PATH.open("a") as fh:
             fh.write(f"\n[{ts}] TUI crashed:\n{tb}\n")
-        # Optionally, display an error message in the TUI before exiting
-        # app.bell()
+        print(f"\nManage TUI crashed. Traceback written to {_TUI_LOG_PATH}", file=sys.stderr)
+        app.bell()
+        # Optionally, display an error screen: app.push_screen(ErrorScreen(...))
         # app.push_screen(ErrorScreen(message="An unexpected error occurred. See logs for details."))
         # Or, if the intention is to just log and let the process terminate naturally:
         # sys.exit(1) # Or similar controlled exit

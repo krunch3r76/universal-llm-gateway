@@ -20,7 +20,7 @@ import sys
 import time
 from asyncio.transports import BaseTransport
 from pathlib import Path
-from typing import Any, cast, override
+from typing import cast, override
 
 import uvicorn
 from fastmcp import FastMCP
@@ -35,6 +35,7 @@ from tools.clip import normalize_clip_content, register_clip_tools
 from tools.context import register_context_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
+from tools.manage import register_manage_tools
 from tools.pipeline import register_pipeline_tools
 from tools.pipeline_consult import register_pipeline_consult_tools
 from tools.project import register_project_tools
@@ -57,6 +58,11 @@ _SSE_PING_INTERVAL: int = int(os.getenv("MCP_SSE_PING_INTERVAL", "15"))
 
 
 def _env_truthy(name: str, default: bool) -> bool:
+    """Return True if env var is set to a truthy value ('1', 'true', 'yes', 'on'), else default.
+
+    Returns:
+        True if the env var is truthy; otherwise the default.
+    """
     value = os.getenv(name)
     if value is None:
         return default
@@ -82,11 +88,14 @@ def _patch_sse_ping() -> None:
         kwargs["ping"] = _SSE_PING_INTERVAL
         _orig_init(self, *args, **kwargs)
 
+    # Monkey-patch __init__ to inject custom ping interval via kwargs.
+    # type: ignore[method-assign] required because the patched signature diverges from the original.
     EventSourceResponse.__init__ = _patched_init  # type: ignore[method-assign]
 
 
 def _patch_sse_lifecycle_events() -> None:
     """Emit structured events for every SSE stream start/end."""
+    # Accessing protected member for lifecycle-event monkey-patch.
     _orig_stream = EventSourceResponse._stream_response  # type: ignore[attr-defined]
 
     async def _stream_with_events(self: EventSourceResponse, send: Send) -> None:
@@ -115,6 +124,7 @@ def _patch_sse_lifecycle_events() -> None:
             if duration >= 0.1:
                 logger.info("SSE stream ended cleanly after %.1fs", duration)
 
+    # Monkey-patch protected method to wrap stream with start/end events.
     EventSourceResponse._stream_response = _stream_with_events  # type: ignore[method-assign]
 
 
@@ -123,7 +133,17 @@ _patch_sse_lifecycle_events()
 
 
 def _require_env(name: str) -> str:
-    """Return the value of *name* from the environment, exiting if unset or empty."""
+    """Return the value of *name* from the environment, exiting if unset or empty.
+
+    Args:
+        name: Environment variable name.
+
+    Returns:
+        Stripped value.
+
+    Raises:
+        SystemExit: If the variable is unset or empty.
+    """
     value = os.environ.get(name, "").strip()
     if not value:
         logger.error("Required environment variable %s is not set", name)
@@ -136,6 +156,9 @@ def _set_tcp_keepalive(sock: socket.socket) -> None:
 
     Prevents NAT/firewall connection tracking from evicting idle TCP
     sessions during long model-thinking pauses between MCP tool calls.
+
+    Args:
+        sock: The socket to configure.
     """
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
     if hasattr(socket, "TCP_KEEPIDLE"):
@@ -169,6 +192,7 @@ class BearerAuthMiddleware:
 
     @staticmethod
     def _slugify(text: str, max_len: int = 60) -> str:
+        """Convert a string to a URL-safe slug (lowercase, hyphens, truncated)."""
         slug = re.sub(r"[^a-z0-9]+", "-", text.lower())
         slug = slug.strip("-")[:max_len].rstrip("-")
         return slug or "untitled"
@@ -234,12 +258,11 @@ class BearerAuthMiddleware:
         if method == "POST":
             msg = await receive()
             body = msg.get("body", b"")
-            more = msg.get("more_body", False)
+            _ = msg.get("more_body", False)
             if body:
-                import json as _json  # noqa: PLC0415
                 try:
-                    mcp_method = _json.loads(body).get("method", "") or ""
-                except Exception:
+                    mcp_method = json.loads(body).get("method", "") or ""
+                except json.JSONDecodeError:
                     pass
             orig_receive = receive
             _body_sent = False
@@ -283,7 +306,11 @@ class BearerAuthMiddleware:
             )
 
     async def _handle_clip(self, request: Request) -> JSONResponse:
-        """Process a clip submission from the bookmarklet."""
+        """Process a clip submission from the bookmarklet.
+
+        Expects JSON body with url, title, content (required), selected.
+        Returns 200 with {status, clip_id}; 400/413/409 on error.
+        """
         body = b""
         async for chunk in request.stream():
             body += chunk
@@ -355,7 +382,9 @@ class BearerAuthMiddleware:
                 continue
         else:
             return JSONResponse(
-                {"error": "Unable to allocate unique clip filename"},
+                {
+                    "error": f"Unable to allocate unique clip filename for slug '{slug}'"
+                },
                 status_code=409,
                 headers=self._CORS_HEADERS,
             )
@@ -373,6 +402,7 @@ def _build_server() -> FastMCP:
     """Construct and configure the FastMCP application with all registered tools."""
     mcp: FastMCP = FastMCP("gateway-tools")
     register_filesystem_tools(mcp)
+    register_manage_tools(mcp)
     register_project_tools(mcp)
     register_web_tools(mcp)
     register_rag_tools(mcp)
@@ -400,7 +430,7 @@ def _build_server() -> FastMCP:
 
 
 class _UTCFormatter(logging.Formatter):
-    """Logging formatter that renders asctime in UTC."""
+    """Logging formatter that renders asctime in UTC (converter = time.gmtime)."""
 
     converter = time.gmtime
 
@@ -465,10 +495,8 @@ def main() -> None:
     class KeepaliveProtocol(orig_protocol_class):
         @override
         def connection_made(self, transport: BaseTransport) -> None:
-            # get_extra_info('socket') returns a TransportSocket, which wraps the raw socket
-            # We cast to Any to avoid importing asyncio.TransportSocket if not strictly needed,
-            # as we only use it to pass to _set_tcp_keepalive which expects socket.socket.
-            sock = cast(Any | None, transport.get_extra_info("socket"))
+            # get_extra_info('socket') returns the raw socket; cast for _set_tcp_keepalive.
+            sock = cast(socket.socket | None, transport.get_extra_info("socket"))
             if sock is not None:
                 _set_tcp_keepalive(sock)
             super().connection_made(transport)

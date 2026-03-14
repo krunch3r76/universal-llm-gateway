@@ -2,6 +2,7 @@ prompts:
   suggest_terms:
     description: "Pre-step LLM call to suggest concrete retrieval terms (generic, corpus-agnostic)"
     system_prompt: |
+      # Suggest Retrieval Terms
       You suggest concrete retrieval terms for search.
       From the user query, extract 5–10 short, specific terms likely to appear verbatim in relevant documents.
       Good terms: names of entities, products, tools, systems, languages, frameworks, protocols, standards,
@@ -16,6 +17,7 @@ prompts:
   analyze_scope:
     description: "Analyze query scope + generate dynamic rewrite strategy"
     system_prompt: |
+      # Analyze Query Scope and Rewrite Strategy
       You analyze a user query for dense-retrieval RAG over the indexed corpus.
       Return valid JSON only with these keys:
       needs_retrieval, scopes, scope_confidence, out_of_scope_reason,
@@ -32,7 +34,6 @@ prompts:
       - If no specific label fits, use ["all"].
       Valid scopes:
        {scope_options}
-      Invalid (do not use): schema_design, data_governance, data_modeling — use the closest valid label instead.
       3. If the query is a poor match for the corpus, set out_of_scope_reason to a brief
         explanation and scope_confidence <= 0.5. Otherwise out_of_scope_reason = "".
       Scope confidence should reflect confidence in the chosen labels,
@@ -81,6 +82,7 @@ prompts:
   generate_rewrites:
     description: "Generate retrieval rewrites with dynamic strategy injection"
     system_prompt: |
+      # Generate Retrieval Rewrites
       You generate retrieval-optimized query rewrites for dense-retrieval RAG
       over an indexed technical corpus.
       Return valid JSON only with these keys: reasoning, rewritten_queries.
@@ -116,9 +118,8 @@ prompts:
           tokens into a single rewrite. No rewrite should be a near-copy
           of the original query without added retrieval value.
       11. Anchor preservation: do not replace a must_include phrase with a
-          near variant (e.g. do not substitute "personal knowledge graphs"
-          for "personal knowledge base" if the latter is in must_include).
-          Prefer exact upstream surface forms.
+          near variant or broader/narrower term. Prefer exact upstream
+          surface forms verbatim.
       12. Hint coverage: across the full rewrite set, cover as many
           high-signal corpus_hints and scope_vocabulary terms as fit
           naturally. Each rewrite should add at least one non-query term
@@ -146,6 +147,7 @@ prompts:
   generate_hyde:
     description: "Generate HyDE passage only (hypothetical retrieval document)"
     system_prompt: |
+      # Generate HyDE Passage
       You generate a HyDE passage for dense-retrieval RAG.
       Return valid JSON only with this key: hyde_passage.
 
@@ -180,17 +182,16 @@ prompts:
       Template variable rerank_candidates: newline-separated chunk texts, optionally
       with source identifiers, as produced by the retrieve_assemble step.
     system_prompt: |
+      # Rerank Context Chunks
       You are reranking candidate context chunks for a retrieval-augmented generation system.
       Rank chunks by how useful they are for answering the query.
 
       Criteria, in order of importance:
       1. Direct relevance to the query intent
       2. Presence of concrete facts, definitions, or evidence useful for answering
-      3. Match between query concepts and chunk metadata (entities, topics)
-      4. Prefer chunks that add new useful information over redundant ones
-      5. Do NOT overvalue chunks just because they list many entities or topics
-      6. Prefer text evidence over superficial keyword overlap
-      7. Use the prior rank as a weak anchor, not a hard rule
+      3. Prefer chunks that add new useful information over redundant ones
+      4. Do NOT overvalue chunks just because they list many entities or topics
+      5. Prefer text evidence over superficial keyword overlap
     template: |
       Query: {text}
 

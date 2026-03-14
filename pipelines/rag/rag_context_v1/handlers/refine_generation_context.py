@@ -61,15 +61,15 @@ class RefineGenerationContextHandler(BaseHandler):
         max_hints: int = step.get_domain_field("max_hints", 7)
 
         vocabulary = load_scope_vocabulary()
-        register_text = format_register_hints(vocabulary, scopes=scopes or None)
+        register_text = format_register_hints(vocabulary, scopes=scopes)
         register_total = len(vocabulary)
         register_included = (
-            len([s for s in scopes if s in vocabulary]) if scopes else register_total
+            sum(1 for s in scopes if s in vocabulary) if scopes else register_total
         )
 
         hints_path = _resolve_hints_path()
         hints_map = load_corpus_hints(hints_path)
-        flat_text = get_hints_for_scopes(hints_map, scopes=scopes or None)
+        flat_text = get_hints_for_scopes(hints_map, scopes=scopes)
         flat_terms = [t.strip() for t in flat_text.split(",") if t.strip()]
 
         filtered_flat: list[str] = []
@@ -94,12 +94,11 @@ class RefineGenerationContextHandler(BaseHandler):
         )
         enriched = list(must_include) + scope_anchors
 
-        parts: list[str] = []
-        if filtered_flat:
-            parts.append(", ".join(filtered_flat))
-        if register_text:
-            parts.append(f"Vocabulary by register:\n{register_text}")
-        combined = "\n\n".join(parts)
+        parts = [
+            ", ".join(filtered_flat) if filtered_flat else None,
+            f"Vocabulary by register:\n{register_text}" if register_text else None,
+        ]
+        combined = "\n\n".join(filter(None, parts))
 
         logger.info(
             "Step '%s': scopes=%s, flat=%d→%d, register=%d/%d scopes, "
@@ -150,9 +149,11 @@ class RefineGenerationContextHandler(BaseHandler):
         key: str,
     ) -> list[str]:
         """Resolve a handler input expected to be a list of strings."""
-        raw: Any = self._resolve_input(resolver, step, key, step.handler_inputs)
+        raw: list[Any] | str = self._resolve_input(
+            resolver, step, key, step.handler_inputs
+        )
         if isinstance(raw, list):
-            return [str(x) for x in raw if isinstance(x, str) and x.strip()]
+            return [str(x).strip() for x in raw if str(x).strip()]
         if isinstance(raw, str) and raw.strip():
             return [raw.strip()]
         return []
@@ -168,6 +169,7 @@ class RefineGenerationContextHandler(BaseHandler):
         return errors
 
 
+# Priority order for scope registers when selecting anchors; lower value = higher priority.
 _REGISTER_PRIORITY: dict[str, int] = {
     "specification": 0,
     "practitioner": 1,
@@ -189,8 +191,17 @@ def _select_scope_anchors(
     order (specification → practitioner → academic), filters out terms
     already in must_include or query, validates via co-occurrence with
     suggested_terms, and returns the top candidates.
+
+    ∀ scopes with len > 1: skip anchor injection — multi-scope predictions
+    cover broader query intent where vocabulary spec-terms are less
+    discriminative than the query-derived must_include terms from analyze_scope.
+    Single-scope predictions have tight vocabulary alignment (e.g.,
+    temporal_provenance → prov:wasderivedfrom) that genuinely adds signal.
     """
     if not scopes or not vocabulary or max_anchors <= 0:
+        return []
+
+    if len(scopes) > 1:
         return []
 
     existing_lower = {t.lower() for t in must_include}
@@ -206,10 +217,6 @@ def _select_scope_anchors(
                     continue
                 cl = clean.lower()
                 if cl in existing_lower or cl in query_lower:
-                    continue
-                if any(cl in q for q in query_lower) or any(
-                    q in cl for q in existing_lower
-                ):
                     continue
                 candidates.append(clean)
 
@@ -231,13 +238,17 @@ def _select_scope_anchors(
     )
 
     if validated:
-        return validated[:max_anchors]
+        # Co-occurrence is a threshold filter only — preserve register-priority order
+        # from `unique` rather than using the co-occurrence-sorted result.
+        validated_lower = {v.lower() for v in validated}
+        priority_ordered = [c for c in unique if c.lower() in validated_lower]
+        return priority_ordered[:max_anchors]
 
     return unique[:max_anchors]
 
 
 def _resolve_hints_path() -> Path:
-    """Resolve corpus hints YAML path from RAG config or default."""
+    """Resolve corpus hints YAML path from RAG config (services.rag.config) or default."""
     try:
         from services.rag.config import load_config
 
@@ -245,9 +256,11 @@ def _resolve_hints_path() -> Path:
         path = getattr(config, "corpus_hints_path", None)
         if path:
             return path
+    except ImportError:
+        logger.debug("RAG config module not found, using default corpus hints path.")
     except Exception:
-        logger.debug(
-            "Could not load RAG config for corpus hints path, using default.",
+        logger.warning(
+            "Failed to load RAG config for corpus hints path, using default.",
             exc_info=True,
         )
     return _DEFAULT_HINTS_PATH

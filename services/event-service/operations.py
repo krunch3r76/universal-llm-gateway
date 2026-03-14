@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
-from typing import Any
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass
+from typing import Any, TypedDict
+
+from .store import EventStore
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +25,13 @@ class OperationDef:
     name: str
     description: str
     params: dict[str, ParamDef]
+    returns: str
+
 
 class ParamDef(TypedDict, total=False):
     type: str
     default: Any
     required: bool
-    returns: str
 
 
 _OPERATIONS: dict[str, OperationDef] = {}
@@ -140,18 +144,23 @@ _register(
     )
 )
 
+_register(
+    OperationDef(
+        name="signal-events",
+        description="Recent events matching a signal pattern, with full payload",
+        params={
+            "signal": {"type": "string", "required": True},
+            "limit": {"type": "int", "default": 20},
+            "execution_id": {"type": "string"},
+        },
+        returns="event rows with payload",
+    )
+)
+
 
 def list_operations() -> list[dict[str, Any]]:
     """Return all operations as dicts for agent discovery."""
-    return [
-        {
-            "name": op.name,
-            "description": op.description,
-            "params": op.params,
-            "returns": op.returns,
-        }
-        for op in _OPERATIONS.values()
-    ]
+    return [asdict(op) for op in _OPERATIONS.values()]
 
 
 def get_operation(name: str) -> OperationDef | None:
@@ -167,18 +176,21 @@ async def execute_operation(
     op = get_operation(name)
     if not op:
         return {
-            "error": f"Unknown operation: {name}. Use 'operations' to list available."
+            "error": f"Unknown operation: {name}. Use 'operations' to list available.",
+            "code": -32601,
         }
 
     try:
         return await _DISPATCH[name](params, store)
     except Exception as e:
-        logger.exception("Operation %s failed", name) # Use logger.exception for traceback
+        logger.exception(
+            "Operation %s failed", name
+        )  # Use logger.exception for traceback
         # Potentially return a more structured error, e.g., with an error_code
         return {"error": f"Operation failed: {e}", "error_type": e.__class__.__name__}
 
 
-async def _recent_failures(params: dict[str, Any], store: Any) -> dict[str, Any]:
+async def _recent_failures(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
     limit = params.get("limit", 20)
     rows = await store.query(
         "SELECT * FROM events WHERE signal LIKE '%.failed' OR signal LIKE '%.error' "
@@ -188,7 +200,7 @@ async def _recent_failures(params: dict[str, Any], store: Any) -> dict[str, Any]
     return {"rows": rows, "count": len(rows)}
 
 
-async def _noise_profile(params: dict[str, Any], store: Any) -> dict[str, Any]:
+async def _noise_profile(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
     import time
 
     minutes = params.get("minutes", 5)
@@ -201,7 +213,7 @@ async def _noise_profile(params: dict[str, Any], store: Any) -> dict[str, Any]:
     return {"signals": rows, "minutes": minutes}
 
 
-async def _coordination_audit(params: dict[str, Any], store: Any) -> dict[str, Any]:
+async def _coordination_audit(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
     limit = params.get("limit", 50)
     rows = await store.query(
         "SELECT * FROM events WHERE role = 'coordination' ORDER BY seq DESC LIMIT ?",
@@ -210,8 +222,8 @@ async def _coordination_audit(params: dict[str, Any], store: Any) -> dict[str, A
     return {"rows": rows, "count": len(rows)}
 
 
-async def _model_timeline(params: dict[str, Any], store: Any) -> dict[str, Any]:
-    model_id = params.get("model_id", "")
+async def _model_timeline(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
+    model_id = params.get("model_id") or ""
     if not model_id:
         return {"error": "model_id is required"}
     rows = await store.query(
@@ -221,8 +233,8 @@ async def _model_timeline(params: dict[str, Any], store: Any) -> dict[str, Any]:
     return {"rows": rows, "count": len(rows), "model_id": model_id}
 
 
-async def _request_trace(params: dict[str, Any], store: Any) -> dict[str, Any]:
-    request_id = params.get("request_id", "")
+async def _request_trace(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
+    request_id = params.get("request_id") or ""
     if not request_id:
         return {"error": "request_id is required"}
     rows = await store.query(
@@ -232,8 +244,8 @@ async def _request_trace(params: dict[str, Any], store: Any) -> dict[str, Any]:
     return {"rows": rows, "count": len(rows), "request_id": request_id}
 
 
-async def _request_lifecycle(params: dict[str, Any], store: Any) -> dict[str, Any]:
-    request_id = params.get("request_id", "")
+async def _request_lifecycle(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
+    request_id = params.get("request_id") or ""
     if not request_id:
         return {"error": "request_id is required"}
     rows = await store.query(
@@ -243,7 +255,7 @@ async def _request_lifecycle(params: dict[str, Any], store: Any) -> dict[str, An
     return {"rows": rows, "count": len(rows), "request_id": request_id}
 
 
-async def _request_summary(params: dict[str, Any], store: Any) -> dict[str, Any]:
+async def _request_summary(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
     import time
 
     minutes = params.get("minutes", 5)
@@ -256,18 +268,80 @@ async def _request_summary(params: dict[str, Any], store: Any) -> dict[str, Any]
     return {"phases": rows, "minutes": minutes}
 
 
+def _coerce_limit(value: Any, default: int = 20) -> int:
+    """Coerce user limit to a bounded positive integer."""
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(limit, 500))
+
+
+async def _signal_events(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
+    """Fetch recent events by exact signal or '*' glob, including parsed payload."""
+    signal = params.get("signal") or ""
+    if not signal:
+        return {"error": "signal is required"}
+
+    limit = _coerce_limit(params.get("limit", 20))
+    execution_id = params.get("execution_id")
+
+    if "*" in signal:
+        signal_clause = "signal LIKE ?"
+        signal_value = signal.replace("*", "%")
+    else:
+        signal_clause = "signal = ?"
+        signal_value = signal
+
+    sql = (
+        "SELECT seq, signal, source, timestamp, execution_id, model_id, payload "
+        f"FROM events WHERE {signal_clause}"
+    )
+    query_params: list[Any] = [signal_value]
+    if execution_id:
+        sql += " AND execution_id = ?"
+        query_params.append(execution_id)
+    sql += " ORDER BY seq DESC LIMIT ?"
+    query_params.append(limit)
+
+    rows = await store.query(sql, tuple(query_params))
+    out_rows: list[dict[str, Any]] = []
+    for row in rows:
+        row_dict = dict(row)
+        payload = row_dict.get("payload")
+        if isinstance(payload, str):
+            try:
+                row_dict["payload"] = json.loads(payload)
+            except json.JSONDecodeError:
+                row_dict["payload"] = payload
+        out_rows.append(row_dict)
+
+    return {"rows": out_rows, "count": len(out_rows)}
+
+
 async def _pipeline_trace(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    execution_id = params.get("execution_id", "")
+    execution_id = params.get("execution_id") or ""
     if not execution_id:
         return {"error": "execution_id is required"}
+
     rows = await store.query(
         "SELECT * FROM events WHERE execution_id = ? ORDER BY seq",
         (execution_id,),
     )
+
     steps: list[dict[str, Any]] = []
-    total_tokens = 0
+    total_tokens_in = 0
+    total_tokens_out = 0
+
     for row in rows:
-        payload = json.loads(row["payload"]) if row.get("payload") else {}
+        payload: dict[str, Any] = {}
+        raw_payload = row.get("payload")
+        if raw_payload:
+            try:
+                payload = json.loads(raw_payload)
+            except json.JSONDecodeError:
+                payload = {}
+
         step_info: dict[str, Any] = {
             "signal": row["signal"],
             "source": row["source"],
@@ -277,37 +351,31 @@ async def _pipeline_trace(params: dict[str, Any], store: EventStore) -> dict[str
             step_info["model"] = payload["model_id"]
         if "duration_ms" in payload:
             step_info["duration_ms"] = payload["duration_ms"]
-        total_tokens_in = 0
-        total_tokens_out = 0
         if "tokens_in" in payload:
             step_info["tokens_in"] = payload["tokens_in"]
             total_tokens_in += payload["tokens_in"]
         if "tokens_out" in payload:
             step_info["tokens_out"] = payload["tokens_out"]
             total_tokens_out += payload["tokens_out"]
-    # ...
+        if "status" in payload:
+            step_info["status"] = payload["status"]
+
+        steps.append(step_info)
+
+    total_tokens = total_tokens_in + total_tokens_out
     return {
         "execution_id": execution_id,
         "steps": steps,
         "event_count": len(rows),
         "total_tokens_in": total_tokens_in,
-        "total_tokens_out": total_tokens_out
-    }
-        if "status" in payload:
-            step_info["status"] = payload["status"]
-        steps.append(step_info)
-
-    return {
-        "execution_id": execution_id,
-        "steps": steps,
-        "event_count": len(rows),
+        "total_tokens_out": total_tokens_out,
         "total_tokens": total_tokens,
     }
 
 
 async def _compare_runs(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    run_a = params.get("run_a", "")
-    run_b = params.get("run_b", "")
+    run_a = params.get("run_a") or ""
+    run_b = params.get("run_b") or ""
     if not run_a or not run_b:
         return {"error": "run_a and run_b are required"}
 
@@ -326,7 +394,7 @@ async def _compare_runs(params: dict[str, Any], store: EventStore) -> dict[str, 
     }
 
 
-async def _federation_health(params: dict[str, Any], store: Any) -> dict[str, Any]:
+async def _federation_health(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
     rows = await store.query(
         "SELECT * FROM events WHERE signal LIKE 'federation.%' "
         "ORDER BY seq DESC LIMIT 50",
@@ -334,7 +402,7 @@ async def _federation_health(params: dict[str, Any], store: Any) -> dict[str, An
     return {"rows": rows, "count": len(rows)}
 
 
-async def _capacity_snapshot(params: dict[str, Any], store: Any) -> dict[str, Any]:
+async def _capacity_snapshot(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
     rows = await store.query(
         "SELECT * FROM events "
         "WHERE signal IN ('model.execution.completed', 'model.execution.failed', "
@@ -344,9 +412,9 @@ async def _capacity_snapshot(params: dict[str, Any], store: Any) -> dict[str, An
     return {"rows": rows, "count": len(rows)}
 
 
-from typing import Callable, Awaitable
-
-OperationCallable = Callable[[dict[str, Any], Any], Awaitable[dict[str, Any]]]
+OperationCallable = Callable[
+    [dict[str, Any], EventStore], Awaitable[dict[str, Any]]
+]
 
 _DISPATCH: dict[str, OperationCallable] = {
     "recent-failures": _recent_failures,
@@ -360,4 +428,5 @@ _DISPATCH: dict[str, OperationCallable] = {
     "compare-runs": _compare_runs,
     "federation-health": _federation_health,
     "capacity-snapshot": _capacity_snapshot,
+    "signal-events": _signal_events,
 }

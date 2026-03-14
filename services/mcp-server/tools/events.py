@@ -37,6 +37,7 @@ _VALID_OPERATIONS = frozenset(
         "compare-runs",
         "federation-health",
         "capacity-snapshot",
+        "signal-events",
         "operations",
         "raw_sql",
     }
@@ -64,10 +65,12 @@ def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
             "error": "Event query timed out. Try a narrower query or increase limits."
         }
     except httpx.ConnectError as e:
+        logger.error("Event service not reachable: %s", e, exc_info=True)
         return {"error": f"Event service not reachable: {e}"}
     except httpx.HTTPStatusError as e:
         return {"error": f"Event service error: {e.response.status_code}"}
     except Exception as e:
+        logger.error("Event query failed: %s", e, exc_info=True)
         return {"error": f"Event query failed: {e}"}
 
 
@@ -97,8 +100,11 @@ def register_event_tools(mcp: FastMCP) -> None:
           compare-runs       — Side-by-side metrics for two runs
           federation-health  — Latest relay telemetry
           capacity-snapshot  — Current slot usage
+          signal-events      — Recent events for a signal pattern, with payload
           operations         — List all available operations
-          raw_sql            — Raw SQL query (SELECT only)
+          raw_sql            — Raw SQL query (SELECT only, use "params" list for bindings)
+
+        Authoritative operation set: _VALID_OPERATIONS in this module.
 
         Args:
             operation: Operation name from the list above.
@@ -123,6 +129,7 @@ def register_event_tools(mcp: FastMCP) -> None:
             body = {
                 "type": "sql",
                 "sql": (params or {}).get("sql", ""),
+                "params": (params or {}).get("params", []),
                 "limit": (params or {}).get("limit", 100),
             }
         else:

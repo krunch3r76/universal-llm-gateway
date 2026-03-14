@@ -1345,10 +1345,50 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.tool.file.edited` | `sandbox`, `path`, `operation`, `content_chars` | `edit_file` completed |
 | `mcp.tool.file.edit_failed` | `sandbox`, `path`, `operation`, `reason`, `error_message` | `edit_file` failed |
 | `mcp.tool.file.deleted` | `sandbox`, `path` | `delete_file` completed |
+| `mcp.manage.service.called` | `action`, `service` | manage_service tool invoked |
+| `mcp.manage.service.completed` | `action`, `service`, `duration_s` | manage_service completed successfully |
+| `mcp.manage.service.failed` | `action`, `service`, `error`, `duration_s` | manage_service returned error |
 
 Query example — all tool calls in last 5 minutes:
 ```
 scripts/query-events --sql "SELECT ts_unix_ms, signal, json_extract(payload,'$.path') path FROM events WHERE source='mcp-server' AND signal LIKE 'mcp.tool.%' AND ts_unix_ms > (unixepoch()-300)*1000 ORDER BY seq"
+```
+
+## Management API Signals
+
+Emitted by `ManageAPIServer` in `scripts/model_manager/ui/api_server.py`
+on every lifecycle operation received over `manage.sock`.
+
+| Signal | Role | Scope | When emitted |
+|--------|------|-------|--------------|
+| `manage.service.requested` | observation | global | API request received, before execution |
+| `manage.service.completed` | observation | global | Operation finished successfully |
+| `manage.service.failed` | observation | global | Operation raised an error |
+
+### Payload Keys
+
+`manage.service.requested`: `method` (str), `service` (str)
+`manage.service.completed`: `method` (str), `service` (str), `duration_s` (float)
+`manage.service.failed`: `method` (str), `service` (str), `error` (str), `duration_s` (float)
+
+### MCP Layer Signals
+
+The `manage_service` MCP tool emits its own observation signals:
+
+| Signal | When |
+|--------|------|
+| `mcp.manage.service.called` | Tool invoked |
+| `mcp.manage.service.completed` | Tool returned success |
+| `mcp.manage.service.failed` | Tool returned error |
+
+### Query Example
+
+```bash
+# Recent manage API calls
+scripts/query-events --sql "SELECT signal, payload FROM events WHERE signal LIKE 'manage.service.%' ORDER BY seq DESC LIMIT 50"
+
+# Failed rebuilds
+scripts/query-events --sql "SELECT payload FROM events WHERE signal='manage.service.failed' ORDER BY seq DESC LIMIT 10"
 ```
 
 ## Event Service Self-Health Signals
