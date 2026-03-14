@@ -14,6 +14,8 @@ import asyncio
 import logging
 import os
 import signal
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from aiohttp import web
@@ -31,19 +33,35 @@ _QUERY_SOCK = os.environ.get(
     "QUERY_UDS_PATH", "/tmp/universal-protocol/events-query.sock"
 )
 _RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "7"))
+_MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "2"))
 _RETENTION_INTERVAL_S = 86400
 
 
 async def _retention_loop(store: EventStore) -> None:
-    """Daily retention: delete events older than configured threshold."""
-    max_age_ms = _RETENTION_DAYS * 86400 * 1000
+    """Apply session-cap retention first, then age retention as safety net.
+
+    Session retention runs immediately on boot so each restart trims older
+    sessions without waiting 24 hours. Age-based retention catches stale data
+    when few sessions exist across many days.
+    """
+    max_age_ms = _RETENTION_DAYS * _RETENTION_INTERVAL_S * 1000
+    startup_deleted = await store.run_session_retention(_MAX_SESSIONS)
+    if startup_deleted:
+        logger.info(
+            "Session retention (startup): deleted %d rows, keeping %d sessions",
+            startup_deleted,
+            _MAX_SESSIONS,
+        )
     while True:
         await asyncio.sleep(_RETENTION_INTERVAL_S)
-        deleted = await store.run_retention(max_age_ms)
-        if deleted:
+        session_deleted = await store.run_session_retention(_MAX_SESSIONS)
+        age_deleted = await store.run_retention(max_age_ms)
+        if session_deleted or age_deleted:
             logger.info(
-                "Retention: deleted %d events older than %d days",
-                deleted,
+                "Retention: session=%d age=%d (max_sessions=%d, max_days=%d)",
+                session_deleted,
+                age_deleted,
+                _MAX_SESSIONS,
                 _RETENTION_DAYS,
             )
 
@@ -89,7 +107,7 @@ async def run_service() -> None:
     try:
         os.chmod(_QUERY_SOCK, 0o777)
     except OSError as e:
-        logger.error("Failed to set permissions on query socket %s: %s", _QUERY_SOCK, e)
+        logger.critical("Failed to set permissions on query socket %s: %s", _QUERY_SOCK, e)
         raise
 
     logger.info(
@@ -97,6 +115,25 @@ async def run_service() -> None:
         _INGEST_SOCK,
         _QUERY_SOCK,
         _DB_PATH,
+    )
+    ts_ms = int(time.time() * 1000)
+    ts_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    await store.insert_events(
+        [
+            {
+                "signal": "event.service.started",
+                "role": "coordination",
+                "scope": "global",
+                "ts_unix_ms": ts_ms,
+                "timestamp": ts_iso,
+                "source": "event_service",
+                "payload": {
+                    "ingest_sock": _INGEST_SOCK,
+                    "query_sock": _QUERY_SOCK,
+                    "db_path": _DB_PATH,
+                },
+            }
+        ]
     )
 
     retention_task = asyncio.create_task(_retention_loop(store))
@@ -114,8 +151,28 @@ async def run_service() -> None:
 
     logger.info("Event service shutting down...")
     retention_task.cancel()
+    try:
+        await retention_task
+    except asyncio.CancelledError:
+        pass
     await ingest.stop()
+    await site.stop()
     await runner.cleanup()
+    ts_ms = int(time.time() * 1000)
+    ts_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    await store.insert_events(
+        [
+            {
+                "signal": "event.service.stopped",
+                "role": "coordination",
+                "scope": "global",
+                "ts_unix_ms": ts_ms,
+                "timestamp": ts_iso,
+                "source": "event_service",
+                "payload": {},
+            }
+        ]
+    )
     await store.close()
     logger.info("Event service stopped")
 

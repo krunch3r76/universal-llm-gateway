@@ -1,19 +1,7 @@
-"""
-Universal Event Bus - Shared Event Infrastructure
+"""Shared event-driven infrastructure for universal-llm-gateway and universal-stargate.
 
-This module provides shared event-driven architecture components
-for universal-llm-gateway and universal-stargate.
-
-Source: Originally developed in universal-stargate
-Purpose: Shared event bus infrastructure for event-driven communication
-
-Usage:
-    from universal_event_bus.events import EventBus
-    from universal_event_bus.events import MinimalEventDebugBroadcaster
-    from universal_event_bus.transports import UDPTransport
-    from universal_event_bus.bridges import UDPBridge
-    from universal_event_bus.monitoring import MonitoringMessage
-    from universal_event_bus.actor import CommandProcessor, Command, CommandResult
+Originally developed in universal-stargate. Provides event bus, transports,
+monitoring, and actor patterns with no shared state and race-free design.
 
 Features:
     - Event-driven publish/subscribe architecture
@@ -42,8 +30,10 @@ from .events import (
     EVENT_SIGNAL_PATTERN,
     Event,
     EventBus,
+    ExceptionCaught,
     MinimalEventDebugBroadcaster,
     Subscription,
+    capture_exception,
     create_timestamp,
     event_factory,
     is_valid_event_signal,
@@ -56,6 +46,8 @@ __all__ = [
     # Events
     "Event",
     "EventBus",
+    "ExceptionCaught",
+    "capture_exception",
     "MinimalEventDebugBroadcaster",
     "Subscription",
     "create_timestamp",

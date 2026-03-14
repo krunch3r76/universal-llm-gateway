@@ -19,7 +19,11 @@ def CloudProxyStarted(  # noqa: N802
 
 @event_factory
 def CloudProxyShutdown(*, reason: str) -> Event:  # noqa: N802
-    """reason: 'clean' | 'crash' (atexit without clean flag set)"""
+    """Emit cloud proxy shutdown lifecycle event.
+
+    reason: 'clean' for graceful shutdown, 'crash' for unexpected termination
+    (e.g. atexit without clean flag set).
+    """
     return Event(signal="cloud.proxy.shutdown", payload={"reason": reason})
 
 
@@ -300,7 +304,7 @@ def McpAdapterMcpToolUseSeen(  # noqa: N802
 ) -> Event:
     """Response contained an mcp_tool_use block (Anthropic-executed MCP tool)."""
     return Event(
-        signal="mcp.adapter.mcp_tool_use.seen",
+        signal="mcp.adapter.tool.seen",
         payload={"tool_name": tool_name, "server_name": server_name},
     )
 
@@ -312,6 +316,6 @@ def McpAdapterToolSearchSeen(  # noqa: N802
 ) -> Event:
     """Response contained a tool_search_tool_result block."""
     return Event(
-        signal="mcp.adapter.tool_search.seen",
+        signal="mcp.adapter.search.seen",
         payload={"references_count": references_count},
     )

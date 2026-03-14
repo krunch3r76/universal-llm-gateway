@@ -1317,14 +1317,14 @@ MCP adapter signals track the v1→v2 migration and MCP tool execution visibilit
 |---|---|---|
 | `mcp.adapter.v2.configured` | First request where `mcp_v2=true` builds toolset | `provider`, `server_name`, `always_loaded_count`, `deferred_count` |
 | `mcp.adapter.request.shape` | Every MCP request (v1 or v2) | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` |
-| `mcp.adapter.mcp_tool_use.seen` | Response contains `mcp_tool_use` block | `tool_name`, `server_name` |
-| `mcp.adapter.tool_search.seen` | Response contains `tool_search_tool_result` | `references_count` |
+| `mcp.adapter.tool.seen` | Response contains `mcp_tool_use` block | `tool_name`, `server_name` |
+| `mcp.adapter.search.seen` | Response contains `tool_search_tool_result` | `references_count` |
 
 ### Invariants
 
 - `mcp.adapter.v2.configured` emits at most once per adapter instance lifetime
 - `mcp.adapter.request.shape` emits exactly once per MCP request
-- `mcp.adapter.mcp_tool_use.seen` emits once per `mcp_tool_use` block in the response
+- `mcp.adapter.tool.seen` emits once per `mcp_tool_use` block in the response
   (a single response may have multiple MCP tool calls)
 - ∀ `mcp_tool_use` block in response: ¬ mapped to OpenAI `tool_calls` (server-executed)
 - ∀ `server_tool_use` block in response: ¬ mapped to OpenAI `tool_calls` (server-executed)
@@ -1416,6 +1416,40 @@ structured lifecycle queries).
 | `request.snapshot.routed` | routed | Routing decision (model, gateway, profile) |
 | `request.snapshot.completed` | completed | Response body for non-streaming requests |
 | `request.snapshot.failed` | failed | Error details on failure |
+
+## System Signals
+
+Cross-service diagnostic signals emitted by any service. These signals are not tied to
+a specific request or pipeline execution — they capture infrastructure-level events such
+as caught exceptions.
+
+**Invariant**: `system.exception` MUST NOT be emitted for control-flow use of exceptions
+(e.g., `asyncio.CancelledError`, `StopIteration`). It targets abnormal runtime faults
+caught in operational code paths via `except Exception`.
+
+| Signal | Role | Scope | Description |
+|---|---|---|---|
+| `system.exception` | observation | global | A caught Exception was observed in a service handler or code path |
+
+### `system.exception` Payload
+
+| Field | Required | Type | Description |
+|---|---|---|---|
+| `exception_type` | yes | string | `type(exc).__name__`, e.g. `'ValueError'` |
+| `message` | yes | string | `str(exc)` truncated to 500 chars |
+| `service` | yes | string | Originating service, e.g. `'cloud_proxy'`, `'stargate'`, `'rag'` |
+| `handler` | no | string | Function or class name where the exception was caught |
+| `request_id` | no | string | Request correlation ID if inside a request context |
+| `traceback` | no | string | Last frames from `traceback.format_exc()`, truncated to 1000 chars |
+
+### Usage
+
+```python
+from universal_event_bus import capture_exception
+
+async with capture_exception("stargate", handler="proxy_request", event_bus=bus):
+    await do_risky_operation()
+```
 
 ## Ordering Guarantees
 

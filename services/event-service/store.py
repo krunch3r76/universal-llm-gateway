@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -83,8 +84,6 @@ _MAX_PAYLOAD_BYTES = 64 * 1024
 def _ts_ms_from_iso(iso: str) -> int:
     """Convert ISO 8601 timestamp to Unix epoch milliseconds."""
     try:
-        from datetime import datetime
-
         dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
         return int(dt.timestamp() * 1000)
     except (ValueError, AttributeError):
@@ -137,10 +136,8 @@ class EventStore:
                 )
                 continue
             ts_iso = ev.get("timestamp", "")
-            ts_ms = (
-                ev["ts_unix_ms"]
-                if "ts_unix_ms" in ev
-                else (_ts_ms_from_iso(ts_iso) if ts_iso else int(time.time() * 1000))
+            ts_ms = ev.get("ts_unix_ms") or (
+                _ts_ms_from_iso(ts_iso) if ts_iso else int(time.time() * 1000)
             )
             rows.append(
                 (
@@ -163,7 +160,12 @@ class EventStore:
             await self._db.executemany(_INSERT_EVENT, rows)
             await self._db.commit()
         except Exception as e:
-            logger.error("DB write failed, dropping %d events: %s", len(rows), e)
+            logger.error(
+                "DB write failed, dropping %d events (signals: %s): %s",
+                len(rows),
+                [ev.get("signal") for ev in accepted[:5]],
+                e,
+            )
             return []
 
         return accepted
@@ -187,7 +189,12 @@ class EventStore:
             )
             await self._db.commit()
         except Exception as e:
-            logger.error("Snapshot insert failed: %s", e)
+            logger.error(
+                "Snapshot insert failed request_id=%s phase=%s: %s",
+                snap.get("request_id"),
+                snap.get("phase"),
+                e,
+            )
 
     async def query(
         self,
@@ -204,21 +211,68 @@ class EventStore:
             raw_rows = await cursor.fetchmany(limit)
             return [dict(r) for r in raw_rows]
         except Exception as e:
-            logger.error("Query failed: %s — %s", sql[:120], e)
+            logger.error("Query failed: %s params=%s — %s", sql[:120], params, e)
             return []
 
     async def run_retention(self, max_age_ms: int) -> int:
-        """Delete events older than max_age_ms. Returns count deleted."""
+        """Delete rows older than max_age_ms from all retained tables.
+
+        Returns total count deleted across events, request_snapshots, and
+        evaluations.
+        """
         if not self._db:
             return 0
         cutoff = int(time.time() * 1000) - max_age_ms
         try:
-            cursor = await self._db.execute(
+            r1 = await self._db.execute(
                 "DELETE FROM events WHERE ts_unix_ms < ?", (cutoff,)
+            )
+            r2 = await self._db.execute(
+                "DELETE FROM request_snapshots WHERE ts_unix_ms < ?", (cutoff,)
+            )
+            r3 = await self._db.execute(
+                "DELETE FROM evaluations WHERE ts_unix_ms < ?", (cutoff,)
             )
             await self._db.execute("PRAGMA incremental_vacuum")
             await self._db.commit()
-            return cursor.rowcount
+            return max(r1.rowcount or 0, 0) + max(r2.rowcount or 0, 0) + max(r3.rowcount or 0, 0)
         except Exception as e:
-            logger.error("Retention failed: %s", e)
+            logger.error("Retention failed cutoff=%s: %s", cutoff, e)
+            return 0
+
+    async def run_session_retention(self, max_sessions: int) -> int:
+        """Delete rows older than the Nth most recent system.started boundary.
+
+        For max_sessions=2 this keeps rows from the two most recent Stargate
+        sessions. Uses OFFSET max_sessions - 1 to identify the oldest boundary
+        that should remain, then deletes older rows across all retained tables.
+        """
+        if not self._db or max_sessions < 1:
+            return 0
+
+        rows = await self.query(
+            "SELECT ts_unix_ms FROM events WHERE signal = 'system.started' "
+            "ORDER BY ts_unix_ms DESC LIMIT 1 OFFSET ?",
+            (max_sessions - 1,),
+            limit=1,
+        )
+        if not rows:
+            return 0
+
+        cutoff_ts = int(rows[0]["ts_unix_ms"])
+        try:
+            r1 = await self._db.execute(
+                "DELETE FROM events WHERE ts_unix_ms < ?", (cutoff_ts,)
+            )
+            r2 = await self._db.execute(
+                "DELETE FROM request_snapshots WHERE ts_unix_ms < ?", (cutoff_ts,)
+            )
+            r3 = await self._db.execute(
+                "DELETE FROM evaluations WHERE ts_unix_ms < ?", (cutoff_ts,)
+            )
+            await self._db.execute("PRAGMA incremental_vacuum")
+            await self._db.commit()
+            return max(r1.rowcount or 0, 0) + max(r2.rowcount or 0, 0) + max(r3.rowcount or 0, 0)
+        except Exception as e:
+            logger.error("Session retention failed cutoff_ts=%s: %s", cutoff_ts, e)
             return 0
