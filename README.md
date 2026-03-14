@@ -50,7 +50,7 @@ All endpoints are served by Stargate on `:9999` — the **sole client-facing end
 - [x] **Consensus pipeline (v7/v7.1)** — Multi-model answer generation with decomposition, domain-specific verification, veto, citation enforcement, and structured synthesis
 - [x] **Pipeline event observability** — Dedicated `/tmp/pipeline-events/` stream with per-step metrics (tokens, duration, call count)
 - [x] **Cloud proxy** — OpenRouter/Anthropic/OpenAI/Google integration with quality-tier autoselection, cost-aware routing, configurable provider allow-lists, and browser UI for interactive model selection
-- [x] **RAG-augmented routing** — `rag-context` pipeline rewrites queries into embedding-optimized sub-queries, executes parallel retrieval with RRF merge, and returns assembled context chunks; `rag-answer` wraps it with grounded answer generation; `rag-answer-deep` adds iterative refinement; `source_prefixes` and named scopes restrict retrieval to any indexed corpus subset
+- [x] **RAG-augmented routing** — `rag-context` pipeline implements corpus-grounded multi-stage retrieval: scope classification → facet prediction → second-pass facet refinement → multi-query rewriting → two-pool hybrid retrieval (dense+sparse Pool A, named-entity OR-query Pool B) → RRF merge with source habituation → facet-guided LLM reranking; `rag-answer` adds grounded answer generation; `rag-answer-deep` adds iterative refinement; `source_prefixes` and named scopes restrict retrieval to any indexed corpus subset
 - [x] **Consultation pipelines** — Domain-specialized assistants (researcher, architect, planner, prompt engineer) available as pipeline model IDs
 - [x] **Knowledge extraction** — LLM-driven entity, topic, and relation extraction from indexed documents, stored in a property index for hybrid structured+vector search
 - [x] **Intelligence profiles** — Per-model capability metadata and task-aware model selection with cost budgets
@@ -254,11 +254,19 @@ See [Pipeline System README](services/universal-stargate/systems/pipeline/README
 
 > Scoped documentation: [services/rag/README.md](services/rag/README.md)
 
-A local semantic search and knowledge management service backed by ChromaDB. The service provides advanced retrieval pipelines that rewrite user questions into embedding-optimized sub-queries, run them in parallel, and merge results via reciprocal rank fusion (RRF) for superior context.
+A local semantic search and knowledge management service backed by ChromaDB, with an LLM-driven pipeline layer that implements corpus-grounded multi-stage retrieval.
+
+**What makes it different from standard RAG:** Most systems either do naive vector search on the raw query (missing lexical variants) or use unconstrained LLM rewriting that hallucinates terms not in the corpus. This system validates every candidate term against actually-indexed vocabulary via the property index *before* any LLM call. Rewrites only ever include vocabulary that exists in the corpus.
+
+**Corpus-grounded query rewriting**: Queries are decomposed into retrieval facets, refined through a second LLM pass to surface deeper named entities (e.g. `Zettelkasten`, `NEPOMUK`, `PIMO` from a `personal_knowledge_management` facet), then expanded into multiple embedding-optimized sub-queries with a HyDE passage — all constrained to validated corpus vocabulary.
+
+**Two-pool hybrid retrieval**: Pool A runs standard dense+sparse hybrid (ChromaDB + BM25). Pool B constructs OR-joined FTS5 named-entity queries per facet with `sparse_only=True`, bypassing dense embedding for exact-match retrieval of proper nouns and technical terms that embedding models tend to dilute. Results merge via RRF with source habituation to ensure coverage breadth over source depth.
+
+**Facet-guided reranking**: A sliding-window LLM reranker receives the retrieval facets explicitly and re-orders candidates to prefer chunks matching multiple facets simultaneously over generic documents that merely mention the domain.
 
 - **Indexing**: Markdown, code (Python via tree-sitter AST), PDF (native via `pymupdf4llm`), EPUB, HTML, and plain text, chunked by structure.
 - **Knowledge Extraction**: Extracts entities, topics, and relations from documents to power hybrid structured+vector search.
-- **Search**: Cosine similarity with configurable recency scoring and property boosting.
+- **Scope Vocabulary Registers**: Terms are LLM-classified into `academic`, `practitioner`, and `specification` registers per scope, so rewrites target the right vocabulary for each query type.
 - **Corpus Scoping**: Query specific subsets of your data using a named scope registry or ad-hoc `source_prefixes`.
 - **File Watching**: Automatically re-indexes changed files via inotify.
 - **Local Embeddings**: Uses a local model via the Gateway. No external API calls.

@@ -21,7 +21,59 @@ Search time:
 8. **Recency scoring** — additive recency weight based on `published_date` (preferred for research papers) or `indexed_at` timestamps. Naive ISO timestamps are normalized to UTC before scoring to avoid timezone subtraction errors.
 9. **BM25 sidecar merge** — sparse BM25 candidates are merged with dense vector results via mini-RRF. Chroma fetch payloads are length-normalized (pad/trim) and invalid metadata rows are skipped to avoid strict zip failures.
 
-The pipeline layer (`rag-context`, `rag-answer`, `rag-answer-deep`) handles query rewriting, RRF multi-query merge, and answer generation on top of this service.
+The pipeline layer (`rag-context`, `rag-answer`, `rag-answer-deep`) handles query rewriting, facet-driven retrieval, RRF multi-query merge, reranking, and answer generation on top of this service. See [Pipeline Layer](#pipeline-layer-rag-context) below.
+
+## Pipeline Layer (`rag-context`)
+
+The `rag-context` pipeline runs on top of the RAG service and implements corpus-grounded multi-stage retrieval. It is exposed as a virtual model ID (`rag-context`, `rag-answer`, `rag-answer-deep`) through Stargate.
+
+### Pre-Retrieval: Corpus-Grounded Query Rewriting
+
+Most RAG systems either search the raw query (misses lexical variants) or rely on unconstrained LLM rewriting (hallucinates terms not in the corpus). This pipeline does **corpus-grounded rewriting**:
+
+1. **`suggest_terms`** — extracts candidate vocabulary from the raw query
+2. **`filter_corpus_hints`** — validates candidates against *actually indexed vocabulary* via the property index. Terms that don't appear in the corpus are discarded before reaching any LLM.
+3. **`analyze_scope`** — classifies the query into retrieval scopes using validated terms; applies scope anchors only for single-scope predictions (multi-scope implies broader intent)
+4. **`predict_facets`** — decomposes the query into named retrieval sub-topics with corpus-grounded vocabulary
+5. **`refine_facets`** — second-pass prediction: given first-pass facets, surfaces deeper or more specific terms from parametric knowledge (e.g. discovers `Zettelkasten`, `NEPOMUK` from `personal_knowledge_management` facet)
+6. **`generate_rewrites`** — produces embedding-optimized sub-queries that *must* include validated terms
+7. **`generate_hyde`** — generates a hypothetical answer passage with `must_include` constraints to stay grounded
+
+The **co-occurrence filter** (`filter_hints_by_cooccurrence`) is the key grounding mechanism — it checks whether a candidate hint term actually appears in chunks alongside the query terms, preventing vocabulary hallucination.
+
+Scope vocabulary (`~/.rag/scope_vocabulary.yaml`) separates terms into `academic`, `practitioner`, and `specification` registers so rewrites target the correct register for each query type (e.g. `PKG` → academic, `Obsidian` → practitioner).
+
+### Retrieval: Two-Pool Hybrid
+
+Retrieval runs two parallel pools:
+
+**Pool A — Dense + Sparse hybrid**: standard hybrid search (ChromaDB cosine similarity + BM25 sidecar), one query per rewrite/HyDE variant, merged via RRF.
+
+**Pool B — Named-entity sparse-only**: for each facet from `refine_facets`, constructs an OR-joined FTS5 query from all terms in that facet and dispatches with `sparse_only=True` (bypasses dense embedding entirely). This surfaces exact-match named-entity hits (e.g. `NEPOMUK OR PIMO OR Zettelkasten`) that dense embedding dilutes or misses.
+
+Post-RRF scoring adjustments:
+- Pool B chunks receive a `facet_pool_score_boost` multiplier (default 1.5×) with **lateral source habituation**: the highest-scoring chunk from a given source gets the full boost; subsequent chunks from the same source are inhibited (÷boost), preventing any single source from monopolizing boosted slots
+- **Global source habituation**: applied across all merged chunks — subsequent chunks from any already-represented source receive exponentially decayed scores, ensuring coverage breadth
+- **Pool B source swap**: if a source has any Pool B hit, all Pool A chunks from that same source are evicted (the sparse named-entity hit subsumes the semantic hit from the same document)
+
+### Reranking
+
+A sliding-window LLM reranker (`rerank_assemble`) takes the assembled Pool A + Pool B chunks and re-orders them. The reranker receives the `refine_facets` output as explicit context in its prompt, guiding it to prefer chunks covering multiple facets simultaneously and to penalize generic survey content that mentions a domain without engaging with the named entities.
+
+Score fusion: `final = prior_weight × rrf_score + (1 − prior_weight) × llm_score` with bounded movement (`rerank_max_movement`) to prevent large rank inversions from a single window judgment.
+
+### Pipeline IDs
+
+| Model ID | Description |
+|----------|-------------|
+| `rag-context` | Returns assembled context chunks (no answer generation) |
+| `rag-answer` | Context retrieval + grounded answer generation |
+| `rag-answer-deep` | Context retrieval + iterative refinement + answer generation |
+| `consult-*` | Domain-specialized consultation pipelines (researcher, architect, prompt-engineer) |
+
+Pipeline configuration: `pipelines/rag/rag_context_v1/rag-context-v1.yaml`
+
+---
 
 ## Supported Formats
 

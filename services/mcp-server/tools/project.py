@@ -114,8 +114,11 @@ def _git_tracked_files(directory: str = "") -> list[str]:
             timeout=10,
             env=env,
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        logger.warning("git ls-files unavailable: %s", e)
+    except FileNotFoundError:
+        logger.warning("git command not found or inaccessible.")
+        return []
+    except subprocess.TimeoutExpired as e:
+        logger.warning("git ls-files timed out: %s", e)
         return []
 
     if result.returncode != 0:
@@ -215,7 +218,10 @@ def register_project_tools(mcp: FastMCP) -> None:
         directory: str = "",
         max_results: int = 50,
     ) -> dict[str, list[dict[str, str | int]] | bool]:
-        """Search for a regex pattern across git-tracked project files.
+        """Search for an exact regex pattern across git-tracked project files.
+
+        This is literal/regex text search — use rag_search(scope="project")
+        for semantic search when you need meaning-based retrieval.
 
         Only files tracked by git are searched — .gitignore is respected.
         Binary files are skipped.
@@ -249,7 +255,8 @@ def register_project_tools(mcp: FastMCP) -> None:
             abs_path = resolved_root / rel_path
             try:
                 text = abs_path.read_text(encoding="utf-8", errors="replace")
-            except (OSError, PermissionError):
+            except (OSError, PermissionError) as e:
+                logger.warning("Failed to read file %s for search: %s", abs_path, e)
                 continue
 
             for line_num, line in enumerate(text.splitlines(), start=1):

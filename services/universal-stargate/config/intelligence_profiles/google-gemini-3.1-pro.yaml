@@ -1,0 +1,30 @@
+basename: gemini-3.1-pro
+full_model_id: google/gemini-3.1-pro
+source: cloud
+context_length: 1000000
+max_completion_tokens: 65536
+completion_cost: 10.0
+latency_bucket: medium
+cost_bucket: medium
+reasoning_depth: good
+tasks:
+  code_review:
+    score: good
+    evidence:
+      - source: benchmark
+        detail: "CursorBench 2026-03: 50.7% at $0.15/task — near Pareto frontier"
+  planning:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Inferred from CursorBench 50.7% + SWE-bench 80.6% (#3); no direct planning benchmark"
+  code_architecture:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Inferred from strong SWE-bench (80.6%) vs moderate CursorBench (50.7%); no direct architecture benchmark"
+  research:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Long context (1M) suggests research suitability; not benchmarked directly"

@@ -45,6 +45,7 @@ def rrf_merge(
 
     RRF score: score(chunk) = Σ 1/(k + rank_i + 1), summed across queries
     where rank_i is the 0-based position in query i's results.
+    k dampens the influence of lower ranks; higher k reduces rank sensitivity.
 
     Cosine distances from different queries are incomparable - RRF uses rank
     order only.
@@ -74,17 +75,25 @@ async def execute_single_query(
     recency_weight: float,
     scope: str | list[str] | None,
     source_prefixes: list[str] | None,
+    *,
+    sparse_only: bool = False,
 ) -> list[RetrievedChunk]:
-    """Execute one RAG search and parse results into chunks."""
+    """Execute one RAG search and parse results into chunks.
+
+    ∀ sparse_only=True: skip dense embedding; BM25/FTS5 only.
+    Use for OR-joined named-entity queries where dense embedding adds noise.
+    """
     body: dict[str, Any] = {
         "query": query,
         "top_k": top_k,
         "recency_weight": recency_weight,
     }
+    if sparse_only:
+        body["sparse_only"] = True
     if source_prefixes:
         body["source_prefixes"] = source_prefixes
     elif scope is not None:
-        body["scope"] = [scope] if isinstance(scope, str) else scope
+        body["scope"] = [scope] if isinstance(scope, str) else list(scope)
 
     response = await client.post(endpoint, json=body)
     response.raise_for_status()
@@ -191,15 +200,11 @@ async def expand_neighbors(
         )
         response.raise_for_status()
         data = response.json()
-    except (httpx.HTTPStatusError, httpx.RequestError):
-        logger.warning("expand_neighbors: /chunks_by_index call failed", exc_info=True)
-        return NeighborExpansionResult(
-            chunks=chunks,
-            scores=scores,
-            neighbors_added=0,
-            neighbors_fetched=0,
-            sources_expanded=len(groups),
+    except (httpx.HTTPStatusError, httpx.RequestError) as e:
+        logger.error(
+            "expand_neighbors: /chunks_by_index call failed: %s", e, exc_info=True
         )
+        raise
 
     raw_neighbors = data.get("chunks", [])
     neighbor_chunks: list[tuple[float, RetrievedChunk]] = []
@@ -207,22 +212,27 @@ async def expand_neighbors(
     for item in raw_neighbors:
         chunk_index = item.get("chunk_index")
         if chunk_index is None or not isinstance(chunk_index, int):
+            logger.warning("Missing or invalid chunk_index in neighbor item: %s", item)
+            continue
+        content = item.get("text")
+        source = item.get("source")
+        metadata = item.get("metadata")
+        if not content or not source or not metadata:
             logger.warning(
-                "Missing or invalid chunk_index in neighbor item: %s", item
+                "Missing required fields (text, source, metadata) in neighbor item: %s",
+                item,
             )
             continue
         rc = RetrievedChunk(
-            content=item["text"],
-            source=item["source"],
-            indexed_at=str(item["metadata"].get("indexed_at", "unknown")),
-            metadata=item["metadata"],
+            content=content,
+            source=source,
+            indexed_at=str(metadata.get("indexed_at", "unknown")),
+            metadata=metadata,
         )
         if rc.content_hash in existing_hashes:
             continue
         existing_hashes.add(rc.content_hash)
-        parent_score = neighbor_parent_scores.get(
-            (item["source"], chunk_index), 0.0
-        )
+        parent_score = neighbor_parent_scores.get((item["source"], chunk_index), 0.0)
         discounted = parent_score * score_discount
         neighbor_chunks.append((discounted, rc))
 

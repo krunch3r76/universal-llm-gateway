@@ -1,38 +1,30 @@
-# Curated intelligence profiles for strong planning + architecture models.
-#
-# These models are explicitly preferred for planning, code_architecture,
-# and code_review tasks. Without curation the deriver assigns planning:good to
-# any model with "thinking" in its name (e.g. vision-language models), which
-# produces poor selections for text planning work.
-#
-# Score vocabulary: strong | good | neutral | weak | exclude
-
-# --- Anthropic ---
-
 basename: claude-sonnet-4
 full_model_id: anthropic/claude-sonnet-4
 source: cloud
+context_length: 200000
+max_completion_tokens: 16384
+completion_cost: 15.0
 latency_bucket: medium
 cost_bucket: medium
-reasoning_depth: strong
+reasoning_depth: good
 tasks:
-  planning:
-    score: strong
-    evidence:
-      - source: curated
-        detail: Strong instruction following and structured planning output
-  code_architecture:
-    score: strong
-    evidence:
-      - source: curated
-        detail: Excellent system design reasoning across large codebases
   code_review:
-    score: strong
+    score: neutral
+    evidence:
+      - source: benchmark
+        detail: "CursorBench 2026-03: Sonnet 4.5 37.9% (#10/11) at $0.18/task"
+  planning:
+    score: neutral
     evidence:
       - source: curated
-        detail: Precise bug identification and fix suggestions
+        detail: "SWE-bench 77.2% (#6) but catastrophic CursorBench drop to 37.9% (#10); planning quality uncertain"
+  code_architecture:
+    score: neutral
+    evidence:
+      - source: curated
+        detail: "SWE-bench/CursorBench divergence too large to infer architecture quality with confidence"
   research:
-    score: good
+    score: neutral
     evidence:
       - source: curated
-        detail: Strong synthesis and grounded analysis
+        detail: "Outperformed by GPT and Gemini alternatives at similar cost; quality uncertain"

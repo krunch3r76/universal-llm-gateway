@@ -9,6 +9,7 @@ models:
     profile: qwen3-5-instruct-reasoning
   qwen3_32b:
     model: qwen3-32b-awq-32768
+    profile: qwen3-instruct
   gpt-oss:
     model: gpt-oss-20b-mxfp4-65536
   qwen3_14b:

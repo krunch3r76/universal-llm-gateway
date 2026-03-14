@@ -55,6 +55,9 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         plus execution metadata. Use query_observability with
         operation='pipeline-trace' for detailed step-by-step traces.
 
+        Pipeline YAML, prompts, and model configs hot-reload on file
+        change (~2s debounce) — no service restart needed between runs.
+
         Args:
             pipeline: Pipeline ID (e.g. 'consensus', 'rag-context').
             messages: Chat messages in OpenAI format.

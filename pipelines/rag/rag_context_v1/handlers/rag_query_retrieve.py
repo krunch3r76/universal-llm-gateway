@@ -182,6 +182,36 @@ class RagMultiRetrieveHandler(BaseHandler):
             hyde_data_raw if isinstance(hyde_data_raw, dict) else {}
         )
         hyde_result_valid = _is_valid_step_result(hyde_result)
+
+        # Optional: per-facet OR-term queries for sparse-only pool B.
+        # ∀ facet ∈ facet_result: terms OR-joined → FTS5 exact-match recall for
+        # named systems/standards that AND-semantics rewrites miss entirely.
+        facet_pool: list[tuple[str, str]] = []  # (facet_label, or_query)
+        if step.handler_inputs and "facet_result" in step.handler_inputs:
+            try:
+                facet_raw = self._resolve_input(
+                    resolver, step, "facet_result", step.handler_inputs
+                )
+                if isinstance(facet_raw, list):
+                    for facet in facet_raw:
+                        if not isinstance(facet, dict):
+                            continue
+                        label = str(facet.get("label", ""))
+                        terms = [
+                            t
+                            for t in facet.get("terms", [])
+                            if isinstance(t, str) and t.strip()
+                        ]
+                        if not terms:
+                            continue
+                        fts_terms = [f'"{t}"' if " " in t else t for t in terms]
+                        facet_pool.append((label, " OR ".join(fts_terms)))
+            except Exception:
+                logger.warning(
+                    "Step '%s': failed to resolve facet_result, skipping pool B",
+                    step.id,
+                    exc_info=True,
+                )
         raw_scopes = scope_data.get("scopes") or scope_data.get("scope", "all")
         if isinstance(raw_scopes, list):
             predicted_scopes = [
@@ -600,6 +630,13 @@ class RagMultiRetrieveHandler(BaseHandler):
         _retrieval_start = _time.monotonic()
         chunk_scope_by_hash: dict[str, str] = {}
         chunk_all_scopes: dict[str, set[str]] = {}
+        facet_chunk_hashes: set[str] = set()  # hashes sourced from pool B OR queries
+
+        # Pool B top_k: smaller than pool A to avoid flooding RRF with sparse hits.
+        try:
+            facet_top_k = int(effective.get("facet_pool_top_k", 5))
+        except (TypeError, ValueError):
+            facet_top_k = 5
 
         async with make_async_client(base_url, timeout=rag_timeout) as client:
             results_per_query: list[list[_RetrievedChunk] | BaseException]
@@ -624,6 +661,33 @@ class RagMultiRetrieveHandler(BaseHandler):
                                 None,
                             )
                         )
+                # Pool B: per-facet OR-term sparse-only queries.
+                # Appended after pool A; results map to q_idx >= len(queries).
+                facet_q_offset = len(queries)
+                for f_idx, (facet_label, or_query) in enumerate(facet_pool):
+                    for scoped_label in search_scope:
+                        task_specs.append((facet_q_offset + f_idx, scoped_label))
+                        tasks.append(
+                            _execute_single_query(
+                                client,
+                                api_path,
+                                or_query,
+                                facet_top_k,
+                                recency_weight,
+                                scoped_label,
+                                None,
+                                sparse_only=True,
+                            )
+                        )
+                if facet_pool:
+                    logger.info(
+                        "Step '%s': pool B — %d facet sparse queries (top_k=%d): %s",
+                        step.id,
+                        len(facet_pool),
+                        facet_top_k,
+                        [label for label, _ in facet_pool],
+                    )
+
                 task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
                 per_query_chunks: dict[int, list[_RetrievedChunk]] = {}
@@ -641,8 +705,9 @@ class RagMultiRetrieveHandler(BaseHandler):
                         )
                     per_query_chunks.setdefault(q_idx, []).extend(result)
 
+                total_q_count = len(queries) + len(facet_pool)
                 results_per_query = []
-                for q_idx in range(len(queries)):
+                for q_idx in range(total_q_count):
                     if q_idx in per_query_chunks:
                         raw = per_query_chunks[q_idx]
                         seen: set[str] = set()
@@ -651,6 +716,9 @@ class RagMultiRetrieveHandler(BaseHandler):
                             if chunk.content_hash not in seen:
                                 seen.add(chunk.content_hash)
                                 deduped.append(chunk)
+                                # ∀ q_idx ≥ facet_q_offset → pool B hit
+                                if q_idx >= facet_q_offset:
+                                    facet_chunk_hashes.add(chunk.content_hash)
                         results_per_query.append(deduped)
                     elif q_idx in per_query_errors:
                         results_per_query.append(per_query_errors[q_idx])
@@ -669,7 +737,37 @@ class RagMultiRetrieveHandler(BaseHandler):
                     )
                     for q in queries
                 ]
+                # Pool B: per-facet OR-term sparse-only queries.
+                if facet_pool:
+                    logger.info(
+                        "Step '%s': pool B — %d facet sparse queries (top_k=%d): %s",
+                        step.id,
+                        len(facet_pool),
+                        facet_top_k,
+                        [label for label, _ in facet_pool],
+                    )
+                    for _facet_label, or_query in facet_pool:
+                        tasks.append(
+                            _execute_single_query(
+                                client,
+                                api_path,
+                                or_query,
+                                facet_top_k,
+                                recency_weight,
+                                search_scope,
+                                source_prefixes,
+                                sparse_only=True,
+                            )
+                        )
                 results_per_query = await asyncio.gather(*tasks, return_exceptions=True)
+                # Collect pool B hashes: last len(facet_pool) results in the list.
+                pool_b_start = len(queries)
+                for i, result in enumerate(
+                    results_per_query[pool_b_start:], pool_b_start
+                ):
+                    if not isinstance(result, BaseException):
+                        for chunk in result:
+                            facet_chunk_hashes.add(chunk.content_hash)
 
         successful: list[list[_RetrievedChunk]] = []
         for i, result in enumerate(results_per_query):
@@ -687,7 +785,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                     pipeline_id=context.pipeline.id,
                     execution_id=context.execution_id,
                     step_name=step.name,
-                    error=f"all {len(queries)} queries failed",
+                    error=f"all {len(queries) + len(facet_pool)} queries failed",
                     total_retrieval_seconds=_retrieval_seconds,
                 ),
             )
@@ -897,6 +995,79 @@ class RagMultiRetrieveHandler(BaseHandler):
         merged = boost_result.chunks
         merged_scores = boost_result.scores
 
+        # Pool B score boost with source habituation:
+        # - First pool B hit per source: full boost (signal detected)
+        # - Subsequent hits from same source: inhibited by 1/boost (lateral inhibition)
+        # ∀ source: chunks ranked by current score; first *= boost, rest *= 1/boost
+        # Prevents any single source from monopolising boosted slots via repeated hits.
+        facet_pool_score_boost = float(effective.get("facet_pool_score_boost", 1.5))
+        if facet_chunk_hashes and facet_pool_score_boost != 1.0:
+            # Group pool B chunks by source, sorted descending by current score.
+            facet_by_source: dict[str, list[str]] = {}
+            for c in merged:
+                if c.content_hash in facet_chunk_hashes:
+                    facet_by_source.setdefault(c.source, []).append(c.content_hash)
+            for source_hashes in facet_by_source.values():
+                source_hashes.sort(
+                    key=lambda h: merged_scores.get(h, 0.0), reverse=True
+                )
+                for n, h in enumerate(source_hashes):
+                    if h not in merged_scores:
+                        continue
+                    # n=0 → boost; n≥1 → inhibit (sensory habituation)
+                    multiplier = (
+                        facet_pool_score_boost
+                        if n == 0
+                        else (1.0 / facet_pool_score_boost)
+                    )
+                    merged_scores[h] = merged_scores[h] * multiplier
+            merged.sort(
+                key=lambda c: merged_scores.get(c.content_hash, 0.0), reverse=True
+            )
+
+        # Global source habituation: apply the same diminishing-returns inhibition
+        # to ALL chunks grouped by source — pool A included.
+        # After the first (highest-scored) chunk from any source is seen, the system
+        # has received that source's signal; subsequent chunks carry less new information.
+        # ∀ source: nth chunk (n≥1, 0-indexed) → score *= (1/factor)^n
+        source_habituation_factor = float(
+            effective.get("source_habituation_factor", facet_pool_score_boost)
+        )
+        if source_habituation_factor != 1.0:
+            source_seen: dict[str, int] = {}  # source → count of chunks seen so far
+            for c in merged:  # already sorted descending by score
+                n = source_seen.get(c.source, 0)
+                if n > 0 and c.content_hash in merged_scores:
+                    merged_scores[c.content_hash] /= source_habituation_factor**n
+                source_seen[c.source] = n + 1
+            merged.sort(
+                key=lambda c: merged_scores.get(c.content_hash, 0.0), reverse=True
+            )
+
+        # Pool B swap: for any source that has a pool B hit, drop all pool A chunks
+        # from that source. The named-entity chunk already implies the semantics;
+        # the dense duplicate adds noise and wastes context budget.
+        # ∀ pool_a_chunk ∈ merged: source ∈ facet_sources → remove
+        facet_pool_swap_enabled = bool(effective.get("facet_pool_swap_enabled", True))
+        if facet_pool_swap_enabled and facet_chunk_hashes:
+            facet_sources: set[str] = {
+                c.source for c in merged if c.content_hash in facet_chunk_hashes
+            }
+            swapped_out: set[str] = {
+                c.content_hash
+                for c in merged
+                if c.content_hash not in facet_chunk_hashes
+                and c.source in facet_sources
+            }
+            if swapped_out:
+                merged = [c for c in merged if c.content_hash not in swapped_out]
+                logger.info(
+                    "Step '%s': pool B swap — evicted %d pool A chunks from %d sources",
+                    step.id,
+                    len(swapped_out),
+                    len(facet_sources),
+                )
+
         if coverage_enabled:
             self._publish_bus_event(
                 context,
@@ -997,11 +1168,12 @@ class RagMultiRetrieveHandler(BaseHandler):
             raw=context_text,
             json={
                 "chunks_found": len(merged),
-                "queries_executed": len(queries),
+                "queries_executed": len(queries) + len(facet_pool),
                 "queries_succeeded": len(successful),
                 "raw_chunks_total": total_raw,
                 "scope": scope,
                 "rewritten_queries": queries,
+                "facet_pool_queries": [q for _, q in facet_pool] or None,
                 "chunks": chunk_dicts,
                 "effective_params": {
                     "top_k_per_query": top_k,

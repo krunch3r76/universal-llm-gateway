@@ -7,6 +7,4 @@ PIPELINE_TEST_HEADERS: dict[str, str] = {
     "X-Skip-Token-Counting": "true",
 }
 
-PIPELINE_TEST_PARAMS: dict[str, str] = {
-    "disable_profile": "true",
-}
+PIPELINE_TEST_PARAMS: dict[str, str] = {}

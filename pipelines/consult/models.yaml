@@ -1,5 +1,5 @@
 models:
   consult_model:
-    model: google/gemini-2.5-flash
+    model: openai/gpt-5.4
   review_model:
-    model: anthropic/claude-sonnet-4
+    model: openai/gpt-5.3-codex

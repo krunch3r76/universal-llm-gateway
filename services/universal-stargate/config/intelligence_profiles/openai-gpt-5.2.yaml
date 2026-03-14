@@ -1,0 +1,30 @@
+basename: gpt-5.2
+full_model_id: openai/gpt-5.2
+source: cloud
+context_length: 200000
+max_completion_tokens: 65536
+completion_cost: 14.0
+latency_bucket: medium
+cost_bucket: medium
+reasoning_depth: strong
+tasks:
+  code_review:
+    score: good
+    evidence:
+      - source: benchmark
+        detail: "CursorBench 2026-03: 56.5% (high) #4 at $0.22/task"
+  planning:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Inferred from CursorBench #4; no direct planning benchmark"
+  code_architecture:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Inferred from CursorBench 56.5% + SWE-bench 80.0%; no direct architecture benchmark"
+  research:
+    score: good
+    evidence:
+      - source: curated
+        detail: "General reasoning model; research suitability inferred, not benchmarked"

@@ -4,7 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, model_validator
 
-RECENCY_DECAY_LAMBDA = 0.01  # half-life ~= 69 days
+# Decay constant for recency scoring; half-life ≈ 69 days.
+RECENCY_DECAY_LAMBDA = 0.01
 
 
 class SearchRequest(BaseModel):
@@ -16,6 +17,9 @@ class SearchRequest(BaseModel):
     max_distance: float | None = None  # None = return all (backward compat)
     source_prefixes: list[str] | None = None
     scope: str | list[str] | None = None
+    # ∀ sparse_only=True: skip dense embedding + collection.query(); BM25 sidecar only.
+    # Use for OR-joined named-entity queries where dense embedding adds noise.
+    sparse_only: bool = False
 
     @model_validator(mode="after")
     def check_scope_source_prefixes_exclusive(self) -> SearchRequest:

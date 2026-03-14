@@ -68,19 +68,58 @@ prompts:
          retrieval query. A single-topic query has one facet.
       2. For each facet:
          - Assign a short snake_case label (e.g. schema_design, provenance_tracking).
-         - Select 2–5 terms from the vocabulary provided below that are most
-           likely to appear in documents relevant to that facet.
+         - Select 2–5 terms from the FULL vocabulary block in the user message.
+           The block has two parts: a flat summary line and per-register lists
+           ([scope] academic: ... | practitioner: ... | specification: ...).
+           Both parts are valid selection sources — prefer per-register terms
+           that are specific to the facet's domain.
          - Only use terms present in the provided vocabulary. Do not invent terms.
-         - Prefer specification-tier terms first, then academic, then practitioner.
+         - Prefer terms that are maximally specific to the query's named subject
+           (e.g. for a personal knowledge base query, prefer terms from
+           knowledge_systems or semantic desktop vocabulary over generic KG terms).
+         - Prefer human-readable keyword phrases over IRI-format terms (terms
+           containing a colon, e.g. prov:wasderivedfrom, nie:dataobject). IRIs
+           are poor dense-retrieval anchors — they rarely appear verbatim in
+           indexed text. Include at most one IRI per facet; fill remaining slots
+           with plain-English academic or practitioner terms.
+         - Among plain-English terms: prefer specification-referenced concepts
+           first, then academic, then practitioner.
       3. Assign each term to the best-fit facet. Do not repeat a term across facets.
     template: |
       Query: {text}
 
-      Scope-specific vocabulary (select from this list only):
+      Full scope vocabulary (select terms from anywhere in this block —
+      both the flat summary line and the per-register lists are valid):
       {corpus_hints}
 
-      Additional candidate terms (use only if not already covered above):
+      Additional candidate terms (supplement only if the above lacks coverage):
       {suggested_terms}
+
+  refine_facets:
+    description: "Second prediction pass: deepen facet terms from parametric knowledge given first-pass facets"
+    system_prompt: |
+      # Refine Retrieval Facets (Second Pass)
+      You receive first-pass retrieval facets grounded in an indexed corpus vocabulary.
+      Your job is a second prediction pass: reason from those facets to surface
+      deeper or more specific terms from your parametric knowledge that are likely
+      to appear in relevant technical documents.
+      Return valid JSON only with one key: facets.
+
+      Required behavior:
+      1. Keep the same facet labels from the input.
+      2. For each facet: look at its existing terms, reason about what domain they
+         represent, and replace generic terms with more specific ones you know
+         belong to that domain (e.g. named systems, standards, frameworks, authors).
+      3. Deduplicate terms within each facet (case-insensitive) and across facets.
+      4. Keep 3–5 terms per facet.
+      5. IRI cap: ≤1 IRI-format term per facet. Prefer plain-English terms.
+      6. Add one new facet only if the query clearly implies a sub-topic not
+         covered by any existing facet.
+    template: |
+      Query: {text}
+
+      First-pass facets (corpus-grounded):
+      {corpus_facets}
 
   generate_rewrites:
     description: "Generate retrieval rewrites with dynamic strategy injection"
@@ -167,16 +206,34 @@ prompts:
     system_prompt: |
       # Rerank Context Chunks
       You are reranking candidate context chunks for a retrieval-augmented generation system.
-      Rank chunks by how useful they are for answering the query.
+      Rank chunks by how useful they are for answering this exact query.
 
       Criteria, in order of importance:
-      1. Direct relevance to the query intent
-      2. Presence of concrete facts, definitions, or evidence useful for answering
-      3. Prefer chunks that add new useful information over redundant ones
-      4. Do NOT overvalue chunks just because they list many entities or topics
-      5. Prefer text evidence over superficial keyword overlap
+      1. FACET COVERAGE: The query has been decomposed into named facets (provided below).
+         Strongly prefer chunks that address terms from MULTIPLE facets simultaneously.
+         A chunk matching only one facet is weaker than one that bridges two or more.
+      2. SPECIFICITY OVER BREADTH: If the query names a specific system, architecture,
+         standard, or technology, strongly penalize generic survey papers, broad
+         introductions, and overview articles — even if they mention the same general
+         domain. Prefer documents that engage directly with the named subject.
+      3. TERM MATCHING: Strongly prefer chunks that explicitly reference the proper nouns,
+         acronyms, and technical terms listed in the facets below. Demote chunks that
+         only discuss the broader field without mentioning those terms.
+      4. CONTEXT FIT: If the query asks about a personal or user-centric variant of a
+         technology (e.g. personal knowledge base, personal data store), demote chunks
+         about the enterprise or general-purpose variant unless they directly address the
+         personal case.
+      5. Direct relevance: the chunk must address what the user is specifically asking.
+      6. Concrete evidence: prefer facts, definitions, schemas, algorithms, or
+         implementation details over high-level descriptions.
+      7. Information gain: prefer chunks that add new information over redundant ones.
+      8. Do NOT overvalue chunks that merely list many entities or topics.
+      9. Prefer text evidence over superficial keyword overlap.
     template: |
       Query: {text}
+
+      Retrieval facets (terms the query requires — prefer chunks matching multiple facets):
+      {rerank_facets}
 
       Candidate chunks:
       {rerank_candidates}

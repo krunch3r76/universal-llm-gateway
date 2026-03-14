@@ -84,13 +84,20 @@ def _handle_pipeline_error(
         error_type = str(exc)
         log_message = f"Pipeline request error: {exc}"
 
-    logger.warning(log_message)
+    logger.warning(log_message, exc_info=True)
     record("mcp.rag.pipeline.failed", pipeline=pipeline, error=error_type, **extra)
     return {"error": user_message}
 
 
 def _extract_content(response: dict[str, Any]) -> str:
-    """Extract message content from an OpenAI-format chat completions response."""
+    """Extract message content from an OpenAI-format chat completions response.
+
+    Args:
+        response: Raw dict from the chat completions API.
+
+    Returns:
+        Content string from the first choice's message, or empty string if absent.
+    """
     choices = response.get("choices", [])
     if not choices:
         return ""
@@ -205,16 +212,18 @@ def register_rag_tools(mcp: FastMCP) -> None:
         top_k: int = 20,
         scope: str | list[str] | None = None,
     ) -> dict[str, str]:
-        """Search the knowledge base using the full RAG pipeline.
+        """Search the knowledge base and return raw context chunks.
+
+        Returns assembled context with source labels for the agent to
+        reason over. Prefer this over rag_answer when exploring a topic,
+        gathering evidence for broader analysis, or when the question is
+        open-ended. Use rag_answer instead when a direct synthesized
+        answer is sufficient.
 
         Uses multi-query rewriting, reciprocal rank fusion, entity/relation
-        merging, and property index boost — significantly richer than raw
-        vector search.
+        merging, and property index boost.
 
-        Available scopes: "project", "research", "research_small_llm",
-        "all_research", "rag_systems", "code_retrieval", "workflows",
-        "graph_modeling", "temporal_provenance", "belief_consistency",
-        "knowledge_systems", "both", "all".
+        Call rag_list_scopes() for the current set of valid scope names.
 
         Args:
             query: Natural language search query.
@@ -274,6 +283,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 pipeline="rag-context",
                 duration_s=round(duration, 3),
                 empty=True,
+                query=query,
+                scope=scope,
             )
             return {"error": "Pipeline returned empty results."}
 
@@ -298,19 +309,21 @@ def register_rag_tools(mcp: FastMCP) -> None:
         scope: str | list[str] | None = None,
         deep: bool = False,
     ) -> dict[str, str]:
-        """Ask a question and get a grounded answer from the knowledge base.
+        """Ask a specific question and get a grounded, synthesized answer.
 
-        Uses the full RAG pipeline: query rewriting, multi-query retrieval,
-        RRF merge, relevance gate, and answer generation. The answer is
-        grounded in retrieved context — not hallucinated.
+        Prefer this over rag_search for direct factual or technical
+        questions where a synthesized answer is the end goal. Use
+        rag_search instead when you need raw context chunks to weave
+        into broader reasoning or combine with non-RAG context.
 
-        Set deep=True for complex multi-faceted questions that benefit from
-        iterative retrieval (up to 2 gap-filling passes).
+        Has a relevance gate: returns empty if retrieved context doesn't
+        directly address the question. Fall back to rag_search if this
+        returns empty — it always returns whatever matches.
 
-        Available scopes: "project", "research", "research_small_llm",
-        "all_research", "rag_systems", "code_retrieval", "workflows",
-        "graph_modeling", "temporal_provenance", "belief_consistency",
-        "knowledge_systems", "both", "all".
+        Set deep=True for complex multi-faceted questions that benefit
+        from iterative retrieval (up to 2 gap-filling passes).
+
+        Call rag_list_scopes() for the current set of valid scope names.
 
         Args:
             question: Natural language question.
@@ -372,6 +385,9 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 pipeline=pipeline,
                 duration_s=round(duration, 3),
                 empty=True,
+                query=question,
+                scope=scope,
+                deep=deep,
             )
             return {"error": "Pipeline returned empty results."}
 

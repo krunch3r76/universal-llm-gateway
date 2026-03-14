@@ -68,6 +68,31 @@ class RagRerankAssembleHandler(BaseHandler):
             )
             chunks_data = []
 
+        # Optional facets from refine_facets — formatted as compact label: terms lines
+        # so the reranker can weight chunks that match ALL facet dimensions higher.
+        rerank_facets: str = ""
+        if step.handler_inputs and "facet_result" in step.handler_inputs:
+            try:
+                facet_raw = self._resolve_input(
+                    resolver, step, "facet_result", step.handler_inputs
+                )
+                if isinstance(facet_raw, list):
+                    lines = []
+                    for facet in facet_raw:
+                        if not isinstance(facet, dict):
+                            continue
+                        label = str(facet.get("label", "")).replace("_", " ")
+                        terms = [str(t) for t in facet.get("terms", []) if t]
+                        if terms:
+                            lines.append(f"  {label}: {', '.join(terms)}")
+                    rerank_facets = "\n".join(lines)
+            except Exception:
+                logger.warning(
+                    "Step '%s': failed to resolve facet_result for reranking",
+                    step.id,
+                    exc_info=True,
+                )
+
         effective = context.options
         rerank_enabled = bool(effective.get("rerank_enabled", False))
 
@@ -101,6 +126,7 @@ class RagRerankAssembleHandler(BaseHandler):
             max_candidates=int(effective.get("rerank_max_candidates", 14)),
             max_movement=int(effective.get("rerank_max_movement", 3)),
             prior_weight=float(effective.get("rerank_prior_weight", 0.70)),
+            rerank_facets=rerank_facets,
         )
 
     async def _execute_rerank(
@@ -114,6 +140,7 @@ class RagRerankAssembleHandler(BaseHandler):
         max_candidates: int,
         max_movement: int,
         prior_weight: float,
+        rerank_facets: str = "",
     ) -> StepOutput:
         """Run sliding-window LLM reranking, fuse scores, format context."""
         _start = _time.monotonic()
@@ -143,22 +170,30 @@ class RagRerankAssembleHandler(BaseHandler):
                 "text": context.source_text,
                 **context.options,
                 "rerank_candidates": candidates_text,
+                "rerank_facets": rerank_facets,
             }
 
             rendered = self._render_prompt(step.prompt_ref, template_ctx, context)
 
-            call_result = await self._call_model(
-                model_id,
-                rendered.user_prompt,
-                step,
-                context,
-                rendered.system_prompt,
-                temperature=step.generation_parameters.get("temperature", 0.2),
-                max_tokens=step.generation_parameters.get("max_tokens", 512),
-                json_schema=json_schema,
-                call_label=f"rerank_w{w_idx}",
-                model_id_is_resolved=True,
-            )
+            try:
+                call_result = await self._call_model(
+                    model_id,
+                    rendered.user_prompt,
+                    step,
+                    context,
+                    rendered.system_prompt,
+                    temperature=step.generation_parameters.get("temperature", 0.2),
+                    max_tokens=step.generation_parameters.get("max_tokens", 512),
+                    json_schema=json_schema,
+                    call_label=f"rerank_w{w_idx}",
+                    model_id_is_resolved=True,
+                )
+            except Exception as e:
+                logger.error(
+                    "rerank window %d LLM call failed: %s", w_idx, e, exc_info=True
+                )
+                window_rankings.append({"ranking": []})
+                continue
 
             try:
                 parsed = json.loads(call_result.content)
@@ -173,7 +208,7 @@ class RagRerankAssembleHandler(BaseHandler):
             window_rankings, windows, chunk_ids
         )
 
-        max_prior = max((c["score"] for c in candidates), default=1.0) or 1.0
+        max_prior = max(1.0, max((c["score"] for c in candidates), default=0.0))
         max_llm = max(llm_scores.values(), default=1.0) or 1.0
 
         final_scores: dict[str, float] = {}
@@ -237,6 +272,7 @@ class RagRerankAssembleHandler(BaseHandler):
         max_move: int,
         seconds: float,
     ) -> None:
+        """Emit RagRerankCompleted to the event bus for observability."""
         self._publish_bus_event(
             context,
             RagRerankCompleted(

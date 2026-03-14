@@ -87,9 +87,11 @@ def _get_session_start_ts() -> int | None:
 
 def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
     """POST to event service query endpoint over UDS."""
-    transport = httpx.HTTPTransport(uds=_QUERY_SOCKET)
     try:
-        with httpx.Client(transport=transport, timeout=_QUERY_TIMEOUT) as client:
+        with httpx.Client(
+            transport=httpx.HTTPTransport(uds=_QUERY_SOCKET),
+            timeout=_QUERY_TIMEOUT,
+        ) as client:
             resp = client.post("http://localhost/v1/query", json=body)
             resp.raise_for_status()
             return resp.json()
@@ -110,9 +112,12 @@ def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
         return {"error": f"Event service not reachable: {e}"}
     except httpx.HTTPStatusError as e:
         logger.error(
-            "Event service returned error status: %s", e.response.status_code, exc_info=True
+            "Event service returned error status: %s, response: %s",
+            e.response.status_code,
+            e.response.text,
+            exc_info=True,
         )
-        return {"error": f"Event service error: {e.response.status_code}"}
+        return {"error": f"Event service error: {e.response.status_code} - {e.response.text}"}
     except Exception as e:
         logger.error("Event query failed: %s", e, exc_info=True)
         return {"error": f"Event query failed: {e}"}
@@ -130,7 +135,10 @@ def register_event_tools(mcp: FastMCP) -> None:
 
         Single entry point for all event service operations. Use
         operation='operations' to discover available operations and
-        their parameters.
+        their detailed parameter schemas.
+
+        Default time window: since last Stargate restart (session-scoped).
+        Override with since_ts or minutes params where supported.
 
         Operations:
           recent-failures    — Failures/errors since last Stargate restart (override: since_ts param)
@@ -172,12 +180,12 @@ def register_event_tools(mcp: FastMCP) -> None:
             body: dict[str, Any] = {"type": "operations"}
             result = _query_event_service(body)
         elif operation == "raw_sql":
-            p = params or {}
+            params_dict = params or {}
             body = {
                 "type": "sql",
-                "sql": p.get("sql", ""),
-                "params": p.get("params", []),
-                "limit": p.get("limit", 100),
+                "sql": params_dict.get("sql", ""),
+                "params": params_dict.get("params", []),
+                "limit": params_dict.get("limit", 100),
             }
             result = _query_event_service(body)
         elif operation == "stack-last-started":
@@ -218,24 +226,20 @@ def register_event_tools(mcp: FastMCP) -> None:
             since_ts = int(since_ts_raw) if since_ts_raw is not None else None
             if since_ts is None:
                 since_ts = _get_session_start_ts()
+            sql_where = ["(signal LIKE '%.failed' OR signal LIKE '%.error')"]
+            sql_params: list[Any] = []
             if since_ts is not None:
-                result = _query_event_service(
-                    {
-                        "type": "sql",
-                        "sql": (
-                            "SELECT * FROM events "
-                            "WHERE (signal LIKE '%.failed' OR signal LIKE '%.error') "
-                            "AND ts_unix_ms >= ? "
-                            "ORDER BY ts_unix_ms DESC LIMIT ?"
-                        ),
-                        "params": [since_ts, limit],
-                        "limit": limit,
-                    }
-                )
-            else:
-                result = _query_event_service(
-                    {"type": "operation", "name": "recent-failures", "params": p}
-                )
+                sql_where.append("ts_unix_ms >= ?")
+                sql_params.append(since_ts)
+            sql_params.append(limit)
+            sql = (
+                "SELECT * FROM events WHERE "
+                + " AND ".join(sql_where)
+                + " ORDER BY ts_unix_ms DESC LIMIT ?"
+            )
+            result = _query_event_service(
+                {"type": "sql", "sql": sql, "params": sql_params, "limit": limit}
+            )
         elif operation == "noise-profile":
             p = params or {}
             minutes_raw = p.get("minutes")

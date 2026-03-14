@@ -24,6 +24,18 @@ _STARGATE_URL = os.environ.get("STARGATE_URL", "http://host.docker.internal:9999
 _CONSULT_TIMEOUT = 300.0
 _CONSULT_PIPELINE = "consult-prompt-engineer"
 
+# Available consult pipeline variants:
+#   consult-prompt-engineer  — prompt/model output issues (code_review task, Devstral tier)
+#   consult-architect        — system/retrieval architecture (strong_planner, excludes weak_grounding)
+#   consult-researcher       — research/literature questions (general+reasoning, 128k ctx)
+#   consult-planner          — planning/workflow questions
+_CONSULT_PIPELINES = {
+    "prompt-engineer": "consult-prompt-engineer",
+    "architect": "consult-architect",
+    "researcher": "consult-researcher",
+    "planner": "consult-planner",
+}
+
 _QUERY_SOCKET = os.environ.get(
     "EVENT_QUERY_SOCKET", "/tmp/universal-protocol/events-query.sock"
 )
@@ -31,13 +43,19 @@ _QUERY_SOCKET = os.environ.get(
 
 def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
     """POST to event service query endpoint over UDS."""
-    transport = httpx.HTTPTransport(uds=_QUERY_SOCKET)
     try:
-        with httpx.Client(transport=transport, timeout=10.0) as client:
+        with httpx.Client(
+            transport=httpx.HTTPTransport(uds=_QUERY_SOCKET),
+            timeout=10.0,
+        ) as client:
             resp = client.post("http://localhost/v1/query", json=body)
             resp.raise_for_status()
             return resp.json()
+    except httpx.RequestError as e:
+        logger.error("Event service request failed: %s", e, exc_info=True)
+        return {"error": f"Event service request failed: {e}"}
     except Exception as e:
+        logger.error("Event service query failed: %s", e, exc_info=True)
         return {"error": f"Event service query failed: {e}"}
 
 
@@ -77,7 +95,10 @@ def _extract_step_metadata(execution_id: str, step_name: str) -> dict[str, Any]:
             payload = (
                 json.loads(payload_raw) if isinstance(payload_raw, str) else payload_raw
             )
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning(
+                "Failed to parse event payload: %s, raw: %.200s", e, payload_raw
+            )
             continue
 
         if payload.get("step_name") != step_name:
@@ -102,9 +123,9 @@ def _extract_step_metadata(execution_id: str, step_name: str) -> dict[str, Any]:
 def _detect_scope(model_id: str | None) -> str:
     """Auto-detect RAG scope from model tier.
 
-    Cloud models ("/" in ID) → research (frontier prompting research).
-    Local models → research_small_llm (small model prompting techniques).
-    Unknown → research (broader coverage).
+    Models with '/' in their ID (e.g. cloud) → research (frontier prompting).
+    Local models (no '/' in ID) → research_small_llm (small model techniques).
+    If model_id is None → research (broader coverage).
     """
     if model_id is None:
         return "research"
@@ -122,17 +143,21 @@ def register_pipeline_consult_tools(mcp: FastMCP) -> None:
         step_name: str,
         problem: str,
         scope: str | None = None,
+        pipeline: str | None = None,
     ) -> dict[str, Any]:
-        """Get expert prompt-engineering advice for a pipeline step.
+        """Get RAG-grounded expert advice from a frontier model.
+
+        Default variant (prompt-engineer) analyzes pipeline step issues.
+        Other variants handle system architecture, research questions,
+        and planning — not limited to pipeline steps.
 
         Queries the execution trace for step metadata, auto-detects the
-        RAG scope from the model tier, and runs the consult-prompt-engineer
-        pipeline via Stargate with RAG-grounded research.
+        RAG scope from the model tier, and runs a consult pipeline via
+        Stargate with grounded research context.
 
         The 'problem' field should include as much context as possible:
-        the step's prompt text, model output, and a description of what's
-        wrong. Use query_observability and refine-context CLI to gather
-        this context before calling.
+        prompt text, model output, and a description of what's wrong
+        or what you need advice on.
 
         Args:
             execution_id: Pipeline execution ID (from pipeline_run result).
@@ -141,6 +166,14 @@ def register_pipeline_consult_tools(mcp: FastMCP) -> None:
                      prompt text and model output excerpts.
             scope: Override auto-detected RAG scope (e.g. 'research',
                    'research_small_llm', 'workflows').
+            pipeline: Consult pipeline variant to use. One of:
+                      'prompt-engineer' (default) — prompt/output issues,
+                        code_review task, routes to code-focused models;
+                      'architect' — system/retrieval architecture questions,
+                        strong_planner models, excludes weak_grounding;
+                      'researcher' — research/literature questions,
+                        general+reasoning models, 128k context;
+                      'planner' — planning/workflow questions.
 
         Returns:
             On success: {"advice": "...", "scope_used": "...", "model": "...",
@@ -152,6 +185,13 @@ def register_pipeline_consult_tools(mcp: FastMCP) -> None:
             "mcp.pipeline.consult.called",
             execution_id=execution_id,
             step_name=step_name,
+            pipeline=pipeline or "prompt-engineer",
+        )
+
+        consult_pipeline = (
+            _CONSULT_PIPELINES.get(pipeline, _CONSULT_PIPELINE)
+            if pipeline
+            else _CONSULT_PIPELINE
         )
 
         step_meta = _extract_step_metadata(execution_id, step_name)
@@ -188,7 +228,7 @@ def register_pipeline_consult_tools(mcp: FastMCP) -> None:
         user_message = "\n".join(context_sections)
 
         body: dict[str, Any] = {
-            "model": _CONSULT_PIPELINE,
+            "model": consult_pipeline,
             "messages": [{"role": "user", "content": user_message}],
         }
         if effective_scope:

@@ -1,0 +1,30 @@
+basename: gpt-5.4
+full_model_id: openai/gpt-5.4
+source: cloud
+context_length: 1050000
+max_completion_tokens: 128000
+completion_cost: 15.0
+latency_bucket: medium
+cost_bucket: medium
+reasoning_depth: strong
+tasks:
+  code_review:
+    score: strong
+    evidence:
+      - source: benchmark
+        detail: "CursorBench 2026-03: 63.8% (high) #1/11 — Pareto frontier at $0.20/task"
+  planning:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "Inferred from CursorBench #1 ranking; no direct planning benchmark available"
+  code_architecture:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "Inferred from CursorBench #1 + code-specialized lineage (Codex+GPT unification)"
+  research:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "Inferred from reasoning depth and 1M+ context; no direct research benchmark"

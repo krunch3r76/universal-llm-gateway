@@ -64,7 +64,7 @@ def replay_recorded(
     overrides = overrides or ReplayOverrides()
 
     body = dict(call.request_body)
-    _apply_step_yaml_settings(body, snapshot, step, pipeline_dir)
+    model_profile = _apply_step_yaml_settings(body, snapshot, step, pipeline_dir)
     _apply_overrides(body, overrides)
 
     return _send_request(
@@ -73,6 +73,7 @@ def replay_recorded(
         call_label=call_label,
         stargate_url=stargate_url,
         timeout=timeout,
+        model_profile=model_profile,
     )
 
 
@@ -112,7 +113,7 @@ def replay_rerender(
         rendered = _try_render_from_yaml(snapshot, step, call, pipeline_dir, overrides)
         if rendered is not None:
             body = rendered
-            _apply_step_yaml_settings(body, snapshot, step, pipeline_dir)
+            model_profile = _apply_step_yaml_settings(body, snapshot, step, pipeline_dir)
             _apply_overrides(body, overrides)
             return _send_request(
                 body=body,
@@ -120,6 +121,7 @@ def replay_rerender(
                 call_label=call_label,
                 stargate_url=stargate_url,
                 timeout=timeout,
+                model_profile=model_profile,
             )
         print(
             f"  [warn] Could not re-render prompt for step '{step_name}' "
@@ -127,7 +129,7 @@ def replay_rerender(
         )
 
     body = dict(call.request_body)
-    _apply_step_yaml_settings(body, snapshot, step, pipeline_dir)
+    model_profile = _apply_step_yaml_settings(body, snapshot, step, pipeline_dir)
     _apply_overrides(body, overrides)
     return _send_request(
         body=body,
@@ -135,6 +137,7 @@ def replay_rerender(
         call_label=call_label,
         stargate_url=stargate_url,
         timeout=timeout,
+        model_profile=model_profile,
     )
 
 
@@ -432,13 +435,18 @@ def _apply_step_yaml_settings(
     snapshot: ExecutionSnapshot,
     step: StepSnapshot,
     pipeline_dir: Path | str | None,
-) -> None:
+) -> str | None:
     """Overlay model + generation parameters from step YAML onto request body.
 
     Applied between snapshot defaults and CLI overrides in the precedence chain.
+
+    Returns:
+        The model profile string (e.g. 'qwen3-instruct') if one is declared in
+        models.yaml for this step's model alias, or None if absent.  Callers use
+        this to decide between ?filter=<profile> and ?disable_profile=true.
     """
     if pipeline_dir is None:
-        return
+        return None
     pipeline_dir = Path(pipeline_dir)
     is_map_step = "__map_" in step.step_name
     if is_map_step:
@@ -448,11 +456,17 @@ def _apply_step_yaml_settings(
         )
     match = _find_step_config(step, pipeline_dir, snapshot)
     if match is None:
-        return
+        return None
+    model_profile: str | None = None
     if not is_map_step:
         yaml_model = _resolve_model_from_config(match, pipeline_dir)
         if yaml_model:
             body["model"] = yaml_model
+        ref = match.step_config.get("model_ref") or match.step_config.get("model")
+        if ref:
+            resolved_alias = _resolve_namespaced_value(ref, match.pipeline_config)
+            if isinstance(resolved_alias, str):
+                model_profile = resolve_model_profile(resolved_alias, pipeline_dir)
     gen_params = match.step_config.get("generation_parameters")
     if isinstance(gen_params, dict):
         for key, value in gen_params.items():
@@ -460,6 +474,7 @@ def _apply_step_yaml_settings(
                 print(f"  [warn] Ignoring unsupported generation parameter: {key}")
                 continue
             body[key] = value
+    return model_profile
 
 
 def _build_template_variables(step: StepSnapshot, call: ModelCall) -> dict[str, Any]:
@@ -542,8 +557,13 @@ def _send_request(
     call_label: str | None,
     stargate_url: str,
     timeout: float,
+    model_profile: str | None = None,
 ) -> ReplayResult:
     """POST to /v1/chat/completions and return a ReplayResult.
+
+    ∀ call: if model_profile is set → ?filter=<profile> (chat template applied).
+    Otherwise → ?disable_profile=true (mirrors pipeline default for models without
+    an explicit profile: entry in models.yaml).
 
     Args:
         body: Request body (model, messages, stream=False, etc.).
@@ -551,16 +571,23 @@ def _send_request(
         call_label: Optional call label for result metadata.
         stargate_url: Base URL of Stargate.
         timeout: Request timeout in seconds.
+        model_profile: Profile name from models.yaml, or None.
 
     Returns:
         ReplayResult with response text, usage, and latency.
     """
     url = f"{stargate_url.rstrip('/')}/v1/chat/completions"
+    params: dict[str, str] = dict(PIPELINE_TEST_PARAMS)
+    if model_profile:
+        params["filter"] = model_profile
+        print(f"  profile: {model_profile} (?filter={model_profile})")
+    else:
+        params["disable_profile"] = "true"
 
     start = time.monotonic()
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(
-            url, json=body, params=PIPELINE_TEST_PARAMS, headers=PIPELINE_TEST_HEADERS
+            url, json=body, params=params, headers=PIPELINE_TEST_HEADERS
         )
     elapsed_ms = (time.monotonic() - start) * 1000
 
@@ -606,6 +633,32 @@ def resolve_model_alias(alias: str, pipeline_dir: Path | str | None) -> str:
             break
         search = search.parent
     return alias
+
+
+def resolve_model_profile(alias: str, pipeline_dir: Path | str | None) -> str | None:
+    """Resolve the profile field for a pipeline model alias from models.yaml.
+
+    ∀ alias ∈ models.yaml: returns profile string if present, else None.
+    Callers use None as the signal to send ?disable_profile=true.
+
+    Searches for models.yaml in the pipeline dir and its parents (up to 3 levels).
+    """
+    if pipeline_dir is None:
+        return None
+
+    search = Path(pipeline_dir)
+    for _ in range(4):
+        candidate = search / "models.yaml"
+        if candidate.exists():
+            with candidate.open(encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            models = data.get("models", {})
+            if alias in models:
+                return models[alias].get("profile")
+        if search.parent == search:
+            break
+        search = search.parent
+    return None
 
 
 def _apply_overrides(body: dict[str, Any], overrides: ReplayOverrides) -> None:

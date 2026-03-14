@@ -46,9 +46,7 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
             and original_scope is not None
             and exc.status_code == 400
         ):
-            available_scopes = (
-                sorted(state._config.scopes) if state._config is not None else []
-            )
+            available_scopes = sorted(state._config.scopes) if state._config else []
             await state._event_bus.publish_async_nowait(
                 rag_scope_rejected(
                     scope=original_scope,
@@ -60,59 +58,72 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
 
     if state._event_bus is not None and original_scope is not None:
         resolved_prefixes = request.source_prefixes or []
-        state._event_bus.publish_async_nowait(
-            rag_scope_resolved(
-                scope=original_scope, prefix_count=len(resolved_prefixes)
-            )
-        )
-
-    collection = state._get_collection()
-    try:
-        query_embedding = await embed_query(request.query, scope=request.scope)
-    except EmbeddingTransientError as exc:
-        if state._event_bus is not None:
+        if resolved_prefixes:
             state._event_bus.publish_async_nowait(
-                rag_search_embedding_failed(
-                    model_id=exc.model_id,
-                    attempts=exc.attempts,
-                    last_status=exc.last_status,
-                    query_len=len(request.query),
-                    scope=request.scope,
+                rag_scope_resolved(
+                    scope=original_scope, prefix_count=len(resolved_prefixes)
                 )
             )
-        raise HTTPException(
-            status_code=503,
-            detail=f"Embedding model temporarily unavailable after {exc.attempts} "
-            f"attempts (model={exc.model_id}, last_status={exc.last_status})",
+
+    collection = state._get_collection()
+
+    result_ids: list[str]
+    chunks: list[str]
+    metadatas: list[dict[str, str | int | float | bool]]
+    distances: list[float]
+
+    if request.sparse_only:
+        # Skip dense embedding + vector search entirely.
+        # BM25 sidecar below starts from an empty dense set and promotes all
+        # FTS5 hits into the result (they land in bm25_only_ids and are fetched
+        # from ChromaDB by ID). OR-joined term queries work correctly here
+        # because FTS5 sees individual token matches, not an AND phrase.
+        result_ids, chunks, metadatas, distances = [], [], [], []
+    else:
+        try:
+            query_embedding = await embed_query(request.query, scope=request.scope)
+        except EmbeddingTransientError as exc:
+            if state._event_bus is not None:
+                state._event_bus.publish_async_nowait(
+                    rag_search_embedding_failed(
+                        model_id=exc.model_id,
+                        attempts=exc.attempts,
+                        last_status=exc.last_status,
+                        query_len=len(request.query),
+                        scope=request.scope,
+                    )
+                )
+            raise HTTPException(
+                status_code=503,
+                detail=f"Embedding model temporarily unavailable after {exc.attempts} "
+                f"attempts (model={exc.model_id}, last_status={exc.last_status})",
+            )
+
+        fetch_k = request.top_k * (5 if request.source_prefixes else 3)
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=fetch_k,
+            include=["documents", "metadatas", "distances"],
         )
 
-    fetch_k = request.top_k * (5 if request.source_prefixes else 3)
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=fetch_k,
-        include=["documents", "metadatas", "distances"],
-    )
+        result_ids = results["ids"][0] if results["ids"] else []
+        chunks = results["documents"][0] if results["documents"] else []
+        metadatas = results["metadatas"][0] if results["metadatas"] else []
+        distances = results["distances"][0] if results["distances"] else []
 
-    result_ids: list[str] = results["ids"][0] if results["ids"] else []
-    chunks: list[str] = results["documents"][0] if results["documents"] else []
-    metadatas: list[dict[str, str | int | float | bool]] = (
-        results["metadatas"][0] if results["metadatas"] else []
-    )
-    distances: list[float] = results["distances"][0] if results["distances"] else []
-
-    if result_ids:
-        clean = [
-            (rid, doc, meta, dist)
-            for rid, doc, meta, dist in zip(
-                result_ids, chunks, metadatas, distances, strict=True
-            )
-            if not meta.get("is_bibliography")
-        ]
-        if clean:
-            result_ids = [t[0] for t in clean]
-            chunks = [t[1] for t in clean]
-            metadatas = [t[2] for t in clean]
-            distances = [t[3] for t in clean]
+        if result_ids:
+            clean = [
+                (rid, doc, meta, dist)
+                for rid, doc, meta, dist in zip(
+                    result_ids, chunks, metadatas, distances, strict=True
+                )
+                if not meta.get("is_bibliography")
+            ]
+            if clean:
+                result_ids = [t[0] for t in clean]
+                chunks = [t[1] for t in clean]
+                metadatas = [t[2] for t in clean]
+                distances = [t[3] for t in clean]
 
     result_ids, chunks, metadatas, distances = apply_source_prefix_filter_with_ids(
         ids=result_ids,
