@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import traceback
 from datetime import UTC, datetime
@@ -28,6 +29,8 @@ from .view.screens.remotes import RemotesScreen
 from .view.screens.services import ServicesScreen
 from .view.screens.settings import SettingsScreen
 from .view.widgets.status_bar import StatusBar
+
+logger = logging.getLogger(__name__)
 
 _TUI_LOG_PATH = Path("/tmp/logs/tui/tui.log")
 _TUI_EVENT_DIR = "/tmp/tui-events"
@@ -142,11 +145,20 @@ class ModelManagerApp(App):
                     )
                 )
             case _:
-                super().push_screen(screen)
+                if screen in self.SCREENS:
+                    super().push_screen(self.SCREENS[screen]())
+                else:
+                    logger.warning("Unknown screen id: %s", screen)
 
 
 def run() -> None:
     """Entry point for the TUI."""
+    import logging
+
+    # Avoid polluting the TUI with DEBUG logs from httpx/httpcore (e.g. UDS probes).
+    for _logger in ("httpcore", "httpcore.connection", "httpx", "urllib3"):
+        logging.getLogger(_logger).setLevel(logging.WARNING)
+
     _TUI_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     app = ModelManagerApp()
     try:

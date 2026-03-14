@@ -39,10 +39,9 @@ class ModelLoader:
     async def _validate_context_availability(self, model_id: str) -> tuple[bool, str]:
         """Verify resolved n_ctx matches the context encoded in the synthetic model ID.
 
-        ∀ synthetic model ID with context suffix: resolved loader n_ctx must equal
-        the suffix value. Emits MODEL_LOAD_CONTEXT_MISMATCH if a stale value is present
-        (after _select_profile_loader has already corrected it in Task 1 — this is a
-        belt-and-suspenders guard for future regressions).
+        For any synthetic model ID with a context suffix, the resolved loader n_ctx
+        must equal the suffix value. Emits MODEL_LOAD_CONTEXT_MISMATCH if a mismatch
+        is detected.
 
         Returns (is_valid, error_message).
         """
@@ -161,6 +160,18 @@ class ModelLoader:
                     f"Model {model_id} already {model_info.status.value}, "
                     f"skipping redundant load"
                 )
+                # Emit MODEL_LOADED for idempotent loads so WebSocket-based
+                # waiters receive a definitive completion signal.
+                if self._controller.event_bus:
+                    from src.core.events.types import ModelLoaded
+
+                    await self._controller.event_bus.publish_async_nowait(
+                        ModelLoaded(
+                            model_id=model_id,
+                            vram_usage_mb=model_info.vram_usage_mb,
+                            ram_usage_mb=model_info.ram_usage_mb,
+                        )
+                    )
                 return True
 
             logger.info(f"📦 Loading model: {model_id}")

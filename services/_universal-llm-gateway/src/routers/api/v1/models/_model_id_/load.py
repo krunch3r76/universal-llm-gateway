@@ -56,28 +56,28 @@ async def load_model(
     Raises:
         HTTPException: 404/403 for invalid models, 500 for internal errors
     """
-    request_id = str(uuid.uuid4())[:8]
+    request_id: str = str(uuid.uuid4())[:8]
 
     try:
         # Verify model exists in registry
+        if model_id not in model_registry.models_to_metadata:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model '{model_id}' not found in registry. Use /v1/models to see available models.",
+            )
         if not model_registry.is_model_enabled(model_id):
-            # Check if model exists but is disabled
-            if model_id in model_registry.models_to_metadata:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Model '{model_id}' is disabled. Enable it in the configuration to load.",
-                )
-            else:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Model '{model_id}' not found in registry. Use /v1/models to see available models.",
-                )
+            raise HTTPException(
+                status_code=403,
+                detail=f"Model '{model_id}' is disabled. Enable it in the configuration to load.",
+            )
 
         # Check if model is already loaded
         is_loaded = await worker_controller.is_model_loaded(model_id)
 
         if is_loaded:
-            # Model already loaded - return 200 OK
+            # Route through coalescing loader so idempotent loads emit
+            # MODEL_LOADED for WebSocket waiters.
+            await worker_controller.load_model(model_id)
             return {
                 "message": f"Model '{model_id}' is already loaded",
                 "model_id": model_id,
@@ -150,12 +150,14 @@ async def load_model(
         # Note: set_model_loading() now automatically clears ERROR state if present
         resource_tracker.set_model_loading(model_id)
 
+        # Fetch requirements before create_task so any error is reported to the client
+        resources = resource_tracker.get_model_requirements(model_id)
+
         # Trigger async load (non-blocking)
         asyncio.create_task(worker_controller.load_model(model_id))
 
         # Return immediately with 202 Accepted
         response.status_code = 202
-        resources = resource_tracker.get_model_requirements(model_id)
 
         return {
             "message": f"Model '{model_id}' loading started",

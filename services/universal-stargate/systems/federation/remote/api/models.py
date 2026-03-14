@@ -9,6 +9,7 @@ INVARIANT: ¬∃ import from master/ (domain isolation)
 
 import asyncio
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from model_id import ModelId
 from pydantic import BaseModel
@@ -64,6 +65,18 @@ def create_model_router(
     """
     router = APIRouter(prefix="/api/v1/federation/models", tags=["federation-models"])
 
+    def _edge_client_and_headers(timeout: float):
+        """Build federation auth headers and an AsyncClient for Edge UDS. Caller must async with client."""
+        headers = {"Content-Type": "application/json"}
+        if relay_stargate_id and local_edge_client:
+            headers["X-Federation-Source"] = relay_stargate_id
+            headers["X-Federation-Key"] = local_edge_client._config.api_key
+        client = httpx.AsyncClient(
+            transport=httpx.AsyncHTTPTransport(uds=local_edge_client._config.socket_path),
+            timeout=timeout,
+        )
+        return client, headers
+
     @router.post("/load", response_model=ModelLoadResponse)
     async def load_model(body: ModelLoadRequest) -> ModelLoadResponse:
         """
@@ -89,24 +102,8 @@ def create_model_router(
         if local_edge_client:
             logger.info(f"📡 Forwarding load to Edge via Unix socket: {model_id!r}")
             try:
-                import httpx
-
-                # Build federation auth headers for Edge authentication
-                headers = {
-                    "Content-Type": "application/json",
-                }
-                if relay_stargate_id:
-                    headers["X-Federation-Source"] = relay_stargate_id
-                    headers["X-Federation-Key"] = local_edge_client._config.api_key
-
-                # Edge exposes /api/v1/federation/models/load endpoint
-                # Placeholder URL 'http://edge' - socket determines connection
-                async with httpx.AsyncClient(
-                    transport=httpx.AsyncHTTPTransport(
-                        uds=local_edge_client._config.socket_path
-                    ),
-                    timeout=185.0,  # Slightly longer than Edge's 180s timeout
-                ) as client:
+                client, headers = _edge_client_and_headers(185.0)  # Slightly longer than Edge's 180s
+                async with client:
                     response = await client.post(
                         "http://edge/api/v1/federation/models/load",
                         json={
@@ -140,30 +137,20 @@ def create_model_router(
         try:
             gateway = gateway_manager.require_gateway()
 
-            # Check if already loaded (idempotent)
-            # CRITICAL: Use ModelId comparison, not str(). Gateway reports
-            # model names without -hybrid suffix; ModelId.__eq__ normalizes.
+            # Diagnostic cache check only. All requests continue into
+            # event-driven outcome tracking to avoid cache TOCTOU races.
             loaded_models = gateway.client.get_loaded_models()
             is_loaded = any(model_id == m for m in loaded_models)
 
-            # DIAGNOSTIC LOGGING (permanent)
             logger.info(
-                f"🔍 [REMOTE] Idempotency check: model={model_id!r}, "
+                f"🔍 [REMOTE] Load check: model={model_id!r}, "
                 f"routing_key={model_id.routing_key}, "
-                f"is_loaded={is_loaded}, "
+                f"cache_loaded={is_loaded}, "
                 f"loaded_models_count={len(loaded_models)}"
             )
-            if not is_loaded and len(loaded_models) > 0:
+            if not is_loaded and loaded_models:
                 sample = sorted(loaded_models)[:5]
                 logger.debug(f"🔍 [REMOTE] Loaded models: {sample}")
-
-            if is_loaded:
-                logger.info(f"✅ Model {model_id.routing_key} already loaded")
-                return ModelLoadResponse(
-                    status="ok",
-                    model_id=model_id.routing_key,
-                    message="Model already loaded on gateway",
-                )
 
             # Setup outcome tracking BEFORE initiating load
             from .load_outcome import LoadFailedError, LoadOutcomeTracker
@@ -255,23 +242,8 @@ def create_model_router(
         if local_edge_client:
             logger.info(f"📡 Forwarding unload to Edge via Unix socket: {model_id!r}")
             try:
-                import httpx
-
-                # Build federation auth headers for Edge authentication
-                headers = {
-                    "Content-Type": "application/json",
-                }
-                if relay_stargate_id:
-                    headers["X-Federation-Source"] = relay_stargate_id
-                    headers["X-Federation-Key"] = local_edge_client._config.api_key
-
-                # Placeholder URL 'http://edge' - socket determines connection
-                async with httpx.AsyncClient(
-                    transport=httpx.AsyncHTTPTransport(
-                        uds=local_edge_client._config.socket_path
-                    ),
-                    timeout=60.0,  # Unload should be fast
-                ) as client:
+                client, headers = _edge_client_and_headers(60.0)  # Unload should be fast
+                async with client:
                     response = await client.post(
                         "http://edge/api/v1/federation/models/unload",
                         json={"model_id": model_id.synthetic_id},
@@ -302,20 +274,7 @@ def create_model_router(
         try:
             gateway = gateway_manager.require_gateway()
 
-            # Check if not loaded (idempotent)
-            # Use ModelId comparison — normalizes away -hybrid
-            loaded_models = gateway.client.get_loaded_models()
-            if not any(model_id == m for m in loaded_models):
-                logger.info(
-                    f"✅ Model {model_id.routing_key} not loaded (already unloaded)"
-                )
-                return ModelUnloadResponse(
-                    status="ok",
-                    model_id=model_id.routing_key,
-                    message="Model not loaded",
-                )
-
-            # Unload the model — gateway knows it by routing_key
+            # Rely on gateway.client.unload_model idempotency (avoid TOCTOU)
             success = await gateway.client.unload_model(model_id.routing_key)
 
             if success:
