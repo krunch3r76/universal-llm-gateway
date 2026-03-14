@@ -8,6 +8,8 @@ dependencies explicitly rather than accessing them via `self`.
 
 from __future__ import annotations
 
+import asyncio
+import random
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -20,6 +22,11 @@ from universal_protocol import ErrorCode, error_envelope
 from ..context import RequestContext
 
 logger = get_logger(__name__)
+
+_TRANSIENT_STATUS_CODES = frozenset({502, 503, 429})
+_FORWARD_RETRY_ATTEMPTS = 6
+_FORWARD_RETRY_BASE_S = 0.5
+_FORWARD_RETRY_MAX_S = 8.0
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -48,6 +55,89 @@ class _FederationForwarderLike(Protocol):
         request_body: dict[str, Any],
         request_id: str,
     ) -> dict[str, Any]: ...
+
+
+async def _forward_with_retry(
+    *,
+    forward_fn: Callable[..., Awaitable[dict[str, Any]]],
+    fed_gateway: Any,
+    request_body: dict[str, Any],
+    request_id: str,
+    parsed_model_id: Any,
+    oom_recovery_fn: Callable[..., Awaitable[bool]] | None,
+    oom_ban_fn: Callable[..., None] | None,
+) -> dict[str, Any]:
+    """Forward embedding request with retry on transient downstream errors.
+
+    Retries on 502/503/429 with jittered exponential backoff. The downstream
+    Gateway/llama-server returns 503 when parallel slots are full — this is
+    transient and must not propagate to callers.
+
+    OOM recovery (500) is attempted once per the existing contract.
+    """
+    last_exc: HTTPException | None = None
+
+    for attempt in range(1, _FORWARD_RETRY_ATTEMPTS + 1):
+        try:
+            return await forward_fn(
+                gateway=fed_gateway,
+                request_body=request_body,
+                request_id=request_id,
+            )
+        except HTTPException as fwd_exc:
+            if fwd_exc.status_code == 500 and oom_recovery_fn is not None:
+                recovered = await oom_recovery_fn(
+                    gateway=fed_gateway,
+                    model_id=parsed_model_id,
+                    request_id=request_id,
+                )
+                if recovered:
+                    try:
+                        return await forward_fn(
+                            gateway=fed_gateway,
+                            request_body=request_body,
+                            request_id=request_id,
+                        )
+                    except HTTPException as retry_exc:
+                        if retry_exc.status_code == 500 and oom_ban_fn is not None:
+                            oom_ban_fn(
+                                gateway_id=fed_gateway.gateway_id,
+                                model_id=parsed_model_id,
+                                request_id=request_id,
+                            )
+                        raise
+                raise
+
+            if fwd_exc.status_code not in _TRANSIENT_STATUS_CODES:
+                raise
+
+            last_exc = fwd_exc
+
+        if attempt < _FORWARD_RETRY_ATTEMPTS:
+            base = _FORWARD_RETRY_BASE_S * (2 ** (attempt - 1))
+            delay = min(base, _FORWARD_RETRY_MAX_S) * random.uniform(0.75, 1.25)
+            logger.warning(
+                "Embedding forward %d/%d returned %d; retrying in %.1fs "
+                "(model=%s, gateway=%s)",
+                attempt,
+                _FORWARD_RETRY_ATTEMPTS,
+                last_exc.status_code if last_exc else 0,
+                delay,
+                request_body.get("model", "?"),
+                fed_gateway.gateway_id,
+            )
+            await asyncio.sleep(delay)
+
+    logger.error(
+        "Embedding forward exhausted %d attempts (model=%s, gateway=%s, "
+        "last_status=%d)",
+        _FORWARD_RETRY_ATTEMPTS,
+        request_body.get("model", "?"),
+        fed_gateway.gateway_id,
+        last_exc.status_code if last_exc else 0,
+    )
+    assert last_exc is not None
+    raise last_exc
 
 
 async def execute_embedding_request(
@@ -133,38 +223,15 @@ async def execute_embedding_request(
                 ),
             )
 
-        try:
-            result = await forward_embedding_fn(
-                gateway=fed_gateway,
-                request_body=request_body,
-                request_id=resolved_request_id,
-            )
-        except HTTPException as fwd_exc:
-            if fwd_exc.status_code != 500 or oom_recovery_fn is None:
-                raise
-
-            recovered = await oom_recovery_fn(
-                gateway=fed_gateway,
-                model_id=parsed_model_id,
-                request_id=resolved_request_id,
-            )
-            if not recovered:
-                raise
-
-            try:
-                result = await forward_embedding_fn(
-                    gateway=fed_gateway,
-                    request_body=request_body,
-                    request_id=resolved_request_id,
-                )
-            except HTTPException as retry_exc:
-                if retry_exc.status_code == 500 and oom_ban_fn is not None:
-                    oom_ban_fn(
-                        gateway_id=fed_gateway.gateway_id,
-                        model_id=parsed_model_id,
-                        request_id=resolved_request_id,
-                    )
-                raise
+        result = await _forward_with_retry(
+            forward_fn=forward_embedding_fn,
+            fed_gateway=fed_gateway,
+            request_body=request_body,
+            request_id=resolved_request_id,
+            parsed_model_id=parsed_model_id,
+            oom_recovery_fn=oom_recovery_fn,
+            oom_ban_fn=oom_ban_fn,
+        )
 
         await emit_execution_completed(
             event_bus=event_bus,
@@ -188,8 +255,6 @@ async def execute_embedding_request(
         raise
     finally:
         release_routing_key_fn(resolved_request_id)
-        # Release admission capacity only when a gateway was selected
-        # (token was acquired).
         if fed_gateway is not None:
             await release_capacity_token_fn(context)
 

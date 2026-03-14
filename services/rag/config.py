@@ -59,8 +59,10 @@ class KnowledgeExtractionConfig:
     batch_timeout_overhead_s: float = 30.0
 
 
-DEFAULT_EMBEDDING_MODEL = "bge-m3-q8-0-8192-cpu"
+DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-40960-cpu"
 DEFAULT_INDEX_WORKERS = 8
+# Used when contextualize_model is omitted; set to "" to disable contextualization.
+DEFAULT_CONTEXTUALIZE_MODEL = "qwen3-5-9b-q8-0-262144"
 _BASELINE_EXTENSIONS: tuple[str, ...] = (
     ".md",
     ".txt",
@@ -88,7 +90,9 @@ class RagConfig:
     article_registry_path: Path | None = None
     baseline_extensions: tuple[str, ...] = BASELINE_EXTENSIONS
     post_index_enforcement: str = "strict"
-    contextualize_model: str
+    # Model ID for per-chunk context generation before embedding. Omitted → use default (on).
+    # Set to "" to explicitly disable contextualization.
+    contextualize_model: str = DEFAULT_CONTEXTUALIZE_MODEL
 
     def get_scope_for_path(self, file_path: str) -> str:
         """Longest-prefix match over scopes; leaf-preferred on ties.
@@ -329,13 +333,14 @@ def load_config() -> RagConfig:
         else "strict"
     )
     raw_ctx_model = parsed_root.get("contextualize_model")
-    if not isinstance(raw_ctx_model, str) or not raw_ctx_model.strip():
-        raise ValueError(
-            "rag.yaml: 'contextualize_model' is required. "
-            "Set it to the model ID used for chunk context generation "
-            "(e.g. 'qwen3-5-9b-q8-0-262144')."
-        )
-    contextualize_model = raw_ctx_model.strip()
+    if raw_ctx_model is None:
+        contextualize_model = DEFAULT_CONTEXTUALIZE_MODEL
+    elif isinstance(raw_ctx_model, str) and not raw_ctx_model.strip():
+        contextualize_model = ""  # Explicitly disabled
+    elif isinstance(raw_ctx_model, str):
+        contextualize_model = raw_ctx_model.strip()
+    else:
+        contextualize_model = DEFAULT_CONTEXTUALIZE_MODEL
     return RagConfig(
         watch_directories=watch_directories,
         scopes=scopes,

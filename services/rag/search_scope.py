@@ -21,7 +21,7 @@ search results before they are returned to the retrieval pipeline:
     defined in the RAG config.  Enables per-collection retrieval without exposing
     raw filesystem paths to callers.  Applied by ``resolve_scope_request()``.
 
-These are pure functions; state lives in ``rag_service.py`` globals.
+These are pure functions; runtime state lives in ``services.rag.rag_service.state``.
 """
 
 from __future__ import annotations
@@ -198,6 +198,8 @@ def _apply_recency(
         except ValueError:
             result.append(distance)
             continue
+        if doc_date.tzinfo is None:
+            doc_date = doc_date.replace(tzinfo=UTC)
         days_old = max((now - doc_date).total_seconds() / 86400, 0.0)
         recency_score = math.exp(-RECENCY_DECAY_LAMBDA * days_old)
         adjusted_distance = (
@@ -389,10 +391,22 @@ def apply_bm25_sidecar(
         return ids, chunks, metadatas, distances, bm25_hit_count
 
     fetched_ids: list[str] = fetched.get("ids") or []
-    fetched_docs: list[str] = fetched.get("documents") or []
-    fetched_metas: list[dict[str, str | int | float | bool]] = (
-        fetched.get("metadatas") or []
+    fetched_docs_raw = fetched.get("documents")
+    fetched_metas_raw = fetched.get("metadatas")
+    fetched_docs = (
+        fetched_docs_raw if isinstance(fetched_docs_raw, list) else [""] * len(fetched_ids)
     )
+    if len(fetched_docs) < len(fetched_ids):
+        fetched_docs = fetched_docs + ([""] * (len(fetched_ids) - len(fetched_docs)))
+    else:
+        fetched_docs = fetched_docs[: len(fetched_ids)]
+    fetched_metas_list = (
+        fetched_metas_raw if isinstance(fetched_metas_raw, list) else [{}] * len(fetched_ids)
+    )
+    if len(fetched_metas_list) < len(fetched_ids):
+        fetched_metas_list = fetched_metas_list + ([{}] * (len(fetched_ids) - len(fetched_metas_list)))
+    else:
+        fetched_metas_list = fetched_metas_list[: len(fetched_ids)]
 
     # Synthetic distance: slightly worse than the worst dense result
     tail_distance = max(distances) * 1.1 if distances else 1.0
@@ -402,10 +416,11 @@ def apply_bm25_sidecar(
     all_metadatas = list(metadatas)
     all_distances = list(distances)
 
-    fetched_map = {
-        fid: (doc, meta)
-        for fid, doc, meta in zip(fetched_ids, fetched_docs, fetched_metas, strict=True)
-    }
+    fetched_map = {}
+    for fid, doc, meta in zip(fetched_ids, fetched_docs, fetched_metas_list):
+        if not isinstance(meta, dict):
+            continue
+        fetched_map[fid] = (doc if isinstance(doc, str) else "", meta)
     for cid in bm25_only_ids:
         if cid in fetched_map:
             doc, meta = fetched_map[cid]

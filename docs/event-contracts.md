@@ -150,6 +150,36 @@ federation.routing.delegated
   └─> [response from remote]
 ```
 
+### Federation Capacity Seeding
+
+**INVARIANT**: ∀ `GATEWAY_SNAPSHOT` received: `_seed_capacity_pool_for_gateway`
+seeds all models with `max_concurrent_requests` from `model_resources`.
+
+**INVARIANT**: ∀ `MODEL_LOADED` without prior `GATEWAY_SNAPSHOT` for that
+gateway: `_restore_model_capacity` applies `fallback_max_concurrent=1` and
+emits `federation.capacity.fallback.applied`. This fallback is corrected when
+the snapshot arrives and `_seed_capacity_pool_for_gateway` runs with
+authoritative `model_resources`.
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `federation.capacity.fallback.applied` | `gateway_id`, `model_id`, `fallback_max_concurrent`, `reason` | Capacity seeded from fallback default; snapshot not yet received for this gateway |
+
+**Debugging queries**:
+
+```bash
+# Capacity fallback events (indicates GATEWAY_SNAPSHOT timing issue)
+jq -c 'select(.signal == "federation.capacity.fallback.applied")' \
+  /tmp/stargate-events/current.jsonl
+
+# Verify fallback was later corrected by snapshot
+jq -c 'select(.signal == "federation.capacity.fallback.applied" or
+  (.signal == "federation.telemetry.received" and
+   .payload.msg_type == "telemetry.gateway.snapshot")) |
+  {signal, gw: .payload.gateway_id, model: .payload.model_id}' \
+  /tmp/stargate-events/current.jsonl
+```
+
 ### Federated Prompt Transformation Contract
 
 **INVARIANT**: ∀ federated request with `input_schema == "prompt"` and
@@ -736,6 +766,17 @@ jq -c 'select(.event_type == "combine_passages_completed") | {step: .step_name, 
 | `system.started` | `{}` | None |
 | `system.shutdown` | `{}` | None |
 
+### TUI Events
+
+Source: `/tmp/tui-events/current.jsonl`
+
+| Signal | Payload | Notes |
+|--------|---------|-------|
+| `tui.started` | `pid` | Emitted on mount; absence after known launch = crash |
+| `tui.exited` | `reason` | Emitted on clean quit (q / ctrl+c); absence = crash or SIGKILL |
+
+Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exception).
+
 ### Request Events
 
 | Signal | Required Payload | Optional Payload |
@@ -1026,6 +1067,7 @@ provider HTTP failures.
 | `federation.resource.updated` | `gateway_id`, `vram_free_mb`, `ram_free_mb` | master applied RESOURCE_UPDATE from edge |
 | `federation.activation.filtered.empty` | `gateway_id`, `available_count`, `activated_count` | gateway has available models but activated_models is explicitly empty — all hidden from /v1/models |
 | `federation.circuit.breaker.rejected` | `gateway_id`, `model_id`, `reason` | request rejected (gateway_wide_open, model_circuit_open, half_open_limit_reached) |
+| `federation.capacity.fallback.applied` | `gateway_id`, `model_id`, `fallback_max_concurrent`, `reason` | capacity seeded from fallback (no model_resources from GATEWAY_SNAPSHOT); corrected when snapshot arrives |
 
 **`federation.telemetry.received` disambiguation fields**: `model_count` is the
 backward-compatible count scoped by message type. The optional fields clarify its

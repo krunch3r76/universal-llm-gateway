@@ -13,7 +13,7 @@ from ...model.service_state import ServiceState
 from ..service_config import GATEWAY_DIR, read_rag_socket_path, read_rag_tcp_config
 from .uvicorn_service import _start_uvicorn_service, _stop_uvicorn_service
 
-_RAG_APP_MODULE = "services.rag.rag_service:app"
+_RAG_APP_MODULE = "services.rag.rag_service.main:app"
 _RAG_LOCK_FILE = GATEWAY_DIR / "rag.lock"
 
 

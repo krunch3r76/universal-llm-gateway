@@ -200,6 +200,25 @@ Validate pipeline YAML, prompts.yaml, models.yaml before commit.
 python scripts/validate-pipeline.py pipelines.local/
 ```
 
+## Docstring Enhancement Workflow
+
+Prompt-tunable docstring improvement now runs through a dedicated pipeline:
+
+- Pipeline ID: `docstring-enhance`
+- Pipeline source: `pipelines/docstring_enhance/`
+- Command workflow: `.cursor/commands/docstring-enhance.md`
+- Auto-apply helper: `scripts/docstring-apply`
+
+Primary use: second-pass docstring quality upgrades before architecture doc
+generation in `/overhaul` or `/overhaul-file`.
+
+The helper consumes `docstring-enhance` `review.edits` JSON and applies
+docstring-only updates deterministically with AST + line guards.
+
+Tuning surface:
+- prompts: `pipelines/docstring_enhance/prompts.yaml`
+- model aliases: `pipelines/docstring_enhance/models.yaml`
+
 ## scripts/model_manager/
 
 TUI and CLI for catalog management, topology, services.

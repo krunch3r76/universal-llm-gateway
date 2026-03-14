@@ -51,6 +51,8 @@ async def connection_loop(
         on_connect_success: Callback when authenticated (receives websocket)
         on_disconnect: Callback when disconnected
     """
+    # Ensure max_delay adheres to FED-11 invariant (30s max).
+    max_delay = min(max_delay, 30.0)
     current_delay = initial_delay
 
     logger.info(f"🔄 Connection loop STARTED (running={is_running()})")
@@ -119,6 +121,7 @@ async def connect_once(
     try:
         async with websockets.connect(
             ws_url,
+            max_size=None,
             ping_interval=None,  # We handle our own ping/pong
             ping_timeout=None,
             close_timeout=5.0,

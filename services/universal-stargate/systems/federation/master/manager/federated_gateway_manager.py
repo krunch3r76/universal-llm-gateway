@@ -205,7 +205,12 @@ class FederatedGatewayManager(Sequential):
     def _restore_model_capacity(
         self, gateway: FederatedGateway, model_id: ModelId
     ) -> bool:
-        """Restore capacity ledger for one model if requirements are available."""
+        """Restore one model's capacity from model_resources or fallback.
+
+        If telemetry has not delivered model_resources yet, we still seed a
+        minimal capacity of 1 so admission control can see the model until the
+        next authoritative GATEWAY_SNAPSHOT refreshes the real value.
+        """
         if not self._capacity_pool:
             return False
 
@@ -213,9 +218,15 @@ class FederatedGatewayManager(Sequential):
         if res is None:
             logger.warning(
                 f"📊 Capacity pool: no model_resources for {model_id} on "
-                f"{gateway.gateway_id}, capacity not restored"
+                f"{gateway.gateway_id} — applying fallback capacity=1"
             )
-            return False
+            self._capacity_pool.set_capacity(
+                gateway_id=gateway.gateway_id,
+                model_id=model_id.routing_key,
+                max_concurrent=1,
+            )
+            self._emit_capacity_fallback(gateway.gateway_id, model_id)
+            return True
 
         max_concurrent = self._parse_max_concurrent(
             gateway.gateway_id,
@@ -228,6 +239,34 @@ class FederatedGatewayManager(Sequential):
             max_concurrent=max_concurrent,
         )
         return True
+
+    def _emit_capacity_fallback(self, gateway_id: str, model_id: ModelId) -> None:
+        """Emit observability signal when fallback capacity is applied."""
+        if not self._event_bus:
+            return
+        try:
+            from universal_event_bus import Event
+
+            event = Event(
+                signal="federation.capacity.fallback.applied",
+                payload={
+                    "gateway_id": gateway_id,
+                    "model_id": model_id.routing_key,
+                    "fallback_max_concurrent": 1,
+                    "reason": "no_model_resources",
+                },
+            )
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(event),
+                name=f"emit-capacity-fallback-{gateway_id}-{model_id.routing_key}",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to emit capacity fallback event for %s/%s: %s",
+                gateway_id,
+                model_id.routing_key,
+                exc,
+            )
 
     def _seed_capacity_pool_for_gateway(self, gateway: FederatedGateway) -> int:
         """Seed capacity ledger from gateway model_resources; returns slot count."""
@@ -1076,14 +1115,24 @@ class FederatedGatewayManager(Sequential):
         gw.active_requests = state.get("active_requests", 0)
         gw.model_resources = state.get("model_resources", {})
 
-        # GATEWAY_SNAPSHOT is the authoritative initial state: seed model lifecycle.
-        # Unlike RESOURCE_UPDATE (which preserves single-writer invariant for discrete
-        # events), the snapshot IS the initial state — models loaded before the snapshot
-        # have no discrete MODEL_LOADED event path to the Master.
+        # GATEWAY_SNAPSHOT is the authoritative state from the Edge.
+        # The Edge updates its cached snapshot with MODEL_LOADED/MODEL_UNLOADED
+        # events, so the snapshot should reflect current lifecycle state.
         snapshot_loaded: frozenset[ModelId] = state.get("loaded_models", frozenset())
         snapshot_busy: frozenset[ModelId] = state.get("busy_models", frozenset())
 
         prev_loaded = gw.loaded_models
+
+        # Diagnostic: detect if snapshot would drop models the Master already
+        # knew about from discrete lifecycle events (indicates stale snapshot).
+        dropped = prev_loaded - snapshot_loaded
+        if dropped:
+            logger.warning(
+                f"⚠️ GATEWAY_SNAPSHOT for {gw.gateway_id} drops {len(dropped)} "
+                f"previously-loaded models: {dropped} "
+                f"(prev={len(prev_loaded)}, snapshot={len(snapshot_loaded)})"
+            )
+
         gw.loaded_models = snapshot_loaded
         gw.busy_models = snapshot_busy
         gw.loading_models = gw.loading_models - snapshot_loaded

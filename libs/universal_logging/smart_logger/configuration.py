@@ -107,11 +107,12 @@ def sanitize_formatters(config: dict[str, Any]) -> dict[str, Any]:
                     f"{safe_formatter}"
                 )
                 safe_formatter = {
+                    "class": "universal_logging.utc_formatter.UTCFormatter",
                     "format": safe_formatter.get(
                         "format",
                         "[%(asctime)s] %(levelname)s [%(name)s] %(message)s",
                     ),
-                    "datefmt": safe_formatter.get("datefmt", "%Y-%m-%d %H:%M:%S"),
+                    "datefmt": safe_formatter.get("datefmt", "%Y-%m-%dT%H:%M:%SZ"),
                 }
 
             safe_formatters[name] = safe_formatter

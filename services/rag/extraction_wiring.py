@@ -1,6 +1,6 @@
 """Wire knowledge extraction into the indexing pipeline.
 
-Extracted from rag_service.py to keep that module under the SLOC limit.
+Extracted during the rag_service module split to keep files under SLOC limits.
 Called between chunk_file() and embed_chunks() when extraction is enabled.
 One pipeline call per file — MapExecutor fans out over all chunks in parallel.
 
@@ -257,6 +257,21 @@ async def run_extraction(
             type(extract_return).__name__,
             file,
         )
+        for chunk_id in ids:
+            await property_index.record_failure(
+                chunk_id=chunk_id,
+                source=file,
+                error="invalid extraction response shape",
+                permanent=False,
+            )
+            if event_bus is not None:
+                _publish_event_nonblocking(
+                    event_bus,
+                    rag_extraction_failed(
+                        chunk_id=chunk_id,
+                        error="invalid extraction response shape",
+                    ),
+                )
         return result
     knowledge_list, timing = extract_return
     if not isinstance(knowledge_list, list):
@@ -265,6 +280,21 @@ async def run_extraction(
             type(knowledge_list).__name__,
             file,
         )
+        for chunk_id in ids:
+            await property_index.record_failure(
+                chunk_id=chunk_id,
+                source=file,
+                error="invalid extraction list payload",
+                permanent=False,
+            )
+            if event_bus is not None:
+                _publish_event_nonblocking(
+                    event_bus,
+                    rag_extraction_failed(
+                        chunk_id=chunk_id,
+                        error="invalid extraction list payload",
+                    ),
+                )
         return result
     if isinstance(timing, dict):
         result.processing_seconds = timing.get("processing_seconds")
@@ -471,6 +501,13 @@ async def recover_missing_extraction(
         for i, d, m in zip(raw_ids, raw_docs, raw_metadatas, strict=True)
         if isinstance(m, dict)
     ]
+    if len(aligned) != len(raw_ids):
+        logger.warning(
+            "Recovery for %s dropped %d/%d chunks due to invalid metadata rows",
+            source,
+            len(raw_ids) - len(aligned),
+            len(raw_ids),
+        )
     ids: list[str] = [t[0] for t in aligned]
     docs: list[str] = [t[1] for t in aligned]
     metadatas: list[dict[str, Any]] = [t[2] for t in aligned]

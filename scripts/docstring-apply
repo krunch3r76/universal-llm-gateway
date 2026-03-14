@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+"""Apply docstring-enhance review edits deterministically to Python source files.
+
+This CLI consumes `docstring-enhance` JSON output and applies approved
+`review.edits` updates to module, class, function, and method docstrings. It
+uses AST-backed symbol resolution plus line guards to avoid stale or ambiguous
+rewrites in changed files.
+
+Invariant: this helper updates docstrings only. It never changes signatures,
+imports, control flow, or any non-docstring statements.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import json
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal, NoReturn, cast
+
+Scope = Literal["module", "class", "function", "method"]
+JsonDict = dict[str, object]
+
+
+@dataclass(slots=True)
+class EditSpec:
+    """Represents one validated docstring update from pipeline output."""
+
+    path: str
+    scope: Scope
+    name: str
+    line: int
+    docstring: str
+    rationale: str
+
+
+@dataclass(slots=True)
+class SpanEdit:
+    """Represents one concrete source-line replacement operation."""
+
+    start_line: int
+    end_line: int
+    replacement_lines: list[str]
+    summary: str
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for deterministic docstring application."""
+    parser = argparse.ArgumentParser(
+        description="Apply docstring-enhance review edits to Python files",
+    )
+    _ = parser.add_argument(
+        "--input",
+        default="/tmp/docstring-enhance-result.json",
+        help="Path to parsed docstring-enhance result JSON",
+    )
+    _ = parser.add_argument(
+        "--target",
+        required=True,
+        help="Target file or directory originally passed to /docstring-enhance",
+    )
+    _ = parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail if any edit cannot be resolved unambiguously",
+    )
+    _ = parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print planned edits without writing files",
+    )
+    return parser.parse_args()
+
+
+def _fatal(message: str) -> NoReturn:
+    """Print an error and terminate with a non-zero exit code."""
+    print(f"Error: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _load_pipeline_payload(path: Path) -> JsonDict:
+    """Load pipeline payload, supporting both raw and chat-completions wrappers."""
+    try:
+        raw_obj = cast(object, json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError) as exc:
+        _fatal(f"cannot load JSON from {path}: {exc}")
+
+    if not isinstance(raw_obj, dict):
+        _fatal("top-level payload must be a JSON object")
+    raw = cast(JsonDict, raw_obj)
+
+    if "choices" in raw:
+        choices = raw.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            _fatal("response JSON has invalid 'choices' wrapper")
+        first_choice = cast(JsonDict, choices[0])
+        message = first_choice.get("message")
+        if not isinstance(message, dict):
+            _fatal("response JSON has invalid choices[0].message")
+        message_obj = cast(JsonDict, message)
+        content = message_obj.get("content", "")
+        if not isinstance(content, str) or not content.strip():
+            _fatal("response JSON has empty choices[0].message.content")
+        try:
+            parsed_obj: object = json.loads(content)
+        except json.JSONDecodeError as exc:
+            _fatal(f"response content is not valid JSON: {exc}")
+        if not isinstance(parsed_obj, dict):
+            _fatal("response content payload must be a JSON object")
+        return cast(JsonDict, parsed_obj)
+
+    return raw
+
+
+def _validate_scope(value: str) -> Scope:
+    """Validate and normalize the edit scope field."""
+    allowed = {"module", "class", "function", "method"}
+    if value not in allowed:
+        raise ValueError(f"invalid scope '{value}'")
+    return cast(Scope, value)
+
+
+def _extract_edits(payload: JsonDict) -> list[EditSpec]:
+    """Extract validated edits from `review.edits` with fail-closed parsing."""
+    review = payload.get("review")
+    if not isinstance(review, dict):
+        _fatal("payload does not contain a 'review' object")
+    review_obj = cast(JsonDict, review)
+    edits_raw = review_obj.get("edits")
+    if not isinstance(edits_raw, list):
+        _fatal("payload does not contain 'review.edits' list")
+
+    validated: list[EditSpec] = []
+    edits_list = cast(list[object], edits_raw)
+    for idx, item in enumerate(edits_list):
+        if not isinstance(item, dict):
+            _fatal(f"review.edits[{idx}] is not an object")
+        item_obj = cast(JsonDict, item)
+        try:
+            path_raw = item_obj["path"]
+            scope_raw = item_obj["scope"]
+            name_raw = item_obj["name"]
+            line_raw = item_obj["line"]
+            doc_raw = item_obj["docstring"]
+            rationale_raw = item_obj.get("rationale", "")
+            path = str(path_raw)
+            scope = _validate_scope(str(scope_raw))
+            name = str(name_raw)
+            if not isinstance(line_raw, int | str):
+                _fatal(f"invalid review.edits[{idx}] line type: {type(line_raw).__name__}")
+            line = int(line_raw)
+            docstring = str(doc_raw).strip()
+            rationale = str(rationale_raw).strip()
+        except (KeyError, ValueError, TypeError) as exc:
+            _fatal(f"invalid review.edits[{idx}] payload: {exc}")
+
+        if not path or not name or line <= 0 or not docstring:
+            _fatal(f"review.edits[{idx}] has empty required fields")
+
+        validated.append(
+            EditSpec(
+                path=path,
+                scope=scope,
+                name=name,
+                line=line,
+                docstring=docstring,
+                rationale=rationale,
+            )
+        )
+
+    return validated
+
+
+def _target_allows_edit(target: Path, edit_path: Path) -> bool:
+    """Return whether an edit path is inside the approved target scope."""
+    if target.is_file():
+        return target.resolve() == edit_path.resolve()
+    try:
+        _ = edit_path.resolve().relative_to(target.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _render_docstring_lines(indent: str, text: str) -> list[str]:
+    """Render text as a correctly indented triple-quoted docstring block."""
+    cleaned = text.strip()
+    if "\n" not in cleaned:
+        return [f'{indent}"""{cleaned}"""']
+    inner = [f"{indent}{line}" if line else "" for line in cleaned.splitlines()]
+    return [f'{indent}"""', *inner, f'{indent}"""']
+
+
+def _find_doc_expr_range(node_body: list[ast.stmt]) -> tuple[int, int] | None:
+    """Return existing docstring expression line range for a node body."""
+    if not node_body:
+        return None
+    first = node_body[0]
+    if (
+        isinstance(first, ast.Expr)
+        and isinstance(first.value, ast.Constant)
+        and isinstance(first.value.value, str)
+    ):
+        if first.end_lineno is None:
+            return None
+        return (first.lineno, first.end_lineno)
+    return None
+
+
+def _line_matches(expected: int, actual: int, tolerance: int = 2) -> bool:
+    """Guard against stale edits by allowing only small line drift."""
+    return abs(expected - actual) <= tolerance
+
+
+def _span_for_holder(
+    body: list[ast.stmt],
+    col_offset: int,
+    line: int,
+    docstring: str,
+    summary: str,
+) -> SpanEdit:
+    """Create a span edit for a module/class/function-like node body."""
+    existing = _find_doc_expr_range(body)
+    indent = "" if col_offset < 0 else " " * (col_offset + 4)
+    if existing:
+        start, end = existing
+        return SpanEdit(start, end, _render_docstring_lines(indent, docstring), summary)
+    insert_line = body[0].lineno if body else line + 1
+    replacement = _render_docstring_lines(indent, docstring)
+    if col_offset < 0:
+        replacement = replacement + [""]
+    return SpanEdit(insert_line, insert_line - 1, replacement, summary)
+
+
+def _top_level_matches(
+    module: ast.Module,
+    name: str,
+    expected_line: int,
+    scope: Scope,
+) -> list[ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Collect unique top-level nodes that satisfy scope, name, and line guards."""
+    if scope == "class":
+        return [
+            node
+            for node in module.body
+            if isinstance(node, ast.ClassDef)
+            and node.name == name
+            and _line_matches(expected_line, node.lineno)
+        ]
+    return [
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.name == name
+        and _line_matches(expected_line, node.lineno)
+    ]
+
+
+def _find_span_edit(module: ast.Module, spec: EditSpec) -> SpanEdit | None:
+    """Resolve an edit spec to an exact source-line replacement span."""
+    if spec.scope == "module":
+        return _span_for_holder(module.body, -1, 0, spec.docstring, f"module:{spec.path}")
+
+    if spec.scope in {"class", "function"}:
+        matches = _top_level_matches(module, spec.name, spec.line, spec.scope)
+        if len(matches) != 1:
+            return None
+        node = matches[0]
+        return _span_for_holder(node.body, node.col_offset, node.lineno, spec.docstring, f"{spec.scope}:{spec.name}")
+
+    class_name, _, method_name = spec.name.rpartition(".")
+    if not class_name or not method_name:
+        return None
+    classes = [node for node in module.body if isinstance(node, ast.ClassDef) and node.name == class_name]
+    if len(classes) != 1:
+        return None
+    methods = [
+        node
+        for node in classes[0].body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        and node.name == method_name
+        and _line_matches(spec.line, node.lineno)
+    ]
+    if len(methods) != 1:
+        return None
+    method = methods[0]
+    return _span_for_holder(method.body, method.col_offset, method.lineno, spec.docstring, f"method:{spec.name}")
+
+
+def _apply_spans(source_lines: list[str], spans: list[SpanEdit]) -> list[str]:
+    """Apply span replacements in descending order to preserve offsets."""
+    updated = source_lines[:]
+    for span in sorted(spans, key=lambda item: (item.start_line, item.end_line), reverse=True):
+        start_idx = span.start_line - 1
+        end_idx = span.end_line
+        updated[start_idx:end_idx] = span.replacement_lines
+    return updated
+
+
+def main() -> None:
+    """Load payload, resolve docstring spans, apply edits, and report results."""
+    args = _parse_args()
+    args_map = cast(dict[str, object], vars(args))
+    input_path = args_map.get("input")
+    target_arg = args_map.get("target")
+    strict_mode = bool(args_map.get("strict", False))
+    dry_run_mode = bool(args_map.get("dry_run", False))
+    if not isinstance(input_path, str) or not isinstance(target_arg, str):
+        _fatal("invalid CLI arguments: expected string --input and --target")
+
+    payload = _load_pipeline_payload(Path(input_path))
+    edits = _extract_edits(payload)
+
+    target = Path(target_arg).resolve()
+    if not target.exists():
+        _fatal(f"target does not exist: {target}")
+
+    by_file: dict[Path, list[EditSpec]] = {}
+    for spec in edits:
+        path = Path(spec.path).resolve()
+        if not _target_allows_edit(target, path):
+            continue
+        by_file.setdefault(path, []).append(spec)
+
+    unresolved: list[str] = []
+    changed_files = 0
+    applied_edits = 0
+
+    for py_file, file_edits in sorted(by_file.items()):
+        if not py_file.exists():
+            unresolved.extend(f"{py_file}: missing file" for _ in file_edits)
+            continue
+        source_text = py_file.read_text(encoding="utf-8")
+        source_lines = source_text.splitlines()
+        try:
+            tree = ast.parse(source_text)
+        except SyntaxError as exc:
+            unresolved.extend(f"{py_file}: parse error ({exc})" for _ in file_edits)
+            continue
+
+        spans: list[SpanEdit] = []
+        for spec in sorted(file_edits, key=lambda item: item.line, reverse=True):
+            span = _find_span_edit(tree, spec)
+            if span is None:
+                unresolved.append(f"{py_file}:{spec.line} unresolved {spec.scope} {spec.name}")
+                continue
+            spans.append(span)
+
+        if not spans:
+            continue
+
+        new_lines = _apply_spans(source_lines, spans)
+        new_text = "\n".join(new_lines) + ("\n" if source_text.endswith("\n") else "")
+
+        if new_text != source_text:
+            changed_files += 1
+            applied_edits += len(spans)
+            if dry_run_mode:
+                print(f"[DRY-RUN] {py_file}: would apply {len(spans)} edit(s)")
+            else:
+                _ = py_file.write_text(new_text, encoding="utf-8")
+                print(f"{py_file}: applied {len(spans)} edit(s)")
+
+    if unresolved:
+        print("\nUnresolved edits:", file=sys.stderr)
+        for item in unresolved:
+            print(f"- {item}", file=sys.stderr)
+        if strict_mode:
+            print("\nError: unresolved edits encountered in --strict mode", file=sys.stderr)
+            sys.exit(1)
+
+    print(
+        f"\nSummary: changed_files={changed_files}, applied_edits={applied_edits}, unresolved={len(unresolved)}"
+    )
+
+
+if __name__ == "__main__":
+    main()

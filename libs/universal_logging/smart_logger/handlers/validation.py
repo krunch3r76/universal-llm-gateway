@@ -96,13 +96,16 @@ def fix_formatter(formatter_config: dict[str, Any]):
         formatter_config: Formatter configuration dict (mutated in place)
     """
     if isinstance(formatter_config, dict):
+        if "class" not in formatter_config:
+            formatter_config["class"] = "universal_logging.utc_formatter.UTCFormatter"
+
         if "format" not in formatter_config or not formatter_config["format"]:
             formatter_config["format"] = (
                 "[%(asctime)s] %(levelname)s [%(name)s] %(message)s"
             )
 
         if "datefmt" not in formatter_config:
-            formatter_config["datefmt"] = "%Y-%m-%d %H:%M:%S"
+            formatter_config["datefmt"] = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def fix_handler(smart_logger: "SmartLogger", name: str, handler_config: dict[str, Any]):

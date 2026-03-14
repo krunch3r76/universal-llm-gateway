@@ -1,0 +1,63 @@
+prompts:
+  enhance:
+    description: "Produce grounded docstring rewrite proposals from quality inventory"
+    system_prompt: |
+      You improve Python docstrings using only grounded inventory data.
+
+      Hard constraints:
+      - Propose edits only for symbols that exist in the inventory.
+      - Do not suggest code logic changes or signature changes.
+      - Keep docstrings factual and implementation-grounded.
+      - Do not mention line numbers inside docstrings.
+      - Preserve docstring style consistency: triple-quoted, concise paragraphs.
+
+      Quality targets:
+      - Module/class docstrings: at least 15 words.
+      - Function/method docstrings: at least 10 words.
+      - Include purpose, caller context, invariants, and side effects when available.
+      - Avoid name-echo first sentences.
+
+      Scope rules:
+      - Prioritize all critical issues first (missing docstrings).
+      - Then address warnings when a rewrite materially improves architecture extraction quality.
+      - Skip private symbols unless the inventory already surfaced them in quality_issues.
+
+      Return JSON matching schema exactly.
+    template: |
+      Generate docstring enhancements for this target.
+
+      ## Target path
+      {target_path}
+
+      ## Inventory + quality report JSON
+      {inventory_json}
+
+      Return JSON only.
+
+  review:
+    description: "Verify docstring rewrite proposals are grounded and high quality"
+    system_prompt: |
+      You validate docstring edit proposals against inventory evidence.
+
+      Validation rules:
+      - Keep only edits grounded in existing symbol signatures/docstrings.
+      - Remove edits that invent behavior not inferable from inventory.
+      - Keep edits focused on documentation quality, not behavior speculation.
+      - Ensure word-count thresholds are satisfied.
+      - Ensure first sentence is descriptive and not pure name echo.
+
+      Return JSON matching schema exactly.
+      Include unsupported_edits as explanations for dropped/rewritten proposals.
+    template: |
+      Review and finalize this docstring enhancement proposal.
+
+      ## Target path
+      {target_path}
+
+      ## Inventory + quality report JSON
+      {inventory_json}
+
+      ## Draft proposal JSON
+      {proposal_json}
+
+      Return JSON only.

@@ -10,7 +10,7 @@ options:
 
 estimation:
   # budget_source_tokens = (source_code_chars / chars_per_token) * validate_amplification + fixed_overhead_tokens
-  budget_source_tokens: 12000
+  budget_source_tokens: 12000 # (source_code_chars / chars_per_token) * validate_amplification + fixed_overhead_tokens
   chars_per_token: 3.5
   validate_amplification: 1.3
   fixed_overhead_tokens: 1300
@@ -23,9 +23,10 @@ steps:
     model_requirements:
       task: code_review
       min_score: strong
-      count: 3
+      count: 1
       source: cloud
-      large_payload_latency_bucket: medium
+      max_latency_bucket: fast
+      large_payload_latency_bucket: fast
       large_payload_threshold_tokens: 6000
     prompt_ref: code_review.review
     handler_inputs:
@@ -113,10 +114,11 @@ steps:
     model_requirements:
       task: code_review
       min_score: good
-      count: 3
+      count: 1
       source: cloud
       health_scoring: true
-      large_payload_latency_bucket: medium
+      max_latency_bucket: fast
+      large_payload_latency_bucket: fast
       large_payload_threshold_tokens: 6000
     prompt_ref: code_review.validate
     handler_inputs:

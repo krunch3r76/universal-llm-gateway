@@ -216,8 +216,9 @@ def create_minimal_config(service_name: str) -> dict[str, Any]:
         "disable_existing_loggers": False,
         "formatters": {
             "standard": {
+                "class": "universal_logging.utc_formatter.UTCFormatter",
                 "format": "[%(asctime)s] %(levelname)s [%(name)s] %(message)s",
-                "datefmt": "%Y-%m-%d %H:%M:%S",
+                "datefmt": "%Y-%m-%dT%H:%M:%SZ",
             }
         },
         "handlers": {

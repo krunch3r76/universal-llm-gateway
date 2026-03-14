@@ -94,11 +94,15 @@ def rag_file_indexing_failed(
     *,
     file: str,
     error: str,
+    model: str | None = None,
 ) -> Event:
     """Emitted when an unhandled error aborts file indexing."""
+    payload: dict[str, str] = {"file": file, "error": error}
+    if model is not None:
+        payload["model"] = model
     return Event(
         signal="rag.file.indexing.failed",
-        payload={"file": file, "error": error},
+        payload=payload,
     )
 
 

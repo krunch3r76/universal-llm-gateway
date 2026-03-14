@@ -87,11 +87,19 @@ def setup_emergency_fallback(smart_logger: "SmartLogger", original_error: Except
     smart_logger.metrics["fallback_activations"] += 1
 
     try:
+        from universal_logging.utc_formatter import UTCFormatter
+
         # Set up minimal logging via basicConfig (no dependencies)
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(
+            UTCFormatter(
+                fmt="[%(asctime)s] %(levelname)s [%(name)s] %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%SZ",
+            )
+        )
         logging.basicConfig(
             level=INFO,
-            format="[%(asctime)s] %(levelname)s [%(name)s] %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
+            handlers=[stream_handler],
             force=True,
         )
 

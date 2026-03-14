@@ -9,15 +9,17 @@ A semantic search and knowledge management service backed by ChromaDB. Runs as a
 Index time:
 
 1. **Chunking** — files are split into semantically coherent chunks using target+pad sizing with paragraph overlap and heading injection. Code files use tree-sitter AST-based chunking.
-2. **Embedding** — chunks are embedded via the configured local embedding model (default: `bge-m3`) through the Gateway and stored in ChromaDB with cosine similarity.
-3. **Knowledge extraction** — the `rag-extraction` LLM pipeline extracts entities, types, facets, topics, and relations from each chunk. Results are stored in both ChromaDB metadata and a SQLite-backed property inverted index.
-4. **Pending journal** — tracks in-flight indexing operations. On restart, interrupted files are re-indexed before the watcher starts, eliminating dangling pointers.
+2. **Knowledge extraction** — the `rag-extraction` LLM pipeline extracts entities, types, facets, topics, and relations from each chunk. Results are stored in both ChromaDB metadata and a SQLite-backed property inverted index.
+3. **Contextualization** — on by default (omit `contextualize_model` or set it to a model ID). Per-chunk LLM-generated context prefixes are prepended only for embedding; stored document text stays unchanged. Set `contextualize_model: ""` to disable. Improves retrieval when chunks share overlapping vocabulary.
+4. **Embedding** — chunks (with context prefix when contextualization ran) are embedded via the configured local embedding model (default: `qwen3-embedding-8b`) through the Gateway and stored in ChromaDB with cosine similarity.
+5. **Pending journal** — tracks in-flight indexing operations. On restart, interrupted files are re-indexed before the watcher starts, eliminating dangling pointers.
 
 Search time:
 
-5. **Vector search** — ChromaDB cosine similarity retrieves top-k candidate chunks.
-6. **Property boost** — entity/topic/relation matches from the property index apply a configurable score boost to matching chunks (hybrid structured+vector search).
-7. **Recency scoring** — additive recency weight based on `published_date` (preferred for research papers) or `indexed_at` timestamps.
+6. **Vector search** — ChromaDB cosine similarity retrieves top-k candidate chunks.
+7. **Property boost** — entity/topic/relation matches from the property index apply a configurable score boost to matching chunks (hybrid structured+vector search).
+8. **Recency scoring** — additive recency weight based on `published_date` (preferred for research papers) or `indexed_at` timestamps. Naive ISO timestamps are normalized to UTC before scoring to avoid timezone subtraction errors.
+9. **BM25 sidecar merge** — sparse BM25 candidates are merged with dense vector results via mini-RRF. Chroma fetch payloads are length-normalized (pad/trim) and invalid metadata rows are skipped to avoid strict zip failures.
 
 The pipeline layer (`rag-context`, `rag-answer`, `rag-answer-deep`) handles query rewriting, RRF multi-query merge, and answer generation on top of this service.
 
@@ -97,7 +99,7 @@ scopes:
     union: true               # aggregates all scope prefixes
     description: "Everything"
 
-embedding_model: bge-m3-q8-0-8192-cpu
+embedding_model: qwen3-embedding-8b-q8-0-40960-cpu
 
 knowledge_extraction:
   pipeline: rag-extraction
@@ -134,11 +136,22 @@ Event stream: `/tmp/rag-events/current.jsonl`
 
 Covers indexing operations, search queries, extraction progress, watcher status.
 
+Extraction failure observability:
+
+- If extraction returns an invalid payload shape, each chunk is recorded as a failed attempt in the property index and emits `rag_extraction_failed`.
+- During recovery, rows with invalid metadata are dropped and logged with counts before rerun.
+- Batch timeout paths emit `rag_extraction_batch_timed_out`; permanently exhausted chunks emit `rag_extraction_permanently_skipped`.
+
 ## Key Files
 
 | File | Responsibility |
 |------|---------------|
-| `rag_service.py` | FastAPI app, indexing orchestration, search |
+| `rag_service/main.py` | FastAPI app assembly and lifecycle wiring |
+| `rag_service/api.py` | Router and endpoint registration |
+| `rag_service/search.py` | Search execution flow used by `/search` |
+| `rag_service/indexing.py` | Indexing/reindexing implementation |
+| `rag_service/state.py` | Shared runtime state for the modular service |
+| `rag_service/lifecycle.py` | Startup/shutdown orchestration |
 | `config.py` | Configuration dataclasses and YAML parsing |
 | `search_scope.py` | Scoped search, property boost, recency scoring |
 | `chunkers.py` | Format-aware chunking (markdown, text) |

@@ -1,5 +1,5 @@
 models:
-  plan_model:
+  enhance_model:
     model: google/gemini-2.5-pro
-  execute_model:
+  review_model:
     model: google/gemini-2.5-pro

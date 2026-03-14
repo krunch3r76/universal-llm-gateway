@@ -13,7 +13,7 @@ GATEWAY_URL = "http://localhost:9999"
 _client = httpx.AsyncClient(timeout=60.0)
 logger = logging.getLogger(__name__)
 
-_embed_model: str = "bge-m3-q8-0-8192-cpu"
+_embed_model: str = "qwen3-embedding-8b-q8-0-40960-cpu"
 _probe_payload: dict[str, str | list[str]] = {"model": _embed_model, "input": ["probe"]}
 _event_bus: EventBus | None = None
 
@@ -71,6 +71,11 @@ def set_event_bus(bus: EventBus) -> None:
             "Embedding event bus already initialised with a different instance"
         )
     _event_bus = bus
+
+
+def get_model_id() -> str:
+    """Return the currently configured embedding model ID."""
+    return _embed_model
 
 
 async def close() -> None:
@@ -195,6 +200,22 @@ _TRANSIENT_STATUS_CODES = frozenset({502, 503, 429})
 _embed_dim: int | None = None
 
 
+def _parse_embedding_rows(payload: dict[str, object]) -> list[list[float]]:
+    """Extract embedding vectors from gateway response payload."""
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise RuntimeError("Embedding response missing list 'data' field")
+    vectors: list[list[float]] = []
+    for row in data:
+        if not isinstance(row, dict):
+            raise RuntimeError("Embedding response item is not an object")
+        embedding = row.get("embedding")
+        if not isinstance(embedding, list):
+            raise RuntimeError("Embedding response item missing 'embedding' list")
+        vectors.append(embedding)
+    return vectors
+
+
 def _cache_embed_dim(embeddings: list[list[float]]) -> None:
     """Cache embedding dimension from first successful embedding response.
 
@@ -233,7 +254,7 @@ async def _handle_single_item_500(text: str, error_body: str) -> list[list[float
                 json={"model": _embed_model, "input": [truncated]},
             )
             if response.status_code == 200:
-                result = [item["embedding"] for item in response.json()["data"]]
+                result = _parse_embedding_rows(response.json())
                 _cache_embed_dim(result)
                 return result
             logger.error(
@@ -344,7 +365,7 @@ async def _post_embeddings(batch: list[str]) -> list[list[float]]:
                 right = await _post_embeddings(batch[mid:])
                 return left + right
             response.raise_for_status()
-            result = [item["embedding"] for item in response.json()["data"]]
+            result = _parse_embedding_rows(response.json())
             _cache_embed_dim(result)
             return result
         except _TransientEmbeddingError as exc:

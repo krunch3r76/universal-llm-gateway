@@ -47,6 +47,7 @@ if not os.getenv("SERVICE_NAME"):
 
 # Now safe to import universal_logging (will use correct LOG_DIR and SERVICE_NAME)
 from universal_logging import get_logger  # noqa: E402
+from universal_logging.utc_formatter import UTCFormatter  # noqa: E402
 
 
 @dataclass
@@ -455,10 +456,17 @@ class StargateServiceManager:
         """Configure logging with appropriate level and format"""
         import logging
 
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(
+            UTCFormatter(
+                fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%SZ",
+            )
+        )
         logging.basicConfig(
             level=getattr(logging, self.config.log_level.upper()),
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
+            handlers=[stream_handler],
+            force=True,
         )
 
         logger = get_logger("stargate-manager")

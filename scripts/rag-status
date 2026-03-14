@@ -104,13 +104,15 @@ def _build_state(events: list[dict[str, Any]]) -> dict[str, Any]:
                 )
 
             case "rag.file.indexing.failed":
-                failed_files.append(
-                    {
-                        "file": p.get("file", ""),
-                        "error": p.get("error", "unknown"),
-                        "ts": ts,
-                    }
-                )
+                entry: dict[str, Any] = {
+                    "file": p.get("file", ""),
+                    "error": p.get("error", "unknown"),
+                    "ts": ts,
+                }
+                fail_model = p.get("model")
+                if fail_model:
+                    entry["model"] = fail_model
+                failed_files.append(entry)
 
             case _:
                 pass
@@ -210,10 +212,12 @@ def _print_snapshot(state: dict[str, Any]) -> None:
                 status_tag = "indexed"
             elif fname in failed_set:
                 mark = "✗"
-                err = next(
-                    (ff["error"] for ff in failed if ff["file"] == fname), ""
-                )
-                status_tag = _short_error(err)
+                fail_entry = next((ff for ff in failed if ff["file"] == fname), {})
+                err = fail_entry.get("error", "")
+                model_suffix = ""
+                if "model" in fail_entry:
+                    model_suffix = f"  model={fail_entry['model']}"
+                status_tag = f"{_short_error(err)}{model_suffix}"
             elif ok:
                 mark = "…"
                 status_tag = "embedding"
@@ -256,9 +260,7 @@ def _print_failures() -> None:
 
     conn = sqlite3.connect(str(DB_PATH))
     try:
-        cols = {
-            row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")
-        }
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")}
         has_permanent = "permanent" in cols
 
         if has_permanent:
@@ -302,9 +304,7 @@ def _print_failures() -> None:
                 print(f"  {_basename(source)}  ({len(chunks)} chunks)")
                 for chunk_id, attempt_count, recorded_at in chunks:
                     ts_str = recorded_at[:16] if recorded_at else "?"
-                    print(
-                        f"    {chunk_id}  attempts={attempt_count}  last={ts_str}"
-                    )
+                    print(f"    {chunk_id}  attempts={attempt_count}  last={ts_str}")
             print()
 
         if transient_rows:
@@ -351,9 +351,7 @@ def _reset() -> None:
         pending_count = conn.execute("SELECT COUNT(*) FROM pending").fetchone()[0]
         conn.execute("DELETE FROM pending")
 
-        cols = {
-            row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")
-        }
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")}
         perm_count = 0
         if "permanent" in cols:
             perm_count = conn.execute(
@@ -586,10 +584,7 @@ def _watch_mode() -> None:
                                 if t > 0:
                                     batch_start_by_file[path] = t
                             n = p.get("chunk_count", 0)
-                            print(
-                                f"{ts}  [EXTRACT ]  "
-                                f"{_basename(path)}  ({n} chunks)"
-                            )
+                            print(f"{ts}  [EXTRACT ]  {_basename(path)}  ({n} chunks)")
 
                         case "rag.extraction.batch.completed":
                             fname = p.get("file", "")
@@ -603,7 +598,8 @@ def _watch_mode() -> None:
                             w = p.get("written", 0)
                             n = p.get("chunk_count", 0)
                             file_duration = (
-                                extract_secs if extract_secs is not None and extract_secs >= 0
+                                extract_secs
+                                if extract_secs is not None and extract_secs >= 0
                                 else 0.0
                             )
                             d = _fmt_duration(file_duration)
@@ -635,7 +631,9 @@ def _watch_mode() -> None:
                             idx = p.get("indexed", 0)
                             bib = p.get("bibliography_chunks", 0)
                             path = p.get("file", "")
-                            extract_secs = extract_secs_by_file.get(path) if path else None
+                            extract_secs = (
+                                extract_secs_by_file.get(path) if path else None
+                            )
                             proc_secs = _as_float(p.get("processing_seconds"))
                             queue_wait_secs = _as_float(p.get("queue_wait_seconds"))
                             fallback_dur = _file_index_duration_seconds(
@@ -648,7 +646,9 @@ def _watch_mode() -> None:
                                 else (
                                     fallback_dur
                                     if fallback_dur is not None
-                                    else (payload_dur if payload_dur is not None else 0.0)
+                                    else (
+                                        payload_dur if payload_dur is not None else 0.0
+                                    )
                                 )
                             )
                             file_dur = max(0.0, file_dur)
@@ -684,11 +684,13 @@ def _watch_mode() -> None:
                         case "rag.file.indexing.failed":
                             path = p.get("file", "")
                             error = p.get("error", "unknown")
+                            fail_model = p.get("model", "")
                             short = _short_error(error)
+                            model_tag = f"  model={fail_model}" if fail_model else ""
                             print(
                                 f"{ts}  [✗ FAIL  ]  "
                                 f"{_basename(path)}  "
-                                f"{short}"
+                                f"{short}{model_tag}"
                             )
                             if batch_active:
                                 batch_seen_activity = True
@@ -701,14 +703,13 @@ def _watch_mode() -> None:
                         case "rag.extraction.failed":
                             pass  # summarized in batch.completed via written/chunk_count
 
-                        case _ if sig in {"rag.file.indexing.skipped", "rag.file.skipped"}:
+                        case _ if sig in {
+                            "rag.file.indexing.skipped",
+                            "rag.file.skipped",
+                        }:
                             path = p.get("file", "")
                             reason = p.get("reason", "skipped")
-                            print(
-                                f"{ts}  [↷ SKIP  ]  "
-                                f"{_basename(path)}  "
-                                f"{reason}"
-                            )
+                            print(f"{ts}  [↷ SKIP  ]  {_basename(path)}  {reason}")
                             if batch_active:
                                 batch_seen_activity = True
                                 batch_skipped += 1
@@ -722,8 +723,7 @@ def _watch_mode() -> None:
                             src = _basename(p.get("source", "?"))
                             att = p.get("attempt_count", "?")
                             print(
-                                f"{ts}  [PERM ✗  ]  "
-                                f"{src}  chunk={cid}  attempts={att}"
+                                f"{ts}  [PERM ✗  ]  {src}  chunk={cid}  attempts={att}"
                             )
 
                         case "rag.extraction.completed":
@@ -789,10 +789,7 @@ def _watch_mode() -> None:
                                     and state.started_seen
                                     and total != state.total_files
                                 )
-                                or (
-                                    state is not None
-                                    and processed < state.processed
-                                )
+                                or (state is not None and processed < state.processed)
                             )
                             if invalid:
                                 print(
@@ -858,17 +855,13 @@ def _watch_mode() -> None:
                             state.unchanged = unchanged
                             state.processed = max(
                                 state.processed,
-                                state.reindexed
-                                + state.unchanged
-                                + state.errors,
+                                state.reindexed + state.unchanged + state.errors,
                             )
                             if state.processed > state.total_files:
                                 state.total_files = state.processed
                             state.completed_seen = True
                             sweep_by_path[path] = state
-                            line = _render_sweep_line(
-                                ts, "SWEEP✓ ", path, state
-                            )
+                            line = _render_sweep_line(ts, "SWEEP✓ ", path, state)
                             line = line.rsplit(" ", 2)[0] + "  0 remaining"
                             print(line)
 
@@ -882,10 +875,7 @@ def _watch_mode() -> None:
 
                         case _:
                             if sig.startswith("rag."):
-                                print(
-                                    f"{ts}  [{sig}]  "
-                                    f"{json.dumps(p)}"
-                                )
+                                print(f"{ts}  [{sig}]  {json.dumps(p)}")
 
                 seen = len(lines)
             time.sleep(WATCH_INTERVAL)
@@ -900,23 +890,32 @@ def main() -> None:
     )
     group = parser.add_mutually_exclusive_group()
     _ = group.add_argument(
-        "--watch", "-w", action="store_true",
+        "--watch",
+        "-w",
+        action="store_true",
         help="live tail — stream events as they arrive",
     )
     _ = group.add_argument(
-        "--summary", "-s", action="store_true",
+        "--summary",
+        "-s",
+        action="store_true",
         help="compact one-liner for scripting",
     )
     _ = group.add_argument(
-        "--failures", "-f", action="store_true",
+        "--failures",
+        "-f",
+        action="store_true",
         help="show permanently skipped chunks from the property index DB",
     )
     _ = group.add_argument(
-        "--pending", "-p", action="store_true",
+        "--pending",
+        "-p",
+        action="store_true",
         help="show files stuck in the pending journal",
     )
     _ = group.add_argument(
-        "--reset", action="store_true",
+        "--reset",
+        action="store_true",
         help="clear pending journal + permanent extraction failures (run with RAG stopped)",
     )
     args = parser.parse_args()

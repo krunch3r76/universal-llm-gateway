@@ -26,6 +26,18 @@ logger = get_logger(__name__)
 
 
 def _build_edge_ws_url(remote_url: str) -> str:
+    """
+    Constructs the full WebSocket URL for Master-to-Edge federation.
+
+    Args:
+        remote_url: The base URL of the remote Edge stargate.
+
+    Returns:
+        The complete WebSocket URL for the federation endpoint.
+
+    Raises:
+        ValueError: If a unix:// URL is provided, as it's not supported for this client.
+    """
     base = remote_url.rstrip("/")
     if base.startswith("unix://"):
         raise ValueError("Master→Edge WebSocket client does not support unix:// URLs")
@@ -60,6 +72,12 @@ async def connection_loop(
         on_connect_success: Callback when authenticated (receives websocket)
         on_disconnect: Callback when disconnected
     """
+    if max_delay > 30.0:
+        logger.warning(
+            f"max_delay {max_delay} exceeds FED-11 invariant of 30s. Capping at 30s."
+        )
+        max_delay = 30.0
+
     current_delay = initial_delay
     remote_id = remote_config.stargate_id
     ws_url = _build_edge_ws_url(remote_config.url)
@@ -114,6 +132,7 @@ async def connect_once(
 
     async with websockets.connect(
         ws_url,
+        max_size=None,
         ping_interval=None,  # We handle our own ping/pong
         ping_timeout=None,
         close_timeout=5.0,

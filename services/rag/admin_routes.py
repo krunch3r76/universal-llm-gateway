@@ -1,6 +1,6 @@
 """Admin/CRUD routes for the RAG service.
 
-Extracted from rag_service.py to keep that module under the SLOC limit.
+Extracted during the rag_service module split to keep files under SLOC limits.
 Handles index, reindex, source, stats, watch status, and clear endpoints.
 """
 
@@ -50,6 +50,21 @@ logger = logging.getLogger(__name__)
 DEFAULT_EXTENSIONS = list(BASELINE_EXTENSIONS)
 
 router = APIRouter()
+
+
+def _align_list_length(
+    values: list[Any] | None,
+    expected: int,
+    default_factory: Callable[[], Any],
+) -> list[Any]:
+    """Return a list exactly `expected` long by trimming or padding defaults."""
+    if not isinstance(values, list):
+        return [default_factory() for _ in range(expected)]
+    if len(values) >= expected:
+        return values[:expected]
+    padded = list(values)
+    padded.extend(default_factory() for _ in range(expected - len(values)))
+    return padded
 
 
 def _validate_file(path: str) -> Path:
@@ -269,6 +284,12 @@ def register_admin_routes(
     async def index_file(request: IndexRequest) -> IndexResult:
         return await _index_single_file(request)
 
+    # ...
+
+    @router.post("/reindex", response_model=IndexResult)
+    async def reindex_file(request: IndexRequest) -> IndexResult:
+        return await _index_single_file(request)
+
     @router.post("/index_directory", response_model=IndexDirectoryResponse)
     async def index_directory(
         request: IndexDirectoryRequest,
@@ -348,23 +369,13 @@ def register_admin_routes(
         include = ["metadatas"] if not include_text else ["documents", "metadatas"]
         results = collection.get(include=include)
         ids: list[str] = results.get("ids") or []
-        raw_docs = results.get("documents")
-        raw_metas = results.get("metadatas")
         n = len(ids)
-        docs: list[str] = (
-            raw_docs
-            if isinstance(raw_docs, list) and len(raw_docs) == n
-            else ["" for _ in ids]
-        )
-        metas: list[dict[str, Any]] = (
-            raw_metas
-            if isinstance(raw_metas, list) and len(raw_metas) == n
-            else [{} for _ in ids]
-        )
+        docs = _align_list_length(results.get("documents"), n, lambda: "")
+        metas = _align_list_length(results.get("metadatas"), n, dict)
 
         items: list[ExtractionExportItem] = []
         sources_seen: set[str] = set()
-        for chunk_id, text, meta in zip(ids, docs, metas, strict=True):
+        for chunk_id, text, meta in zip(ids, docs, metas):
             if not isinstance(meta, dict):
                 continue
             source = meta.get("source") or ""
@@ -414,10 +425,10 @@ def register_admin_routes(
             raise HTTPException(
                 status_code=404, detail=f"No chunks indexed for: {path}"
             )
-        documents = results.get("documents") or []
-        metadatas_list = results.get("metadatas") or []
+        documents = _align_list_length(results.get("documents"), len(results["documents"]), lambda: "")
+        metadatas_list = _align_list_length(results.get("metadatas"), len(documents), dict)
         pairs = sorted(
-            zip(documents, metadatas_list, strict=True),
+            zip(documents, metadatas_list),
             key=lambda pair: pair[1].get("chunk_index", 0),
         )
         return SourceResponse(

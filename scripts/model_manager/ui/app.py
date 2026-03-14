@@ -1,10 +1,16 @@
 """Model Manager TUI application."""
 
+from __future__ import annotations
+
+import os
+import traceback
+from datetime import UTC, datetime
 from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header
+from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
 from scripts.model_manager.ensure_venv import find_workspace_root
 
@@ -12,6 +18,7 @@ from .controller.onboarding import OnboardingController
 from .controller.service_ctl import ServiceController
 from .model.catalog_state import CatalogState
 from .model.local_env import LocalEnv
+from .tui_events import TuiExited, TuiStarted
 from .view.screens.catalog import CatalogScreen
 from .view.screens.download import DownloadScreen
 from .view.screens.footprint import FootprintScreen
@@ -21,6 +28,9 @@ from .view.screens.remotes import RemotesScreen
 from .view.screens.services import ServicesScreen
 from .view.screens.settings import SettingsScreen
 from .view.widgets.status_bar import StatusBar
+
+_TUI_LOG_PATH = Path("/tmp/logs/tui/tui.log")
+_TUI_EVENT_DIR = "/tmp/tui-events"
 
 
 class ModelManagerApp(App):
@@ -64,6 +74,8 @@ class ModelManagerApp(App):
             local_env=self._local_env,
             workspace_root=self._workspace_root,
         )
+        self._event_bus: EventBus | None = None
+        self._broadcaster: MinimalEventDebugBroadcaster | None = None
 
     @property
     def catalog(self) -> CatalogState:
@@ -86,11 +98,29 @@ class ModelManagerApp(App):
         yield Footer()
         yield StatusBar()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         warning = self._service_controller.check_model_path_ownership()
         if warning:
             self.notify(warning, severity="error", timeout=15)
         self.push_screen("home")
+
+        self._broadcaster = MinimalEventDebugBroadcaster(
+            persistence_config={
+                "enabled": True,
+                "directory": _TUI_EVENT_DIR,
+                "max_file_size_mb": 10,
+                "max_files": 3,
+            }
+        )
+        self._event_bus = EventBus(debug_broadcaster=self._broadcaster)
+        await self._broadcaster.start_debug_server()
+        await self._event_bus.publish_async(TuiStarted(pid=os.getpid()))
+
+    async def on_unmount(self) -> None:
+        if self._event_bus is not None:
+            await self._event_bus.publish_async(TuiExited(reason="quit"))
+        if self._broadcaster is not None:
+            await self._broadcaster.stop_debug_server()
 
     def push_screen(  # type: ignore[override]
         self, screen: str, kwargs: dict | None = None
@@ -117,5 +147,13 @@ class ModelManagerApp(App):
 
 def run() -> None:
     """Entry point for the TUI."""
+    _TUI_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     app = ModelManagerApp()
-    app.run()
+    try:
+        app.run()
+    except Exception:
+        tb = traceback.format_exc()
+        ts = datetime.now(UTC).isoformat()
+        with _TUI_LOG_PATH.open("a") as fh:
+            fh.write(f"\n[{ts}] TUI crashed:\n{tb}\n")
+        raise

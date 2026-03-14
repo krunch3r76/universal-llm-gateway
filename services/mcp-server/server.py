@@ -364,9 +364,19 @@ def _build_server() -> FastMCP:
 
 
 def main() -> None:
+    from universal_logging.utc_formatter import UTCFormatter
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(
+        UTCFormatter(
+            fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%SZ",
+        )
+    )
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        handlers=[stream_handler],
+        force=True,
     )
 
     for cert_path in (_CERT_FILE, _KEY_FILE):

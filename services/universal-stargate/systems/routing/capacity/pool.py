@@ -13,6 +13,7 @@ INVARIANT: ∀ dispatch-admitted waiter cancelled before token creation ⟹
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 from collections import deque
 from collections.abc import AsyncIterator
@@ -143,7 +144,7 @@ class CapacityPool:
                 )
             else:
                 del self._capacity[slot]
-                del self._in_flight[slot]
+                self._in_flight.pop(slot, None)
                 removed += 1
         if slots:
             logger.info(
@@ -176,7 +177,7 @@ class CapacityPool:
             )
         else:
             del self._capacity[slot]
-            del self._in_flight[slot]
+            self._in_flight.pop(slot, None)
             logger.info("Removed capacity: %s/%s", gateway_id, model_id)
 
     # ── Queries ──
@@ -284,7 +285,8 @@ class CapacityPool:
         if not ranked:
             return None
 
-        ranked.sort(key=lambda item: (-item[1], item[0]))
+        random.shuffle(ranked)
+        ranked.sort(key=lambda item: -item[1])
         gw_id = ranked[0][0]
         slot = _Slot(gateway_id=gw_id, model_id=model_id)
         self._in_flight[slot] = self._in_flight.get(slot, 0) + 1
@@ -508,15 +510,29 @@ class CapacityPool:
                 skipped += 1
                 continue
 
-            if not waiter.future.done():
-                waiter.future.set_result(gw_id)
-                dispatched += 1
-            else:
+            if waiter.future.done():
                 slot = _Slot(gateway_id=gw_id, model_id=model_id)
                 self._in_flight[slot] = max(0, self._in_flight.get(slot, 0) - 1)
                 logger.warning(
                     "Cancelled between admit and set_result: "
                     "%s on %s/%s — released slot",
+                    waiter.request_id,
+                    gw_id,
+                    model_id,
+                )
+                continue
+
+            try:
+                waiter.future.set_result(gw_id)
+                dispatched += 1
+            except asyncio.InvalidStateError:
+                # Cancellation can race between done() check and set_result().
+                # In that window _try_immediate already incremented in_flight,
+                # so we must release the slot to avoid a permanent leak.
+                slot = _Slot(gateway_id=gw_id, model_id=model_id)
+                self._in_flight[slot] = max(0, self._in_flight.get(slot, 0) - 1)
+                logger.warning(
+                    "Cancelled during set_result race: %s on %s/%s — released slot",
                     waiter.request_id,
                     gw_id,
                     model_id,

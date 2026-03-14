@@ -252,10 +252,11 @@ class ConfigLoader:
             "disable_existing_loggers": False,
             "formatters": {
                 "standard": {
+                    "class": "universal_logging.utc_formatter.UTCFormatter",
                     "format": (
                         "[%(asctime)s] %(levelname)s [%(name)s:%(lineno)s] %(message)s"
                     ),
-                    "datefmt": "%Y-%m-%d %H:%M:%S",
+                    "datefmt": "%Y-%m-%dT%H:%M:%SZ",
                 }
             },
             "handlers": {

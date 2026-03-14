@@ -75,6 +75,7 @@ Stargate detects the ID and routes to `PipelineExecutor` transparently.
 | `rag-extraction` | Structured entity/topic/facet extraction used during RAG indexing | `pipelines/rag_extraction/` |
 | `project-assistant` | Project-scoped assistant flow that pins RAG context scope to project docs | `pipelines/project_assistant/` |
 | `code-review` | Structured review → validation → deterministic merged findings | `pipelines/code_review/` |
+| `docstring-enhance` | Inventory-grounded docstring rewrite proposals for file/directory targets | `pipelines/docstring_enhance/` |
 
 #### `rag-context` scope validation
 

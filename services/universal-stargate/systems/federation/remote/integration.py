@@ -43,6 +43,8 @@ class RemoteIntegration:
         self._local_edge_client: LocalEdgeClient | None = None
         # Request store for cancel propagation (shared with inference router)
         self._request_store: ActiveRequestStore | None = None
+        # Cached GATEWAY_SNAPSHOT from Edge (for resend on Master reconnection)
+        self._cached_edge_snapshot: dict | None = None
 
     async def setup(
         self,
@@ -108,6 +110,7 @@ class RemoteIntegration:
             )
 
     def _init_remote_telemetry(self) -> None:
+        """Initializes remote telemetry by setting up the node ID and log level."""
         """Initialize Remote telemetry tracker."""
         from .api.telemetry import initialize_telemetry
 
@@ -122,6 +125,7 @@ class RemoteIntegration:
         )
 
     async def _start_connection_manager(self) -> None:
+        """Creates and starts the ConnectionManager to connect to the Master Stargate."""
         """Create and start ConnectionManager (connects TO Master)."""
         self._connection_manager = ConnectionManager(
             self._config,
@@ -203,6 +207,12 @@ class RemoteIntegration:
             msg_type: Telemetry message type (resource_update, model_loaded, etc.)
             data: Telemetry data
         """
+        # Cache GATEWAY_SNAPSHOT for resend on Master reconnection.
+        # The Edge builds this with current loaded_models state; caching it
+        # ensures the Relay can restore Master state after transient disconnects.
+        if msg_type == "telemetry.gateway.snapshot":
+            self._cached_edge_snapshot = {"msg_type": msg_type, "data": data.copy()}
+
         # Also ingest Edge telemetry for HTTP polling mode.
         #
         # In relay topology (Remote with local_edge), Master polls this Relay over HTTP:
@@ -332,6 +342,7 @@ class RemoteIntegration:
             )
 
     def _mount_remote_routes(self, app: FastAPI, gateway_manager: Any | None) -> None:
+        """Mounts all Remote API routes to the FastAPI application."""
         """Mount all Remote API routes."""
         from .api.cancel import create_cancel_router
         from .api.inference import create_inference_router
@@ -389,10 +400,13 @@ class RemoteIntegration:
         app.include_router(create_cancel_router(request_store))
 
     @property
+    @property
     def connection_manager(self) -> ConnectionManager | None:
+        """Returns the ConnectionManager instance."""
         return self._connection_manager
 
     async def _handle_peer_connected(self, peer_id: str) -> None:
+        """Handles a successful connection to the Master Stargate."""
         """
         Handle connection to Master.
 
@@ -405,6 +419,7 @@ class RemoteIntegration:
             await self._resend_telemetry_after_reconnect()
 
     async def _handle_peer_disconnected(self, peer_id: str) -> None:
+        """Handles a disconnection from the Master Stargate."""
         """
         Handle disconnection from Master.
 
@@ -417,13 +432,15 @@ class RemoteIntegration:
         )
 
     async def _resend_telemetry_after_reconnect(self) -> None:
-        """Resend telemetry snapshot after WebSocket reconnection."""
+        """Resend telemetry snapshot after WebSocket reconnection.
+
+        Two paths:
+        1. Local gateway mode: build fresh snapshot from ws_client
+        2. Relay + local_edge mode: resend cached GATEWAY_SNAPSHOT from Edge
+        """
         import asyncio
 
         from ..link.ws.remote.client import RemoteWebSocketClient
-
-        # CRITICAL: Uses Phase 1's snapshot helpers
-        from .telemetry.snapshot import build_telemetry_payload, log_snapshot_sent
 
         if not self._connection_manager:
             logger.warning("Cannot resend telemetry: ConnectionManager not initialized")
@@ -441,29 +458,51 @@ class RemoteIntegration:
             )
             return
 
-        if not self._gateway_url or not self._gateway_ws_client:
-            logger.warning("Cannot resend telemetry: gateway not wired")
+        # Path 1: Local gateway mode (Remote Stargate with own Gateway)
+        if self._gateway_url and self._gateway_ws_client:
+            from .telemetry.snapshot import build_telemetry_payload, log_snapshot_sent
+
+            ws_client = self._gateway_ws_client
+            if not ws_client.is_connected:
+                logger.warning("Cannot resend telemetry: Gateway not connected")
+                return
+
+            payload = build_telemetry_payload(ws_client, apply_filtering=True)
+
+            _ = asyncio.create_task(
+                telemetry_sender.on_resource_update(payload),
+                name="federation-telemetry-reconnect",
+            )
+
+            log_snapshot_sent(
+                "🔄 Resent telemetry after reconnect",
+                len(payload["available_models"]),
+                len(ws_client.get_models()),
+                len(payload["loaded_models"]),
+                len(payload["busy_models"]),
+            )
             return
 
-        ws_client = self._gateway_ws_client
-        if not ws_client.is_connected:
-            logger.warning("Cannot resend telemetry: Gateway not connected")
+        # Path 2: Relay + local_edge mode (no local Gateway, forwarding Edge state)
+        if self._config.local_edge and self._cached_edge_snapshot:
+            edge_id = self._config.local_edge.stargate_id
+            snapshot = self._cached_edge_snapshot
+            logger.info(
+                "🔄 Resending cached Edge GATEWAY_SNAPSHOT after reconnect "
+                f"(edge={edge_id})"
+            )
+            _ = asyncio.create_task(
+                telemetry_sender.forward_edge_telemetry(
+                    edge_id,
+                    snapshot["msg_type"],
+                    snapshot["data"],
+                ),
+                name="federation-edge-snapshot-reconnect",
+            )
             return
 
-        # INVARIANT: Reconnect telemetry applies filtering
-        payload = build_telemetry_payload(ws_client, apply_filtering=True)
-
-        _ = asyncio.create_task(
-            telemetry_sender.on_resource_update(payload),
-            name="federation-telemetry-reconnect",
-        )
-
-        log_snapshot_sent(
-            "🔄 Resent telemetry after reconnect",
-            len(payload["available_models"]),
-            len(ws_client.get_models()),
-            len(payload["loaded_models"]),
-            len(payload["busy_models"]),
+        logger.warning(
+            "Cannot resend telemetry: no gateway and no cached Edge snapshot"
         )
 
     def wire_gateway_telemetry(

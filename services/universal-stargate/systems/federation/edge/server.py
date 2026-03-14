@@ -100,6 +100,8 @@ class EdgeFederationServer:
 
         # Connected and authenticated peers
         self._authenticated_peers: dict[str, WebSocket] = {}  # stargate_id → ws
+        # Peers authenticated before GATEWAY_SNAPSHOT exists (startup timing race)
+        self._pending_snapshot_peers: set[str] = set()
 
         # Periodic heartbeat task (for preventing telemetry staleness)
         self._heartbeat_task: asyncio.Task[None] | None = None
@@ -209,9 +211,16 @@ class EdgeFederationServer:
                 name="emit-federation-connection-authenticated",
             )
 
-        # Send cached GATEWAY_SNAPSHOT to new peer (contains catalog for routing)
+        # Send cached GATEWAY_SNAPSHOT to new peer (contains catalog for routing).
+        # If not ready yet, queue for delivery when telemetry wiring completes.
         if self._cached_gateway_snapshot:
             await self._send_cached_telemetry(websocket, peer_id)
+        else:
+            self._pending_snapshot_peers.add(peer_id)
+            logger.info(
+                f"📋 Peer {peer_id} authenticated before GATEWAY_SNAPSHOT ready "
+                "— queued for snapshot delivery"
+            )
 
         return True
 
@@ -255,14 +264,12 @@ class EdgeFederationServer:
     # ─── Peer Lifecycle ────────────────────────────────────────────────────
 
     async def handle_peer_disconnect(self, peer_id: str) -> None:
-        """Handle peer disconnection."""
+        """Remove disconnected peers from auth and pending snapshot registries."""
+        self._pending_snapshot_peers.discard(peer_id)
         if peer_id in self._authenticated_peers:
             del self._authenticated_peers[peer_id]
             remaining = len(self._authenticated_peers)
-            logger.info(
-                f"⚠️ Peer {peer_id} disconnected "
-                f"(remaining: {remaining})"
-            )
+            logger.info(f"⚠️ Peer {peer_id} disconnected (remaining: {remaining})")
             if self._event_bus is not None:
                 from src.scheduling.events.federation_signaling import (
                     FederationPeerDisconnected,
@@ -600,10 +607,11 @@ class EdgeFederationServer:
         self, ws_client: GatewayWebSocketClient, gateway_url: str
     ) -> None:
         """
-        Send initial telemetry snapshot and broadcast to connected peers.
+        Build and cache GATEWAY_SNAPSHOT, then deliver to all peers.
 
-        Called after wiring to ensure ALL peers (already connected + late-joining)
-        receive current state.
+        Handles startup timing where peers can authenticate before gateway telemetry
+        wiring completes. Pending peers are drained first, then all authenticated
+        peers receive the same cached snapshot idempotently.
 
         PHASE 2: Includes available_models + model_resources for Master routing.
         Subsequent RESOURCE_UPDATEs only send loaded/busy state (not catalog).
@@ -651,14 +659,50 @@ class EdgeFederationServer:
                 name="emit-federation-snapshot-sent",
             )
 
-        # Broadcast GATEWAY_SNAPSHOT to already-connected peers
+        # Deliver snapshot to connected peers with explicit per-peer handling.
         asyncio.create_task(
-            self._broadcast_to_peers(self._cached_gateway_snapshot),
-            name="initial-telemetry-broadcast",
+            self._deliver_snapshot_to_all_peers(),
+            name="initial-telemetry-delivery",
         )
-        peer_count = len(self._authenticated_peers)
+
+    async def _deliver_snapshot_to_all_peers(self) -> None:
+        """Deliver cached snapshot to pending and currently authenticated peers."""
+        if not self._cached_gateway_snapshot:
+            return
+
+        pending = tuple(self._pending_snapshot_peers)
+        self._pending_snapshot_peers.clear()
+
+        if pending:
+            logger.info(
+                f"📤 Delivering GATEWAY_SNAPSHOT to {len(pending)} pending peer(s): "
+                f"{list(pending)}"
+            )
+
+        snapshot_json = json.dumps(self._cached_gateway_snapshot)
+        peers = list(self._authenticated_peers.items())
+        delivered = 0
+
+        for peer_id, websocket in peers:
+            try:
+                await websocket.send_text(snapshot_json)
+                delivered += 1
+                logger.info(
+                    f"📤 GATEWAY_SNAPSHOT delivered to {peer_id} "
+                    f"({'was pending' if peer_id in pending else 'already connected'})"
+                )
+            except WebSocketDisconnect:
+                logger.info(f"Peer {peer_id} disconnected during snapshot delivery")
+                asyncio.create_task(self.handle_peer_disconnect(peer_id))
+            except Exception as e:
+                logger.error(
+                    f"Failed to deliver GATEWAY_SNAPSHOT to {peer_id}: "
+                    f"{e.__class__.__name__} - {e}"
+                )
+
         logger.info(
-            f"📤 Broadcasting initial telemetry to {peer_count} connected peers"
+            f"📊 GATEWAY_SNAPSHOT delivery complete: "
+            f"{delivered}/{len(peers)} peers served"
         )
 
     def _start_periodic_heartbeat(self, ws_client: GatewayWebSocketClient) -> None:

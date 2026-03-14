@@ -104,6 +104,7 @@ async def _connect_once(
         async with websockets.unix_connect(
             path=socket_path,
             uri=uri,
+            max_size=None,
             ping_interval=None,  # We handle our own ping/pong
             ping_timeout=None,
             close_timeout=5.0,
