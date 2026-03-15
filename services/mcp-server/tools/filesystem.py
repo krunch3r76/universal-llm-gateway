@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 
 _SANDBOX_ROOT = Path("/data/files")
 _ALLOWED_WRITE_SUFFIXES = {".md", ".txt", ".docx", ".pdf"}
-_ALLOWED_READ_SUFFIXES = {".md", ".txt", ".docx", ".odt"}
+_ALLOWED_READ_SUFFIXES = {".md", ".txt", ".docx", ".odt", ".eml", ".doc", ".html", ".json", ".yaml"}
+_ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
 _EDITABLE_SUFFIXES = {".md", ".txt"}
 
 
@@ -46,10 +47,7 @@ def _read_odt(path: Path) -> str:
     from odf.text import P  # type: ignore[import-untyped]
 
     doc = odf_load(str(path))
-    return "\n".join(
-        teletype.extractText(node)
-        for node in doc.getElementsByType(P)
-    )
+    return "\n".join(teletype.extractText(node) for node in doc.getElementsByType(P))
 
 
 def _safe_path(relative: str) -> Path:
@@ -128,13 +126,12 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
                 f"Allowed: {', '.join(sorted(_ALLOWED_WRITE_SUFFIXES))}"
             )
         try:
-            match suffix:
-                case ".docx":
-                    _write_docx(dest, content)
-                case ".pdf":
-                    _write_pdf(dest, content)
-                case _:
-                    _write_plain(dest, content)
+            write_handlers = {
+                ".docx": _write_docx,
+                ".pdf": _write_pdf,
+            }
+            write_handler = write_handlers.get(suffix, _write_plain)
+            write_handler(dest, content)
         except OSError as exc:
             record(
                 "mcp.tool.file.write_failed",
@@ -142,12 +139,16 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
                 resolved=str(dest),
                 reason="os_error",
                 error=str(exc),
-                error_type=type(exc).__name__
+                error_type=type(exc).__name__,
             )
-            logger.exception("write_file: OS error writing %s", dest) # Use logger.exception to include traceback
+            logger.exception(
+                "write_file: OS error writing %s", dest
+            )  # Use logger.exception to include traceback
             raise
 
-        record("mcp.tool.file.written", path=path, resolved=str(dest), chars=len(content))
+        record(
+            "mcp.tool.file.written", path=path, resolved=str(dest), chars=len(content)
+        )
         logger.debug("write_file: wrote %s (%d chars)", dest, len(content))
         return {"status": "written", "path": str(dest)}
 
@@ -176,17 +177,97 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
                 f"Allowed: {', '.join(sorted(_ALLOWED_READ_SUFFIXES))}"
             )
 
-        match suffix:
-            case ".docx":
-                content = _read_docx(src)
-            case ".odt":
-                content = _read_odt(src)
-            case _:
-                content = _read_plain(src)
+        read_handlers = {
+            ".docx": _read_docx,
+            ".odt": _read_odt,
+        }
+        read_handler = read_handlers.get(suffix, _read_plain)
+        content = read_handler(src)
 
         record("mcp.tool.file.read", path=path, resolved=str(src), chars=len(content))
         logger.debug("read_file: read %s (%d chars)", src, len(content))
         return {"content": content, "path": str(src)}
+
+    @mcp.tool()
+    def view_image(
+        path: str, max_dimension: int = 1024, quality: int = 60
+    ) -> dict[str, str]:
+        """View a photo or image from the sandbox filesystem.
+
+        Resizes and compresses the image to a JPEG thumbnail saved at
+        .thumbnails/<name>.jpg inside the sandbox. Returns the thumbnail
+        path and metadata — no base64 in the response, so it won't
+        overflow the context window.
+
+        To actually see the image, read the thumbnail file with your
+        file viewer or bash tool.
+
+        Supported formats: .jpg, .jpeg, .png, .gif, .webp
+
+        Args:
+            path: Relative file path, e.g. "dropbox/photo.jpg".
+            max_dimension: Max width or height in pixels (default 1024).
+            quality: JPEG compression quality 1-95 (default 60).
+
+        Returns:
+            {"thumbnail": "<path to compressed JPEG>", "original": "<source path>",
+             "original_size": "WxH", "thumbnail_size": "WxH", "bytes": "<file size>"}
+        """
+        from PIL import Image as PILImage
+
+        src = _safe_path(path)
+        if not src.exists():
+            raise FileNotFoundError(f"Image not found: {path!r}")
+        if not src.is_file():
+            raise ValueError(f"Path is not a file: {path!r}")
+
+        suffix = src.suffix.lower()
+        if suffix not in _ALLOWED_IMAGE_SUFFIXES:
+            raise ValueError(
+                f"Unsupported image format {suffix!r}. "
+                f"Allowed: {', '.join(sorted(_ALLOWED_IMAGE_SUFFIXES))}"
+            )
+
+        img = PILImage.open(src)
+        original_size = f"{img.width}x{img.height}"
+
+        img.thumbnail((max_dimension, max_dimension), PILImage.Resampling.LANCZOS)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+
+        thumb_dir = _SANDBOX_ROOT / ".thumbnails"
+        thumb_dir.mkdir(parents=True, exist_ok=True)
+        thumb_name = src.stem + ".jpg"
+        thumb_path = thumb_dir / thumb_name
+        img.save(str(thumb_path), format="JPEG", quality=quality, optimize=True)
+
+        thumb_size = f"{img.width}x{img.height}"
+        file_bytes = thumb_path.stat().st_size
+        thumb_rel = str(thumb_path.relative_to(_SANDBOX_ROOT))
+
+        record(
+            "mcp.tool.image.viewed",
+            path=path,
+            resolved=str(src),
+            original=original_size,
+            thumbnail=thumb_rel,
+            thumbnail_size=thumb_size,
+            bytes=file_bytes,
+        )
+        logger.info(
+            "view_image: %s %s -> %s (%d bytes)",
+            src,
+            original_size,
+            thumb_size,
+            file_bytes,
+        )
+        return {
+            "thumbnail": thumb_rel,
+            "original": path,
+            "original_size": original_size,
+            "thumbnail_size": thumb_size,
+            "bytes": str(file_bytes),
+        }
 
     @mcp.tool()
     def edit_file(
@@ -272,6 +353,94 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             raise
 
     @mcp.tool()
+    def move_file(source: str, destination: str) -> dict[str, str]:
+        """Move or rename a file within the sandbox.
+
+        Works with any file type including images and binary files.
+        Creates intermediate directories at the destination automatically.
+        Overwrites the destination if it already exists.
+
+        Args:
+            source: Current relative path, e.g. "dropbox/photo.jpg".
+            destination: New relative path, e.g. "notes/legal/assets/photo.jpg".
+
+        Returns:
+            {"status": "moved", "from": "<old path>", "to": "<new path>"}
+        """
+        import shutil
+
+        src = _safe_path(source)
+        dst = _safe_path(destination)
+        if not src.exists():
+            raise FileNotFoundError(f"Source not found: {source!r}")
+        if not src.is_file():
+            raise ValueError(f"Source is not a file: {source!r}")
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        record("mcp.tool.file.moved", source=source, destination=destination)
+        logger.info("move_file: %s → %s", src, dst)
+        return {"status": "moved", "from": str(src), "to": str(dst)}
+
+    @mcp.tool()
+    def copy_file(source: str, destination: str) -> dict[str, str]:
+        """Copy a file within the sandbox.
+
+        Works with any file type including images and binary files.
+        Creates intermediate directories at the destination automatically.
+        Overwrites the destination if it already exists.
+
+        Args:
+            source: Relative path to copy from, e.g. "dropbox/photo.jpg".
+            destination: Relative path to copy to, e.g. "archive/photo.jpg".
+
+        Returns:
+            {"status": "copied", "from": "<source path>", "to": "<new path>"}
+        """
+        import shutil
+
+        src = _safe_path(source)
+        dst = _safe_path(destination)
+        if not src.exists():
+            raise FileNotFoundError(f"Source not found: {source!r}")
+        if not src.is_file():
+            raise ValueError(f"Source is not a file: {source!r}")
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(src), str(dst))
+        record("mcp.tool.file.copied", source=source, destination=destination)
+        logger.info("copy_file: %s → %s", src, dst)
+        return {"status": "copied", "from": str(src), "to": str(dst)}
+
+    @mcp.tool()
+    def remove_directory(directory: str) -> dict[str, str]:
+        """Remove a directory and all its contents from the sandbox.
+
+        Deletes the directory and everything inside it recursively.
+        Use with care — this is irreversible.
+
+        Args:
+            directory: Relative directory path, e.g. "notes/old-drafts".
+
+        Returns:
+            {"status": "removed", "path": "<resolved path>"}
+        """
+        import shutil
+
+        target = _safe_path(directory)
+        if not target.exists():
+            raise FileNotFoundError(f"Directory not found: {directory!r}")
+        if not target.is_dir():
+            raise ValueError(f"Path is not a directory: {directory!r}")
+        if target == _SANDBOX_ROOT:
+            raise ValueError("Cannot remove the sandbox root directory")
+
+        shutil.rmtree(str(target))
+        record("mcp.tool.dir.removed", directory=directory)
+        logger.info("remove_directory: %s", target)
+        return {"status": "removed", "path": str(target)}
+
+    @mcp.tool()
     def delete_file(path: str) -> dict[str, str]:
         """Delete a file from the sandboxed files directory.
 
@@ -287,7 +456,9 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         if not target.exists():
             raise FileNotFoundError(f"File not found: {path!r}")
         if not target.is_file():
-            raise ValueError(f"Path is not a file (directories cannot be deleted): {path!r}")
+            raise ValueError(
+                f"Path is not a file (directories cannot be deleted): {path!r}"
+            )
 
         target.unlink()
         record("mcp.tool.file.deleted", sandbox="files", path=path)
@@ -311,7 +482,9 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             raise ValueError(f"Path is not a directory: {directory!r}")
 
         files = sorted(
-            str(p.relative_to(_SANDBOX_ROOT)) for p in target.rglob("*") if p.is_file()
+            str(p.relative_to(_SANDBOX_ROOT))
+            for p in target.rglob("*")
+            if p.is_file() and not p.is_relative_to(_SANDBOX_ROOT / ".thumbnails")
         )
         record("mcp.tool.file.listed", directory=directory or ".", count=len(files))
         logger.debug("list_files: %s → %d files", target, len(files))

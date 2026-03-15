@@ -50,6 +50,15 @@ class GatewayStatus(TypedDict):
     models: list[str]
 
 
+class _CatalogCacheEntry(TypedDict):
+    """Last-known catalog for a gateway, cached across disconnect/reconnect cycles."""
+
+    available_models: frozenset[ModelId]
+    model_resources: dict[ModelId, dict[str, int | str]]
+    activated_models: frozenset[ModelId] | None
+    activated_contexts: dict[str, dict[str, list[int]]]
+
+
 class FederatedGatewayManager(Sequential):
     """
     Manages federated gateway state via telemetry events.
@@ -81,6 +90,11 @@ class FederatedGatewayManager(Sequential):
 
         # Gateway state by gateway_id
         self._gateways: dict[str, FederatedGateway] = {}
+
+        # Catalog cache: gateway_id → last-known catalog state.
+        # Bridging reconnects (container rebuilds) so routing continues
+        # until the authoritative GATEWAY_SNAPSHOT arrives.
+        self._catalog_cache: dict[str, _CatalogCacheEntry] = {}
 
         # Remote URLs by remote_stargate_id
         self._remote_urls: dict[str, str] = {}
@@ -188,7 +202,7 @@ class FederatedGatewayManager(Sequential):
         )
 
     def _parse_max_concurrent(
-        self, gateway_id: str, model_id: ModelId, max_concurrent_raw: Any
+        self, gateway_id: str, model_id: ModelId, max_concurrent_raw: int | str
     ) -> int:
         """Parse max_concurrent_requests with fail-loud logging and safe fallback."""
         try:
@@ -431,8 +445,14 @@ class FederatedGatewayManager(Sequential):
         return list(self._gateways.values())
 
     def get_healthy_gateways(self) -> list[FederatedGateway]:
-        """Get gateways that are not unreachable (no signal within TTL)."""
+        """Get gateways that are currently considered healthy (reachable).
 
+        A gateway is healthy if it is not marked unreachable based on
+        its last heartbeat timestamp.
+
+        Returns:
+            List of FederatedGateway instances that are currently healthy.
+        """
         healthy = []
         unreachable_count = 0
 
@@ -451,12 +471,12 @@ class FederatedGatewayManager(Sequential):
 
             healthy.append(gw)
 
-        logger.info(
+        logger.debug(
             f"🔍 get_healthy_gateways() returning {len(healthy)} gateways "
             f"(total: {len(self._gateways)}, unreachable: {unreachable_count})"
         )
         for gw in healthy:
-            logger.info(
+            logger.debug(
                 f"  → {gw.gateway_id}: available_models={len(gw.available_models)}, "
                 f"sample={list(gw.available_models)[:2]}"
             )
@@ -494,22 +514,22 @@ class FederatedGatewayManager(Sequential):
 
     def is_model_believed_loaded(self, gateway_id: str, model_id: ModelId) -> bool:
         """
-        Check if telemetry HINTS that model is loaded.
+        Check if telemetry HINTS that model is loaded on the given gateway.
 
         WARNING: This is a HINT, not authoritative. Caller MUST handle
         the case where this returns True but model is actually not loaded
-        (split-brain scenario).
+        (e.g. split-brain or delayed telemetry).
 
         Args:
-            gateway_id: Gateway identifier (primitive for clean interface)
-            model_id: Model to check (ModelId object, NOT string)
+            gateway_id: Gateway identifier.
+            model_id: ModelId to check (not a string).
 
         Returns:
-            True if telemetry indicates model is loaded, False otherwise
+            True if telemetry indicates the model is loaded on the gateway.
         """
         gateway = self._gateways.get(gateway_id)
         if not gateway:
-            logger.info(
+            logger.debug(
                 f"🔍 [TELEMETRY] Model belief check: gateway={gateway_id} NOT FOUND, "
                 f"model={model_id}, believed_loaded=false"
             )
@@ -519,7 +539,7 @@ class FederatedGatewayManager(Sequential):
         result = model_id in gateway.loaded_models
 
         # DIAGNOSTIC LOGGING (permanent, not temporary)
-        logger.info(
+        logger.debug(
             f"🔍 [TELEMETRY] Model belief check: gateway={gateway_id}, "
             f"model={model_id}, believed_loaded={result}, "
             f"loaded_models_count={len(gateway.loaded_models)}"
@@ -548,19 +568,17 @@ class FederatedGatewayManager(Sequential):
 
     def is_telemetry_fresh(self, gateway_id: str, threshold_seconds: float) -> bool:
         """
-        Check if telemetry is within freshness threshold.
+        Check if telemetry for the gateway is within the freshness threshold.
 
         Args:
-            gateway_id: Gateway identifier (primitive for clean interface)
-            threshold_seconds: Maximum acceptable age in seconds
+            gateway_id: Gateway identifier.
+            threshold_seconds: Maximum acceptable age in seconds.
 
         Returns:
-            True if telemetry age <= threshold, False if stale or unknown
+            True if telemetry age <= threshold; False if stale or unknown.
 
         Note:
-            Pure read — no @sequential needed. asyncio is single-threaded;
-            dict reads are safe without serialisation. The only async work
-            (event emission) is fire-and-forget via asyncio.create_task.
+            Pure read — no @sequential. Event emission is fire-and-forget.
         """
         age = self.get_telemetry_age_seconds(gateway_id)
 
@@ -575,7 +593,7 @@ class FederatedGatewayManager(Sequential):
         is_fresh = age <= threshold_seconds
 
         # DIAGNOSTIC LOGGING (permanent)
-        logger.info(
+        logger.debug(
             f"🔍 [TELEMETRY] Freshness check: gateway={gateway_id}, "
             f"age={age:.1f}s, threshold={threshold_seconds}s, fresh={is_fresh}"
         )
@@ -841,7 +859,8 @@ class FederatedGatewayManager(Sequential):
         remote_url = self._remote_urls.get(remote_stargate_id, "")
         is_http_polling = remote_stargate_id in self._http_polling_remotes
 
-        # Create gateway
+        # Create gateway, restoring cached catalog if available
+        cached = self._catalog_cache.pop(gateway_id, None)
         gateway = FederatedGateway(
             gateway_id=gateway_id,
             remote_stargate_id=remote_stargate_id,
@@ -849,13 +868,36 @@ class FederatedGatewayManager(Sequential):
             node_id=node_id,
             is_http_polling=is_http_polling,
         )
+        if cached:
+            gateway.available_models = cached["available_models"]
+            gateway.model_resources = cached["model_resources"]
+            gateway.activated_models = cached["activated_models"]
+            gateway.activated_contexts = cached["activated_contexts"]
+
         self._gateways[gateway_id] = gateway
 
         mode = "HTTP-polling" if is_http_polling else "WebSocket"
+        n_cached = len(gateway.available_models) if cached else 0
+        extra = f", cached_catalog={n_cached}" if cached else ""
         logger.info(
             f"🌐 New federated gateway registered: {gateway_id} "
-            f"(node={node_id or 'unknown'}, {mode})"
+            f"(node={node_id or 'unknown'}, {mode}{extra})"
         )
+
+        if self._event_bus:
+            from src.scheduling.events import RoutingDebugGatewayRegistered
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    RoutingDebugGatewayRegistered(
+                        gateway_id=gateway_id,
+                        remote_stargate_id=remote_stargate_id,
+                        node_id=node_id,
+                        catalog_size=len(gateway.available_models),
+                        is_http_polling=is_http_polling,
+                    )
+                )
+            )
 
         return gateway
 
@@ -877,10 +919,10 @@ class FederatedGatewayManager(Sequential):
 
         # Log state change if transitioning from unreachable to reachable
         if was_unreachable:
-            age_before = int((now - old_heartbeat) * 1000)
+            offline_duration_ms = int((now - old_heartbeat) * 1000)
             logger.warning(
                 f"🔄 Gateway {gateway.gateway_id} transition: UNREACHABLE → REACHABLE "
-                f"(was offline for {age_before}ms)"
+                f"(was offline for {offline_duration_ms}ms)"
             )
 
     def _update_heartbeat_timestamp(self, gateway: FederatedGateway) -> None:
@@ -893,10 +935,10 @@ class FederatedGatewayManager(Sequential):
 
         # Log state change if transitioning from unreachable to reachable
         if was_unreachable:
-            age_before = int((now - old_heartbeat) * 1000)
+            offline_duration_ms = int((now - old_heartbeat) * 1000)
             logger.warning(
                 f"💓 Gateway {gateway.gateway_id} heartbeat restored: "
-                f"UNREACHABLE → REACHABLE (was offline for {age_before}ms)"
+                f"UNREACHABLE → REACHABLE (was offline for {offline_duration_ms}ms)"
             )
         else:
             gap_ms = int((now - old_heartbeat) * 1000)
@@ -1138,9 +1180,7 @@ class FederatedGatewayManager(Sequential):
         gw.loading_models = gw.loading_models - snapshot_loaded
 
         # Seed eviction hysteresis for newly-visible loaded models
-        import time as _time
-
-        now = _time.monotonic()
+        now = time.monotonic()
         for mid in snapshot_loaded - prev_loaded:
             if mid not in gw.model_loaded_at:
                 gw.model_loaded_at[mid] = now
@@ -1330,9 +1370,7 @@ class FederatedGatewayManager(Sequential):
 
         # Eviction hysteresis: record load timestamp (idempotent — keeps first)
         if model_id not in gw.model_loaded_at:
-            import time as _time
-
-            gw.model_loaded_at[model_id] = _time.monotonic()
+            gw.model_loaded_at[model_id] = time.monotonic()
 
         # Telemetry confirms model loaded — clear any prior load failure
         self._clear_model_load_failure(gw.gateway_id, model_id)
@@ -1438,7 +1476,13 @@ class FederatedGatewayManager(Sequential):
         for gateway_id in list(self._gateways.keys()):
             gw = self._gateways[gateway_id]
             if gw.remote_stargate_id == remote_stargate_id:
-                # Remove capacity from ledger (admission control)
+                if gw.available_models:
+                    self._catalog_cache[gateway_id] = _CatalogCacheEntry(
+                        available_models=gw.available_models,
+                        model_resources=dict(gw.model_resources),
+                        activated_models=gw.activated_models,
+                        activated_contexts=dict(gw.activated_contexts),
+                    )
                 if self._capacity_pool:
                     self._capacity_pool.remove_gateway(gateway_id)
                     logger.debug(f"📊 Capacity pool: removed gateway {gateway_id}")
@@ -1462,6 +1506,18 @@ class FederatedGatewayManager(Sequential):
 
         if removed:
             logger.info(f"Removed {len(removed)} gateways from {remote_stargate_id}")
+            if self._event_bus:
+                from src.scheduling.events import RoutingDebugGatewayRemoved
+
+                asyncio.create_task(
+                    self._event_bus.publish_async_nowait(
+                        RoutingDebugGatewayRemoved(
+                            remote_stargate_id=remote_stargate_id,
+                            removed_gateway_ids=removed,
+                            remaining_gateway_ids=list(self._gateways.keys()),
+                        )
+                    )
+                )
             await self.notify_state_change()
         return removed
 
@@ -1653,9 +1709,7 @@ class FederatedGatewayManager(Sequential):
                 )
 
             # Reconcile model_loaded_at with loaded_models changes
-            import time as _time
-
-            now = _time.monotonic()
+            now = time.monotonic()
             old_loaded = gateway.loaded_models
             new_loaded = updated_gateway.loaded_models
             for mid in new_loaded - old_loaded:

@@ -2,7 +2,7 @@
 #
 # Prerequisites (host):
 #   - TLS certs populated by certbot (default /etc/letsencrypt)
-#   - MCP_AUTH_TOKEN set in environment or .env.local
+#   - MCP_AUTH_TOKEN set in environment (e.g., via export or source .env.local)
 #   - MCP_PROJECT_DIR set to workspace root (required — no default)
 #   - MCP_DATA_DIR defaults to ~/mcp-data
 #
@@ -35,6 +35,7 @@ services:
       - ${MCP_DATA_DIR:-~/mcp-data}/sqlite.yaml:/data/sqlite-config.yaml:ro
       - ${MCP_DATA_DIR:-~/mcp-data}/databases:/data/databases:rw
       - ~/.rag/store:/data/rag-store:ro
+      - ~/.cortex:/data/cortex:rw
       - ~/.gateway:/home/mcp/.gateway:ro
     environment:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN required}

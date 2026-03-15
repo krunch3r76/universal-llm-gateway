@@ -16,6 +16,7 @@ from systems.federation.common.config.schema import EndpointCategory
 from .....endpoint_category import derive_endpoint_category
 from ....selection_errors import (
     raise_all_gateways_excluded_error,
+    raise_inference_banned_error,
     raise_load_failed_error,
     raise_no_gateways_error,
 )
@@ -95,6 +96,17 @@ async def run_initial_selection(
     """
     Build decision context and produce first-pass selection plus overflow metadata.
 
+    Parameters:
+        context: Request context (model ID, request ID, etc.).
+        federated_manager: Manages federated gateways and health.
+        federated_load_orchestrator: Orchestrates load across gateways.
+        event_bus: Optional event bus for routing events.
+        routing_config: Routing policy configuration.
+        stability_tracker: Tracks sticky placements.
+        routing_key_tracker: Tracks routing keys for the decision engine.
+        capacity_pool: Optional capacity pool.
+        circuit_breaker: Optional federation circuit breaker.
+
     Returns the selected gateway, decision trace, and all state required for
     downstream admission and rejection handling.
     """
@@ -124,6 +136,36 @@ async def run_initial_selection(
 
     federated_gateways = federated_manager.get_healthy_gateways()
     logger.info("Router-only healthy gateways: %s", len(federated_gateways))
+
+    if len(all_gateways) > len(federated_gateways) and event_bus:
+        healthy_gateway_ids = {g.gateway_id for g in federated_gateways}
+        dropped_gateways = [
+            g for g in all_gateways if g.gateway_id not in healthy_gateway_ids
+        ]
+        if dropped_gateways:
+            from src.scheduling.events import RoutingDebugGatewayDropout
+
+            asyncio.create_task(
+                event_bus.publish_async_nowait(
+                    RoutingDebugGatewayDropout(
+                        model_id=str(model_id),
+                        stage="health_filter",
+                        all_gateway_ids=[g.gateway_id for g in all_gateways],
+                        surviving_gateway_ids=list(healthy_gateway_ids),
+                        dropped_gateway_ids=[g.gateway_id for g in dropped_gateways],
+                        detail={
+                            g.gateway_id: {
+                                "hb_age_ms": g.heartbeat_age_ms,
+                                "telem_age_ms": g.telemetry_age_ms,
+                                "unreachable": g.is_unreachable,
+                                "catalog_size": len(g.available_models),
+                            }
+                            for g in dropped_gateways
+                        },
+                    )
+                )
+            )
+
     if not federated_gateways:
         raise_no_gateways_error()
 
@@ -169,20 +211,31 @@ async def run_initial_selection(
         for gateway in gateways_for_routing
         if federated_manager.is_load_failed(gateway.name, model_id)
     ]
+    if load_failed_ids:
+        failed_set = set(load_failed_ids)
+        eligible = [
+            gateway
+            for gateway in gateways_for_routing
+            if gateway.name not in failed_set
+        ]
+        if not eligible:
+            raise_load_failed_error(str(model_id), sorted(load_failed_ids))
+        gateways_for_routing = eligible
+
     inference_banned_ids = [
         gateway.name
         for gateway in gateways_for_routing
         if federated_manager.is_inference_banned(gateway.name, model_id)
     ]
-    excluded_ids = set(load_failed_ids) | set(inference_banned_ids)
-    if excluded_ids:
+    if inference_banned_ids:
+        banned_set = set(inference_banned_ids)
         eligible = [
             gateway
             for gateway in gateways_for_routing
-            if gateway.name not in excluded_ids
+            if gateway.name not in banned_set
         ]
         if not eligible:
-            raise_load_failed_error(str(model_id), sorted(excluded_ids))
+            raise_inference_banned_error(str(model_id), sorted(inference_banned_ids))
         gateways_for_routing = eligible
 
     vram_mb = 0

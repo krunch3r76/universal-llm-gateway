@@ -45,7 +45,7 @@ _MCP_ALWAYS_LOADED: frozenset[str] = frozenset(
     }
 )
 
-_MCP_SERVER_NAME = "gateway-tools"
+_MCP_SERVER_NAME = "vortex"
 
 
 class AnthropicAdapter:
@@ -74,8 +74,6 @@ class AnthropicAdapter:
         return self._client
 
     def normalize_catalog_model_id(self, raw_model_id: str) -> str:
-        if raw_model_id.startswith("native/anthropic/"):
-            return raw_model_id
         if raw_model_id.startswith("native/"):
             return raw_model_id
         if "/" in raw_model_id:

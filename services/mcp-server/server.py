@@ -17,7 +17,7 @@ import socket
 import sys
 import time
 from asyncio.transports import BaseTransport
-from typing import cast, override
+from typing import Any, cast, override
 
 import uvicorn
 from auth_middleware import AuthMiddleware
@@ -179,6 +179,34 @@ def _build_oauth_service(config: OAuthServerConfig | None) -> OAuthService | Non
     return OAuthService(config=config, store=store)
 
 
+_PRIMARY_TOOLS: set[str] = {
+    "write_file",
+    "read_file",
+    "edit_file",
+    "delete_file",
+    "list_files",
+    "write_context_file",
+    "read_context_file",
+    "edit_context_file",
+    "delete_context_file",
+    "list_context_directory",
+    "read_project_file",
+    "list_project_files",
+    "sqlite_query",
+    "sqlite_execute",
+    "sqlite_schema",
+    "sqlite_list_databases",
+    "web_search",
+    "pipeline_run",
+    "manage_service",
+    "quality_gate",
+    "list_journal_entries",
+    "list_clips",
+    "health",
+    "dispatch",
+}
+
+
 def _build_server() -> FastMCP:
     """Construct and configure the FastMCP application with all registered tools."""
     mcp: FastMCP = FastMCP("gateway-tools")
@@ -208,11 +236,106 @@ def _build_server() -> FastMCP:
         """Health check — confirms the MCP server is reachable."""
         return {"status": "ok"}
 
+    overflow_registry: dict[str, Any] = _prune_to_primary(mcp)
+
+    @mcp.tool()
+    def dispatch(tool: str, arguments: str = "{}") -> dict[str, str]:
+        """Call any server tool by name — gateway to tools beyond the primary set.
+
+        Some MCP clients enumerate only a limited number of tools. Use dispatch
+        to reach any tool not in your direct list.
+
+        Dispatchable tools:
+          File ops:
+            view_image(path, max_dimension?, quality?) — view photo/screenshot
+            move_file(source, destination) — move/rename any file
+            copy_file(source, destination) — copy any file
+            remove_directory(directory) — delete directory and contents
+          Search & knowledge:
+            rag_search(query, scope?, limit?) — semantic search
+            rag_answer(question, scope?) — RAG-grounded answer
+            rag_list_scopes() — list available scopes
+            rag_upsert_article(url, title?, scope?) — index article
+            search_project_files(query, glob?) — search source code
+          Web:
+            web_fetch(url) — fetch URL content
+          Observability:
+            query_observability(operation, params?) — event queries
+          Pipeline:
+            pipeline_consult(execution_id, step_name, problem)
+            validate_pipeline(path)
+          Journal & clips:
+            read_journal_entry(id) — read entry
+            write_journal_entry(title, content, tags?)
+            read_clip(name) — read a clip
+            list_todos() — list todo items
+          Browser (if enabled):
+            browser_navigate, browser_click, browser_fill,
+            browser_screenshot, browser_get_structure, browser_get_content
+
+        Example:
+            dispatch(tool="view_image", arguments='{"path": "photos/note.jpg"}')
+            dispatch(tool="move_file", arguments='{"source": "a.jpg", "destination": "b/a.jpg"}')
+
+        Args:
+            tool: Name of the tool to invoke.
+            arguments: JSON string of tool arguments (default "{}").
+
+        Returns:
+            {"tool": "<name>", "result": "<JSON string of tool output>"}
+        """
+        import json as _json
+
+        fn = overflow_registry.get(tool)
+        if fn is None:
+            raise ValueError(
+                f"Unknown dispatch tool: {tool!r}. "
+                f"Available: {sorted(overflow_registry)}"
+            )
+        parsed = _json.loads(arguments)
+        result = fn(**parsed)
+        return {"tool": tool, "result": _json.dumps(result)}
+
+    primary_count = sum(1 for _ in _PRIMARY_TOOLS)
+    logger.info(
+        "Tool pruning: %d primary (advertised), %d overflow (via dispatch)",
+        primary_count,
+        len(overflow_registry),
+    )
     return mcp
 
 
+def _prune_to_primary(mcp: FastMCP) -> dict[str, Any]:
+    """Remove non-primary tools from MCP and return their fn references."""
+    import asyncio
+
+    async def _collect() -> dict[str, Any]:
+        registry: dict[str, Any] = {}
+        all_tools = await mcp.list_tools()
+        for t in all_tools:
+            if t.name not in _PRIMARY_TOOLS:
+                tool_obj = await mcp.get_tool(t.name)
+                registry[t.name] = tool_obj.fn
+        return registry
+
+    registry = asyncio.run(_collect())
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        for name in registry:
+            mcp.remove_tool(name)
+
+    return registry
+
+
 class _UTCFormatter(logging.Formatter):
-    """Logging formatter that renders asctime in UTC (converter = time.gmtime)."""
+    """Logging formatter that renders asctime in UTC (converter = time.gmtime).
+
+    Ensures consistent, unambiguous timestamps for distributed systems and
+    log analysis.
+    """
 
     converter = time.gmtime
 

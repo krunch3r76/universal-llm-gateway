@@ -27,7 +27,7 @@ def raise_no_gateways_error() -> None:
 def raise_configuration_error(mode: str) -> None:
     """Raise error when routing mechanism not available."""
     raise HTTPException(
-        status_code=500,
+        status_code=get_http_status(ErrorCode.INVALID_REQUEST),
         detail=error_envelope(
             code=ErrorCode.INVALID_REQUEST,
             message=(
@@ -136,9 +136,8 @@ def raise_all_gateways_excluded_error(
     data: dict[str, Any] = {
         "model_id": model_id,
         "excluded_gateways": excluded_gateway_ids,
+        **({"upstream_errors": upstream_errors} if upstream_errors else {}),
     }
-    if upstream_errors:
-        data["upstream_errors"] = upstream_errors
 
     raise HTTPException(
         status_code=http_status,
@@ -152,18 +151,48 @@ def raise_all_gateways_excluded_error(
     )
 
 
-def raise_load_failed_error(model_id: str, failed_gateways: list[str]) -> None:
-    """Raise non-retryable error when model failed to load on all gateways."""
+def raise_inference_banned_error(
+    model_id: str, banned_gateway_ids: list[str]
+) -> None:
+    """Raise non-retryable error when all gateways have session-lifetime inference bans.
+
+    Inference bans are applied when the model cannot run even with exclusive GPU
+    and therefore indicates a persistent VRAM mismatch (e.g., after OOM
+    recovery failure).
+    The ban persists for the Stargate session lifetime and clears on reconnect.
+    """
     raise HTTPException(
         status_code=get_http_status(ErrorCode.RESOURCE_UNAVAILABLE),
         detail=error_envelope(
             code=ErrorCode.RESOURCE_UNAVAILABLE,
-            message=(f"Model {model_id} failed to load on all available gateways"),
+            message=f"Model {model_id} is inference-banned on all available gateways",
             source="master",
             retryable=False,
             data={
                 "model_id": str(model_id),
-                "failed_gateways": failed_gateways,
+                "banned_gateway_ids": banned_gateway_ids,
+                "reason": "inference_banned",
+            },
+        ),
+    )
+
+
+def raise_load_failed_error(model_id: str, gateway_ids: list[str]) -> None:
+    """Raise retryable error when recent load failures exclude every candidate."""
+    raise HTTPException(
+        status_code=get_http_status(ErrorCode.RESOURCE_UNAVAILABLE),
+        detail=error_envelope(
+            code=ErrorCode.RESOURCE_UNAVAILABLE,
+            message=(
+                f"Model {model_id} recently failed to load "
+                "on all available gateways"
+            ),
+            source="master",
+            retryable=True,
+            data={
+                "model_id": str(model_id),
+                "gateway_ids": gateway_ids,
+                "reason": "load_failed",
             },
         ),
     )
@@ -196,9 +225,8 @@ def raise_eviction_failed_error(
     error_data = {
         "model_id": str(model_id),
         "gateway": gateway_name,
+        **({"gateway_url": gateway_url} if gateway_url else {}),
     }
-    if gateway_url:
-        error_data["gateway_url"] = gateway_url
 
     raise HTTPException(
         status_code=get_http_status(ErrorCode.EVICTION_FAILED),

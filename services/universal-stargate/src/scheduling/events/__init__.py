@@ -222,6 +222,14 @@ from .routing import (
     TokenCountCompleted,
     TokenCountingFailed,
 )
+from .routing_debug import (
+    ROUTING_DEBUG_GATEWAY_DROPOUT,
+    ROUTING_DEBUG_GATEWAY_REGISTERED,
+    ROUTING_DEBUG_GATEWAY_REMOVED,
+    RoutingDebugGatewayDropout,
+    RoutingDebugGatewayRegistered,
+    RoutingDebugGatewayRemoved,
+)
 from .routing_failures import (
     ROUTING_CAPACITY_DIVERGENCE,
     ROUTING_CAPACITY_PRESEEDED,
@@ -279,6 +287,13 @@ __all__ = [
     "TokenCountingFailed",
     "RoutingDecision",
     "RoutingDecisionFailed",
+    # ── routing_debug ───────────────────────────────────────────────────────
+    "ROUTING_DEBUG_GATEWAY_DROPOUT",
+    "ROUTING_DEBUG_GATEWAY_REMOVED",
+    "ROUTING_DEBUG_GATEWAY_REGISTERED",
+    "RoutingDebugGatewayDropout",
+    "RoutingDebugGatewayRemoved",
+    "RoutingDebugGatewayRegistered",
     # ── routing_failures ─────────────────────────────────────────────────────
     "ROUTING_RESOURCE_DATA_MISSING",
     "ROUTING_MODEL_INFEASIBLE",
