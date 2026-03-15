@@ -86,27 +86,31 @@ async def _delete_file(file_path: Path) -> DeleteResult:
 
 
 async def _delete_file_impl(source: str) -> DeleteResult:
-    """Delete source chunks from ChromaDB and property index."""
+    """Delete source chunks and source-scoped metadata for a removed file."""
     collection = state._get_collection()
     existing = collection.get(where={"source": source}, include=[])
     existing_ids: list[str] = existing.get("ids", [])
 
-    if not existing_ids:
-        logger.info("Watcher delete: no chunks found for source=%s", source)
-        return DeleteResult(file=source, deleted=0)
-
-    collection.delete(ids=existing_ids)
-    if state._property_index is not None:
-        await state._property_index.remove_source_metadata(source, existing_ids)
-
-    logger.info(
-        "Watcher delete complete: source=%s deleted=%d", source, len(existing_ids)
-    )
-    if state._event_bus is not None:
-        await state._event_bus.publish_async_nowait(
-            rag_file_deleted(file=source, deleted=len(existing_ids))
+    if existing_ids:
+        collection.delete(ids=existing_ids)
+    else:
+        logger.info(
+            "Watcher delete: no chunks found for source=%s; clearing metadata only",
+            source,
         )
-    return DeleteResult(file=source, deleted=len(existing_ids))
+
+    if state._property_index is not None:
+        await state._property_index.remove_source_metadata(
+            source, existing_ids if existing_ids else None
+        )
+
+    deleted = len(existing_ids)
+    logger.info("Watcher delete complete: source=%s deleted=%d", source, deleted)
+    if existing_ids and state._event_bus is not None:
+        await state._event_bus.publish_async_nowait(
+            rag_file_deleted(file=source, deleted=deleted)
+        )
+    return DeleteResult(file=source, deleted=deleted)
 
 
 async def _index_file_impl(

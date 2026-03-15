@@ -333,11 +333,12 @@ indexed sources are left untouched.
 
 | Signal | Required Payload | Description |
 |--------|-----------------|-------------|
-| `rag.orphan.purged` | `files`, `chunks` | Chunks removed for source files deleted while service was down |
+| `rag.orphan.purged` | `files`, `chunks` | Missing watched sources reconciled during startup; `chunks` counts only Chroma deletions |
 
 Payload semantics:
-- `files`: number of distinct source paths whose chunks were deleted
-- `chunks`: total chunks removed across all purged sources
+- `files`: number of distinct watched source paths reconciled back to filesystem truth
+- `chunks`: total Chroma chunks removed across all purged sources
+- `files > 0` with `chunks = 0` is valid when cleanup removed metadata-only stale sources
 
 ### RAG Extraction Batch Lifecycle
 
@@ -1108,7 +1109,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.extraction.failed` | `chunk_id`, `error` | - |
 | `rag.property.index.rebuilt` | `collection`, `count` | - |
 | `rag.pending.reconciled` | `reconciled`, `cleared`, `failed_transient`, `failed_permanent` | emitted once at startup if interrupted files found |
-| `rag.orphan.purged` | `files`, `chunks` | emitted once at startup; chunks removed for source files deleted while service was down |
+| `rag.orphan.purged` | `files`, `chunks` | emitted once at startup; `files` counts watched sources reconciled to filesystem truth and `chunks` counts only Chroma deletions |
 | `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
 | `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
 | `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |

@@ -22,7 +22,9 @@ if TYPE_CHECKING:
 from services.rag.config import BASELINE_EXTENSIONS
 from services.rag.directory_ops import (
     IndexFileFn,
-    find_removed_sources,
+    delete_sources,
+    find_removed_directory_sources,
+    find_sources_under_prefixes,
     index_directory_contents,
 )
 from services.rag.events.articles import rag_article_upserted
@@ -114,42 +116,23 @@ async def _clear_directory_sources(
     get_collection_fn: Callable[[], chromadb.Collection],
     get_property_index_fn: Callable[[], PropertyIndex | None],
 ) -> tuple[int, int]:
-    """Delete all ChromaDB chunks and metadata for sources under dir_path.
-
-    Scans all chunk metadata, matches by source prefix, bulk-deletes from
-    ChromaDB, then removes properties, FTS, failure records, and article rows
-    from rag_metadata.db.
-
-    Returns:
-        tuple[int, int]: (source paths cleared, total chunks removed).
-    """
+    """Delete all known sources under dir_path from ChromaDB and SQLite metadata."""
     collection = get_collection_fn()
-    dir_prefix = str(dir_path.resolve()) + "/"
-
-    all_data = collection.get(include=["metadatas"])
-    rows: list[dict[str, object]] = all_data.get("metadatas", [])
-    all_ids: list[str] = all_data.get("ids", [])
-
-    source_to_ids: dict[str, list[str]] = {}
-    for chunk_id, row in zip(all_ids, rows, strict=True):
-        if not isinstance(row, dict):
-            continue
-        source = row.get("source")
-        if isinstance(source, str) and source.startswith(dir_prefix):
-            source_to_ids.setdefault(source, []).append(chunk_id)
-
-    if not source_to_ids:
-        return 0, 0
-
-    all_chunk_ids = [cid for ids in source_to_ids.values() for cid in ids]
-    collection.delete(ids=all_chunk_ids)
-
+    dir_prefix = f"{dir_path.resolve()}/"
     prop_idx = get_property_index_fn()
-    if prop_idx is not None:
-        for source, chunk_ids in source_to_ids.items():
-            await prop_idx.remove_source_metadata(source, chunk_ids)
-
-    return len(source_to_ids), len(all_chunk_ids)
+    sources = find_sources_under_prefixes(
+        collection=collection,
+        prefixes=[dir_prefix],
+        list_known_sources_fn=prop_idx.list_known_sources if prop_idx else None,
+    )
+    if not sources:
+        return 0, 0
+    remove_fn = prop_idx.remove_source_metadata if prop_idx else None
+    return await delete_sources(
+        collection=collection,
+        sources=sources,
+        remove_source_metadata_fn=remove_fn,
+    )
 
 
 def register_admin_routes(
@@ -240,25 +223,43 @@ def register_admin_routes(
 
         if is_reindex:
             collection = get_collection_fn()
-            removed_sources = find_removed_sources(
-                collection=collection,
-                dir_path=dir_path,
-                walked_sources=walked_sources,
-            )
             stale_prop_idx = get_property_index_fn()
-            for source in removed_sources:
-                stale = collection.get(where={"source": source}, include=[])
-                stale_ids = stale.get("ids", [])
-                if stale_ids:
-                    collection.delete(ids=stale_ids)
-                    totals.deleted += len(stale_ids)
-                    if stale_prop_idx is not None:
-                        await stale_prop_idx.remove_source_metadata(source, stale_ids)
+            try:
+                removed_sources = find_removed_directory_sources(
+                    collection=collection,
+                    dir_path=dir_path,
+                    walked_sources=walked_sources,
+                    list_known_sources_fn=(
+                        stale_prop_idx.list_known_sources
+                        if stale_prop_idx is not None
+                        else None
+                    ),
+                )
+                removed_source_count, removed_chunk_count = await delete_sources(
+                    collection=collection,
+                    sources=removed_sources,
+                    remove_source_metadata_fn=(
+                        stale_prop_idx.remove_source_metadata
+                        if stale_prop_idx is not None
+                        else None
+                    ),
+                )
+                totals.deleted += removed_chunk_count
+                if removed_source_count:
                     logger.info(
-                        "Removed stale source: source=%s deleted=%d",
-                        source,
-                        len(stale_ids),
+                        "Removed stale directory sources: path=%s sources=%d chunks=%d",
+                        dir_path,
+                        removed_source_count,
+                        removed_chunk_count,
                     )
+            except Exception as exc:
+                logger.error(
+                    "Directory stale-source cleanup failed: path=%s error=%s",
+                    dir_path,
+                    exc,
+                    exc_info=True,
+                )
+                errors.append(dir_path)
 
         prop_idx = get_property_index_fn()
         if prop_idx is not None:

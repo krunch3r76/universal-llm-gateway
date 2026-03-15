@@ -25,7 +25,7 @@ from services.rag.article_registry import (
     to_article_rows,
 )
 from services.rag.config import DEFAULT_INDEX_WORKERS, RagConfig, load_config
-from services.rag.directory_ops import purge_orphaned_chunks
+from services.rag.directory_ops import purge_orphaned_sources
 from services.rag.embeddings import close as close_embeddings
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import set_event_bus as set_embeddings_event_bus
@@ -252,7 +252,7 @@ async def _reconcile_pending(config: RagConfig) -> None:
 
 
 async def _purge_orphans(config: RagConfig) -> None:
-    """Delete chunks whose backing files disappeared while service was down."""
+    """Delete watched sources whose backing files disappeared while service was down."""
     if state._collection is None or not config.watch_directories:
         return
     watch_prefixes = [
@@ -264,10 +264,16 @@ async def _purge_orphans(config: RagConfig) -> None:
         if state._property_index is not None
         else None
     )
-    files_purged, chunks_purged = await purge_orphaned_chunks(
+    list_known_fn = (
+        state._property_index.list_known_sources
+        if state._property_index is not None
+        else None
+    )
+    files_purged, chunks_purged = await purge_orphaned_sources(
         collection=state._collection,
         watch_prefixes=watch_prefixes,
         remove_source_metadata_fn=remove_source_fn,
+        list_known_sources_fn=list_known_fn,
     )
     if files_purged > 0:
         logger.info(

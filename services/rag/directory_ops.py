@@ -1,3 +1,10 @@
+"""Shared directory-level source discovery and cleanup helpers for RAG.
+
+This module centralizes directory indexing, stale-source detection, and
+filesystem-truth cleanup so startup reconciliation and admin routes apply the
+same source-level deletion semantics across Chroma and SQLite metadata.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -40,6 +47,8 @@ class IndexFileFn(Protocol):
 
 
 OnIndexErrorFn = Callable[[Path, Exception], None]
+RemoveSourceMetadataFn = Callable[[str, list[str] | None], Awaitable[None]]
+ListKnownSourcesFn = Callable[[list[str]], set[str]]
 
 
 async def index_directory_contents(
@@ -56,7 +65,7 @@ async def index_directory_contents(
     walked_sources: set[str] = set()
 
     # Collect all candidate paths before dispatch so walked_sources is complete
-    # before asyncio.gather starts and stale-chunk cleanup in reindex_directory
+    # before asyncio.gather starts and stale-source cleanup in reindex_directory
     # sees the full walked set even if gather is interrupted.
     file_paths: list[Path] = []
     for root, _dirs, files in dir_path.walk():
@@ -96,82 +105,102 @@ async def index_directory_contents(
     return totals, walked_sources
 
 
-def find_removed_sources(
+def find_sources_under_prefixes(
+    *,
+    collection: chromadb.Collection,
+    prefixes: list[str],
+    list_known_sources_fn: ListKnownSourcesFn | None = None,
+) -> set[str]:
+    """Return source paths under the given prefixes from Chroma and metadata-only tables."""
+    if not prefixes:
+        return set()
+
+    all_data = collection.get(include=["metadatas"])
+    rows: list[dict[str, object]] = all_data.get("metadatas") or []
+    sources = {
+        source
+        for row in rows
+        if isinstance(row, dict)
+        for source in [row.get("source")]
+        if isinstance(source, str)
+        and any(source.startswith(prefix) for prefix in prefixes)
+    }
+    if list_known_sources_fn is not None:
+        sources.update(list_known_sources_fn(prefixes))
+    return sources
+
+
+def find_removed_directory_sources(
     *,
     collection: chromadb.Collection,
     dir_path: Path,
     walked_sources: set[str],
+    list_known_sources_fn: ListKnownSourcesFn | None = None,
 ) -> set[str]:
-    all_meta = collection.get(include=["metadatas"])
-    metadata_rows = all_meta.get("metadatas") or []
+    """Return missing source paths under dir_path after a directory reindex walk."""
     dir_prefix = f"{dir_path.resolve()}/"
+    known_sources = find_sources_under_prefixes(
+        collection=collection,
+        prefixes=[dir_prefix],
+        list_known_sources_fn=list_known_sources_fn,
+    )
     return {
         source
-        for row in metadata_rows
-        if isinstance(row, dict)
-        for source in [row.get("source")]
-        if isinstance(source, str)
-        and source.startswith(dir_prefix)
-        and source not in walked_sources
-        and not Path(source).exists()
+        for source in known_sources
+        if source not in walked_sources and not Path(source).exists()
     }
 
 
-# Callable types for property-index cleanup (avoids circular import with PropertyIndex).
-RemoveChunkFn = Callable[[str], Awaitable[None]]
-RemoveSourceMetadataFn = Callable[[str, list[str]], Awaitable[None]]
+async def delete_sources(
+    *,
+    collection: chromadb.Collection,
+    sources: set[str],
+    remove_source_metadata_fn: RemoveSourceMetadataFn | None = None,
+) -> tuple[int, int]:
+    """Delete a set of sources consistently across Chroma and SQLite metadata."""
+    deleted_sources = 0
+    deleted_chunks = 0
+
+    for source in sorted(sources):
+        existing = collection.get(where={"source": source}, include=[])
+        chunk_ids: list[str] = existing.get("ids", [])
+        try:
+            if chunk_ids:
+                collection.delete(ids=chunk_ids)
+                deleted_chunks += len(chunk_ids)
+            if remove_source_metadata_fn is not None:
+                await remove_source_metadata_fn(source, chunk_ids or None)
+            deleted_sources += 1
+        except Exception as e:
+            logger.error(
+                "Source deletion failed: source=%s chunk_ids=%d",
+                source,
+                len(chunk_ids),
+                exc_info=True,
+            )
+            raise e
+
+    return deleted_sources, deleted_chunks
 
 
-async def purge_orphaned_chunks(
+async def purge_orphaned_sources(
     *,
     collection: chromadb.Collection,
     watch_prefixes: list[str],
-    remove_chunk_fn: RemoveChunkFn | None = None,
     remove_source_metadata_fn: RemoveSourceMetadataFn | None = None,
+    list_known_sources_fn: ListKnownSourcesFn | None = None,
 ) -> tuple[int, int]:
-    """Delete chunks for source files that no longer exist on disk.
-
-    Only sources under watched directory prefixes are examined — externally
-    indexed sources are left untouched.
-
-    ∀ source ∈ ChromaDB ∩ watched_prefixes: ¬Path(source).exists() ⟹ delete.
-
-    When *remove_source_metadata_fn* is provided it replaces the per-chunk
-    *remove_chunk_fn* path: properties, FTS, failure records, and the articles
-    row are all cleaned in one call.
-
-    Returns (files_purged, chunks_purged).
-    """
-    if not watch_prefixes:
+    """Delete missing watched sources from Chroma and metadata-bearing storage."""
+    known_sources = find_sources_under_prefixes(
+        collection=collection,
+        prefixes=watch_prefixes,
+        list_known_sources_fn=list_known_sources_fn,
+    )
+    missing_sources = {source for source in known_sources if not Path(source).exists()}
+    if not missing_sources:
         return 0, 0
-
-    all_data = collection.get(include=["metadatas"])
-    rows: list[dict[str, object]] = all_data.get("metadatas") or []
-    all_ids: list[str] = all_data.get("ids") or []
-
-    source_to_ids: dict[str, list[str]] = {}
-    for chunk_id, row in zip(all_ids, rows, strict=True):
-        if not isinstance(row, dict):
-            continue
-        source = row.get("source")
-        if not isinstance(source, str) or not any(
-            source.startswith(prefix) for prefix in watch_prefixes
-        ):
-            continue
-        source_to_ids.setdefault(source, []).append(chunk_id)
-
-    files_purged = 0
-    chunks_purged = 0
-    for source, ids in source_to_ids.items():
-        if not Path(source).exists():
-            collection.delete(ids=ids)
-            if remove_source_metadata_fn is not None:
-                await remove_source_metadata_fn(source, ids)
-            elif remove_chunk_fn is not None:
-                for chunk_id in ids:
-                    await remove_chunk_fn(chunk_id)
-            logger.info("Startup orphan purge: source=%s deleted=%d", source, len(ids))
-            files_purged += 1
-            chunks_purged += len(ids)
-
-    return files_purged, chunks_purged
+    return await delete_sources(
+        collection=collection,
+        sources=missing_sources,
+        remove_source_metadata_fn=remove_source_metadata_fn,
+    )

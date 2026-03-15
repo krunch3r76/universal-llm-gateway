@@ -445,17 +445,33 @@ class PropertyIndex:
 
         return await self._seq.run(_write())
 
-    async def remove_source_metadata(self, source: str, chunk_ids: list[str]) -> None:
-        """Remove all metadata artefacts for a deleted source.
+    async def remove_source_metadata(
+        self,
+        source: str,
+        chunk_ids: list[str] | None = None,
+    ) -> None:
+        """Remove source-scoped SQLite metadata for one source.
 
-        Cleans properties (per chunk), FTS rows, failure records, and the
-        articles row — everything in rag_metadata.db that references *source*.
+        Cleanup always removes failure and article rows. Chunk-backed tables are
+        only cleaned when concrete chunk IDs are available.
         """
-        for chunk_id in chunk_ids:
-            await self.remove_chunk(chunk_id)
-        await self.fts.remove_batch(chunk_ids)
-        await self.clear_failures_for(source)
-        await self.remove_article(source)
+        normalized_chunk_ids = list(dict.fromkeys(chunk_ids or []))
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute("DELETE FROM failed_extractions WHERE source = ?", (source,))
+            conn.execute("DELETE FROM articles WHERE source_path = ?", (source,))
+            if normalized_chunk_ids:
+                placeholders = ",".join("?" for _ in normalized_chunk_ids)
+                conn.execute(
+                    f"DELETE FROM properties WHERE chunk_id IN ({placeholders})",
+                    normalized_chunk_ids,
+                )
+            conn.commit()
+
+        await self._seq.run(_write())
+        if normalized_chunk_ids:
+            await self.fts.remove_batch(normalized_chunk_ids)
 
     async def clear_failures_for(self, source: str) -> None:
         """Remove all failure records for a source file (e.g. after successful recovery)."""
@@ -724,6 +740,25 @@ class PropertyIndex:
                 "SELECT DISTINCT source FROM properties WHERE source != '' ORDER BY source"
             ).fetchall()
         return [r[0] for r in rows]
+
+    def list_known_sources(self, prefixes: list[str]) -> set[str]:
+        """Return source paths present in metadata-only tables under watched prefixes."""
+        if not prefixes:
+            return set()
+
+        conn = self._ensure_conn()
+        sources: set[str] = set()
+        queries = (
+            "SELECT DISTINCT source FROM failed_extractions",
+            "SELECT DISTINCT source_path AS source FROM articles",
+        )
+        for sql in queries:
+            for (candidate,) in conn.execute(sql).fetchall():
+                if isinstance(candidate, str) and any(
+                    candidate.startswith(prefix) for prefix in prefixes
+                ):
+                    sources.add(candidate)
+        return sources
 
     def get_stats(self) -> dict[str, int]:
         """Return property index statistics."""
