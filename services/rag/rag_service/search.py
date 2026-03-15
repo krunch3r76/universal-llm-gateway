@@ -171,6 +171,29 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
         recency_weight=request.recency_weight,
     )
 
+    if state._property_index is not None and metadatas:
+        unique_hashes: list[str] = [
+            str(h)
+            for h in {m.get("source_hash") for m in metadatas}
+            if isinstance(h, str)
+        ]
+        if unique_hashes:
+            articles = state._property_index.lookup_articles_by_hash(unique_hashes)
+            for meta in metadatas:
+                h = meta.get("source_hash")
+                if isinstance(h, str) and h in articles:
+                    entry = articles[h]
+                    if entry.title:
+                        meta["article_title"] = entry.title
+                    if entry.authors:
+                        meta["article_authors"] = entry.authors
+                    if entry.venue:
+                        meta["article_venue"] = entry.venue
+                    if entry.published_date:
+                        meta["article_published_date"] = entry.published_date
+                    if entry.doi:
+                        meta["article_doi"] = entry.doi
+
     if state._event_bus is not None:
         result_count = len(chunks)
         event = (

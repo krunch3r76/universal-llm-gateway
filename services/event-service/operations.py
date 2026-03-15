@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from typing import Any, TypedDict
@@ -16,6 +17,7 @@ from typing import Any, TypedDict
 from .store import EventStore
 
 logger = logging.getLogger(__name__)
+_SESSION_BOUNDARY_SIGNAL = "system.started"
 
 
 @dataclass(slots=True)
@@ -45,8 +47,11 @@ def _register(op: OperationDef) -> OperationDef:
 _register(
     OperationDef(
         name="recent-failures",
-        description="Last N events matching *.failed or *.error signals",
-        params={"limit": {"type": "int", "default": 20}},
+        description="Last N failure/error events (default window: since last Stargate restart)",
+        params={
+            "limit": {"type": "int", "default": 20},
+            "since_ts": {"type": "int"},
+        },
         returns="event rows",
     )
 )
@@ -54,8 +59,8 @@ _register(
 _register(
     OperationDef(
         name="noise-profile",
-        description="Signal frequency histogram for the last N minutes",
-        params={"minutes": {"type": "int", "default": 5}},
+        description="Signal frequency histogram (default window: since last Stargate restart)",
+        params={"minutes": {"type": "int"}},
         returns="signal counts",
     )
 )
@@ -63,8 +68,11 @@ _register(
 _register(
     OperationDef(
         name="coordination-audit",
-        description="Recent role=coordination events",
-        params={"limit": {"type": "int", "default": 50}},
+        description="Recent role=coordination events (default window: since last Stargate restart)",
+        params={
+            "limit": {"type": "int", "default": 50},
+            "since_ts": {"type": "int"},
+        },
         returns="event rows",
     )
 )
@@ -72,8 +80,11 @@ _register(
 _register(
     OperationDef(
         name="model-timeline",
-        description="Load/execute/unload events for a specific model",
-        params={"model_id": {"type": "string", "required": True}},
+        description="Load/execute/unload events for a specific model (default window: since last Stargate restart)",
+        params={
+            "model_id": {"type": "string", "required": True},
+            "since_ts": {"type": "int"},
+        },
         returns="event rows",
     )
 )
@@ -99,8 +110,8 @@ _register(
 _register(
     OperationDef(
         name="request-summary",
-        description="Aggregate request stats (count, avg latency, error rate)",
-        params={"minutes": {"type": "int", "default": 5}},
+        description="Aggregate request stats (default window: since last Stargate restart)",
+        params={"minutes": {"type": "int"}},
         returns="summary object",
     )
 )
@@ -129,8 +140,11 @@ _register(
 _register(
     OperationDef(
         name="federation-health",
-        description="Latest telemetry/connection per remote relay",
-        params={},
+        description="Latest telemetry/connection per remote relay (default window: since last Stargate restart)",
+        params={
+            "limit": {"type": "int", "default": 50},
+            "since_ts": {"type": "int"},
+        },
         returns="health summary",
     )
 )
@@ -138,8 +152,11 @@ _register(
 _register(
     OperationDef(
         name="capacity-snapshot",
-        description="Current slot usage from recent execution events",
-        params={},
+        description="Current slot usage from recent execution events (default window: since last Stargate restart)",
+        params={
+            "limit": {"type": "int", "default": 50},
+            "since_ts": {"type": "int"},
+        },
         returns="capacity summary",
     )
 )
@@ -152,8 +169,25 @@ _register(
             "signal": {"type": "string", "required": True},
             "limit": {"type": "int", "default": 20},
             "execution_id": {"type": "string"},
+            "since_ts": {"type": "int"},
         },
         returns="event rows with payload",
+    )
+)
+
+_STARTUP_SIGNALS: tuple[str, ...] = (
+    "cloud.proxy.started",
+    "event.service.started",
+    "rag.started",
+    "system.started",
+)
+
+_register(
+    OperationDef(
+        name="stack-last-started",
+        description="Per-service last startup timestamp and overall session start",
+        params={},
+        returns="per-service rows + session boundary timestamp",
     )
 )
 
@@ -191,19 +225,34 @@ async def execute_operation(
 
 
 async def _recent_failures(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    limit = params.get("limit", 20)
+    limit = _coerce_limit(params.get("limit", 20))
+    since_ts = _coerce_since_ts(params.get("since_ts"))
+    if since_ts is None:
+        since_ts = await _get_session_start_ts(store)
+    where = ["(signal LIKE '%.failed' OR signal LIKE '%.error')"]
+    query_params: list[Any] = []
+    if since_ts is not None:
+        where.append("ts_unix_ms >= ?")
+        query_params.append(since_ts)
+    query_params.append(limit)
     rows = await store.query(
-        "SELECT * FROM events WHERE signal LIKE '%.failed' OR signal LIKE '%.error' "
-        "ORDER BY seq DESC LIMIT ?",
-        (limit,),
+        "SELECT * FROM events WHERE "
+        + " AND ".join(where)
+        + " ORDER BY seq DESC LIMIT ?",
+        tuple(query_params),
     )
     return {"rows": rows, "count": len(rows)}
 
 
 async def _noise_profile(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    import time
-
-    minutes = params.get("minutes", 5)
+    minutes = _coerce_minutes(params.get("minutes"))
+    if minutes is None:
+        session_start_ts = await _get_session_start_ts(store)
+        if session_start_ts is not None:
+            elapsed_ms = int(time.time() * 1000) - session_start_ts
+            minutes = max(1, elapsed_ms // 60_000 + 1)
+        else:
+            minutes = 5
     cutoff = int(time.time() * 1000) - (minutes * 60 * 1000)
     rows = await store.query(
         "SELECT signal, COUNT(*) as count FROM events "
@@ -214,10 +263,20 @@ async def _noise_profile(params: dict[str, Any], store: EventStore) -> dict[str,
 
 
 async def _coordination_audit(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    limit = params.get("limit", 50)
+    limit = _coerce_limit(params.get("limit", 50), default=50)
+    since_ts = _coerce_since_ts(params.get("since_ts"))
+    if since_ts is None:
+        since_ts = await _get_session_start_ts(store)
+    sql = "SELECT * FROM events WHERE role = 'coordination'"
+    query_params: list[Any] = []
+    if since_ts is not None:
+        sql += " AND ts_unix_ms >= ?"
+        query_params.append(since_ts)
+    sql += " ORDER BY seq DESC LIMIT ?"
+    query_params.append(limit)
     rows = await store.query(
-        "SELECT * FROM events WHERE role = 'coordination' ORDER BY seq DESC LIMIT ?",
-        (limit,),
+        sql,
+        tuple(query_params),
     )
     return {"rows": rows, "count": len(rows)}
 
@@ -226,10 +285,16 @@ async def _model_timeline(params: dict[str, Any], store: EventStore) -> dict[str
     model_id = params.get("model_id") or ""
     if not model_id:
         return {"error": "model_id is required"}
-    rows = await store.query(
-        "SELECT * FROM events WHERE model_id = ? ORDER BY seq",
-        (model_id,),
-    )
+    since_ts = _coerce_since_ts(params.get("since_ts"))
+    if since_ts is None:
+        since_ts = await _get_session_start_ts(store)
+    sql = "SELECT * FROM events WHERE model_id = ?"
+    query_params: list[Any] = [model_id]
+    if since_ts is not None:
+        sql += " AND ts_unix_ms >= ?"
+        query_params.append(since_ts)
+    sql += " ORDER BY seq"
+    rows = await store.query(sql, tuple(query_params))
     return {"rows": rows, "count": len(rows), "model_id": model_id}
 
 
@@ -256,9 +321,14 @@ async def _request_lifecycle(params: dict[str, Any], store: EventStore) -> dict[
 
 
 async def _request_summary(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    import time
-
-    minutes = params.get("minutes", 5)
+    minutes = _coerce_minutes(params.get("minutes"))
+    if minutes is None:
+        session_start_ts = await _get_session_start_ts(store)
+        if session_start_ts is not None:
+            elapsed_ms = int(time.time() * 1000) - session_start_ts
+            minutes = max(1, elapsed_ms // 60_000 + 1)
+        else:
+            minutes = 5
     cutoff = int(time.time() * 1000) - (minutes * 60 * 1000)
     rows = await store.query(
         "SELECT phase, COUNT(*) as count FROM request_snapshots "
@@ -277,6 +347,39 @@ def _coerce_limit(value: Any, default: int = 20) -> int:
     return max(1, min(limit, 500))
 
 
+def _coerce_minutes(value: Any) -> int | None:
+    """Coerce minutes to a positive integer; None means auto-window."""
+    if value is None:
+        return None
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(1, min(minutes, 24 * 60))
+
+
+def _coerce_since_ts(value: Any) -> int | None:
+    """Coerce optional since_ts to Unix milliseconds."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _get_session_start_ts(store: EventStore) -> int | None:
+    """Return ts_unix_ms of the most recent Stargate session boundary."""
+    rows = await store.query(
+        "SELECT MAX(ts_unix_ms) AS ts FROM events WHERE signal = ?",
+        (_SESSION_BOUNDARY_SIGNAL,),
+        limit=1,
+    )
+    if rows and rows[0].get("ts") is not None:
+        return int(rows[0]["ts"])
+    return None
+
+
 async def _signal_events(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
     """Fetch recent events by exact signal or '*' glob, including parsed payload."""
     signal = params.get("signal") or ""
@@ -285,6 +388,9 @@ async def _signal_events(params: dict[str, Any], store: EventStore) -> dict[str,
 
     limit = _coerce_limit(params.get("limit", 20))
     execution_id = params.get("execution_id")
+    since_ts = _coerce_since_ts(params.get("since_ts"))
+    if since_ts is None:
+        since_ts = await _get_session_start_ts(store)
 
     if "*" in signal:
         signal_clause = "signal LIKE ?"
@@ -301,6 +407,9 @@ async def _signal_events(params: dict[str, Any], store: EventStore) -> dict[str,
     if execution_id:
         sql += " AND execution_id = ?"
         query_params.append(execution_id)
+    if since_ts is not None:
+        sql += " AND ts_unix_ms >= ?"
+        query_params.append(since_ts)
     sql += " ORDER BY seq DESC LIMIT ?"
     query_params.append(limit)
 
@@ -395,21 +504,78 @@ async def _compare_runs(params: dict[str, Any], store: EventStore) -> dict[str, 
 
 
 async def _federation_health(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
+    limit = _coerce_limit(params.get("limit", 50), default=50)
+    since_ts = _coerce_since_ts(params.get("since_ts"))
+    if since_ts is None:
+        since_ts = await _get_session_start_ts(store)
+    sql = "SELECT * FROM events WHERE signal LIKE 'federation.%'"
+    query_params: list[Any] = []
+    if since_ts is not None:
+        sql += " AND ts_unix_ms >= ?"
+        query_params.append(since_ts)
+    sql += " ORDER BY seq DESC LIMIT ?"
+    query_params.append(limit)
     rows = await store.query(
-        "SELECT * FROM events WHERE signal LIKE 'federation.%' "
-        "ORDER BY seq DESC LIMIT 50",
+        sql,
+        tuple(query_params),
     )
     return {"rows": rows, "count": len(rows)}
 
 
 async def _capacity_snapshot(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    rows = await store.query(
+    limit = _coerce_limit(params.get("limit", 50), default=50)
+    since_ts = _coerce_since_ts(params.get("since_ts"))
+    if since_ts is None:
+        since_ts = await _get_session_start_ts(store)
+    sql = (
         "SELECT * FROM events "
         "WHERE signal IN ('model.execution.completed', 'model.execution.failed', "
-        "'model.capacity.freed', 'model.loaded', 'model.unloaded') "
-        "ORDER BY seq DESC LIMIT 50",
+        "'model.capacity.freed', 'model.loaded', 'model.unloaded')"
+    )
+    query_params: list[Any] = []
+    if since_ts is not None:
+        sql += " AND ts_unix_ms >= ?"
+        query_params.append(since_ts)
+    sql += " ORDER BY seq DESC LIMIT ?"
+    query_params.append(limit)
+    rows = await store.query(
+        sql,
+        tuple(query_params),
     )
     return {"rows": rows, "count": len(rows)}
+
+
+async def _stack_last_started(
+    params: dict[str, Any], store: EventStore
+) -> dict[str, Any]:
+    """Per-service last startup timestamps + overall session boundary."""
+    placeholders = ", ".join("?" for _ in _STARTUP_SIGNALS)
+    rows = await store.query(
+        "SELECT e.signal, e.ts_unix_ms, e.timestamp "
+        "FROM events e "
+        "JOIN ("
+        f"  SELECT signal, MAX(ts_unix_ms) AS max_ts FROM events "
+        f"  WHERE signal IN ({placeholders}) GROUP BY signal"
+        ") latest ON e.signal = latest.signal AND e.ts_unix_ms = latest.max_ts "
+        "ORDER BY e.ts_unix_ms DESC",
+        tuple(_STARTUP_SIGNALS),
+        limit=len(_STARTUP_SIGNALS),
+    )
+    session_start_ts = await _get_session_start_ts(store)
+    session_timestamp = next(
+        (
+            r.get("timestamp")
+            for r in rows
+            if r.get("signal") == _SESSION_BOUNDARY_SIGNAL
+        ),
+        None,
+    )
+    return {
+        "rows": rows,
+        "count": len(rows),
+        "stack_start_ts_unix_ms": session_start_ts,
+        "stack_start_timestamp": session_timestamp,
+    }
 
 
 OperationCallable = Callable[
@@ -429,4 +595,5 @@ _DISPATCH: dict[str, OperationCallable] = {
     "federation-health": _federation_health,
     "capacity-snapshot": _capacity_snapshot,
     "signal-events": _signal_events,
+    "stack-last-started": _stack_last_started,
 }

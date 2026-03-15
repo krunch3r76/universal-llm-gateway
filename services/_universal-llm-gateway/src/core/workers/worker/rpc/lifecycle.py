@@ -1,6 +1,7 @@
 """Worker lifecycle and health RPC handlers."""
 
 from datetime import datetime
+from typing import Any
 
 from universal_logging import format_json_for_log, get_logger
 
@@ -44,20 +45,24 @@ class LifecycleHandlers:
             "message": "Config received. Use 'load_model' command to load the model.",
         }
 
-    async def handle_health(self, params: dict) -> dict:
+    async def handle_health(self, params: dict[str, Any]) -> dict:
         """
         Handle health RPC request.
 
         Returns:
-            Health status including model_loaded state
+            Health status including model_loaded state and engine_pid
         """
         live = bool(self.engine and self.engine.is_loaded())
         status = "ready" if live else "busy"
-        models = [self.model_id] if live else []
+        models = [self.model_id] if live and self.model_id else []
+        engine_pid = self.engine.get_engine_pid() if self.engine else None
 
-        return {"status": status, "models": models}
+        result: dict = {"status": status, "models": models}
+        if engine_pid is not None:
+            result["engine_pid"] = engine_pid
+        return result
 
-    async def handle_ping(self, params: dict) -> dict:
+    async def handle_ping(self, params: dict[str, Any]) -> dict:
         """
         Handle ping RPC request (connectivity test).
 
@@ -71,7 +76,7 @@ class LifecycleHandlers:
             "model_loaded": bool(self.engine and self.engine.is_loaded()),
         }
 
-    async def handle_debug_stats(self, params: dict) -> dict:
+    async def handle_debug_stats(self, params: dict[str, Any]) -> dict:
         """
         Handle debug_stats RPC request.
 

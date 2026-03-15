@@ -152,6 +152,7 @@ class McpConfig:
     """Parsed ~/.gateway/mcp.yaml."""
 
     auth_token: str
+    auth_token_env: str | None = None
     data_dir: str = _MCP_DEFAULT_DATA_DIR
     project_dir: str | None = None
     tls_cert_dir: str = _MCP_DEFAULT_TLS_CERT_DIR
@@ -159,6 +160,7 @@ class McpConfig:
     firefox_profile_dir: str = ""
     tasks_access: str = "ro"  # "ro" | "rw" | "off"
     enable_browser_tools: bool = False
+    refresh_cursor_descriptors_after_rebuild: bool = False
 
 
 _MCP_CONFIG_TEMPLATE = """\
@@ -171,6 +173,8 @@ _MCP_CONFIG_TEMPLATE = """\
 # Generate auth_token: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 
 # Required: bearer token for the MCP server (:443)
+# Prefer env indirection for single-source secret management:
+# auth_token_env: MCP_AUTH_TOKEN
 auth_token: ""
 
 # Required: workspace root mounted read-only as /data/project
@@ -197,7 +201,28 @@ BRAVE_SEARCH_API_KEY: ""
 # Enabling this also applies a narrow seccomp relaxation (unshare/clone3/setns)
 # required for Firefox's internal process sandbox. See docker/compose/mcp-server-browser.override.yml.
 # enable_browser_tools: false
+#
+# Optional (default: false): after successful MCP rebuild/start, run
+# scripts/refresh-cursor-mcp-descriptors (for local Cursor users).
+# Leave disabled for non-Cursor environments.
+# refresh_cursor_descriptors_after_rebuild: false
 """
+
+
+def _parse_bool(value: object, *, default: bool = False) -> bool:
+    """Parse a permissive bool from YAML values; fallback to *default*."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
 
 
 def _resolve_firefox_profile(configured: str) -> str:
@@ -247,7 +272,7 @@ def ensure_mcp_config() -> Path:
 
 
 def load_mcp_config() -> McpConfig | None:
-    """Load ~/.gateway/mcp.yaml. Returns None if absent or auth_token empty."""
+    """Load ~/.gateway/mcp.yaml. Returns None if absent or token resolution fails."""
     if not _MCP_CONFIG_PATH.exists():
         return None
     try:
@@ -257,13 +282,39 @@ def load_mcp_config() -> McpConfig | None:
         return None
     if not isinstance(raw, dict):
         return None
-    token = raw.get("auth_token", "")
-    if not isinstance(token, str) or not token.strip():
+    token_env_name: str | None = None
+    raw_token_env = raw.get("auth_token_env")
+    if raw_token_env is not None:
+        if isinstance(raw_token_env, str) and raw_token_env.strip():
+            token_env_name = raw_token_env.strip()
+        else:
+            logger.error(
+                "mcp.yaml auth_token_env must be a non-empty string when set, got: %r",
+                raw_token_env,
+            )
+
+    token = ""
+    if token_env_name:
+        token = os.environ.get(token_env_name, "").strip()
+        if not token:
+            logger.warning(
+                "mcp.yaml auth_token_env=%s is set but env var is missing/empty; "
+                "falling back to auth_token",
+                token_env_name,
+            )
+
+    if not token:
+        raw_token = raw.get("auth_token", "")
+        if isinstance(raw_token, str):
+            token = raw_token.strip()
+
+    if not token:
         return None
     return McpConfig(
-        auth_token=token.strip(),
+        auth_token=token,
+        auth_token_env=token_env_name,
         data_dir=str(raw.get("data_dir", _MCP_DEFAULT_DATA_DIR)),
-        project_dir=str(raw["project_dir"]) if raw.get("project_dir") else None,
+        project_dir=str(raw["project_dir"]) if "project_dir" in raw and raw["project_dir"] is not None else None,
         tls_cert_dir=str(raw.get("tls_cert_dir", _MCP_DEFAULT_TLS_CERT_DIR)),
         brave_search_api_key=str(
             raw.get("BRAVE_SEARCH_API_KEY") or raw.get("brave_search_api_key", "")
@@ -272,7 +323,14 @@ def load_mcp_config() -> McpConfig | None:
             str(raw.get("firefox_profile_dir", ""))
         ),
         tasks_access=str(raw.get("tasks_access", "ro")).strip().lower(),
-        enable_browser_tools=bool(raw.get("enable_browser_tools", False)),
+        enable_browser_tools=_parse_bool(
+            raw.get("enable_browser_tools", False),
+            default=False,
+        ),
+        refresh_cursor_descriptors_after_rebuild=_parse_bool(
+            raw.get("refresh_cursor_descriptors_after_rebuild", False),
+            default=False,
+        ),
     )
 
 
@@ -546,9 +604,7 @@ def _recover_root_owned_socket_dir(socket_dir: Path) -> bool:
                 )
                 return False
         except FileNotFoundError:
-            logger.error(
-                "sudo not found; cannot remove root-owned %s", socket_dir
-            )
+            logger.error("sudo not found; cannot remove root-owned %s", socket_dir)
             return False
         except OSError as exc:
             logger.error(
@@ -809,8 +865,9 @@ def write_cloud_proxy_url_to_stargate(proxy_url: str) -> None:
         try:
             data = yaml.safe_load(config_path.read_text()) or {}
         except yaml.YAMLError as e:
-            logger.warning(
-                "Could not parse stargate.yaml for cloud_proxy update: %s", e
+            logger.error(
+                "Failed to parse stargate.yaml for cloud_proxy update. Cloud proxy URL will not be written: %s",
+                e,
             )
             return
     if not isinstance(data, dict):

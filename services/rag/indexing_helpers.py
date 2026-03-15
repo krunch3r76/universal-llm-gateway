@@ -27,18 +27,18 @@ def all_ids_match_prefix(ids: list[str], prefix: str) -> bool:
 
 def check_pdf_duplicate(
     collection: chromadb.Collection,
-    pdf_hash: str,
+    source_hash: str,
     source: str,
 ) -> IndexResult | None:
     try:
         existing = collection.get(
-            where={"pdf_hash": pdf_hash},
+            where={"source_hash": source_hash},
             include=["metadatas"],
             limit=1,
         )
-    except Exception:
+    except chromadb.errors.ChromaError as e:
         logger.warning(
-            "Failed to query ChromaDB for PDF duplicate check", exc_info=True
+            "Failed to query ChromaDB for PDF duplicate check: %s", e, exc_info=True
         )
         return None
     raw_metadatas = existing.get("metadatas")

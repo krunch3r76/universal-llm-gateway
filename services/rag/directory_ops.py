@@ -117,8 +117,9 @@ def find_removed_sources(
     }
 
 
-# Callable type for property-index chunk removal (avoids circular import with PropertyIndex).
+# Callable types for property-index cleanup (avoids circular import with PropertyIndex).
 RemoveChunkFn = Callable[[str], Awaitable[None]]
+RemoveSourceMetadataFn = Callable[[str, list[str]], Awaitable[None]]
 
 
 async def purge_orphaned_chunks(
@@ -126,6 +127,7 @@ async def purge_orphaned_chunks(
     collection: chromadb.Collection,
     watch_prefixes: list[str],
     remove_chunk_fn: RemoveChunkFn | None = None,
+    remove_source_metadata_fn: RemoveSourceMetadataFn | None = None,
 ) -> tuple[int, int]:
     """Delete chunks for source files that no longer exist on disk.
 
@@ -133,6 +135,10 @@ async def purge_orphaned_chunks(
     indexed sources are left untouched.
 
     ∀ source ∈ ChromaDB ∩ watched_prefixes: ¬Path(source).exists() ⟹ delete.
+
+    When *remove_source_metadata_fn* is provided it replaces the per-chunk
+    *remove_chunk_fn* path: properties, FTS, failure records, and the articles
+    row are all cleaned in one call.
 
     Returns (files_purged, chunks_purged).
     """
@@ -159,7 +165,9 @@ async def purge_orphaned_chunks(
     for source, ids in source_to_ids.items():
         if not Path(source).exists():
             collection.delete(ids=ids)
-            if remove_chunk_fn is not None:
+            if remove_source_metadata_fn is not None:
+                await remove_source_metadata_fn(source, ids)
+            elif remove_chunk_fn is not None:
                 for chunk_id in ids:
                     await remove_chunk_fn(chunk_id)
             logger.info("Startup orphan purge: source=%s deleted=%d", source, len(ids))

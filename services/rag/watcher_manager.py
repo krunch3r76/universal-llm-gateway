@@ -86,12 +86,14 @@ class WatcherManager:
         reconcile_interval_s: float = _RECONCILE_INTERVAL_S,
         delete_fn: DeleteFn | None = None,
         index_workers: int = 8,
+        file_timeout_s: float = 600.0,
     ) -> None:
         self._index_fn: IndexFn = index_fn
         self._delete_fn: DeleteFn | None = delete_fn
         self._event_bus: EventBus | None = event_bus
         self._reconcile_interval_s = reconcile_interval_s
         self._index_workers = max(1, index_workers)
+        self._file_timeout_s = file_timeout_s
         self._watchers: list[HotReloadWatcher] = []
         self._watch_configs: list[WatchDirectory] = []
         self._reconcile_task: asyncio.Task[None] | None = None
@@ -108,7 +110,9 @@ class WatcherManager:
         self._watchers = []
         self._watch_configs = []
         configured_baseline = _normalize_extensions(config.baseline_extensions)
-        self._baseline_extensions = configured_baseline or _normalize_extensions(BASELINE_EXTENSIONS)
+        self._baseline_extensions = configured_baseline or _normalize_extensions(
+            BASELINE_EXTENSIONS
+        )
         for watch_directory in config.watch_directories:
             await self._start_one(watch_directory)
         if self._watch_configs and self._reconcile_interval_s > 0:
@@ -205,6 +209,7 @@ class WatcherManager:
                     )
                     recovered = 0
                     unchanged = 0
+                    file_timeout = self._file_timeout_s
                     for file_path in walker:
                         if (
                             not file_path.is_file()
@@ -214,9 +219,15 @@ class WatcherManager:
                         if any(fnmatch(file_path.name, pat) for pat in exclude):
                             continue
                         try:
-                            result = await self._index_fn(
+                            coro = self._index_fn(
                                 file_path, watch_directory.chunk_tokens
                             )
+                            if file_timeout > 0:
+                                result = await asyncio.wait_for(
+                                    coro, timeout=file_timeout
+                                )
+                            else:
+                                result = await coro
                             if result.unchanged:
                                 unchanged += 1
                             else:
@@ -226,6 +237,18 @@ class WatcherManager:
                                     result.file,
                                     result.indexed,
                                 )
+                        except TimeoutError:
+                            logger.error(
+                                "Reconcile timed out after %.0fs for %s",
+                                file_timeout,
+                                file_path,
+                            )
+                            await self._emit(
+                                rag_file_indexing_failed(
+                                    file=str(file_path),
+                                    error=f"Timed out after {file_timeout:.0f}s",
+                                )
+                            )
                         except Exception as exc:
                             logger.warning(
                                 "Reconcile skipped %s: %s",
@@ -315,6 +338,8 @@ class WatcherManager:
                 )
             )
 
+        file_timeout = self._file_timeout_s
+
         async def _worker() -> None:
             nonlocal reindexed_total, unchanged_total, error_total
             while True:
@@ -323,12 +348,31 @@ class WatcherManager:
                     queue.task_done()
                     return
                 try:
-                    result = await self._index_fn(fp, chunk_tokens)
+                    coro = self._index_fn(fp, chunk_tokens)
+                    if file_timeout > 0:
+                        result = await asyncio.wait_for(coro, timeout=file_timeout)
+                    else:
+                        result = await coro
                     async with progress_lock:
                         if result.unchanged:
                             unchanged_total += 1
                         else:
                             reindexed_total += 1
+                    await _emit_progress_snapshot()
+                except TimeoutError:
+                    logger.error(
+                        "Initial reindex timed out after %.0fs for %s",
+                        file_timeout,
+                        fp,
+                    )
+                    await self._emit(
+                        rag_file_indexing_failed(
+                            file=str(fp),
+                            error=f"Timed out after {file_timeout:.0f}s",
+                        )
+                    )
+                    async with progress_lock:
+                        error_total += 1
                     await _emit_progress_snapshot()
                 except Exception as exc:
                     logger.warning(

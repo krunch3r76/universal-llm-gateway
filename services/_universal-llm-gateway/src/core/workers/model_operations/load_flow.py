@@ -67,14 +67,17 @@ def reset_state_machine(model_id: str):
                 metadata={"reset_before_load": True},
             )
     except Exception as e:
-        logger.warning(f"⚠️ Could not reset state machine: {e}")
+        logger.error(
+            "Critical error resetting state machine for %s: %s", model_id, e
+        )
 
 
 async def measure_vram_before(model_id: str) -> float | None:
     """Measure VRAM before loading for delta calculation."""
     try:
         return (await _get_resource_tracker().get_system_resources()).available_vram_mb
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to measure VRAM before loading: %s", e)
         return None
 
 
@@ -84,10 +87,8 @@ async def start_worker_if_needed(controller: "WorkerController", model_id: str) 
     resource_tracker = _get_resource_tracker()
 
     # Check if process exists and is running
-    if (
-        model_id in procs
-        and procs[model_id].get("status") == ProcessStatus.RUNNING.value
-    ):
+    process_info = procs.get(model_id) if model_id in procs else None
+    if process_info and process_info.get("status") == ProcessStatus.RUNNING.value:
         # Process exists - verify it's actually tracked and healthy
         tracked_models = resource_tracker.get_loaded_models()
         if model_id not in tracked_models:
@@ -204,8 +205,12 @@ async def finalize_load(
         info = controller.get_all_process_info().get(model_id)
         if info and isinstance(info, dict):
             pid = info.get("pid")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(
+            "Could not get process info for %s during finalization: %s",
+            model_id,
+            e,
+        )
 
     req = resource_tracker.get_model_requirements(model_id)
     actual_vram, actual_ram = (
@@ -289,29 +294,39 @@ async def cleanup_failed_worker(
         # Try graceful stop first
         try:
             await supervisor.stop(force=True, timeout=3)
-            process_killed = True
-            logger.debug(f"✅ Supervisor stop succeeded for {model_id}")
+            logger.debug("Supervisor stop attempted for %s", model_id)
         except Exception as e:
-            logger.warning(f"⚠️ Supervisor stop failed for {model_id}: {e}")
+            logger.warning("Supervisor stop failed for %s: %s", model_id, e)
 
-        # Verify process is actually dead
-        if pid and not process_killed:
+        # Always verify process is actually dead, regardless of supervisor.stop outcome
+        if pid:
             try:
                 import psutil
 
                 if psutil.pid_exists(pid):
                     logger.warning(
-                        f"⚠️ Process {pid} for {model_id} still alive after stop, "
-                        f"force killing"
+                        "Process %s for %s still alive after stop, force killing",
+                        pid,
+                        model_id,
                     )
                     await controller._lifecycle_manager.kill_pid_tree(pid, model_id)
                     process_killed = True
+                else:
+                    process_killed = True
             except Exception as e:
-                logger.error(f"❌ Force kill failed for {model_id} (PID {pid}): {e}")
+                logger.error(
+                    "Process existence check or force kill failed for %s (PID %s): %s",
+                    model_id,
+                    pid,
+                    e,
+                )
+        else:
+            process_killed = True
 
         # Clean up state only after process is confirmed dead
         controller._process_state.remove_supervisor(model_id)
         controller._process_state.remove_socket_path(model_id)
+        controller._process_state.remove_engine_pid(model_id)
 
     # Clean up socket file (may exist even if supervisor doesn't)
     await controller._cleanup_socket_file(model_id)

@@ -441,6 +441,10 @@ class WorkerController:
         sup = self._process_state.get_supervisor(model_id)
         return sup.get_worker_info() if sup else None
 
+    def get_engine_pid(self, model_id: str) -> int | None:
+        """Get engine subprocess PID for ghost detection."""
+        return self._process_state.get_engine_pid(model_id)
+
     def get_socket_path(self, model_id: str) -> str:
         return self._communication_manager.get_socket_path(model_id)
 

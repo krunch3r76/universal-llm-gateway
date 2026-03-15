@@ -124,7 +124,7 @@ def rag_search_no_results(
 ) -> Event:
     """Emitted when a search returns zero results."""
     return Event(
-        signal="rag.search.no_results",
+        signal="rag.search.no.results",
         payload={"query_len": query_len, "scope": scope},
     )
 
@@ -138,7 +138,7 @@ def rag_corpus_hints_updated(
 ) -> Event:
     """Emitted after corpus_hints.yaml is written following aggregation from the property index."""
     return Event(
-        signal="rag.corpus_hints.updated",
+        signal="rag.corpus.hints.updated",
         payload={
             "path": path,
             "scopes_updated": scopes_updated,
@@ -155,7 +155,7 @@ def rag_corpus_hints_update_failed(
 ) -> Event:
     """Emitted when corpus_hints.yaml update fails after indexing."""
     return Event(
-        signal="rag.corpus_hints.update.failed",
+        signal="rag.corpus.hints.update.failed",
         payload={"path": path, "error": error},
     )
 

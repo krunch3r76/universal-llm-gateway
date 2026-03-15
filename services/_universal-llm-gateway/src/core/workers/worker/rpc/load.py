@@ -178,10 +178,16 @@ class LoadHandlers:
                 )
 
                 context_size = self._extract_context_size_from_catalog(request_id)
+                engine_pid = self.engine.get_engine_pid()
                 result = {
                     "success": True,
                     "model_loaded": True,
-                    **({"context_size": context_size} if context_size is not None else {}),
+                    **(
+                        {"context_size": context_size}
+                        if context_size is not None
+                        else {}
+                    ),
+                    **({"engine_pid": engine_pid} if engine_pid is not None else {}),
                 }
                 return result
 
@@ -203,10 +209,16 @@ class LoadHandlers:
                 self._init_inference_gate(request_id)
 
                 context_size = self._extract_context_size_from_catalog(request_id)
+                engine_pid = self.engine.get_engine_pid() if self.engine else None
                 result = {
                     "success": True,
                     "model_loaded": True,
-                    **({"context_size": context_size} if context_size is not None else {}),
+                    **(
+                        {"context_size": context_size}
+                        if context_size is not None
+                        else {}
+                    ),
+                    **({"engine_pid": engine_pid} if engine_pid is not None else {}),
                 }
                 return result
 

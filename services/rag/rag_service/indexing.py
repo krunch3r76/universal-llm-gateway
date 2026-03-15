@@ -17,14 +17,10 @@ from pathlib import Path
 from services.rag.article_registry import (
     get_entry as get_article_entry,
 )
-from services.rag.article_registry import (
-    lookup_article as lookup_article_metadata,
-)
 from services.rag.chunk_filters import chunk_is_junk
 from services.rag.chunkers import Chunk, chunk_file
 from services.rag.contextualize import contextualize_chunks
 from services.rag.embeddings import embed_chunks
-from services.rag.embeddings import get_model_id as get_embed_model_id
 from services.rag.events.extraction import rag_extraction_model_mismatch
 from services.rag.events.indexing import (
     rag_article_content_hash_mismatch,
@@ -101,9 +97,7 @@ async def _delete_file_impl(source: str) -> DeleteResult:
 
     collection.delete(ids=existing_ids)
     if state._property_index is not None:
-        for chunk_id in existing_ids:
-            await state._property_index.remove_chunk(chunk_id)
-        await state._property_index.fts.remove_batch(existing_ids)
+        await state._property_index.remove_source_metadata(source, existing_ids)
 
     logger.info(
         "Watcher delete complete: source=%s deleted=%d", source, len(existing_ids)
@@ -137,31 +131,31 @@ async def _index_file_impl(
     schema_version = state._config.knowledge_extraction.schema_version
     content_hash = file_hash(raw, schema_version=schema_version)
     prefix = content_hash[:16]
+    source_hash = hashlib.sha256(raw).hexdigest()
 
     if state._registry is not None:
         entry = get_article_entry(state._registry, source)
         if entry and entry.content_hash:
-            file_sha = hashlib.sha256(raw).hexdigest()
-            if file_sha != entry.content_hash:
+            if source_hash != entry.content_hash:
                 logger.warning(
                     "Article registry content_hash mismatch for %s: expected %s, got %s",
                     source,
                     entry.content_hash,
-                    file_sha,
+                    source_hash,
                 )
                 if state._event_bus is not None:
                     await state._event_bus.publish_async_nowait(
                         rag_article_content_hash_mismatch(
                             file=source,
                             expected_hash=entry.content_hash,
-                            actual_hash=file_sha,
+                            actual_hash=source_hash,
                         )
                     )
 
     collection = state._get_collection()
 
     if file_path.suffix.lower() == ".pdf":
-        dup_result = check_pdf_duplicate(collection, content_hash, source)
+        dup_result = check_pdf_duplicate(collection, source_hash, source)
         if dup_result is not None:
             if dup_result.duplicate_of is not None:
                 logger.info(
@@ -227,6 +221,9 @@ async def _index_file_impl(
                                 deleted=0,
                                 indexed=0,
                                 duration_seconds=time.monotonic() - start,
+                                batch_start_ts=getattr(
+                                    ext_result, "batch_start_ts", None
+                                ),
                                 document_metadata=(
                                     state._article_event_kwargs(state._registry, source)
                                     if state._registry is not None
@@ -304,15 +301,9 @@ async def _index_file_impl(
         metadatas = [c.metadata for c in chunks]
         ids = [f"{prefix}-{i}" for i in range(len(chunks))]
 
-        merged: dict[str, str | int | float | bool] = {}
-        if state._registry is not None:
-            entry_meta = lookup_article_metadata(state._registry, source)
-            if entry_meta is not None:
-                merged.update(entry_meta)
         if metadata_overrides is not None:
-            merged.update(metadata_overrides)
-        for metadata in metadatas:
-            metadata.update(merged)
+            for metadata in metadatas:
+                metadata.update(metadata_overrides)
 
         now = datetime.now(UTC).isoformat()
         for metadata, chunk in zip(metadatas, chunks, strict=True):
@@ -320,9 +311,8 @@ async def _index_file_impl(
             metadata["chunk_hash"] = chunk_hash
             metadata["indexed_at"] = existing_timestamps.get(chunk_hash, now)
 
-        if file_path.suffix.lower() == ".pdf":
-            for metadata in metadatas:
-                metadata["pdf_hash"] = content_hash
+        for metadata in metadatas:
+            metadata["source_hash"] = source_hash
 
         for metadata, chunk in zip(metadatas, chunks, strict=True):
             metadata["is_bibliography"] = chunk_is_junk(chunk.text)
@@ -437,7 +427,6 @@ async def _index_file_impl(
                     error=f"{type(exc).__qualname__}: {exc}"
                     if str(exc)
                     else type(exc).__qualname__,
-                    model=get_embed_model_id(),
                 )
             )
         raise

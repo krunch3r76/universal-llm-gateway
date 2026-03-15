@@ -36,7 +36,7 @@ async def execute_model_loading_flow(
     model_registry: Any,
     gateway_config: Any,
     correlation_id: str | None = None,
-) -> tuple[bool, int | None, str | None]:
+) -> tuple[bool, int | None, int | None, str | None]:
     """
     Execute the main model loading flow.
 
@@ -55,7 +55,7 @@ async def execute_model_loading_flow(
         correlation_id: Optional correlation ID
 
     Returns:
-        Tuple of (success, context_size, error_msg)
+        Tuple of (success, context_size, engine_pid, error_msg)
 
     Raises:
         WorkerInitializationError: On validation or RPC failures
@@ -163,9 +163,11 @@ async def execute_model_loading_flow(
         )
 
     # Step 5: Validate load response
-    success, context_size, error_msg = validate_load_response(load_result, model_id)
+    success, context_size, engine_pid, error_msg = validate_load_response(
+        load_result, model_id
+    )
 
-    return success, context_size, error_msg
+    return success, context_size, engine_pid, error_msg
 
 
 async def handle_load_failure(

@@ -37,6 +37,13 @@ RUN echo "$SOURCE_VERSION" > /tmp/source_version
 # Application code last — only this layer rebuilds on code changes
 COPY --chown=mcp:mcp server.py .
 COPY --chown=mcp:mcp mcp_events.py .
+COPY --chown=mcp:mcp oauth_config.py .
+COPY --chown=mcp:mcp oauth_models.py .
+COPY --chown=mcp:mcp oauth_store.py .
+COPY --chown=mcp:mcp oauth_service.py .
+COPY --chown=mcp:mcp oauth_routes.py .
+COPY --chown=mcp:mcp auth_middleware.py .
+COPY --chown=mcp:mcp mcp_request_middleware.py .
 COPY --chown=mcp:mcp tools/ tools/
 
 EXPOSE 443

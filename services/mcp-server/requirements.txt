@@ -7,3 +7,4 @@ httpx>=0.27
 trafilatura>=1.12
 pyyaml>=6.0
 playwright>=1.42.0
+python-multipart>=0.0.9

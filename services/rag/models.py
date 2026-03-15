@@ -174,3 +174,25 @@ class FailedChunkItem(BaseModel):
 class FailedExtractionResponse(BaseModel):
     total: int
     chunks: list[FailedChunkItem]
+
+
+class ArticleUpsertRequest(BaseModel):
+    """Upsert a row in the articles table. Only source_path is required;
+    all other fields merge with any existing row (empty strings are ignored)."""
+
+    source_path: str
+    filename: str | None = None
+    title: str = ""
+    authors: str = ""
+    venue: str = ""
+    published_date: str = ""
+    doi: str = ""
+    abstract: str = ""
+    content_hash: str = ""
+    subdirectory: str = ""
+    scope: str = "all"
+
+
+class ArticleUpsertResponse(BaseModel):
+    source_path: str
+    created: bool

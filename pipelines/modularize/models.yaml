@@ -1,5 +1,5 @@
 models:
   plan_model:
-    model: google/gemini-2.5-pro
+    model: openai/gpt-5.3-codex
   execute_model:
-    model: google/gemini-2.5-pro
+    model: openai/gpt-5.3-codex

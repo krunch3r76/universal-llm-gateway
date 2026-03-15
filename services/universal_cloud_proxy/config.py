@@ -39,6 +39,7 @@ class ProviderConfig:
     native_tools: list[str] = field(default_factory=list)
     mcp_server_url: str | None = None
     mcp_auth_token: str | None = None
+    mcp_auth_token_env: str | None = None
     mcp_v2: bool = False
 
 
@@ -177,17 +178,41 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
                 raw_mcp_url,
             )
 
-    mcp_auth_token: str | None = None
-    raw_mcp_token = entry.get("mcp_auth_token")
-    if raw_mcp_token is not None:
-        if isinstance(raw_mcp_token, str) and raw_mcp_token.strip():
-            mcp_auth_token = raw_mcp_token.strip()
+    mcp_auth_token_env: str | None = None
+    raw_mcp_token_env = entry.get("mcp_auth_token_env")
+    if raw_mcp_token_env is not None:
+        if isinstance(raw_mcp_token_env, str) and raw_mcp_token_env.strip():
+            mcp_auth_token_env = raw_mcp_token_env.strip()
         else:
             logger.error(
-                "providers[%s].mcp_auth_token must be a non-empty string, got: %r",
+                "providers[%s].mcp_auth_token_env must be a non-empty string, got: %r",
                 provider,
-                raw_mcp_token,
+                raw_mcp_token_env,
             )
+
+    mcp_auth_token: str | None = None
+    if mcp_auth_token_env:
+        token_from_env = os.environ.get(mcp_auth_token_env, "").strip()
+        if token_from_env:
+            mcp_auth_token = token_from_env
+        else:
+            logger.warning(
+                "providers[%s].mcp_auth_token_env=%s is set but env var is missing/empty; "
+                "falling back to providers[].mcp_auth_token",
+                provider,
+                mcp_auth_token_env,
+            )
+    if not mcp_auth_token:
+        raw_mcp_token = entry.get("mcp_auth_token")
+        if raw_mcp_token is not None:
+            if isinstance(raw_mcp_token, str) and raw_mcp_token.strip():
+                mcp_auth_token = raw_mcp_token.strip()
+            else:
+                logger.error(
+                    "providers[%s].mcp_auth_token must be a non-empty string, got: %r",
+                    provider,
+                    raw_mcp_token,
+                )
 
     mcp_v2 = bool(entry.get("mcp_v2", False))
 
@@ -201,6 +226,7 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
         native_tools=native_tools,
         mcp_server_url=mcp_server_url,
         mcp_auth_token=mcp_auth_token,
+        mcp_auth_token_env=mcp_auth_token_env,
         mcp_v2=mcp_v2,
     )
 

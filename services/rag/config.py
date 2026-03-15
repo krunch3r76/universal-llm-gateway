@@ -76,6 +76,13 @@ BASELINE_EXTENSIONS: tuple[str, ...] = _BASELINE_EXTENSIONS
 
 @dataclass(slots=True, kw_only=True)
 class RagConfig:
+    """Parsed RAG service configuration for indexing, retrieval, and extraction.
+
+    ``article_registry_path`` is retained for one-time startup migration of
+    legacy YAML article metadata into SQLite; after all deployments migrate, the
+    field should be removed with its import path.
+    """
+
     watch_directories: list[WatchDirectory]
     scopes: dict[str, ScopeDefinition]
     automatic_indexing_enabled: bool = True
@@ -84,8 +91,6 @@ class RagConfig:
     )
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
     index_workers: int = DEFAULT_INDEX_WORKERS
-    # Optional path to corpus_hints.yaml (scope → vocabulary hints for suggest_terms).
-    corpus_hints_path: Path | None = None
     # Optional path to article_registry.yaml (filename → citation metadata for chunk enrichment).
     article_registry_path: Path | None = None
     baseline_extensions: tuple[str, ...] = BASELINE_EXTENSIONS
@@ -96,6 +101,9 @@ class RagConfig:
     # Seconds between watcher reconcile sweeps (recover files missed by inotify). 0 = disabled.
     # Higher values reduce idle CPU; default 300 (5 min).
     reconcile_interval_s: float = 300.0
+    # Per-file timeout for watcher workers (initial reindex + reconcile). 0 = no timeout.
+    # Prevents a single hung extraction from blocking an entire watcher worker indefinitely.
+    file_timeout_s: float = 600.0
 
     def get_scope_for_path(self, file_path: str) -> str:
         """Longest-prefix match over scopes; leaf-preferred on ties.
@@ -321,10 +329,6 @@ def load_config() -> RagConfig:
     automatic_indexing_enabled = (
         raw_indexing if isinstance(raw_indexing, bool) else True
     )
-    corpus_hints_path: Path | None = None
-    raw_hints_path = parsed_root.get("corpus_hints_path")
-    if isinstance(raw_hints_path, str) and raw_hints_path.strip():
-        corpus_hints_path = Path(raw_hints_path.strip()).expanduser()
     article_registry_path: Path | None = None
     raw_registry = parsed_root.get("article_registry_path")
     if isinstance(raw_registry, str) and raw_registry.strip():
@@ -345,10 +349,15 @@ def load_config() -> RagConfig:
     else:
         contextualize_model = DEFAULT_CONTEXTUALIZE_MODEL
     raw_reconcile = parsed_root.get("reconcile_interval_s", 300.0)
-    if isinstance(raw_reconcile, (int, float)) and raw_reconcile >= 0:
+    if isinstance(raw_reconcile, int | float) and raw_reconcile >= 0:
         reconcile_interval_s = float(raw_reconcile)
     else:
         reconcile_interval_s = 300.0
+    raw_file_timeout = parsed_root.get("file_timeout_s", 600.0)
+    if isinstance(raw_file_timeout, int | float) and raw_file_timeout >= 0:
+        file_timeout_s = float(raw_file_timeout)
+    else:
+        file_timeout_s = 600.0
     return RagConfig(
         watch_directories=watch_directories,
         scopes=scopes,
@@ -356,10 +365,10 @@ def load_config() -> RagConfig:
         knowledge_extraction=knowledge_extraction,
         embedding_model=embedding_model,
         index_workers=index_workers,
-        corpus_hints_path=corpus_hints_path,
         article_registry_path=article_registry_path,
         baseline_extensions=BASELINE_EXTENSIONS,
         post_index_enforcement=post_index_enforcement,
         contextualize_model=contextualize_model,
         reconcile_interval_s=reconcile_interval_s,
+        file_timeout_s=file_timeout_s,
     )

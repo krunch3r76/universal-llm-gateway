@@ -24,6 +24,7 @@ from pathlib import Path
 
 from universal_event_bus.actor.sequential import SequentialExecutor
 
+from services.rag.article_registry import ArticleEntry
 from services.rag.fts_index import FtsIndex
 
 logger = logging.getLogger(__name__)
@@ -189,7 +190,11 @@ class PropertyIndex:
             "SELECT COALESCE(MAX(version), 0) FROM schema_version"
         ).fetchone()[0]
         migrations: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
-            (1, "baseline tables + indexes + legacy column backfill", self._migration_v1_baseline),
+            (
+                1,
+                "baseline tables + indexes + legacy column backfill",
+                self._migration_v1_baseline,
+            ),
             (
                 2,
                 "metadata tables: corpus_hints, scope_vocabulary, articles",
@@ -270,9 +275,7 @@ class PropertyIndex:
 
     async def add_batch(self, entries: list[tuple[str, str]], source: str = "") -> None:
         """Add multiple (key, chunk_id) pairs in one transaction. Scope defaults to 'all'."""
-        await self.add_batch_with_scope(
-            [(k, cid, "all", source) for k, cid in entries]
-        )
+        await self.add_batch_with_scope([(k, cid, "all", source) for k, cid in entries])
 
     async def add_batch_with_scope(
         self, entries: list[tuple[str, str, str, str]]
@@ -360,6 +363,100 @@ class PropertyIndex:
 
         await self._seq.run(_write())
 
+    async def upsert_article(
+        self,
+        source_path: str,
+        filename: str,
+        *,
+        title: str = "",
+        authors: str = "",
+        venue: str = "",
+        published_date: str = "",
+        doi: str = "",
+        abstract: str = "",
+        content_hash: str = "",
+        subdirectory: str = "",
+        scope: str = "all",
+    ) -> bool:
+        """Insert or update an articles row. Returns True if a new row was created."""
+
+        async def _write() -> bool:
+            conn = self._ensure_conn()
+            existing = conn.execute(
+                "SELECT 1 FROM articles WHERE source_path = ?", (source_path,)
+            ).fetchone()
+            conn.execute(
+                "INSERT INTO articles ("
+                "  source_path, filename, title, authors, venue, published_date,"
+                "  doi, abstract, scope, content_hash, subdirectory, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
+                " ON CONFLICT(source_path) DO UPDATE SET"
+                "  filename = excluded.filename,"
+                "  title = CASE WHEN excluded.title != '' THEN excluded.title ELSE articles.title END,"
+                "  authors = CASE WHEN excluded.authors != '' THEN excluded.authors ELSE articles.authors END,"
+                "  venue = CASE WHEN excluded.venue != '' THEN excluded.venue ELSE articles.venue END,"
+                "  published_date = CASE WHEN excluded.published_date != '' THEN excluded.published_date ELSE articles.published_date END,"
+                "  doi = CASE WHEN excluded.doi != '' THEN excluded.doi ELSE articles.doi END,"
+                "  abstract = CASE WHEN excluded.abstract != '' THEN excluded.abstract ELSE articles.abstract END,"
+                "  scope = excluded.scope,"
+                "  content_hash = CASE WHEN excluded.content_hash != '' THEN excluded.content_hash ELSE articles.content_hash END,"
+                "  subdirectory = CASE WHEN excluded.subdirectory != '' THEN excluded.subdirectory ELSE articles.subdirectory END,"
+                "  updated_at = datetime('now')",
+                (
+                    source_path,
+                    filename,
+                    title,
+                    authors,
+                    venue,
+                    published_date,
+                    doi,
+                    abstract,
+                    scope,
+                    content_hash,
+                    subdirectory,
+                ),
+            )
+            conn.commit()
+            return existing is None
+
+        return await self._seq.run(_write())
+
+    async def remove_article(self, source_path: str) -> None:
+        """Remove the articles row for a source path."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute("DELETE FROM articles WHERE source_path = ?", (source_path,))
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    async def remove_articles_by_prefix(self, prefix: str) -> int:
+        """Remove all articles rows whose source_path starts with *prefix*."""
+
+        async def _write() -> int:
+            conn = self._ensure_conn()
+            cursor = conn.execute(
+                "DELETE FROM articles WHERE source_path LIKE ? ESCAPE '\\'",
+                (prefix.replace("%", "\\%").replace("_", "\\_") + "%",),
+            )
+            conn.commit()
+            return cursor.rowcount
+
+        return await self._seq.run(_write())
+
+    async def remove_source_metadata(self, source: str, chunk_ids: list[str]) -> None:
+        """Remove all metadata artefacts for a deleted source.
+
+        Cleans properties (per chunk), FTS rows, failure records, and the
+        articles row — everything in rag_metadata.db that references *source*.
+        """
+        for chunk_id in chunk_ids:
+            await self.remove_chunk(chunk_id)
+        await self.fts.remove_batch(chunk_ids)
+        await self.clear_failures_for(source)
+        await self.remove_article(source)
+
     async def clear_failures_for(self, source: str) -> None:
         """Remove all failure records for a source file (e.g. after successful recovery)."""
 
@@ -430,7 +527,7 @@ class PropertyIndex:
                         rows,
                     )
                 conn.execute("COMMIT")
-            except Exception:
+            except sqlite3.Error:
                 conn.execute("ROLLBACK")
                 raise
 
@@ -460,7 +557,7 @@ class PropertyIndex:
                         rows,
                     )
                 conn.execute("COMMIT")
-            except Exception:
+            except sqlite3.Error:
                 conn.execute("ROLLBACK")
                 raise
 
@@ -716,6 +813,31 @@ class PropertyIndex:
         for source, chunk_id in rows:
             result[source].append(chunk_id)
         return dict(result)
+
+    def lookup_articles_by_hash(self, hashes: list[str]) -> dict[str, ArticleEntry]:
+        """Batch-lookup articles by content_hash. Returns {hash: ArticleEntry}."""
+        if not hashes:
+            return {}
+        conn = self._ensure_conn()
+        placeholders = ",".join("?" for _ in hashes)
+        rows = conn.execute(
+            "SELECT content_hash, title, authors, venue, published_date, doi, abstract, subdirectory"
+            f" FROM articles WHERE content_hash IN ({placeholders})",
+            hashes,
+        ).fetchall()
+        return {
+            row[0]: ArticleEntry(
+                title=row[1],
+                authors=row[2],
+                venue=row[3],
+                published_date=row[4],
+                doi=row[5],
+                abstract=row[6],
+                subdirectory=row[7],
+                content_hash=row[0],
+            )
+            for row in rows
+        }
 
     def rescope_all(self, scope_resolver: Callable[[str], str]) -> tuple[int, int]:
         """Re-resolve scope for all entries using the given resolver.

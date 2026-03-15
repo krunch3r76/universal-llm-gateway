@@ -69,7 +69,7 @@ async def run_preflight_checks(
 def validate_load_response(
     result: Any,
     model_id: str,
-) -> tuple[bool, int | None, str | None]:
+) -> tuple[bool, int | None, int | None, str | None]:
     """
     Validate load_model response from worker.
 
@@ -78,17 +78,14 @@ def validate_load_response(
         model_id: Model identifier (for error messages)
 
     Returns:
-        Tuple of (success, context_size, error_message)
-        - success: True if model loaded
-        - context_size: Context size if available
-        - error_message: Error message if failed
+        Tuple of (success, context_size, engine_pid, error_message)
 
     Note: Does not raise - returns validation result
     """
     # Check if result is not a dict
     if not isinstance(result, dict):
         error_msg = f"RPC response is not a dict: {type(result).__name__}"
-        return False, None, error_msg
+        return False, None, None, error_msg
 
     # Check if result looks like metadata-only (protocol issue)
     metadata_fields = {"command_type", "worker_id"}
@@ -97,11 +94,11 @@ def validate_load_response(
             "Response contains only metadata (command_type, worker_id) "
             "but no worker response data"
         )
-        return False, None, error_msg
+        return False, None, None, error_msg
 
     # Check for error in response
     if "error" in result:
-        return False, None, result["error"]
+        return False, None, None, result["error"]
 
     # Check status to verify model is loaded
     model_loaded = result.get("model_loaded", False)
@@ -114,7 +111,8 @@ def validate_load_response(
 
     if model_loaded or success:
         context_size = result.get("context_size")
-        return True, context_size, None
+        engine_pid = result.get("engine_pid")
+        return True, context_size, engine_pid, None
 
     # Got a response but no success/model_loaded
     if result and not result.get("error"):
@@ -124,4 +122,4 @@ def validate_load_response(
     else:
         error_msg = "Worker did not return model_loaded=True or success=True"
 
-    return False, None, error_msg
+    return False, None, None, error_msg

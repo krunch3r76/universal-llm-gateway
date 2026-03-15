@@ -102,6 +102,8 @@ Gateway generates a UUID `request_id`.
 
 ## Event Lifecycle Contracts
 
+Migration note: `scripts/rag-status --watch` moved from JSONL polling to event-service WebSocket consumption. This is a transport-only consumer change; no new signals were added and no existing signal contracts were modified.
+
 ### Request Lifecycle
 
 **INVARIANT**: `request.started` ⟹ (`request.completed` ∨ `request.failed` ∨ `request.timed.out` ∨ `request.client.disconnected`)
@@ -1077,6 +1079,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `gateway.vram.phantom.detected` | `hardware_used_mb`, `catalog_used_mb`, `discrepancy_mb`, `tracked_models` | - |
 | `gateway.model.phantom.detected` | `model_id`, `process_status` | `tracker_status` |
 | `gateway.model.phantom.cleaned` | `model_id`, `success` | `vram_freed_mb` |
+| `gateway.model.ghost.cleaned` | `model_id`, `success` | `vram_freed_mb` |
 
 ### RAG Events
 
@@ -1127,14 +1130,14 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.scope.resolved` | `scope`, `prefix_count` | scope(s) resolved to prefixes; `scope`: str or array of strings |
 | `rag.scope.rejected` | `scope`, `reason`, `available` | scope validation failed |
 | `rag.scopes.listed` | `count` | scope registry listing completed |
-| `rag.post_index.stale` | `stale_steps` | startup: post-index enrichment steps stale after last reindex; operator should run runbook |
+| `rag.post.index.stale` | `stale_steps` | startup: post-index enrichment steps stale after last reindex; operator should run runbook |
 | `rag.search.embedding.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | search embedding retries exhausted; request degraded/fails before vector search |
 | `rag.embedding.query.success` | `model_id`, `query_len`, `scope` | query embedding completed successfully |
 | `rag.embedding.query.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | query embedding retries exhausted before search |
 | `rag.search.executed` | `query_len`, `top_k`, `results`, `scope` | search completed with ≥1 result; `scope`: str \| list[str] \| None |
-| `rag.search.no_results` | `query_len`, `scope` | search completed with 0 results; `scope`: str \| list[str] \| None |
-| `rag.corpus_hints.updated` | `path`, `scopes_updated`, `timestamp` | corpus_hints.yaml written after aggregation from property index |
-| `rag.corpus_hints.update.failed` | `path`, `error` | corpus_hints.yaml update failed after indexing |
+| `rag.search.no.results` | `query_len`, `scope` | search completed with 0 results; `scope`: str \| list[str] \| None |
+| `rag.corpus.hints.updated` | `path`, `scopes_updated`, `timestamp` | corpus_hints.yaml written after aggregation from property index |
+| `rag.corpus.hints.update.failed` | `path`, `error` | corpus_hints.yaml update failed after indexing |
 | `rag.corpus.hints.load.failed` | `path`, `error` | corpus_hints.yaml could not be loaded |
 | `rag.scope.vocabulary.load.failed` | `path`, `error` | scope_vocabulary.yaml could not be loaded |
 | `rag.corpus.hints.filter.failed` | `error` | co-occurrence hint filtering failed |
@@ -1329,6 +1332,61 @@ MCP adapter signals track the v1→v2 migration and MCP tool execution visibilit
 - ∀ `mcp_tool_use` block in response: ¬ mapped to OpenAI `tool_calls` (server-executed)
 - ∀ `server_tool_use` block in response: ¬ mapped to OpenAI `tool_calls` (server-executed)
 
+### MCP OAuth Lifecycle
+
+**Purpose**: Tracks OAuth 2.1 authorization bootstrap and bearer-token validation
+for the self-hosted MCP server (`services/mcp-server/`).
+
+**INVARIANT**: `mcp.oauth.code.issued` ⟹ eventually (`mcp.oauth.token.issued` ∨ code expiry)
+
+**INVARIANT**: `mcp.oauth.token.exchange.failed` is terminal for one exchange attempt.
+
+**INVARIANT**: `mcp.oauth.token.accepted` ⊕ `mcp.oauth.token.rejected` per presented token.
+
+```text
+mcp.oauth.server.started
+  └─> mcp.oauth.authorization.validated
+      └─> mcp.oauth.code.issued
+          └─> mcp.oauth.token.issued | mcp.oauth.token.exchange.failed | mcp.oauth.code.expired
+  └─> mcp.oauth.token.accepted
+      └─> mcp.request.started(auth_mode="oauth")
+          └─> mcp.request.completed | mcp.request.failed
+  └─> mcp.oauth.token.rejected (request terminates)
+```
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `mcp.oauth.server.started` | `issuer`, `token_endpoint`, `authorization_endpoint` | OAuth initialized; metadata endpoints active |
+| `mcp.oauth.authorization.validated` | `client_id`, `scope` | Authorization request passed validation |
+| `mcp.oauth.code.issued` | `client_id`, `scope`, `ttl_seconds` | Authorization code created after user consent |
+| `mcp.oauth.code.expired` | `client_id` | Authorization code expired before token exchange |
+| `mcp.oauth.token.issued` | `client_id`, `scope`, `expires_in` | Access token minted from valid code + PKCE |
+| `mcp.oauth.token.exchange.failed` | `client_id`, `reason` | Token exchange rejected (expired, mismatch, PKCE failure) |
+| `mcp.oauth.token.accepted` | `client_id` | OAuth bearer token accepted for resource access |
+| `mcp.oauth.token.rejected` | `reason` | OAuth bearer token rejected (unknown or expired) |
+
+### MCP Request Auth Mode
+
+`mcp.request.started`, `mcp.request.completed`, and `mcp.request.failed` include:
+
+| Field | Type | Description |
+|---|---|---|
+| `auth_mode` | `"static"` \| `"oauth"` | Which bearer validation path admitted the request |
+
+Additive field — backward compatible for existing consumers.
+
+### MCP Observability: Adapter + OAuth Signal Coordination
+
+With both `mcp.adapter.*` (cloud proxy side) and `mcp.oauth.*` (server side)
+signals in place, the full MCP request lifecycle is observable:
+
+```text
+mcp.adapter.request.shape (proxy sends request with mcp_v2 toolset)
+  → mcp.oauth.token.accepted | mcp.oauth.token.rejected (server authenticates)
+    → mcp.adapter.tool.seen (proxy receives server-executed tool block)
+      → mcp.adapter.search.seen (proxy sees tool search result)
+```
+
 ## MCP Server Signals
 
 The internet-facing MCP server (`source: "mcp-server"`) publishes to the
@@ -1336,9 +1394,9 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 
 | Signal | Payload fields | Description |
 |---|---|---|
-| `mcp.request.started` | `method`, `client_ip` | HTTP request received at `/mcp` |
-| `mcp.request.completed` | `method`, `client_ip`, `duration_s` | Request completed normally |
-| `mcp.request.failed` | `method`, `client_ip`, `duration_s`, `error`, `exc_type` | Request raised an exception |
+| `mcp.request.started` | `method`, `client_ip`, `mcp_method`, `auth_mode` | HTTP request received at `/mcp` |
+| `mcp.request.completed` | `method`, `client_ip`, `duration_s`, `auth_mode` | Request completed normally |
+| `mcp.request.failed` | `method`, `client_ip`, `duration_s`, `error`, `exc_type`, `auth_mode` | Request raised an exception |
 | `mcp.sse.stream.started` | — | SSE stream opened |
 | `mcp.sse.stream.ended` | `duration_s`, `reason` | SSE stream closed cleanly |
 | `mcp.sse.stream.aborted` | `duration_s`, `reason`, `exc_type` | SSE stream dropped on error |
@@ -1348,6 +1406,22 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.manage.service.called` | `action`, `service` | manage_service tool invoked |
 | `mcp.manage.service.completed` | `action`, `service`, `duration_s` | manage_service completed successfully |
 | `mcp.manage.service.failed` | `action`, `service`, `error`, `duration_s` | manage_service returned error |
+
+### OAuth Signals
+
+OAuth signals are emitted by the auth admission middleware and OAuth service
+when OAuth is enabled (`MCP_OAUTH_ENABLED=true` with a valid HTTPS issuer).
+
+| Signal | Payload fields | Description |
+|---|---|---|
+| `mcp.oauth.server.started` | `issuer`, `token_endpoint`, `authorization_endpoint` | OAuth server initialized at startup |
+| `mcp.oauth.authorization.validated` | `client_id`, `scope` | Authorization request validated |
+| `mcp.oauth.code.issued` | `client_id`, `scope`, `ttl_seconds` | Authorization code issued after consent |
+| `mcp.oauth.code.expired` | `client_id` | Authorization code expired before exchange |
+| `mcp.oauth.token.issued` | `client_id`, `scope`, `expires_in` | Access token minted from code exchange |
+| `mcp.oauth.token.exchange.failed` | `client_id`, `reason` | Token exchange failed (bad code/PKCE/mismatch) |
+| `mcp.oauth.token.accepted` | `client_id` | OAuth bearer token accepted for request |
+| `mcp.oauth.token.rejected` | `reason` | OAuth bearer token rejected (expired/unknown) |
 
 Query example — all tool calls in last 5 minutes:
 ```

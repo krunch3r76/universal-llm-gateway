@@ -556,6 +556,12 @@ class NativeGGUFEngine(BaseEngine):
             return False
         return self.server_manager.status == ServerStatus.RUNNING
 
+    @override
+    def get_engine_pid(self) -> int | None:
+        if self.server_manager and self.server_manager.process:
+            return self.server_manager.process.pid
+        return None
+
     # Router mode operations
 
     async def list_models(self) -> dict[str, Any]:

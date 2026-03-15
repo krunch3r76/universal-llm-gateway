@@ -105,7 +105,8 @@ def load_registry_from_db(db_path: Path) -> dict[str, ArticleEntry]:
 
 
 def replace_article_rows(
-    db_path: Path, rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str]]
+    db_path: Path,
+    rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str]],
 ) -> None:
     """Replace all rows in the SQLite ``articles`` table in one transaction."""
     if not db_path.exists():

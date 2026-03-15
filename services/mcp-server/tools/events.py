@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -24,19 +23,6 @@ _QUERY_SOCKET = os.environ.get(
     "EVENT_QUERY_SOCKET", "/tmp/universal-protocol/events-query.sock"
 )
 _QUERY_TIMEOUT = 10.0
-
-# All signals that indicate a service started — used by stack-last-started.
-_STARTUP_SIGNALS: frozenset[str] = frozenset(
-    {
-        "system.started",  # Stargate (canonical session boundary)
-        "cloud.proxy.started",  # Cloud Proxy
-        "rag.started",  # RAG service
-    }
-)
-
-# Canonical session boundary signal.
-# ∀ per-service restarts (RAG, cloud proxy): NOT a session boundary.
-_SESSION_BOUNDARY_SIGNAL = "system.started"
 
 _VALID_OPERATIONS = frozenset(
     {
@@ -57,32 +43,6 @@ _VALID_OPERATIONS = frozenset(
         "raw_sql",
     }
 )
-
-
-def _get_session_start_ts() -> int | None:
-    """Return ts_unix_ms of the most recent Stargate startup, or None on failure.
-
-    Uses system.started exclusively — the canonical session boundary signal.
-    RAG/cloud-proxy independent restarts do NOT shift this value, ensuring
-    the default observability window matches the full session, not just
-    the last sub-service restart.
-
-    Returns:
-        int | None: Unix timestamp in milliseconds of the most recent
-        Stargate startup, or None if not found or query failed.
-    """
-    result = _query_event_service(
-        {
-            "type": "sql",
-            "sql": "SELECT MAX(ts_unix_ms) AS ts FROM events WHERE signal = ?",
-            "params": [_SESSION_BOUNDARY_SIGNAL],
-            "limit": 1,
-        }
-    )
-    rows = result.get("rows", [])
-    if rows and rows[0].get("ts") is not None:
-        return int(rows[0]["ts"])
-    return None
 
 
 def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
@@ -137,12 +97,12 @@ def register_event_tools(mcp: FastMCP) -> None:
         operation='operations' to discover available operations and
         their detailed parameter schemas.
 
-        Default time window: since last Stargate restart (session-scoped).
-        Override with since_ts or minutes params where supported.
+        Default time window semantics are owned by Event Service operations.
+        This tool forwards params through unchanged.
 
         Operations:
-          recent-failures    — Failures/errors since last Stargate restart (override: since_ts param)
-          noise-profile      — Signal frequency histogram since last restart (override: minutes param)
+          recent-failures    — Failures/errors (window defaults in Event Service)
+          noise-profile      — Signal frequency histogram (window defaults in Event Service)
           coordination-audit — Recent role=coordination events
           model-timeline     — Load/execute/unload for a model
           request-trace      — All events for a request_id
@@ -188,76 +148,6 @@ def register_event_tools(mcp: FastMCP) -> None:
                 "limit": params_dict.get("limit", 100),
             }
             result = _query_event_service(body)
-        elif operation == "stack-last-started":
-            # Use a JOIN to guarantee ts_unix_ms and timestamp come from the same row.
-            signal_params = sorted(_STARTUP_SIGNALS)
-            placeholders = ", ".join("?" for _ in signal_params)
-            result = _query_event_service(
-                {
-                    "type": "sql",
-                    "sql": (
-                        "SELECT e.signal, e.ts_unix_ms, e.timestamp "
-                        "FROM events e "
-                        "JOIN ("
-                        f"  SELECT signal, MAX(ts_unix_ms) AS max_ts FROM events "
-                        f"  WHERE signal IN ({placeholders}) GROUP BY signal"
-                        ") latest ON e.signal = latest.signal AND e.ts_unix_ms = latest.max_ts "
-                        "ORDER BY e.ts_unix_ms DESC"
-                    ),
-                    "params": signal_params,
-                    "limit": len(signal_params),
-                }
-            )
-            rows = result.get("rows", [])
-            session_start_ts = _get_session_start_ts()
-            result["stack_start_ts_unix_ms"] = session_start_ts
-            result["stack_start_timestamp"] = next(
-                (
-                    r.get("timestamp")
-                    for r in rows
-                    if r.get("signal") == _SESSION_BOUNDARY_SIGNAL
-                ),
-                None,
-            )
-        elif operation == "recent-failures":
-            p = params or {}
-            limit = int(p.get("limit", 20))
-            since_ts_raw = p.get("since_ts")
-            since_ts = int(since_ts_raw) if since_ts_raw is not None else None
-            if since_ts is None:
-                since_ts = _get_session_start_ts()
-            sql_where = ["(signal LIKE '%.failed' OR signal LIKE '%.error')"]
-            sql_params: list[Any] = []
-            if since_ts is not None:
-                sql_where.append("ts_unix_ms >= ?")
-                sql_params.append(since_ts)
-            sql_params.append(limit)
-            sql = (
-                "SELECT * FROM events WHERE "
-                + " AND ".join(sql_where)
-                + " ORDER BY ts_unix_ms DESC LIMIT ?"
-            )
-            result = _query_event_service(
-                {"type": "sql", "sql": sql, "params": sql_params, "limit": limit}
-            )
-        elif operation == "noise-profile":
-            p = params or {}
-            minutes_raw = p.get("minutes")
-            minutes = int(minutes_raw) if minutes_raw is not None else None
-            if minutes is None:
-                start_ts = _get_session_start_ts()
-                if start_ts is not None:
-                    elapsed_ms = int(time.time() * 1000) - start_ts
-                    minutes = max(1, elapsed_ms // 60_000 + 1)
-                else:
-                    minutes = 5
-            result = _query_event_service(
-                {
-                    "type": "operation",
-                    "name": "noise-profile",
-                    "params": {"minutes": minutes},
-                }
-            )
         else:
             body = {"type": "operation", "name": operation, "params": params or {}}
             result = _query_event_service(body)

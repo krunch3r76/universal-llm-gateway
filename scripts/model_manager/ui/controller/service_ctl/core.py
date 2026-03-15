@@ -25,6 +25,7 @@ from ..service_config import (
     ensure_socket_dir,
     ensure_stargate_config,
     load_env_file,
+    load_mcp_config,
     mcp_browser_override_path,
 )
 from ..sidecar_ctl import SidecarController
@@ -33,6 +34,7 @@ from . import cloud_proxy_service, rag_service
 logger = logging.getLogger(__name__)
 
 _PGID_KILL_TIMEOUT = 5
+_CURSOR_DESCRIPTOR_REFRESH_TIMEOUT_S = 30
 
 
 class ServiceController:
@@ -398,8 +400,69 @@ class ServiceController:
                 "MCP rebuild failed (exit %d):\n%s", build.returncode, build_text
             )
             return f"MCP rebuild failed (exit {build.returncode}).\n{build_text}"
+        start_text = await self.start_mcp()
+        if not start_text.startswith("MCP server started."):
+            return start_text
 
-        return await self.start_mcp()
+        refresh_text = await self._refresh_cursor_mcp_descriptors_if_enabled()
+        if refresh_text:
+            return f"{start_text}\n{refresh_text}"
+        return start_text
+
+    async def _refresh_cursor_mcp_descriptors_if_enabled(self) -> str:
+        """Optionally refresh Cursor MCP descriptors based on ~/.gateway/mcp.yaml."""
+        cfg = load_mcp_config()
+        if cfg is None or not cfg.refresh_cursor_descriptors_after_rebuild:
+            return ""
+
+        script = self._root / "scripts" / "refresh-cursor-mcp-descriptors"
+        if not script.exists():
+            msg = (
+                "WARNING: Cursor descriptor refresh is enabled, but script is missing: "
+                f"{script}"
+            )
+            logger.warning(msg)
+            return msg
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "bash",
+                str(script),
+                cwd=str(self._root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+        except OSError as exc:
+            msg = f"WARNING: Could not launch descriptor refresh script: {exc}"
+            logger.warning(msg)
+            return msg
+
+        try:
+            output = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=_CURSOR_DESCRIPTOR_REFRESH_TIMEOUT_S,
+            )
+        except TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            msg = (
+                "WARNING: Cursor descriptor refresh timed out after "
+                f"{_CURSOR_DESCRIPTOR_REFRESH_TIMEOUT_S}s"
+            )
+            logger.warning(msg)
+            return msg
+
+        text = output[0].decode(errors="replace").strip() if output[0] else ""
+        if proc.returncode == 0:
+            if text:
+                return f"Cursor MCP descriptors refreshed.\n{text}"
+            return "Cursor MCP descriptors refreshed."
+
+        msg = f"WARNING: Cursor descriptor refresh failed (exit {proc.returncode})."
+        logger.warning("%s\n%s", msg, text)
+        if text:
+            return f"{msg}\n{text}"
+        return msg
 
     async def start_event_service(self) -> str:
         """Start event service container via docker compose."""
@@ -568,8 +631,7 @@ class ServiceController:
             f"(could not confirm death, PID {pid}, {total_elapsed:.1f}s)."
         )
 
-    @staticmethod
-    def _write_pid_file(pid: int) -> None:
+    def _write_pid_file(self, pid: int) -> None:
         GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
         pid_path = GATEWAY_DIR / "stargate.pid"
         pid_path.write_text(str(pid) + "\n")

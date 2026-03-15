@@ -222,12 +222,20 @@ class ModelLoader:
             if not config_result:
                 return False
 
+            # Store engine subprocess PID for ghost detection in VramReconciler
+            engine_pid = config_result.get("engine_pid")
+            if engine_pid is not None:
+                self._controller._process_state.set_engine_pid(model_id, engine_pid)
+                logger.info("Stored engine_pid=%d for %s", engine_pid, model_id)
+
             if not await load_flow.verify_model_responsive(self._controller, model_id):
                 return False
 
             resource_tracker.set_model_loaded(model_id)
 
-            context_size = config_result.get("context_size") if config_result else None
+            context_size: int | None = (
+                config_result.get("context_size") if config_result else None
+            )
 
             await load_flow.finalize_load(
                 self._controller, model_id, vram_before, context_length=context_size

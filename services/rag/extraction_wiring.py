@@ -47,7 +47,7 @@ from services.rag.property_index import PropertyIndex
 
 logger = logging.getLogger(__name__)
 
-# ≥90% success → write partial results (matches MapExecutor failure_threshold=0.1)
+# Accept partial writes when failure ratio is within 10%.
 _FAILURE_THRESHOLD = 0.1
 
 

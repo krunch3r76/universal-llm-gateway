@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from universal_logging import get_logger
 
 from src.core.errors import is_connection_error
+from src.core.resources.types import ModelStatus
 
 if TYPE_CHECKING:
     from ..controller import WorkerController
@@ -42,7 +43,18 @@ class StreamingChatCompletion:
         """
         Handle streaming inference as async generator.
 
-        Yields chunks immediately as they arrive from worker.
+        Yields raw inference chunks as they arrive from the underlying worker.
+        Does not perform resource busy/idle tracking; use
+        generate_chat_completion_stream for that.
+
+        Args:
+            model_id: Model to use for inference.
+            messages: Input messages for the chat completion.
+            parameters: Generation parameters (passed through to worker).
+            correlation_id: Optional correlation ID for tracing.
+
+        Yields:
+            dict[str, Any]: One chunk of the streaming inference response.
         """
         async for chunk in self._controller._streaming_inference.inference_stream(
             model_id, messages, parameters, correlation_id
@@ -58,19 +70,21 @@ class StreamingChatCompletion:
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Generate streaming chat completion with resource tracking.
+
+        INVARIANT: the finally block guarantees idle transition on ALL exit
+        paths — normal return, Exception, CancelledError, and GeneratorExit
+        (async generator closed by ASGI server on client disconnect).
         """
         model_marked_busy = False
+        idle_marked_in_stream: list[bool] = [False]
 
         try:
             if not await self._controller._model_loader.ensure_model_loaded(model_id):
                 raise RuntimeError(f"Failed to load model {model_id}")
 
+            # Ensure streaming path; caller may omit stream=True.
             kwargs["stream"] = True
 
-            # INVARIANT: Pure passthrough - parameters flow unchanged to worker/engine
-            # Gateway does not validate, transform, or add defaults
-            # (Stargate's responsibility)
-            # Log generation parameters being sent to worker
             from universal_logging import format_json_for_log
 
             logger.info(
@@ -88,16 +102,17 @@ class StreamingChatCompletion:
 
             try:
                 async for chunk in self._stream_with_tracking(
-                    model_id, messages, kwargs, correlation_id, resource_tracker
+                    model_id,
+                    messages,
+                    kwargs,
+                    correlation_id,
+                    resource_tracker,
+                    idle_marked_in_stream,
                 ):
-                    model_marked_busy = yield chunk
-                    if model_marked_busy is None:
-                        model_marked_busy = True
+                    yield chunk
 
             except asyncio.CancelledError:
                 try:
-                    # Shield cancellation handler from being cancelled
-                    # Ensures cleanup completes even if client disconnects
                     await asyncio.shield(
                         self._handle_cancellation(model_id, model_marked_busy)
                     )
@@ -118,9 +133,6 @@ class StreamingChatCompletion:
                 raise stream_error
 
         except Exception as e:
-            if model_marked_busy:
-                await self._cleanup_busy_state(model_id)
-
             error_message = str(e)
             lower_error = error_message.lower()
             if "cancel" in lower_error or "disconnect" in lower_error:
@@ -135,8 +147,16 @@ class StreamingChatCompletion:
                 exc_info=True,
             )
 
-            self._handle_transport_error(error_message, model_id, "streaming")
+            raise_msg = self._handle_transport_error(
+                error_message, model_id, "streaming", re_raise=False
+            )
+            if raise_msg is not None:
+                raise RuntimeError(raise_msg)
             raise
+
+        finally:
+            if model_marked_busy and not idle_marked_in_stream[0]:
+                await self._ensure_model_idle(model_id)
 
     async def _stream_with_tracking(
         self,
@@ -145,12 +165,12 @@ class StreamingChatCompletion:
         kwargs: dict,
         correlation_id: str | None,
         resource_tracker,
-    ) -> AsyncIterator[tuple[dict, bool]]:
-        """Stream with state tracking, yielding (chunk, model_marked_busy)."""
+        idle_marked_in_stream: list[bool],
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream with state tracking; sets idle_marked_in_stream[0] when idle is set."""
         logger.info(f"🔍 [controller] Starting inference_stream for {model_id}")
         first_chunk_received = False
         model_marked_ready = False
-        model_marked_busy = True
 
         async for chunk in self._controller._streaming_inference.inference_stream(
             model_id, messages, kwargs, correlation_id
@@ -167,22 +187,18 @@ class StreamingChatCompletion:
                 )
                 await resource_tracker.set_model_idle(model_id)
                 model_marked_ready = True
-                model_marked_busy = False
+                idle_marked_in_stream[0] = True
 
             yield chunk
 
-        if not model_marked_ready and model_marked_busy:
-            model_marked_busy = await self._finalize_stream(model_id)
+        if not model_marked_ready:
+            await self._finalize_stream(model_id)
+            idle_marked_in_stream[0] = True
 
     def _get_finish_reason(self, chunk: dict) -> str | None:
         """Extract finish_reason from chunk."""
         finish_reason = chunk.get("finish_reason")
-        if (
-            not finish_reason
-            and isinstance(chunk, dict)
-            and "choices" in chunk
-            and chunk["choices"]
-        ):
+        if not finish_reason and isinstance(chunk, dict) and chunk.get("choices"):
             choice = chunk["choices"][0]
             if isinstance(choice, dict):
                 finish_reason = choice.get("finish_reason")
@@ -219,32 +235,24 @@ class StreamingChatCompletion:
         logger.info(f"🔌 Stream cancelled for {model_id} - emitting cancellation event")
 
         reason = "client_disconnect" if model_marked_busy else "client_disconnect_early"
-
-        if model_marked_busy:
+        if not model_marked_busy:
+            logger.debug(
+                "🔍 [controller] Model %s not marked busy, emitting event anyway",
+                model_id,
+            )
+        try:
             await emit_stream_cancelled_or_force_idle(
                 model_id,
                 stream_id=None,
                 reason=reason,
                 event_bus=self._controller.event_bus,
             )
-        else:
-            logger.debug(
-                "🔍 [controller] Model %s not marked busy, emitting event anyway",
+        except Exception as e:
+            logger.warning(
+                "⚠️ [controller] Failed to emit cancellation for %s: %s",
                 model_id,
+                e,
             )
-            try:
-                await emit_stream_cancelled_or_force_idle(
-                    model_id,
-                    stream_id=None,
-                    reason=reason,
-                    event_bus=self._controller.event_bus,
-                )
-            except Exception as e:
-                logger.warning(
-                    "⚠️ [controller] Failed to emit cancellation for %s: %s",
-                    model_id,
-                    e,
-                )
 
     async def _handle_stream_error(
         self, model_id: str, error: Exception, model_marked_busy: bool
@@ -267,16 +275,41 @@ class StreamingChatCompletion:
                     f"⚠️ [controller] Failed to check worker for {model_id}: {e}"
                 )
 
-    async def _cleanup_busy_state(self, model_id: str):
-        """Cleanup busy state on exception."""
-        logger.info(f"🔧 [controller] Cleaning up busy state for {model_id}")
-        try:
-            await _get_resource_tracker().set_model_idle(model_id)
-        except Exception as cleanup_error:
-            logger.error(f"❌ [controller] Failed to cleanup state: {cleanup_error}")
+    async def _ensure_model_idle(self, model_id: str) -> None:
+        """Ensure model is not stuck in BUSY after generator exit.
 
-    def _handle_transport_error(self, error_message: str, model_id: str, context: str):
-        """Handle transport/connection errors."""
+        Safety net for ALL exit paths including GeneratorExit (async generator
+        closed by ASGI on client disconnect). Only transitions if the model
+        is actually still BUSY — avoids double-idle on normal completion.
+        """
+        try:
+            tracker = _get_resource_tracker()
+            info = tracker.get_model_info(model_id)
+            if info and info.status == ModelStatus.BUSY:
+                logger.warning(
+                    "⚠️ [controller] Model %s still BUSY at generator exit — forcing idle",
+                    model_id,
+                )
+                await tracker.set_model_idle(model_id)
+        except Exception as e:
+            logger.error(
+                "❌ [controller] Failed to ensure idle for %s: %s", model_id, e
+            )
+
+    def _handle_transport_error(
+        self,
+        error_message: str,
+        model_id: str,
+        context: str,
+        re_raise: bool = True,
+    ) -> str | None:
+        """Handle transport/connection errors.
+
+        When re_raise is True, raises RuntimeError for connection/timeout errors.
+        When re_raise is False, returns the RuntimeError message if it was a
+        transport error (caller should raise RuntimeError with it), or None so
+        the caller can re-raise the original exception.
+        """
         if is_connection_error(error_message):
             logger.error(
                 "🚨 [controller] Transport error during %s for %s: %s",
@@ -284,7 +317,10 @@ class StreamingChatCompletion:
                 model_id,
                 error_message,
             )
-            raise RuntimeError(f"Worker connection failed: {error_message}")
+            msg = f"Worker connection failed: {error_message}"
+            if re_raise:
+                raise RuntimeError(msg)
+            return msg
         if "timed out" in error_message.lower():
             logger.error(
                 "⏰ [controller] Timeout during %s for %s: %s",
@@ -292,4 +328,8 @@ class StreamingChatCompletion:
                 model_id,
                 error_message,
             )
-            raise RuntimeError(f"Operation timed out: {error_message}")
+            msg = f"Operation timed out: {error_message}"
+            if re_raise:
+                raise RuntimeError(msg)
+            return msg
+        return None

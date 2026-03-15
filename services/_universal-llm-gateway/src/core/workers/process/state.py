@@ -10,6 +10,9 @@ from dataclasses import dataclass, field
 
 from model_id import ModelId
 from process_ipc import ProcessSupervisor
+from universal_logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def _normalize_key(model_id: str | ModelId) -> str:
@@ -39,12 +42,14 @@ class ProcessState:
 
     supervisors: dict[str, ProcessSupervisor] = field(default_factory=dict)
     socket_paths: dict[str, str] = field(default_factory=dict)
+    engine_pids: dict[str, int] = field(default_factory=dict)
     failed_workers: set[str] = field(default_factory=set)
 
     def clear(self):
         """Clear all state (useful for testing)."""
         self.supervisors.clear()
         self.socket_paths.clear()
+        self.engine_pids.clear()
         self.failed_workers.clear()
 
     def has_supervisor(self, model_id: str | ModelId) -> bool:
@@ -77,10 +82,22 @@ class ProcessState:
         """Remove and return socket path for model, or None if not found."""
         return self.socket_paths.pop(_normalize_key(model_id), None)
 
+    def get_engine_pid(self, model_id: str | ModelId) -> int | None:
+        """Get engine subprocess PID for model, or None if not known."""
+        return self.engine_pids.get(_normalize_key(model_id))
+
+    def set_engine_pid(self, model_id: str | ModelId, pid: int) -> None:
+        """Store engine subprocess PID reported by worker after load."""
+        self.engine_pids[_normalize_key(model_id)] = pid
+
+    def remove_engine_pid(self, model_id: str | ModelId) -> int | None:
+        """Remove and return engine PID for model, or None if not found."""
+        return self.engine_pids.pop(_normalize_key(model_id), None)
+
     @staticmethod
     def _is_pid_running(pid: int | None) -> bool:
         """Check process liveness without mutating supervisor state."""
-        if pid is None or pid <= 0:
+        if pid is None:
             return False
         try:
             os.kill(pid, 0)
@@ -98,7 +115,10 @@ class ProcessState:
         for model_id, supervisor in self.supervisors.items():
             try:
                 info = supervisor.get_worker_info()
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    "Failed to get worker info for model %s: %s", model_id, e
+                )
                 continue
             if self._is_pid_running(getattr(info, "pid", None)):
                 running.append(model_id)
@@ -110,7 +130,10 @@ class ProcessState:
         for supervisor in self.supervisors.values():
             try:
                 info = supervisor.get_worker_info()
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    "Failed to get worker info for supervisor: %s", e
+                )
                 continue
             pid = getattr(info, "pid", None)
             if isinstance(pid, int) and self._is_pid_running(pid):
@@ -123,7 +146,10 @@ class ProcessState:
         for model_id, supervisor in self.supervisors.items():
             try:
                 info = supervisor.get_worker_info()
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    "Failed to get worker info for model %s: %s", model_id, e
+                )
                 continue
             pid = getattr(info, "pid", None)
             if isinstance(pid, int) and self._is_pid_running(pid):

@@ -314,6 +314,16 @@ Payload:
     vram_freed_mb: int | None - Estimated VRAM reclaimed by cleanup
 """
 
+GHOST_MODEL_CLEANED = "gateway.model.ghost.cleaned"
+"""
+Emitted after ghost model cleanup (tracked as loaded but engine dead).
+
+Payload:
+    model_id: str - Model ID of ghost process
+    success: bool - Whether cleanup succeeded
+    vram_freed_mb: int | None - Estimated VRAM reclaimed by cleanup
+"""
+
 
 # ========== Compute Capacity Telemetry Event Signals ==========
 
@@ -1018,6 +1028,23 @@ def PhantomModelCleaned(
     """Create PHANTOM_MODEL_CLEANED event."""
     return Event(
         signal=PHANTOM_MODEL_CLEANED,
+        payload={
+            "model_id": model_id,
+            "success": success,
+            "vram_freed_mb": vram_freed_mb,
+        },
+    )
+
+
+@event_factory
+def GhostModelCleaned(
+    model_id: str,
+    success: bool,
+    vram_freed_mb: int | None = None,
+) -> Event:
+    """Create GHOST_MODEL_CLEANED event (tracked model whose engine was dead)."""
+    return Event(
+        signal=GHOST_MODEL_CLEANED,
         payload={
             "model_id": model_id,
             "success": success,

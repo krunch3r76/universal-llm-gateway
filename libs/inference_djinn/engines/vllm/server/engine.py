@@ -118,7 +118,11 @@ class VLLMServerEngine(BaseEngine):
             host=host,
             port=port,
             socket_path=socket_path,
-            **({"api_server_count": api_server_count} if api_server_count is not None else {}),
+            **(
+                {"api_server_count": api_server_count}
+                if api_server_count is not None
+                else {}
+            ),
             enable_auto_tool_choice=resolved_auto_tool_choice,
             tool_call_parser=parser,
             max_model_len=max_model_len,
@@ -149,9 +153,11 @@ class VLLMServerEngine(BaseEngine):
                     model_id=self.config.model_path,
                     error_message="vLLM server process crashed or froze",
                     socket_path=self.config.socket_path,
-                    process_pid=self.server_manager.process.pid
-                    if self.server_manager and self.server_manager.process
-                    else None,
+                    process_pid=(
+                        self.server_manager.process.pid
+                        if self.server_manager and self.server_manager.process
+                        else None
+                    ),
                 )
                 await self._event_bus.publish_async_nowait(event)
 
@@ -184,7 +190,11 @@ class VLLMServerEngine(BaseEngine):
                 try:
                     await self.server_manager.stop()
                 except Exception as cleanup_error:
-                    logger.error(f"Cleanup failed: {cleanup_error!r}")
+                    logger.error(
+                        "❌ [VLLMServerEngine] Error during cleanup after failed load: %s",
+                        cleanup_error,
+                        exc_info=True,
+                    )
                 finally:
                     self.server_manager = None
             raise
@@ -337,6 +347,11 @@ class VLLMServerEngine(BaseEngine):
         if not self.server_manager:
             return False
         if self.server_manager.status == ServerStatus.STOPPED:
-            self._crashed = True
             return False
         return self.server_manager.status == ServerStatus.RUNNING
+
+    @override
+    def get_engine_pid(self) -> int | None:
+        if self.server_manager and self.server_manager.process:
+            return self.server_manager.process.pid
+        return None

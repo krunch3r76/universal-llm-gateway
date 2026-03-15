@@ -215,6 +215,6 @@ def rag_post_index_stale(*, stale_steps: list[str]) -> Event:
     or watermark is missing entirely. Operator should run the post-index refresh runbook.
     """
     return Event(
-        signal="rag.post_index.stale",
+        signal="rag.post.index.stale",
         payload={"stale_steps": stale_steps},
     )

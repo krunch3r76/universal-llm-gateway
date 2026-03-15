@@ -113,7 +113,9 @@ def replay_rerender(
         rendered = _try_render_from_yaml(snapshot, step, call, pipeline_dir, overrides)
         if rendered is not None:
             body = rendered
-            model_profile = _apply_step_yaml_settings(body, snapshot, step, pipeline_dir)
+            model_profile = _apply_step_yaml_settings(
+                body, snapshot, step, pipeline_dir
+            )
             _apply_overrides(body, overrides)
             return _send_request(
                 body=body,
@@ -586,9 +588,7 @@ def _send_request(
 
     start = time.monotonic()
     with httpx.Client(timeout=timeout) as client:
-        resp = client.post(
-            url, json=body, params=params, headers=PIPELINE_TEST_HEADERS
-        )
+        resp = client.post(url, json=body, params=params, headers=PIPELINE_TEST_HEADERS)
     elapsed_ms = (time.monotonic() - start) * 1000
 
     resp.raise_for_status()

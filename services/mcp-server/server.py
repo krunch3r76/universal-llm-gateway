@@ -1,37 +1,38 @@
-"""MCP server — Streamable HTTP transport with bearer token auth.
+"""MCP server — Streamable HTTP transport with bearer token and OAuth 2.1 auth.
 
 Internet-facing service at :443 (TLS). Exposes filesystem tools to
 Anthropic models via the mcp_servers API parameter.
 
 Security boundaries:
-  - Bearer token auth via ASGI middleware rejects unauthenticated requests
+  - Auth admission via static bearer token or OAuth 2.1 (PKCE + S256)
   - TLS via Let's Encrypt certs mounted at /etc/letsencrypt (read-only)
   - Filesystem access sandboxed to /data/files via volume mount
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import re
 import socket
 import sys
 import time
 from asyncio.transports import BaseTransport
-from pathlib import Path
 from typing import cast, override
 
 import uvicorn
+from auth_middleware import AuthMiddleware
 from fastmcp import FastMCP
 from mcp_events import monotonic_now, record
+from mcp_request_middleware import McpRequestEventsMiddleware
+from oauth_config import OAuthServerConfig, load_oauth_config
+from oauth_routes import build_oauth_routes
+from oauth_service import OAuthService
+from oauth_store import OAuthStore
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import Send
 
 from tools.browser import register_browser_tools
-from tools.clip import normalize_clip_content, register_clip_tools
+from tools.clip import register_clip_tools
 from tools.context import register_context_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
@@ -41,6 +42,7 @@ from tools.pipeline_consult import register_pipeline_consult_tools
 from tools.project import register_project_tools
 from tools.quality import register_quality_tools
 from tools.rag import register_rag_tools
+from tools.rag_articles import register_rag_article_tools
 from tools.sqlite import register_sqlite_tools
 from tools.web import register_web_tools
 
@@ -169,233 +171,12 @@ def _set_tcp_keepalive(sock: socket.socket) -> None:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, _TCP_KEEPCNT)
 
 
-class BearerAuthMiddleware:
-    """ASGI middleware: bearer token auth + request lifecycle events.
-
-    /health is exempt to allow Docker healthcheck without credentials.
-    /clip handles CORS preflight without auth, POST with auth.
-    Emits mcp.request.* events for all /mcp requests with timing.
-    """
-
-    _CLIPS_DIR = Path("/data/files/clips")
-    _MAX_BODY_BYTES = 5 * 1024 * 1024
-    _CORS_HEADERS: dict[str, str] = {
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods": "POST, OPTIONS",
-        "access-control-allow-headers": "Authorization, Content-Type",
-        "access-control-max-age": "86400",
-    }
-
-    def __init__(self, app: ASGIApp, *, token: str) -> None:
-        self._app: ASGIApp = app
-        self._token: str = token
-
-    @staticmethod
-    def _slugify(text: str, max_len: int = 60) -> str:
-        """Convert a string to a URL-safe slug (lowercase, hyphens, truncated)."""
-        slug = re.sub(r"[^a-z0-9]+", "-", text.lower())
-        slug = slug.strip("-")[:max_len].rstrip("-")
-        return slug or "untitled"
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self._app(scope, receive, send)
-            return
-
-        request = Request(scope, receive)
-
-        if request.url.path == "/health":
-            response = JSONResponse({"status": "ok"})
-            await response(scope, receive, send)
-            return
-
-        if request.url.path == "/clip":
-            if request.method == "OPTIONS":
-                response = JSONResponse({"status": "ok"}, headers=self._CORS_HEADERS)
-                await response(scope, receive, send)
-                return
-
-            auth = request.headers.get("authorization", "")
-            if auth != f"Bearer {self._token}":
-                response = JSONResponse(
-                    {"error": "Unauthorized"},
-                    status_code=401,
-                    headers=self._CORS_HEADERS,
-                )
-                await response(scope, receive, send)
-                return
-
-            if request.method == "POST":
-                response = await self._handle_clip(request)
-                await response(scope, receive, send)
-                return
-
-            response = JSONResponse(
-                {"error": "Method not allowed"},
-                status_code=405,
-                headers=self._CORS_HEADERS,
-            )
-            await response(scope, receive, send)
-            return
-
-        auth = request.headers.get("authorization", "")
-        if auth != f"Bearer {self._token}":
-            response = JSONResponse({"error": "Unauthorized"}, status_code=401)
-            await response(scope, receive, send)
-            return
-
-        if request.url.path != "/mcp":
-            await self._app(scope, receive, send)
-            return
-
-        client_ip = request.client.host if request.client else "unknown"
-        method = request.method
-        t0 = monotonic_now()
-
-        # Peek at the request body for POST /mcp to extract the MCP method name.
-        # Tee the receive callable so the inner app can still read the full body.
-        mcp_method = ""
-        if method == "POST":
-            msg = await receive()
-            body = msg.get("body", b"")
-            _ = msg.get("more_body", False)
-            if body:
-                try:
-                    mcp_method = json.loads(body).get("method", "") or ""
-                except json.JSONDecodeError:
-                    pass
-            orig_receive = receive
-            _body_sent = False
-
-            async def _tee_receive() -> dict:
-                nonlocal _body_sent
-                if not _body_sent:
-                    _body_sent = True
-                    return msg
-                return await orig_receive()
-
-            receive = _tee_receive
-
-        record(
-            "mcp.request.started",
-            method=method,
-            client_ip=client_ip,
-            mcp_method=mcp_method,
-        )
-
-        try:
-            await self._app(scope, receive, send)
-        except Exception as exc:
-            duration = monotonic_now() - t0
-            record(
-                "mcp.request.failed",
-                method=method,
-                client_ip=client_ip,
-                duration_s=round(duration, 3),
-                error=str(exc),
-                exc_type=type(exc).__name__,
-            )
-            raise
-        else:
-            duration = monotonic_now() - t0
-            record(
-                "mcp.request.completed",
-                method=method,
-                client_ip=client_ip,
-                duration_s=round(duration, 3),
-            )
-
-    async def _handle_clip(self, request: Request) -> JSONResponse:
-        """Process a clip submission from the bookmarklet.
-
-        Expects JSON body with url, title, content (required), selected.
-        Returns 200 with {status, clip_id}; 400/413/409 on error.
-        """
-        body = b""
-        async for chunk in request.stream():
-            body += chunk
-            if len(body) > self._MAX_BODY_BYTES:
-                return JSONResponse(
-                    {"error": "Payload too large (5MB limit)"},
-                    status_code=413,
-                    headers=self._CORS_HEADERS,
-                )
-
-        try:
-            data = json.loads(body)
-        except json.JSONDecodeError:
-            return JSONResponse(
-                {"error": "Invalid JSON"},
-                status_code=400,
-                headers=self._CORS_HEADERS,
-            )
-
-        url = data.get("url", "").strip()
-        title = data.get("title", "").strip()
-        content = data.get("content", "").strip()
-        selected = bool(data.get("selected", False))
-
-        if not content:
-            return JSONResponse(
-                {"error": "Missing required field: content"},
-                status_code=400,
-                headers=self._CORS_HEADERS,
-            )
-
-        content, extracted = normalize_clip_content(content)
-
-        if not title:
-            title = "Untitled Clip"
-
-        ts = int(time.time())
-        slug = self._slugify(title)
-        filename = f"{slug}-{ts}.md"
-
-        self._CLIPS_DIR.mkdir(parents=True, exist_ok=True)
-
-        # Sanitize for YAML: no newlines in quoted values
-        title_sanitized = title.replace("\r", "").replace("\n", " ")
-        url_sanitized = url.replace("\r", "").replace("\n", " ")
-        safe_title = title_sanitized.replace("\\", "\\\\").replace('"', '\\"')
-        safe_url = url_sanitized.replace("\\", "\\\\").replace('"', '\\"')
-        frontmatter = (
-            f"---\n"
-            f'url: "{safe_url}"\n'
-            f'title: "{safe_title}"\n'
-            f"clipped_at: {ts}\n"
-            f"selected: {str(selected).lower()}\n"
-            f"extracted: {str(extracted).lower()}\n"
-            f"chars: {len(content)}\n"
-            f"---\n\n"
-        )
-
-        for attempt in range(5):
-            candidate = self._CLIPS_DIR / (
-                f"{slug}-{ts + attempt}.md" if attempt else filename
-            )
-            try:
-                with candidate.open("x", encoding="utf-8") as clip_file:
-                    clip_file.write(frontmatter + content)
-                filename = candidate.name
-                break
-            except FileExistsError:
-                continue
-        else:
-            return JSONResponse(
-                {
-                    "error": f"Unable to allocate unique clip filename for slug '{slug}'"
-                },
-                status_code=409,
-                headers=self._CORS_HEADERS,
-            )
-        logger.info(
-            "clip: saved %s (%d chars, selected=%s)", filename, len(content), selected
-        )
-
-        return JSONResponse(
-            {"status": "clipped", "clip_id": filename},
-            headers=self._CORS_HEADERS,
-        )
+def _build_oauth_service(config: OAuthServerConfig | None) -> OAuthService | None:
+    """Construct an OAuthService from config, or None if OAuth is disabled."""
+    if config is None:
+        return None
+    store = OAuthStore()
+    return OAuthService(config=config, store=store)
 
 
 def _build_server() -> FastMCP:
@@ -406,6 +187,7 @@ def _build_server() -> FastMCP:
     register_project_tools(mcp)
     register_web_tools(mcp)
     register_rag_tools(mcp)
+    register_rag_article_tools(mcp)
     if _env_truthy("ENABLE_CONTEXT_TOOLS", default=True):
         register_context_tools(mcp)
     else:
@@ -467,15 +249,35 @@ def main() -> None:
             sys.exit(1)
 
     auth_token = _require_env(_AUTH_TOKEN_ENV)
+    oauth_config = load_oauth_config()
+    oauth_service = _build_oauth_service(oauth_config)
     mcp = _build_server()
 
-    # Wrap the FastMCP ASGI app with bearer auth middleware
     # stateless_http=True: each POST is self-contained (no session ID tracking).
     # Anthropic's API client creates a new session per interaction rather than
     # reusing Mcp-Session-Id across the SSE stream and tool call POSTs, so
     # stateful mode silently drops all tool calls (routed to empty sessions).
     asgi_app = mcp.http_app(transport="streamable-http", stateless_http=True)
-    protected_app = BearerAuthMiddleware(asgi_app, token=auth_token)
+
+    if oauth_service is not None:
+        for route in build_oauth_routes(oauth_service):
+            asgi_app.router.routes.append(route)
+        record(
+            "mcp.oauth.server.started",
+            issuer=oauth_service.issuer,
+            token_endpoint=oauth_service.token_endpoint,
+            authorization_endpoint=oauth_service.authorization_endpoint,
+        )
+
+    # Middleware composition order (outermost first):
+    # AuthMiddleware → McpRequestEventsMiddleware → asgi_app
+    # Rejected tokens terminate before mcp.request.started fires.
+    evented_app = McpRequestEventsMiddleware(asgi_app)
+    protected_app = AuthMiddleware(
+        evented_app,
+        token=auth_token,
+        oauth_service=oauth_service,
+    )
 
     logger.info("Starting MCP server on %s:%d", _HOST, _PORT)
     config = uvicorn.Config(

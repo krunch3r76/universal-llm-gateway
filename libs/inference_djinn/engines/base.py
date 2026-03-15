@@ -32,6 +32,14 @@ class BaseEngine(ABC):
         self.loaded = False
         self.engine_type = "base"
 
+    def get_engine_pid(self) -> int | None:
+        """Return PID of the engine subprocess (llama-server, vllm, etc.).
+
+        Engines backed by a child process override this so the gateway can
+        check liveness directly via ``os.kill(pid, 0)`` without an RPC round-trip.
+        """
+        return None
+
     @abstractmethod
     async def load(self) -> None:
         """Load model using ONLY provided parameters - no defaults applied"""
@@ -123,12 +131,6 @@ class BaseEngine(ABC):
 
     def _get_generation_params(self, data: dict[str, Any]) -> dict[str, Any]:
         """Extract generation parameters from request data - parameters must be at top level"""
-        # Extract all parameters except for prompt/messages and other non-generation fields
-        # This allows engines to receive all generation parameters without hardcoded filtering
-        generation_params = {}
-
-        # Fields that are NOT generation parameters and should be excluded.
-        # tools, tool_choice, function_call, functions pass through for engines that forward to OpenAI-compatible servers.
         non_generation_fields = {
             "prompt",
             "messages",
@@ -136,12 +138,9 @@ class BaseEngine(ABC):
             "user",
             "logit_bias",
         }
-
-        for key, value in data.items():
-            if key not in non_generation_fields:
-                generation_params[key] = value
-
-        return generation_params
+        return {
+            k: v for k, v in data.items() if k not in non_generation_fields
+        }
 
     def _extract_prompt(self, data: dict[str, Any]) -> str | None:
         """
@@ -172,7 +171,9 @@ class BaseEngine(ABC):
                 # For models with chat templates, return None to let the engine handle messages
                 return None
             else:
-                raise ValueError("'messages' field must be a non-empty list")
+                raise ValueError(
+                    "'messages' field must be a non-empty list of dictionaries"
+                )
 
         # Neither field present
         return None

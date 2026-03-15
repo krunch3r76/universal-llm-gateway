@@ -25,12 +25,15 @@ from services.rag.directory_ops import (
     find_removed_sources,
     index_directory_contents,
 )
+from services.rag.events.articles import rag_article_upserted
 from services.rag.events.indexing import (
     rag_directory_cleared,
     rag_directory_index_completed,
     rag_directory_index_started,
 )
 from services.rag.models import (
+    ArticleUpsertRequest,
+    ArticleUpsertResponse,
     ClearDirectoryRequest,
     ClearDirectoryResponse,
     ClearResponse,
@@ -111,14 +114,14 @@ async def _clear_directory_sources(
     get_collection_fn: Callable[[], chromadb.Collection],
     get_property_index_fn: Callable[[], PropertyIndex | None],
 ) -> tuple[int, int]:
-    """Delete all ChromaDB chunks and property index entries for sources under dir_path.
+    """Delete all ChromaDB chunks and metadata for sources under dir_path.
 
-    Scans all chunk metadata, matches by source prefix, bulk-deletes from ChromaDB,
-    then removes property index entries and failure records per source.
+    Scans all chunk metadata, matches by source prefix, bulk-deletes from
+    ChromaDB, then removes properties, FTS, failure records, and article rows
+    from rag_metadata.db.
 
     Returns:
-        tuple[int, int]: A tuple containing (number of source paths cleared,
-        total number of chunks removed from ChromaDB and the property index).
+        tuple[int, int]: (source paths cleared, total chunks removed).
     """
     collection = get_collection_fn()
     dir_prefix = str(dir_path.resolve()) + "/"
@@ -144,9 +147,7 @@ async def _clear_directory_sources(
     prop_idx = get_property_index_fn()
     if prop_idx is not None:
         for source, chunk_ids in source_to_ids.items():
-            for chunk_id in chunk_ids:
-                await prop_idx.remove_chunk(chunk_id)
-            await prop_idx.clear_failures_for(source)
+            await prop_idx.remove_source_metadata(source, chunk_ids)
 
     return len(source_to_ids), len(all_chunk_ids)
 
@@ -160,7 +161,7 @@ def register_admin_routes(
     set_collection_fn: Callable[[chromadb.Collection], None],
     collection_name: str,
     get_property_index_fn: Callable[[], PropertyIndex | None],
-    get_event_bus_fn: Callable[[], object | None] | None = None,
+    get_event_bus_fn: Callable[[], Any | None] | None = None,
 ) -> APIRouter:
     """Register admin routes with the shared service state via closures."""
 
@@ -244,14 +245,17 @@ def register_admin_routes(
                 dir_path=dir_path,
                 walked_sources=walked_sources,
             )
+            stale_prop_idx = get_property_index_fn()
             for source in removed_sources:
                 stale = collection.get(where={"source": source}, include=[])
                 stale_ids = stale.get("ids", [])
                 if stale_ids:
                     collection.delete(ids=stale_ids)
                     totals.deleted += len(stale_ids)
+                    if stale_prop_idx is not None:
+                        await stale_prop_idx.remove_source_metadata(source, stale_ids)
                     logger.info(
-                        "Removed stale chunks: source=%s deleted=%d",
+                        "Removed stale source: source=%s deleted=%d",
                         source,
                         len(stale_ids),
                     )
@@ -303,10 +307,6 @@ def register_admin_routes(
             request.force,
             is_reindex=False,
         )
-
-    @router.post("/reindex", response_model=IndexResult)
-    async def reindex_file(request: IndexRequest) -> IndexResult:
-        return await _index_single_file(request)
 
     @router.post("/reindex_directory", response_model=IndexDirectoryResponse)
     async def reindex_directory(
@@ -425,8 +425,12 @@ def register_admin_routes(
             raise HTTPException(
                 status_code=404, detail=f"No chunks indexed for: {path}"
             )
-        documents = _align_list_length(results.get("documents"), len(results["documents"]), lambda: "")
-        metadatas_list = _align_list_length(results.get("metadatas"), len(documents), dict)
+        documents = _align_list_length(
+            results.get("documents"), len(results["documents"]), lambda: ""
+        )
+        metadatas_list = _align_list_length(
+            results.get("metadatas"), len(documents), dict
+        )
         pairs = sorted(
             zip(documents, metadatas_list),
             key=lambda pair: pair[1].get("chunk_index", 0),
@@ -468,5 +472,49 @@ def register_admin_routes(
             await prop_idx.clear()
             logger.info("Property index cleared alongside ChromaDB collection")
         return ClearResponse(deleted=deleted, collection=collection_name)
+
+    @router.post("/article", response_model=ArticleUpsertResponse)
+    async def upsert_article(request: ArticleUpsertRequest) -> ArticleUpsertResponse:
+        """Insert or update an article metadata row.
+
+        Non-empty fields overwrite existing values; empty strings preserve
+        the current value (merge semantics). The ``content_hash`` field is
+        the plain SHA-256 of the source file bytes — the join key that
+        connects article metadata to indexed chunks at query time.
+        """
+        prop_idx = get_property_index_fn()
+        if prop_idx is None:
+            raise HTTPException(status_code=503, detail="Property index not available")
+        filename = request.filename or Path(request.source_path).name
+        created = await prop_idx.upsert_article(
+            source_path=request.source_path,
+            filename=filename,
+            title=request.title,
+            authors=request.authors,
+            venue=request.venue,
+            published_date=request.published_date,
+            doi=request.doi,
+            abstract=request.abstract,
+            content_hash=request.content_hash,
+            subdirectory=request.subdirectory,
+            scope=request.scope,
+        )
+        logger.info(
+            "Article %s: source_path=%s title=%s",
+            "created" if created else "updated",
+            request.source_path,
+            request.title[:60] if request.title else "(empty)",
+        )
+        eb = get_event_bus_fn() if get_event_bus_fn else None
+        if eb:
+            await eb.publish_async_nowait(
+                rag_article_upserted(
+                    source_path=request.source_path,
+                    created=created,
+                    title=request.title,
+                    content_hash=request.content_hash,
+                )
+            )
+        return ArticleUpsertResponse(source_path=request.source_path, created=created)
 
     return router

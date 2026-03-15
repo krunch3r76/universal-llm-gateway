@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-from typing import Final, Protocol
+from typing import Any, Final, Protocol
 
 from universal_logging import get_logger
 
@@ -22,7 +22,7 @@ class _ResourceTrackerProto(Protocol):
 
     def get_loaded_models(self) -> list[str]: ...
 
-    async def get_system_resources(self) -> object: ...
+    async def get_system_resources(self) -> dict[str, Any]: ...
 
 
 class _UnloadResultProto(Protocol):
@@ -32,6 +32,8 @@ class _UnloadResultProto(Protocol):
 
 class _WorkerControllerProto(Protocol):
     def get_running_worker_processes(self) -> dict[str, int]: ...
+
+    def get_engine_pid(self, model_id: str) -> int | None: ...
 
     async def check_engine_health(self, model_id: str) -> bool: ...
 
@@ -102,6 +104,7 @@ class VramReconciler:
                 await self._reconcile_once()
             except Exception:
                 logger.error("VRAM reconciliation failed", exc_info=True)
+                await asyncio.sleep(RECONCILE_INTERVAL_S / 2)
 
     async def _reconcile_once(self) -> None:
         tracked_models = set(self._resource_tracker.get_loaded_models())
@@ -140,20 +143,33 @@ class VramReconciler:
     ) -> None:
         """For each tracked model with a running worker, verify the engine is alive.
 
-        ∀ model ∈ tracked ∩ running: check_engine_health → False ⟹ ghost.
-        Ghost cleanup: force-unload worker, update resource tracker, emit MODEL_UNLOADED.
+        ∀ model ∈ tracked ∩ running: check engine PID (fast) or RPC health (fallback).
+        Engine PID dead ⟹ ghost. Cleanup: force-unload, update tracker, emit MODEL_UNLOADED.
         """
         candidates = sorted(tracked_models & set(running_processes))
         for model_id in candidates:
-            try:
-                healthy = await self._worker_controller.check_engine_health(model_id)
-            except Exception:
-                logger.warning(
-                    "Engine health check failed for %s, treating as ghost",
-                    model_id,
-                    exc_info=True,
-                )
-                healthy = False
+            engine_pid = self._worker_controller.get_engine_pid(model_id)
+            healthy = True
+            if engine_pid is not None:
+                if not self._is_engine_pid_alive(engine_pid):
+                    logger.warning(
+                        "Engine PID %d dead for %s — ghost detected (no RPC needed)",
+                        engine_pid,
+                        model_id,
+                    )
+                    healthy = False
+            if healthy:
+                try:
+                    healthy = await self._worker_controller.check_engine_health(
+                        model_id
+                    )
+                except Exception:
+                    logger.warning(
+                        "Engine health check failed for %s, treating as ghost",
+                        model_id,
+                        exc_info=True,
+                    )
+                    healthy = False
 
             if healthy:
                 continue
@@ -201,7 +217,7 @@ class VramReconciler:
         except Exception:
             logger.warning("Failed to publish resource update after ghost cleanup")
 
-        await self._emit_phantom_cleaned(model_id, success, vram_freed_mb)
+        await self._emit_ghost_cleaned(model_id, success, vram_freed_mb)
 
         logger.info(
             "✅ Ghost model %s cleaned up (success=%s, vram_freed=%sMB)",
@@ -247,6 +263,23 @@ class VramReconciler:
     # ------------------------------------------------------------------
     # Helpers shared by phantom and ghost paths
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_engine_pid_alive(pid: int) -> bool:
+        """Check engine subprocess liveness via signal 0 (no RPC needed)."""
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            logger.error(
+                "Permission denied when checking PID %d liveness. Assuming dead or unmanageable.",
+                pid,
+            )
+            return False
+        except OSError:
+            return False
 
     def _get_tracker_status(self, model_id: str) -> str | None:
         info = self._resource_tracker._models.get(model_id)
@@ -426,6 +459,28 @@ class VramReconciler:
                 exc_info=True,
             )
 
+    async def _emit_ghost_cleaned(
+        self, model_id: str, success: bool, vram_freed_mb: int | None
+    ) -> None:
+        if self._event_bus is None:
+            return
+        try:
+            from ..events.types import GhostModelCleaned
+
+            await self._event_bus.publish_async_nowait(
+                GhostModelCleaned(
+                    model_id=model_id,
+                    success=success,
+                    vram_freed_mb=vram_freed_mb,
+                )
+            )
+        except Exception:
+            logger.error(
+                "Failed to publish ghost cleanup event for %s",
+                model_id,
+                exc_info=True,
+            )
+
     async def _kill_worker_process(self, model_id: str, pid: int) -> bool:
         """Last-resort kill for known Gateway-managed worker PID."""
         try:
@@ -455,8 +510,13 @@ class VramReconciler:
     # ------------------------------------------------------------------
 
     def _get_known_pids(self) -> set[int]:
-        """Snapshot known worker pids from process state on event loop."""
-        return set(self._worker_controller.get_running_worker_processes().values())
+        """Snapshot known worker AND engine subprocess PIDs."""
+        pids = set(self._worker_controller.get_running_worker_processes().values())
+        for model_id in self._resource_tracker.get_loaded_models():
+            engine_pid = self._worker_controller.get_engine_pid(model_id)
+            if engine_pid is not None:
+                pids.add(engine_pid)
+        return pids
 
     async def _scan_gpu_processes(self) -> list[dict[str, int]]:
         known_pids = self._get_known_pids()

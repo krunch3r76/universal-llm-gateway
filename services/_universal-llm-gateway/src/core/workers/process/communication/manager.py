@@ -156,7 +156,12 @@ class ProcessCommunicationManager:
 
         try:
             # Execute main loading flow
-            success, context_size, error_msg = await execute_model_loading_flow(
+            (
+                success,
+                context_size,
+                engine_pid,
+                error_msg,
+            ) = await execute_model_loading_flow(
                 model_id,
                 supervisor,
                 self.model_registry,
@@ -165,12 +170,20 @@ class ProcessCommunicationManager:
             )
 
             if not success:
-                # Get config for error context
-                config_to_send = build_model_config_for_worker(
-                    model_id,
-                    self.model_registry,
-                    self.gateway_config,
-                )
+                config_to_send = None
+                try:
+                    config_to_send = build_model_config_for_worker(
+                        model_id,
+                        self.model_registry,
+                        self.gateway_config,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to build model config for error context for %s: %s",
+                        model_id,
+                        e,
+                        exc_info=True,
+                    )
 
                 await handle_load_failure(
                     model_id,
@@ -178,8 +191,8 @@ class ProcessCommunicationManager:
                     self.gateway_config,
                     socket_path,
                     self.state.failed_workers,
-                    error_msg,
-                    config_to_send,
+                    error_msg or "",
+                    config_to_send or {},
                 )
 
             # Validate context_size is present (only for LLM models)
@@ -227,6 +240,8 @@ class ProcessCommunicationManager:
             result = {"success": True}
             if context_size is not None:
                 result["context_size"] = context_size
+            if engine_pid is not None:
+                result["engine_pid"] = engine_pid
             return result
 
         except (WorkerInitializationError, ModelLoadingError, SyntaxErrorException):

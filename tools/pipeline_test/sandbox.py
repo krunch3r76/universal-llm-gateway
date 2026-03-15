@@ -61,7 +61,9 @@ def create_sandbox(source_dir: str | Path, name: str | None = None) -> Path:
         msg = f"Sandbox '{name}' already exists at {sandbox_root}. Use 'clean' first."
         raise FileExistsError(msg)
     sandbox_root.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(copy_root, sandbox_root, ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(
+        copy_root, sandbox_root, ignore=shutil.ignore_patterns("__pycache__")
+    )
 
     # Return the version subdir within the sandbox when applicable.
     return sandbox_root / version_name if version_name else sandbox_root

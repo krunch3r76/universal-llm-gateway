@@ -77,11 +77,7 @@ async def _startup() -> None:
         try:
             state._registry = await asyncio.to_thread(load_registry_from_db, db_path)
             legacy_path = state._config.article_registry_path
-            if (
-                not state._registry
-                and legacy_path is not None
-                and legacy_path.exists()
-            ):
+            if not state._registry and legacy_path is not None and legacy_path.exists():
                 logger.info(
                     "Articles table empty; importing one-time legacy registry from %s",
                     legacy_path,
@@ -263,15 +259,15 @@ async def _purge_orphans(config: RagConfig) -> None:
         str(Path(wd.path).expanduser().resolve()) + "/"
         for wd in config.watch_directories
     ]
-    remove_fn = (
-        state._property_index.remove_chunk
+    remove_source_fn = (
+        state._property_index.remove_source_metadata
         if state._property_index is not None
         else None
     )
     files_purged, chunks_purged = await purge_orphaned_chunks(
         collection=state._collection,
         watch_prefixes=watch_prefixes,
-        remove_chunk_fn=remove_fn,
+        remove_source_metadata_fn=remove_source_fn,
     )
     if files_purged > 0:
         logger.info(
@@ -306,6 +302,7 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
         event_bus=state._event_bus,
         index_workers=worker_count,
         reconcile_interval_s=config.reconcile_interval_s,
+        file_timeout_s=config.file_timeout_s,
     )
     try:
         await wait_until_healthy()
