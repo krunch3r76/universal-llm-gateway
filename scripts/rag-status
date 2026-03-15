@@ -3,7 +3,7 @@
 
 Usage:
     rag-status            # snapshot: current state
-    rag-status --watch    # live tail: stream events as they arrive
+    rag-status --watch    # live tail via event-service WS
     rag-status --summary  # compact one-liner (for scripting)
     rag-status --failures # permanently skipped chunks (from property index DB)
     rag-status --reset    # clear pending journal + permanent extraction failures
@@ -11,31 +11,114 @@ Usage:
 """
 
 import argparse
+import asyncio
 import json
 import sqlite3
 import time
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-EVENT_FILE = Path("/tmp/rag-events/current.jsonl")
+EVENT_QUERY_SOCKET = Path("/tmp/universal-protocol/events-query.sock")
+EVENT_QUERY_URL = "http://localhost/v1/subscribe"
+EVENT_QUERY_API_URL = "http://localhost/v1/query"
+WATCH_INTERVAL = 1.5  # seconds between event service availability checks
+WATCH_HEARTBEAT_SECONDS = 120.0
+WS_RETRY_BASE_SECONDS = 1.0
+WS_RETRY_MAX_SECONDS = 30.0
 DB_PATH = Path.home() / ".rag" / "store" / "property_index.db"
-WATCH_INTERVAL = 1.5  # seconds between tail polls in --watch mode
+_error_truncate_chars: int | None = 120
+
+
+@dataclass
+class _WatchCursor:
+    resume_seq: int | None = None
+
+
+async def _iter_event_service_events(
+    *,
+    resume_seq: int | None,
+    signal_filter: str = "rag.*",
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield frames from event-service subscription over UDS WebSocket."""
+    import aiohttp
+
+    connector = aiohttp.UnixConnector(path=str(EVENT_QUERY_SOCKET))
+    async with aiohttp.ClientSession(connector=connector) as session:
+        async with session.ws_connect(EVENT_QUERY_URL) as ws:
+            msg: dict[str, Any] = {
+                "type": "subscribe",
+                "filter": {"signal": signal_filter},
+            }
+            if resume_seq is not None:
+                msg["resume_from"] = {"seq": resume_seq}
+            await ws.send_json(msg)
+
+            async for frame in ws:
+                if frame.type == aiohttp.WSMsgType.TEXT:
+                    try:
+                        data = json.loads(frame.data)
+                    except json.JSONDecodeError:
+                        continue
+                    yield data
+                elif frame.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    break
+
+
+def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
+    """Synchronous HTTP POST to event service over UDS."""
+    import httpx
+
+    transport = httpx.HTTPTransport(uds=str(EVENT_QUERY_SOCKET))
+    with httpx.Client(transport=transport, timeout=10.0) as client:
+        resp = client.post(EVENT_QUERY_API_URL, json=body)
+        resp.raise_for_status()
+        result = resp.json()
+    return result if isinstance(result, dict) else {}
 
 
 def _load_events() -> list[dict[str, Any]]:
-    if not EVENT_FILE.exists():
+    if not EVENT_QUERY_SOCKET.exists():
         return []
+
+    body = {
+        "type": "sql",
+        "sql": (
+            "SELECT * FROM ("
+            "SELECT * FROM events WHERE signal LIKE 'rag.%' ORDER BY seq DESC LIMIT 1000"
+            ") ORDER BY seq ASC"
+        ),
+        "limit": 1000,
+    }
+    try:
+        result = _query_event_service(body)
+    except Exception as e:
+        print(f"⚠ Failed to query event service: {e}", flush=True)
+        return []
+
+    rows = result.get("rows", [])
+    if not isinstance(rows, list):
+        return []
+
     events: list[dict[str, Any]] = []
-    for line in EVENT_FILE.read_text().splitlines():
-        line = line.strip()
-        if not line:
+    for row in rows:
+        if not isinstance(row, dict):
             continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            pass
+        ev = dict(row)
+        payload = ev.get("payload")
+        if isinstance(payload, str):
+            try:
+                ev["payload"] = json.loads(payload)
+            except json.JSONDecodeError:
+                ev["payload"] = {}
+        elif not isinstance(payload, dict):
+            ev["payload"] = {}
+        if "timestamp" not in ev and isinstance(ev.get("ts_iso"), str):
+            ev["timestamp"] = ev["ts_iso"]
+
+        events.append(ev)
     return events
 
 
@@ -155,11 +238,17 @@ def _short_error(error: str) -> str:
         return "embedding OOM (VRAM insufficient)"
     if "CUDA" in error and "out of memory" in error:
         return "CUDA OOM"
-    # Generic: take first line, truncate
+    # Generic: take first line, then cap width for one-line watch readability.
     first_line = error.split("\n")[0]
-    if len(first_line) > 60:
-        return first_line[:57] + "..."
+    if _error_truncate_chars is not None and len(first_line) > _error_truncate_chars:
+        keep = max(0, _error_truncate_chars - 3)
+        return first_line[:keep] + "..."
     return first_line
+
+
+def _watch_print(line: str) -> None:
+    """Flush watch-mode output immediately to avoid PTY buffering surprises."""
+    print(line, flush=True)
 
 
 def _print_snapshot(state: dict[str, Any]) -> None:
@@ -451,16 +540,614 @@ def _file_index_duration_seconds(
     return None
 
 
-def _watch_mode() -> None:
-    """Stream events with clear phase labels.
+def _inference_to_index_seconds(
+    *,
+    queue_wait_seconds: float | None,
+    processing_seconds: float | None,
+    wall_seconds: float | None,
+    extract_seconds: float | None,
+) -> float | None:
+    """Duration from first inference start (post-queue) to file indexed.
 
-    Pipeline per file:  EXTRACT → CHUNKED → INDEXED (done)
-                                           → FAILED  (error)
+    Preferred path uses wall-clock duration and queue wait:
+    inference_to_index = wall_seconds - queue_wait_seconds.
+
+    Fallback path combines pipeline post-queue processing and index tail:
+    inference_to_index = processing_seconds + (wall_seconds - extract_seconds).
     """
-    if not EVENT_FILE.exists():
-        print(f"Waiting for {EVENT_FILE} ...", flush=True)
+    if wall_seconds is not None and queue_wait_seconds is not None:
+        return max(0.0, wall_seconds - max(0.0, queue_wait_seconds))
 
-    seen = 0
+    if wall_seconds is not None and processing_seconds is not None and extract_seconds is not None:
+        tail = max(0.0, wall_seconds - max(0.0, extract_seconds))
+        return max(0.0, processing_seconds + tail)
+
+    if processing_seconds is not None:
+        return max(0.0, processing_seconds)
+
+    return None
+
+
+def _render_watch_event(
+    ev: dict[str, Any],
+    *,
+    emit: Callable[[str], None],
+    dir_start_ts: float | None,
+    batch_start_by_file: dict[str, float],
+    batch_active: bool,
+    batch_seen_activity: bool,
+    inflight_files: set[str],
+    extract_secs_by_file: dict[str, float],
+    pending_extract_starts_ref: list[int],
+    batch_done: int,
+    batch_failed: int,
+    batch_skipped: int,
+    batch_effective_secs: float,
+    sweep_by_path: dict[str, _SweepState],
+    on_reset: Callable[[], None],
+    on_start_batch: Callable[[str, str, str], None],
+    on_complete_batch: Callable[[str], None],
+) -> tuple[float | None, bool, bool, int, int, int, float, int | None]:
+    """Render one watch event and return updated counters plus optional seq cursor."""
+    sig = ev.get("signal", "")
+    p = ev.get("payload", {})
+    if not isinstance(p, dict):
+        p = {}
+
+    ts_unix_ms = _as_int(ev.get("ts_unix_ms"))
+    ts_text = ev.get("timestamp", "")
+    if ts_text:
+        ts = ts_text[:19].replace("T", " ")
+    elif ts_unix_ms is not None:
+        ts = datetime.fromtimestamp(ts_unix_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts_full = ts_text
+
+    seq = _as_int(ev.get("seq"))
+
+    if sig == "rag.article.upserted":
+        src = _basename(p.get("source_path", ""))
+        action = "created" if bool(p.get("created")) else "updated"
+        h = str(p.get("content_hash", ""))
+        h_short = h[:12] + "..." if len(h) > 12 else h
+        emit(f"{ts}  [ARTICLE ]  {src}  {action}  hash={h_short}")
+        return (
+            dir_start_ts,
+            batch_active,
+            batch_seen_activity,
+            batch_done,
+            batch_failed,
+            batch_skipped,
+            batch_effective_secs,
+            seq,
+        )
+
+    match sig:
+        case "rag.started":
+            dir_start_ts = None
+            batch_start_by_file.clear()
+            batch_active = False
+            on_reset()
+            emit(f"{ts}  [START   ]  RAG service started")
+            return (None, False, False, 0, 0, 0, 0.0, seq)
+
+        case "rag.directory.index.started":
+            total_files = _as_int(p.get("total_files"))
+            if batch_active:
+                on_complete_batch(ts)
+            files_label = (
+                str(total_files)
+                if total_files is not None and total_files >= 0
+                else "?"
+            )
+            on_start_batch(ts, sig, files_label)
+            if total_files == 0:
+                batch_seen_activity = True
+            if ts_full:
+                dir_start_ts = _parse_ts(ts_full)
+            batch_start_by_file.clear()
+            nfiles = p.get("total_files", 0)
+            emit(f"{ts}  [DIR     ]  directory index started  ({nfiles} files)")
+            return (
+                dir_start_ts,
+                True,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.extraction.batch.started":
+            path = p.get("file", "")
+            if not batch_active:
+                on_start_batch(ts, sig, "?")
+            batch_seen_activity = True
+            pending_extract_starts_ref[0] += 1
+            if path:
+                inflight_files.add(path)
+            if path and ts_full:
+                t = _parse_ts(ts_full)
+                if t > 0:
+                    batch_start_by_file[path] = t
+            n = p.get("chunk_count", 0)
+            emit(f"{ts}  [EXTRACT ]  {_basename(path)}  ({n} chunks)")
+            return (
+                dir_start_ts,
+                True,
+                True,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.extraction.batch.completed":
+            fname = p.get("file", "")
+            batch_seen_activity = True
+            pending_extract_starts_ref[0] = max(0, pending_extract_starts_ref[0] - 1)
+            extract_secs = _as_float(p.get("duration_seconds"))
+            if fname:
+                inflight_files.add(fname)
+            if fname and extract_secs is not None and extract_secs >= 0:
+                extract_secs_by_file[fname] = extract_secs
+            w = p.get("written", 0)
+            n = p.get("chunk_count", 0)
+            file_duration = (
+                extract_secs if extract_secs is not None and extract_secs >= 0 else 0.0
+            )
+            d = _fmt_duration(file_duration)
+            ok = w == n
+            mark = "✓" if ok else "!"
+            since_start = ""
+            if dir_start_ts is not None and ts_full:
+                end_ts = _parse_ts(ts_full)
+                if end_ts > 0:
+                    since_start = (
+                        f"  {_fmt_duration(end_ts - dir_start_ts)} since dir start"
+                    )
+            fail_count = n - w if n > w else 0
+            fail_note = ""
+            if fail_count:
+                fail_note = (
+                    f"  ({fail_count} extraction"
+                    f" {'failure' if fail_count == 1 else 'failures'})"
+                )
+            emit(
+                f"{ts}  [{mark} CHUNK ]  "
+                f"{_basename(fname)}  "
+                f"{w}/{n} chunks  "
+                f"{d}{since_start}{fail_note}"
+            )
+            return (
+                dir_start_ts,
+                batch_active,
+                True,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.file.indexed":
+            idx = p.get("indexed", 0)
+            bib = p.get("bibliography_chunks", 0)
+            path = p.get("file", "")
+            extract_secs = extract_secs_by_file.get(path) if path else None
+            proc_secs = _as_float(p.get("processing_seconds"))
+            queue_wait_secs = _as_float(p.get("queue_wait_seconds"))
+            fallback_dur = _file_index_duration_seconds(p, ts_full, batch_start_by_file)
+            payload_dur = _as_float(p.get("duration_seconds"))
+            wall_secs = (
+                fallback_dur
+                if fallback_dur is not None
+                else (payload_dur if payload_dur is not None else None)
+            )
+            if wall_secs is not None:
+                wall_secs = max(0.0, wall_secs)
+
+            display_secs = wall_secs
+            if display_secs is None and proc_secs is not None:
+                display_secs = max(0.0, proc_secs)
+            if display_secs is None:
+                display_secs = 0.0
+            d = _fmt_duration(display_secs)
+            breakdown = ""
+            if extract_secs is not None:
+                tail_source = wall_secs if wall_secs is not None else display_secs
+                tail_secs = max(0.0, tail_source - max(0.0, extract_secs))
+                breakdown = (
+                    f"  (extract {_fmt_duration(extract_secs)} "
+                    f"+ tail {_fmt_duration(tail_secs)})"
+                )
+            if queue_wait_secs is not None and queue_wait_secs > 0:
+                breakdown += f"; queue {_fmt_duration(queue_wait_secs)}"
+            infer_to_index_secs = _inference_to_index_seconds(
+                queue_wait_seconds=queue_wait_secs,
+                processing_seconds=proc_secs,
+                wall_seconds=wall_secs,
+                extract_seconds=extract_secs,
+            )
+            if infer_to_index_secs is not None:
+                breakdown += f"; infer→index {_fmt_duration(infer_to_index_secs)}"
+            if path:
+                batch_start_by_file.pop(path, None)
+            bib_note = f"  ({bib} bib)" if bib else ""
+            emit(
+                f"{ts}  [✓ DONE  ]  "
+                f"{_basename(path)}  "
+                f"{idx} chunks stored  "
+                f"{d}{breakdown}{bib_note}"
+            )
+            new_done = batch_done + (1 if batch_active else 0)
+            new_effective = (
+                batch_effective_secs + display_secs
+                if batch_active
+                else batch_effective_secs
+            )
+            if batch_active:
+                batch_seen_activity = True
+            if path:
+                inflight_files.discard(path)
+                extract_secs_by_file.pop(path, None)
+            on_complete_batch(ts)
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                new_done,
+                batch_failed,
+                batch_skipped,
+                new_effective,
+                seq,
+            )
+
+        case "rag.file.indexing.failed":
+            path = p.get("file", "")
+            error = p.get("error", "unknown")
+            fail_model = p.get("model", "")
+            short = _short_error(error)
+            model_tag = f"  model={fail_model}" if fail_model else ""
+            emit(f"{ts}  [✗ FAIL  ]  {_basename(path)}  {short}{model_tag}")
+            new_failed = batch_failed + (1 if batch_active else 0)
+            if path:
+                inflight_files.discard(path)
+                extract_secs_by_file.pop(path, None)
+            on_complete_batch(ts)
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                new_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.extraction.failed":
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case _ if sig in {
+            "rag.file.indexing.skipped",
+            "rag.file.skipped",
+        }:
+            path = p.get("file", "")
+            reason = p.get("reason", "skipped")
+            emit(f"{ts}  [↷ SKIP  ]  {_basename(path)}  {reason}")
+            new_skipped = batch_skipped + (1 if batch_active else 0)
+            if path:
+                inflight_files.discard(path)
+                extract_secs_by_file.pop(path, None)
+            on_complete_batch(ts)
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                new_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.extraction.permanently.skipped":
+            cid = p.get("chunk_id", "?")
+            src = _basename(p.get("source", "?"))
+            att = p.get("attempt_count", "?")
+            emit(f"{ts}  [PERM ✗  ]  {src}  chunk={cid}  attempts={att}")
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.extraction.completed":
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.pending.reconciled":
+            r = p.get("reconciled", 0)
+            c = p.get("cleared", 0)
+            ft = p.get("failed_transient", 0)
+            fp = p.get("failed_permanent", 0)
+            emit(
+                f"{ts}  [RECONC  ]  "
+                f"{r} reconciled  "
+                f"{c} cleared  "
+                f"{ft} transient  "
+                f"{fp} permanent"
+            )
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.watch.initial.started":
+            path = p.get("path", "")
+            total = _as_int(p.get("total_files"))
+            if not path or total is None or total < 0:
+                emit(f"{ts}  [SWEEP ! ]  {_basename(path)}  invalid progress payload")
+                return (
+                    dir_start_ts,
+                    batch_active,
+                    batch_seen_activity,
+                    batch_done,
+                    batch_failed,
+                    batch_skipped,
+                    batch_effective_secs,
+                    None,
+                )
+            state = sweep_by_path.get(path, _SweepState())
+            if state.started_seen:
+                return (
+                    dir_start_ts,
+                    batch_active,
+                    batch_seen_activity,
+                    batch_done,
+                    batch_failed,
+                    batch_skipped,
+                    batch_effective_secs,
+                    seq,
+                )
+            state.total_files = total
+            state.processed = 0
+            state.reindexed = 0
+            state.unchanged = 0
+            state.errors = 0
+            state.started_seen = True
+            sweep_by_path[path] = state
+            emit(_render_sweep_line(ts, "SWEEP→ ", path, state))
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.watch.initial.progress":
+            path = p.get("path", "")
+            total = _as_int(p.get("total_files"))
+            processed = _as_int(p.get("processed"))
+            reindexed = _as_int(p.get("reindexed"))
+            unchanged = _as_int(p.get("unchanged"))
+            errors = _as_int(p.get("errors"))
+            state = sweep_by_path.get(path)
+            invalid = (
+                not path
+                or total is None
+                or processed is None
+                or reindexed is None
+                or unchanged is None
+                or errors is None
+                or total < 0
+                or processed < 0
+                or reindexed < 0
+                or unchanged < 0
+                or errors < 0
+                or processed != (reindexed + unchanged + errors)
+                or processed > total
+                or (
+                    state is not None
+                    and state.started_seen
+                    and total != state.total_files
+                )
+                or (state is not None and processed < state.processed)
+            )
+            if invalid:
+                emit(f"{ts}  [SWEEP ! ]  {_basename(path)}  invalid progress payload")
+                return (
+                    dir_start_ts,
+                    batch_active,
+                    batch_seen_activity,
+                    batch_done,
+                    batch_failed,
+                    batch_skipped,
+                    batch_effective_secs,
+                    None,
+                )
+            assert (
+                total is not None
+                and processed is not None
+                and reindexed is not None
+                and unchanged is not None
+                and errors is not None
+            )
+            if state is None:
+                state = _SweepState()
+            if not state.started_seen:
+                state.started_seen = True
+                state.total_files = total
+                emit(_render_sweep_line(ts, "SWEEP→ ", path, state))
+            if processed == state.processed:
+                return (
+                    dir_start_ts,
+                    batch_active,
+                    batch_seen_activity,
+                    batch_done,
+                    batch_failed,
+                    batch_skipped,
+                    batch_effective_secs,
+                    seq,
+                )
+            state.total_files = total
+            state.processed = processed
+            state.reindexed = reindexed
+            state.unchanged = unchanged
+            state.errors = errors
+            sweep_by_path[path] = state
+            emit(_render_sweep_line(ts, "SWEEP→ ", path, state))
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.watch.initial.complete":
+            path = p.get("path", "")
+            files = _as_int(p.get("files"))
+            reindexed = _as_int(p.get("reindexed"))
+            unchanged = _as_int(p.get("unchanged"))
+            state = sweep_by_path.get(path)
+            if (
+                not path
+                or files is None
+                or reindexed is None
+                or unchanged is None
+                or files < 0
+                or reindexed < 0
+                or unchanged < 0
+            ):
+                emit(f"{ts}  [SWEEP ! ]  {_basename(path)}  invalid progress payload")
+                return (
+                    dir_start_ts,
+                    batch_active,
+                    batch_seen_activity,
+                    batch_done,
+                    batch_failed,
+                    batch_skipped,
+                    batch_effective_secs,
+                    None,
+                )
+            assert files is not None and reindexed is not None and unchanged is not None
+            if state is None:
+                state = _SweepState(total_files=files, started_seen=True)
+            if state.completed_seen:
+                return (
+                    dir_start_ts,
+                    batch_active,
+                    batch_seen_activity,
+                    batch_done,
+                    batch_failed,
+                    batch_skipped,
+                    batch_effective_secs,
+                    seq,
+                )
+            if state.total_files < files:
+                state.total_files = files
+            state.reindexed = reindexed
+            state.unchanged = unchanged
+            state.processed = max(
+                state.processed,
+                state.reindexed + state.unchanged + state.errors,
+            )
+            if state.processed > state.total_files:
+                state.total_files = state.processed
+            state.completed_seen = True
+            sweep_by_path[path] = state
+            line = _render_sweep_line(ts, "SWEEP✓ ", path, state)
+            line = line.rsplit(" ", 2)[0] + "  0 remaining"
+            emit(line)
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.post.index.stale":
+            steps = p.get("stale_steps", [])
+            emit(f"{ts}  [⚠ STALE ]  post-index steps overdue: {', '.join(steps)}")
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case _:
+            if sig.startswith("rag."):
+                emit(f"{ts}  [{sig}]  {json.dumps(p)}")
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+
+async def _watch_mode_async() -> None:
+    """Stream watch events from event-service WebSocket only."""
+    cursor = _WatchCursor()
+    had_ws_session = False
+    backoff = WS_RETRY_BASE_SECONDS
+    waiting_for_socket = False
+    last_event_at = time.monotonic()
+    idle_heartbeat_emitted = False
+
     dir_start_ts: float | None = None
     batch_start_by_file: dict[str, float] = {}
     batch_id = 0
@@ -469,21 +1156,22 @@ def _watch_mode() -> None:
     inflight_files: set[str] = set()
     extract_secs_by_file: dict[str, float] = {}
     pending_extract_starts = 0
+    pending_extract_starts_ref: list[int] = [0]
     batch_done = 0
     batch_failed = 0
     batch_skipped = 0
     batch_effective_secs = 0.0
     sweep_by_path: dict[str, _SweepState] = {}
 
+    def _emit_watch_line(line: str) -> None:
+        _watch_print(line)
+
     def _reset_batch_counters() -> None:
-        nonlocal batch_seen_activity
-        nonlocal pending_extract_starts
-        nonlocal batch_done
-        nonlocal batch_failed
-        nonlocal batch_skipped
-        nonlocal batch_effective_secs
+        nonlocal batch_seen_activity, pending_extract_starts, batch_done
+        nonlocal batch_failed, batch_skipped, batch_effective_secs
         batch_seen_activity = False
         pending_extract_starts = 0
+        pending_extract_starts_ref[0] = 0
         batch_done = 0
         batch_failed = 0
         batch_skipped = 0
@@ -492,398 +1180,149 @@ def _watch_mode() -> None:
         extract_secs_by_file.clear()
 
     def _start_batch(ts: str, trigger: str, files_label: str) -> None:
-        nonlocal batch_id
-        nonlocal batch_active
+        nonlocal batch_id, batch_active
         batch_id += 1
         batch_active = True
         _reset_batch_counters()
-        print(
-            f"{ts}  [BATCH↑ ]  "
-            f"batch #{batch_id} started  "
-            f"trigger={trigger}  "
-            f"files={files_label}"
+        _emit_watch_line(
+            f"{ts}  [BATCH↑ ]  batch #{batch_id} started  trigger={trigger}  files={files_label}"
         )
 
     def _complete_batch_if_ready(ts: str) -> None:
         nonlocal batch_active
-        if not batch_active:
-            return
-        if inflight_files:
-            return
-        if pending_extract_starts > 0:
+        if not batch_active or inflight_files or pending_extract_starts_ref[0] > 0:
             return
         if not batch_seen_activity:
             return
-        print(
-            f"{ts}  [BATCH✓ ]  "
-            f"batch #{batch_id} completed  "
+        _emit_watch_line(
+            f"{ts}  [BATCH✓ ]  batch #{batch_id} completed  "
             f"done={batch_done} failed={batch_failed} skipped={batch_skipped}  "
             f"total_effective={_fmt_duration(batch_effective_secs)}"
         )
         batch_active = False
 
+    async def _idle_heartbeat_loop() -> None:
+        nonlocal idle_heartbeat_emitted
+        while True:
+            await asyncio.sleep(WATCH_INTERVAL)
+            if waiting_for_socket:
+                continue
+            idle_seconds = max(0.0, time.monotonic() - last_event_at)
+            if idle_seconds < WATCH_HEARTBEAT_SECONDS or idle_heartbeat_emitted:
+                continue
+            idle_heartbeat_emitted = True
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            _emit_watch_line(
+                f"{ts}  [IDLE    ]  {_fmt_duration(idle_seconds)} since last rag event"
+            )
+
+    async def _consume_event(ev: dict[str, Any]) -> None:
+        nonlocal dir_start_ts, batch_active, batch_seen_activity, batch_done
+        nonlocal \
+            batch_failed, \
+            batch_skipped, \
+            batch_effective_secs, \
+            pending_extract_starts, \
+            last_event_at, \
+            idle_heartbeat_emitted
+        last_event_at = time.monotonic()
+        idle_heartbeat_emitted = False
+        pending_extract_starts_ref[0] = pending_extract_starts
+        updated = _render_watch_event(
+            ev,
+            emit=_emit_watch_line,
+            dir_start_ts=dir_start_ts,
+            batch_start_by_file=batch_start_by_file,
+            batch_active=batch_active,
+            batch_seen_activity=batch_seen_activity,
+            inflight_files=inflight_files,
+            extract_secs_by_file=extract_secs_by_file,
+            pending_extract_starts_ref=pending_extract_starts_ref,
+            batch_done=batch_done,
+            batch_failed=batch_failed,
+            batch_skipped=batch_skipped,
+            batch_effective_secs=batch_effective_secs,
+            sweep_by_path=sweep_by_path,
+            on_reset=_reset_batch_counters,
+            on_start_batch=_start_batch,
+            on_complete_batch=_complete_batch_if_ready,
+        )
+        (
+            dir_start_ts,
+            batch_active,
+            batch_seen_activity,
+            batch_done,
+            batch_failed,
+            batch_skipped,
+            batch_effective_secs,
+            seq,
+        ) = updated
+        pending_extract_starts = pending_extract_starts_ref[0]
+        if seq is not None:
+            cursor.resume_seq = seq
+
+    heartbeat_task = asyncio.create_task(_idle_heartbeat_loop())
     try:
         while True:
-            if EVENT_FILE.exists():
-                lines = EVENT_FILE.read_text().splitlines()
-                new_lines = lines[seen:]
-                for line in new_lines:
-                    line = line.strip()
-                    if not line:
+            if not EVENT_QUERY_SOCKET.exists():
+                if not waiting_for_socket:
+                    _emit_watch_line(
+                        f"Waiting for event service socket {EVENT_QUERY_SOCKET} ..."
+                    )
+                    waiting_for_socket = True
+                await asyncio.sleep(WATCH_INTERVAL)
+                continue
+            waiting_for_socket = False
+
+            try:
+                async for ev in _iter_event_service_events(resume_seq=cursor.resume_seq):
+                    if ev.get("type") == "subscribed":
+                        had_ws_session = True
+                        backoff = WS_RETRY_BASE_SECONDS
+                        last_event_at = time.monotonic()
+                        idle_heartbeat_emitted = False
+                        _emit_watch_line("subscribed (waiting for rag.* events)")
                         continue
-                    try:
-                        ev = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    sig = ev.get("signal", "")
-                    p = ev.get("payload", {})
-                    if not isinstance(p, dict):
-                        p = {}
-                    ts = ev.get("timestamp", "")[:19].replace("T", " ")
-                    ts_full = ev.get("timestamp", "")
+                    await _consume_event(ev)
+                had_ws_session = True
+                backoff = WS_RETRY_BASE_SECONDS
+            except OSError as e:
+                if had_ws_session:
+                    _emit_watch_line(
+                        f"⚠ Event service disconnected ({e}), retrying WebSocket stream"
+                    )
+                else:
+                    _emit_watch_line(
+                        f"⚠ Event service unavailable ({e}), retrying WebSocket stream"
+                    )
+                await asyncio.sleep(backoff)
+                backoff = min(WS_RETRY_MAX_SECONDS, backoff * 2.0)
+                continue
+            except ModuleNotFoundError as e:
+                _emit_watch_line(f"⚠ Missing dependency for watch mode: {e}")
+                raise
+            except Exception as e:
+                _emit_watch_line(f"⚠ Unexpected error in watch stream: {e}")
+                raise
+    finally:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
 
-                    match sig:
-                        case "rag.started":
-                            dir_start_ts = None
-                            batch_start_by_file.clear()
-                            batch_active = False
-                            _reset_batch_counters()
-                            print(f"{ts}  [START   ]  RAG service started")
 
-                        case "rag.directory.index.started":
-                            total_files = _as_int(p.get("total_files"))
-                            if batch_active:
-                                _complete_batch_if_ready(ts)
-                            files_label = (
-                                str(total_files)
-                                if total_files is not None and total_files >= 0
-                                else "?"
-                            )
-                            _start_batch(ts, sig, files_label)
-                            if total_files == 0:
-                                batch_seen_activity = True
-                            if ts_full:
-                                dir_start_ts = _parse_ts(ts_full)
-                            batch_start_by_file.clear()
-                            nfiles = p.get("total_files", 0)
-                            print(
-                                f"{ts}  [DIR     ]  "
-                                f"directory index started  ({nfiles} files)"
-                            )
-
-                        case "rag.extraction.batch.started":
-                            path = p.get("file", "")
-                            if not batch_active:
-                                _start_batch(ts, sig, "?")
-                            batch_seen_activity = True
-                            pending_extract_starts += 1
-                            if path:
-                                inflight_files.add(path)
-                            if path and ts_full:
-                                t = _parse_ts(ts_full)
-                                if t > 0:
-                                    batch_start_by_file[path] = t
-                            n = p.get("chunk_count", 0)
-                            print(f"{ts}  [EXTRACT ]  {_basename(path)}  ({n} chunks)")
-
-                        case "rag.extraction.batch.completed":
-                            fname = p.get("file", "")
-                            batch_seen_activity = True
-                            pending_extract_starts = max(0, pending_extract_starts - 1)
-                            extract_secs = _as_float(p.get("duration_seconds"))
-                            if fname:
-                                inflight_files.add(fname)
-                            if fname and extract_secs is not None and extract_secs >= 0:
-                                extract_secs_by_file[fname] = extract_secs
-                            w = p.get("written", 0)
-                            n = p.get("chunk_count", 0)
-                            file_duration = (
-                                extract_secs
-                                if extract_secs is not None and extract_secs >= 0
-                                else 0.0
-                            )
-                            d = _fmt_duration(file_duration)
-                            ok = w == n
-                            mark = "✓" if ok else "!"
-                            since_start = ""
-                            if dir_start_ts is not None and ts_full:
-                                end_ts = _parse_ts(ts_full)
-                                if end_ts > 0:
-                                    since_start = (
-                                        f"  {_fmt_duration(end_ts - dir_start_ts)}"
-                                        " since dir start"
-                                    )
-                            fail_count = n - w if n > w else 0
-                            fail_note = ""
-                            if fail_count:
-                                fail_note = (
-                                    f"  ({fail_count} extraction"
-                                    f" {'failure' if fail_count == 1 else 'failures'})"
-                                )
-                            print(
-                                f"{ts}  [{mark} CHUNK ]  "
-                                f"{_basename(fname)}  "
-                                f"{w}/{n} chunks  "
-                                f"{d}{since_start}{fail_note}"
-                            )
-
-                        case "rag.file.indexed":
-                            idx = p.get("indexed", 0)
-                            bib = p.get("bibliography_chunks", 0)
-                            path = p.get("file", "")
-                            extract_secs = (
-                                extract_secs_by_file.get(path) if path else None
-                            )
-                            proc_secs = _as_float(p.get("processing_seconds"))
-                            queue_wait_secs = _as_float(p.get("queue_wait_seconds"))
-                            fallback_dur = _file_index_duration_seconds(
-                                p, ts_full, batch_start_by_file
-                            )
-                            payload_dur = _as_float(p.get("duration_seconds"))
-                            file_dur = (
-                                proc_secs
-                                if (proc_secs is not None and proc_secs > 0)
-                                else (
-                                    fallback_dur
-                                    if fallback_dur is not None
-                                    else (
-                                        payload_dur if payload_dur is not None else 0.0
-                                    )
-                                )
-                            )
-                            file_dur = max(0.0, file_dur)
-                            display_secs = file_dur
-                            d = _fmt_duration(display_secs)
-                            breakdown = ""
-                            if extract_secs is not None:
-                                tail_secs = max(0.0, file_dur - extract_secs)
-                                breakdown = (
-                                    f"  (extract {_fmt_duration(extract_secs)} "
-                                    f"+ tail {_fmt_duration(tail_secs)})"
-                                )
-                            if queue_wait_secs is not None and queue_wait_secs > 0:
-                                breakdown += f"; queue {_fmt_duration(queue_wait_secs)}"
-                            if path:
-                                batch_start_by_file.pop(path, None)
-                            bib_note = f"  ({bib} bib)" if bib else ""
-                            print(
-                                f"{ts}  [✓ DONE  ]  "
-                                f"{_basename(path)}  "
-                                f"{idx} chunks stored  "
-                                f"{d}{breakdown}{bib_note}"
-                            )
-                            if batch_active:
-                                batch_seen_activity = True
-                                batch_done += 1
-                                batch_effective_secs += file_dur
-                            if path:
-                                inflight_files.discard(path)
-                                extract_secs_by_file.pop(path, None)
-                            _complete_batch_if_ready(ts)
-
-                        case "rag.file.indexing.failed":
-                            path = p.get("file", "")
-                            error = p.get("error", "unknown")
-                            fail_model = p.get("model", "")
-                            short = _short_error(error)
-                            model_tag = f"  model={fail_model}" if fail_model else ""
-                            print(
-                                f"{ts}  [✗ FAIL  ]  "
-                                f"{_basename(path)}  "
-                                f"{short}{model_tag}"
-                            )
-                            if batch_active:
-                                batch_seen_activity = True
-                                batch_failed += 1
-                            if path:
-                                inflight_files.discard(path)
-                                extract_secs_by_file.pop(path, None)
-                            _complete_batch_if_ready(ts)
-
-                        case "rag.extraction.failed":
-                            pass  # summarized in batch.completed via written/chunk_count
-
-                        case _ if sig in {
-                            "rag.file.indexing.skipped",
-                            "rag.file.skipped",
-                        }:
-                            path = p.get("file", "")
-                            reason = p.get("reason", "skipped")
-                            print(f"{ts}  [↷ SKIP  ]  {_basename(path)}  {reason}")
-                            if batch_active:
-                                batch_seen_activity = True
-                                batch_skipped += 1
-                            if path:
-                                inflight_files.discard(path)
-                                extract_secs_by_file.pop(path, None)
-                            _complete_batch_if_ready(ts)
-
-                        case "rag.extraction.permanently.skipped":
-                            cid = p.get("chunk_id", "?")
-                            src = _basename(p.get("source", "?"))
-                            att = p.get("attempt_count", "?")
-                            print(
-                                f"{ts}  [PERM ✗  ]  {src}  chunk={cid}  attempts={att}"
-                            )
-
-                        case "rag.extraction.completed":
-                            pass  # too noisy for watch mode
-
-                        case "rag.pending.reconciled":
-                            r = p.get("reconciled", 0)
-                            c = p.get("cleared", 0)
-                            ft = p.get("failed_transient", 0)
-                            fp = p.get("failed_permanent", 0)
-                            print(
-                                f"{ts}  [RECONC  ]  "
-                                f"{r} reconciled  "
-                                f"{c} cleared  "
-                                f"{ft} transient  "
-                                f"{fp} permanent"
-                            )
-
-                        case "rag.watch.initial.started":
-                            path = p.get("path", "")
-                            total = _as_int(p.get("total_files"))
-                            if not path or total is None or total < 0:
-                                print(
-                                    f"{ts}  [SWEEP ! ]  {_basename(path)}  invalid progress payload"
-                                )
-                                continue
-                            state = sweep_by_path.get(path, _SweepState())
-                            if state.started_seen:
-                                continue
-                            state.total_files = total
-                            state.processed = 0
-                            state.reindexed = 0
-                            state.unchanged = 0
-                            state.errors = 0
-                            state.started_seen = True
-                            sweep_by_path[path] = state
-                            print(_render_sweep_line(ts, "SWEEP→ ", path, state))
-
-                        case "rag.watch.initial.progress":
-                            path = p.get("path", "")
-                            total = _as_int(p.get("total_files"))
-                            processed = _as_int(p.get("processed"))
-                            reindexed = _as_int(p.get("reindexed"))
-                            unchanged = _as_int(p.get("unchanged"))
-                            errors = _as_int(p.get("errors"))
-                            state = sweep_by_path.get(path)
-                            invalid = (
-                                not path
-                                or total is None
-                                or processed is None
-                                or reindexed is None
-                                or unchanged is None
-                                or errors is None
-                                or total < 0
-                                or processed < 0
-                                or reindexed < 0
-                                or unchanged < 0
-                                or errors < 0
-                                or processed != (reindexed + unchanged + errors)
-                                or processed > total
-                                or (
-                                    state is not None
-                                    and state.started_seen
-                                    and total != state.total_files
-                                )
-                                or (state is not None and processed < state.processed)
-                            )
-                            if invalid:
-                                print(
-                                    f"{ts}  [SWEEP ! ]  {_basename(path)}  invalid progress payload"
-                                )
-                                continue
-                            assert (
-                                total is not None
-                                and processed is not None
-                                and reindexed is not None
-                                and unchanged is not None
-                                and errors is not None
-                            )
-                            if state is None:
-                                state = _SweepState()
-                            if not state.started_seen:
-                                state.started_seen = True
-                                state.total_files = total
-                                print(_render_sweep_line(ts, "SWEEP→ ", path, state))
-                            if processed == state.processed:
-                                continue
-                            state.total_files = total
-                            state.processed = processed
-                            state.reindexed = reindexed
-                            state.unchanged = unchanged
-                            state.errors = errors
-                            sweep_by_path[path] = state
-                            print(_render_sweep_line(ts, "SWEEP→ ", path, state))
-
-                        case "rag.watch.initial.complete":
-                            path = p.get("path", "")
-                            files = _as_int(p.get("files"))
-                            reindexed = _as_int(p.get("reindexed"))
-                            unchanged = _as_int(p.get("unchanged"))
-                            state = sweep_by_path.get(path)
-                            if (
-                                not path
-                                or files is None
-                                or reindexed is None
-                                or unchanged is None
-                                or files < 0
-                                or reindexed < 0
-                                or unchanged < 0
-                            ):
-                                print(
-                                    f"{ts}  [SWEEP ! ]  {_basename(path)}  invalid progress payload"
-                                )
-                                continue
-                            assert (
-                                files is not None
-                                and reindexed is not None
-                                and unchanged is not None
-                            )
-                            if state is None:
-                                state = _SweepState(
-                                    total_files=files, started_seen=True
-                                )
-                            if state.completed_seen:
-                                continue
-                            if state.total_files < files:
-                                state.total_files = files
-                            state.reindexed = reindexed
-                            state.unchanged = unchanged
-                            state.processed = max(
-                                state.processed,
-                                state.reindexed + state.unchanged + state.errors,
-                            )
-                            if state.processed > state.total_files:
-                                state.total_files = state.processed
-                            state.completed_seen = True
-                            sweep_by_path[path] = state
-                            line = _render_sweep_line(ts, "SWEEP✓ ", path, state)
-                            line = line.rsplit(" ", 2)[0] + "  0 remaining"
-                            print(line)
-
-                        case "rag.post_index.stale":
-                            steps = p.get("stale_steps", [])
-                            print(
-                                f"{ts}  [⚠ STALE ]  "
-                                f"post-index steps overdue: "
-                                f"{', '.join(steps)}"
-                            )
-
-                        case _:
-                            if sig.startswith("rag."):
-                                print(f"{ts}  [{sig}]  {json.dumps(p)}")
-
-                seen = len(lines)
-            time.sleep(WATCH_INTERVAL)
+def _watch_mode() -> None:
+    """Sync wrapper for async watch mode."""
+    try:
+        asyncio.run(_watch_mode_async())
     except KeyboardInterrupt:
         print("\nStopped.")
 
 
 def main() -> None:
+    global _error_truncate_chars
+
     parser = argparse.ArgumentParser(
         description="RAG indexing status",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -893,7 +1332,7 @@ def main() -> None:
         "--watch",
         "-w",
         action="store_true",
-        help="live tail — stream events as they arrive",
+        help="live tail via event-service WS",
     )
     _ = group.add_argument(
         "--summary",
@@ -918,7 +1357,14 @@ def main() -> None:
         action="store_true",
         help="clear pending journal + permanent extraction failures (run with RAG stopped)",
     )
+    _ = parser.add_argument(
+        "--full-errors",
+        action="store_true",
+        help="show full error text in status/watch output (no truncation)",
+    )
     args = parser.parse_args()
+    if args.full_errors:
+        _error_truncate_chars = None
 
     if args.watch:
         _watch_mode()

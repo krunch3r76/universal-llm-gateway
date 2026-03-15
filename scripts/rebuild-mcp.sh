@@ -16,9 +16,13 @@ eval "$(python3 -c "
 import os, shlex, yaml
 from pathlib import Path
 cfg = yaml.safe_load(Path(os.environ.get('MCP_YAML', str(Path.home() / '.gateway/mcp.yaml'))).read_text()) or {}
-token = (cfg.get('auth_token') or '').strip()
+token = ''
+token_env = (cfg.get('auth_token_env') or '').strip()
+if token_env:
+    token = (os.environ.get(token_env) or '').strip()
+token = token or (cfg.get('auth_token') or '').strip()
 if not token:
-    print('auth_token missing or empty in MCP config', file=__import__('sys').stderr)
+    print('auth_token not resolved (set auth_token_env env var or auth_token in MCP config)', file=__import__('sys').stderr)
     raise SystemExit(1)
 project_dir = (cfg.get('project_dir') or '').strip()
 if not project_dir:

@@ -19,10 +19,51 @@
 
 set -euo pipefail
 
-MCP_URL="https://mcp.k-1.me/mcp"
-MCP_TOKEN="c6df64a99d24a17e88104497fc21543e4f0d09fbe748bbebaf728ab93f0fa6cc"
+MCP_URL="${MCP_URL:-https://mcp.k-1.me/mcp}"
+MCP_YAML="${MCP_YAML:-$HOME/.gateway/mcp.yaml}"
 MCPS_DIR="/home/io/.cursor/projects/mnt-torus-projects-universal-llm-gateway/mcps/universal-gateway"
 TOOLS_DIR="${MCPS_DIR}/tools"
+
+if [ -z "${MCP_TOKEN:-}" ] && [ -f "${MCP_YAML}" ]; then
+  MCP_TOKEN=$(python3 - "${MCP_YAML}" <<'PY'
+from pathlib import Path
+import os
+import sys
+
+path = Path(sys.argv[1]).expanduser()
+auth_token = ""
+auth_token_env = ""
+for raw_line in path.read_text(encoding="utf-8").splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        continue
+    if not line.startswith("auth_token:") and not line.startswith("auth_token_env:"):
+        continue
+    key, value = line.split(":", 1)
+    value = value.split("#", 1)[0].strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    if key.strip() == "auth_token":
+        auth_token = value.strip()
+    elif key.strip() == "auth_token_env":
+        auth_token_env = value.strip()
+
+if auth_token_env:
+    env_val = os.environ.get(auth_token_env, "").strip()
+    if env_val:
+        print(env_val)
+        raise SystemExit(0)
+if auth_token:
+    print(auth_token)
+PY
+  )
+fi
+
+if [ -z "${MCP_TOKEN:-}" ]; then
+  echo "ERROR: MCP token not configured." >&2
+  echo "  Set MCP_TOKEN env var, or set auth_token_env/auth_token in ${MCP_YAML}" >&2
+  exit 1
+fi
 
 echo "Fetching tool list from ${MCP_URL}..."
 

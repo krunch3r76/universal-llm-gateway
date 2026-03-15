@@ -85,7 +85,7 @@ Published to EventBus as `rag.*` signals. Persisted to
 | `rag.extraction.batch.started` / `rag.extraction.batch.completed` | File-level extraction batch lifecycle |
 | `rag.property.index.rebuilt` / `rag.pending.reconciled` | Property index rebuilds and startup recovery of interrupted indexing |
 | `rag.file.indexed` / `rag.file.deleted` / `rag.file.skipped` / `rag.file.indexing.failed` | File-level indexing outcomes (success, deletion, skip reason, failure) |
-| `rag.search.executed` / `rag.search.no_results` | Search completion telemetry and zero-result visibility |
+| `rag.search.executed` / `rag.search.no.results` | Search completion telemetry and zero-result visibility |
 
 ## Routing Events
 

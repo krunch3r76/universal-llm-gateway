@@ -9,17 +9,19 @@ A semantic search and knowledge management service backed by ChromaDB. Runs as a
 Index time:
 
 1. **Chunking** — files are split into semantically coherent chunks using target+pad sizing with paragraph overlap and heading injection. Code files use tree-sitter AST-based chunking.
-2. **Knowledge extraction** — the `rag-extraction` LLM pipeline extracts entities, types, facets, topics, and relations from each chunk. Results are stored in both ChromaDB metadata and a SQLite-backed property inverted index.
-3. **Contextualization** — on by default (omit `contextualize_model` or set it to a model ID). Per-chunk LLM-generated context prefixes are prepended only for embedding; stored document text stays unchanged. Set `contextualize_model: ""` to disable. Improves retrieval when chunks share overlapping vocabulary.
-4. **Embedding** — chunks (with context prefix when contextualization ran) are embedded via the configured local embedding model (default: `qwen3-embedding-8b`) through the Gateway and stored in ChromaDB with cosine similarity.
-5. **Pending journal** — tracks in-flight indexing operations. On restart, interrupted files are re-indexed before the watcher starts, eliminating dangling pointers.
+2. **Source hashing** — plain SHA-256 of file bytes is stored as `source_hash` on every chunk (PDF, Markdown, HTML, etc.). This hash serves as the universal join key to the `articles` table for query-time metadata enrichment.
+3. **Knowledge extraction** — the `rag-extraction` LLM pipeline extracts entities, types, facets, topics, and relations from each chunk. Results are stored in both ChromaDB metadata and a SQLite-backed property inverted index.
+4. **Contextualization** — on by default (omit `contextualize_model` or set it to a model ID). Per-chunk LLM-generated context prefixes are prepended only for embedding; stored document text stays unchanged. Set `contextualize_model: ""` to disable. Improves retrieval when chunks share overlapping vocabulary.
+5. **Embedding** — chunks (with context prefix when contextualization ran) are embedded via the configured local embedding model (default: `qwen3-embedding-8b`) through the Gateway and stored in ChromaDB with cosine similarity.
+6. **Pending journal** — tracks in-flight indexing operations. On restart, interrupted files are re-indexed before the watcher starts, eliminating dangling pointers.
 
 Search time:
 
-6. **Vector search** — ChromaDB cosine similarity retrieves top-k candidate chunks.
-7. **Property boost** — entity/topic/relation matches from the property index apply a configurable score boost to matching chunks (hybrid structured+vector search).
-8. **Recency scoring** — additive recency weight based on `published_date` (preferred for research papers) or `indexed_at` timestamps. Naive ISO timestamps are normalized to UTC before scoring to avoid timezone subtraction errors.
-9. **BM25 sidecar merge** — sparse BM25 candidates are merged with dense vector results via mini-RRF. Chroma fetch payloads are length-normalized (pad/trim) and invalid metadata rows are skipped to avoid strict zip failures.
+7. **Vector search** — ChromaDB cosine similarity retrieves top-k candidate chunks.
+8. **Property boost** — entity/topic/relation matches from the property index apply a configurable score boost to matching chunks (hybrid structured+vector search).
+9. **Article enrichment** — unique `source_hash` values from the result set are batch-looked up in the `articles` table. Matching article metadata (`article_title`, `article_authors`, `article_venue`, `article_published_date`, `article_doi`) is merged into each chunk's metadata dict.
+10. **Recency scoring** — additive recency weight based on `published_date` (preferred for research papers) or `indexed_at` timestamps. Naive ISO timestamps are normalized to UTC before scoring to avoid timezone subtraction errors.
+11. **BM25 sidecar merge** — sparse BM25 candidates are merged with dense vector results via mini-RRF. Chroma fetch payloads are length-normalized (pad/trim) and invalid metadata rows are skipped to avoid strict zip failures.
 
 The pipeline layer (`rag-context`, `rag-answer`, `rag-answer-deep`) handles query rewriting, facet-driven retrieval, RRF multi-query merge, reranking, and answer generation on top of this service. See [Pipeline Layer](#pipeline-layer-rag-context) below.
 
@@ -41,7 +43,7 @@ Most RAG systems either search the raw query (misses lexical variants) or rely o
 
 The **co-occurrence filter** (`filter_hints_by_cooccurrence`) is the key grounding mechanism — it checks whether a candidate hint term actually appears in chunks alongside the query terms, preventing vocabulary hallucination.
 
-Scope vocabulary (`~/.rag/scope_vocabulary.yaml`) separates terms into `academic`, `practitioner`, and `specification` registers so rewrites target the correct register for each query type (e.g. `PKG` → academic, `Obsidian` → practitioner).
+Scope vocabulary (the `scope_vocabulary` table in `rag_metadata.db`) separates terms into `academic`, `practitioner`, and `specification` registers so rewrites target the correct register for each query type (e.g. `PKG` → academic, `Obsidian` → practitioner).
 
 ### Retrieval: Two-Pool Hybrid
 
@@ -106,6 +108,14 @@ Pipeline configuration: `pipelines/rag/rag_context_v1/rag-context-v1.yaml`
 | `POST /clear_directory` | POST | Remove all chunks under a directory path |
 | `POST /clear` | POST | Clear entire collection |
 
+### Article Metadata
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `POST /article` | POST | Upsert article citation metadata (merge semantics — non-empty fields overwrite, empty fields preserve) |
+
+Also available as MCP tool `rag_upsert_article` via Stargate passthrough (`POST /api/v1/rag/article`).
+
 ### Corpus Management
 
 | Endpoint | Method | Purpose |
@@ -160,8 +170,6 @@ knowledge_extraction:
   extraction_model: ""        # model mismatch triggers re-extraction
 
 automatic_indexing_enabled: true
-corpus_hints_path: ~/.gateway/corpus_hints.yaml
-article_registry_path: ~/.gateway/article_registry.yaml
 post_index_enforcement: strict   # strict | warn — strict returns 503 until enrichment is current
 ```
 
@@ -173,8 +181,6 @@ post_index_enforcement: strict   # strict | warn — strict returns 503 until en
 | `scopes` | Named retrieval scopes — consumers reference by name; `union: true` aggregates all |
 | `chunk_tokens` | Target chunk size per directory (default varies: 1024 for docs, 256 for code) |
 | `knowledge_extraction` | LLM extraction config — pipeline, boost factor, retry limits |
-| `corpus_hints_path` | Scope-specific vocabulary hints for retrieval tuning |
-| `article_registry_path` | Citation metadata (title, authors, venue, DOI, published_date) per file |
 | `post_index_enforcement` | `strict` (default): return 503 on search until post-index enrichment watermarks are current. `warn`: log ERROR at startup but continue serving |
 | `contextualize_model` | Model ID for per-chunk context generation before embedding. Omit for default (on); set to `""` to disable |
 | `reconcile_interval_s` | Seconds between watcher reconcile sweeps. Default 300 (5 min). 0 = disabled |
@@ -183,17 +189,45 @@ post_index_enforcement: strict   # strict | warn — strict returns 503 until en
 
 | Path | Contents |
 |------|----------|
-| `~/.rag/store/` | ChromaDB persistent data |
-| `~/.rag/store/rag_metadata.db` | SQLite metadata store (property index + corpus_hints + scope_vocabulary + articles + watermarks) |
-| `~/.rag/corpus_hints.yaml` | Scope-specific vocabulary hints aggregated from the property index |
-| `~/.rag/scope_vocabulary.yaml` | LLM-classified vocabulary registers (`practitioner`, `academic`, `specification`) per scope |
+| `~/.rag/store/chroma/` | ChromaDB persistent vector data |
+| `~/.rag/store/rag_metadata.db` | SQLite metadata store (property index, corpus_hints, scope_vocabulary, articles, watermarks, schema_version) |
+
+### `articles` Table
+
+The `articles` table in `rag_metadata.db` is the runtime source of truth for citation metadata. It is keyed by `source_path` and joined to search results via the `content_hash` column (which matches the `source_hash` stored on Chroma chunks).
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `source_path` | TEXT PK | Absolute path to the source file |
+| `filename` | TEXT | Filename only (e.g. `paper.pdf`) |
+| `title` | TEXT | Article title |
+| `authors` | TEXT | Authors (comma-separated) |
+| `venue` | TEXT | Publication venue |
+| `published_date` | TEXT | Publication date (ISO format) |
+| `doi` | TEXT | Digital Object Identifier |
+| `abstract` | TEXT | Article abstract |
+| `scope` | TEXT | Retrieval scope (default `all`) |
+| `content_hash` | TEXT | Plain SHA-256 of file bytes — join key to `source_hash` on chunks |
+| `subdirectory` | TEXT | Subdirectory within the corpus root |
+
+Population: `python scripts/populate-articles.py` reads `docs/research/article_registry.yaml` and upserts validated entries. Idempotent, does not require the RAG service to be running.
+
+Article metadata is **not** baked into chunks at index time. Instead, the search handler enriches results at query time by joining `source_hash` → `content_hash`.
+
+### Clean-Slate Reindex
+
+```bash
+rm -rf ~/.rag/*                          # wipe both ChromaDB and rag_metadata.db
+python scripts/populate-articles.py      # recreate DB + seed articles table
+./manage                                 # start services — indexes all files with source_hash
+```
 
 ## Post-Index Enrichment
 
 Indexing handles chunk extraction, embedding, knowledge extraction, and per-chunk `is_bibliography` tagging automatically. After a large corpus refresh, three manual enrichment steps rebuild derived artifacts:
 
-1. **Corpus hints** (`python -m services.rag.corpus_hints`) — aggregates terms from the property index per scope and writes `~/.rag/corpus_hints.yaml`.
-2. **Scope vocabulary** (`scripts/rag/classify_vocabulary.py`) — LLM-classifies corpus hint terms into register categories and writes `~/.rag/scope_vocabulary.yaml`.
+1. **Corpus hints** (`python -m services.rag.corpus_hints`) — aggregates terms from the property index per scope into the `corpus_hints` table in `rag_metadata.db`.
+2. **Scope vocabulary** (`scripts/rag/classify_vocabulary.py`) — LLM-classifies corpus hint terms into register categories and writes to the `scope_vocabulary` table in `rag_metadata.db`.
 3. **Bibliography classification** (`scripts/rag/classify_bibliography.py`) — LLM-classifies chunks and writes boolean metadata keys (`is_bibliography`, `is_non_intelligible`) into ChromaDB. Resumable by metadata key.
 
 Each step stamps a watermark in `rag_metadata.db`. When `post_index_enforcement: strict` (default), the service returns 503 on search requests until all watermarks are current relative to the last reindex. In `warn` mode, an ERROR is logged at startup but search continues.
@@ -210,13 +244,14 @@ Full procedure: [Post-Index Refresh Runbook](../../tasks/runbooks/rag-post-index
 
 | Script | Purpose |
 |--------|---------|
+| `scripts/populate-articles.py` | Seed `articles` table from curated YAML registry (`--dry-run` supported) |
 | `scripts/rag/classify_vocabulary.py` | LLM-classify scope vocabulary registers from corpus hints |
 | `scripts/rag/classify_bibliography.py` | LLM-classify chunk-level bibliography/noise metadata |
 | `scripts/rag/ingest-arxiv` | Ingest arXiv papers into the RAG corpus |
 
 ## Events
 
-Event stream: `/tmp/rag-events/current.jsonl`
+Events are published to the Event Service via `universal_event_bus`. Query with `scripts/query-events --op noise-profile --minutes 5`.
 
 Covers indexing operations, search queries, extraction progress, watcher status.
 
@@ -225,6 +260,21 @@ Extraction failure observability:
 - If extraction returns an invalid payload shape, each chunk is recorded as a failed attempt in the property index and emits `rag_extraction_failed`.
 - During recovery, rows with invalid metadata are dropped and logged with counts before rerun.
 - Batch timeout paths emit `rag_extraction_batch_timed_out`; permanently exhausted chunks emit `rag_extraction_permanently_skipped`.
+
+## Deep Context for Agents
+
+For subsystem-specific investigation, reference these paths directly:
+
+| Area | Path | What it covers |
+|------|------|---------------|
+| Pipeline structure | `pipelines/rag/rag_context_v1/rag-context-v1.yaml` | Step sequence, model refs, generation params |
+| Pipeline handlers | `pipelines/rag/rag_context_v1/handlers/` | Corpus-grounded rewriting, retrieval, reranking |
+| Metadata DB schema | `services/rag/property_index.py` | Schema versioning, migration, all metadata tables |
+| Corpus hints flow | `services/rag/corpus_hints.py` | Hint generation, DB read/write, co-occurrence filtering |
+| Vocabulary classification | `scripts/rag/classify_vocabulary.py` | LLM-based register classification |
+| Enrichment runbook | `tasks/runbooks/rag-post-index-refresh.md` | Operator post-index workflow |
+| RAG config | `services/rag/config.py` | `RagConfig` dataclass, YAML parsing |
+| MCP RAG tools | `services/mcp-server/tools/rag.py` | `rag_search`, `rag_list_scopes`, prefix passthrough |
 
 ## Key Files
 

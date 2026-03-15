@@ -48,6 +48,10 @@ tmp/
 docs/*
 !docs/architecture/
 !docs/architecture/*.md
+!docs/architecture/appendices/
+!docs/architecture/appendices/*.md
+!docs/architecture/design/
+!docs/architecture/design/*.md
 
 # IDE - Keep settings.json but ignore other VS Code files
 .vscode/
@@ -99,6 +103,8 @@ README_REVISED.md
 !/CONTRIBUTING.md
 !/examples/adding-model-workflow-cpu.md
 !/docs/architecture/*.md
+!/docs/architecture/appendices/*.md
+!/docs/architecture/design/*.md
 !services/rag/README.md
 !services/universal_cloud_proxy/README.md
 !services/mcp-server/README.md

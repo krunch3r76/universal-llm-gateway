@@ -1,9 +1,18 @@
 # Architecture Documentation — AI Index
 
 Comprehensive, maintained architecture documentation for the Universal LLM Gateway.
-Each file covers one subsystem and is self-contained for RAG consumption.
+
+## Directory Layout
+
+| Directory | Contents | Write authority |
+|---|---|---|
+| `docs/architecture/*.md` | Subsystem docs — one per overhaul target | `/overhaul` only |
+| `docs/architecture/appendices/` | Cross-cutting reference (config, tools, libs, events) | `/doc-check` factual corrections |
+| `docs/architecture/design/` | Historical design docs and proposals | User-directed only |
 
 ## File Routing Guide
+
+### Subsystem docs (overhaul-produced)
 
 | Question domain | Read this file |
 |---|---|
@@ -13,31 +22,34 @@ Each file covers one subsystem and is self-contained for RAG consumption.
 | How do Master/Relay/Edge nodes federate? | `federation.md` |
 | How does routing and capacity admission work? | `routing.md` |
 | How do pipelines work (DAG, handlers, execution)? | `pipeline-system.md` |
-| What shared libraries exist and what do they provide? | `libraries.md` |
-| How does the event system work (signals, contracts)? | `event-system.md` |
-| What tools, scripts, and CLIs are available? | `tools.md` |
-| Where are config files, env vars, paths? | `configuration.md` |
-## Supersedes
+| How does doc-generate extraction work? | `handlers.md` |
 
-These files consolidate and replace the following scattered README_AI.md files:
+### Appendices (cross-cutting reference)
 
-- `./README_AI.md` → `overview.md`
-- `services/universal-stargate/README_AI.md` → `stargate.md`
-- `services/_universal-llm-gateway/README_AI.md` → `gateway.md`
-- `services/universal-stargate/systems/federation/README_AI.md` → `federation.md`
-- `services/universal-stargate/systems/routing/README_AI.md` → `routing.md`
-- `services/universal-stargate/systems/routing/capacity/README_AI.md` → `routing.md`
-- `services/universal-stargate/systems/pipeline/README_AI.md` → `pipeline-system.md`
-- `services/universal-stargate/systems/pipeline/core/execution/README_AI.md` → `pipeline-system.md`
-- `libs/*/README_AI.md` → `libraries.md`
-- `tools/pipeline_test/README_AI.md` → `tools.md`
+| Question domain | Read this file |
+|---|---|
+| Where are config files, env vars, paths? | `appendices/configuration.md` |
+| What tools, scripts, and CLIs are available? | `appendices/tools.md` |
+| What shared libraries exist and what do they provide? | `appendices/libraries.md` |
+| How does the event system work (signals, contracts)? | `appendices/event-system.md` |
+
+### Design docs (historical)
+
+| Document | Topic |
+|---|---|
+| `design/federation-proposal.md` | Original federation architecture proposal |
+| `design/federation-phase1-must-ship.md` | Phase 1 implementation specification |
+| `design/federation-can-wait.md` | Deferred capabilities and risks |
+| `design/federation-roles.md` | Federation topologies and roles |
+| `design/event-driven-state.md` | Event-driven state architecture |
+| `design/multi-master-future.md` | Multi-master forward-looking design |
 
 ## Maintenance Contract
 
-These docs are committed to accuracy. Update triggers:
-- `/commit` that touches service or library source code
-- `/journal-entry` that captures architectural decisions
-- Architecture changes that affect subsystem boundaries
+Subsystem docs are produced by `/overhaul {service_dir}` and must not be
+edited directly. Appendices may receive targeted factual corrections via
+`/doc-check` during `/commit`. Design docs are historical and not actively
+maintained.
 
 ## Staleness Detection
 
