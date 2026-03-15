@@ -23,6 +23,7 @@ MCP_URL="${MCP_URL:-https://mcp.k-1.me/mcp}"
 MCP_YAML="${MCP_YAML:-$HOME/.gateway/mcp.yaml}"
 MCPS_DIR="/home/io/.cursor/projects/mnt-torus-projects-universal-llm-gateway/mcps/universal-gateway"
 TOOLS_DIR="${MCPS_DIR}/tools"
+SERVER_METADATA_PATH="${MCPS_DIR}/SERVER_METADATA.json"
 
 if [ -z "${MCP_TOKEN:-}" ] && [ -f "${MCP_YAML}" ]; then
   MCP_TOKEN=$(python3 - "${MCP_YAML}" <<'PY'
@@ -83,6 +84,19 @@ fi
 
 mkdir -p "${TOOLS_DIR}"
 
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+metadata_path = Path("/home/io/.cursor/projects/mnt-torus-projects-universal-llm-gateway/mcps/universal-gateway/SERVER_METADATA.json")
+metadata_path.parent.mkdir(parents=True, exist_ok=True)
+metadata = {
+    "serverIdentifier": "universal-gateway",
+    "serverName": "universal-gateway",
+}
+metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+PY
+
 COUNT=$(echo "${RESPONSE}" | python3 -c "
 import sys, json, os
 
@@ -114,8 +128,8 @@ print(len(tools))
 
 echo "Wrote ${COUNT} tool descriptors to ${TOOLS_DIR}"
 echo ""
-echo "Server metadata: ${MCPS_DIR}/SERVER_METADATA.json"
-cat "${MCPS_DIR}/SERVER_METADATA.json" 2>/dev/null || echo "(missing — run once to create)"
+echo "Server metadata: ${SERVER_METADATA_PATH}"
+cat "${SERVER_METADATA_PATH}"
 
 echo ""
 echo "Next step: reload Cursor window (Ctrl+Shift+P → Developer: Reload Window)"

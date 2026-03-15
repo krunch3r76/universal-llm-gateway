@@ -165,23 +165,23 @@ class GatewayWebSocketClient:
     # =========================================================================
 
     def get_models(self) -> set[str]:
-        """Get available model IDs (instant, from cache)."""
+        """Get the set of model IDs known to the Gateway (instant, from cache)."""
         return self._state.get_models()
 
     def get_resources(self) -> ResourcesData:
-        """Get resource status (instant, from cache)."""
+        """Get current resource status (VRAM/RAM, instant, from cache)."""
         return self._state.get_resources()
 
     def get_catalog(self) -> dict[str, Any]:
-        """Get catalog data (instant, from cache)."""
+        """Get full catalog data from the Gateway (instant, from cache)."""
         return self._state.get_catalog()
 
     def get_activated_contexts(self) -> dict[str, dict]:
-        """Get activated contexts from catalog (instant, from cache)."""
+        """Get currently activated contexts from the catalog (instant, from cache)."""
         return self._state.get_activated_contexts()
 
     def get_transformations(self) -> dict[str, Any]:
-        """Get catalog transformations (instant, from cache)."""
+        """Get transformation config from the catalog (instant, from cache)."""
         return self._state.get_transformations()
 
     def get_resource_status(self) -> ResourcesData | None:
@@ -304,12 +304,10 @@ class GatewayWebSocketClient:
 
         # Start message handling loop
         # CRITICAL: Must be started here to work after reconnection
-        logger.info(f"🔍 {self._gateway_name}: About to call start_message_loop()...")
         self._connection.start_message_loop(
             on_message=self._handle_message,
             on_disconnected=self._on_connection_lost,
         )
-        logger.info(f"🔍 {self._gateway_name}: start_message_loop() returned")
 
         # Notify user callback (fire-and-forget)
         if self._on_connected:
@@ -320,7 +318,14 @@ class GatewayWebSocketClient:
 
     async def _on_connection_lost(self) -> None:
         """Callback when connection is lost."""
-        # Emit disconnected event (event-driven architecture)
+        stale_busy = list(self._state.busy_models)
+        if stale_busy:
+            logger.warning(
+                "⚠️ %s: connection lost with busy_models=%s — "
+                "these will remain stale until reconnect delivers fresh state",
+                self._gateway_name,
+                stale_busy,
+            )
         await self._event_publisher.emit_gateway_state_changed(connected=False)
 
         # Notify user callback (fire-and-forget)
@@ -520,8 +525,7 @@ class GatewayWebSocketClient:
             self._log_reservation_event("resource_reserved", model_id, vram_mb, ram_mb)
         except Exception as e:
             logger.error(
-                "Error handling RESOURCE_RESERVED event for gateway=%s "
-                "model=%s: %s",
+                "Error handling RESOURCE_RESERVED event for gateway=%s model=%s: %s",
                 gateway_name,
                 model_id,
                 e,
@@ -553,8 +557,7 @@ class GatewayWebSocketClient:
             )
         except Exception as e:
             logger.error(
-                "Error handling RESOURCE_RELEASED event for gateway=%s "
-                "model=%s: %s",
+                "Error handling RESOURCE_RELEASED event for gateway=%s model=%s: %s",
                 gateway_name,
                 model_id,
                 e,

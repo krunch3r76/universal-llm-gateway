@@ -99,7 +99,11 @@ class WebSocketEventForwarder:
         self._subscribed = False
 
     def start(self) -> None:
-        """Subscribe to relevant events."""
+        """Subscribe to FORWARDED_EVENTS on the event bus.
+
+        Idempotent: no-op if already subscribed. Ensures the forwarder
+        receives gateway events and broadcasts them to WebSocket clients.
+        """
         if self._subscribed:
             return
 
@@ -197,8 +201,20 @@ class WebSocketEventForwarder:
                         f"⚠️ CATALOG_UPDATE not sent - no clients connected: "
                         f"{model_count} models available"
                     )
+            elif signal in (INFERENCE_STARTED, INFERENCE_COMPLETED):
+                model_id = message.data.get("model_id", "?")
+                label = "MODEL_BUSY" if signal == INFERENCE_STARTED else "MODEL_IDLE"
+                if count > 0:
+                    logger.info(
+                        f"📡 {label} broadcast to {count} client(s): "
+                        f"model_id={model_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ {label} NOT sent — no clients connected: "
+                        f"model_id={model_id}"
+                    )
             elif count > 0:
-                # logger.debug(f"Forwarded {signal} to {count} WebSocket client(s)")
                 pass
         except Exception as e:
             logger.error(
@@ -268,13 +284,15 @@ class WebSocketEventForwarder:
                 limit=p["limit"],
                 timestamp_ms=p["timestamp_ms"],
             ),
-            COMPUTE_CAPACITY_QUEUE_ACQUIRED: lambda p: create_compute_queue_acquired_message(
-                request_id=p["request_id"],
-                model_id=p["model_id"],
-                compute_type=p["compute_type"],
-                wait_duration_ms=p["wait_duration_ms"],
-                queue_position_at_enqueue=p["queue_position_at_enqueue"],
-                timestamp_ms=p["timestamp_ms"],
+            COMPUTE_CAPACITY_QUEUE_ACQUIRED: lambda p: (
+                create_compute_queue_acquired_message(
+                    request_id=p["request_id"],
+                    model_id=p["model_id"],
+                    compute_type=p["compute_type"],
+                    wait_duration_ms=p["wait_duration_ms"],
+                    queue_position_at_enqueue=p["queue_position_at_enqueue"],
+                    timestamp_ms=p["timestamp_ms"],
+                )
             ),
             VRAM_PHANTOM_DETECTED: self._build_vram_phantom_detected_message,
             PHANTOM_MODEL_DETECTED: self._build_phantom_model_detected_message,

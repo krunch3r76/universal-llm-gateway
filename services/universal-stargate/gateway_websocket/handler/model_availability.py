@@ -15,8 +15,8 @@ class ModelIdleHandler(SyncMessageHandler):
     Handle MODEL_IDLE message.
 
     State:
-      - _busy_models.discard()
-      - _model_last_inference[model_id] = last_inference_time
+      - ctx.busy_models.discard()
+      - ctx.model_last_inference[model_id] = last_inference_time
     Side effect: on_model_idle callback, wake queue processors (fire-and-forget)
 
     Invariant: MODEL_IDLE ⟹ model.capacity.freed scheduled
@@ -41,7 +41,15 @@ class ModelIdleHandler(SyncMessageHandler):
         else:
             ctx.model_last_inference[model_id] = float(timestamp)
 
-        logger.debug(f"Model idle on Gateway: {model_id}")
+        elapsed_s = ctx.busy_since.get(model_id)
+        if elapsed_s is not None:
+            import time
+
+            elapsed_s = time.monotonic() - elapsed_s
+        logger.info(
+            f"📥 MODEL_IDLE received: model={model_id}"
+            + (f" (busy for {elapsed_s:.1f}s)" if elapsed_s else "")
+        )
 
         # Fire callback for federation telemetry (includes last_inference_time)
         if ctx.on_model_idle:
@@ -60,8 +68,8 @@ class ModelUnloadedHandler(SyncMessageHandler):
     Handle MODEL_UNLOADED message.
 
     State:
-      - _loaded_models.discard()
-      - _model_last_inference.pop(model_id) (cleanup)
+      - ctx.loaded_models.discard()
+      - ctx.model_last_inference.pop(model_id) (cleanup)
     Side effects:
       - callback notification (fire-and-forget)
       - wake queue processors (fire-and-forget)

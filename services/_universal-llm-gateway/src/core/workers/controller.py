@@ -70,7 +70,8 @@ class WorkerController:
             f"🔧 WorkerController initialized (auto_load: {self.auto_load_on_request})"
         )
 
-    def _init_resource_monitoring(self, event_bus):
+    def _init_resource_monitoring(self, event_bus) -> None:
+        """Set up resource monitoring config if event_bus is provided."""
         self.resource_monitor_enabled, self.resource_config = False, None
         if event_bus:
             try:
@@ -89,7 +90,8 @@ class WorkerController:
                     f"Continuing without resource monitoring."
                 )
 
-    def _init_paths(self, cfg):
+    def _init_paths(self, cfg) -> None:
+        """Set worker log dir, IPC socket dir, entrypoint, and timeouts from config."""
         iso = cfg.process_isolation
         # Respect WORKER_LOG_DIR from environment
         default_dir = os.getenv("WORKER_LOG_DIR", "/tmp/llm_gateway/worker-logs")
@@ -112,7 +114,8 @@ class WorkerController:
             float(getattr(iso, "shutdown_timeout", 30)),
         )
 
-    def _init_managers(self, cfg, event_bus):
+    def _init_managers(self, cfg, event_bus) -> None:
+        """Create lifecycle, communication, and inference managers."""
         hc = self._create_health_config(cfg, event_bus)
         self._lifecycle_manager = ProcessLifecycleManager(
             state=self._process_state,
@@ -144,6 +147,7 @@ class WorkerController:
         )
 
     def _create_health_config(self, cfg, event_bus) -> ProcessHealthConfig:
+        """Build ProcessHealthConfig from gateway config and event bus."""
         hm = getattr(cfg.process_isolation, "health_monitoring", {})
 
         async def cb(pid, code, msg):
@@ -415,7 +419,7 @@ class WorkerController:
             result = await supervisor.execute_command(
                 {"command_type": "health"}, timeout=5.0
             )
-            return bool(result and result.get("status") == "ready")
+            return bool(result and result.get("model_loaded"))
         except Exception:
             return False
 

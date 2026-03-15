@@ -118,14 +118,19 @@ class ServicesScreen(Screen):
                 )
             with Horizontal(classes="svc-button-row"):
                 yield Button("Start RAG", id="btn-start-rag", variant="success")
-                yield Button("Stop RAG", id="btn-stop-rag", variant="error", disabled=True)
+                yield Button(
+                    "Stop RAG", id="btn-stop-rag", variant="error", disabled=True
+                )
                 yield Button("Start Cloud Proxy", id="btn-start-cp", variant="success")
                 yield Button(
                     "Stop Cloud Proxy", id="btn-stop-cp", variant="error", disabled=True
                 )
                 yield Button("Start Sidecar", id="btn-start-sidecar", variant="success")
                 yield Button(
-                    "Stop Sidecar", id="btn-stop-sidecar", variant="error", disabled=True
+                    "Stop Sidecar",
+                    id="btn-stop-sidecar",
+                    variant="error",
+                    disabled=True,
                 )
             with Horizontal(classes="svc-button-row"):
                 yield Button("Start Events", id="btn-start-events", variant="success")
@@ -249,7 +254,7 @@ class ServicesScreen(Screen):
                 except ValueError:
                     tcp_config = None
 
-                if tcp_config is not None:
+                if tcp_config:
                     host, port = tcp_config
                     base_url = f"http://{host}:{port}"
                 else:
@@ -321,8 +326,9 @@ class ServicesScreen(Screen):
 
         gw_exists = gw.status.value != "stopped"
         sg_up = sg.status.value == "running"
-        rag_up = rag.status.value == "running"
-        cp_up = cp.status.value == "running"
+        # If service is unhealthy but not stopped (e.g., stale PID/socket), show Stop.
+        rag_up = rag.status.value != "stopped"
+        cp_up = cp.status.value != "stopped"
         sidecar_up = sidecar.status.value == "running"
         events_up = events.status.value == "running"
         self.query_one("#btn-start-gw", Button).disabled = gw_exists

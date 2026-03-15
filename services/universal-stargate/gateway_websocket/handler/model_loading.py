@@ -44,7 +44,7 @@ class ModelLoadingStartedHandler(SyncMessageHandler):
         if model_id in ctx.loaded_models:
             logger.info(
                 f"MODEL_LOADING_STARTED for {model_id} ignored — "
-                f"already in loaded_models (stale re-load attempt)"
+                "already in loaded_models (stale re-load attempt)"
             )
             return
 
@@ -159,7 +159,7 @@ class ModelBusyHandler(SyncMessageHandler):
 
         ctx.busy_models.add(model_id)
         ctx.busy_since[model_id] = time.monotonic()
-        logger.debug(f"Model busy on Gateway: {model_id}")
+        logger.info(f"📥 MODEL_BUSY received: model={model_id}")
 
         # Fire callback for federation telemetry
         if ctx.on_model_busy:

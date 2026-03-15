@@ -9,10 +9,11 @@ logger = get_logger(__name__)
 
 
 class LifecycleHandlers:
-    """Mix-in class for worker lifecycle and health RPC handlers."""
+    """Mix-in class for worker lifecycle and health RPC handlers.
 
-    # Assumes self.worker_id, self.model_id, self.model_config
-    # Assumes self.config_received exists
+    Expects on the instance: worker_id, model_id, model_config, config_received,
+    engine, and optionally _inference_gate.
+    """
 
     async def handle_init_config(self, params: dict) -> dict:
         """
@@ -26,8 +27,6 @@ class LifecycleHandlers:
         Returns:
             Success response confirming config received
         """
-        # Remove import - truncation now automatic
-
         config = params.get("config", {})
 
         logger.info(
@@ -49,15 +48,38 @@ class LifecycleHandlers:
         """
         Handle health RPC request.
 
-        Returns:
-            Health status including model_loaded state and engine_pid
+        Returns model_loaded state, engine_pid, and inference gate activity.
+        The gate stats (inference_active, inference_limit) are the source of
+        truth for whether the worker is actually processing inference — do NOT
+        rely on "status" alone (it only reflects model-in-memory).
         """
-        live = bool(self.engine and self.engine.is_loaded())
-        status = "ready" if live else "busy"
-        models = [self.model_id] if live and self.model_id else []
+        model_loaded = bool(self.engine and self.engine.is_loaded())
+        models = [self.model_id] if model_loaded and self.model_id else []
         engine_pid = self.engine.get_engine_pid() if self.engine else None
 
-        result: dict = {"status": status, "models": models}
+        gate = getattr(self, "_inference_gate", None)
+        inference_active = 0
+        inference_limit = 0
+        if gate is not None:
+            stats = gate.stats
+            inference_active = stats.active
+            inference_limit = stats.limit
+
+        status = (
+            "not_loaded"
+            if not model_loaded
+            else "inferring"
+            if inference_active > 0
+            else "idle"
+        )
+
+        result: dict = {
+            "status": status,
+            "model_loaded": model_loaded,
+            "models": models,
+            "inference_active": inference_active,
+            "inference_limit": inference_limit,
+        }
         if engine_pid is not None:
             result["engine_pid"] = engine_pid
         return result

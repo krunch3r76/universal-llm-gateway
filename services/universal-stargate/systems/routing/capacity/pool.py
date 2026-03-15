@@ -51,7 +51,10 @@ class CapacityToken:
     _pool: CapacityPool | None = field(default=None, repr=False)
 
     async def release(self) -> None:
-        """Idempotent release — safe to call multiple times."""
+        """Idempotent release — safe to call multiple times.
+
+        First call runs _pool._release and sets _released; later calls no-op.
+        """
         if self._released or self._pool is None:
             return
         self._released = True
@@ -124,9 +127,9 @@ class CapacityPool:
     def remove_gateway(self, gateway_id: str) -> None:
         """Remove all capacity slots for a disconnected gateway.
 
-        Defers physical deletion of slots that still have in-flight requests,
-        setting their capacity to 0 instead. Cleanup happens in _release when
-        each slot's in_flight drains to 0.
+        Physical deletion: _capacity and _in_flight entries for the gateway.
+        Deferred: slots with in_flight > 0 are zeroed in _capacity; _release
+        removes them when in_flight drains to 0.
         """
         slots = [s for s in self._capacity if s.gateway_id == gateway_id]
         removed = 0
@@ -155,12 +158,11 @@ class CapacityPool:
             )
 
     def remove_model(self, gateway_id: str, model_id: str) -> None:
-        """Mark a model's capacity as zero on a gateway after telemetry reports unload.
+        """Mark a model's capacity as zero after telemetry reports unload.
 
-        If requests are still in-flight on the slot, defers physical deletion of
-        the tracking entries until _release drains in_flight to 0. Setting capacity
-        to 0 prevents new admissions while preserving the in_flight counter so
-        active token releases can decrement correctly and trigger _dispatch.
+        Physical deletion: _capacity and _in_flight for this (gateway_id, model_id).
+        Deferred: if in_flight > 0, slot is zeroed in _capacity; _release
+        removes it when in_flight drains to 0.
         """
         slot = _Slot(gateway_id=gateway_id, model_id=model_id)
         if slot not in self._capacity:
@@ -196,14 +198,16 @@ class CapacityPool:
 
     def get_available_gateways(self, model_id: str) -> list[tuple[str, int]]:
         """Return [(gateway_id, available)] for available > 0, sorted desc."""
-        results: list[tuple[str, int]] = []
-        for slot in self._capacity:
-            if slot.model_id == model_id:
-                avail = self.available(slot.gateway_id, slot.model_id)
-                if avail > 0:
-                    results.append((slot.gateway_id, avail))
-        results.sort(key=lambda x: x[1], reverse=True)
-        return results
+        return sorted(
+            (
+                (slot.gateway_id, self.available(slot.gateway_id, slot.model_id))
+                for slot in self._capacity
+                if slot.model_id == model_id
+                and self.available(slot.gateway_id, slot.model_id) > 0
+            ),
+            key=lambda x: x[1],
+            reverse=True,
+        )
 
     # ── Admission ──
 
@@ -230,6 +234,14 @@ class CapacityPool:
 
         if gateway_id is None:
             queued = True
+            logger.info(
+                "🔍 acquire_token: no immediate slot for %s/%s "
+                "(allowed_gws=%s) — queueing. Snapshot: %s",
+                request_id,
+                model_id,
+                list(allowed_gateway_ids),
+                self.get_snapshot(),
+            )
             gateway_id = await self._wait_for_slot(
                 request_id,
                 model_id,
@@ -434,11 +446,10 @@ class CapacityPool:
     async def _release(self, token: CapacityToken) -> None:
         """Return a capacity slot and dispatch waiting requests.
 
-        Always invokes _dispatch even when the in-flight counter is already at
-        zero (invariant violation from a prior remove_model race) — the model
-        queue may have serviceable waiters on other gateways.
-
-        Cleans up deferred zero-capacity slots once in-flight drains to zero.
+        Always invokes _dispatch even when in_flight is already 0 (e.g. after
+        remove_model/remove_gateway race): the queue may have waiters that
+        can be served on other gateways. Cleans up deferred zero-capacity
+        slots when in_flight drains to zero.
         """
         slot = _Slot(gateway_id=token.gateway_id, model_id=token.model_id)
         in_flight = self._in_flight.get(slot, 0)
@@ -454,12 +465,16 @@ class CapacityPool:
             )
         else:
             self._in_flight[slot] = in_flight - 1
-            logger.debug(
-                "Released: %s on %s/%s (held %.0fms)",
+            held = token.held_ms
+            log = logger.info if held > 10_000 else logger.debug
+            log(
+                "Released: %s on %s/%s (held %.0fms, in_flight: %d → %d)",
                 token.request_id,
                 token.gateway_id,
                 token.model_id,
-                token.held_ms,
+                held,
+                in_flight,
+                in_flight - 1,
             )
 
         current = self._in_flight.get(slot, 0)

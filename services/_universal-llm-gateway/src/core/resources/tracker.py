@@ -96,7 +96,11 @@ class ResourceTracker:
         self._initialize_system_resources()
 
     def set_event_bus(self, event_bus: Any) -> None:
-        """Set the EventBus for publishing events."""
+        """Set the EventBus for publishing events.
+
+        Args:
+            event_bus: The event bus instance to use for emitting events.
+        """
         self.event_bus = event_bus
 
     def _initialize_system_resources(self) -> None:
@@ -131,7 +135,7 @@ class ResourceTracker:
         """
         key = _normalize_key(model_id)
         if key not in self._models:
-            model_str = str(model_id) if isinstance(model_id, str) else str(model_id)
+            model_str = str(model_id)
             self._models[key] = ModelResourceInfo(model_id=model_str)
             self._state_machines[key] = WorkerStateMachine(
                 worker_id=model_str, initial_state=WorkerState.UNINITIALIZED
@@ -168,7 +172,7 @@ class ResourceTracker:
 
     def set_model_loading(self, model_id: str | ModelId) -> None:
         """Mark a model as loading. Resets ERROR state automatically."""
-        model_str = str(model_id) if isinstance(model_id, str) else str(model_id)
+        model_str = str(model_id)
         key = _normalize_key(model_id)
         handle_error_state_recovery(self._state_machines, self._models, key, model_str)
         if key not in self._models:
@@ -204,13 +208,14 @@ class ResourceTracker:
         (request-scoped, when request_id provided) to notify Stargate.
         """
         key = _normalize_key(model_id)
-        model_str = str(model_id) if isinstance(model_id, str) else str(model_id)
+        model_str = str(model_id)
         if key in self._state_machines:
             success = self._state_machines[key].transition(
                 WorkerState.BUSY,
                 reason="inference_started",
-                guard=lambda: self._state_machines[key].current_state
-                == WorkerState.LOADED,
+                guard=lambda: (
+                    self._state_machines[key].current_state == WorkerState.LOADED
+                ),
             )
             if not success:
                 self.logger.warning(
@@ -230,7 +235,7 @@ class ResourceTracker:
         Emits INFERENCE_COMPLETED event to notify Stargate.
         """
         key = _normalize_key(model_id)
-        model_str = str(model_id) if isinstance(model_id, str) else str(model_id)
+        model_str = str(model_id)
         transition_to_idle(self._state_machines, key, model_str)
         await update_model_idle_status_async(
             self._models,
@@ -272,7 +277,11 @@ class ResourceTracker:
         self.set_model_status(model_id, ModelStatus.ERROR, error_message)
 
     def get_model_error(self, model_id: str | ModelId) -> str | None:
-        """Get error message if model has error status."""
+        """Get the error message for a model when its status is ERROR.
+
+        Returns:
+            The error message string if the model is in ERROR state, else None.
+        """
         key = _normalize_key(model_id)
         if key in self._models:
             info = self._models[key]
@@ -290,7 +299,7 @@ class ResourceTracker:
         Emits INFERENCE_COMPLETED event to notify Stargate.
         """
         key = _normalize_key(model_id)
-        model_str = str(model_id) if isinstance(model_id, str) else str(model_id)
+        model_str = str(model_id)
         sm_success = False
         if key in self._state_machines:
             sm_success = self._state_machines[key].force_idle(reason)
@@ -332,13 +341,20 @@ class ResourceTracker:
                 REQUEST_INFERENCE_STARTED so Stargate can distinguish
                 queued-vs-executing.
         """
+        t0 = time.monotonic()
+        self.logger.info(
+            f"⏱️ track_inference ENTER: model={model_id} request={request_id}"
+        )
         try:
             await self.set_model_busy(model_id, request_id)
-            self.logger.debug(f"Model {model_id} busy for inference")
             yield
         finally:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            self.logger.info(
+                f"⏱️ track_inference EXIT: model={model_id} request={request_id} "
+                f"held={elapsed_ms:.0f}ms"
+            )
             await self.set_model_idle(model_id)
-            self.logger.debug(f"Model {model_id} idle after inference")
 
     # -------------------------------------------------------------------------
     # Resource Updates
@@ -359,7 +375,12 @@ class ResourceTracker:
     def update_model_last_inference_time(
         self, model_id: str | ModelId, ts: float | None = None
     ) -> None:
-        """Update the last inference time for a model."""
+        """Update the last inference time for a model.
+
+        Args:
+            model_id: The model to update.
+            ts: Unix timestamp for last inference end; if None, uses current time.
+        """
         key = _normalize_key(model_id)
         if key in self._models:
             self._models[key].last_inference_time = ts or time.time()
@@ -428,7 +449,11 @@ class ResourceTracker:
         return _get_operations_in_progress(self)
 
     def get_state_machine(self, model_id: str | ModelId) -> WorkerStateMachine | None:
-        """Get state machine by model ID."""
+        """Get the state machine for a model, if registered.
+
+        Returns:
+            The WorkerStateMachine for the model, or None if not registered.
+        """
         return self._state_machines.get(_normalize_key(model_id))
 
     def get_state_machine_status(self, model_id: str | ModelId) -> dict | None:

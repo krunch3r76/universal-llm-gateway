@@ -35,13 +35,16 @@ logger = logging.getLogger(__name__)
 
 _PGID_KILL_TIMEOUT = 5
 _CURSOR_DESCRIPTOR_REFRESH_TIMEOUT_S = 30
+_MCP_HEALTH_WAIT_TIMEOUT_S = 60.0
+_MCP_HEALTH_POLL_INTERVAL_S = 1.0
 
 
 class ServiceController:
     """
-    Orchestrates Docker builds and service lifecycle.
+    Orchestrates Docker builds and the lifecycle of Gateway, Stargate, MCP,
+    RAG, Cloud Proxy, and Event Service.
 
-    Delegates to existing shell scripts; does not reimplement their logic.
+    Delegates to existing shell scripts for core logic; does not reimplement it.
     """
 
     def __init__(self, workspace_root: Path) -> None:
@@ -276,12 +279,14 @@ class ServiceController:
             logger.error("Failed to start Stargate subprocess or open log file: %s", e)
             return f"Failed to start Stargate: {e}"
 
+        self._write_pid_file(process.pid)
         try:
             exit_code = await asyncio.wait_for(process.wait(), timeout=3.0)
             tail = log_path.read_text(errors="replace")[-1500:]
+            pid_path = GATEWAY_DIR / "stargate.pid"
+            pid_path.unlink(missing_ok=True)
             return f"Stargate failed (exit {exit_code}).\n{tail}"
         except TimeoutError:
-            self._write_pid_file(process.pid)
             return f"Stargate starting (PID {process.pid})."
 
     async def start_rag(self) -> str:
@@ -313,6 +318,9 @@ class ServiceController:
 
         When browser tools are enabled in ~/.gateway/mcp.yaml, appends the
         browser override file which applies the narrow seccomp relaxation.
+
+        Returns:
+            (args, compose_path) for docker compose, or None if compose file absent.
         """
         compose_path = self._root / "docker" / "compose" / "mcp-server.yml"
         if not compose_path.exists():
@@ -404,10 +412,53 @@ class ServiceController:
         if not start_text.startswith("MCP server started."):
             return start_text
 
+        health_error = await self._wait_mcp_healthy(timeout=_MCP_HEALTH_WAIT_TIMEOUT_S)
+        if health_error is not None:
+            return f"{start_text}\nWARNING: {health_error}"
+
         refresh_text = await self._refresh_cursor_mcp_descriptors_if_enabled()
         if refresh_text:
             return f"{start_text}\n{refresh_text}"
         return start_text
+
+    async def _wait_mcp_healthy(self, *, timeout: float) -> str | None:
+        """Wait until the mcp-server container reports healthy.
+
+        Returns:
+            None when healthy before timeout, otherwise a warning message.
+        """
+        deadline = asyncio.get_running_loop().time() + timeout
+        last_status = "unknown"
+        while asyncio.get_running_loop().time() < deadline:
+            inspect = await asyncio.create_subprocess_exec(
+                "docker",
+                "inspect",
+                "--format",
+                "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}",
+                "mcp-server",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            output = await inspect.communicate()
+            status = output[0].decode(errors="replace").strip().lower()
+            if inspect.returncode != 0:
+                # Container may not be visible yet right after compose up.
+                last_status = "missing"
+            elif status:
+                last_status = status
+                if status == "healthy":
+                    return None
+                if status in {"exited", "dead"}:
+                    return (
+                        "MCP server did not become healthy "
+                        f"(container state: {status})."
+                    )
+            await asyncio.sleep(_MCP_HEALTH_POLL_INTERVAL_S)
+
+        return (
+            "MCP server health check timed out after "
+            f"{timeout:.0f}s (last status: {last_status})."
+        )
 
     async def _refresh_cursor_mcp_descriptors_if_enabled(self) -> str:
         """Optionally refresh Cursor MCP descriptors based on ~/.gateway/mcp.yaml."""
@@ -454,9 +505,7 @@ class ServiceController:
 
         text = output[0].decode(errors="replace").strip() if output[0] else ""
         if proc.returncode == 0:
-            if text:
-                return f"Cursor MCP descriptors refreshed.\n{text}"
-            return "Cursor MCP descriptors refreshed."
+            return f"Cursor MCP descriptors refreshed.{chr(10) + text if text else ''}"
 
         msg = f"WARNING: Cursor descriptor refresh failed (exit {proc.returncode})."
         logger.warning("%s\n%s", msg, text)
@@ -529,7 +578,7 @@ class ServiceController:
             stderr=asyncio.subprocess.STDOUT,
         )
         output = await result.communicate()
-        return output[0].decode(errors="replace") if output[0] else "No output."
+        return output[0].decode(errors="replace") or "No output."
 
     @property
     def sidecar(self) -> SidecarController:
