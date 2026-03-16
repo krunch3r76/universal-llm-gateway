@@ -5,7 +5,7 @@
 #   - MCP_AUTH_TOKEN set in environment (e.g., via export or source .env.local)
 #   - MCP_PROJECT_DIR set to project root (required — no default)
 #   - MCP_TASKS_DIR set to tasks directory (required — no default)
-#   - MCP_DATA_DIR defaults to ~/mcp-data
+#   - MCP_DATA_DIR defaults to ${HOME}/mcp-data
 #   - `docker network create mcp-network` (shared with satellite containers)
 #
 # Usage: docker compose -f docker/compose/mcp-server.yml up -d
@@ -24,19 +24,20 @@ services:
     volumes:
       # Mount entire letsencrypt dir so relative symlinks in live/ resolve correctly
       - /etc/letsencrypt:/etc/letsencrypt:ro
-      - ${MCP_DATA_DIR:-~/mcp-data}/files:/data/files:rw
+      - ${MCP_DATA_DIR:-${HOME}/mcp-data}/files:/data/files:rw
       # project mount: "ro" (default) or "rw" — toggled via project_access in mcp.yaml
       - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}:/data/project:${MCP_PROJECT_MOUNT_MODE:-ro}
       # tasks mount: separate dir, independent access mode
       - ${MCP_TASKS_DIR:?MCP_TASKS_DIR required}:/data/tasks:${MCP_TASKS_MOUNT_MODE:-ro}
       - /tmp/universal-protocol:/tmp/universal-protocol
       # Optional: Firefox profile for authenticated browser sessions.
-      # Set firefox_profile_dir in ~/.gateway/mcp.yaml to enable cookie injection.
+      # Set firefox_profile_dir in ~/.gateway/mcp.yaml (host-managed) to enable
+      # cookie injection.
       # If unset, browser tools still work but without host cookies.
       - ${FIREFOX_PROFILE_DIR:-/tmp/no-firefox-profile}:/data/firefox_profile:ro
       # SQLite databases + config for sqlite_* tools
-      - ${MCP_DATA_DIR:-~/mcp-data}/sqlite.yaml:/data/sqlite-config.yaml:ro
-      - ${MCP_DATA_DIR:-~/mcp-data}/databases:/data/databases:rw
+      - ${MCP_DATA_DIR:-${HOME}/mcp-data}/sqlite.yaml:/data/sqlite-config.yaml:ro
+      - ${MCP_DATA_DIR:-${HOME}/mcp-data}/databases:/data/databases:rw
       - ~/.rag/store:/data/rag-store:ro
       - ~/.cortex:/data/cortex:rw
       - ~/.gateway:/home/mcp/.gateway:ro
@@ -59,6 +60,8 @@ services:
       - EVENTS_SOCK=/tmp/universal-protocol/events.sock
       - MCP_OAUTH_ENABLED=${MCP_OAUTH_ENABLED:-true}
       - MCP_OAUTH_ISSUER=${MCP_OAUTH_ISSUER:-https://mcp.k-1.me}
+      - BRIDGE_TOKEN=${BRIDGE_TOKEN:-}
+      - AGENT_BUS_TOKEN=${AGENT_BUS_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:
@@ -72,7 +75,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('https://localhost/health')",
+          "import ssl,urllib.request; urllib.request.urlopen('https://localhost/health', context=ssl._create_unverified_context())",
         ]
       interval: 30s
       timeout: 10s

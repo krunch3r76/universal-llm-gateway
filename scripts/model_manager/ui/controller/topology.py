@@ -7,7 +7,10 @@ for deployment, and provides async deploy/restart flows used by the TUI.
 import asyncio
 import json
 import logging
+import os
 import secrets
+import shlex
+import signal
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,12 +23,111 @@ logger = logging.getLogger(__name__)
 _GATEWAY_DIR = Path.home() / ".gateway"
 _NODES_DIR = _GATEWAY_DIR / "nodes"
 _MASTER_CONFIG = _GATEWAY_DIR / "stargate.yaml"
+_FORWARDED_BUILD_ENV_KEYS = (
+    "ENABLE_VLLM",
+    "VLLM_FROM_SOURCE",
+    "VLLM_BUILD_ARGS",
+    "VLLM_EXTRA_FLAGS",
+    "VLLM_MAX_JOBS",
+    "VLLM_VERSION",
+    "TORCH_NIGHTLY_DATE",
+    "ENABLE_LLAMA_CPP_PYTHON",
+    "LLAMA_CPP_PYTHON_VERSION",
+    "ENABLE_LLAMA_SERVER",
+    "LLAMA_SERVER_VERSION",
+)
 
 
 class RemoteConfig(TypedDict):
     stargate_id: str
     url: str
     api_key: str
+
+
+def _string_field(remote: dict[object, object], key: str) -> str:
+    """Read a remote config field as string, defaulting to empty string."""
+    value = remote.get(key, "")
+    return value if isinstance(value, str) else str(value)
+
+
+def _relay_remote_command(relay_cmd: str) -> str:
+    """Prefix remote relay commands with forwarded build env vars, if set."""
+    forwarded = [
+        f"{key}={shlex.quote(value)}"
+        for key in _FORWARDED_BUILD_ENV_KEYS
+        if (value := os.environ.get(key))
+    ]
+    prefix = " ".join(forwarded)
+    command_prefix = f"{prefix} " if prefix else ""
+    command = f"cd ~/universal-llm-gateway && {command_prefix}{relay_cmd}"
+    wrapped = f"trap 'kill 0 >/dev/null 2>&1 || true' EXIT HUP INT TERM; {command}"
+    return f"bash -lc {shlex.quote(wrapped)}"
+
+
+async def _terminate_process_group(
+    proc: asyncio.subprocess.Process, *, sigkill_timeout: float = 3.0
+) -> None:
+    """Terminate a subprocess group spawned with ``start_new_session=True``."""
+    if proc.returncode is not None:
+        return
+    try:
+        _ = os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=sigkill_timeout)
+        return
+    except TimeoutError:
+        pass
+    try:
+        _ = os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            return
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=1.0)
+    except TimeoutError:
+        logger.warning("Subprocess %s did not exit after SIGKILL", proc.pid)
+
+
+class _StreamedCommandError(Exception):
+    """Internal control-flow marker for streamed subprocess failures."""
+
+
+async def _stream_subprocess(
+    args: list[str],
+    *,
+    stream_failure_line: str,
+    exit_failure_prefix: str,
+    cwd: str | None = None,
+) -> AsyncIterator[str]:
+    """Run a subprocess and yield decoded stdout lines as they arrive."""
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=cwd,
+        start_new_session=True,
+    )
+    try:
+        if proc.stdout is None:
+            yield stream_failure_line
+            await _terminate_process_group(proc)
+            raise _StreamedCommandError
+        async for raw in proc.stdout:
+            yield raw.decode(errors="replace").rstrip()
+        code = await proc.wait()
+    except asyncio.CancelledError:
+        await _terminate_process_group(proc)
+        raise
+    if code != 0:
+        yield f"{exit_failure_prefix} (exit {code}).[/red]"
+        raise _StreamedCommandError
 
 
 def list_remotes() -> list[RemoteConfig]:
@@ -43,9 +145,9 @@ def list_remotes() -> list[RemoteConfig]:
             continue
         remotes.append(
             {
-                "stargate_id": str(remote.get("stargate_id", "")),
-                "url": str(remote.get("url", "")),
-                "api_key": str(remote.get("api_key", "")),
+                "stargate_id": _string_field(remote, "stargate_id"),
+                "url": _string_field(remote, "url"),
+                "api_key": _string_field(remote, "api_key"),
             }
         )
     return remotes
@@ -195,21 +297,16 @@ async def deploy_remote(
         f"{repo}/",
         dest,
     ]
-    yield f"$ {' '.join(rsync_args)}"
-    proc = await asyncio.create_subprocess_exec(
-        *rsync_args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        cwd=str(repo),
-    )
-    if proc.stdout is None:
-        yield "[red]rsync failed to stream output.[/red]"
-        return
-    async for raw in proc.stdout:
-        yield raw.decode(errors="replace").rstrip()
-    code = await proc.wait()
-    if code != 0:
-        yield f"[red]rsync failed (exit {code}).[/red]"
+    yield f"$ {shlex.join(rsync_args)}"
+    try:
+        async for line in _stream_subprocess(
+            rsync_args,
+            cwd=str(repo),
+            stream_failure_line="[red]rsync failed to stream output.[/red]",
+            exit_failure_prefix="[red]rsync failed",
+        ):
+            yield line
+    except _StreamedCommandError:
         return
 
     scp_args = [
@@ -217,20 +314,15 @@ async def deploy_remote(
         str(node_env),
         f"{ssh_target}:~/.gateway/nodes/{hostname}.env",
     ]
-    yield f"$ {' '.join(scp_args)}"
-    proc = await asyncio.create_subprocess_exec(
-        *scp_args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    if proc.stdout is None:
-        yield "[red]scp failed to stream output.[/red]"
-        return
-    async for raw in proc.stdout:
-        yield raw.decode(errors="replace").rstrip()
-    code = await proc.wait()
-    if code != 0:
-        yield f"[red]scp failed (exit {code}).[/red]"
+    yield f"$ {shlex.join(scp_args)}"
+    try:
+        async for line in _stream_subprocess(
+            scp_args,
+            stream_failure_line="[red]scp failed to stream output.[/red]",
+            exit_failure_prefix="[red]scp failed",
+        ):
+            yield line
+    except _StreamedCommandError:
         return
 
     relay_cmd = "./manage relay"
@@ -238,28 +330,24 @@ async def deploy_remote(
         relay_cmd += " --restart"
     if build:
         relay_cmd += f" --build --scope {scope}"
+    remote_cmd = _relay_remote_command(relay_cmd)
     ssh_args = [
         "ssh",
         "-t",
         "-o",
         "BatchMode=yes",
         ssh_target,
-        f"cd ~/universal-llm-gateway && {relay_cmd}",
+        remote_cmd,
     ]
-    yield f"$ ssh -t -o BatchMode=yes {ssh_target} 'cd ~/universal-llm-gateway && {relay_cmd}'"
-    proc = await asyncio.create_subprocess_exec(
-        *ssh_args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    if proc.stdout is None:
-        yield "[red]ssh relay failed to stream output.[/red]"
-        return
-    async for raw in proc.stdout:
-        yield raw.decode(errors="replace").rstrip()
-    code = await proc.wait()
-    if code != 0:
-        yield f"[red]ssh relay failed (exit {code}).[/red]"
+    yield f"$ {shlex.join(ssh_args)}"
+    try:
+        async for line in _stream_subprocess(
+            ssh_args,
+            stream_failure_line="[red]ssh relay failed to stream output.[/red]",
+            exit_failure_prefix="[red]ssh relay failed",
+        ):
+            yield line
+    except _StreamedCommandError:
         return
 
 
@@ -273,6 +361,8 @@ _CONNECTION_EVENT = "federation.connection.established"
 
 @dataclass(slots=True, kw_only=True)
 class RelayConnectionResult:
+    """Result of relay-connection wait with optional non-success reason."""
+
     connected: bool
     reason: str | None = None
 
@@ -352,7 +442,7 @@ async def _subscribe_for_connection(remote_id: str, timeout: float) -> bool:
                 ):
                     break
     except (TimeoutError, OSError, aiohttp.ClientError) as e:
-        logger.debug("WebSocket subscription failed: %s", e)
+        logger.exception("WebSocket subscription failed: %s", e)
     return False
 
 
@@ -398,28 +488,25 @@ async def restart_relay(
     relay_cmd = "./manage relay --restart"
     if build:
         relay_cmd += " --build"
+    remote_cmd = _relay_remote_command(relay_cmd)
     ssh_args = [
         "ssh",
         "-t",
         "-o",
         "BatchMode=yes",
         ssh_target,
-        f"cd ~/universal-llm-gateway && {relay_cmd}",
+        remote_cmd,
     ]
-    yield f"$ {' '.join(ssh_args)}"
-    proc = await asyncio.create_subprocess_exec(
-        *ssh_args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    if proc.stdout is None:
-        yield "[red]ssh relay restart failed to stream output.[/red]"
+    yield f"$ {shlex.join(ssh_args)}"
+    try:
+        async for line in _stream_subprocess(
+            ssh_args,
+            stream_failure_line="[red]ssh relay restart failed to stream output.[/red]",
+            exit_failure_prefix="[red]ssh relay restart failed",
+        ):
+            yield line
+    except _StreamedCommandError:
         return
-    async for raw in proc.stdout:
-        yield raw.decode(errors="replace").rstrip()
-    code = await proc.wait()
-    if code != 0:
-        yield f"[red]ssh relay restart failed (exit {code}).[/red]"
 
 
 def list_node_envs() -> list[Path]:

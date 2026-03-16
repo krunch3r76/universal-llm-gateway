@@ -161,6 +161,8 @@ class McpConfig:
     firefox_profile_dir: str = ""
     project_access: str = "ro"  # "ro" | "rw"
     tasks_access: str = "ro"  # "ro" | "rw" | "off"
+    bridge_token: str = ""
+    agent_bus_token: str = ""
     enable_browser_tools: bool = False
     refresh_cursor_descriptors_after_rebuild: bool = False
 
@@ -233,7 +235,7 @@ def _parse_bool(value: object, *, default: bool = False) -> bool:
         if normalized in {"0", "false", "no", "off", ""}:
             return False
         return default
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return bool(value)
     return default
 
@@ -323,26 +325,38 @@ def load_mcp_config() -> McpConfig | None:
 
     if not token:
         return None
-    raw_project_dir = raw.get("project_dir")
-    project_dir = str(raw_project_dir) if raw_project_dir is not None else None
-    raw_tasks_dir = raw.get("tasks_dir")
-    tasks_dir = str(raw_tasks_dir) if raw_tasks_dir is not None else None
+
+    def _get_str_or_none(key: str) -> str | None:
+        value = raw.get(key)
+        return str(value) if value is not None else None
+
+    def _get_stripped_str(primary_key: str, secondary_key: str = "") -> str:
+        if secondary_key:
+            value = raw.get(primary_key) or raw.get(secondary_key, "")
+        else:
+            value = raw.get(primary_key, "")
+        return str(value).strip()
+
+    project_dir = _get_str_or_none("project_dir")
+    tasks_dir = _get_str_or_none("tasks_dir")
 
     return McpConfig(
         auth_token=token,
         auth_token_env=token_env_name,
-        data_dir=str(raw.get("data_dir", _MCP_DEFAULT_DATA_DIR)),
+        data_dir=_get_stripped_str("data_dir") or _MCP_DEFAULT_DATA_DIR,
         project_dir=project_dir,
         tasks_dir=tasks_dir,
-        tls_cert_dir=str(raw.get("tls_cert_dir", _MCP_DEFAULT_TLS_CERT_DIR)),
-        brave_search_api_key=str(
-            raw.get("BRAVE_SEARCH_API_KEY") or raw.get("brave_search_api_key", "")
-        ).strip(),
-        firefox_profile_dir=_resolve_firefox_profile(
-            str(raw.get("firefox_profile_dir", ""))
+        tls_cert_dir=_get_stripped_str("tls_cert_dir") or _MCP_DEFAULT_TLS_CERT_DIR,
+        brave_search_api_key=_get_stripped_str(
+            "BRAVE_SEARCH_API_KEY", "brave_search_api_key"
         ),
-        project_access=str(raw.get("project_access", "ro")).strip().lower(),
-        tasks_access=str(raw.get("tasks_access", "ro")).strip().lower(),
+        bridge_token=_get_stripped_str("BRIDGE_TOKEN", "bridge_token"),
+        agent_bus_token=_get_stripped_str("AGENT_BUS_TOKEN", "agent_bus_token"),
+        firefox_profile_dir=_resolve_firefox_profile(
+            _get_stripped_str("firefox_profile_dir")
+        ),
+        project_access=(_get_stripped_str("project_access") or "ro").lower(),
+        tasks_access=(_get_stripped_str("tasks_access") or "ro").lower(),
         enable_browser_tools=_parse_bool(
             raw.get("enable_browser_tools", False),
             default=False,
@@ -382,31 +396,34 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
         env["MCP_TASKS_DIR"] = f"{cfg.project_dir}/tasks"
     if cfg.brave_search_api_key:
         env["BRAVE_SEARCH_API_KEY"] = cfg.brave_search_api_key
+    if cfg.bridge_token:
+        env["BRIDGE_TOKEN"] = cfg.bridge_token
+    if cfg.agent_bus_token:
+        env["AGENT_BUS_TOKEN"] = cfg.agent_bus_token
     if cfg.firefox_profile_dir:
         env["FIREFOX_PROFILE_DIR"] = cfg.firefox_profile_dir
     env["ENABLE_BROWSER_TOOLS"] = "true" if cfg.enable_browser_tools else "false"
     # project_access: ro (default) or rw
-    match cfg.project_access:
-        case "rw":
-            env["MCP_PROJECT_MOUNT_MODE"] = "rw"
-            env["PROJECT_READ_ONLY"] = "false"
-        case _:
-            env["MCP_PROJECT_MOUNT_MODE"] = "ro"
-            env["PROJECT_READ_ONLY"] = "true"
+    if cfg.project_access == "rw":
+        env["MCP_PROJECT_MOUNT_MODE"] = "rw"
+        env["PROJECT_READ_ONLY"] = "false"
+    else:
+        env["MCP_PROJECT_MOUNT_MODE"] = "ro"
+        env["PROJECT_READ_ONLY"] = "true"
+
     # tasks_access: off | ro (default) | rw
-    match cfg.tasks_access:
-        case "off":
-            env["ENABLE_CONTEXT_TOOLS"] = "false"
-            env["MCP_TASKS_MOUNT_MODE"] = "off"
-            env["TASKS_READ_ONLY"] = "true"
-        case "rw":
-            env["ENABLE_CONTEXT_TOOLS"] = "true"
-            env["MCP_TASKS_MOUNT_MODE"] = "rw"
-            env["TASKS_READ_ONLY"] = "false"
-        case _:
-            env["ENABLE_CONTEXT_TOOLS"] = "true"
-            env["MCP_TASKS_MOUNT_MODE"] = "ro"
-            env["TASKS_READ_ONLY"] = "true"
+    if cfg.tasks_access == "off":
+        env["ENABLE_CONTEXT_TOOLS"] = "false"
+        env["MCP_TASKS_MOUNT_MODE"] = "off"
+        env["TASKS_READ_ONLY"] = "true"
+    elif cfg.tasks_access == "rw":
+        env["ENABLE_CONTEXT_TOOLS"] = "true"
+        env["MCP_TASKS_MOUNT_MODE"] = "rw"
+        env["TASKS_READ_ONLY"] = "false"
+    else:
+        env["ENABLE_CONTEXT_TOOLS"] = "true"
+        env["MCP_TASKS_MOUNT_MODE"] = "ro"
+        env["TASKS_READ_ONLY"] = "true"
     return env
 
 
@@ -782,10 +799,11 @@ def read_cloud_proxy_socket_path(config_path: Path | None = None) -> Path:
 
 
 def read_cloud_proxy_port(config_path: Path | None = None) -> int:
-    """Read the port from cloud-proxy.yaml (TCP mode only). DEPRECATED.
+    """Deprecated TCP-only host/port accessor for cloud-proxy config.
 
-    Logs WARNING. Use read_cloud_proxy_socket_path for UDS mode.
-    Returns 8200 if TCP configured, else default (for backward compat).
+    Cloud Proxy now defaults to Unix Domain Socket transport and this helper
+    remains only for compatibility with older TCP-based configs. Prefer
+    ``read_cloud_proxy_socket_path`` for new code.
     """
     logger.warning(
         "read_cloud_proxy_port is deprecated; cloud proxy defaults to UDS. "
@@ -804,9 +822,11 @@ def read_cloud_proxy_port(config_path: Path | None = None) -> int:
 
 
 def read_cloud_proxy_host(config_path: Path | None = None) -> str:
-    """Read the host from cloud-proxy.yaml (TCP mode only). DEPRECATED.
+    """Deprecated TCP-only host accessor for cloud-proxy config.
 
-    Logs WARNING. Use read_cloud_proxy_socket_path for UDS mode.
+    Cloud Proxy now defaults to Unix Domain Socket transport and this helper
+    remains only for compatibility with older TCP-based configs. Prefer
+    ``read_cloud_proxy_socket_path`` for new code.
     """
     logger.warning(
         "read_cloud_proxy_host is deprecated; cloud proxy defaults to UDS. "
@@ -901,6 +921,9 @@ def write_cloud_proxy_url_to_stargate(proxy_url: str) -> None:
             )
             return
     if not isinstance(data, dict):
+        logger.error(
+            "stargate.yaml content is not a dictionary; cannot update cloud_proxy URL."
+        )
         return
     if "cloud_proxy" not in data:
         data["cloud_proxy"] = {}

@@ -44,11 +44,11 @@ def _node_env_path(node_id: str) -> Path:
 
 def _validate_node_env(env: dict[str, str]) -> list[str]:
     """Return list of missing required keys."""
-    return [k for k in _REQUIRED_KEYS if not (env.get(k) or "").strip()]
+    return [k for k in _REQUIRED_KEYS if not env.get(k, "").strip()]
 
 
 def _build_env(node_env: dict[str, str]) -> dict[str, str]:
-    env = dict(os.environ)
+    env: dict[str, str] = dict(os.environ)
     env.update(load_env_file(_ROOT / ".env.local"))
     env.update(node_env)
     return env
@@ -65,8 +65,9 @@ def _render_template(template: Path, env: dict[str, str]) -> Path:
         key = m.group(1)
         value = env.get(key)
         if value is None:
-            logger.error("Template variable ${%s} has no value in env", key)
-            return m.group(0)
+            error_msg = f"Template variable ${{{key}}} has no value in env. Cannot render template."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         return value
 
     rendered = _ENV_VAR_RE.sub(_replace, text)
@@ -87,19 +88,20 @@ _STARGATE_STARTUP_TIMEOUT = 60
 
 
 def _write_stargate_pid(pid: int) -> None:
-    """Write relay Stargate PID for ServiceController stop/restart flows."""
+    """Persist relay Stargate PID for ServiceController lifecycle operations."""
     pid_path = _GATEWAY_DIR / "stargate.pid"
     pid_path.parent.mkdir(parents=True, exist_ok=True)
     pid_path.write_text(f"{pid}\n")
 
 
-def _run_build(scope: str = "all") -> int:
+def _run_build(node_env: dict[str, str], scope: str = "all") -> int:
     if not _BUILD_SCRIPT.exists():
         print("ERROR: Build script not found:", _BUILD_SCRIPT, file=sys.stderr)
         return 1
     flags = _SCOPE_FLAGS.get(scope, _SCOPE_FLAGS["all"])
     return subprocess.run(
         [str(_BUILD_SCRIPT), *flags, "--refresh-source"],
+        env=_build_env(node_env),
         cwd=str(_ROOT),
     ).returncode
 
@@ -109,9 +111,13 @@ def _run_stop(node_id: str) -> int:
     import asyncio
 
     async def stop() -> str:
-        out = await controller.stop_stargate()
-        print(out)
-        return out
+        try:
+            out = await controller.stop_stargate()
+            print(out)
+            return out
+        except Exception as e:
+            logger.error("Failed to stop Stargate: %s", e)
+            return f"Error stopping Stargate: {e}"
 
     asyncio.run(stop())
     result = subprocess.run(
@@ -168,7 +174,7 @@ def _stop_existing_container(node_id: str) -> None:
 def _run_start(
     node_id: str, node_env: dict[str, str], do_build: bool, scope: str = "all"
 ) -> int:
-    if do_build and _run_build(scope) != 0:
+    if do_build and _run_build(node_env, scope) != 0:
         return 1
     if not _COMPOSE_PATH.exists():
         print("ERROR: Compose file not found:", _COMPOSE_PATH, file=sys.stderr)
@@ -238,10 +244,16 @@ def _launch_stargate(node_id: str, stargate_env: dict[str, str]) -> int:
                     print(f"Relay started (PID {proc.pid})")
                     return 0
             elif proc.poll() is not None:
-                for rest in reader:
-                    print(rest.rstrip())
+                remaining_output = "".join(reader).strip()
+                if remaining_output:
+                    logger.error(
+                        "Stargate exited early (code %d). Output:\n%s",
+                        proc.returncode,
+                        remaining_output,
+                    )
+                else:
+                    logger.error("Stargate exited early (code %d)", proc.returncode)
                 (_GATEWAY_DIR / "stargate.pid").unlink(missing_ok=True)
-                logger.error("Stargate exited early (code %d)", proc.returncode)
                 return proc.returncode
             else:
                 time.sleep(0.2)
@@ -258,6 +270,7 @@ def _launch_stargate(node_id: str, stargate_env: dict[str, str]) -> int:
 
 
 def main() -> int:
+    """Parse CLI args and dispatch relay stop/restart/start operations."""
     parser = argparse.ArgumentParser(
         description="Start or stop relay+edge on this host (headless; no TUI)."
     )
