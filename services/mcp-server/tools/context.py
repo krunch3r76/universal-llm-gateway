@@ -27,11 +27,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TASKS_ROOT = Path(os.environ.get("TASKS_ROOT", "/data/tasks"))
+_TODOS_DB = Path(os.environ.get("TODOS_DB", "/data/cortex/todos.db"))
 _ALLOWED_WRITE_SUFFIXES = {".md", ".txt", ".yaml", ".yml"}
-_TASKS_READ_ONLY = (
-    os.environ.get("TASKS_READ_ONLY", "false").strip().lower()
-    in {"1", "true", "yes", "on"}
-)
+_TASKS_READ_ONLY = os.environ.get("TASKS_READ_ONLY", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def _read_only_error() -> dict[str, str]:
@@ -43,6 +46,20 @@ def _read_only_error() -> dict[str, str]:
     }
 
 
+def _record_read_only_violation(
+    *,
+    tool: str,
+    path: str | None = None,
+    operation: str | None = None,
+) -> None:
+    payload: dict[str, str] = {"tool": tool}
+    if path is not None:
+        payload["path"] = path
+    if operation is not None:
+        payload["operation"] = operation
+    record("mcp.tool.read.only.violation", **payload)
+
+
 def _safe_tasks_path(relative: str) -> Path:
     """Resolve *relative* inside the tasks root, rejecting traversal."""
     clean = relative.lstrip("/")
@@ -51,6 +68,7 @@ def _safe_tasks_path(relative: str) -> Path:
     try:
         candidate.relative_to(resolved_root)
     except ValueError:
+        record("mcp.tool.path.traversal.rejected", path=relative)
         raise ValueError(
             f"Path {relative!r} resolves outside tasks root; traversal rejected"
         )
@@ -64,53 +82,78 @@ def register_context_tools(mcp: FastMCP) -> None:
     def list_todos(
         status: str = "open",
         domain: str | None = None,
-        limit: int = 20,
+        context: str | None = None,
+        priority: str | None = None,
+        limit: int = 30,
     ) -> dict[str, list[dict[str, str]] | str]:
-        """List todo items from the workspace todo list.
+        """List todo items from the todos database.
 
-        Filters by status and optionally by domain. Returns structured
-        items without the full 2000-line YAML to save context.
+        Filters by status, domain, context, and/or priority. Returns
+        structured items for quick scanning without loading full descriptions.
 
         Args:
             status: Filter by status (default "open"). Use "all" for everything.
-            domain: Optional domain filter (e.g. "routing", "pipeline", "tooling").
-            limit: Maximum items to return (default 20).
+            domain: Optional domain filter (substring match, e.g. "routing").
+            context: Optional context filter (e.g. "universal-llm-gateway").
+            priority: Optional priority filter (e.g. "short_term", "high").
+            limit: Maximum items to return (default 30).
 
         Returns:
-            {"items": [{"id", "title", "status", "priority", "domain"}, ...]}
+            {"items": [{"id", "title", "status", "priority", "domain", "context"}, ...]}
         """
-        todo_path = _TASKS_ROOT / "todo.yaml"
-        if not todo_path.exists():
-            return {"error": "todo.yaml not found"}
+        import sqlite3 as _sqlite3
+
+        db_path = _TODOS_DB
+        if not db_path.exists():
+            return {"error": f"todos.db not found at {db_path}"}
+
+        clauses: list[str] = []
+        params: list[str] = []
+
+        if status != "all":
+            clauses.append("status = ?")
+            params.append(status)
+        if domain:
+            clauses.append("domain LIKE ?")
+            params.append(f"%{domain}%")
+        if context:
+            clauses.append("context = ?")
+            params.append(context)
+        if priority:
+            clauses.append("priority = ?")
+            params.append(priority)
+
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT id, title, status, priority, domain, context FROM todos{where} ORDER BY rowid LIMIT ?"
+        params.append(str(limit))
 
         try:
-            data = yaml.safe_load(todo_path.read_text(encoding="utf-8")) or {}
-        except (OSError, yaml.YAMLError) as e:
-            return {"error": f"Failed to parse todo.yaml: {e}"}
+            conn = _sqlite3.connect(str(db_path))
+            conn.row_factory = _sqlite3.Row
+            rows = conn.execute(sql, params).fetchall()
+            conn.close()
+        except _sqlite3.Error as exc:
+            return {"error": f"DB query failed: {exc}"}
 
-        raw_items = data.get("items", [])
-        filtered = []
-        for item in raw_items:
-            if status != "all" and item.get("status") != status:
-                continue
-            if domain and domain not in (item.get("domain") or ""):
-                continue
-            filtered.append(
-                {
-                    "id": item.get("id", ""),
-                    "title": item.get("title", ""),
-                    "status": item.get("status", ""),
-                    "priority": item.get("priority", ""),
-                    "domain": item.get("domain", ""),
-                }
-            )
-            if len(filtered) >= limit:
-                break
+        items = [dict(row) for row in rows]
 
         logger.info(
-            "list_todos: status=%s domain=%s → %d items", status, domain, len(filtered)
+            "list_todos: status=%s domain=%s context=%s → %d items",
+            status,
+            domain,
+            context,
+            len(items),
         )
-        return {"items": filtered}
+        record(
+            "mcp.tool.todo.listed",
+            status=status,
+            domain=domain or "",
+            context=context or "",
+            priority=priority or "",
+            limit=limit,
+            count=len(items),
+        )
+        return {"items": items}
 
     @mcp.tool()
     def list_journal_entries(
@@ -134,8 +177,13 @@ def register_context_tools(mcp: FastMCP) -> None:
             return {"error": "journal/index.yaml not found"}
 
         try:
-            data = yaml.safe_load(index_path.read_text(encoding="utf-8")) or {}
-        except (OSError, yaml.YAMLError) as e:
+            raw_content = index_path.read_text(encoding="utf-8")
+        except OSError as e:
+            return {"error": f"Failed to read journal index file: {e}"}
+
+        try:
+            data = yaml.safe_load(raw_content) or {}
+        except yaml.YAMLError as e:
             return {"error": f"Failed to parse journal index: {e}"}
 
         raw_entries = data.get("entries", [])
@@ -158,6 +206,12 @@ def register_context_tools(mcp: FastMCP) -> None:
         logger.info(
             "list_journal_entries: domain=%s → %d entries", domain, len(filtered)
         )
+        record(
+            "mcp.tool.journal.listed",
+            domain=domain or "",
+            limit=limit,
+            count=len(filtered),
+        )
         return {"entries": filtered}
 
     @mcp.tool()
@@ -178,6 +232,7 @@ def register_context_tools(mcp: FastMCP) -> None:
 
         content = entry_path.read_text(encoding="utf-8", errors="replace")
         logger.info("read_journal_entry: %s (%d chars)", slug, len(content))
+        record("mcp.tool.journal.read", slug=slug, chars=len(content))
         return {"content": content, "slug": slug}
 
     @mcp.tool()
@@ -207,6 +262,7 @@ def register_context_tools(mcp: FastMCP) -> None:
             {"status": "created", "path": "<journal entry path>"}
         """
         if _TASKS_READ_ONLY:
+            _record_read_only_violation(tool="write_journal_entry")
             return _read_only_error()
 
         entry_path = _safe_tasks_path(f"journal/{slug}.md")
@@ -243,10 +299,14 @@ def register_context_tools(mcp: FastMCP) -> None:
 
         if index_path.exists():
             try:
-                index_data = (
-                    yaml.safe_load(index_path.read_text(encoding="utf-8")) or {}
+                raw_content = index_path.read_text(encoding="utf-8")
+                index_data = yaml.safe_load(raw_content) or {}
+            except OSError as e:
+                logger.warning(
+                    "Failed to read journal index file %s: %s", index_path, e
                 )
-            except (OSError, yaml.YAMLError) as e:
+                index_data = {}
+            except yaml.YAMLError as e:
                 logger.warning("Failed to parse journal index %s: %s", index_path, e)
                 index_data = {}
         else:
@@ -261,6 +321,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         )
 
         logger.info("write_journal_entry: created %s", slug)
+        record("mcp.tool.journal.created", slug=slug)
         return {"status": "created", "path": str(entry_path)}
 
     @mcp.tool()
@@ -268,7 +329,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         """List files and directories under the tasks/ workspace context.
 
         Use this to discover what's available: journal/, discoveries/,
-        lessons/, specs/, faq/, todo.yaml, etc.
+        lessons/, specs/, faq/, etc.
 
         Args:
             path: Relative path within tasks/ (empty = root).
@@ -286,6 +347,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         logger.info(
             "list_context_directory: %s → %d entries", path or "/", len(entries)
         )
+        record("mcp.tool.context.directory.listed", path=path or "/", count=len(entries))
         return {"entries": entries}
 
     @mcp.tool()
@@ -308,6 +370,7 @@ def register_context_tools(mcp: FastMCP) -> None:
 
         content = target.read_text(encoding="utf-8", errors="replace")
         logger.info("read_context_file: %s (%d chars)", path, len(content))
+        record("mcp.tool.context.file.read", path=path, chars=len(content))
         return {"content": content, "path": path}
 
     @mcp.tool()
@@ -328,11 +391,22 @@ def register_context_tools(mcp: FastMCP) -> None:
             {"status": "written", "path": "<relative path>"}
         """
         if _TASKS_READ_ONLY:
+            _record_read_only_violation(tool="write_context_file", path=path)
             return _read_only_error()
 
-        target = _safe_tasks_path(path)
+        try:
+            target = _safe_tasks_path(path)
+        except ValueError as exc:
+            record("mcp.tool.context.file.write.failed", path=path, reason="path_error")
+            return {"error": str(exc)}
         suffix = target.suffix.lower()
         if suffix not in _ALLOWED_WRITE_SUFFIXES:
+            record(
+                "mcp.tool.context.file.write.failed",
+                path=path,
+                reason="unsupported_suffix",
+                suffix=suffix,
+            )
             return {
                 "error": f"Unsupported format {suffix!r}. "
                 f"Allowed: {', '.join(sorted(_ALLOWED_WRITE_SUFFIXES))}"
@@ -341,6 +415,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         logger.info("write_context_file: wrote %s (%d chars)", path, len(content))
+        record("mcp.tool.context.file.written", path=path, chars=len(content))
         return {"status": "written", "path": path}
 
     @mcp.tool()
@@ -382,6 +457,9 @@ def register_context_tools(mcp: FastMCP) -> None:
             On error: {"error": "..."}
         """
         if _TASKS_READ_ONLY:
+            _record_read_only_violation(
+                tool="edit_context_file", path=path, operation=operation
+            )
             return cast(dict[str, str | int], _read_only_error())
 
         try:
@@ -396,6 +474,10 @@ def register_context_tools(mcp: FastMCP) -> None:
             }
 
         try:
+            if operation == "replace" and target is None:
+                raise ValueError(
+                    "Argument 'target' is required for 'replace' operation"
+                )
             result = perform_edit(
                 path=target_path,
                 operation=operation,
@@ -422,12 +504,13 @@ def register_context_tools(mcp: FastMCP) -> None:
             record("mcp.tool.file.edited", **event_payload)
             logger.info("edit_context_file: %s on %s", operation, path)
             return result
-        except (FileNotFoundError, ValueError) as exc:
-            reason = (
-                "not_found"
-                if isinstance(exc, FileNotFoundError)
-                else "validation_error"
-            )
+        except (FileNotFoundError, ValueError, OSError) as exc:
+            if isinstance(exc, FileNotFoundError):
+                reason = "not_found"
+            elif isinstance(exc, ValueError):
+                reason = "validation_error"
+            else:
+                reason = "os_error"
             record(
                 "mcp.tool.file.edit_failed",
                 sandbox="tasks",
@@ -438,6 +521,19 @@ def register_context_tools(mcp: FastMCP) -> None:
             )
             logger.warning("edit_context_file failed on %s: %s", path, exc)
             return {"error": str(exc)}
+        except Exception as exc:
+            record(
+                "mcp.tool.file.edit_failed",
+                sandbox="tasks",
+                path=path,
+                operation=operation,
+                reason="unexpected_error",
+                error_message=str(exc),
+            )
+            logger.exception(
+                "edit_context_file encountered an unexpected error on %s", path
+            )
+            return {"error": f"An unexpected error occurred: {exc}"}
 
     @mcp.tool()
     def delete_context_file(path: str) -> dict[str, str]:
@@ -454,17 +550,23 @@ def register_context_tools(mcp: FastMCP) -> None:
             On error: {"error": "..."}
         """
         if _TASKS_READ_ONLY:
+            _record_read_only_violation(tool="delete_context_file", path=path)
             return _read_only_error()
 
         try:
             target = _safe_tasks_path(path)
         except ValueError as exc:
+            record("mcp.tool.file.delete.failed", path=path, reason="path_error")
             return {"error": str(exc)}
 
         if not target.exists():
+            record("mcp.tool.file.delete.failed", path=path, reason="not_found")
             return {"error": f"File not found: {path!r}"}
         if not target.is_file():
-            return {"error": f"Path is not a file (directories cannot be deleted): {path!r}"}
+            record("mcp.tool.file.delete.failed", path=path, reason="not_file")
+            return {
+                "error": f"Path is not a file (directories cannot be deleted): {path!r}"
+            }
 
         target.unlink()
         record("mcp.tool.file.deleted", sandbox="tasks", path=path)

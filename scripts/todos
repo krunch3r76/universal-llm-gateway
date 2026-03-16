@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""Todo manager — direct SQLite CRUD, no service dependency.
+
+Same DB as MCP sqlite_execute/sqlite_query, so human CLI and agent
+tools always see the same state.
+
+Usage:
+    todos list [--status STATUS] [--domain DOMAIN] [--priority PRIORITY] [--context CTX]
+    todos add --title TITLE --domain DOMAIN [--priority PRIORITY] [--context CTX] [--description DESC]
+    todos show ID
+    todos done ID
+    todos defer ID
+    todos edit ID --field FIELD --value VALUE
+    todos search QUERY
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sqlite3
+import sys
+import textwrap
+from pathlib import Path
+
+_DB_PATH = Path(os.environ.get("TODOS_DB", os.path.expanduser("~/.cortex/todos.db")))
+_DEFAULT_CONTEXT = "universal-llm-gateway"
+_VALID_STATUSES = {"open", "in_progress", "deferred", "done", "resolved", "blocked"}
+_VALID_PRIORITIES = {"critical", "high", "short_term", "medium_term", "backlog"}
+_EDITABLE_FIELDS = {
+    "title",
+    "status",
+    "priority",
+    "domain",
+    "context",
+    "description",
+    "complexity",
+    "depends_on",
+    "notes",
+}
+
+
+def _connect() -> sqlite3.Connection:
+    if not _DB_PATH.exists():
+        print(f"Error: database not found at {_DB_PATH}", file=sys.stderr)
+        print("Run: python scripts/migrate-todos-to-db.py", file=sys.stderr)
+        sys.exit(1)
+    conn = sqlite3.connect(str(_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _slugify(text: str) -> str:
+    """Convert title to kebab-case id."""
+    slug = text.lower().strip()
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug[:80]
+
+
+def cmd_list(args: argparse.Namespace) -> None:
+    conn = _connect()
+    clauses: list[str] = []
+    params: list[str] = []
+
+    if args.status and args.status != "all":
+        clauses.append("status = ?")
+        params.append(args.status)
+    if args.domain:
+        clauses.append("domain LIKE ?")
+        params.append(f"%{args.domain}%")
+    if args.priority:
+        clauses.append("priority = ?")
+        params.append(args.priority)
+    if args.context:
+        clauses.append("context = ?")
+        params.append(args.context)
+
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = f"SELECT id, title, status, priority, domain FROM todos{where} ORDER BY rowid LIMIT ?"
+    params.append(str(args.limit))
+
+    rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        print("No todos found.")
+        return
+
+    id_w = max(len(r["id"]) for r in rows)
+    id_w = min(id_w, 45)
+    for row in rows:
+        tid = row["id"][:45]
+        status = row["status"]
+        priority = row["priority"]
+        domain = row["domain"][:30] if row["domain"] else ""
+        title = row["title"][:60]
+        print(f"  {tid:<{id_w}}  {status:<12} {priority:<12} {domain:<30} {title}")
+
+    print(f"\n  ({len(rows)} items)")
+
+
+def cmd_add(args: argparse.Namespace) -> None:
+    conn = _connect()
+    todo_id = args.id or _slugify(args.title)
+    if not todo_id:
+        print("Error: could not derive id from title", file=sys.stderr)
+        sys.exit(1)
+
+    existing = conn.execute("SELECT id FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    if existing:
+        print(f"Error: todo {todo_id!r} already exists", file=sys.stderr)
+        sys.exit(1)
+
+    conn.execute(
+        """INSERT INTO todos (id, title, status, priority, domain, context, description)
+           VALUES (?, ?, 'open', ?, ?, ?, ?)""",
+        (
+            todo_id,
+            args.title,
+            args.priority or "backlog",
+            args.domain or "",
+            args.context,
+            args.description or "",
+        ),
+    )
+    conn.commit()
+    print(f"Created: {todo_id}")
+
+
+def cmd_show(args: argparse.Namespace) -> None:
+    conn = _connect()
+    row = conn.execute("SELECT * FROM todos WHERE id = ?", (args.id,)).fetchone()
+    if not row:
+        print(f"Not found: {args.id}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"  id:          {row['id']}")
+    print(f"  title:       {row['title']}")
+    print(f"  status:      {row['status']}")
+    print(f"  priority:    {row['priority']}")
+    print(f"  domain:      {row['domain']}")
+    print(f"  context:     {row['context']}")
+    print(f"  complexity:  {row['complexity']}")
+    print(f"  depends_on:  {row['depends_on']}")
+    print(f"  created_at:  {row['created_at']}")
+    print(f"  updated_at:  {row['updated_at']}")
+
+    if row["description"]:
+        print(f"\n  Description:\n{textwrap.indent(row['description'], '    ')}")
+
+    if row["refs"] and row["refs"] != "{}":
+        try:
+            refs = json.loads(row["refs"])
+            print("\n  Refs:")
+            for k, v in refs.items():
+                print(f"    {k}: {v}")
+        except json.JSONDecodeError:
+            print(f"\n  Refs: {row['refs']}")
+
+    if row["notes"]:
+        print(f"\n  Notes:\n{textwrap.indent(row['notes'], '    ')}")
+
+
+def cmd_done(args: argparse.Namespace) -> None:
+    _set_status(args.id, "done")
+
+
+def cmd_defer(args: argparse.Namespace) -> None:
+    _set_status(args.id, "deferred")
+
+
+def _set_status(todo_id: str, status: str) -> None:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT id, status FROM todos WHERE id = ?", (todo_id,)
+    ).fetchone()
+    if not row:
+        print(f"Not found: {todo_id}", file=sys.stderr)
+        sys.exit(1)
+
+    old = row["status"]
+    conn.execute(
+        "UPDATE todos SET status = ?, updated_at = datetime('now') WHERE id = ?",
+        (status, todo_id),
+    )
+    conn.commit()
+    print(f"{todo_id}: {old} → {status}")
+
+
+def cmd_edit(args: argparse.Namespace) -> None:
+    field = args.field
+    if field not in _EDITABLE_FIELDS:
+        print(
+            f"Error: field {field!r} not editable. Choose from: {sorted(_EDITABLE_FIELDS)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if field == "status" and args.value not in _VALID_STATUSES:
+        print(
+            f"Error: invalid status {args.value!r}. Choose from: {sorted(_VALID_STATUSES)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    conn = _connect()
+    row = conn.execute("SELECT id FROM todos WHERE id = ?", (args.id,)).fetchone()
+    if not row:
+        print(f"Not found: {args.id}", file=sys.stderr)
+        sys.exit(1)
+
+    conn.execute(
+        f"UPDATE todos SET {field} = ?, updated_at = datetime('now') WHERE id = ?",
+        (args.value, args.id),
+    )
+    conn.commit()
+    print(f"{args.id}: {field} = {args.value}")
+
+
+def cmd_search(args: argparse.Namespace) -> None:
+    conn = _connect()
+    pattern = f"%{args.query}%"
+    rows = conn.execute(
+        """SELECT id, title, status, priority, domain FROM todos
+           WHERE title LIKE ? OR description LIKE ? OR id LIKE ?
+           ORDER BY rowid LIMIT ?""",
+        (pattern, pattern, pattern, args.limit),
+    ).fetchall()
+
+    if not rows:
+        print("No matches.")
+        return
+
+    id_w = max(len(r["id"]) for r in rows)
+    id_w = min(id_w, 45)
+    for row in rows:
+        tid = row["id"][:45]
+        status = row["status"]
+        title = row["title"][:60]
+        print(f"  {tid:<{id_w}}  {status:<12} {title}")
+
+    print(f"\n  ({len(rows)} matches)")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="todos",
+        description="Todo manager — direct SQLite CRUD",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_list = sub.add_parser("list", aliases=["ls"], help="List todos")
+    p_list.add_argument(
+        "--status",
+        "-s",
+        default="open",
+        help="Filter by status (default: open, use 'all' for everything)",
+    )
+    p_list.add_argument("--domain", "-d", help="Filter by domain (substring match)")
+    p_list.add_argument("--priority", "-p", help="Filter by priority")
+    p_list.add_argument("--context", "-c", default=None, help="Filter by context")
+    p_list.add_argument(
+        "--limit", "-n", type=int, default=50, help="Max items (default: 50)"
+    )
+
+    p_add = sub.add_parser("add", help="Add a todo")
+    p_add.add_argument("--title", "-t", required=True, help="Title")
+    p_add.add_argument("--domain", "-d", default="", help="Domain")
+    p_add.add_argument("--priority", "-p", default="backlog", help="Priority")
+    p_add.add_argument(
+        "--context", "-c", default=_DEFAULT_CONTEXT, help="Context namespace"
+    )
+    p_add.add_argument("--description", help="Description text")
+    p_add.add_argument("--id", default=None, help="Override auto-generated id")
+
+    p_show = sub.add_parser("show", help="Show todo details")
+    p_show.add_argument("id", help="Todo ID")
+
+    p_done = sub.add_parser("done", help="Mark todo as done")
+    p_done.add_argument("id", help="Todo ID")
+
+    p_defer = sub.add_parser("defer", help="Defer a todo")
+    p_defer.add_argument("id", help="Todo ID")
+
+    p_edit = sub.add_parser("edit", help="Edit a todo field")
+    p_edit.add_argument("id", help="Todo ID")
+    p_edit.add_argument(
+        "--field",
+        "-f",
+        required=True,
+        help=f"Field to edit: {sorted(_EDITABLE_FIELDS)}",
+    )
+    p_edit.add_argument("--value", "-v", required=True, help="New value")
+
+    p_search = sub.add_parser("search", aliases=["find"], help="Search todos by text")
+    p_search.add_argument("query", help="Search text")
+    p_search.add_argument("--limit", "-n", type=int, default=20, help="Max results")
+
+    args = parser.parse_args()
+
+    handlers = {
+        "list": cmd_list,
+        "ls": cmd_list,
+        "add": cmd_add,
+        "show": cmd_show,
+        "done": cmd_done,
+        "defer": cmd_defer,
+        "edit": cmd_edit,
+        "search": cmd_search,
+        "find": cmd_search,
+    }
+    handlers[args.command](args)
+
+
+if __name__ == "__main__":
+    main()

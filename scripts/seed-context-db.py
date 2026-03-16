@@ -185,7 +185,7 @@ MCP_TOOLS = [
     {
         "name": "list_todos",
         "category": "context",
-        "description": "Query todo.yaml for work items",
+        "description": "Query todos.db for work items (status, domain, context, priority filters)",
         "parameters": '{"status": "string, default open", "domain": "string, optional", "limit": "int, default 20"}',
         "when_to_use": "Checking current priorities and open work items",
         "when_not_to_use": "N/A",

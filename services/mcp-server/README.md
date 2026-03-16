@@ -74,14 +74,19 @@ Access to browser-clipped content saved via the bookmarklet endpoint.
 
 ### Context (`tools/context.py`)
 
-Structured access to the project's `tasks/` directory (todo, journal, discoveries, lessons).
+Structured access to the project's `tasks/` directory (journal, discoveries, lessons) and todos DB.
 
 | Tool | Purpose |
 |------|---------|
-| `read_todo` | Read todo items from `tasks/todo.yaml` |
-| `read_journal` | Read journal entries |
-| `list_discoveries` | List discovery files |
-| (and others) | Journal write, discovery read, lesson access |
+| `list_todos` | Query todos from `~/.cortex/todos.db` (status, domain, context, priority filters) |
+| `list_journal_entries` | List recent journal entries with metadata |
+| `read_journal_entry` | Read full journal entry by slug |
+| `write_journal_entry` | Create journal entry with indexing |
+| `list_context_directory` | Browse `tasks/` directory tree |
+| `read_context_file` | Read any file from `tasks/` |
+| `write_context_file` | Write file to `tasks/` |
+| `edit_context_file` | Atomic prepend/append/insert/replace on `tasks/` files |
+| `delete_context_file` | Delete a file from `tasks/` |
 
 Configurable: read-only or read-write via `TASKS_READ_ONLY` / mount mode. Disabled entirely with `ENABLE_CONTEXT_TOOLS=false`.
 
