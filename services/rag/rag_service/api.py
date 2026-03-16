@@ -36,13 +36,21 @@ router = APIRouter()
 
 @router.post("/search", response_model=SearchResponse)
 async def search_endpoint(request: SearchRequest) -> SearchResponse:
-    """Execute RAG search request and return ranked chunks."""
+    """Execute the RAG retrieval flow and return ranked chunk payloads.
+
+    Delegates search execution to the shared search module so endpoint behavior
+    remains a thin transport boundary over core retrieval logic.
+    """
     return await search.execute_search(request)
 
 
 @router.post("/chunks_by_index", response_model=ChunksByIndexResponse)
 async def chunks_by_index(request: ChunksByIndexRequest) -> ChunksByIndexResponse:
-    """Fetch specific chunks by source path and chunk indices."""
+    """Fetch an explicit set of chunk positions for one or more sources.
+
+    This endpoint is used by downstream workflows that need deterministic
+    source/index addressing rather than semantic top-k retrieval.
+    """
     collection = state._get_collection()
     results: list[ChunkByIndexItem] = []
 
@@ -111,7 +119,11 @@ async def get_scopes() -> ScopesResponse:
 
 @router.get("/extraction/failed", response_model=FailedExtractionResponse)
 def get_failed_extractions(source: str | None = None) -> FailedExtractionResponse:
-    """Return extraction-failure records, optionally narrowed to one source."""
+    """Return persisted extraction-failure records for observability and recovery.
+
+    When `source` is provided, results are restricted to that document path;
+    otherwise all known failed extraction rows are returned.
+    """
     if state._property_index is None:
         return FailedExtractionResponse(total=0, chunks=[])
     records = state._property_index.get_failed_chunks(source=source)
@@ -131,7 +143,11 @@ def get_failed_extractions(source: str | None = None) -> FailedExtractionRespons
 
 
 def _set_collection(col: chromadb.Collection) -> None:
-    """Swap collection instance for admin operations and tests."""
+    """Replace the active collection reference for admin mutations and tests.
+
+    This helper centralizes collection swapping so route wiring can inject
+    replacement collections without importing mutable state directly.
+    """
     state._collection = col
 
 
@@ -144,5 +160,6 @@ _admin_router = register_admin_routes(
     collection_name=state.COLLECTION_NAME,
     get_property_index_fn=lambda: state._property_index,
     get_event_bus_fn=lambda: state._event_bus,
+    get_config_fn=lambda: state._config,
 )
 router.include_router(_admin_router)

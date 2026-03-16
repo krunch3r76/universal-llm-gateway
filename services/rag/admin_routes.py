@@ -39,12 +39,15 @@ from services.rag.models import (
     ClearDirectoryRequest,
     ClearDirectoryResponse,
     ClearResponse,
+    CoverageResponse,
     ExtractionExportItem,
     ExtractionExportResponse,
     IndexDirectoryRequest,
     IndexDirectoryResponse,
     IndexRequest,
     IndexResult,
+    PrefixCoverage,
+    ScopeCoverage,
     SourceResponse,
     SourcesResponse,
     StatsResponse,
@@ -145,6 +148,7 @@ def register_admin_routes(
     collection_name: str,
     get_property_index_fn: Callable[[], PropertyIndex | None],
     get_event_bus_fn: Callable[[], Any | None] | None = None,
+    get_config_fn: Callable[[], Any | None] | None = None,
 ) -> APIRouter:
     """Register admin routes with the shared service state via closures."""
 
@@ -378,6 +382,10 @@ def register_admin_routes(
         sources_seen: set[str] = set()
         for chunk_id, text, meta in zip(ids, docs, metas):
             if not isinstance(meta, dict):
+                logger.warning(
+                    "Skipping chunk_id %s due to malformed metadata in extraction_export",
+                    chunk_id,
+                )
                 continue
             source = meta.get("source") or ""
             if not source:
@@ -422,13 +430,12 @@ def register_admin_routes(
             where={"source": path},
             include=["documents", "metadatas"],
         )
-        if not results["documents"]:
+        raw_documents = results.get("documents") or []
+        if not raw_documents:
             raise HTTPException(
                 status_code=404, detail=f"No chunks indexed for: {path}"
             )
-        documents = _align_list_length(
-            results.get("documents"), len(results["documents"]), lambda: ""
-        )
+        documents = _align_list_length(raw_documents, len(raw_documents), lambda: "")
         metadatas_list = _align_list_length(
             results.get("metadatas"), len(documents), dict
         )
@@ -473,6 +480,69 @@ def register_admin_routes(
             await prop_idx.clear()
             logger.info("Property index cleared alongside ChromaDB collection")
         return ClearResponse(deleted=deleted, collection=collection_name)
+
+    @router.get("/coverage", response_model=CoverageResponse)
+    def get_coverage() -> CoverageResponse:
+        """Per-scope, per-prefix view of indexed file counts and recency.
+
+        Aggregates property index sources against configured scope prefixes.
+        Optionally enriches with last_indexed timestamps from ChromaDB chunk
+        metadata (skipped when collection exceeds 100k chunks).
+        """
+        config = get_config_fn() if get_config_fn else None
+        if config is None:
+            return CoverageResponse(scopes={})
+
+        prop_idx = get_property_index_fn()
+        all_sources = prop_idx.get_sources() if prop_idx else []
+
+        # Build source -> max(indexed_at) from ChromaDB metadata.
+        # Skip for very large collections to keep this admin endpoint responsive.
+        source_last_indexed: dict[str, str] = {}
+        collection = get_collection_fn()
+        chunk_count = collection.count()
+        max_chunks_for_ts_scan = 100_000
+        if chunk_count <= max_chunks_for_ts_scan:
+            try:
+                raw = collection.get(include=["metadatas"])
+                for meta in raw.get("metadatas") or []:
+                    if not isinstance(meta, dict):
+                        continue
+                    src = meta.get("source", "")
+                    ts = meta.get("indexed_at", "")
+                    if isinstance(src, str) and isinstance(ts, str) and src and ts:
+                        existing = source_last_indexed.get(src, "")
+                        if ts > existing:
+                            source_last_indexed[src] = ts
+            except Exception as e:
+                logger.warning(
+                    "Coverage: ChromaDB timestamp scan failed, omitting last_indexed: %s",
+                    e,
+                    exc_info=True,
+                )
+
+        scopes: dict[str, ScopeCoverage] = {}
+        for scope_name, scope_def in config.scopes.items():
+            prefix_coverages: list[PrefixCoverage] = []
+            scope_total = 0
+            for pfx in scope_def.prefixes:
+                normalized = pfx.rstrip("/") + "/"
+                matched = [s for s in all_sources if s.startswith(normalized)]
+                count = len(matched)
+                scope_total += count
+                last_ts: str | None = None
+                for s in matched:
+                    ts = source_last_indexed.get(s)
+                    if ts and (last_ts is None or ts > last_ts):
+                        last_ts = ts
+                prefix_coverages.append(
+                    PrefixCoverage(path=pfx, indexed_files=count, last_indexed=last_ts)
+                )
+            scopes[scope_name] = ScopeCoverage(
+                prefixes=prefix_coverages, total_indexed=scope_total
+            )
+
+        return CoverageResponse(scopes=scopes)
 
     @router.post("/article", response_model=ArticleUpsertResponse)
     async def upsert_article(request: ArticleUpsertRequest) -> ArticleUpsertResponse:

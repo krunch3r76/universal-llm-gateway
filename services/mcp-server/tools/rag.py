@@ -42,8 +42,9 @@ def _pipeline_call(
     body: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        **({"pipeline_options": pipeline_options} if pipeline_options else {}),
     }
+    if pipeline_options:
+        body["pipeline_options"] = pipeline_options
 
     url = f"{_STARGATE_URL}/v1/chat/completions"
     with httpx.Client(timeout=timeout) as client:
@@ -62,6 +63,44 @@ def _rag_call(path: str, *, timeout: float) -> dict[str, Any]:
         if not isinstance(payload_obj, dict):
             raise ValueError("RAG response payload must be a JSON object")
         return cast(dict[str, Any], payload_obj)
+
+
+def _handle_rag_call_error(
+    exc: BaseException,
+    *,
+    endpoint_name: str,
+) -> dict[str, str]:
+    """Record/log RAG passthrough errors and return a user-facing error payload."""
+    signal = f"mcp.rag.{endpoint_name}.failed"
+    if isinstance(exc, httpx.ConnectError):
+        logger.warning("RAG %s connection failed: %s", endpoint_name, exc)
+        record(signal, error=str(exc))
+        return {
+            "error": (
+                f"RAG {endpoint_name} endpoint not reachable. "
+                "Ensure RAG is running and reachable through Stargate."
+            )
+        }
+    if isinstance(exc, httpx.TimeoutException):
+        logger.warning("RAG %s request timed out: %s", endpoint_name, exc)
+        record(signal, error="timeout")
+        return {"error": f"RAG {endpoint_name} request timed out."}
+    if isinstance(exc, httpx.HTTPStatusError):
+        logger.warning("RAG %s HTTP error: %s", endpoint_name, exc)
+        record(signal, error=f"{exc.response.status_code}")
+        return {
+            "error": (
+                f"RAG {endpoint_name} endpoint error: "
+                f"{exc.response.status_code} {exc.response.reason_phrase}"
+            )
+        }
+    if isinstance(exc, httpx.RequestError):
+        logger.warning("RAG %s request error: %s", endpoint_name, exc)
+        record(signal, error=str(exc))
+        return {"error": f"RAG {endpoint_name} request failed: {exc}"}
+    logger.warning("RAG %s invalid payload: %s", endpoint_name, exc)
+    record(signal, error="invalid_payload")
+    return {"error": f"RAG {endpoint_name} endpoint returned invalid payload."}
 
 
 def _handle_pipeline_error(
@@ -207,7 +246,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
     """Register RAG pipeline tools on *mcp*."""
 
     @mcp.tool()
-    def rag_list_scopes() -> dict[str, object]:
+    def rag_list_scopes() -> dict[str, Any]:
         """List available retrieval scopes from the RAG scope registry.
 
         Returns:
@@ -225,36 +264,14 @@ def register_rag_tools(mcp: FastMCP) -> None:
         record("mcp.rag.scopes.called")
         try:
             payload = _rag_call("api/v1/rag/scopes", timeout=_SCOPES_TIMEOUT)
-        except httpx.ConnectError as e:
-            logger.warning("RAG scopes connection failed: %s", e)
-            record("mcp.rag.scopes.failed", error=str(e))
-            return {
-                "error": (
-                    "RAG scopes endpoint not reachable. Ensure RAG is running and "
-                    "reachable through Stargate."
-                )
-            }
-        except httpx.TimeoutException as e:
-            logger.warning("RAG scopes request timed out: %s", e)
-            record("mcp.rag.scopes.failed", error="timeout")
-            return {"error": "RAG scopes request timed out."}
-        except httpx.HTTPStatusError as e:
-            logger.warning("RAG scopes HTTP error: %s", e)
-            record("mcp.rag.scopes.failed", error=f"{e.response.status_code}")
-            return {
-                "error": (
-                    f"RAG scopes endpoint error: "
-                    f"{e.response.status_code} {e.response.reason_phrase}"
-                )
-            }
-        except httpx.RequestError as e:
-            logger.warning("RAG scopes request error: %s", e)
-            record("mcp.rag.scopes.failed", error=str(e))
-            return {"error": f"RAG scopes request failed: {e}"}
-        except ValueError as e:
-            logger.warning("RAG scopes invalid payload: %s", e)
-            record("mcp.rag.scopes.failed", error="invalid_payload")
-            return {"error": "RAG scopes endpoint returned invalid payload."}
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+            ValueError,
+        ) as e:
+            return _handle_rag_call_error(e, endpoint_name="scopes")
 
         scopes_obj = payload.get("scopes", {})
         if not isinstance(scopes_obj, dict):
@@ -280,6 +297,51 @@ def register_rag_tools(mcp: FastMCP) -> None:
             count=len(scope_names),
         )
         return {"scopes": scope_names, "details": details}
+
+    @mcp.tool()
+    def rag_coverage() -> dict[str, Any]:
+        """Show per-scope, per-prefix indexed file counts and last-indexed timestamps.
+
+        Use this to check what's actually indexed in each retrieval scope
+        before running searches. Surfaces blind spots where a scope prefix
+        has zero indexed files or stale data.
+
+        Returns:
+            On success:
+                {
+                  "scopes": {
+                    "project": {
+                      "prefixes": [
+                        {"path": "/path/to/docs", "indexed_files": 18, "last_indexed": "2026-03-16T06:10:47"},
+                        {"path": "/path/to/journal", "indexed_files": 4, "last_indexed": "2026-03-15T22:33:53"}
+                      ],
+                      "total_indexed": 22
+                    }
+                  }
+                }
+            On error: {"error": "<message>"}
+        """
+        t0 = monotonic_now()
+        record("mcp.rag.coverage.called")
+        try:
+            payload = _rag_call("api/v1/rag/coverage", timeout=_SCOPES_TIMEOUT)
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+            ValueError,
+        ) as e:
+            return _handle_rag_call_error(e, endpoint_name="coverage")
+
+        duration = monotonic_now() - t0
+        scope_count = len(payload.get("scopes", {}))
+        record(
+            "mcp.rag.coverage.completed",
+            duration_s=round(duration, 3),
+            scope_count=scope_count,
+        )
+        return payload
 
     @mcp.tool()
     def rag_search(

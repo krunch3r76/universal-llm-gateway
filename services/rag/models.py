@@ -196,3 +196,24 @@ class ArticleUpsertRequest(BaseModel):
 class ArticleUpsertResponse(BaseModel):
     source_path: str
     created: bool
+
+
+class PrefixCoverage(BaseModel):
+    """Coverage stats for a single scope prefix path."""
+
+    path: str
+    indexed_files: int
+    last_indexed: str | None = None
+
+
+class ScopeCoverage(BaseModel):
+    """Aggregated coverage for a named retrieval scope."""
+
+    prefixes: list[PrefixCoverage]
+    total_indexed: int
+
+
+class CoverageResponse(BaseModel):
+    """Per-scope, per-prefix indexed file counts and recency."""
+
+    scopes: dict[str, ScopeCoverage]

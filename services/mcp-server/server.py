@@ -17,6 +17,7 @@ import socket
 import sys
 import time
 from asyncio.transports import BaseTransport
+from collections.abc import Callable
 from typing import Any, cast, override
 
 import uvicorn
@@ -30,12 +31,12 @@ from oauth_service import OAuthService
 from oauth_store import OAuthStore
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from starlette.types import Send
-
 from tools.browser import register_browser_tools
 from tools.clip import register_clip_tools
 from tools.context import register_context_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
+from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
 from tools.pipeline import register_pipeline_tools
 from tools.pipeline_consult import register_pipeline_consult_tools
@@ -72,12 +73,10 @@ def _env_truthy(name: str, default: bool) -> bool:
 
 
 def _patch_sse_ping() -> None:
-    """Force sse_starlette to emit real SSE events every N seconds.
+    """Patch SSE response construction to emit heartbeat events at a fixed cadence.
 
-    Middleboxes and firewalls may categorise SSE comment-only pings as
-    empty traffic.  Sending a named event with a payload resets idle
-    timers.  We inject ping_message_factory and ping interval via kwargs
-    so they're set during the original __init__ constructor path.
+    The patch injects a named `heartbeat` event and a configurable ping interval
+    during `EventSourceResponse` initialization so idle transports stay active.
     """
     _orig_init = EventSourceResponse.__init__
 
@@ -96,7 +95,11 @@ def _patch_sse_ping() -> None:
 
 
 def _patch_sse_lifecycle_events() -> None:
-    """Emit structured events for every SSE stream start/end."""
+    """Wrap SSE stream execution with structured lifecycle event emission.
+
+    Emits `mcp.sse.stream.started`, `mcp.sse.stream.aborted`, and
+    `mcp.sse.stream.ended` so stream health is visible in event telemetry.
+    """
     # Accessing protected member for lifecycle-event monkey-patch.
     _orig_stream = EventSourceResponse._stream_response  # type: ignore[attr-defined]
 
@@ -208,7 +211,11 @@ _PRIMARY_TOOLS: set[str] = {
 
 
 def _build_server() -> FastMCP:
-    """Construct and configure the FastMCP application with all registered tools."""
+    """Construct the FastMCP server, register tool surfaces, and prune exports.
+
+    The resulting server advertises a primary tool set and routes non-primary
+    tools through `dispatch` for clients with limited tool enumeration capacity.
+    """
     mcp: FastMCP = FastMCP("gateway-tools")
     register_filesystem_tools(mcp)
     register_manage_tools(mcp)
@@ -230,13 +237,14 @@ def _build_server() -> FastMCP:
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)
     register_quality_tools(mcp)
+    register_local_api_tools(mcp)
 
     @mcp.tool()
     def health() -> dict[str, str]:
         """Health check — confirms the MCP server is reachable."""
         return {"status": "ok"}
 
-    overflow_registry: dict[str, Any] = _prune_to_primary(mcp)
+    overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
 
     @mcp.tool()
     def dispatch(tool: str, arguments: str = "{}") -> dict[str, str]:
@@ -264,6 +272,8 @@ def _build_server() -> FastMCP:
           Pipeline:
             pipeline_consult(execution_id, step_name, problem)
             validate_pipeline(path)
+          Internal services:
+            local_api(service, method, path, body?, token?) — relay to Docker network services
           Journal & clips:
             read_journal_entry(id) — read entry
             write_journal_entry(title, content, tags?)
@@ -296,7 +306,7 @@ def _build_server() -> FastMCP:
         result = fn(**parsed)
         return {"tool": tool, "result": _json.dumps(result)}
 
-    primary_count = sum(1 for _ in _PRIMARY_TOOLS)
+    primary_count = len(_PRIMARY_TOOLS)
     logger.info(
         "Tool pruning: %d primary (advertised), %d overflow (via dispatch)",
         primary_count,
@@ -305,12 +315,16 @@ def _build_server() -> FastMCP:
     return mcp
 
 
-def _prune_to_primary(mcp: FastMCP) -> dict[str, Any]:
-    """Remove non-primary tools from MCP and return their fn references."""
+def _prune_to_primary(mcp: FastMCP) -> dict[str, Callable[..., Any]]:
+    """Remove non-primary tools from the exported MCP catalog.
+
+    Returns a registry of removed callables so `dispatch` can still invoke
+    them by name while keeping the advertised tool list intentionally compact.
+    """
     import asyncio
 
-    async def _collect() -> dict[str, Any]:
-        registry: dict[str, Any] = {}
+    async def _collect() -> dict[str, Callable[..., Any]]:
+        registry: dict[str, Callable[..., Any]] = {}
         all_tools = await mcp.list_tools()
         for t in all_tools:
             if t.name not in _PRIMARY_TOOLS:
@@ -341,6 +355,7 @@ class _UTCFormatter(logging.Formatter):
 
 
 def main() -> None:
+    """Initialize logging/auth/TLS state and run the MCP HTTPS server loop."""
     utc_fmt = _UTCFormatter(
         fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%SZ",
