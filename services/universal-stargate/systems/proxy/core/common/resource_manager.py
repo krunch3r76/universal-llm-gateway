@@ -218,10 +218,13 @@ class GatewayResourceManager(Sequential):
         Sequential execution: Iterates reservations dict during cleanup.
         """
         # Cancel all reservation expiration tasks
-        for reservation in list(self._reservations.values()):
+        for reservation_id in list(self._reservations.keys()):
+            reservation = self._reservations.get(reservation_id)
+            if reservation is None:
+                continue
             reservation.cancel_expiration()
             if reservation.state != "released":
-                self._release_reservation_internal(reservation.id)
+                self._release_reservation_internal(reservation_id)
 
         await self._stop_executor()
 
@@ -285,7 +288,7 @@ class GatewayResourceManager(Sequential):
             )
 
             # Publish event to update WebSocket cache
-            self._publish_reservation_event(reservation, created=True)
+            self._publish_reservation_event(reservation)
 
             return reservation
 
@@ -296,40 +299,70 @@ class GatewayResourceManager(Sequential):
 
     def _on_reservation_expired(self, reservation: ResourceReservation) -> None:
         """Called when a reservation expires (via its expiration task)."""
-        if reservation.id in self._reservations:
-            del self._reservations[reservation.id]
-
-            # Remove from model mapping
-            if reservation.model_id in self._reservations_by_model:
-                if self._reservations_by_model[reservation.model_id] == reservation.id:
-                    del self._reservations_by_model[reservation.model_id]
-
-            self._metrics["active_reservations"] -= 1
-            self._metrics["expired_reservations"] += 1
-
-            logger.warning(
-                f"Reservation {reservation.id[:16]} for {reservation.model_id} "
-                f"expired and cleaned up"
+        try:
+            task = asyncio.create_task(
+                self._handle_reservation_expired(reservation),
+                name=f"reservation-expired-{reservation.id[:16]}",
+            )
+            task.add_done_callback(self._on_expiration_task_done)
+        except RuntimeError as exc:
+            logger.error(
+                "Failed to enqueue expiration cleanup for reservation %s: %s",
+                reservation.id[:16],
+                exc,
             )
 
-            # Publish event to update WebSocket cache
-            self._publish_release_event(reservation, reason="expired")
+    def _on_expiration_task_done(self, task: asyncio.Task[None]) -> None:
+        """Log unexpected errors from async expiration cleanup tasks."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Reservation expiration cleanup task failed: %s", exc)
 
+    @sequential
+    async def _handle_reservation_expired(
+        self, reservation: ResourceReservation
+    ) -> None:
+        """Clean expired reservation state inside the sequential executor."""
+        if reservation.id not in self._reservations:
+            return
+
+        del self._reservations[reservation.id]
+
+        # Remove from model mapping
+        if reservation.model_id in self._reservations_by_model:
+            if self._reservations_by_model[reservation.model_id] == reservation.id:
+                del self._reservations_by_model[reservation.model_id]
+
+        self._metrics["active_reservations"] -= 1
+        self._metrics["expired_reservations"] += 1
+
+        logger.warning(
+            f"Reservation {reservation.id[:16]} for {reservation.model_id} "
+            f"expired and cleaned up"
+        )
+
+        # Publish event to update WebSocket cache
+        self._publish_release_event(reservation, reason="expired")
+
+    @sequential
     async def mark_reservation_active(self, reservation_id: str):
         """
         Mark reservation as active when model loading starts.
 
-        No sequentiality needed: Simple state update, no await.
+        Sequential execution: updates shared reservation state.
         """
         if reservation_id in self._reservations:
             self._reservations[reservation_id].state = "active"
             logger.debug(f"Activated reservation {reservation_id}")
 
+    @sequential
     async def release_reservation(self, reservation_id: str):
         """
         Release a reservation and update metrics.
 
-        No sequentiality needed: Simple state update, no await.
+        Sequential execution: modifies shared reservation and metric state.
         """
         self._release_reservation_internal(reservation_id)
 
@@ -422,7 +455,7 @@ class GatewayResourceManager(Sequential):
         }
 
     def _publish_reservation_event(
-        self, reservation: ResourceReservation, created: bool
+        self, reservation: ResourceReservation
     ) -> None:
         """
         Publish RESOURCE_RESERVED event to update WebSocket cache.

@@ -30,15 +30,6 @@ from .model_lifecycle.replication import (
     get_replication_policy,
 )
 from .model_lifecycle.status import GatewayStatusResult, ModelLoadingStatus, ModelStatus
-from .model_lifecycle.vllm_coordination import (
-    BatchRequest,
-    BatchResult,
-    VLLMBatchCoordinator,
-    VLLMGatewayStatus,
-    VLLMMultiGatewayCoordinator,
-    get_vllm_routing_config,
-    is_vllm_format,
-)
 from .types import (
     AttemptImmediateRoute,
     ConfigHelper,
@@ -75,14 +66,6 @@ __all__ = [
     "engine_supports_batching",
     # Replication errors
     "UnknownFormatError",
-    # vLLM stubs
-    "VLLMBatchCoordinator",
-    "VLLMMultiGatewayCoordinator",
-    "VLLMGatewayStatus",
-    "BatchRequest",
-    "BatchResult",
-    "is_vllm_format",
-    "get_vllm_routing_config",
     # Types
     "AttemptImmediateRoute",
     "ConfigHelper",

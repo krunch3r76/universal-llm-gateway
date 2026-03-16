@@ -227,7 +227,7 @@ python scripts/populate-articles.py      # recreate DB + seed articles table
 Indexing handles chunk extraction, embedding, knowledge extraction, and per-chunk `is_bibliography` tagging automatically. After a large corpus refresh, three manual enrichment steps rebuild derived artifacts:
 
 1. **Corpus hints** (`python -m services.rag.corpus_hints`) — aggregates terms from the property index per scope into the `corpus_hints` table in `rag_metadata.db`.
-2. **Scope vocabulary** (`scripts/rag/classify_vocabulary.py`) — LLM-classifies corpus hint terms into register categories and writes to the `scope_vocabulary` table in `rag_metadata.db`.
+2. **Scope vocabulary** (`scripts/rag/classify_vocabulary.py`) — LLM-classifies corpus hint terms into register categories and writes to the `scope_vocabulary` table in `rag_metadata.db`. Fail-closed: aborts without writing if any scope fails classification.
 3. **Bibliography classification** (`scripts/rag/classify_bibliography.py`) — LLM-classifies chunks and writes boolean metadata keys (`is_bibliography`, `is_non_intelligible`) into ChromaDB. Resumable by metadata key.
 
 Each step stamps a watermark in `rag_metadata.db`. When `post_index_enforcement: strict` (default), the service returns 503 on search requests until all watermarks are current relative to the last reindex. In `warn` mode, an ERROR is logged at startup but search continues.

@@ -17,13 +17,12 @@ class ErrorFormat(str, Enum):
     CUSTOM = "custom"
 
 
-def determine_error_type(status_code: int, exc_type: str | None = None) -> str:
+def determine_error_type(status_code: int) -> str:
     """
     Map HTTP status code to OpenAI error type.
 
     Args:
         status_code: HTTP status code
-        exc_type: Optional exception type name for additional context
 
     Returns:
         str: OpenAI error type
@@ -72,7 +71,7 @@ def determine_status_code(exc: Exception, default: int = 500) -> int:
         return exc.status_code
 
     # Map exception types to status codes
-    if isinstance(exc, ValueError | TypeError | KeyError):
+    if isinstance(exc, (ValueError, TypeError, KeyError)):
         return 400  # Bad Request
 
     if isinstance(exc, FileNotFoundError):

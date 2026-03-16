@@ -156,9 +156,6 @@ class ModelRouter:
         # Forwarder for federated eviction (Master mode only)
         self._forwarder: FederatedRequestForwarder | None = None
 
-        # Request tracker for compute-type limits (Master mode only)
-        self._compute_type_tracker = compute_type_tracker
-
         # Capacity pool for admission control (Master mode only)
         self._capacity_pool = capacity_pool
 
@@ -535,20 +532,3 @@ class ModelRouter:
 
         return selected
 
-    def log_routing_stats(self) -> None:
-        """Log current routing statistics."""
-        total = self.stats["total_requests"]
-        if total == 0:
-            return
-
-        p1 = self.stats["priority_1_hits"]
-        p2 = self.stats["priority_2_hits"]
-        p3 = self.stats["priority_3_hits"]
-        p4 = self.stats["priority_4_hits"]
-        logger.info(
-            f"Routing stats: total={total}, "
-            f"P1={p1} ({p1 / total:.1%}), "
-            f"P2={p2} ({p2 / total:.1%}), "
-            f"P3={p3} ({p3 / total:.1%}), "
-            f"P4={p4} ({p4 / total:.1%})"
-        )

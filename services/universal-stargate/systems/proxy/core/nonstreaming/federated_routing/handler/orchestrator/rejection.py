@@ -128,8 +128,8 @@ async def handle_selection_rejection(
 
         def _is_permanent_resource_failure(candidate) -> bool:
             failed = {failure.constraint for failure in candidate.constraints_failed}
-            return "can_fit_with_eviction" in failed and bool(
-                failed & resource_constraints
+            return bool(failed & resource_constraints) and (
+                "can_fit_with_eviction" not in failed
             )
 
         has_capacity_failure = any(
@@ -139,7 +139,7 @@ async def handle_selection_rejection(
             _is_permanent_resource_failure(candidate) for candidate in trace.candidates
         )
 
-        if has_permanent_resource_failure and not has_capacity_failure:
+        if has_permanent_resource_failure:
             from ....selection_errors import raise_insufficient_resources_error
 
             failure_reason = next(
@@ -227,6 +227,17 @@ async def handle_selection_rejection(
                 trace=trace,
                 excluded_gateway_ids=list(context.excluded_gateway_ids),
             )
-        raise_no_feasible_gateway_error(str(context.selected_model), constraint_summary)
+
+        # Model exists in *some* catalog but may not be in any active routing
+        # candidate.  When every candidate fails has_model_available, retrying
+        # cannot make progress — the presence is stale federation state only.
+        model_in_any_routing_candidate = any(
+            context.selected_model in gw.available_models for gw in gateways_for_routing
+        )
+        raise_no_feasible_gateway_error(
+            str(context.selected_model),
+            constraint_summary,
+            retryable=model_in_any_routing_candidate,
+        )
 
     raise_model_unavailable_error(str(context.selected_model))

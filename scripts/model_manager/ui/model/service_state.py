@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import time
 from dataclasses import dataclass
@@ -50,16 +51,16 @@ class ServiceState:
     via run_in_executor or Worker threads.
     """
 
-    GATEWAY_PORT = 9998
-    STARGATE_PORT = 9999
-    RAG_PORT = 8100
-    CLOUD_PROXY_PORT = 8200  # TCP mode only; UDS mode uses socket
-    STARGATE_PID_FILE = Path.home() / ".gateway" / "stargate.pid"
-    RAG_PID_FILE = Path.home() / ".gateway" / "rag.pid"
-    CLOUD_PROXY_PID_FILE = Path.home() / ".gateway" / "cloud-proxy.pid"
+    GATEWAY_PORT: int = 9998
+    STARGATE_PORT: int = 9999
+    RAG_PORT: int = 8100
+    CLOUD_PROXY_PORT: int = 8200  # TCP mode only; UDS mode uses socket
+    STARGATE_PID_FILE: Path = Path.home() / ".gateway" / "stargate.pid"
+    RAG_PID_FILE: Path = Path.home() / ".gateway" / "rag.pid"
+    CLOUD_PROXY_PID_FILE: Path = Path.home() / ".gateway" / "cloud-proxy.pid"
 
     def __init__(self, workspace_root: Path) -> None:
-        self._workspace_root = workspace_root
+        self._workspace_root: Path = workspace_root
 
     def check_all(self) -> list[ServiceInfo]:
         return [
@@ -76,32 +77,39 @@ class ServiceState:
             tcp_config = None
         uds_mode = tcp_config is None
         socket_path = read_rag_socket_path()
-        pid = self._read_pid(self.RAG_PID_FILE)
+        pid, pid_note = self._resolve_pid_file(self.RAG_PID_FILE)
 
         if uds_mode:
-            return self._check_rag_uds(pid, socket_path)
-        return self._check_rag_tcp(pid, tcp_config)
+            return self._check_rag_uds(pid, socket_path, pid_note)
+        return self._check_rag_tcp(pid, tcp_config, pid_note)
 
-    def _check_rag_uds(self, pid: int | None, socket_path: Path) -> ServiceInfo:
+    def _check_rag_uds(
+        self, pid: int | None, socket_path: Path, pid_note: str | None
+    ) -> ServiceInfo:
         """UDS mode: PID + socket presence + readiness probe."""
         if not socket_path.exists():
-            if pid and self._pid_alive(pid):
+            if pid is not None:
                 return ServiceInfo(
                     name="RAG",
                     status=ServiceStatus.UNHEALTHY,
                     port=None,
                     pid=pid,
                     health_url=f"unix://{socket_path}/stats",
-                    detail=f"PID {pid}, socket not ready",
+                    detail=self._with_note(f"PID {pid}, socket not ready", pid_note),
                 )
             return ServiceInfo(
                 name="RAG",
                 status=ServiceStatus.STOPPED,
                 port=None,
-                pid=pid,
+                detail=pid_note or "",
             )
-        if pid and self._pid_alive(pid):
-            healthy = self._rag_probe_uds(socket_path)
+        healthy = self._rag_probe_uds(socket_path)
+        listener_pid = self._find_unix_listener_pid(socket_path) if healthy else None
+        if listener_pid is not None and listener_pid != pid:
+            self._write_pid_file(self.RAG_PID_FILE, listener_pid)
+            pid = listener_pid
+            pid_note = self._merge_notes(pid_note, "PID file refreshed from live socket")
+        if pid is not None:
             uptime = self._proc_uptime_str(pid)
             uptime_str = f" ({uptime})" if uptime else ""
             return ServiceInfo(
@@ -110,14 +118,26 @@ class ServiceState:
                 port=None,
                 pid=pid,
                 health_url=f"unix://{socket_path}/stats",
-                detail=f"PID {pid}{uptime_str}" + ("" if healthy else ", probe failed"),
+                detail=self._with_note(
+                    f"PID {pid}{uptime_str}" + ("" if healthy else ", probe failed"),
+                    pid_note,
+                ),
             )
-        healthy = self._rag_probe_uds(socket_path)
+        if not healthy and self._unlink_stale_socket(socket_path):
+            return ServiceInfo(
+                name="RAG",
+                status=ServiceStatus.STOPPED,
+                port=None,
+                detail=self._merge_notes(pid_note, "stale socket removed") or "",
+            )
         return ServiceInfo(
             name="RAG",
             status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
             port=None,
-            detail="Socket ready (no PID file)" + ("" if healthy else ", probe failed"),
+            detail=self._with_note(
+                "Socket ready (PID file missing)" if healthy else "Socket ready, probe failed",
+                pid_note,
+            ),
         )
 
     def _rag_probe_uds(self, socket_path: Path) -> bool:
@@ -133,12 +153,20 @@ class ServiceState:
             return False
 
     def _check_rag_tcp(
-        self, pid: int | None, tcp_config: tuple[str, int]
+        self,
+        pid: int | None,
+        tcp_config: tuple[str, int],
+        pid_note: str | None,
     ) -> ServiceInfo:
         """TCP mode: port-based + HTTP health."""
         host, port = tcp_config
-        if pid and self._pid_alive(pid):
-            healthy = self._port_open(port, host)
+        healthy = self._port_open(port, host)
+        listener_pid = self._find_listener_pid(port) if healthy else None
+        if listener_pid is not None and listener_pid != pid:
+            self._write_pid_file(self.RAG_PID_FILE, listener_pid)
+            pid = listener_pid
+            pid_note = self._merge_notes(pid_note, "PID file refreshed from live listener")
+        if pid is not None:
             uptime = self._proc_uptime_str(pid)
             uptime_str = f" ({uptime})" if uptime else ""
             return ServiceInfo(
@@ -147,20 +175,23 @@ class ServiceState:
                 port=port,
                 pid=pid,
                 health_url=f"http://{host}:{port}/stats",
-                detail=f"PID {pid}{uptime_str}"
-                + ("" if healthy else ", port not responding"),
+                detail=self._with_note(
+                    f"PID {pid}{uptime_str}" + ("" if healthy else ", port not responding"),
+                    pid_note,
+                ),
             )
-        if self._port_open(port, host):
+        if healthy:
             return ServiceInfo(
                 name="RAG",
                 status=ServiceStatus.RUNNING,
                 port=port,
-                detail="Port open (no PID file)",
+                detail=self._with_note("Port open (PID file missing)", pid_note),
             )
         return ServiceInfo(
             name="RAG",
             status=ServiceStatus.STOPPED,
             port=port,
+            detail=pid_note or "",
         )
 
     def check_cloud_proxy(self) -> ServiceInfo:
@@ -181,26 +212,31 @@ class ServiceState:
 
     def _check_cloud_proxy_uds(self) -> ServiceInfo:
         """UDS mode: PID + socket + bounded readiness probe to /health."""
-        pid = self._read_pid(self.CLOUD_PROXY_PID_FILE)
+        pid, pid_note = self._resolve_pid_file(self.CLOUD_PROXY_PID_FILE)
         socket_path = read_cloud_proxy_socket_path()
         if not socket_path.exists():
-            if pid and self._pid_alive(pid):
+            if pid is not None:
                 return ServiceInfo(
                     name="Cloud Proxy",
                     status=ServiceStatus.UNHEALTHY,
                     port=None,
                     pid=pid,
                     health_url=f"unix://{socket_path}/health",
-                    detail=f"PID {pid}, socket not ready",
+                    detail=self._with_note(f"PID {pid}, socket not ready", pid_note),
                 )
             return ServiceInfo(
                 name="Cloud Proxy",
                 status=ServiceStatus.STOPPED,
                 port=None,
-                pid=pid,
+                detail=pid_note or "",
             )
-        if pid and self._pid_alive(pid):
-            healthy = self._cloud_proxy_probe_uds(socket_path)
+        healthy = self._cloud_proxy_probe_uds(socket_path)
+        listener_pid = self._find_unix_listener_pid(socket_path) if healthy else None
+        if listener_pid is not None and listener_pid != pid:
+            self._write_pid_file(self.CLOUD_PROXY_PID_FILE, listener_pid)
+            pid = listener_pid
+            pid_note = self._merge_notes(pid_note, "PID file refreshed from live socket")
+        if pid is not None:
             uptime = self._proc_uptime_str(pid)
             uptime_str = f" ({uptime})" if uptime else ""
             return ServiceInfo(
@@ -209,14 +245,26 @@ class ServiceState:
                 port=None,
                 pid=pid,
                 health_url=f"unix://{socket_path}/health",
-                detail=f"PID {pid}{uptime_str}" + ("" if healthy else ", probe failed"),
+                detail=self._with_note(
+                    f"PID {pid}{uptime_str}" + ("" if healthy else ", probe failed"),
+                    pid_note,
+                ),
             )
-        healthy = self._cloud_proxy_probe_uds(socket_path)
+        if not healthy and self._unlink_stale_socket(socket_path):
+            return ServiceInfo(
+                name="Cloud Proxy",
+                status=ServiceStatus.STOPPED,
+                port=None,
+                detail=self._merge_notes(pid_note, "stale socket removed") or "",
+            )
         return ServiceInfo(
             name="Cloud Proxy",
             status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
             port=None,
-            detail="Socket ready (no PID file)" + ("" if healthy else ", probe failed"),
+            detail=self._with_note(
+                "Socket ready (PID file missing)" if healthy else "Socket ready, probe failed",
+                pid_note,
+            ),
         )
 
     def _cloud_proxy_probe_uds(self, socket_path: Path) -> bool:
@@ -234,9 +282,14 @@ class ServiceState:
 
     def _check_cloud_proxy_tcp(self, *, host: str, port: int) -> ServiceInfo:
         """TCP mode: port-based + HTTP health."""
-        pid = self._read_pid(self.CLOUD_PROXY_PID_FILE)
-        if pid and self._pid_alive(pid):
-            healthy = self._port_open(port, host)
+        pid, pid_note = self._resolve_pid_file(self.CLOUD_PROXY_PID_FILE)
+        healthy = self._port_open(port, host)
+        listener_pid = self._find_listener_pid(port) if healthy else None
+        if listener_pid is not None and listener_pid != pid:
+            self._write_pid_file(self.CLOUD_PROXY_PID_FILE, listener_pid)
+            pid = listener_pid
+            pid_note = self._merge_notes(pid_note, "PID file refreshed from live listener")
+        if pid is not None:
             uptime = self._proc_uptime_str(pid)
             uptime_str = f" ({uptime})" if uptime else ""
             return ServiceInfo(
@@ -245,20 +298,23 @@ class ServiceState:
                 port=port,
                 pid=pid,
                 health_url=f"http://{host}:{port}/health",
-                detail=f"PID {pid}{uptime_str}"
-                + ("" if healthy else ", port not responding"),
+                detail=self._with_note(
+                    f"PID {pid}{uptime_str}" + ("" if healthy else ", port not responding"),
+                    pid_note,
+                ),
             )
-        if self._port_open(port, host):
+        if healthy:
             return ServiceInfo(
                 name="Cloud Proxy",
                 status=ServiceStatus.RUNNING,
                 port=port,
-                detail="Port open (no PID file)",
+                detail=self._with_note("Port open (PID file missing)", pid_note),
             )
         return ServiceInfo(
             name="Cloud Proxy",
             status=ServiceStatus.STOPPED,
             port=port,
+            detail=pid_note or "",
         )
 
     def check_gateway(self) -> ServiceInfo:
@@ -268,9 +324,14 @@ class ServiceState:
         return self._check_container_pattern("gateway")
 
     def check_stargate(self) -> ServiceInfo:
-        pid = self._read_pid(self.STARGATE_PID_FILE)
-        if pid and self._pid_alive(pid):
-            healthy = self._port_open(self.STARGATE_PORT)
+        pid, pid_note = self._resolve_pid_file(self.STARGATE_PID_FILE)
+        healthy = self._port_open(self.STARGATE_PORT)
+        listener_pid = self._find_listener_pid(self.STARGATE_PORT) if healthy else None
+        if listener_pid is not None and listener_pid != pid:
+            self._write_pid_file(self.STARGATE_PID_FILE, listener_pid)
+            pid = listener_pid
+            pid_note = self._merge_notes(pid_note, "PID file refreshed from live listener")
+        if pid is not None:
             uptime = self._proc_uptime_str(pid)
             uptime_str = f" ({uptime})" if uptime else ""
             return ServiceInfo(
@@ -279,20 +340,23 @@ class ServiceState:
                 port=self.STARGATE_PORT,
                 pid=pid,
                 health_url=f"http://localhost:{self.STARGATE_PORT}/health",
-                detail=f"PID {pid}{uptime_str}"
-                + ("" if healthy else ", port not responding"),
+                detail=self._with_note(
+                    f"PID {pid}{uptime_str}" + ("" if healthy else ", port not responding"),
+                    pid_note,
+                ),
             )
-        if self._port_open(self.STARGATE_PORT):
+        if healthy:
             return ServiceInfo(
                 name="Stargate",
                 status=ServiceStatus.RUNNING,
                 port=self.STARGATE_PORT,
-                detail="Port open (no PID file)",
+                detail=self._with_note("Port open (PID file missing)", pid_note),
             )
         return ServiceInfo(
             name="Stargate",
             status=ServiceStatus.STOPPED,
             port=self.STARGATE_PORT,
+            detail=pid_note or "",
         )
 
     def check_sidecar(self) -> ServiceInfo:
@@ -474,18 +538,24 @@ class ServiceState:
         except OSError:
             return False
 
-    @staticmethod
-    def _read_pid(path: Path) -> int | None:
+    def _resolve_pid_file(self, path: Path) -> tuple[int | None, str | None]:
         if not path.exists():
-            return None
+            return None, None
         try:
-            return int(path.read_text().strip())
+            pid = int(path.read_text().strip())
         except ValueError:
             logger.warning("Invalid PID contents in %s", path)
-            return None
+            _ = self._unlink_path(path)
+            return None, "invalid PID file removed"
         except OSError as exc:
             logger.warning("Failed reading PID file %s: %s", path, exc)
-            return None
+            return None, None
+        if self._pid_alive(pid):
+            return pid, None
+        logger.info("Removing stale PID file %s for dead PID %d", path, pid)
+        if self._unlink_path(path):
+            return None, f"stale PID file removed (PID {pid})"
+        return None, f"stale PID file detected (PID {pid})"
 
     @staticmethod
     def _pid_alive(pid: int) -> bool:
@@ -550,3 +620,76 @@ class ServiceState:
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
             logger.warning("ss lookup failed for port %d: %s", port, e)
         return None
+
+    @staticmethod
+    def _find_unix_listener_pid(socket_path: Path) -> int | None:
+        """Find PID of the process listening on a Unix socket path using ss(8)."""
+        try:
+            result = subprocess.run(
+                ["ss", "-Hxlpn"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            for line in result.stdout.splitlines():
+                if str(socket_path) not in line:
+                    continue
+                match = re.search(r"pid=(\d+)", line)
+                if match:
+                    return int(match.group(1))
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.warning("ss lookup failed for socket %s: %s", socket_path, e)
+        return None
+
+    @staticmethod
+    def _unlink_path(path: Path) -> bool:
+        try:
+            path.unlink(missing_ok=True)
+            return True
+        except OSError as exc:
+            logger.warning("Failed to remove %s: %s", path, exc)
+            return False
+
+    def _unlink_stale_socket(self, socket_path: Path) -> bool:
+        """Remove a stale Unix socket when connect() proves no listener exists."""
+        if not socket_path.exists():
+            return False
+        try:
+            mode = socket_path.lstat().st_mode
+            if not stat.S_ISSOCK(mode):
+                logger.warning("Path %s is not a socket, refusing cleanup", socket_path)
+                return False
+        except OSError as exc:
+            logger.warning("Could not stat socket %s: %s", socket_path, exc)
+            return False
+
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                probe.settimeout(0.5)
+                probe.connect(str(socket_path))
+            return False
+        except ConnectionRefusedError:
+            logger.info("Removing stale socket %s after connection refused", socket_path)
+            return self._unlink_path(socket_path)
+        except OSError as exc:
+            logger.warning("Socket probe failed for %s: %s", socket_path, exc)
+            return False
+
+    @staticmethod
+    def _merge_notes(*notes: str | None) -> str | None:
+        parts = [note for note in notes if note]
+        if not parts:
+            return None
+        return "; ".join(parts)
+
+    def _with_note(self, detail: str, note: str | None) -> str:
+        merged = self._merge_notes(detail, note)
+        return merged or detail
+
+    @staticmethod
+    def _write_pid_file(path: Path, pid: int) -> None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _ = path.write_text(f"{pid}\n")
+        except OSError as exc:
+            logger.warning("Failed to write PID file %s: %s", path, exc)

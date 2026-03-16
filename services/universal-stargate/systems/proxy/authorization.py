@@ -14,7 +14,6 @@ import os
 import secrets
 
 from fastapi import Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
 from universal_logging import get_logger
 
@@ -30,7 +29,6 @@ class APIKeyManager:
         self.enabled = config.get("enabled", True)
         self.valid_keys: set[str] = set()
         self.key_hashes: set[str] = set()
-        self.require_auth_for_all = config.get("require_auth_for_all", True)
         self.exempt_endpoints = set(
             config.get(
                 "exempt_endpoints", ["/", "/health", "/docs", "/redoc", "/openapi.json"]
@@ -39,8 +37,9 @@ class APIKeyManager:
 
         # IP whitelisting configuration
         self.ip_whitelist_enabled = config.get("ip_whitelist", {}).get("enabled", True)
-        self.whitelisted_ips: set[ipaddress.IPv4Network] = set()
-        self.whitelisted_networks: set[ipaddress.IPv4Network] = set()
+        self.whitelisted_networks: set[
+            ipaddress.IPv4Network | ipaddress.IPv6Network
+        ] = set()
 
         # Load API keys from configuration
         self._load_api_keys(config)
@@ -63,15 +62,8 @@ class APIKeyManager:
         individual_ips = ip_config.get("individual_ips", [])
         for ip in individual_ips:
             try:
-                # Handle both single IPs and CIDR notation
-                if "/" in ip:
-                    self.whitelisted_networks.add(
-                        ipaddress.IPv4Network(ip, strict=False)
-                    )
-                else:
-                    self.whitelisted_ips.add(
-                        ipaddress.IPv4Network(f"{ip}/32", strict=False)
-                    )
+                network = _to_ip_network(ip)
+                self.whitelisted_networks.add(network)
                 logger.info(f"Whitelisted IP: {ip}")
             except ValueError as e:
                 logger.warning(f"Invalid IP address in whitelist: {ip} - {e}")
@@ -80,9 +72,7 @@ class APIKeyManager:
         network_ranges = ip_config.get("network_ranges", [])
         for network in network_ranges:
             try:
-                self.whitelisted_networks.add(
-                    ipaddress.IPv4Network(network, strict=False)
-                )
+                self.whitelisted_networks.add(_to_ip_network(network))
                 logger.info(f"Whitelisted network: {network}")
             except ValueError as e:
                 logger.warning(f"Invalid network range in whitelist: {network} - {e}")
@@ -99,12 +89,7 @@ class APIKeyManager:
 
             for ip in default_whitelist:
                 try:
-                    if "::" in ip:
-                        # Skip IPv6 for now, focus on IPv4
-                        continue
-                    self.whitelisted_networks.add(
-                        ipaddress.IPv4Network(ip, strict=False)
-                    )
+                    self.whitelisted_networks.add(_to_ip_network(ip))
                     logger.info(f"Added default whitelist: {ip}")
                 except ValueError as e:
                     logger.warning(f"Failed to add default whitelist {ip}: {e}")
@@ -175,20 +160,12 @@ class APIKeyManager:
             return False
 
         try:
-            # Handle both IPv4 and IPv6
-            if ":" in client_ip:
-                # IPv6 address - for now, just check if it's localhost
-                if client_ip in ["::1", "::ffff:127.0.0.1"]:
-                    return True
-                return False
-
-            # IPv4 address
-            client_addr = ipaddress.IPv4Address(client_ip)
-
-            # Check individual IPs
-            for whitelisted_ip in self.whitelisted_ips:
-                if client_addr in whitelisted_ip:
-                    return True
+            client_addr = ipaddress.ip_address(client_ip)
+            if (
+                isinstance(client_addr, ipaddress.IPv6Address)
+                and client_addr.ipv4_mapped is not None
+            ):
+                client_addr = client_addr.ipv4_mapped
 
             # Check network ranges
             for network in self.whitelisted_networks:
@@ -200,58 +177,6 @@ class APIKeyManager:
             # Invalid IP address
             logger.warning(f"Invalid client IP address: {client_ip}")
             return False
-
-
-class StargateAuthBearer(HTTPBearer):
-    """Custom HTTPBearer that supports multiple authorization methods"""
-
-    def __init__(self, api_key_manager: APIKeyManager, auto_error: bool = True):
-        self.api_key_manager = api_key_manager
-        super().__init__(auto_error=auto_error)
-
-    async def __call__(self, request: Request) -> HTTPAuthorizationCredentials | None:
-        """Extract and validate authorization from request"""
-
-        # Check if endpoint is exempt
-        if self.api_key_manager.is_endpoint_exempt(request.url.path):
-            return None
-
-        # Try multiple authorization methods
-        api_key = self._extract_api_key(request)
-
-        if not api_key:
-            if self.auto_error:
-                raise AuthErrorBuilder.api_key_required()
-            return None
-
-        # Validate the API key
-        if not self.api_key_manager.validate_key(api_key):
-            raise AuthErrorBuilder.invalid_api_key()
-
-        # Return credentials for compatibility
-        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=api_key)
-
-    def _extract_api_key(self, request: Request) -> str | None:
-        """Extract API key from request using multiple methods"""
-
-        # Method 1: Authorization header (Bearer token)
-        auth_header = request.headers.get("Authorization")
-        if auth_header:
-            scheme, credentials = get_authorization_scheme_param(auth_header)
-            if scheme.lower() == "bearer" and credentials:
-                return credentials
-
-        # Method 2: X-API-Key header
-        api_key_header = request.headers.get("X-API-Key")
-        if api_key_header:
-            return api_key_header
-
-        # Method 3: Query parameter (for compatibility)
-        api_key_param = request.query_params.get("api_key")
-        if api_key_param:
-            return api_key_param
-
-        return None
 
 
 def _extract_api_key_from_request(request: Request) -> str | None:
@@ -333,7 +258,7 @@ def create_auth_dependency(api_key_manager: APIKeyManager):
 
 
 def create_optional_auth_dependency(api_key_manager: APIKeyManager):
-    """Create optional FastAPI dependency for authorization (doesn't fail if no key provided)"""
+    """Create optional auth dependency without requiring a key."""
 
     async def get_optional_user(request: Request):
         """FastAPI dependency for optional authorization"""
@@ -430,21 +355,16 @@ class AuthorizationManager:
 
     def _extract_api_key(self, request: Request) -> str | None:
         """Extract API key from request"""
-        # Try Authorization header
-        auth_header = request.headers.get("Authorization")
-        if auth_header:
-            scheme, credentials = get_authorization_scheme_param(auth_header)
-            if scheme.lower() == "bearer" and credentials:
-                return credentials
+        return _extract_api_key_from_request(request)
 
-        # Try X-API-Key header
-        api_key_header = request.headers.get("X-API-Key")
-        if api_key_header:
-            return api_key_header
 
-        # Try query parameter
-        api_key_param = request.query_params.get("api_key")
-        if api_key_param:
-            return api_key_param
+def _to_ip_network(
+    raw_ip: str,
+) -> ipaddress.IPv4Network | ipaddress.IPv6Network:
+    """Normalize single IP or CIDR input into an IP network object."""
+    if "/" in raw_ip:
+        return ipaddress.ip_network(raw_ip, strict=False)
 
-        return None
+    addr = ipaddress.ip_address(raw_ip)
+    suffix = 32 if addr.version == 4 else 128
+    return ipaddress.ip_network(f"{raw_ip}/{suffix}", strict=False)

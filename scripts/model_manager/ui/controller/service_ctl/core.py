@@ -279,6 +279,10 @@ class ServiceController:
             logger.error("Failed to start Stargate subprocess or open log file: %s", e)
             return f"Failed to start Stargate: {e}"
 
+        if process.returncode is not None:
+            tail = log_path.read_text(errors="replace")[-1500:]
+            return f"Stargate failed (exit {process.returncode}).\n{tail}"
+
         self._write_pid_file(process.pid)
         try:
             exit_code = await asyncio.wait_for(process.wait(), timeout=3.0)
@@ -403,12 +407,17 @@ class ServiceController:
         )
         build_out = await build.communicate()
         build_text = build_out[0].decode(errors="replace") if build_out[0] else ""
-        if build.returncode != 0:
+        build_failed = build.returncode != 0
+        if build_failed:
             logger.error(
                 "MCP rebuild failed (exit %d):\n%s", build.returncode, build_text
             )
-            return f"MCP rebuild failed (exit {build.returncode}).\n{build_text}"
         start_text = await self.start_mcp()
+        if build_failed:
+            return (
+                f"MCP build failed (exit {build.returncode}) — "
+                f"restarted with existing image.\n{start_text}"
+            )
         if not start_text.startswith("MCP server started."):
             return start_text
 

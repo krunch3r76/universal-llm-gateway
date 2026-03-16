@@ -24,7 +24,6 @@ from services.rag.corpus_hints import load_corpus_hints
 logger = logging.getLogger(__name__)
 
 STARGATE_URL = "http://localhost:9999/v1/chat/completions"
-DEFAULT_MODEL = "rag-context"  # Will be overridden; we use a direct model
 CLASSIFICATION_PROMPT = """\
 You are classifying vocabulary terms for a RAG retrieval system.
 Given a scope name, its description, and a list of IDF-scored terms extracted
@@ -92,8 +91,8 @@ def classify_scope(
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"]
         return json.loads(content)
-    except Exception as e:
-        logger.error("Classification failed for scope '%s': %s", scope, e)
+    except Exception:
+        logger.exception("Classification failed for scope '%s'", scope)
         return None
 
 
@@ -127,21 +126,32 @@ def main() -> None:
     for scope_name, scope_def in config.scopes.items():
         scope_descriptions[scope_name] = getattr(scope_def, "description", "") or ""
 
-    print(f"Loaded {len(hints_map)} scopes from rag_metadata.db corpus_hints table")
+    processable_scopes: list[tuple[str, list[str]]] = []
     for scope, text in sorted(hints_map.items()):
         terms = [t.strip() for t in text.split(",") if t.strip()]
+        if terms:
+            processable_scopes.append((scope, terms))
+
+    print(
+        f"Loaded {len(processable_scopes)} processable scopes from "
+        "rag_metadata.db corpus_hints table"
+    )
+    for scope, terms in processable_scopes:
         desc = scope_descriptions.get(scope, "")
         print(f"  {scope}: {len(terms)} terms — {desc[:60]}")
 
     if args.dry_run:
         print("\n--dry-run: would classify the above scopes. Exiting.")
         return
+    if not processable_scopes:
+        print("\nNo scopes to classify (all empty).", file=sys.stderr)
+        sys.exit(1)
 
+    expected_scopes = [scope for scope, _ in processable_scopes]
     result: dict[str, dict[str, list[str]]] = {}
-    for scope, text in sorted(hints_map.items()):
-        terms = [t.strip() for t in text.split(",") if t.strip()]
-        if not terms:
-            continue
+    failed_scopes: list[str] = []
+
+    for scope, terms in processable_scopes:
         desc = scope_descriptions.get(scope, "")
         print(f"\nClassifying {scope} ({len(terms)} terms)...")
         classified = classify_scope(scope, desc, terms, args.model)
@@ -157,10 +167,23 @@ def main() -> None:
             for reg, ts in clean.items():
                 print(f"  {reg}: {len(ts)} terms")
         else:
-            print("  FAILED — skipping scope")
+            failed_scopes.append(scope)
+            print("  FAILED")
+
+    if failed_scopes:
+        print(
+            f"\n{len(failed_scopes)}/{len(expected_scopes)} scopes failed: "
+            f"{', '.join(failed_scopes)}",
+            file=sys.stderr,
+        )
+        print(
+            "Aborting — no DB changes applied (all-or-nothing).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     if not result:
-        print("\nNo scopes classified successfully.", file=sys.stderr)
+        print("\nNo scopes to classify (all empty).", file=sys.stderr)
         sys.exit(1)
 
     _write_scope_vocabulary_db(result)

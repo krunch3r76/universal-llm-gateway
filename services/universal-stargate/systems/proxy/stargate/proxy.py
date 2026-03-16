@@ -368,23 +368,6 @@ class StargateProxy:
             return self.federation_integration.circuit_breaker
         return None
 
-    def create_batch_router(self):
-        """
-        Create a BatchRouter instance (dependency injection for pipeline).
-
-        This factory method enables pipeline domain to use batch routing
-        without importing BatchRouter directly, maintaining domain isolation.
-
-        Returns:
-            BatchRouter with generic dict-based interface
-        """
-        from ..core.control_plane.placement.batch.router import BatchRouter
-
-        return BatchRouter(
-            gateway_manager=self.gateway_manager,
-            routing_ops=self.resource_aware_model_manager._routing_ops,
-        )
-
     async def process_chat_completion(
         self,
         request: Request,

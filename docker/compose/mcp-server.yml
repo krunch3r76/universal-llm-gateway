@@ -5,6 +5,7 @@
 #   - MCP_AUTH_TOKEN set in environment (e.g., via export or source .env.local)
 #   - MCP_PROJECT_DIR set to workspace root (required — no default)
 #   - MCP_DATA_DIR defaults to ~/mcp-data
+#   - `docker network create mcp-network` (shared with satellite containers)
 #
 # Usage: docker compose -f docker/compose/mcp-server.yml up -d
 
@@ -68,10 +69,17 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request, ssl; urllib.request.urlopen('https://localhost/health', context=ssl._create_unverified_context())",
+          "import urllib.request; urllib.request.urlopen('https://localhost/health')",
         ]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - default
+      - mcp-network
     restart: unless-stopped
+
+networks:
+  mcp-network:
+    external: true

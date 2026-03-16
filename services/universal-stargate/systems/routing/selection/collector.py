@@ -24,6 +24,11 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+try:
+    from src.core.gateway.in_flight_requests import in_flight_tracker
+except Exception:
+    in_flight_tracker = None
+
 # Timeout for individual gateway status fetch (prevents blocking)
 GATEWAY_STATUS_TIMEOUT_S = 2.0
 
@@ -65,7 +70,6 @@ async def collect_gateways(
     gateway_instances: list[Any],  # list[GatewayInstance]
     get_status: callable = None,
     timeout_s: float = GATEWAY_STATUS_TIMEOUT_S,
-    include_model_details: bool = False,
     gateway_manager: Any = None,  # For fetching model metadata
 ) -> list[Gateway]:
     """
@@ -79,8 +83,6 @@ async def collect_gateways(
         get_status: Optional async function to get gateway status
                    Default: gateway.client.get_resource_status()
         timeout_s: Timeout per gateway status fetch (default 2s)
-        include_model_details: DEPRECATED - always builds model_details from
-                              WebSocket cache + catalog (no HTTP fetch)
 
     Returns:
         List of Gateway snapshots for selection (excludes failed/slow gateways)
@@ -188,11 +190,10 @@ async def collect_gateways(
             # WebSocket telemetry doesn't track this, so we query the tracker directly
             active_requests = 0
             try:
-                from src.core.gateway.in_flight_requests import in_flight_tracker
-
-                active_requests = in_flight_tracker.get_in_flight_count(
-                    gw_instance.config.name
-                )
+                if in_flight_tracker is not None:
+                    active_requests = in_flight_tracker.get_in_flight_count(
+                        gw_instance.config.name
+                    )
             except Exception as e:
                 logger.debug(
                     f"Failed to get active_requests for "

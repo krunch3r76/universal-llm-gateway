@@ -222,9 +222,7 @@ async def _emit_model_loaded_event(
     try:
         from model_id import ModelId
 
-        from systems.proxy.core.control_plane.placement.batch.model_event_emitter import (
-            emit_model_loaded,
-        )
+        from ..model_event_emitter import emit_model_loaded
 
         await emit_model_loaded(
             event_bus=event_bus,
@@ -251,9 +249,7 @@ async def _emit_model_unloaded_event(
     try:
         from model_id import ModelId
 
-        from systems.proxy.core.control_plane.placement.batch.model_event_emitter import (
-            emit_model_unloaded,
-        )
+        from ..model_event_emitter import emit_model_unloaded
 
         await emit_model_unloaded(
             event_bus=event_bus,
@@ -279,9 +275,7 @@ async def _emit_model_loading_failed_event(
     try:
         from model_id import ModelId
 
-        from systems.proxy.core.control_plane.placement.batch.model_event_emitter import (
-            emit_model_loading_failed,
-        )
+        from ..model_event_emitter import emit_model_loading_failed
 
         await emit_model_loading_failed(
             event_bus=event_bus,

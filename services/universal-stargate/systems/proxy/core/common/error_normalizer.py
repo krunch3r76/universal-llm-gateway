@@ -175,7 +175,7 @@ class ErrorNormalizer:
     def _extract_from_httpx_response(error: Any, operation: str) -> dict:
         """Extract error info from httpx.Response."""
         status_code = error.status_code
-        error_type = determine_error_type(status_code, None)
+        error_type = determine_error_type(status_code)
         message = f"Gateway error (HTTP {status_code})"
         code = f"http_{status_code}"
         param = None
@@ -206,7 +206,7 @@ class ErrorNormalizer:
     def _extract_from_http_exception(error: HTTPException, operation: str) -> dict:
         """Extract error info from FastAPI HTTPException."""
         status_code = error.status_code
-        error_type = determine_error_type(status_code, None)
+        error_type = determine_error_type(status_code)
         detail = error.detail
         code = f"http_{status_code}"
         param = None
@@ -291,7 +291,7 @@ class ErrorNormalizer:
         """Extract error info from Python exception."""
         status_code = determine_status_code(error, default_status)
         message = str(error) or error.__class__.__name__
-        error_type = determine_error_type(status_code, type(error).__name__)
+        error_type = determine_error_type(status_code)
 
         return {
             "status_code": status_code,

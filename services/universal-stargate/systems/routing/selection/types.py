@@ -26,12 +26,6 @@ class Placement:
     context_length: int | None = None  # For config lookup
     endpoint_category: str = "generation"  # "generation" or "embedding"
 
-    @property
-    def primary_resource_mb(self) -> int:
-        """The constrained resource for this placement."""
-        return self.vram_mb if self.is_gpu else self.ram_mb
-
-
 class ModelDetails(TypedDict, total=False):
     """Per-model routing metadata used by selection and eviction planning."""
 
@@ -113,17 +107,6 @@ class Gateway:
         """True if telemetry is stale."""
         return self.telemetry_age_ms > max_age_ms
 
-    def get_last_inference_time(self, model_id: ModelId) -> float | None:
-        """
-        Get last inference time for a model, or None if unknown.
-
-        Args:
-            model_id: ModelId object (not string)
-        """
-        if model_id in self.model_details:
-            return self.model_details[model_id].get("last_inference_time")
-        return None
-
     def get_model_resource_usage(self, model_id: ModelId) -> tuple[int, int]:
         """
         Get (vram_mb, ram_mb) for a model, or (0, 0) if unknown.
@@ -140,28 +123,6 @@ class Gateway:
         if details:
             return (details.get("vram_usage", 0), details.get("ram_usage", 0))
         return (0, 0)
-
-    def slack_after_fit(self, p: Placement) -> int:
-        """Remaining primary resource after placing model."""
-        if p.is_gpu:
-            return self.vram_free_mb - p.vram_mb
-        return self.ram_free_mb - p.ram_mb
-
-    def has_model_loaded(self, model_id: ModelId) -> bool:
-        """Check if model is loaded on this gateway."""
-        return model_id in self.loaded_models
-
-    def is_model_idle(self, model_id: ModelId) -> bool:
-        """Check if model is loaded and not busy."""
-        return model_id in self.loaded_models and model_id not in self.busy_models
-
-    def is_model_loading(self, model_id: ModelId) -> bool:
-        """Check if model is currently being loaded."""
-        return model_id in self.loading_models
-
-    def is_model_busy_or_loading(self, model_id: ModelId) -> bool:
-        """Check if model is busy (in use or loading)."""
-        return model_id in self.busy_models or model_id in self.loading_models
 
     @property
     def loaded_count(self) -> int:
@@ -211,19 +172,6 @@ class Stargate:
         """True if telemetry is stale."""
         return self.telemetry_age_ms > max_age_ms
 
-    def has_model_loaded(self, model_id: ModelId) -> bool:
-        """Check if model is loaded on this stargate."""
-        return model_id in self.loaded_models
-
-    def is_model_idle(self, model_id: ModelId) -> bool:
-        """Check if model is loaded and not busy."""
-        return model_id in self.loaded_models and model_id not in self.busy_models
-
-    def slack_after_fit(self, p: Placement) -> int:
-        """Remaining primary resource after placing model."""
-        if p.is_gpu:
-            return self.vram_free_mb - p.vram_mb
-        return self.ram_free_mb - p.ram_mb
 
 
 @dataclass(frozen=True)

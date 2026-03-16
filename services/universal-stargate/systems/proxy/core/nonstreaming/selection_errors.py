@@ -89,15 +89,22 @@ def raise_model_unavailable_error(model_id: str) -> None:
 def raise_no_feasible_gateway_error(
     model_id: str,
     constraint_summary: dict[str, Any],
+    *,
+    retryable: bool = True,
 ) -> None:
-    """Raise error when model exists in catalogs but all gateways are infeasible."""
+    """Raise error when model exists in catalogs but all gateways are infeasible.
+
+    When no routing candidate has the model in its catalog (stale federation
+    presence only), callers pass ``retryable=False`` so the request fails
+    immediately instead of spinning in the capacity retry loop.
+    """
     raise HTTPException(
         status_code=get_http_status(ErrorCode.NO_FEASIBLE_GATEWAY),
         detail=error_envelope(
             code=ErrorCode.NO_FEASIBLE_GATEWAY,
             message=f"Model {model_id} exists but no gateway can serve it now",
             source="master",
-            retryable=True,
+            retryable=retryable,
             data={"model_id": str(model_id), **constraint_summary},
         ),
     )
@@ -151,9 +158,7 @@ def raise_all_gateways_excluded_error(
     )
 
 
-def raise_inference_banned_error(
-    model_id: str, banned_gateway_ids: list[str]
-) -> None:
+def raise_inference_banned_error(model_id: str, banned_gateway_ids: list[str]) -> None:
     """Raise non-retryable error when all gateways have session-lifetime inference bans.
 
     Inference bans are applied when the model cannot run even with exclusive GPU
@@ -184,8 +189,7 @@ def raise_load_failed_error(model_id: str, gateway_ids: list[str]) -> None:
         detail=error_envelope(
             code=ErrorCode.RESOURCE_UNAVAILABLE,
             message=(
-                f"Model {model_id} recently failed to load "
-                "on all available gateways"
+                f"Model {model_id} recently failed to load on all available gateways"
             ),
             source="master",
             retryable=True,

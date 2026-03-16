@@ -4,8 +4,8 @@ All paths are resolved relative to _SANDBOX_ROOT. Traversal attempts
 (../) are rejected before resolution so that the container volume mount
 is complemented by explicit code-level defense in depth.
 
-Supported read formats: .md, .txt (plain), .docx (python-docx), .odt (odfpy).
-Supported write formats: .md, .txt (plain), .docx (python-docx), .pdf (fpdf2).
+Supported read formats: .md, .txt, .docx, .odt, .eml, .pdf, .html, .json, .yaml.
+Supported write formats: .md, .txt, .docx, .pdf, .yaml, .yml.
 """
 
 from __future__ import annotations
@@ -24,8 +24,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SANDBOX_ROOT = Path("/data/files")
-_ALLOWED_WRITE_SUFFIXES = {".md", ".txt", ".docx", ".pdf"}
-_ALLOWED_READ_SUFFIXES = {".md", ".txt", ".docx", ".odt", ".eml", ".doc", ".html", ".json", ".yaml"}
+_ALLOWED_WRITE_SUFFIXES = {".md", ".txt", ".docx", ".pdf", ".yaml", ".yml"}
+_ALLOWED_READ_SUFFIXES = {
+    ".md",
+    ".txt",
+    ".docx",
+    ".odt",
+    ".eml",
+    ".pdf",
+    ".doc",
+    ".html",
+    ".json",
+    ".yaml",
+}
 _ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
 _EDITABLE_SUFFIXES = {".md", ".txt"}
 
@@ -48,6 +59,78 @@ def _read_odt(path: Path) -> str:
 
     doc = odf_load(str(path))
     return "\n".join(teletype.extractText(node) for node in doc.getElementsByType(P))
+
+
+def _read_pdf(path: Path) -> str:
+    import pymupdf4llm  # type: ignore[import-untyped]
+
+    return pymupdf4llm.to_markdown(str(path))
+
+
+def _read_eml(path: Path) -> str:
+    import email
+    import email.policy
+
+    with path.open("rb") as f:
+        msg = email.message_from_binary_file(f, policy=email.policy.default)
+
+    lines: list[str] = []
+
+    # Headers as frontmatter
+    lines.append("---")
+    for header in ("from", "to", "cc", "subject", "date", "message-id"):
+        val = msg.get(header, "")
+        if val:
+            lines.append(f"{header}: {val}")
+    lines.append("---")
+    lines.append("")
+
+    # Body — prefer text/plain, fall back to text/html via html2text
+    body = ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            ct = part.get_content_type()
+            cd = str(part.get("Content-Disposition", ""))
+            if ct == "text/plain" and "attachment" not in cd:
+                body = part.get_content()
+                break
+        if not body:
+            for part in msg.walk():
+                ct = part.get_content_type()
+                cd = str(part.get("Content-Disposition", ""))
+                if ct == "text/html" and "attachment" not in cd:
+                    import html2text  # type: ignore[import-untyped]
+
+                    body = html2text.html2text(part.get_content())
+                    break
+    else:
+        body = msg.get_content()
+
+    lines.append(body.strip())
+
+    # Inline PDF attachments → extract as markdown sections
+    for part in msg.walk():
+        filename = part.get_filename()
+        if not filename:
+            continue
+        lines.append("")
+        lines.append("---")
+        lines.append(f"## Attachment: {filename}")
+        lines.append("")
+        ct = part.get_content_type()
+        if ct == "application/pdf":
+            import pymupdf  # type: ignore[import-untyped]
+            import pymupdf4llm  # type: ignore[import-untyped]
+
+            data = part.get_payload(decode=True)
+            doc = pymupdf.open(stream=data, filetype="pdf")
+            text = pymupdf4llm.to_markdown(doc)
+            doc.close()
+            lines.append(text.strip())
+        else:
+            lines.append(f"[{ct} — not extracted]")
+
+    return "\n".join(lines)
 
 
 def _safe_path(relative: str) -> Path:
@@ -102,7 +185,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
     def write_file(path: str, content: str) -> dict[str, str]:
         """Write *content* to *path* inside the sandboxed files directory.
 
-        Supported extensions: .md, .txt, .docx, .pdf.
+        Supported extensions: .md, .txt, .docx, .pdf, .yaml, .yml.
         Intermediate directories are created automatically.
 
         Args:
@@ -156,7 +239,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
     def read_file(path: str) -> dict[str, str]:
         """Read and return the contents of *path* from the sandboxed directory.
 
-        Supported formats: .md, .txt (plain text), .docx (Word), .odt (OpenDocument).
+        Supported formats: .md, .txt, .docx, .odt, .eml, .pdf, .html, .json, .yaml
 
         Args:
             path: Relative file path, e.g. "documents/notes.md".
@@ -180,6 +263,8 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         read_handlers = {
             ".docx": _read_docx,
             ".odt": _read_odt,
+            ".eml": _read_eml,
+            ".pdf": _read_pdf,
         }
         read_handler = read_handlers.get(suffix, _read_plain)
         content = read_handler(src)

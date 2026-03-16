@@ -53,7 +53,11 @@ class TopologyPanel(Widget):
     """DataTable showing all nodes with live status + parallel fleet operations."""
 
     class DeployStateChanged(Message):
-        """Posted when a fleet deploy starts or finishes."""
+        """Posted when a fleet deploy starts or finishes.
+
+        Args:
+            deploying: True while a deploy operation is running, False when complete.
+        """
 
         def __init__(self, deploying: bool) -> None:
             self.deploying = deploying
@@ -268,15 +272,36 @@ class TopologyPanel(Widget):
             self._append_line(mk, line)
 
         self._append_line(mk, "Restarting local services...")
-        self._append_line(mk, await svc.stop_stargate())
-        self._append_line(mk, await svc.stop_rag())
-        self._append_line(mk, await svc.stop_cloud_proxy())
-        self._append_line(mk, await svc.stop_gateway())
+        stop_ops: list[tuple[str, Any]] = [
+            ("stop stargate", svc.stop_stargate),
+            ("stop rag", svc.stop_rag),
+            ("stop cloud_proxy", svc.stop_cloud_proxy),
+            ("stop gateway", svc.stop_gateway),
+        ]
+        for label, op in stop_ops:
+            result = await op()
+            self._append_line(mk, result)
+            if _service_operation_failed(result):
+                self._set_node_status(mk, "✗ local restart failed")
+                self._append_line(mk, f"⚠ {label} failed; aborting restart.")
+                return
+
         await asyncio.sleep(1)
-        self._append_line(mk, await svc.start_gateway())
-        await asyncio.sleep(0.5)
-        self._append_line(mk, await svc.start_rag())
-        self._append_line(mk, await svc.start_cloud_proxy())
+        start_ops: list[tuple[str, Any]] = [
+            ("start gateway", svc.start_gateway),
+            ("start rag", svc.start_rag),
+            ("start cloud_proxy", svc.start_cloud_proxy),
+        ]
+        for idx, (label, op) in enumerate(start_ops):
+            result = await op()
+            self._append_line(mk, result)
+            if _service_operation_failed(result):
+                self._set_node_status(mk, "✗ local restart failed")
+                self._append_line(mk, f"⚠ {label} failed; aborting restart.")
+                return
+            if idx == 0:
+                await asyncio.sleep(0.5)
+
         result = await svc.start_stargate()
         self._append_line(mk, result)
         if not result.startswith("Stargate starting"):
@@ -292,6 +317,8 @@ class TopologyPanel(Widget):
         if is_mcp_configured(self._workspace_root):
             self._append_line(mk, "Rebuilding MCP server...")
             self._append_line(mk, await svc.rebuild_mcp())
+        else:
+            self._append_line(mk, "MCP skipped (not configured in ~/.gateway/mcp.yaml).")
 
     async def _deploy_remotes_parallel(self, *, build: bool, scope: str) -> None:
         """Deploy all remotes in parallel via TaskGroup."""
@@ -422,3 +449,14 @@ def _status_reason_suffix(status_reason: str | None) -> str:
         return ""
     reason_text = _STATUS_REASON_DISPLAY.get(status_reason, status_reason)
     return f" [{reason_text}]"
+
+
+def _service_operation_failed(result: str) -> bool:
+    """Classify service-controller operation output as success/failure."""
+    text = result.strip().lower()
+    return (
+        text.startswith("failed")
+        or text.startswith("error")
+        or " failed " in text
+        or " not found" in text
+    )
