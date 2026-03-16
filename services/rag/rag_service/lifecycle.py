@@ -25,7 +25,11 @@ from services.rag.article_registry import (
     to_article_rows,
 )
 from services.rag.config import DEFAULT_INDEX_WORKERS, RagConfig, load_config
-from services.rag.directory_ops import purge_orphaned_sources
+from services.rag.directory_ops import (
+    delete_sources,
+    find_sources_under_prefixes,
+    purge_orphaned_sources,
+)
 from services.rag.embeddings import close as close_embeddings
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import set_event_bus as set_embeddings_event_bus
@@ -33,6 +37,7 @@ from services.rag.embeddings import wait_until_healthy
 from services.rag.events.lifecycle import (
     rag_article_registry_failed,
     rag_article_registry_loaded,
+    rag_exclusion_purged,
     rag_orphan_purged,
     rag_pending_reconciled,
     rag_post_index_stale,
@@ -85,7 +90,7 @@ async def _startup() -> None:
                 yaml_registry = await asyncio.to_thread(
                     load_article_registry_yaml, legacy_path
                 )
-                if yaml_registry:
+                if yaml_registry is not None:
                     rows = to_article_rows(
                         yaml_registry,
                         source_root=legacy_path.parent,
@@ -208,6 +213,8 @@ async def _reconcile_pending(config: RagConfig) -> None:
                         src,
                         e,
                     )
+                    if state._property_index is not None:
+                        await state._property_index.clear_pending(src)
                     failed_permanent += 1
             except Exception as e:
                 logger.error(
@@ -269,7 +276,7 @@ async def _purge_orphans(config: RagConfig) -> None:
         if state._property_index is not None
         else None
     )
-    files_purged, chunks_purged = await purge_orphaned_sources(
+    files_purged, chunks_purged, purged_sources = await purge_orphaned_sources(
         collection=state._collection,
         watch_prefixes=watch_prefixes,
         remove_source_metadata_fn=remove_source_fn,
@@ -277,13 +284,78 @@ async def _purge_orphans(config: RagConfig) -> None:
     )
     if files_purged > 0:
         logger.info(
-            "Startup orphan purge complete: files=%d chunks=%d",
+            "Startup orphan purge complete: files=%d chunks=%d sources=%s",
             files_purged,
             chunks_purged,
+            sorted(Path(s).name for s in purged_sources),
         )
+    source_names = (
+        sorted(Path(s).name for s in purged_sources) if purged_sources else None
+    )
     if state._event_bus is not None:
         await state._event_bus.publish_async(
-            rag_orphan_purged(files=files_purged, chunks=chunks_purged)
+            rag_orphan_purged(
+                files=files_purged, chunks=chunks_purged, sources=source_names
+            )
+        )
+
+
+async def _purge_excluded_sources(config: RagConfig) -> None:
+    """Delete indexed sources that now match exclusion patterns in watch config.
+
+    ∀ watch_dir with exclude patterns: find indexed sources under that prefix,
+    check filenames against fnmatch patterns, and purge matches. Covers the case
+    where a file was previously indexed but later added to the exclude list.
+    """
+    if state._collection is None or not config.watch_directories:
+        return
+    sources_to_purge: set[str] = set()
+    for wd in config.watch_directories:
+        if not wd.exclude:
+            continue
+        watch_path = Path(wd.path).expanduser().resolve()
+        prefix = str(watch_path) + "/"
+        known = find_sources_under_prefixes(
+            collection=state._collection,
+            prefixes=[prefix],
+            list_known_sources_fn=(
+                state._property_index.list_known_sources
+                if state._property_index is not None
+                else None
+            ),
+        )
+        for source in known:
+            if any(fnmatch(Path(source).name, pat) for pat in wd.exclude):
+                sources_to_purge.add(source)
+    if not sources_to_purge:
+        if state._event_bus is not None:
+            await state._event_bus.publish_async(
+                rag_exclusion_purged(files=0, chunks=0)
+            )
+        return
+    remove_source_fn = (
+        state._property_index.remove_source_metadata
+        if state._property_index is not None
+        else None
+    )
+    files_purged, chunks_purged = await delete_sources(
+        collection=state._collection,
+        sources=sources_to_purge,
+        remove_source_metadata_fn=remove_source_fn,
+    )
+    if files_purged > 0:
+        logger.info(
+            "Startup exclusion purge: files=%d chunks=%d sources=%s",
+            files_purged,
+            chunks_purged,
+            sorted(Path(s).name for s in sources_to_purge),
+        )
+    source_names = sorted(Path(s).name for s in sources_to_purge)
+    if state._event_bus is not None:
+        await state._event_bus.publish_async(
+            rag_exclusion_purged(
+                files=files_purged, chunks=chunks_purged, sources=source_names
+            )
         )
 
 
@@ -337,6 +409,7 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
     for coro, name in (
         (_reconcile_pending(config), "rag-reconcile-pending"),
         (_purge_orphans(config), "rag-orphan-purge"),
+        (_purge_excluded_sources(config), "rag-exclusion-purge"),
     ):
         task = asyncio.create_task(coro, name=name)
         state._background_tasks.add(task)
@@ -362,7 +435,6 @@ def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | 
         An integer representing the `chunk_tokens` override for the file, or
         `None` if no specific override applies from the watch directories.
     """
-    """Resolve watch-directory chunk token override for a specific file path."""
     resolved_file = file_path.expanduser().resolve()
     baseline: set[str] = {f".{ext.lower()}" for ext in config.baseline_extensions}
     for watch_directory in config.watch_directories:

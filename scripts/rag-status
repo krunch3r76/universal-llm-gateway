@@ -558,7 +558,11 @@ def _inference_to_index_seconds(
     if wall_seconds is not None and queue_wait_seconds is not None:
         return max(0.0, wall_seconds - max(0.0, queue_wait_seconds))
 
-    if wall_seconds is not None and processing_seconds is not None and extract_seconds is not None:
+    if (
+        wall_seconds is not None
+        and processing_seconds is not None
+        and extract_seconds is not None
+    ):
         tail = max(0.0, wall_seconds - max(0.0, extract_seconds))
         return max(0.0, processing_seconds + tail)
 
@@ -1124,6 +1128,50 @@ def _render_watch_event(
                 seq,
             )
 
+        case "rag.orphan.purged":
+            files = p.get("files", 0)
+            chunks = p.get("chunks", 0)
+            sources = p.get("sources", [])
+            if files > 0:
+                detail = f": {', '.join(sources)}" if sources else ""
+                emit(
+                    f"{ts}  [ORPHAN  ]  purged {files} missing files ({chunks} chunks){detail}"
+                )
+            else:
+                emit(f"{ts}  [ORPHAN  ]  no missing files")
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.exclusion.purged":
+            files = p.get("files", 0)
+            chunks = p.get("chunks", 0)
+            sources = p.get("sources", [])
+            if files > 0:
+                detail = f": {', '.join(sources)}" if sources else ""
+                emit(
+                    f"{ts}  [EXCLUDE ]  purged {files} excluded files ({chunks} chunks){detail}"
+                )
+            else:
+                emit(f"{ts}  [EXCLUDE ]  no excluded files to purge")
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
         case _:
             if sig.startswith("rag."):
                 emit(f"{ts}  [{sig}]  {json.dumps(p)}")
@@ -1275,7 +1323,9 @@ async def _watch_mode_async() -> None:
             waiting_for_socket = False
 
             try:
-                async for ev in _iter_event_service_events(resume_seq=cursor.resume_seq):
+                async for ev in _iter_event_service_events(
+                    resume_seq=cursor.resume_seq
+                ):
                     if ev.get("type") == "subscribed":
                         had_ws_session = True
                         backoff = WS_RETRY_BASE_SECONDS

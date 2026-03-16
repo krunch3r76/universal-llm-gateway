@@ -18,6 +18,8 @@ Signals:
     capacity.slot.leak.recovered — cancellation race slot recovery in CapacityPool
 """
 
+from typing import Any, Literal
+
 from universal_event_bus import Event, event_factory
 
 # ========================================
@@ -225,7 +227,7 @@ def RoutingResourceDataMissing(
 def RoutingModelInfeasible(
     request_id: str,
     model_id: str,
-    gateway_constraints: list[dict[str, object]],
+    gateway_constraints: list[dict[str, Any]],
     excluded_gateway_ids: list[str],
 ) -> Event:
     """
@@ -359,7 +361,7 @@ def RoutingCapacityDivergence(
     request_id: str,
     model_id: str,
     gateway_id: str,
-    busy_models_state: str,
+    busy_models_state: Literal["busy", "idle"],
     capacity_pool_available: int,
     capacity_pool_in_flight: int,
     capacity_pool_max: int,
@@ -438,7 +440,21 @@ def RoutingOverflowTriggered(
     to_gateway: str,
     reason: str,
 ) -> Event:
-    """Create ROUTING_OVERFLOW_TRIGGERED event."""
+    """Create ROUTING_OVERFLOW_TRIGGERED event.
+
+    Emitted when the non-sticky overflow path excludes the primary gateway and
+    finds a feasible alternate gateway for the same request.
+
+    Args:
+        request_id: Request that triggered overflow routing
+        model_id: Model being routed
+        from_gateway: Saturated primary gateway selected first
+        to_gateway: Alternate gateway selected by the overflow pass
+        reason: Why the overflow path was taken
+
+    Returns:
+        Event with RoutingOverflowTriggered signal
+    """
     return Event(
         signal=ROUTING_OVERFLOW_TRIGGERED,
         payload={
@@ -458,7 +474,20 @@ def RoutingOverflowFailed(
     from_gateway: str,
     reason: str,
 ) -> Event:
-    """Create ROUTING_OVERFLOW_FAILED event."""
+    """Create ROUTING_OVERFLOW_FAILED event.
+
+    Emitted when the non-sticky overflow branch is taken but no alternate
+    gateway can complete the request successfully.
+
+    Args:
+        request_id: Request that attempted overflow routing
+        model_id: Model being routed
+        from_gateway: Primary gateway that was excluded from the overflow pass
+        reason: Why overflow routing could not complete
+
+    Returns:
+        Event with RoutingOverflowFailed signal
+    """
     return Event(
         signal=ROUTING_OVERFLOW_FAILED,
         payload={
@@ -498,7 +527,7 @@ def CapacitySlotLeakRecovered(
     request_id: str,
     gateway_id: str,
     model_id: str,
-    snapshot: dict[str, object],
+    snapshot: dict[str, Any],
 ) -> Event:
     """Create CAPACITY_SLOT_LEAK_RECOVERED event.
 

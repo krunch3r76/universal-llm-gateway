@@ -35,7 +35,11 @@ MCP_URL = os.environ.get("MCP_URL", "https://mcp.k-1.me/mcp")
 
 
 def _strip_quotes(value: str) -> str:
-    """Strip matching single/double quotes around a scalar YAML value."""
+    """Strip paired outer quotes from scalar YAML values.
+
+    Returns the input unchanged when the string is too short to contain a
+    matching pair or when the outer characters are not the same quote mark.
+    """
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     return value
@@ -57,7 +61,12 @@ def _read_mcp_yaml_scalar(key: str) -> str:
                 continue
             value = line.split(":", 1)[1].split("#", 1)[0].strip()
             return _strip_quotes(value)
-    except OSError:
+    except OSError as exc:
+        print(
+            f"mcp-stdio-proxy warning: failed reading {mcp_yaml}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
         return ""
     return ""
 
@@ -78,6 +87,30 @@ def _resolve_mcp_token() -> str:
     raise RuntimeError(
         "MCP token not configured. Set MCP_TOKEN, or set auth_token_env/auth_token in ~/.gateway/mcp.yaml."
     )
+
+
+def _emit_proxy_error(
+    *, msg_id: object | None, is_notification: bool, exc: Exception
+) -> None:
+    """Report a transport failure to stderr or as a JSON-RPC error response."""
+    if is_notification:
+        print(
+            f"mcp-stdio-proxy notification error: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    sys.stdout.write(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {"code": -32603, "message": str(exc)},
+            }
+        )
+        + "\n"
+    )
+    sys.stdout.flush()
 
 
 def _post(body: bytes, *, token: str) -> str | None:
@@ -146,51 +179,23 @@ def main() -> None:
             continue
         try:
             msg = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            print(
+                f"mcp-stdio-proxy malformed JSON input: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
             continue
 
         is_notification = "id" not in msg
         try:
             result = _post(line.encode("utf-8"), token=mcp_token)
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
-            if is_notification:
-                print(
-                    f"mcp-stdio-proxy notification error: {exc}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                continue
-            sys.stdout.write(
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": msg.get("id"),
-                        "error": {"code": -32603, "message": str(exc)},
-                    }
-                )
-                + "\n"
-            )
-            sys.stdout.flush()
-            continue
         except Exception as exc:
-            if is_notification:
-                print(
-                    f"mcp-stdio-proxy notification error: {exc}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                continue
-            sys.stdout.write(
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": msg.get("id"),
-                        "error": {"code": -32603, "message": str(exc)},
-                    }
-                )
-                + "\n"
+            _emit_proxy_error(
+                msg_id=msg.get("id"),
+                is_notification=is_notification,
+                exc=exc,
             )
-            sys.stdout.flush()
             continue
 
         # JSON-RPC 2.0: notifications have no response.

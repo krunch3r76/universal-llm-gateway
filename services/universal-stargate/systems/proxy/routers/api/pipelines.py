@@ -7,6 +7,8 @@ timeout auto-detection).
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 from fastapi import APIRouter, Depends, HTTPException
 from universal_logging import get_logger
 
@@ -16,11 +18,28 @@ from ...stargate_core import StargateProxy
 logger = get_logger(__name__)
 router = APIRouter(tags=["pipelines"])
 
+class PipelineSummary(TypedDict):
+    steps: int
+    models: list[str]
+    domain: str
+    version: str
+    timeout_seconds: float
 
-def _pipeline_summary(pipeline_id: str, proxy: StargateProxy) -> dict:
-    """Build metadata summary for a single pipeline."""
+
+PipelinesResponse = dict[str, dict[str, PipelineSummary]]
+
+
+def _require_pipeline_registry(proxy: StargateProxy):
+    """Return the pipeline registry or raise when unavailable."""
     registry = proxy.pipeline_registry
-    assert registry is not None
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Pipeline registry unavailable")
+    return registry
+
+
+def _pipeline_summary(pipeline_id: str, proxy: StargateProxy) -> PipelineSummary:
+    """Build metadata summary for a single registered pipeline."""
+    registry = _require_pipeline_registry(proxy)
     spec = registry.pipelines[pipeline_id]
     return {
         "steps": len(spec.steps),
@@ -40,14 +59,10 @@ def _pipeline_summary(pipeline_id: str, proxy: StargateProxy) -> dict:
 @router.get("/pipelines")
 async def list_pipelines(
     proxy: StargateProxy = Depends(get_proxy),
-    current_user: dict = Depends(get_auth_dependency),
-) -> dict:
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> PipelinesResponse:
     """Return metadata for all registered pipelines."""
-    del current_user
-    if proxy.pipeline_registry is None:
-        raise HTTPException(status_code=503, detail="Pipeline registry unavailable")
+    registry = _require_pipeline_registry(proxy)
 
-    pipelines = {
-        pid: _pipeline_summary(pid, proxy) for pid in proxy.pipeline_registry.pipelines
-    }
+    pipelines = {pid: _pipeline_summary(pid, proxy) for pid in registry.pipelines}
     return {"pipelines": pipelines}

@@ -32,9 +32,37 @@ _service_start_locks: dict[str, asyncio.Lock] = {}
 
 
 def _get_service_start_lock(app_module: str) -> asyncio.Lock:
+    """Return the per-app startup lock used to serialize local start attempts.
+
+    The lock complements the cross-process file lock in `_pre_launch()` by
+    preventing two in-process callers from both passing the pre-launch checks
+    before the PID file for the new child process has been written.
+    """
     if app_module not in _service_start_locks:
         _service_start_locks[app_module] = asyncio.Lock()
     return _service_start_locks[app_module]
+
+
+def _read_log_tail(log_file: Path, max_chars: int = 1000) -> str:
+    """Read at most the last ``max_chars`` from a service log file."""
+    with log_file.open("rb") as fh:
+        fh.seek(0, 2)
+        size = fh.tell()
+        seek = max(0, size - max_chars * 4)
+        fh.seek(seek)
+        data = fh.read()
+    return data.decode("utf-8", errors="replace")[-max_chars:]
+
+
+def _cleanup_uds_socket(lock_file: Path, socket_path: Path | None) -> None:
+    """Best-effort cleanup for stale UDS socket files."""
+    if socket_path is None or not socket_path.exists():
+        return
+    fd = _acquire_lock(lock_file)
+    try:
+        _safe_unlink_stale_socket(socket_path)
+    finally:
+        _release_lock(fd)
 
 
 async def _start_uvicorn_service(
@@ -54,6 +82,8 @@ async def _start_uvicorn_service(
 ) -> str:
     """Start a uvicorn-based service. Returns status message."""
     uds_mode = tcp_config is None
+    if uds_mode and socket_path is None:
+        return f"{service_name} configuration error: UDS mode requires socket_path."
 
     def _pre_launch() -> str | None:
         fd = _acquire_lock(lock_file)
@@ -113,9 +143,10 @@ async def _start_uvicorn_service(
 
         try:
             exit_code = await asyncio.wait_for(process.wait(), timeout=3.0)
-            tail = log_file.read_text(errors="replace")[-1000:]
+            tail = _read_log_tail(log_file)
             return f"{service_name} failed (exit {exit_code}).\n{tail}"
         except TimeoutError:
+            logger.info("%s subprocess remained alive after startup probe", service_name)
             if on_timeout_success is not None:
                 on_timeout_success(socket_path, tcp_config, process.pid)
             fd = _acquire_lock(lock_file)
@@ -165,9 +196,7 @@ async def _stop_uvicorn_service(
                 return recorded_pid, True, None
             pid_file.unlink(missing_ok=True)
             if uds_mode:
-                fallback_pid = _find_uvicorn_pid_by_cmdline(
-                    app_module, uds_mode=True
-                ) or _find_uvicorn_pid_by_cmdline(app_module, uds_mode=False)
+                fallback_pid = _find_uvicorn_pid_by_cmdline(app_module, uds_mode=True)
                 if fallback_pid is not None:
                     return fallback_pid, False, None
                 return None, False, None
@@ -198,12 +227,8 @@ async def _stop_uvicorn_service(
     if err_msg is not None:
         return err_msg
     if target_pid is None:
-        if uds_mode and socket_path is not None and socket_path.exists():
-            fd = _acquire_lock(lock_file)
-            try:
-                _safe_unlink_stale_socket(socket_path)
-            finally:
-                _release_lock(fd)
+        if uds_mode:
+            _cleanup_uds_socket(lock_file, socket_path)
         return f"{service_name} is not running."
 
     result = await kill_and_wait(
@@ -212,11 +237,7 @@ async def _stop_uvicorn_service(
         service_name=service_name,
     )
 
-    if uds_mode and socket_path is not None and socket_path.exists():
-        fd = _acquire_lock(lock_file)
-        try:
-            _safe_unlink_stale_socket(socket_path)
-        finally:
-            _release_lock(fd)
+    if uds_mode:
+        _cleanup_uds_socket(lock_file, socket_path)
 
     return result

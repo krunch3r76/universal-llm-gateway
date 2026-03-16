@@ -61,8 +61,9 @@ async def process_chat_completion(
     Returns the HTTP Response (streaming or non-streaming) from the executor.
     """
     target_model = model_override or chat_request.model
-    is_pipeline = bool(proxy.pipeline_registry) and proxy.pipeline_registry.is_pipeline(
-        target_model
+    is_pipeline = (
+        proxy.pipeline_registry is not None
+        and proxy.pipeline_registry.is_pipeline(target_model)
     )
 
     if is_pipeline and chat_request.messages:
@@ -106,8 +107,11 @@ async def process_chat_completion(
                     is_pipeline=is_pipeline,
                 )
             )
-        except Exception:
-            logger.exception("Failed to publish RequestSnapshotReceived event")
+        except Exception as exc:
+            logger.exception(
+                "Failed to publish RequestSnapshotReceived event (%s)",
+                type(exc).__name__,
+            )
 
     if proxy.monitor:
         try:
@@ -119,7 +123,7 @@ async def process_chat_completion(
                 profile_name=profile_name,
             )
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.debug("Failed to send early request_info event: %s", exc)
+            logger.warning("Failed to send early request_info event: %s", exc)
 
     if is_pipeline:
         logger.info("Routing to pipeline executor: %s", context.selected_model)
@@ -202,11 +206,15 @@ async def process_chat_completion(
                 RequestSnapshotRouted(
                     request_id=context.request_id,
                     model_id=model_id,
-                    gateway_id=getattr(context, "target_gateway_id", "") or "",
+                    gateway_id=getattr(context, "target_gateway_id", ""),
                     profile_name=profile_name,
                 )
             )
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.debug("Failed to emit REQUEST_PROCESSING event: %s", exc)
+            logger.warning(
+                "Failed to emit REQUEST_PROCESSING event: %s",
+                exc,
+                exc_info=True,
+            )
 
     return await execute_with_retry(proxy, context, model_id, request, start_time)

@@ -189,8 +189,12 @@ async def purge_orphaned_sources(
     watch_prefixes: list[str],
     remove_source_metadata_fn: RemoveSourceMetadataFn | None = None,
     list_known_sources_fn: ListKnownSourcesFn | None = None,
-) -> tuple[int, int]:
-    """Delete missing watched sources from Chroma and metadata-bearing storage."""
+) -> tuple[int, int, set[str]]:
+    """Delete missing watched sources from Chroma and metadata-bearing storage.
+
+    Returns:
+        (files_purged, chunks_purged, purged_sources)
+    """
     known_sources = find_sources_under_prefixes(
         collection=collection,
         prefixes=watch_prefixes,
@@ -198,9 +202,10 @@ async def purge_orphaned_sources(
     )
     missing_sources = {source for source in known_sources if not Path(source).exists()}
     if not missing_sources:
-        return 0, 0
-    return await delete_sources(
+        return 0, 0, set()
+    files, chunks = await delete_sources(
         collection=collection,
         sources=missing_sources,
         remove_source_metadata_fn=remove_source_metadata_fn,
     )
+    return files, chunks, missing_sources

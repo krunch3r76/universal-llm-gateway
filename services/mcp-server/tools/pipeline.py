@@ -29,26 +29,66 @@ _QUERY_SOCKET = os.environ.get(
 )
 
 _pipeline_timeouts: dict[str, float] = {}
+_last_timeout_refresh_monotonic = 0.0
+_TIMEOUT_CACHE_TTL_S = 60.0
 
 
-def _refresh_pipeline_timeouts() -> None:
-    """Fetch pipeline metadata from Stargate and cache timeout_seconds."""
+def _fetch_pipelines_metadata() -> dict[str, Any]:
+    """Fetch pipeline registry metadata from Stargate.
+
+    Returns:
+        Decoded JSON payload from ``/api/v1/pipelines``.
+    """
+    url = f"{_STARGATE_URL}/api/v1/pipelines"
     try:
-        url = f"{_STARGATE_URL}/api/v1/pipelines"
         with httpx.Client(timeout=_VALIDATE_TIMEOUT) as client:
             resp = client.get(url)
             resp.raise_for_status()
-            data = resp.json()
-    except Exception:
-        logger.debug("Pipeline metadata fetch failed; using fallback timeouts")
-        return
+            return resp.json()
+    except httpx.HTTPError:
+        logger.warning("Failed to fetch pipelines metadata from %s", url, exc_info=True)
+        raise
 
-    pipelines = data.get("pipelines", {})
+
+def _cache_pipeline_timeouts(pipelines: dict[str, Any]) -> None:
+    """Refresh the local timeout cache from a pipelines metadata mapping.
+
+    Args:
+        pipelines: Mapping of pipeline_id -> metadata payload from Stargate.
+    """
     _pipeline_timeouts.clear()
     for pid, info in pipelines.items():
         ts = info.get("timeout_seconds")
         if isinstance(ts, int | float) and ts > 0:
             _pipeline_timeouts[pid] = float(ts)
+
+
+def _refresh_pipeline_timeouts() -> None:
+    """Refresh cached pipeline timeouts from the live Stargate registry.
+
+    Keeps the previous cache untouched when the metadata fetch fails so callers
+    can still use the last known timeout values instead of silently clearing the
+    cache and forcing the hardcoded fallback for every pipeline.
+    """
+    global _last_timeout_refresh_monotonic
+    try:
+        data = _fetch_pipelines_metadata()
+    except Exception as exc:
+        logger.warning(
+            "Pipeline metadata fetch failed; using cached/fallback timeouts: %s",
+            exc,
+        )
+        return
+
+    pipelines = data.get("pipelines", {})
+    if not isinstance(pipelines, dict):
+        logger.warning(
+            "Pipeline metadata fetch returned unexpected payload shape: %r",
+            type(pipelines).__name__,
+        )
+        return
+    _cache_pipeline_timeouts(pipelines)
+    _last_timeout_refresh_monotonic = monotonic_now()
 
 
 def _resolve_timeout(pipeline: str, explicit: float | None) -> float:
@@ -60,7 +100,8 @@ def _resolve_timeout(pipeline: str, explicit: float | None) -> float:
     if explicit is not None:
         return explicit
 
-    if not _pipeline_timeouts:
+    cache_age = monotonic_now() - _last_timeout_refresh_monotonic
+    if not _pipeline_timeouts or cache_age > _TIMEOUT_CACHE_TTL_S:
         _refresh_pipeline_timeouts()
 
     configured = _pipeline_timeouts.get(pipeline)
@@ -71,19 +112,44 @@ def _resolve_timeout(pipeline: str, explicit: float | None) -> float:
 
 
 def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
-    """POST to event service query endpoint over UDS."""
+    """POST a structured query to the event-service UDS endpoint.
+
+    Returns the decoded JSON response on success. On transport or HTTP failure,
+    logs a warning and returns an error dictionary so MCP callers receive a
+    structured failure instead of an uncaught exception.
+    """
     transport = httpx.HTTPTransport(uds=_QUERY_SOCKET)
     try:
         with httpx.Client(transport=transport, timeout=10.0) as client:
             resp = client.post("http://localhost/v1/query", json=body)
             resp.raise_for_status()
             return resp.json()
-    except Exception as e:
-        return {"error": f"Event service query failed: {e}"}
+    except httpx.HTTPError as exc:
+        logger.warning("Event service HTTP query failed: %s", exc)
+        return {"error": f"Event service HTTP query failed: {exc}"}
+    except ValueError as exc:
+        logger.warning("Event service query returned invalid JSON: %s", exc)
+        return {"error": f"Event service query returned invalid JSON: {exc}"}
+    except Exception as exc:
+        logger.warning("Event service query failed: %s", exc)
+        return {"error": f"Event service query failed: {exc}"}
+
+
+def _validate_error(pipeline: str, message: str) -> dict[str, Any]:
+    """Build a consistent error shape for validate_pipeline failures."""
+    return {
+        "valid": False,
+        "pipeline": pipeline,
+        "errors": [message],
+        "steps": 0,
+        "models": [],
+        "domain": "",
+    }
 
 
 def register_pipeline_tools(mcp: FastMCP) -> None:
     """Register pipeline execution and validation tools."""
+    _refresh_pipeline_timeouts()
 
     @mcp.tool()
     def pipeline_run(
@@ -207,46 +273,49 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         record("mcp.pipeline.validate.called", pipeline=pipeline)
 
         try:
-            url = f"{_STARGATE_URL}/api/v1/pipelines"
-            with httpx.Client(timeout=_VALIDATE_TIMEOUT) as client:
-                resp = client.get(url)
-                resp.raise_for_status()
-                pipelines_data = resp.json()
+            pipelines_data = _fetch_pipelines_metadata()
         except httpx.ConnectError as e:
-            logger.exception(
-                "Stargate connection failed during pipeline validation for %s", pipeline
+            logger.warning(
+                "Stargate connection failed during pipeline validation for %s: %s",
+                pipeline,
+                e,
             )
-            return {"valid": False, "errors": [f"Stargate not reachable: {e}"]}
+            return _validate_error(pipeline, f"Stargate not reachable: {e}")
         except httpx.HTTPStatusError as e:
-            logger.exception(
+            logger.warning(
                 "HTTP status error during pipeline validation for %s: %s",
                 pipeline,
                 e.response.status_code,
             )
-            return {
-                "valid": False,
-                "errors": [f"Pipeline API error: {e.response.status_code}"],
-            }
+            return _validate_error(
+                pipeline,
+                f"Pipeline API error: {e.response.status_code}",
+            )
         except Exception as e:
             logger.exception(
                 "Unexpected error during pipeline validation for %s", pipeline
             )
-            return {"valid": False, "errors": [f"Validation failed: {e}"]}
+            return _validate_error(pipeline, f"Validation failed: {e}")
 
         pipelines = pipelines_data.get("pipelines", {})
+        if not isinstance(pipelines, dict):
+            logger.error(
+                "Pipeline metadata endpoint returned invalid pipelines payload: %r",
+                type(pipelines).__name__,
+            )
+            return _validate_error(
+                pipeline,
+                "Pipeline API returned invalid metadata payload.",
+            )
 
-        _pipeline_timeouts.clear()
-        for pid, pinfo in pipelines.items():
-            ts = pinfo.get("timeout_seconds")
-            if isinstance(ts, int | float) and ts > 0:
-                _pipeline_timeouts[pid] = float(ts)
+        _cache_pipeline_timeouts(pipelines)
 
         if pipeline not in pipelines:
             available = sorted(pipelines.keys()) if isinstance(pipelines, dict) else []
-            return {
-                "valid": False,
-                "errors": [f"Pipeline '{pipeline}' not found. Available: {available}"],
-            }
+            return _validate_error(
+                pipeline,
+                f"Pipeline '{pipeline}' not found. Available: {available}",
+            )
 
         info = pipelines[pipeline]
         duration = monotonic_now() - t0
@@ -259,6 +328,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         return {
             "valid": True,
             "pipeline": pipeline,
+            "errors": [],
             "steps": info.get("steps", 0),
             "models": info.get("models", []),
             "domain": info.get("domain", ""),

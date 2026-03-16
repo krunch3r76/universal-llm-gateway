@@ -275,6 +275,7 @@ request.processing
 rag.started
   └─> rag.pending.reconciled?               (* emitted once if pending files found at startup)
   └─> rag.orphan.purged                     (* always emitted; files=0 when nothing to purge)
+  └─> rag.exclusion.purged                  (* always emitted; files=0 when nothing to purge)
   └─> rag.watch.directory.missing | rag.watch.started
       └─> rag.watch.initial.started
           └─> rag.watch.initial.progress*   (* zero or more, monotonic processed count *)
@@ -338,7 +339,26 @@ indexed sources are left untouched.
 Payload semantics:
 - `files`: number of distinct watched source paths reconciled back to filesystem truth
 - `chunks`: total Chroma chunks removed across all purged sources
+- `sources` (optional): list of purged filenames (basename only); present when `files > 0`
 - `files > 0` with `chunks = 0` is valid when cleanup removed metadata-only stale sources
+
+### RAG Exclusion Purge
+
+**INVARIANT**: `rag.exclusion.purged` is emitted exactly once per startup, after orphan purge
+and before `rag.watch.started`. `files=0` when no excluded sources were found in the index.
+
+**INVARIANT**: Only sources under configured watch directory prefixes whose filenames match
+an `exclude` pattern (via `fnmatch`) are examined. Files not under any watch prefix are untouched.
+
+| Signal | Required Payload | Description |
+|--------|-----------------|-------------|
+| `rag.exclusion.purged` | `files`, `chunks` | Indexed sources matching exclusion patterns purged during startup |
+
+Payload semantics:
+- `files`: number of distinct source paths purged because they now match an exclusion pattern
+- `chunks`: total Chroma chunks removed across all purged sources
+- `sources` (optional): list of purged filenames (basename only); present when `files > 0`
+- Covers the case where a file was previously indexed but later added to the `exclude` list
 
 ### RAG Extraction Batch Lifecycle
 
@@ -1126,7 +1146,8 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.extraction.failed` | `chunk_id`, `error` | - |
 | `rag.property.index.rebuilt` | `collection`, `count` | - |
 | `rag.pending.reconciled` | `reconciled`, `cleared`, `failed_transient`, `failed_permanent` | emitted once at startup if interrupted files found |
-| `rag.orphan.purged` | `files`, `chunks` | emitted once at startup; `files` counts watched sources reconciled to filesystem truth and `chunks` counts only Chroma deletions |
+| `rag.orphan.purged` | `files`, `chunks`, `sources`? | emitted once at startup; `files` counts watched sources reconciled to filesystem truth; `sources` lists filenames when files > 0 |
+| `rag.exclusion.purged` | `files`, `chunks`, `sources`? | emitted once at startup; `files` counts indexed sources matching exclusion patterns that were purged; `sources` lists filenames when files > 0 |
 | `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
 | `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
 | `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |

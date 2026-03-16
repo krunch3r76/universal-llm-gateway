@@ -19,11 +19,17 @@ from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class _EventBusLike(Protocol):
+    def subscribe_async(self, signal: str, callback: Any) -> None: ...
+
+    async def publish_async_nowait(self, event: Any) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +38,9 @@ class _Slot:
 
     gateway_id: str
     model_id: str
+
+    def __str__(self) -> str:
+        return f"{self.gateway_id}/{self.model_id}"
 
 
 @dataclass(slots=True)
@@ -51,9 +60,12 @@ class CapacityToken:
     _pool: CapacityPool | None = field(default=None, repr=False)
 
     async def release(self) -> None:
-        """Idempotent release — safe to call multiple times.
+        """Return this reservation to the pool exactly once.
 
-        First call runs _pool._release and sets _released; later calls no-op.
+        The first call hands the slot back to `CapacityPool._release()` and
+        marks the token as released. Later calls are no-ops, and tokens with no
+        associated pool are also treated as no-ops, so callers can safely
+        release in `finally` blocks without risking double accounting.
         """
         if self._released or self._pool is None:
             return
@@ -88,7 +100,7 @@ class CapacityPool:
     only observable as latency degradation under load).
     """
 
-    def __init__(self, event_bus: Any | None = None) -> None:
+    def __init__(self, event_bus: _EventBusLike | None = None) -> None:
         self._event_bus = event_bus
         self._capacity: dict[_Slot, int] = {}
         self._in_flight: dict[_Slot, int] = {}
@@ -224,16 +236,14 @@ class CapacityPool:
         available > 0.  Used by routing to enumerate candidates for a model.
         Only includes slots where at least one request can be admitted immediately.
         """
-        return sorted(
-            (
-                (slot.gateway_id, self.available(slot.gateway_id, slot.model_id))
-                for slot in self._capacity
-                if slot.model_id == model_id
-                and self.available(slot.gateway_id, slot.model_id) > 0
-            ),
-            key=lambda x: x[1],
-            reverse=True,
-        )
+        available_pairs: list[tuple[str, int]] = []
+        for slot in self._capacity:
+            if slot.model_id != model_id:
+                continue
+            available = self.available(slot.gateway_id, slot.model_id)
+            if available > 0:
+                available_pairs.append((slot.gateway_id, available))
+        return sorted(available_pairs, key=lambda x: x[1], reverse=True)
 
     # ── Admission ──
 
@@ -431,11 +441,9 @@ class CapacityPool:
         self._emit_slot_leak_recovered(request_id, gateway_id, model_id)
         # Wake next waiter in a new task — cannot await during cancellation
         try:
-            asyncio.get_running_loop().call_soon(
-                lambda: asyncio.create_task(
-                    self._dispatch(model_id),
-                    name=f"capacity-recover-dispatch-{model_id}",
-                )
+            asyncio.create_task(
+                self._dispatch(model_id),
+                name=f"capacity-recover-dispatch-{model_id}",
             )
         except RuntimeError as exc:
             logger.warning(
@@ -467,9 +475,7 @@ class CapacityPool:
                 model_id=model_id,
                 snapshot=self.get_snapshot(),
             )
-            asyncio.get_running_loop().call_soon(
-                lambda: asyncio.create_task(self._event_bus.publish_async_nowait(event))
-            )
+            asyncio.create_task(self._event_bus.publish_async_nowait(event))
         except RuntimeError as exc:
             logger.warning(
                 "Failed to emit slot leak recovered event for %s/%s: "
@@ -623,12 +629,8 @@ class CapacityPool:
         by health endpoints, logging, and the MCP manage_service status command.
         """
         return {
-            "capacity": {
-                f"{s.gateway_id}/{s.model_id}": c for s, c in self._capacity.items()
-            },
-            "in_flight": {
-                f"{s.gateway_id}/{s.model_id}": c for s, c in self._in_flight.items()
-            },
+            "capacity": {str(s): c for s, c in self._capacity.items()},
+            "in_flight": {str(s): c for s, c in self._in_flight.items()},
             "queues": {
                 mid: [
                     {

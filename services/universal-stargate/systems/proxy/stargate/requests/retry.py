@@ -186,7 +186,7 @@ def _retry_timeout_exception(
     model_id: str,
     effective_timeout: float,
     retry_count: int,
-    elapsed: float,
+    elapsed_s: float,
     last_exc: HTTPException,
 ) -> HTTPException:
     """Build the appropriate timeout HTTPException after retry budget exhaustion.
@@ -200,12 +200,12 @@ def _retry_timeout_exception(
         "model_id": model_id,
         "timeout_seconds": effective_timeout,
         "retry_count": retry_count,
-        "elapsed_s": round(elapsed, 2),
+        "elapsed_s": round(elapsed_s, 2),
     }
     if is_capacity:
         message = (
             f"No capacity for model {model_id} after {retry_count} retries "
-            f"over {round(elapsed, 1)}s (budget {effective_timeout}s)"
+            f"over {round(elapsed_s, 1)}s (budget {effective_timeout}s)"
         )
         return HTTPException(
             status_code=get_http_status(ErrorCode.CAPACITY_TIMEOUT),
@@ -340,10 +340,21 @@ async def execute_with_retry(
                                         duration_s=duration,
                                     )
                                 )
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.warning(
+                                    "Failed to emit RequestSnapshotCompleted "
+                                    "for %s (%s): %s",
+                                    context.request_id,
+                                    type(exc).__name__,
+                                    exc,
+                                    exc_info=True,
+                                )
                     except Exception as exc:  # pragma: no cover - defensive logging
-                        logger.debug("Failed to emit REQUEST_COMPLETED event: %s", exc)
+                        logger.warning(
+                            "Failed to emit REQUEST_COMPLETED event: %s",
+                            exc,
+                            exc_info=True,
+                        )
 
                 return response
 
@@ -389,7 +400,9 @@ async def execute_with_retry(
                             context.request_timeout_hint, capacity_timeout_s
                         )
                     else:
-                        effective_timeout = context.request_timeout_hint
+                        effective_timeout = min(
+                            context.request_timeout_hint, upstream_timeout_s
+                        )
                 elif is_capacity:
                     effective_timeout = capacity_timeout_s
                 else:
@@ -410,14 +423,18 @@ async def execute_with_retry(
                                     pipeline_step_id=context.pipeline_step_id,
                                 )
                             )
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning(
+                                "Failed to emit RequestCapacityTimeout for %s: %s",
+                                context.request_id,
+                                exc,
+                            )
                     raise _retry_timeout_exception(
                         is_capacity=is_capacity,
                         model_id=model_id,
                         effective_timeout=effective_timeout,
                         retry_count=retry_count,
-                        elapsed=elapsed,
+                        elapsed_s=elapsed,
                         last_exc=exc,
                     ) from exc
 
@@ -447,6 +464,7 @@ async def execute_with_retry(
             "⚠️ [REQ:%s] Exception in request processing: %s",
             request_short_id,
             type(exc).__name__,
+            exc_info=True,
         )
         if proxy.event_bus:
             try:
@@ -470,5 +488,9 @@ async def execute_with_retry(
                     )
                 )
             except Exception as emit_err:  # pragma: no cover - defensive logging
-                logger.debug("Failed to emit REQUEST_FAILED event: %s", emit_err)
+                logger.warning(
+                    "Failed to emit REQUEST_FAILED event: %s",
+                    emit_err,
+                    exc_info=True,
+                )
         raise
