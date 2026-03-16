@@ -3,7 +3,8 @@
 # Prerequisites (host):
 #   - TLS certs populated by certbot (default /etc/letsencrypt)
 #   - MCP_AUTH_TOKEN set in environment (e.g., via export or source .env.local)
-#   - MCP_PROJECT_DIR set to workspace root (required — no default)
+#   - MCP_PROJECT_DIR set to project root (required — no default)
+#   - MCP_TASKS_DIR set to tasks directory (required — no default)
 #   - MCP_DATA_DIR defaults to ~/mcp-data
 #   - `docker network create mcp-network` (shared with satellite containers)
 #
@@ -24,9 +25,10 @@ services:
       # Mount entire letsencrypt dir so relative symlinks in live/ resolve correctly
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - ${MCP_DATA_DIR:-~/mcp-data}/files:/data/files:rw
-      - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}:/data/project:ro
-      # tasks mount mode: "ro" (default) or "rw"
-      - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}/tasks:/data/tasks:${MCP_TASKS_MOUNT_MODE:-ro}
+      # project mount: "ro" (default) or "rw" — toggled via project_access in mcp.yaml
+      - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}:/data/project:${MCP_PROJECT_MOUNT_MODE:-ro}
+      # tasks mount: separate dir, independent access mode
+      - ${MCP_TASKS_DIR:?MCP_TASKS_DIR required}:/data/tasks:${MCP_TASKS_MOUNT_MODE:-ro}
       - /tmp/universal-protocol:/tmp/universal-protocol
       # Optional: Firefox profile for authenticated browser sessions.
       # Set firefox_profile_dir in ~/.gateway/mcp.yaml to enable cookie injection.
@@ -47,8 +49,9 @@ services:
       - ENABLE_BROWSER_TOOLS=${ENABLE_BROWSER_TOOLS:-false}
       # Disable all tasks/ context tools with ENABLE_CONTEXT_TOOLS=false
       - ENABLE_CONTEXT_TOOLS=${ENABLE_CONTEXT_TOOLS:-true}
-      # Additional app-level guard for write tools (recommended true with ro mount)
+      # App-level write guards (recommended true with ro mounts)
       - TASKS_READ_ONLY=${TASKS_READ_ONLY:-true}
+      - PROJECT_READ_ONLY=${PROJECT_READ_ONLY:-true}
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
       - SQLITE_CONFIG_PATH=/data/sqlite-config.yaml
       - STARGATE_URL=${STARGATE_URL:-http://host.docker.internal:9999}

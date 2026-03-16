@@ -1,12 +1,18 @@
-"""Project directory tools — read-only access to the mounted project.
+"""Project directory tools — read + optional write access to mounted project(s).
 
 All paths are resolved relative to _PROJECT_ROOT. Traversal attempts
-(../) are rejected. The volume mount is :ro but code-level enforcement
-provides defense in depth — no write functions exist.
+(../) are rejected before resolution so that the container volume mount
+is complemented by explicit code-level defense in depth.
+
+Supports both single-repo roots (PROJECT_ROOT is a git repo) and
+multi-repo roots (PROJECT_ROOT contains multiple git repos as children).
 
 File listing uses `git ls-files` so only tracked files appear — .gitignore
 is the single source of truth for what's visible. Binary files are excluded
 from listing and rejected from reading.
+
+Write tools (write_project_file, edit_project_file) are gated by
+PROJECT_READ_ONLY (default true). Toggle via project_access in mcp.yaml.
 """
 
 from __future__ import annotations
@@ -16,7 +22,11 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+
+from mcp_events import record
+
+from .file_editor import perform_edit
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -24,6 +34,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
+_PROJECT_READ_ONLY = os.environ.get("PROJECT_READ_ONLY", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 _BINARY_SUFFIXES = {
     ".pyc",
@@ -72,6 +88,27 @@ _BINARY_SUFFIXES = {
     ".pdf",
 }
 
+_WRITABLE_SUFFIXES = {
+    ".py",
+    ".md",
+    ".txt",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".html",
+    ".css",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".sh",
+    ".cfg",
+    ".ini",
+    ".env",
+    ".mdc",
+}
+
 
 def _safe_project_path(relative: str) -> Path:
     """Resolve *relative* inside the project root, rejecting traversal."""
@@ -92,19 +129,39 @@ def _is_binary(path: Path) -> bool:
     return path.suffix.lower() in _BINARY_SUFFIXES
 
 
-def _git_tracked_files(directory: str = "") -> list[str]:
-    """Return git-tracked file paths relative to PROJECT_ROOT.
+def _read_only_error() -> dict[str, str]:
+    return {
+        "error": (
+            "project is read-only (PROJECT_READ_ONLY=true); "
+            "set project_access: rw in ~/.gateway/mcp.yaml and rebuild MCP"
+        )
+    }
 
-    Uses ``git -C <root> ls-files`` so the .git directory must be
-    accessible inside the container mount.  GIT_OPTIONAL_LOCKS=0
-    prevents lock-file creation on the read-only mount.
-    Falls back to an empty list on failure.
-    """
-    resolved = str(_PROJECT_ROOT.resolve())
-    cmd = ["git", "-C", resolved, "ls-files"]
-    if directory:
-        cmd.extend(["--", directory])
 
+def _discover_repos() -> list[Path]:
+    """Find git repos within the project root (depth 0 or 1)."""
+    root = _PROJECT_ROOT.resolve()
+    if (root / ".git").exists():
+        return [root]
+    repos = []
+    try:
+        children = sorted(root.iterdir())
+    except OSError:
+        return []
+    for child in children:
+        if child.is_dir() and (child / ".git").exists():
+            repos.append(child)
+    return repos
+
+
+def _git_ls_files_in_repo(
+    repo: Path,
+    sub_dir: str = "",
+) -> list[str]:
+    """Run git ls-files in a single repo, return paths relative to repo root."""
+    cmd = ["git", "-C", str(repo), "ls-files"]
+    if sub_dir:
+        cmd.extend(["--", sub_dir])
     env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
     try:
         result = subprocess.run(
@@ -120,24 +177,56 @@ def _git_tracked_files(directory: str = "") -> list[str]:
     except subprocess.TimeoutExpired as e:
         logger.warning("git ls-files timed out: %s", e)
         return []
-
     if result.returncode != 0:
         logger.warning(
-            "git ls-files failed (rc=%d): %s",
+            "git ls-files failed in %s (rc=%d): %s",
+            repo,
             result.returncode,
             result.stderr.strip(),
         )
         return []
-
     return [f for f in result.stdout.splitlines() if f]
 
 
+def _git_tracked_files(directory: str = "") -> list[str]:
+    """Return git-tracked file paths relative to PROJECT_ROOT.
+
+    Handles both single-repo and multi-repo project roots. For multi-repo,
+    discovers child repos and aggregates results with repo-relative prefixes.
+    """
+    resolved_root = _PROJECT_ROOT.resolve()
+    repos = _discover_repos()
+    if not repos:
+        return []
+
+    all_files: list[str] = []
+    for repo in repos:
+        repo_rel = str(repo.relative_to(resolved_root))
+        is_root_repo = repo_rel == "."
+
+        if directory:
+            if is_root_repo:
+                sub_dir = directory
+            elif directory == repo_rel or directory.startswith(f"{repo_rel}/"):
+                sub_dir = directory[len(repo_rel) :].lstrip("/")
+            else:
+                continue
+        else:
+            sub_dir = ""
+
+        files = _git_ls_files_in_repo(repo, sub_dir)
+        prefix = "" if is_root_repo else f"{repo_rel}/"
+        all_files.extend(f"{prefix}{f}" for f in files)
+
+    return all_files
+
+
 def register_project_tools(mcp: FastMCP) -> None:
-    """Register read-only project directory tools on *mcp*."""
+    """Register project directory tools on *mcp*."""
 
     @mcp.tool()
     def read_project_file(path: str) -> dict[str, str]:
-        """Read a file from the project directory (read-only).
+        """Read a file from the project directory.
 
         Only text files are supported. Binary files (.pyc, .so, images,
         model weights, etc.) are rejected.
@@ -174,6 +263,10 @@ def register_project_tools(mcp: FastMCP) -> None:
         Only files tracked by git are shown — .gitignore is respected.
         Binary files are excluded. Use max_depth to limit how deep the
         listing goes (default 3).
+
+        Supports multi-repo project roots: if the project root contains
+        multiple git repos, files are listed across all of them with
+        repo-relative prefixes (e.g. "agent-bus/src/main.py").
 
         Args:
             directory: Relative directory path. Empty string lists the project root.
@@ -282,3 +375,90 @@ def register_project_tools(mcp: FastMCP) -> None:
             " (truncated)" if truncated else "",
         )
         return {"matches": matches, "truncated": truncated}
+
+    @mcp.tool()
+    def write_project_file(path: str, content: str) -> dict[str, str]:
+        """Write or create a file in the project directory.
+
+        Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
+        Creates parent directories as needed. Only text file types are writable.
+
+        Args:
+            path: Relative file path, e.g. "agent-bus/src/new_module.py".
+            content: Full file content to write.
+
+        Returns:
+            {"status": "written", "path": "<relative path>"}
+        """
+        if _PROJECT_READ_ONLY:
+            return _read_only_error()
+
+        target = _safe_project_path(path)
+        suffix = target.suffix.lower()
+        if suffix and suffix not in _WRITABLE_SUFFIXES:
+            return {"error": f"File type {suffix!r} is not writable"}
+        if _is_binary(target):
+            return {"error": f"Binary file type {suffix!r} cannot be written"}
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        rel = str(target.relative_to(_PROJECT_ROOT.resolve()))
+        logger.info("write_project_file: %s (%d chars)", rel, len(content))
+        record("mcp.project.file.written", path=rel, size=len(content))
+        return {"status": "written", "path": rel}
+
+    @mcp.tool()
+    def edit_project_file(
+        path: str,
+        operation: str,
+        content: str,
+        target_str: str = "",
+        line: int = 0,
+        all_occurrences: bool = False,
+    ) -> dict[str, str | int]:
+        """Edit an existing file in the project directory.
+
+        Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
+
+        Operations:
+          - "prepend": insert content at the beginning of the file
+          - "append": insert content at the end of the file
+          - "insert_at_line": insert content at a specific line number (1-indexed)
+          - "replace": find target_str and replace with content
+
+        Args:
+            path: Relative file path to edit.
+            operation: One of "prepend", "append", "insert_at_line", "replace".
+            content: Text to insert or replacement text.
+            target_str: String to find (required for "replace" operation).
+            line: Line number for "insert_at_line" (1-indexed, required for that op).
+            all_occurrences: For "replace": replace all matches vs first only.
+
+        Returns:
+            {"status": "edited: <operation>", "path": "<relative path>"}
+            For replace: includes "replacements_made".
+        """
+        if _PROJECT_READ_ONLY:
+            return cast(dict[str, str | int], _read_only_error())
+
+        target = _safe_project_path(path)
+        if not target.exists():
+            return cast(dict[str, str | int], {"error": f"File not found: {path!r}"})
+        if _is_binary(target):
+            return cast(
+                dict[str, str | int],
+                {"error": f"Binary file type {target.suffix!r} cannot be edited"},
+            )
+
+        result = perform_edit(
+            target,
+            operation,
+            content,
+            line=line if line else None,
+            target_str=target_str if target_str else None,
+            all_occurrences=all_occurrences,
+        )
+        rel = str(target.relative_to(_PROJECT_ROOT.resolve()))
+        logger.info("edit_project_file: %s op=%s", rel, operation)
+        record("mcp.project.file.edited", path=rel, operation=operation)
+        return result

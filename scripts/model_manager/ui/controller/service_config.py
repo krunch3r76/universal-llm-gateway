@@ -155,9 +155,11 @@ class McpConfig:
     auth_token_env: str | None = None
     data_dir: str = _MCP_DEFAULT_DATA_DIR
     project_dir: str | None = None
+    tasks_dir: str | None = None
     tls_cert_dir: str = _MCP_DEFAULT_TLS_CERT_DIR
     brave_search_api_key: str = ""
     firefox_profile_dir: str = ""
+    project_access: str = "ro"  # "ro" | "rw"
     tasks_access: str = "ro"  # "ro" | "rw" | "off"
     enable_browser_tools: bool = False
     refresh_cursor_descriptors_after_rebuild: bool = False
@@ -177,8 +179,13 @@ _MCP_CONFIG_TEMPLATE = """\
 # auth_token_env: MCP_AUTH_TOKEN
 auth_token: ""
 
-# Required: workspace root mounted read-only as /data/project
-# project_dir: /path/to/your/universal-llm-gateway
+# Required: project root mounted as /data/project
+# Can be a single workspace or a parent directory containing multiple repos.
+# project_dir: /mnt/torus/projects
+
+# Explicit tasks directory. If unset, defaults to {project_dir}/tasks.
+# Set explicitly when project_dir is a multi-repo parent.
+# tasks_dir: /mnt/torus/projects/universal-llm-gateway/tasks
 
 # Host directory for persistent file storage (mounted as /data/files)
 data_dir: ~/mcp-data
@@ -190,6 +197,12 @@ BRAVE_SEARCH_API_KEY: ""
 # Auto-detected from profiles.ini if not set. Override only if you want
 # a specific profile other than the default.
 # firefox_profile_dir: ~/.mozilla/firefox/xxxxxxxx.default-release
+
+# project access control (default: ro — read-only project access for Claude)
+#   ro  = Claude can read project files (code, configs, docs)
+#   rw  = Claude can also write/edit project files
+# Toggle to rw, rebuild MCP, and toggle back when done.
+# project_access: ro
 
 # tasks/ access control (default: ro — read-only access for Claude)
 #   ro  = Claude can read tasks/ context (todos, journal, discoveries)
@@ -310,11 +323,17 @@ def load_mcp_config() -> McpConfig | None:
 
     if not token:
         return None
+    raw_project_dir = raw.get("project_dir")
+    project_dir = str(raw_project_dir) if raw_project_dir is not None else None
+    raw_tasks_dir = raw.get("tasks_dir")
+    tasks_dir = str(raw_tasks_dir) if raw_tasks_dir is not None else None
+
     return McpConfig(
         auth_token=token,
         auth_token_env=token_env_name,
         data_dir=str(raw.get("data_dir", _MCP_DEFAULT_DATA_DIR)),
-        project_dir=str(raw["project_dir"]) if "project_dir" in raw and raw["project_dir"] is not None else None,
+        project_dir=project_dir,
+        tasks_dir=tasks_dir,
         tls_cert_dir=str(raw.get("tls_cert_dir", _MCP_DEFAULT_TLS_CERT_DIR)),
         brave_search_api_key=str(
             raw.get("BRAVE_SEARCH_API_KEY") or raw.get("brave_search_api_key", "")
@@ -322,6 +341,7 @@ def load_mcp_config() -> McpConfig | None:
         firefox_profile_dir=_resolve_firefox_profile(
             str(raw.get("firefox_profile_dir", ""))
         ),
+        project_access=str(raw.get("project_access", "ro")).strip().lower(),
         tasks_access=str(raw.get("tasks_access", "ro")).strip().lower(),
         enable_browser_tools=_parse_bool(
             raw.get("enable_browser_tools", False),
@@ -355,25 +375,35 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
     env["MCP_DATA_DIR"] = str(Path(cfg.data_dir).expanduser())
     if cfg.project_dir:
         env["MCP_PROJECT_DIR"] = cfg.project_dir
+    # tasks_dir: explicit or derived from project_dir
+    if cfg.tasks_dir:
+        env["MCP_TASKS_DIR"] = cfg.tasks_dir
+    elif cfg.project_dir:
+        env["MCP_TASKS_DIR"] = f"{cfg.project_dir}/tasks"
     if cfg.brave_search_api_key:
         env["BRAVE_SEARCH_API_KEY"] = cfg.brave_search_api_key
     if cfg.firefox_profile_dir:
         env["FIREFOX_PROFILE_DIR"] = cfg.firefox_profile_dir
     env["ENABLE_BROWSER_TOOLS"] = "true" if cfg.enable_browser_tools else "false"
-    # Derive compose vars from the single tasks_access field:
-    #   off → no mount needed, tools disabled
-    #   ro  → read-only mount, write tools blocked in app layer
-    #   rw  → read-write mount, writes allowed
+    # project_access: ro (default) or rw
+    match cfg.project_access:
+        case "rw":
+            env["MCP_PROJECT_MOUNT_MODE"] = "rw"
+            env["PROJECT_READ_ONLY"] = "false"
+        case _:
+            env["MCP_PROJECT_MOUNT_MODE"] = "ro"
+            env["PROJECT_READ_ONLY"] = "true"
+    # tasks_access: off | ro (default) | rw
     match cfg.tasks_access:
         case "off":
             env["ENABLE_CONTEXT_TOOLS"] = "false"
-            env["MCP_TASKS_MOUNT_MODE"] = "off"  # no mount needed, tools disabled
+            env["MCP_TASKS_MOUNT_MODE"] = "off"
             env["TASKS_READ_ONLY"] = "true"
         case "rw":
             env["ENABLE_CONTEXT_TOOLS"] = "true"
             env["MCP_TASKS_MOUNT_MODE"] = "rw"
             env["TASKS_READ_ONLY"] = "false"
-        case _:  # "ro" or any unrecognised value
+        case _:
             env["ENABLE_CONTEXT_TOOLS"] = "true"
             env["MCP_TASKS_MOUNT_MODE"] = "ro"
             env["TASKS_READ_ONLY"] = "true"
