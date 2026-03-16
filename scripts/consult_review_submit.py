@@ -5,6 +5,9 @@ This helper avoids fragile shell quoting/argument-size failures by building one
 payload per file and writing both payload + response artifacts under a session
 directory. It is intentionally sequential to reduce server load and simplify
 forensics when one file fails.
+
+Run this script with the project venv interpreter:
+    ~/.venvs/universal/bin/python scripts/consult_review_submit.py ...
 """
 
 from __future__ import annotations
@@ -15,7 +18,17 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import httpx
+try:
+    import httpx
+except ModuleNotFoundError as exc:
+    if exc.name == "httpx":
+        print(
+            "Missing dependency 'httpx'. Run this helper with the project venv:\n"
+            "  ~/.venvs/universal/bin/python scripts/consult_review_submit.py ...",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from exc
+    raise
 
 
 @dataclass

@@ -6,14 +6,23 @@ Contains the StepConfig model and parsing/normalization helpers.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .step_types import InputBinding, MapConfig, OutputBinding
+from .step_types import (
+    InputBinding,
+    MapConfig,
+    OutputBinding,
+    OutputDeclaration,
+    ReadsFrom,
+)
 
 if TYPE_CHECKING:
     from .execution.retry import RetryPolicy
+
+logger = logging.getLogger(__name__)
 
 
 class StepConfig(BaseModel):
@@ -42,6 +51,10 @@ class StepConfig(BaseModel):
         ),
     )
     handler_outputs: dict[str, OutputBinding] = Field(default_factory=dict)
+
+    # Step contracts (schema_version 6+, optional)
+    output_declarations: dict[str, OutputDeclaration] = Field(default_factory=dict)
+    reads_from: list[ReadsFrom] = Field(default_factory=list)
 
     # Common optional fields
     model_ref: str | None = None
@@ -91,11 +104,6 @@ class StepConfig(BaseModel):
     @classmethod
     def normalize_map_config(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Normalize flat map_over/map_inputs fields into map_config."""
-        # Pydantic's model_validator(mode='before') typically ensures `values` is a dict
-        # if the model is being parsed from a dict. If it can be other types, the type hint
-        # should be `Any`. Assuming it's always a dict here.
-        # if not isinstance(values, dict):
-        #     return values
         if values.get("map_config") is not None:
             return values
 
@@ -126,12 +134,17 @@ class StepConfig(BaseModel):
     @field_validator("handler_inputs", mode="before")
     @classmethod
     def parse_handler_inputs(cls, v: dict[str, Any]) -> dict[str, InputBinding]:
-        """Convert string/dict bindings to InputBinding objects."""
-        # Pydantic's field_validator(mode='before') typically ensures `v` is a dict
-        # if the field is being parsed from a dict. If it can be other types, the type hint
-        # should be `Any`. Assuming it's always a dict here.
-        # if not isinstance(v, dict):
-        #     return v
+        """Convert string/dict bindings to InputBinding objects.
+
+        Supports three forms:
+        - String shorthand: "extract.json" → InputBinding(namespace="step", ...)
+        - Contract dict: {"from": "extract.json", "type": "dict"} → typed InputBinding
+        - Programmatic dict: {"namespace": "step", "step_name": ..., "field_path": ...}
+        """
+        if not isinstance(v, dict):
+            raise ValueError(
+                "handler_inputs must be a mapping of field name -> binding"
+            )
         result = {}
         for key, value in v.items():
             if isinstance(value, str):
@@ -139,11 +152,26 @@ class StepConfig(BaseModel):
             elif isinstance(value, InputBinding):
                 result[key] = value
             elif isinstance(value, dict):
-                result[key] = InputBinding(
-                    namespace=value["namespace"],
-                    step_name=value.get("step_name"),
-                    field_path=value["field_path"],
-                )
+                if "from" in value:
+                    binding = InputBinding.parse(value["from"])
+                    result[key] = InputBinding(
+                        namespace=binding.namespace,
+                        step_name=binding.step_name,
+                        field_path=binding.field_path,
+                        declared_type=value.get("type"),
+                    )
+                else:
+                    if "namespace" not in value or "field_path" not in value:
+                        raise ValueError(
+                            f"handler_inputs[{key!r}]: dict format requires "
+                            "'namespace' and 'field_path'"
+                        )
+                    result[key] = InputBinding(
+                        namespace=value["namespace"],
+                        step_name=value.get("step_name"),
+                        field_path=value["field_path"],
+                        declared_type=value.get("declared_type"),
+                    )
             else:
                 result[key] = value
         return result
@@ -152,11 +180,10 @@ class StepConfig(BaseModel):
     @classmethod
     def parse_handler_outputs(cls, v: dict[str, Any]) -> dict[str, OutputBinding]:
         """Convert string/dict specs to OutputBinding objects."""
-        # Pydantic's field_validator(mode='before') typically ensures `v` is a dict
-        # if the field is being parsed from a dict. If it can be other types, the type hint
-        # should be `Any`. Assuming it's always a dict here.
-        # if not isinstance(v, dict):
-        #     return v
+        if not isinstance(v, dict):
+            raise ValueError(
+                "handler_outputs must be a mapping of field name -> binding spec"
+            )
         result = {}
         for key, value in v.items():
             if isinstance(value, str):
@@ -172,6 +199,14 @@ class StepConfig(BaseModel):
                 if isinstance(binding_val, str):
                     input_binding = InputBinding.parse(binding_val)
                 elif isinstance(binding_val, dict):
+                    if (
+                        "namespace" not in binding_val
+                        or "field_path" not in binding_val
+                    ):
+                        raise ValueError(
+                            f"handler_outputs[{key!r}]: dict binding requires "
+                            "'namespace' and 'field_path'"
+                        )
                     input_binding = InputBinding(
                         namespace=binding_val["namespace"],
                         step_name=binding_val.get("step_name"),
@@ -191,6 +226,67 @@ class StepConfig(BaseModel):
                 result[key] = value
         return result
 
+    @field_validator("output_declarations", mode="before")
+    @classmethod
+    def parse_output_declarations(
+        cls,
+        v: dict[str, Any],
+    ) -> dict[str, OutputDeclaration]:
+        """Convert dict specs to OutputDeclaration objects."""
+        if not isinstance(v, dict):
+            raise ValueError(
+                "output_declarations must be a mapping of output name -> declaration"
+            )
+        result = {}
+        for key, value in v.items():
+            if isinstance(value, OutputDeclaration):
+                result[key] = value
+            elif isinstance(value, dict):
+                if "binding" not in value or "type" not in value:
+                    raise ValueError(
+                        f"output_declarations[{key!r}]: dict format requires "
+                        "'binding' and 'type'"
+                    )
+                result[key] = OutputDeclaration(
+                    binding=value["binding"],
+                    declared_type=value["type"],
+                    description=value.get("description", ""),
+                )
+            else:
+                raise ValueError(
+                    f"output_declarations[{key!r}]: expected dict with "
+                    f"'binding' and 'type', got {type(value).__name__}"
+                )
+        return result
+
+    @field_validator("reads_from", mode="before")
+    @classmethod
+    def parse_reads_from(cls, v: list[Any]) -> list[ReadsFrom]:
+        """Convert dict specs to ReadsFrom objects."""
+        if not isinstance(v, list):
+            raise ValueError("reads_from must be a list of dict declarations")
+        result = []
+        for item in v:
+            if isinstance(item, ReadsFrom):
+                result.append(item)
+            elif isinstance(item, dict):
+                if "step" not in item:
+                    raise ValueError("reads_from item requires 'step'")
+                fields = item.get("fields", [])
+                result.append(
+                    ReadsFrom(
+                        step=item["step"],
+                        fields=tuple(fields),
+                        description=item.get("description", ""),
+                    )
+                )
+            else:
+                raise ValueError(
+                    f"reads_from: expected dict with 'step' and 'fields', "
+                    f"got {type(item).__name__}"
+                )
+        return result
+
     @model_validator(mode="after")
     def validate_provenance_config(self) -> Self:
         """Preserve compatibility: handlers validate provenance requirements."""
@@ -203,12 +299,15 @@ class StepConfig(BaseModel):
 
     @property
     def computed_depends_on(self) -> list[str]:
-        """Derive dependencies from bindings, map config, extras, and condition."""
+        """Derive deps from bindings, map config, reads_from, extras, condition."""
         deps: set[str] = set()
 
         for binding in self.handler_inputs.values():
             if binding.namespace == "step" and binding.step_name:
                 deps.add(binding.step_name)
+
+        for rf in self.reads_from:
+            deps.add(rf.step)
 
         if self.map_config:
             for binding_str in self.map_config.get("map_over", {}).values():
@@ -217,7 +316,7 @@ class StepConfig(BaseModel):
                     if binding.namespace == "step" and binding.step_name:
                         deps.add(binding.step_name)
 
-        if self.model_extra:
+        if isinstance(self.model_extra, dict):
             for key, val in self.model_extra.items():
                 if key.endswith("_step") and isinstance(val, str):
                     deps.add(val)
@@ -299,7 +398,13 @@ class StepConfig(BaseModel):
                 self.model_ref, domain=domain, search_path=search_path
             )
             return model_config.model if model_config else None
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Step '%s': model lookup failed for model_ref=%r: %s",
+                self.name,
+                self.model_ref,
+                exc,
+            )
             return None
 
     async def get_target_model_id_async(
@@ -352,7 +457,13 @@ class StepConfig(BaseModel):
                 self.model_ref, domain=domain, search_path=search_path
             )
             return model_config.model if model_config else None
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Step '%s': async model lookup failed for model_ref=%r: %s",
+                self.name,
+                self.model_ref,
+                exc,
+            )
             return None
 
     def get_retry_policy(self) -> RetryPolicy | None:
@@ -369,6 +480,10 @@ class StepConfig(BaseModel):
             return None
 
         raw = self.map_config
+        if not isinstance(raw, dict):
+            raise TypeError(
+                f"map_config must be a dict when present, got {type(raw).__name__}"
+            )
 
         map_over: dict[str, InputBinding] = {}
         for field, binding in raw.get("map_over", {}).items():

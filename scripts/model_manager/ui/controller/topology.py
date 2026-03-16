@@ -44,7 +44,7 @@ class RemoteConfig(TypedDict):
     api_key: str
 
 
-def _string_field(remote: dict[object, object], key: str) -> str:
+def _string_field(remote: dict[str, Any], key: str) -> str:
     """Read a remote config field as string, defaulting to empty string."""
     value = remote.get(key, "")
     return value if isinstance(value, str) else str(value)
@@ -60,7 +60,9 @@ def _relay_remote_command(relay_cmd: str) -> str:
     prefix = " ".join(forwarded)
     command_prefix = f"{prefix} " if prefix else ""
     command = f"cd ~/universal-llm-gateway && {command_prefix}{relay_cmd}"
-    wrapped = f"trap 'kill 0 >/dev/null 2>&1 || true' EXIT HUP INT TERM; {command}"
+    wrapped = (
+        f"trap 'pkill -P $$ 2>/dev/null; wait 2>/dev/null' EXIT HUP INT TERM; {command}"
+    )
     return f"bash -lc {shlex.quote(wrapped)}"
 
 
@@ -72,7 +74,11 @@ async def _terminate_process_group(
         return
     try:
         _ = os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError:
+        logger.debug("Process group already exited (pid=%s)", proc.pid)
+        return
+    except PermissionError as e:
+        logger.warning("Permission denied sending SIGTERM to pid %s: %s", proc.pid, e)
         try:
             proc.terminate()
         except ProcessLookupError:
@@ -84,7 +90,10 @@ async def _terminate_process_group(
         pass
     try:
         _ = os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError:
+        return
+    except PermissionError as e:
+        logger.warning("Permission denied sending SIGKILL to pid %s: %s", proc.pid, e)
         try:
             proc.kill()
         except ProcessLookupError:
@@ -143,11 +152,12 @@ def list_remotes() -> list[RemoteConfig]:
     for remote in remotes_raw:
         if not isinstance(remote, dict):
             continue
+        remote_dict: dict[str, Any] = {str(k): v for k, v in remote.items()}
         remotes.append(
             {
-                "stargate_id": _string_field(remote, "stargate_id"),
-                "url": _string_field(remote, "url"),
-                "api_key": _string_field(remote, "api_key"),
+                "stargate_id": _string_field(remote_dict, "stargate_id"),
+                "url": _string_field(remote_dict, "url"),
+                "api_key": _string_field(remote_dict, "api_key"),
             }
         )
     return remotes
@@ -333,9 +343,9 @@ async def deploy_remote(
     remote_cmd = _relay_remote_command(relay_cmd)
     ssh_args = [
         "ssh",
-        "-t",
         "-o",
         "BatchMode=yes",
+        "-t",
         ssh_target,
         remote_cmd,
     ]
@@ -413,34 +423,36 @@ async def _subscribe_for_connection(remote_id: str, timeout: float) -> bool:
 
     connector = aiohttp.UnixConnector(path=str(_EVENTS_QUERY_SOCKET))
     try:
-        async with (
-            aiohttp.ClientSession(connector=connector) as session,
-            session.ws_connect(
-                "http://localhost/v1/subscribe",
-                timeout=aiohttp.ClientTimeout(total=timeout),
-            ) as ws,
-        ):
-            await ws.send_json(
-                {
-                    "type": "subscribe",
-                    "filter": {"signal": _CONNECTION_EVENT},
-                }
-            )
+        async with asyncio.timeout(timeout):
+            async with (
+                aiohttp.ClientSession(connector=connector) as session,
+                session.ws_connect("http://localhost/v1/subscribe") as ws,
+            ):
+                await ws.send_json(
+                    {
+                        "type": "subscribe",
+                        "filter": {"signal": _CONNECTION_EVENT},
+                    }
+                )
 
-            async for msg in ws:
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    try:
-                        data = json.loads(msg.data)
-                    except json.JSONDecodeError:
-                        continue
-                    payload = data.get("payload", {})
-                    if payload.get("remote_id") == remote_id:
-                        return True
-                elif msg.type in (
-                    aiohttp.WSMsgType.CLOSED,
-                    aiohttp.WSMsgType.ERROR,
-                ):
-                    break
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        try:
+                            data = json.loads(msg.data)
+                        except json.JSONDecodeError:
+                            logger.warning(
+                                "Ignoring malformed event-service message while waiting for %s",
+                                remote_id,
+                            )
+                            continue
+                        payload = data.get("payload", {})
+                        if payload.get("remote_id") == remote_id:
+                            return True
+                    elif msg.type in (
+                        aiohttp.WSMsgType.CLOSED,
+                        aiohttp.WSMsgType.ERROR,
+                    ):
+                        break
     except (TimeoutError, OSError, aiohttp.ClientError) as e:
         logger.exception("WebSocket subscription failed: %s", e)
     return False
@@ -491,9 +503,9 @@ async def restart_relay(
     remote_cmd = _relay_remote_command(relay_cmd)
     ssh_args = [
         "ssh",
-        "-t",
         "-o",
         "BatchMode=yes",
+        "-t",
         ssh_target,
         remote_cmd,
     ]
@@ -559,6 +571,11 @@ def _append_remote_to_config(
     relay_key: str,
 ) -> None:
     """Append a remote entry to ~/.gateway/stargate.yaml."""
+    if not _MASTER_CONFIG.exists():
+        raise FileNotFoundError(
+            f"Master config not found: {_MASTER_CONFIG}. "
+            "Start local Stargate before adding remotes."
+        )
     data = yaml.safe_load(_MASTER_CONFIG.read_text()) or {}
     federation = data.get("federation", {})
     remotes: list[RemoteConfig] = list_remotes()

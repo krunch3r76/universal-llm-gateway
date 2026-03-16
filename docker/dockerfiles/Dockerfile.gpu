@@ -118,7 +118,9 @@ ARG VLLM_FROM_SOURCE=false
 ARG VLLM_BUILD_ARGS="--portable"
 ARG VLLM_MAX_JOBS=8
 # Pin nightly to known-working date. Update when newer nightly verified.
-ARG TORCH_NIGHTLY_DATE=20260111
+# If PyTorch prunes this date from the cu130 index, the install step
+# falls back to the latest available nightly automatically.
+ARG TORCH_NIGHTLY_DATE=20260315
 
 # Output to separate directory — merged with llama packages in runtime stage.
 # Avoids file conflicts between independently-built dependency trees.
@@ -128,19 +130,29 @@ RUN mkdir -p /build/vllm-packages
 # Pre-built wheel method skips this — the wheel pins its own PyTorch.
 RUN if [ "${ENABLE_VLLM}" = "true" ] && [ "${VLLM_FROM_SOURCE}" = "true" ]; then \
     echo "🔥 Installing PyTorch nightly (CUDA 13.0) → /build/vllm-packages" && \
-    if [ "${TORCH_NIGHTLY_DATE}" = "latest" ]; then \
+    install_latest_torch() { \
     python3.12 -m pip install --no-cache-dir --target=/build/vllm-packages \
     torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/nightly/cu130 \
     --pre --break-system-packages; \
+    }; \
+    if [ "${TORCH_NIGHTLY_DATE}" = "latest" ]; then \
+    echo "   Resolving latest cu130 nightly" && \
+    install_latest_torch; \
     else \
-    echo "   Pinned to: ${TORCH_NIGHTLY_DATE}" && \
-    python3.12 -m pip install --no-cache-dir --target=/build/vllm-packages \
+    echo "   Preferred pin: ${TORCH_NIGHTLY_DATE}" && \
+    if python3.12 -m pip install --no-cache-dir --target=/build/vllm-packages \
     "torch==2.11.0.dev${TORCH_NIGHTLY_DATE}+cu130" \
     "torchvision==0.25.0.dev${TORCH_NIGHTLY_DATE}+cu130" \
     "torchaudio==2.11.0.dev${TORCH_NIGHTLY_DATE}+cu130" \
     --index-url https://download.pytorch.org/whl/nightly/cu130 \
-    --break-system-packages; \
+    --break-system-packages; then \
+    echo "   Installed pinned nightly ${TORCH_NIGHTLY_DATE}"; \
+    else \
+    echo "⚠️  Pinned nightly ${TORCH_NIGHTLY_DATE} unavailable; falling back to latest cu130 nightly" && \
+    rm -rf /build/vllm-packages/* && \
+    install_latest_torch; \
+    fi; \
     fi && \
     export PYTHONPATH=/build/vllm-packages:${PYTHONPATH} && \
     python3.12 -c "import torch; print(f'✅ PyTorch {torch.__version__}, CUDA: {torch.version.cuda}')"; \
@@ -292,7 +304,7 @@ FROM base-builder AS llama-server-builder
 ARG CPU_OPTIMIZATION=avx2
 ARG GPU_ARCH=multi
 ARG ENABLE_LLAMA_SERVER=true
-ARG LLAMA_SERVER_VERSION=main
+ARG LLAMA_SERVER_VERSION=b8369
 
 COPY docker/scripts/build/build_llama_server.sh /build/
 

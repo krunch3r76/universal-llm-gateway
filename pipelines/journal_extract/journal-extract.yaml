@@ -1,0 +1,129 @@
+schema_version: 6
+id: journal-extract
+version: "1.0"
+type: journal_extract
+description: >
+  Extract entities, relationships, assertions, and events from a single
+  journal entry into structured Cortex proposals. Two steps: LLM extraction
+  via Claude Sonnet (native Anthropic only), then Python schema validation
+  against Cortex entity/relationship types.
+output: validate
+
+options:
+  timeout_seconds: 120
+
+steps:
+  - name: extract
+    type: generate
+    model_ref: sonnet
+    prompt_ref: journal_extract.extract
+    handler_inputs:
+      text: sourceNs.text
+      entry_id: optionsNs.entry_id
+      entry_date: optionsNs.entry_date
+    output_declarations:
+      proposals:
+        binding: json
+        type: dict
+        description: "Structured Cortex proposals (entities, relationships, assertions, events)"
+      raw_text:
+        binding: raw
+        type: str
+        description: "Raw LLM response text"
+    generation_parameters:
+      temperature: 0.2
+      max_tokens: 16000
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            entry_id:
+              type: integer
+            entry_date:
+              type: string
+            entities:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: "Format: {type}:{slug}"
+                  type:
+                    type: string
+                  name:
+                    type: string
+                  notes:
+                    type: string
+                  attributes:
+                    type: object
+                  action:
+                    type: string
+                    enum: ["create_if_not_exists"]
+                required: ["id", "type", "name", "action"]
+            relationships:
+              type: array
+              items:
+                type: object
+                properties:
+                  type:
+                    type: string
+                  from_entity:
+                    type: string
+                  to_entity:
+                    type: string
+                  role:
+                    type: string
+                  action:
+                    type: string
+                    enum: ["create_if_not_exists"]
+                required: ["type", "from_entity", "to_entity", "action"]
+            assertions:
+              type: array
+              items:
+                type: object
+                properties:
+                  entity_id:
+                    type: string
+                  claim:
+                    type: string
+                  confidence:
+                    type: string
+                    enum: ["confirmed", "believed", "suspected", "hypothesized", "observed"]
+                  evidence:
+                    type: string
+                  evidence_uris:
+                    type: array
+                    items:
+                      type: string
+                required: ["entity_id", "claim", "confidence", "evidence"]
+            events:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: "Format: event:{slug} (stable unique event identifier)"
+                  type:
+                    type: string
+                    enum: ["event"]
+                  name:
+                    type: string
+                  notes:
+                    type: string
+                  attributes:
+                    type: object
+                  action:
+                    type: string
+                    enum: ["create_if_not_exists"]
+                required: ["id", "type", "name", "action"]
+          required: ["entry_id", "entry_date"]
+
+  - name: validate
+    type: journal_extract_validate_v1
+    reads_from:
+      - step: extract
+        fields: [json, raw]
+        description: "Parsed extraction proposals (json preferred, raw fallback)"

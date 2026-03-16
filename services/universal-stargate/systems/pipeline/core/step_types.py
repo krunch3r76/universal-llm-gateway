@@ -6,6 +6,7 @@ These types are used by step configuration and execution paths.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -34,8 +35,6 @@ class StepInputs:
         Returns:
             16-character hash (64 bits) for collision resistance
         """
-        import hashlib
-
         parts = []
         for k, v in sorted(vars(self).items()):
             if isinstance(v, str | int | float | bool | type(None)):
@@ -96,6 +95,7 @@ class InputBinding:
     namespace: str
     step_name: str | None
     field_path: str
+    declared_type: str | None = None
 
     @classmethod
     def parse(cls, binding_str: str) -> InputBinding:
@@ -117,6 +117,54 @@ class InputBinding:
         if prefix in ("sourceNs", "optionsNs", "loopNs", "mapNs"):
             return cls(namespace=prefix, step_name=None, field_path=full_field_path)
         return cls(namespace="step", step_name=prefix, field_path=full_field_path)
+
+
+VALID_DECLARED_TYPES = frozenset({"dict", "str", "list", "int", "any"})
+
+
+@dataclass(frozen=True, slots=True)
+class OutputDeclaration:
+    """
+    Declares what a step promises to produce.
+
+    Purely declarative — no runtime effect. Enables load-time type checking
+    and makes data flow visible from YAML alone.
+
+    binding maps to StepOutput access: "json" → .json, "raw" → .raw,
+    "json.<field>" → .json["field"]
+    """
+
+    binding: str
+    declared_type: str
+    description: str = ""
+
+    def __post_init__(self) -> None:
+        if self.declared_type not in VALID_DECLARED_TYPES:
+            raise ValueError(
+                f"OutputDeclaration: declared_type must be one of "
+                f"{sorted(VALID_DECLARED_TYPES)}, got {self.declared_type!r}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ReadsFrom:
+    """
+    Declares that a custom handler reads from a prior step via direct
+    context.outputs access (bypassing handler_inputs bindings).
+
+    Documentation-only — no runtime effect. Solves the discoverability
+    problem for handlers that access context.outputs directly.
+    """
+
+    step: str
+    fields: tuple[str, ...]
+    description: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.step:
+            raise ValueError("ReadsFrom: step name must be non-empty")
+        if not self.fields:
+            raise ValueError("ReadsFrom: fields must be non-empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,4 +267,3 @@ class MapConfig:
                 f"selection must be 'random', 'rotate', or 'first', "
                 f"got {self.selection!r}"
             )
-

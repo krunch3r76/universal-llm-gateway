@@ -15,6 +15,7 @@ Components:
     - capture_exception: Async context manager that emits ExceptionCaught on Exception
 """
 
+from .debug import emit_debug_event
 from .debug_broadcaster import (
     DebugClient,
     MinimalEventDebugBroadcaster,
@@ -36,6 +37,7 @@ __all__ = [
     "EventBus",
     "Subscription",
     "event_factory",
+    "emit_debug_event",
     "ExceptionCaught",
     "capture_exception",
     "MinimalEventDebugBroadcaster",

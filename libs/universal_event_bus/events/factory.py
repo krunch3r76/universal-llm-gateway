@@ -4,13 +4,13 @@ Provides @event_factory decorator that allows Event construction within
 factory functions while preventing direct Event() construction elsewhere.
 
 Validates at creation time: signal format (dot-notation), role (one of
-'coordination', 'observation'), and scope (one of 'node', 'global').
+'coordination', 'observation', 'debug'), and scope (one of 'node', 'global').
 """
 
 import threading
 from collections.abc import Callable
 from functools import wraps
-from typing import Any
+from typing import Any, cast
 
 from .event import Event
 from .validation import validate_event_signal
@@ -18,11 +18,11 @@ from .validation import validate_event_signal
 # Thread-local flag for Event construction authorization
 _allow_construction = threading.local()
 
-_VALID_ROLES = frozenset({"coordination", "observation"})
+_VALID_ROLES = frozenset({"coordination", "observation", "debug"})
 _VALID_SCOPES = frozenset({"node", "global"})
 
 
-def event_factory[F: Callable[..., Any]](func: F) -> F:
+def event_factory[F: Callable[..., Event]](func: F) -> F:
     """
     Decorator for Event factory functions.
 
@@ -84,4 +84,4 @@ def event_factory[F: Callable[..., Any]](func: F) -> F:
         finally:
             _allow_construction.value = False
 
-    return wrapper  # type: ignore
+    return cast(F, wrapper)

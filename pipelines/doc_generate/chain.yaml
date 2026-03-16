@@ -13,6 +13,19 @@ steps:
     type: doc_generate_extract_docstrings
     handler_inputs:
       subsystem_path: sourceNs.text
+    output_declarations:
+      inventory:
+        binding: raw
+        type: str
+        description: "JSON-serialized docstring inventory for the subsystem"
+      existing_doc:
+        binding: json.existing_doc
+        type: str
+        description: "Current architecture doc content (if exists)"
+      error:
+        binding: json.error
+        type: str
+        description: "Error message if extraction failed"
     timeout_seconds: 45
 
   - name: draft
@@ -24,6 +37,11 @@ steps:
       subsystem_path: sourceNs.text
       inventory_json: extract.raw
       existing_doc: extract.json.existing_doc
+    output_declarations:
+      doc_markdown:
+        binding: json.doc_markdown
+        type: str
+        description: "Draft architecture document markdown"
     generation_parameters:
       temperature: 0.2
       response_format:
@@ -52,6 +70,27 @@ steps:
       subsystem_path: sourceNs.text
       inventory_json: extract.raw
       draft_doc: draft.json.doc_markdown
+    output_declarations:
+      doc_markdown:
+        binding: json.doc_markdown
+        type: str
+        description: "Verified architecture document markdown"
+      unsupported_claims:
+        binding: json.unsupported_claims
+        type: list
+        description: "Claims in draft not supported by extracted inventory"
+      missing_coverage:
+        binding: json.missing_coverage
+        type: list
+        description: "Modules/functions/classes that should be documented"
+      human_markers:
+        binding: json.human_markers
+        type: list
+        description: "HUMAN markers requiring manual synthesis"
+      review_notes:
+        binding: json.review_notes
+        type: list
+        description: "Verifier notes about scope limits and provenance"
     generation_parameters:
       temperature: 0.1
       response_format:

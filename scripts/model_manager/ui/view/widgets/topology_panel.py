@@ -98,10 +98,15 @@ class TopologyPanel(Widget):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        # Buffered per-node deploy output used by row-selection log switching.
         self._workspace_root: Path | None = None
         self._node_buffers: dict[str, list[str]] = {}
+        # Currently selected row/node for the progress log panel.
         self._active_node: str | None = None
+        # True while fleet deployment workflow is active.
         self._deploying: bool = False
+        # Incremented per deploy run so stale hide timers cannot collapse new logs.
+        self._deploy_run_id: int = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(id="topo-table-container"):
@@ -208,8 +213,8 @@ class TopologyPanel(Widget):
         table = self.query_one("#topo-table", DataTable)
         try:
             table.update_cell(node_key, _STATUS_COL, status_text)
-        except Exception as e:
-            logger.warning("Could not update status cell for %s: %s", node_key, e)
+        except Exception:
+            logger.exception("Could not update status cell for %s", node_key)
 
     # ── fleet operations ──────────────────────────────────────────────────
 
@@ -232,6 +237,8 @@ class TopologyPanel(Widget):
 
     async def _do_fleet_deploy(self, *, build: bool, scope: str) -> None:
         self._deploying = True
+        self._deploy_run_id += 1
+        deploy_run_id = self._deploy_run_id
         self._node_buffers.clear()
         self._active_node = _MASTER_ROW_KEY
         self.post_message(self.DeployStateChanged(deploying=True))
@@ -249,11 +256,11 @@ class TopologyPanel(Widget):
         finally:
             self._deploying = False
             self.post_message(self.DeployStateChanged(deploying=False))
-            self.set_timer(10, self._auto_hide_log)
+            self.set_timer(10, lambda: self._auto_hide_log(deploy_run_id))
 
-    def _auto_hide_log(self) -> None:
+    def _auto_hide_log(self, deploy_run_id: int) -> None:
         """Collapse the deploy log stream after idle timeout."""
-        if not self._deploying:
+        if not self._deploying and deploy_run_id == self._deploy_run_id:
             self.query_one("#topo-progress", LogStream).display = False
 
     async def _build_local(self, scope: str) -> None:
@@ -270,6 +277,22 @@ class TopologyPanel(Widget):
         )
         async for line in summary:
             self._append_line(mk, line)
+
+        self._append_line(mk, "Restarting event service (triggers retention prune)...")
+        result = await svc.restart_event_service()
+        self._append_line(mk, result)
+        if _service_operation_failed(result):
+            self._set_node_status(mk, "✗ event service failed")
+            self._append_line(mk, "⚠ event_service restart failed; aborting.")
+            return
+
+        self._append_line(mk, "Waiting for event service...")
+        healthy = await svc.wait_healthy_event_service(timeout=30)
+        if not healthy:
+            self._set_node_status(mk, "✗ event service unhealthy")
+            self._append_line(mk, "⚠ event_service did not become healthy; aborting.")
+            return
+        self._append_line(mk, "Event service healthy. Proceeding with rebuild.")
 
         self._append_line(mk, "Restarting local services...")
         stop_ops: list[tuple[str, Any]] = [
@@ -318,7 +341,9 @@ class TopologyPanel(Widget):
             self._append_line(mk, "Rebuilding MCP server...")
             self._append_line(mk, await svc.rebuild_mcp())
         else:
-            self._append_line(mk, "MCP skipped (not configured in ~/.gateway/mcp.yaml).")
+            self._append_line(
+                mk, "MCP skipped (not configured in ~/.gateway/mcp.yaml)."
+            )
 
     async def _deploy_remotes_parallel(self, *, build: bool, scope: str) -> None:
         """Deploy all remotes in parallel via TaskGroup."""

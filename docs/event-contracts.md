@@ -28,8 +28,35 @@ Validated by `@event_factory` at call time.
 |-------|--------|-----------|
 | `role` | `coordination` | Consumed by state machines, admission control, queues. Suppressing breaks correctness. |
 | `role` | `observation` | Debugging/monitoring only. Safe to suppress, deduplicate, or scope to originating node. |
+| `role` | `debug` | Temporary diagnostic instrumentation. Pruned at session boundary (current session only). Excluded from business-metric operations. |
 | `scope` | `node` | Meaningful only where the action originates. Not re-emitted on master. |
 | `scope` | `global` | Needs master-level visibility. Available in master event stream. |
+
+### Debug Events
+
+Signals with `role="debug"` are temporary diagnostic instrumentation added during
+active debugging sessions. They are written directly to the event service via
+`emit_debug_event()` (bypassing the Stargate event bus).
+
+**Retention**: Pruned at every retention cycle and at startup — only events from
+the current session (after the most recent `system.started`) survive. Debug events
+never accumulate across sessions.
+
+**Query visibility**: Excluded from business-metric operations (`recent-failures`,
+`noise-profile`, `federation-health`, `capacity-snapshot`). Visible in
+`pipeline-trace`, `request-trace`, `signal-events`, and `raw_sql` queries.
+
+**Usage**: `from universal_event_bus.events.debug import emit_debug_event`
+
+```python
+await emit_debug_event(
+    "pipeline.debug.validate",
+    {"execution_id": ctx.execution_id, "available_outputs": list(ctx.outputs.keys())},
+    source="pipeline.journal_extract.validate",
+)
+```
+
+**Convention**: Debug signals use `*.debug.*` naming (e.g., `pipeline.debug.validate`).
 
 ### Coordination Events
 

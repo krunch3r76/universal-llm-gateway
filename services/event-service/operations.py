@@ -32,7 +32,7 @@ class OperationDef:
 
 class ParamDef(TypedDict, total=False):
     type: str
-    default: Any
+    default: str | int | float | bool | None
     required: bool
 
 
@@ -217,11 +217,8 @@ async def execute_operation(
     try:
         return await _DISPATCH[name](params, store)
     except Exception as e:
-        logger.exception(
-            "Operation %s failed", name
-        )  # Use logger.exception for traceback
-        # Potentially return a more structured error, e.g., with an error_code
-        return {"error": f"Operation failed: {e}", "error_type": e.__class__.__name__}
+        logger.exception("Operation %s failed", name)
+        return {"error": "Operation failed", "error_type": e.__class__.__name__}
 
 
 async def _recent_failures(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
@@ -229,7 +226,7 @@ async def _recent_failures(params: dict[str, Any], store: EventStore) -> dict[st
     since_ts = _coerce_since_ts(params.get("since_ts"))
     if since_ts is None:
         since_ts = await _get_session_start_ts(store)
-    where = ["(signal LIKE '%.failed' OR signal LIKE '%.error')"]
+    where = ["(signal LIKE '%.failed' OR signal LIKE '%.error')", "role != 'debug'"]
     query_params: list[Any] = []
     if since_ts is not None:
         where.append("ts_unix_ms >= ?")
@@ -256,13 +253,15 @@ async def _noise_profile(params: dict[str, Any], store: EventStore) -> dict[str,
     cutoff = int(time.time() * 1000) - (minutes * 60 * 1000)
     rows = await store.query(
         "SELECT signal, COUNT(*) as count FROM events "
-        "WHERE ts_unix_ms > ? GROUP BY signal ORDER BY count DESC",
+        "WHERE ts_unix_ms > ? AND role != 'debug' GROUP BY signal ORDER BY count DESC",
         (cutoff,),
     )
     return {"signals": rows, "minutes": minutes}
 
 
-async def _coordination_audit(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
+async def _coordination_audit(
+    params: dict[str, Any], store: EventStore
+) -> dict[str, Any]:
     limit = _coerce_limit(params.get("limit", 50), default=50)
     since_ts = _coerce_since_ts(params.get("since_ts"))
     if since_ts is None:
@@ -309,7 +308,9 @@ async def _request_trace(params: dict[str, Any], store: EventStore) -> dict[str,
     return {"rows": rows, "count": len(rows), "request_id": request_id}
 
 
-async def _request_lifecycle(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
+async def _request_lifecycle(
+    params: dict[str, Any], store: EventStore
+) -> dict[str, Any]:
     request_id = params.get("request_id") or ""
     if not request_id:
         return {"error": "request_id is required"}
@@ -445,7 +446,7 @@ async def _pipeline_trace(params: dict[str, Any], store: EventStore) -> dict[str
     for row in rows:
         payload: dict[str, Any] = {}
         raw_payload = row.get("payload")
-        if raw_payload:
+        if isinstance(raw_payload, str) and raw_payload:
             try:
                 payload = json.loads(raw_payload)
             except json.JSONDecodeError:
@@ -503,12 +504,14 @@ async def _compare_runs(params: dict[str, Any], store: EventStore) -> dict[str, 
     }
 
 
-async def _federation_health(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
+async def _federation_health(
+    params: dict[str, Any], store: EventStore
+) -> dict[str, Any]:
     limit = _coerce_limit(params.get("limit", 50), default=50)
     since_ts = _coerce_since_ts(params.get("since_ts"))
     if since_ts is None:
         since_ts = await _get_session_start_ts(store)
-    sql = "SELECT * FROM events WHERE signal LIKE 'federation.%'"
+    sql = "SELECT * FROM events WHERE signal LIKE 'federation.%' AND role != 'debug'"
     query_params: list[Any] = []
     if since_ts is not None:
         sql += " AND ts_unix_ms >= ?"
@@ -522,7 +525,9 @@ async def _federation_health(params: dict[str, Any], store: EventStore) -> dict[
     return {"rows": rows, "count": len(rows)}
 
 
-async def _capacity_snapshot(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
+async def _capacity_snapshot(
+    params: dict[str, Any], store: EventStore
+) -> dict[str, Any]:
     limit = _coerce_limit(params.get("limit", 50), default=50)
     since_ts = _coerce_since_ts(params.get("since_ts"))
     if since_ts is None:
@@ -530,7 +535,8 @@ async def _capacity_snapshot(params: dict[str, Any], store: EventStore) -> dict[
     sql = (
         "SELECT * FROM events "
         "WHERE signal IN ('model.execution.completed', 'model.execution.failed', "
-        "'model.capacity.freed', 'model.loaded', 'model.unloaded')"
+        "'model.capacity.freed', 'model.loaded', 'model.unloaded') "
+        "AND role != 'debug'"
     )
     query_params: list[Any] = []
     if since_ts is not None:
@@ -551,13 +557,15 @@ async def _stack_last_started(
     """Per-service last startup timestamps + overall session boundary."""
     placeholders = ", ".join("?" for _ in _STARTUP_SIGNALS)
     rows = await store.query(
-        "SELECT e.signal, e.ts_unix_ms, e.timestamp "
-        "FROM events e "
-        "JOIN ("
-        f"  SELECT signal, MAX(ts_unix_ms) AS max_ts FROM events "
-        f"  WHERE signal IN ({placeholders}) GROUP BY signal"
-        ") latest ON e.signal = latest.signal AND e.ts_unix_ms = latest.max_ts "
-        "ORDER BY e.ts_unix_ms DESC",
+        "SELECT signal, ts_unix_ms, timestamp FROM ("
+        "  SELECT signal, ts_unix_ms, timestamp, seq, "
+        "         ROW_NUMBER() OVER ("
+        "           PARTITION BY signal "
+        "           ORDER BY ts_unix_ms DESC, seq DESC"
+        "         ) AS rn "
+        "  FROM events "
+        f"  WHERE signal IN ({placeholders})"
+        ") ranked WHERE rn = 1 ORDER BY ts_unix_ms DESC, signal ASC",
         tuple(_STARTUP_SIGNALS),
         limit=len(_STARTUP_SIGNALS),
     )
@@ -578,9 +586,7 @@ async def _stack_last_started(
     }
 
 
-OperationCallable = Callable[
-    [dict[str, Any], EventStore], Awaitable[dict[str, Any]]
-]
+OperationCallable = Callable[[dict[str, Any], EventStore], Awaitable[dict[str, Any]]]
 
 _DISPATCH: dict[str, OperationCallable] = {
     "recent-failures": _recent_failures,

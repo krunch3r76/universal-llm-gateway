@@ -43,6 +43,8 @@ CREATE INDEX IF NOT EXISTS idx_execution_id ON events(execution_id) WHERE execut
 CREATE INDEX IF NOT EXISTS idx_role_scope_ts ON events(role, scope, ts_unix_ms);
 CREATE INDEX IF NOT EXISTS idx_source_ts ON events(source, ts_unix_ms);
 CREATE INDEX IF NOT EXISTS idx_model_id ON events(model_id) WHERE model_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_seq ON events(seq DESC);
+CREATE INDEX IF NOT EXISTS idx_ts_unix_ms ON events(ts_unix_ms DESC);
 
 CREATE TABLE IF NOT EXISTS request_snapshots (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,7 +123,12 @@ class EventStore:
         Skips events whose JSON payload exceeds 64KB. On DB error (e.g. disk
         full), logs and drops the batch to keep the service alive.
         """
-        if not self._db or not events:
+        if not events:
+            return []
+        if not self._db:
+            logger.error(
+                "insert_events called before EventStore.open(); dropping batch"
+            )
             return []
 
         rows: list[tuple[Any, ...]] = []
@@ -139,9 +146,18 @@ class EventStore:
             ts_ms = ev.get("ts_unix_ms") or (
                 _ts_ms_from_iso(ts_iso) if ts_iso else int(time.time() * 1000)
             )
+            event_id = ev.get("id")
+            if event_id is not None:
+                try:
+                    event_id = int(event_id)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Dropping non-integer event id for signal=%s", ev.get("signal")
+                    )
+                    event_id = None
             rows.append(
                 (
-                    ev.get("id"),
+                    event_id,
                     ev.get("signal", "unknown"),
                     ev.get("role", "observation"),
                     ev.get("scope", "global"),
@@ -173,6 +189,11 @@ class EventStore:
     async def insert_snapshot(self, snap: dict[str, Any]) -> None:
         """Insert a request snapshot record."""
         if not self._db:
+            logger.error(
+                "insert_snapshot called before EventStore.open(); request_id=%s phase=%s",
+                snap.get("request_id"),
+                snap.get("phase"),
+            )
             return
         payload_str = json.dumps(snap.get("payload")) if snap.get("payload") else None
         try:
@@ -205,11 +226,12 @@ class EventStore:
     ) -> list[dict[str, Any]]:
         """Execute a read query and return rows as dicts."""
         if not self._db:
+            logger.error("query called before EventStore.open(); sql=%s", sql[:120])
             return []
         try:
-            cursor = await self._db.execute(sql, params)
-            raw_rows = await cursor.fetchmany(limit)
-            return [dict(r) for r in raw_rows]
+            async with self._db.execute(sql, params) as cursor:
+                raw_rows = await cursor.fetchmany(limit)
+                return [dict(r) for r in raw_rows]
         except Exception as e:
             logger.error("Query failed: %s params=%s — %s", sql[:120], params, e)
             return []
@@ -221,6 +243,7 @@ class EventStore:
         evaluations.
         """
         if not self._db:
+            logger.error("run_retention called before EventStore.open()")
             return 0
         cutoff = int(time.time() * 1000) - max_age_ms
         try:
@@ -235,9 +258,44 @@ class EventStore:
             )
             await self._db.execute("PRAGMA incremental_vacuum")
             await self._db.commit()
-            return max(r1.rowcount or 0, 0) + max(r2.rowcount or 0, 0) + max(r3.rowcount or 0, 0)
+            return (
+                max(r1.rowcount or 0, 0)
+                + max(r2.rowcount or 0, 0)
+                + max(r3.rowcount or 0, 0)
+            )
         except Exception as e:
             logger.error("Retention failed cutoff=%s: %s", cutoff, e)
+            return 0
+
+    async def prune_debug_events(self) -> int:
+        """Delete debug events older than the current session boundary.
+
+        Debug events (role='debug') are temporary diagnostic instrumentation.
+        They survive within the current Stargate session only, pruned at every
+        retention cycle and at startup.
+        """
+        if not self._db:
+            logger.error("prune_debug_events called before EventStore.open()")
+            return 0
+
+        rows = await self.query(
+            "SELECT MAX(ts_unix_ms) AS ts FROM events WHERE signal = 'system.started'",
+            (),
+            limit=1,
+        )
+        if not rows or rows[0].get("ts") is None:
+            return 0
+
+        cutoff_ts = int(rows[0]["ts"])
+        try:
+            result = await self._db.execute(
+                "DELETE FROM events WHERE role = 'debug' AND ts_unix_ms < ?",
+                (cutoff_ts,),
+            )
+            await self._db.commit()
+            return max(result.rowcount or 0, 0)
+        except Exception as e:
+            logger.error("Debug event prune failed cutoff_ts=%s: %s", cutoff_ts, e)
             return 0
 
     async def run_session_retention(self, max_sessions: int) -> int:
@@ -247,7 +305,10 @@ class EventStore:
         sessions. Uses OFFSET max_sessions - 1 to identify the oldest boundary
         that should remain, then deletes older rows across all retained tables.
         """
-        if not self._db or max_sessions < 1:
+        if max_sessions < 1:
+            return 0
+        if not self._db:
+            logger.error("run_session_retention called before EventStore.open()")
             return 0
 
         rows = await self.query(
@@ -272,7 +333,11 @@ class EventStore:
             )
             await self._db.execute("PRAGMA incremental_vacuum")
             await self._db.commit()
-            return max(r1.rowcount or 0, 0) + max(r2.rowcount or 0, 0) + max(r3.rowcount or 0, 0)
+            return (
+                max(r1.rowcount or 0, 0)
+                + max(r2.rowcount or 0, 0)
+                + max(r3.rowcount or 0, 0)
+            )
         except Exception as e:
             logger.error("Session retention failed cutoff_ts=%s: %s", cutoff_ts, e)
             return 0

@@ -56,6 +56,12 @@ else:
 brave = (cfg.get('BRAVE_SEARCH_API_KEY') or cfg.get('brave_search_api_key') or '').strip()
 if brave:
     print('export BRAVE_SEARCH_API_KEY=' + shlex.quote(brave))
+bridge = (cfg.get('BRIDGE_TOKEN') or cfg.get('bridge_token') or '').strip()
+if bridge:
+    print('export BRIDGE_TOKEN=' + shlex.quote(bridge))
+agent_bus = (cfg.get('AGENT_BUS_TOKEN') or cfg.get('agent_bus_token') or '').strip()
+if agent_bus:
+    print('export AGENT_BUS_TOKEN=' + shlex.quote(agent_bus))
 fp = (cfg.get('firefox_profile_dir') or '').strip()
 if fp:
     print('export FIREFOX_PROFILE_DIR=' + shlex.quote(str(Path(fp).expanduser())))

@@ -17,7 +17,7 @@ ARG VLLM_BUILD_ARGS="--portable"
 ARG VLLM_MAX_JOBS=8
 ARG LLAMA_CPP_PYTHON_VERSION=
 ARG ENABLE_LLAMA_SERVER=true
-ARG LLAMA_SERVER_VERSION=main
+ARG LLAMA_SERVER_VERSION=b8369
 
 # ============================================================================
 # Stage 1: Obfuscator

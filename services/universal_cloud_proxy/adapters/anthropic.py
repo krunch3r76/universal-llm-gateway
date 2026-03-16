@@ -195,7 +195,7 @@ class AnthropicAdapter:
                 convert_tools([t for t in tools_in if isinstance(t, dict)])
             )
 
-        native_tool_ids = getattr(self._config, "native_tools", []) or []
+        native_tool_ids = getattr(self._config, "native_tools", [])
         if isinstance(native_tool_ids, list) and native_tool_ids:
             tools_out.extend(
                 build_native_tools([t for t in native_tool_ids if isinstance(t, str)])
@@ -218,7 +218,12 @@ class AnthropicAdapter:
         if bool(request_body.get("stream", False)):
             payload["stream"] = True
 
-        if self._config.mcp_server_url:
+        # Inject MCP server only when tools remain enabled after request-level
+        # tool_choice handling (including explicit tool_choice="none").
+        # Tool-free requests (e.g. pipeline generates) skip MCP to avoid
+        # Anthropic-side MCP server connection overhead and potential 400s.
+        caller_wants_tools = bool(tools_out)
+        if self._config.mcp_server_url and caller_wants_tools:
             payload["mcp_servers"] = [
                 {
                     "type": "url",
@@ -325,6 +330,7 @@ class AnthropicAdapter:
                 )
 
             translator = StreamTranslator(str(request_body.get("model", "")))
+            done_seen = False
             async for line in response.aiter_lines():
                 chunks = translator.process_line(
                     line,
@@ -334,10 +340,13 @@ class AnthropicAdapter:
                 for chunk in chunks:
                     yield chunk
                     if chunk == b"data: [DONE]\n\n":
-                        await self._emit_mcp_response_events(translator.mcp_meta)
-                        return
+                        done_seen = True
+                if done_seen:
+                    break
 
             for chunk in translator.finalize():
+                if done_seen and chunk == b"data: [DONE]\n\n":
+                    continue
                 yield chunk
             await self._emit_mcp_response_events(translator.mcp_meta)
 

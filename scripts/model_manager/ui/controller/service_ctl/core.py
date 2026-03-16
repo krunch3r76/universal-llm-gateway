@@ -265,19 +265,27 @@ class ServiceController:
             return f"Failed to start Stargate: could not set up logging ({e})."
 
         try:
-            with log_path.open("w") as log_fh:
-                process = await asyncio.create_subprocess_exec(
-                    str(script),
-                    "debug",
-                    env=env,
-                    cwd=str(self._root),
-                    stdout=log_fh,
-                    stderr=asyncio.subprocess.STDOUT,
-                    start_new_session=True,
-                )
+            log_fh = log_path.open("w")
         except OSError as e:
-            logger.error("Failed to start Stargate subprocess or open log file: %s", e)
+            logger.error("Failed to open Stargate startup log %s: %s", log_path, e)
             return f"Failed to start Stargate: {e}"
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                str(script),
+                "debug",
+                env=env,
+                cwd=str(self._root),
+                stdout=log_fh,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+            )
+        except OSError as e:
+            logger.error("Failed to start Stargate subprocess: %s", e)
+            log_fh.close()
+            return f"Failed to start Stargate: {e}"
+        # Child process owns its duplicated FD; parent can close immediately.
+        log_fh.close()
 
         if process.returncode is not None:
             tail = log_path.read_text(errors="replace")[-1500:]
@@ -431,43 +439,8 @@ class ServiceController:
         return start_text
 
     async def _wait_mcp_healthy(self, *, timeout: float) -> str | None:
-        """Wait until the mcp-server container reports healthy.
-
-        Returns:
-            None when healthy before timeout, otherwise a warning message.
-        """
-        deadline = asyncio.get_running_loop().time() + timeout
-        last_status = "unknown"
-        while asyncio.get_running_loop().time() < deadline:
-            inspect = await asyncio.create_subprocess_exec(
-                "docker",
-                "inspect",
-                "--format",
-                "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}",
-                "mcp-server",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            output = await inspect.communicate()
-            status = output[0].decode(errors="replace").strip().lower()
-            if inspect.returncode != 0:
-                # Container may not be visible yet right after compose up.
-                last_status = "missing"
-            elif status:
-                last_status = status
-                if status == "healthy":
-                    return None
-                if status in {"exited", "dead"}:
-                    return (
-                        "MCP server did not become healthy "
-                        f"(container state: {status})."
-                    )
-            await asyncio.sleep(_MCP_HEALTH_POLL_INTERVAL_S)
-
-        return (
-            "MCP server health check timed out after "
-            f"{timeout:.0f}s (last status: {last_status})."
-        )
+        """Wait until the mcp-server container reports healthy."""
+        return await self._wait_container_healthy("mcp-server", timeout=timeout)
 
     async def _refresh_cursor_mcp_descriptors_if_enabled(self) -> str:
         """Optionally refresh Cursor MCP descriptors based on ~/.gateway/mcp.yaml."""
@@ -573,6 +546,54 @@ class ServiceController:
             "Failed to stop event service (exit %d):\n%s", result.returncode, text
         )
         return f"Failed to stop event service (exit {result.returncode}).\n{text}"
+
+    async def restart_event_service(self) -> str:
+        """Restart event service (force-recreate triggers session retention at boot)."""
+        return await self.start_event_service()
+
+    async def wait_healthy_event_service(self, *, timeout: float = 30.0) -> bool:
+        """Poll until the event-service container reports healthy."""
+        return (
+            await self._wait_container_healthy("event-service", timeout=timeout) is None
+        )
+
+    async def _wait_container_healthy(
+        self, container_name: str, *, timeout: float
+    ) -> str | None:
+        """Wait until *container_name* reports healthy.
+
+        Returns None when healthy, otherwise a diagnostic message.
+        """
+        deadline = asyncio.get_running_loop().time() + timeout
+        last_status = "unknown"
+        while asyncio.get_running_loop().time() < deadline:
+            inspect = await asyncio.create_subprocess_exec(
+                "docker",
+                "inspect",
+                "--format",
+                "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}",
+                container_name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            output = await inspect.communicate()
+            status = output[0].decode(errors="replace").strip().lower()
+            if inspect.returncode != 0:
+                last_status = "missing"
+            elif status:
+                last_status = status
+                if status == "healthy":
+                    return None
+                if status in {"exited", "dead"}:
+                    return (
+                        f"{container_name} did not become healthy "
+                        f"(container state: {status})."
+                    )
+            await asyncio.sleep(_MCP_HEALTH_POLL_INTERVAL_S)
+        return (
+            f"{container_name} health check timed out after "
+            f"{timeout:.0f}s (last status: {last_status})."
+        )
 
     async def check_mcp(self) -> str:
         """Return docker ps output for the mcp-server container."""

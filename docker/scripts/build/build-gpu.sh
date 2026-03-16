@@ -116,7 +116,7 @@ ENABLE_LLAMA_CPP_PYTHON="${ENABLE_LLAMA_CPP_PYTHON:-false}"
 # Default: Build native llama-server for native integration
 ENABLE_LLAMA_SERVER="${ENABLE_LLAMA_SERVER:-true}"
 # Default: Use latest llama.cpp main branch
-LLAMA_SERVER_VERSION="${LLAMA_SERVER_VERSION:-main}"
+LLAMA_SERVER_VERSION="${LLAMA_SERVER_VERSION:-b8369}"
 
 # Default: Use latest vLLM release tag (empty = latest release)
 # Override: --vllm-version=<hash/tag> for specific version
@@ -125,12 +125,12 @@ LLAMA_SERVER_VERSION="${LLAMA_SERVER_VERSION:-main}"
 # Example: --vllm-version=main (bleeding edge)
 VLLM_VERSION="${VLLM_VERSION:-}"
 
-# Default: Pin PyTorch nightly to known-working version (avoids broken nightly deps)
-# The nightly index sometimes has missing triton wheels or other sync issues.
-# Update this when a newer nightly is verified to work.
+# Default: Pin PyTorch nightly to known-working version (avoids broken nightly deps).
+# The Dockerfile falls back to the latest cu130 nightly automatically if this
+# pin is removed from the index.
 # Set to "latest" to always pull the newest nightly (may fail if deps are broken).
-# Format: YYYYMMDD (e.g., 20260111)
-TORCH_NIGHTLY_DATE="${TORCH_NIGHTLY_DATE:-20260111}"
+# Format: YYYYMMDD (e.g., 20260315)
+TORCH_NIGHTLY_DATE="${TORCH_NIGHTLY_DATE:-20260315}"
 
 # Source cache-busting: empty = rely on Docker's content checksum (default).
 # Set to any value (e.g. timestamp) to force re-COPY of libs/ + services/.
@@ -302,9 +302,9 @@ while [[ $# -gt 0 ]]; do
             echo "  ENABLE_LLAMA_CPP_PYTHON=true|false (default: false)"
             echo "  LLAMA_CPP_PYTHON_VERSION=hash/tag (default: empty = latest)"
             echo "  VLLM_VERSION=hash/tag (default: empty = latest release)"
-            echo "  TORCH_NIGHTLY_DATE=YYYYMMDD|latest (default: 20260111)"
+            echo "  TORCH_NIGHTLY_DATE=YYYYMMDD|latest (default: 20260315)"
             echo "  ENABLE_LLAMA_SERVER=true|false (default: true)"
-            echo "  LLAMA_SERVER_VERSION=ref (default: main)"
+            echo "  LLAMA_SERVER_VERSION=ref (default: b8369)"
             echo "  IMAGE_NAME=universal-llm-gateway"
             echo "  IMAGE_TAG=gpu"
             exit 1

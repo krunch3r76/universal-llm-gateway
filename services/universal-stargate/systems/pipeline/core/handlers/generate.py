@@ -30,6 +30,27 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _strip_markdown_fence(text: str) -> str:
+    """Strip markdown code fences wrapping JSON content.
+
+    Cloud providers (notably Anthropic) may return JSON wrapped in
+    ```json ... ``` even when response_format: json_object was requested,
+    because the adapter silently drops that parameter. This strips the
+    fence so json.loads succeeds.
+    """
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        first_newline = stripped.find("\n")
+        if first_newline == -1:
+            return stripped
+        body = stripped[first_newline + 1 :]
+        last_fence = body.rfind("```")
+        if last_fence != -1:
+            body = body[:last_fence]
+        return body.strip()
+    return stripped
+
+
 def _resolve_avoid_models(
     binding_path: str,
     resolver: NamespaceResolver,
@@ -165,12 +186,13 @@ class GenericGenerateHandler(BaseHandler):
                     if avoided:
                         existing = requirements.get("avoid_models")
                         if isinstance(existing, list):
-                            merged = list(existing)
+                            merged = [str(item) for item in existing if item]
                         elif isinstance(existing, str) and existing:
                             merged = [existing]
                         else:
                             merged = []
-                        requirements["avoid_models"] = merged + avoided
+                        deduped = list(dict.fromkeys(merged + avoided))
+                        requirements["avoid_models"] = deduped
                 except Exception as exc:
                     logger.warning(
                         "[%s] avoid_models_from resolution failed (%s): %s"
@@ -342,8 +364,11 @@ class GenericGenerateHandler(BaseHandler):
         max_tokens = self._resolve_max_tokens(step, context)
 
         json_schema = None
-        if step.generation_parameters.get("response_format"):
-            json_schema = step.generation_parameters["response_format"].get("schema")
+        wants_json = False
+        response_format = step.generation_parameters.get("response_format")
+        if response_format:
+            json_schema = response_format.get("schema")
+            wants_json = response_format.get("type") == "json_object"
 
         return {
             "model_id": model_id,
@@ -351,6 +376,7 @@ class GenericGenerateHandler(BaseHandler):
             "temperature": temperature,
             "max_tokens": max_tokens,
             "json_schema": json_schema,
+            "wants_json": wants_json,
         }
 
     # _resolve_max_tokens and _infer_token_category live on BaseHandler
@@ -660,9 +686,10 @@ class GenericGenerateHandler(BaseHandler):
 
         json_data: dict[str, Any] | None = None
         json_parse_error: str | None = None
-        if resolved_config["json_schema"]:
+        if resolved_config["json_schema"] or resolved_config.get("wants_json"):
             try:
-                json_data = json.loads(call_result.content)
+                content_for_parse = _strip_markdown_fence(call_result.content)
+                json_data = json.loads(content_for_parse)
 
                 # Inject provenance into claims if source_provenance provided
                 if source_provenance and json_data:
