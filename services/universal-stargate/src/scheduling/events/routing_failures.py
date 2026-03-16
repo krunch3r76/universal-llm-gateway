@@ -1,8 +1,9 @@
+# ruff: noqa: N802
 """Routing failure diagnostic event signals.
 
 Covers specific failure modes that cause routing to return 503 or non-retryable
 errors: resource data gaps, infeasibility, eviction blocks, upstream exclusion,
-capacity divergence, and cold-load pre-seeding.
+capacity divergence, cold-load pre-seeding, and capacity slot leak recovery.
 
 Signals:
     routing.resource.data.missing — model in catalog but missing resource data
@@ -14,6 +15,7 @@ Signals:
     routing.capacity.preseeded — CapacityPool pre-seeded for cold load
     routing.overflow.triggered — non-sticky spillover path selected
     routing.overflow.failed — non-sticky spillover had no feasible alternate
+    capacity.slot.leak.recovered — cancellation race slot recovery in CapacityPool
 """
 
 from universal_event_bus import Event, event_factory
@@ -464,5 +466,62 @@ def RoutingOverflowFailed(
             "model_id": model_id,
             "from_gateway": from_gateway,
             "reason": reason,
+        },
+    )
+
+
+CAPACITY_SLOT_LEAK_RECOVERED = "capacity.slot.leak.recovered"
+"""
+Cancellation race in CapacityPool._wait_for_slot recovered a leaked slot.
+
+Canary signal: any occurrence means a waiter was cancelled/timed out AFTER
+_dispatch had already admitted it (incremented in_flight, resolved the future).
+The slot was recovered by _recover_leaked_slot to prevent permanent capacity loss.
+
+Monitoring: non-zero rate under load is expected (asyncio scheduling race);
+sustained high rate may indicate excessive cancellation or timeout tuning issues.
+
+Diagnostic query:
+    jq 'select(.signal == "capacity.slot.leak.recovered")'
+
+Payload: {
+    "request_id": str,
+    "gateway_id": str,
+    "model_id": str,
+    "snapshot": dict       # CapacityPool.get_snapshot() at recovery time
+}
+"""
+
+
+@event_factory
+def CapacitySlotLeakRecovered(
+    request_id: str,
+    gateway_id: str,
+    model_id: str,
+    snapshot: dict[str, object],
+) -> Event:
+    """Create CAPACITY_SLOT_LEAK_RECOVERED event.
+
+    Emitted by CapacityPool._recover_leaked_slot when the cancellation race
+    in _wait_for_slot is detected: _dispatch resolved the future (incrementing
+    in_flight) but the waiter's task was cancelled before the CapacityToken
+    was created.  Without recovery, the slot leaks permanently.
+
+    Args:
+        request_id: Request whose slot was leaked and recovered
+        gateway_id: Gateway where the slot was allocated
+        model_id: Model the slot was reserved for
+        snapshot: CapacityPool diagnostic snapshot at recovery time
+
+    Returns:
+        Event with CapacitySlotLeakRecovered signal
+    """
+    return Event(
+        signal=CAPACITY_SLOT_LEAK_RECOVERED,
+        payload={
+            "request_id": request_id,
+            "gateway_id": gateway_id,
+            "model_id": model_id,
+            "snapshot": snapshot,
         },
     )

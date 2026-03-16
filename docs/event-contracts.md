@@ -798,6 +798,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `routing.inference.oom.banned` | `model_id`, `gateway_id` | - |
 | `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | - |
 | `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | - |
+| `capacity.slot.leak.recovered` | `request_id`, `gateway_id`, `model_id`, `snapshot` | - |
 | `routing.overflow.triggered` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `reason` | - |
 | `routing.overflow.failed` | `request_id`, `model_id`, `tried_gateways`, `reason` | - |
 | `model.load.overflow.started` | `request_id`, `model_id`, `gateway_id`, `reason` | - |
@@ -884,6 +885,22 @@ admission.
 | `capacity_pool_available` | int | Available slots per CapacityPool |
 | `capacity_pool_in_flight` | int | Current in-flight requests |
 | `capacity_pool_max` | int | Max concurrent capacity |
+
+### capacity.slot.leak.recovered
+
+Canary signal emitted by `CapacityPool._recover_leaked_slot` when the
+cancellation race in `_wait_for_slot` is detected: `_dispatch` resolved a
+waiter's future (incrementing `in_flight`) but the waiter's task was cancelled
+before a `CapacityToken` was created. Without recovery, the slot leaks
+permanently. Non-zero rate under load is expected (asyncio scheduling race);
+sustained high rate warrants timeout tuning investigation.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request whose slot was leaked and recovered |
+| `gateway_id` | string | Gateway where the slot was allocated |
+| `model_id` | string | Model the slot was reserved for |
+| `snapshot` | dict | `CapacityPool.get_snapshot()` at recovery time |
 
 ### routing.eviction.blocked.busy
 
@@ -1113,6 +1130,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
 | `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
 | `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |
+| `rag.article.upserted` | `source_path`, `created`, `title`, `content_hash` | article metadata upsert completed; `created=true` for insert and `created=false` for update |
 | `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `bibliography_chunks` (int — count of chunks tagged `is_bibliography` for this file) |
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty) |
 | `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`} |

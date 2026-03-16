@@ -5,6 +5,9 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 MCP_YAML="${MCP_YAML:-$HOME/.gateway/mcp.yaml}"
 if [[ ! -f "$MCP_YAML" ]]; then
   echo "MCP config not found: $MCP_YAML" >&2
@@ -28,12 +31,21 @@ project_dir = (cfg.get('project_dir') or '').strip()
 if not project_dir:
     print('project_dir missing or empty in MCP config', file=__import__('sys').stderr)
     raise SystemExit(1)
+tasks_dir = (cfg.get('tasks_dir') or '').strip() or f'{project_dir}/tasks'
 data_dir = str(Path(cfg.get('data_dir', '~/mcp-data')).expanduser())
 print('export MCP_AUTH_TOKEN=' + shlex.quote(token))
 print('export MCP_PROJECT_DIR=' + shlex.quote(project_dir))
+print('export MCP_TASKS_DIR=' + shlex.quote(tasks_dir))
 print('export MCP_DATA_DIR=' + shlex.quote(data_dir))
 print('export ENABLE_BROWSER_TOOLS=' + shlex.quote('true' if cfg.get('enable_browser_tools') else 'false'))
 print('export ENABLE_CONTEXT_TOOLS=true')
+project_access = (cfg.get('project_access') or 'ro').strip().lower()
+if project_access == 'rw':
+    print('export MCP_PROJECT_MOUNT_MODE=rw')
+    print('export PROJECT_READ_ONLY=false')
+else:
+    print('export MCP_PROJECT_MOUNT_MODE=ro')
+    print('export PROJECT_READ_ONLY=true')
 tasks = (cfg.get('tasks_access') or 'ro').strip().lower()
 if tasks == 'rw':
     print('export MCP_TASKS_MOUNT_MODE=rw')
@@ -49,7 +61,7 @@ if fp:
     print('export FIREFOX_PROFILE_DIR=' + shlex.quote(str(Path(fp).expanduser())))
 ")"
 
-cd "$MCP_PROJECT_DIR"
+cd "$WORKSPACE_ROOT"
 COMPOSE_BASE="-f docker/compose/mcp-server.yml"
 if [[ "$ENABLE_BROWSER_TOOLS" == "true" ]]; then
   COMPOSE_FILES="$COMPOSE_BASE -f docker/compose/mcp-server-browser.override.yml"

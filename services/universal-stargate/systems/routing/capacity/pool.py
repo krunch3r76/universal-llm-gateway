@@ -75,11 +75,17 @@ class _Waiter:
 
 
 class CapacityPool:
-    """
-    Per-(gateway, model) capacity pool with FIFO admission queues.
+    """Per-(gateway, model) capacity pool with FIFO admission queues.
 
-    Tokens auto-release via async context manager, eliminating the
-    scattered release points that caused capacity leaks.
+    Central capacity accounting for all inference requests routed through
+    Stargate.  Every execution path that forwards a request to a gateway
+    MUST acquire a slot via acquire() or acquire_token().  Tokens
+    auto-release via async context manager, eliminating the scattered
+    release points that caused capacity leaks in the prior design.
+
+    INVARIANT: ∀ forwarded request: exactly one acquire() → release() pair.
+    Bypass of this pool is a silent correctness violation (no error, no log,
+    only observable as latency degradation under load).
     """
 
     def __init__(self, event_bus: Any | None = None) -> None:
@@ -111,7 +117,13 @@ class CapacityPool:
         model_id: str,
         max_concurrent: int,
     ) -> None:
-        """Set/update capacity from telemetry. Idempotent."""
+        """Set or update max concurrent capacity for a slot.
+
+        Called by the gateway manager when telemetry reports a capacity
+        change for a (gateway, model) pair.
+        Idempotent — re-setting the same value is a no-op (no log emitted).
+        Negative values are clamped to 0 with an ERROR log.
+        """
         if max_concurrent < 0:
             logger.error(
                 f"Invalid capacity {max_concurrent} for {gateway_id}/{model_id}"
@@ -185,19 +197,33 @@ class CapacityPool:
     # ── Queries ──
 
     def available(self, gateway_id: str, model_id: str) -> int:
-        """Available slots = capacity - in_flight. Returns 0 if unknown."""
+        """Return available slots for a (gateway, model) pair.
+
+        Capacity minus in_flight.  Returns 0 when the slot is unknown
+        or fully occupied.  Used by the
+        DecisionEngine during feasibility evaluation to determine T0/T1 tier.
+        """
         slot = _Slot(gateway_id=gateway_id, model_id=model_id)
         return max(0, self._capacity.get(slot, 0) - self._in_flight.get(slot, 0))
 
     def get_slot_info(self, gateway_id: str, model_id: str) -> tuple[int, int, int]:
-        """Return (available, in_flight, capacity) for diagnostics."""
+        """Return (available, in_flight, capacity) tuple for a (gateway, model) slot.
+
+        Used by _try_immediate for ranking and by diagnostic endpoints.
+        All values are 0 when the slot is unknown.
+        """
         slot = _Slot(gateway_id=gateway_id, model_id=model_id)
         capacity = self._capacity.get(slot, 0)
         in_flight = self._in_flight.get(slot, 0)
         return max(0, capacity - in_flight), in_flight, capacity
 
     def get_available_gateways(self, model_id: str) -> list[tuple[str, int]]:
-        """Return [(gateway_id, available)] for available > 0, sorted desc."""
+        """Return gateways with available capacity, sorted descending.
+
+        Returns ``[(gateway_id, available)]`` for all gateways with
+        available > 0.  Used by routing to enumerate candidates for a model.
+        Only includes slots where at least one request can be admitted immediately.
+        """
         return sorted(
             (
                 (slot.gateway_id, self.available(slot.gateway_id, slot.model_id))
@@ -287,7 +313,13 @@ class CapacityPool:
         model_id: str,
         allowed_gateway_ids: frozenset[str],
     ) -> str | None:
-        """Try to reserve a slot immediately. Returns gateway_id or None."""
+        """Try to reserve a slot immediately without queuing.
+
+        Returns gateway_id on success, None if no capacity.  Ranks
+        allowed gateways by available capacity (descending, random tiebreak)
+        and increments in_flight on the best.  Called both from acquire_token
+        (initial attempt) and _dispatch (queued waiter evaluation).
+        """
         ranked: list[tuple[str, int]] = []
         for gw_id in allowed_gateway_ids:
             available, _in_flight, _capacity = self.get_slot_info(gw_id, model_id)
@@ -312,7 +344,13 @@ class CapacityPool:
         allowed_gateway_ids: frozenset[str],
         timeout_s: float | None,
     ) -> str:
-        """Queue and wait for a slot. Returns gateway_id."""
+        """Enqueue a waiter and block until a slot is assigned.  Returns gateway_id.
+
+        Creates a Future, appends it to the per-model FIFO queue, and awaits
+        resolution by _dispatch.  On timeout or cancellation, handles the race
+        where _dispatch may have already admitted the waiter (recovering the
+        leaked slot to prevent permanent capacity loss).
+        """
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
         waiter = _Waiter(
@@ -350,7 +388,11 @@ class CapacityPool:
             raise
 
     def _cancel_waiter(self, request_id: str) -> None:
-        """Remove a waiter from its queue. Idempotent."""
+        """Remove a waiter from its per-model queue by request_id.  Idempotent.
+
+        Cancels the waiter's future if still pending and cleans up the queue
+        entry.  Empty queues are removed from _queues to avoid memory growth.
+        """
         for model_id, queue in list(self._queues.items()):
             for i, waiter in enumerate(queue):
                 if waiter.request_id == request_id:
@@ -406,20 +448,24 @@ class CapacityPool:
     def _emit_slot_leak_recovered(
         self, request_id: str, gateway_id: str, model_id: str
     ) -> None:
-        """Emit event when a leaked capacity slot is recovered."""
+        """Emit capacity.slot.leak.recovered canary signal via event bus.
+
+        Any occurrence indicates the cancellation race in _wait_for_slot was hit
+        under load: _dispatch resolved the future (incrementing in_flight) but the
+        waiter's task was cancelled before a CapacityToken was created.  The slot
+        was recovered by _recover_leaked_slot; this signal makes the recovery
+        observable for monitoring.
+        """
         if not self._event_bus:
             return
         try:
-            from universal_event_bus import Event
+            from src.scheduling.events import CapacitySlotLeakRecovered
 
-            event = Event(
-                signal="capacity.slot.leak.recovered",
-                payload={
-                    "request_id": request_id,
-                    "gateway_id": gateway_id,
-                    "model_id": model_id,
-                    "snapshot": self.get_snapshot(),
-                },
+            event = CapacitySlotLeakRecovered(
+                request_id=request_id,
+                gateway_id=gateway_id,
+                model_id=model_id,
+                snapshot=self.get_snapshot(),
             )
             asyncio.get_running_loop().call_soon(
                 lambda: asyncio.create_task(self._event_bus.publish_async_nowait(event))
@@ -570,7 +616,12 @@ class CapacityPool:
     # ── Diagnostics ──
 
     def get_snapshot(self) -> dict[str, Any]:
-        """Return diagnostic snapshot of all capacity state."""
+        """Return a diagnostic snapshot of all capacity state as a plain dict.
+
+        Includes per-slot capacity/in_flight, per-model queue contents with
+        waiter request_ids and allowed gateways, and aggregate totals.  Used
+        by health endpoints, logging, and the MCP manage_service status command.
+        """
         return {
             "capacity": {
                 f"{s.gateway_id}/{s.model_id}": c for s, c in self._capacity.items()

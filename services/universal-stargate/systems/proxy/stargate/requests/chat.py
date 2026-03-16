@@ -1,3 +1,13 @@
+"""Chat completion dispatch hub.
+
+Sole entry point for all ``/v1/chat/completions`` requests on Stargate.
+Performs request preparation (via RequestPreparer), emits lifecycle events
+(RequestSnapshotReceived, RequestProcessing, RequestSnapshotRouted), and
+delegates execution to either the pipeline executor or the retry loop
+(retry.py).  Contains no retry or transformation logic itself — those
+responsibilities live in retry.py and mode_transforms.py respectively.
+"""
+
 from __future__ import annotations
 
 import time
@@ -34,7 +44,22 @@ async def process_chat_completion(
     disable_profile: bool,
     skip_token_counting: bool | None,
 ) -> Response:
-    """Process a chat completion request with unified capacity retry."""
+    """Process a chat completion request.
+
+    Handles preparation, event emission, and execution.
+
+    Orchestration flow:
+    1. Pipeline detection — if the target model is a pipeline, truncates
+       messages to last user message and preserves full history in request state.
+    2. Request preparation — delegates to proxy.request_preparer.prepare_request
+       which handles model validation, profile resolution, and transformations.
+    3. Event emission — publishes RequestSnapshotReceived, RequestProfileResolved,
+       RequestProcessing, and RequestSnapshotRouted for observability.
+    4. Execution — routes to pipeline executor (if pipeline) or execute_with_retry
+       (retry.py) for standard inference requests.
+
+    Returns the HTTP Response (streaming or non-streaming) from the executor.
+    """
     target_model = model_override or chat_request.model
     is_pipeline = bool(proxy.pipeline_registry) and proxy.pipeline_registry.is_pipeline(
         target_model

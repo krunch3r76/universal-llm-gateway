@@ -20,12 +20,54 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _STARGATE_URL = os.environ.get("STARGATE_URL", "http://host.docker.internal:9999")
-_RUN_TIMEOUT = 120.0
+_RUN_TIMEOUT_FALLBACK = 480.0
+_TIMEOUT_BUFFER = 30.0
 _VALIDATE_TIMEOUT = 15.0
 
 _QUERY_SOCKET = os.environ.get(
     "EVENT_QUERY_SOCKET", "/tmp/universal-protocol/events-query.sock"
 )
+
+_pipeline_timeouts: dict[str, float] = {}
+
+
+def _refresh_pipeline_timeouts() -> None:
+    """Fetch pipeline metadata from Stargate and cache timeout_seconds."""
+    try:
+        url = f"{_STARGATE_URL}/api/v1/pipelines"
+        with httpx.Client(timeout=_VALIDATE_TIMEOUT) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        logger.debug("Pipeline metadata fetch failed; using fallback timeouts")
+        return
+
+    pipelines = data.get("pipelines", {})
+    _pipeline_timeouts.clear()
+    for pid, info in pipelines.items():
+        ts = info.get("timeout_seconds")
+        if isinstance(ts, int | float) and ts > 0:
+            _pipeline_timeouts[pid] = float(ts)
+
+
+def _resolve_timeout(pipeline: str, explicit: float | None) -> float:
+    """Determine effective HTTP timeout for a pipeline_run call.
+
+    Priority: explicit caller override > auto-detected from registry > fallback.
+    Adds _TIMEOUT_BUFFER to pipeline-configured timeouts for HTTP overhead.
+    """
+    if explicit is not None:
+        return explicit
+
+    if not _pipeline_timeouts:
+        _refresh_pipeline_timeouts()
+
+    configured = _pipeline_timeouts.get(pipeline)
+    if configured is not None:
+        return configured + _TIMEOUT_BUFFER
+
+    return _RUN_TIMEOUT_FALLBACK
 
 
 def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
@@ -48,6 +90,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         pipeline: str,
         messages: list[dict[str, str]],
         options: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """Run a pipeline and return execution summary with trace.
 
@@ -58,10 +101,17 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         Pipeline YAML, prompts, and model configs hot-reload on file
         change (~2s debounce) — no service restart needed between runs.
 
+        The HTTP timeout is auto-detected from the pipeline's configured
+        timeout_seconds (via Stargate registry), so callers don't need to
+        know each pipeline's budget. Falls back to 480s if metadata is
+        unavailable.
+
         Args:
             pipeline: Pipeline ID (e.g. 'consensus', 'rag-context').
             messages: Chat messages in OpenAI format.
             options: Optional pipeline_options dict.
+            timeout: Override HTTP timeout in seconds. Auto-detected from
+                pipeline registry when not provided.
 
         Returns:
             On success: {
@@ -76,13 +126,14 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         t0 = monotonic_now()
         record("mcp.pipeline.run.called", pipeline=pipeline)
 
+        effective_timeout = _resolve_timeout(pipeline, timeout)
         body: dict[str, Any] = {"model": pipeline, "messages": messages}
         if options:
             body["pipeline_options"] = options
 
         try:
             url = f"{_STARGATE_URL}/v1/chat/completions"
-            with httpx.Client(timeout=_RUN_TIMEOUT) as client:
+            with httpx.Client(timeout=effective_timeout) as client:
                 resp = client.post(url, json=body)
                 resp.raise_for_status()
                 data = resp.json()
@@ -94,7 +145,9 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                 error="timeout",
                 duration_s=round(duration, 3),
             )
-            return {"error": f"Pipeline '{pipeline}' timed out after {_RUN_TIMEOUT}s."}
+            return {
+                "error": f"Pipeline '{pipeline}' timed out after {effective_timeout}s."
+            }
         except httpx.ConnectError as e:
             record("mcp.pipeline.run.failed", pipeline=pipeline, error=str(e))
             return {"error": f"Stargate not reachable: {e}"}
@@ -181,6 +234,13 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
             return {"valid": False, "errors": [f"Validation failed: {e}"]}
 
         pipelines = pipelines_data.get("pipelines", {})
+
+        _pipeline_timeouts.clear()
+        for pid, pinfo in pipelines.items():
+            ts = pinfo.get("timeout_seconds")
+            if isinstance(ts, int | float) and ts > 0:
+                _pipeline_timeouts[pid] = float(ts)
+
         if pipeline not in pipelines:
             available = sorted(pipelines.keys()) if isinstance(pipelines, dict) else []
             return {

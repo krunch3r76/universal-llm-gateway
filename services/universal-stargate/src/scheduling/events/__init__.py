@@ -231,6 +231,7 @@ from .routing_debug import (
     RoutingDebugGatewayRemoved,
 )
 from .routing_failures import (
+    CAPACITY_SLOT_LEAK_RECOVERED,
     ROUTING_CAPACITY_DIVERGENCE,
     ROUTING_CAPACITY_PRESEEDED,
     ROUTING_EVICTION_BLOCKED_BUSY,
@@ -240,6 +241,7 @@ from .routing_failures import (
     ROUTING_OVERFLOW_TRIGGERED,
     ROUTING_RESOURCE_DATA_MISSING,
     ROUTING_UPSTREAM_ALL_EXCLUDED,
+    CapacitySlotLeakRecovered,
     RoutingCapacityDivergence,
     RoutingCapacityPreseeded,
     RoutingEvictionBlockedBusy,
@@ -304,6 +306,7 @@ __all__ = [
     "ROUTING_CAPACITY_PRESEEDED",
     "ROUTING_OVERFLOW_TRIGGERED",
     "ROUTING_OVERFLOW_FAILED",
+    "CAPACITY_SLOT_LEAK_RECOVERED",
     "RoutingResourceDataMissing",
     "RoutingModelInfeasible",
     "RoutingEvictionBlockedBusy",
@@ -313,6 +316,7 @@ __all__ = [
     "RoutingCapacityPreseeded",
     "RoutingOverflowTriggered",
     "RoutingOverflowFailed",
+    "CapacitySlotLeakRecovered",
     # ── gateway ──────────────────────────────────────────────────────────────
     "GATEWAY_STATE_CHANGED",
     "GATEWAY_RETRY_ATTEMPTED",

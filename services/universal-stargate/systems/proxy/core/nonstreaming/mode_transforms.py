@@ -1,7 +1,17 @@
 """Mode-specific request transformation functions.
 
-Extracted from RequestPreparer — handles normal-mode (full transformation
-pipeline) and master-mode (client-facing policy only) preparation.
+Extracted from RequestPreparer so each preparation mode is a standalone
+function rather than a method on a god-class.  Two modes exist:
+
+- **Normal mode** (prepare_normal_mode): full transformation pipeline —
+  fetches model config, resolves profiles, applies prompt templates and
+  input schema conversion, builds the final request payload.
+- **Master mode** (prepare_master_mode): client-facing policy only (profiles,
+  system prompts, generation params).  Model-specific transformations are
+  deferred to the execution target (Edge/Gateway).
+
+Helper functions (extract_messages, inject_profile_system_prompt, etc.)
+are shared between modes and are usable independently for testing.
 """
 # ruff: noqa: E501
 
@@ -25,10 +35,14 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def extract_messages(
-    context: RequestContext, transformer: Any
-) -> list[dict[str, Any]]:
-    """Extract message sequence from context into common format (dicts with role/content)."""
+def extract_messages(context: RequestContext, transformer: Any) -> list[dict[str, Any]]:
+    """Extract the message sequence from a RequestContext into a list of plain dicts.
+
+    If the request uses the legacy ``prompt`` field, it is preprocessed
+    (FIM markers removed) and wrapped as a single user message.  Otherwise,
+    ``chat_request.messages`` are converted to ``{role, content, ...}`` dicts,
+    preserving tool_calls, tool_call_id, and name extras when present.
+    """
     if context.chat_request and context.chat_request.prompt:
         cleaned_prompt = transformer.preprocess_prompt_field(
             str(context.chat_request.prompt)
@@ -58,7 +72,13 @@ def inject_profile_system_prompt(
     profile_name: str,
     context: RequestContext,
 ) -> list[dict[str, Any]]:
-    """Inject profile system prompt at start of messages if no user system message exists."""
+    """Prepend the profile's system prompt to the message list, unless the
+    client already supplied a system message (in which case it is preserved).
+
+    Records the decision in ``context.middleware_actions`` for auditing:
+    either ``system_message_preserved_no_profile_override`` or
+    ``system_prompt_injected_from_profile:{name}``.
+    """
     for msg in messages:
         if msg.get("role") == "system":
             logger.info(
@@ -87,7 +107,13 @@ def inject_profile_system_prompt(
 def extract_and_filter_messages(
     preparer: RequestPreparer, context: RequestContext
 ) -> list[dict[str, Any]]:
-    """Extract and filter messages for Master mode forwarding."""
+    """Extract messages from context and apply content filters for Master mode.
+
+    Combines extract_messages (prompt→messages conversion) with the
+    TransformationEngine's filter-only pass (blocklist, length limits)
+    without applying model-specific prompt templates — those are deferred
+    to the execution target in federation forwarding.
+    """
     original_messages = extract_messages(context, preparer.transformer)
     return preparer._transformation_engine.apply_filters_only(
         original_messages, context.selected_model
@@ -287,9 +313,7 @@ async def prepare_normal_mode(
         context.profile_data = profile_data
         if profile_data.name:
             context.request_profile = profile_data.name
-            context.middleware_actions.append(
-                f"profile_resolved:{profile_data.name}"
-            )
+            context.middleware_actions.append(f"profile_resolved:{profile_data.name}")
 
     original_messages = extract_messages(context, preparer.transformer)
     if (
@@ -321,9 +345,7 @@ async def prepare_normal_mode(
         )
     else:
         processed_messages = filtered_messages.copy()
-        context.middleware_actions.append(
-            "pass_through_messages_format_with_filters"
-        )
+        context.middleware_actions.append("pass_through_messages_format_with_filters")
 
         transform_config = preparer._transformation_engine.get_config_for_model(
             context.selected_model
@@ -345,9 +367,7 @@ async def prepare_normal_mode(
         context.model_metadata.format if context.model_metadata else None
     )
     transformation_metadata["input_schema"] = input_schema
-    transformation_metadata["transformation_applied"] = str(
-        input_schema != "messages"
-    )
+    transformation_metadata["transformation_applied"] = str(input_schema != "messages")
 
     preparer.builder.build_request_data(
         context, processed_messages, transformation_metadata

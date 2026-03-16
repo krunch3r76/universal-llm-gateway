@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""stdio → HTTP proxy for the universal-gateway MCP server.
+"""stdio → HTTP proxy for the vortex MCP server.
 
 Cursor uses this as a `command`-type MCP server (stdio transport).
 It translates MCP JSON-RPC messages from stdin to HTTP POST requests
@@ -13,7 +13,7 @@ uses the public hostname (mcp.k-1.me) with /etc/hosts resolving it to
 127.0.0.1 for local connections.
 
 Config in .cursor/mcp.json:
-    "universal-gateway": {
+    "vortex": {
         "command": "python3",
         "args": ["/mnt/torus/projects/universal-llm-gateway/scripts/mcp-stdio-proxy.py"]
     }
@@ -86,8 +86,10 @@ def _post(body: bytes, *, token: str) -> str | None:
     Returns the JSON string payload for requests.
     Returns None for notifications (202 Accepted, no body).
 
-    Reads SSE stream line-by-line and returns as soon as a complete
-    event arrives — never waits for the keep-alive connection to close.
+    Reads SSE stream line-by-line, skipping heartbeat events (named
+    ``event: heartbeat``), and returns as soon as a complete non-heartbeat
+    event arrives.  Heartbeats keep the socket alive for long-running
+    tool calls without being mistaken for the JSON-RPC response.
     """
     req = urllib.request.Request(
         MCP_URL,
@@ -99,28 +101,30 @@ def _post(body: bytes, *, token: str) -> str | None:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=600) as resp:
         if resp.status == 202:
             return None
 
-        # Read SSE stream incrementally. An event ends with a blank line
-        # after a `data: <json>` line. Return immediately on completion —
-        # exiting the `with` block closes the connection.
         data_payload: str | None = None
+        is_heartbeat = False
         while True:
             raw = resp.readline()
             if not raw:
                 break
             line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
-            if line.startswith("data: "):
-                if data_payload is None:
-                    data_payload = line[6:]
-                else:
-                    data_payload += "\n" + line[6:]
-            elif line == "" and data_payload is not None:
-                return data_payload  # complete SSE event
+            if line.startswith("event: "):
+                is_heartbeat = line[7:].strip() == "heartbeat"
+            elif line.startswith("data: "):
+                if not is_heartbeat:
+                    if data_payload is None:
+                        data_payload = line[6:]
+                    else:
+                        data_payload += "\n" + line[6:]
+            elif line == "":
+                if data_payload is not None:
+                    return data_payload
+                is_heartbeat = False
 
-        # Fallback: plain JSON response (not SSE), or truncated stream
         return data_payload or ""
 
 

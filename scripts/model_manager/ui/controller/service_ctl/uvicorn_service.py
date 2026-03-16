@@ -58,7 +58,7 @@ async def _start_uvicorn_service(
     def _pre_launch() -> str | None:
         fd = _acquire_lock(lock_file)
         try:
-            recorded_pid = service_state._read_pid(pid_file)
+            recorded_pid, _ = service_state._resolve_pid_file(pid_file)
             if recorded_pid is not None and _validate_uvicorn_pid(
                 recorded_pid, app_module, uds_mode=uds_mode
             ):
@@ -146,7 +146,7 @@ async def _stop_uvicorn_service(
     def _stop_critical_section() -> tuple[int | None, bool, str | None]:
         fd = _acquire_lock(lock_file)
         try:
-            recorded_pid = service_state._read_pid(pid_file)
+            recorded_pid, _ = service_state._resolve_pid_file(pid_file)
             if recorded_pid is not None and _validate_uvicorn_pid(
                 recorded_pid, app_module, uds_mode=uds_mode
             ):

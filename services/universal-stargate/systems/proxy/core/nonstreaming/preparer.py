@@ -1,11 +1,10 @@
-"""
-Request preparation module - handles all request transformation logic.
+"""Request preparation — context construction and dispatch to mode-specific transforms.
 
-This module is responsible for:
-- Parsing and validating incoming requests
-- Extracting user parameters
-- Applying chat template transformations
-- Preparing request data for forwarding
+RequestPreparer is the single entry point for building a RequestContext from
+a raw HTTP request.  It handles model ID validation, parameter extraction,
+response_format schema validation, profile/pipeline header propagation, and
+bypass-mode preparation.  The actual transformation logic for normal mode
+and master mode lives in mode_transforms.py — this module delegates to it.
 
 Note: Import ordering is intentionally non-standard to ensure logging
 configuration is loaded before universal_logging import.
@@ -70,45 +69,24 @@ def validate_and_prepare_model_id(model_id: str) -> tuple[str, str | None]:
 
 
 class RequestPreparer:
-    """
-    Handles all request preparation and transformation logic for incoming requests.
+    """Builds a fully-populated RequestContext from a raw HTTP request.
 
-    This class is responsible for:
-      - Validating and parsing model IDs to ensure routing and request validity.
-      - Managing all steps required to transform a client request into a normalized,
-        ready-to-execute form (including applying model templates, system prompts,
-        and compatibility adjustments).
-      - Coordinating any required user or system profile logic (injecting system prompts,
-        warnings, or user-specific behaviors when applicable).
-      - Applying gateway and router rules (such as sticky routing policy, router-only short-circuit,
-        federation/forwarding mode, bypasses for debugging/testing, and distinguishing between
-        internal pipeline requests and normal user requests).
-      - Extracting, filtering, and optionally transforming request messages into the correct
-        format expected by downstream model gateways or proxy services.
-      - Managing context objects that track the full lifecycle of a request,
-        including unmodified client input, processing history, middleware actions,
-        and downstream metadata.
-      - Handling corner cases (such as missing models, federated-only models,
-        legacy prompt fields, and robust schema validation for advanced
-        features like response_format).
-      - Building and emitting detailed logs and trace data throughout preparation,
-        critical for observability and debugging.
+    Owns the preparation lifecycle: model ID validation, parameter extraction,
+    response_format schema checking, profile/pipeline header propagation, and
+    mode dispatch.  Transformation logic for normal mode and master mode is
+    delegated to mode_transforms.py — this class coordinates but does not
+    contain transformation implementations.
 
-    This class is the central engine for _all_ non-streaming request pre-processing
-    before dispatching to lower-level systems or external execution targets.
-    Downstream consumers rely on the context and transformations produced here.
+    Typical usage::
 
-    Typical usage:
         preparer = RequestPreparer(...)
         context = await preparer.prepare_request(request, chat_request, ...)
-        # Now context is ready for execution by gateway/federation code.
+        # context is ready for execution by gateway/federation code.
 
-    Design highlights and invariants:
-      - Isolates mutation of client input; raw_client_fields is never modified.
-      - All internal state and decision points are tracked in middleware_actions.
-      - Supports multiple modes (normal, bypass, master, federated).
-      - Strict points of input validation / model ID canonicalization.
-      - Designed to be resilient to configuration, model upgrades, and profile changes.
+    Invariants:
+      - raw_client_fields is never mutated after extraction.
+      - All decision points are tracked in context.middleware_actions.
+      - Supports normal, bypass, master, and federated preparation modes.
     """
 
     def __init__(
@@ -405,4 +383,3 @@ class RequestPreparer:
         context.middleware_actions.append(
             f"model_sticky:{'true' if context.model_sticky else 'false'}"
         )
-

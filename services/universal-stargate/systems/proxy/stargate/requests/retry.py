@@ -1,7 +1,23 @@
-"""Retry loop for chat completion requests.
+"""Unified retry loop for chat completion requests.
 
-Extracted from chat.py — contains the unified capacity/upstream retry
-logic and all helper functions that serve the retry loop.
+Implements capacity-retry and upstream-retry with independent time budgets,
+exponential backoff, gateway exclusion on upstream failures, and client
+disconnection detection.  Extracted from chat.py so the dispatch hub
+(chat.py) is pure orchestration and this module owns all retry semantics.
+
+Error classification helpers:
+- ``_is_capacity_error``: 503/504 with retryable envelope or retryable ErrorCode
+- ``_is_retryable_upstream_error``: 502 from federated gateway, retryable
+- Non-retryable: immediate re-raise (permanent resource failures where
+  ``can_fit_with_eviction`` is NOT in the failed constraint set)
+
+Events emitted (PascalCase ``@event_factory`` signals):
+- ``RequestCompleted`` / ``RequestFailed`` — terminal lifecycle events
+- ``RequestCapacityTimeout`` — capacity retry budget exhausted
+- ``RequestSnapshotCompleted`` / ``RequestSnapshotFailed`` — response snapshots
+
+Capacity slot release is structural via ``CapacityToken.__aexit__``, not
+event-driven.  These events are observational — they do not trigger release.
 """
 
 from __future__ import annotations
@@ -76,7 +92,12 @@ def _is_retryable_upstream_error(exc: HTTPException) -> bool:
 
 
 def _extract_failed_gateway_id(exc: HTTPException) -> str | None:
-    """Extract gateway_id from an upstream error envelope, if present."""
+    """Extract gateway_id from an upstream error envelope, if present.
+
+    Used by the retry loop to exclude the failed gateway from subsequent
+    routing attempts, so the DecisionEngine routes to a different one.
+    Returns None if the envelope lacks a structured data.gateway_id field.
+    """
     detail = exc.detail
     if not isinstance(detail, dict):
         return None
@@ -112,7 +133,12 @@ def _extract_upstream_error_context(exc: HTTPException) -> dict[str, Any]:
 def _read_positive_float(
     config: dict[str, object], key: str, default: float, label: str
 ) -> float:
-    """Read a positive float from config, logging ERROR on missing/invalid."""
+    """Read a positive float from *config*, logging ERROR on missing or invalid values.
+
+    Returns *default* with an ERROR log when the key is absent, non-numeric,
+    or non-positive.  Follows the defaults policy: every use of a default is
+    logged at ERROR level so silent misconfiguration is observable.
+    """
     raw = config.get(key)
     if raw is None:
         logger.error("%s missing in config; using %.0fs default", label, default)
@@ -163,7 +189,13 @@ def _retry_timeout_exception(
     elapsed: float,
     last_exc: HTTPException,
 ) -> HTTPException:
-    """Build the appropriate timeout HTTPException after retry budget exhaustion."""
+    """Build the appropriate timeout HTTPException after retry budget exhaustion.
+
+    Capacity timeouts use ErrorCode.CAPACITY_TIMEOUT (non-retryable).
+    Upstream timeouts use ErrorCode.RESOURCE_UNAVAILABLE with the last
+    upstream error context preserved for client-facing diagnostics.
+    Both include retry_count, elapsed_s, and effective timeout in the envelope.
+    """
     data: dict[str, object] = {
         "model_id": model_id,
         "timeout_seconds": effective_timeout,
@@ -210,7 +242,33 @@ async def execute_with_retry(
     request: Request,
     start_time: float,
 ) -> Response:
-    """Execute request with unified capacity and upstream retry logic."""
+    """Execute a chat completion request with unified capacity and upstream retry.
+
+    Delegates to proxy.request_executor.execute_request in a retry loop that
+    handles two independent failure classes:
+
+    1. Capacity errors (503/504, classified by ``_is_capacity_error``): retried
+       up to ``queue_timeout`` with exponential backoff.  On budget exhaustion,
+       emits ``RequestCapacityTimeout``.
+    2. Upstream errors (502, classified by ``_is_retryable_upstream_error``):
+       retried up to ``upstream_retry_timeout``, excluding the failed gateway
+       (via ``_extract_failed_gateway_id``) from subsequent routing.
+
+    Non-retryable errors (including permanent resource failures where
+    ``can_fit_with_eviction`` is NOT in the failed constraint set) are
+    re-raised immediately without retry.
+
+    Terminal events emitted (exactly one set per request):
+      Success: ``RequestCompleted`` + ``RequestSnapshotCompleted``
+      Failure: ``RequestFailed`` + ``RequestSnapshotFailed``
+      Capacity timeout: ``RequestCapacityTimeout`` (before ``RequestFailed``)
+    Streaming responses emit terminal events on stream completion via
+    ``wrap_streaming_response_for_tracking``.
+
+    INVARIANT: every exit path (success, retry exhaustion, unhandled exception,
+    client disconnect) emits exactly one terminal event set.  Capacity slot
+    release is structural (``CapacityToken.__aexit__``), not event-driven.
+    """
     request_short_id = getattr(context, "request_id", "unknown")[:8]
 
     capacity_timeout_s = _get_capacity_retry_timeout_s(proxy)
