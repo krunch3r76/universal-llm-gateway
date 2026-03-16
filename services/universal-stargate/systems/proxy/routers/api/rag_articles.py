@@ -1,8 +1,8 @@
-"""RAG article metadata passthrough endpoint.
+"""RAG article/source management passthrough endpoints.
 
-Proxies article upsert requests to the RAG service through Stargate's
-administrative API, enabling MCP tools and other clients to manage article
-metadata without direct RAG access.
+Proxies article upsert and source deletion requests to the RAG service
+through Stargate's administrative API, enabling MCP tools and other clients
+to manage article metadata and source lifecycle without direct RAG access.
 """
 
 from __future__ import annotations
@@ -20,28 +20,101 @@ logger = get_logger(__name__)
 router = APIRouter(tags=["rag"])
 
 
-@router.post("/rag/article")
-async def upsert_rag_article(
-    body: dict[str, Any],
-    current_user: dict[str, object] = Depends(get_auth_dependency),
-) -> dict[str, object]:
-    """Proxy an article upsert request to the RAG service."""
-    del current_user
-    rag_url = resolve_rag_base_url()
+async def _proxy_rag_request(
+    *,
+    rag_url: str,
+    method: str,
+    endpoint: str,
+    timeout: float,
+    action_name: str,
+    unavailable_detail: str,
+    invalid_payload_detail: str,
+    params: dict[str, str] | None = None,
+    json_body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Proxy a request to RAG and enforce a dict JSON response."""
     try:
-        async with make_async_client(rag_url, timeout=10.0) as client:
-            response = await client.post("/article", json=body)
+        async with make_async_client(rag_url, timeout=timeout) as client:
+            if method == "POST":
+                response = await client.post(endpoint, json=json_body)
+            elif method == "DELETE":
+                response = await client.delete(endpoint, params=params)
+            else:  # Defensive guard for future callsites.
+                raise ValueError(f"Unsupported RAG proxy method: {method}")
         response.raise_for_status()
         payload = cast(object, response.json())
     except HTTPError as exc:
-        logger.warning("RAG article passthrough failed (rag_url=%s): %s", rag_url, exc)
-        raise HTTPException(
-            status_code=503,
-            detail="RAG article endpoint unavailable via Stargate passthrough.",
-        ) from exc
+        status_code = getattr(exc.response, "status_code", "n/a")
+        response_text = getattr(exc.response, "text", "")
+        logger.warning(
+            "RAG %s passthrough failed (rag_url=%s, status_code=%s, response=%s): %s",
+            action_name,
+            rag_url,
+            status_code,
+            response_text,
+            exc,
+        )
+        raise HTTPException(status_code=503, detail=unavailable_detail) from exc
 
     if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=502, detail="Invalid RAG article response payload."
-        )
-    return cast(dict[str, object], payload)
+        raise HTTPException(status_code=502, detail=invalid_payload_detail)
+    return cast(dict[str, Any], payload)
+
+
+@router.post("/rag/article")
+async def upsert_rag_article(
+    body: dict[str, Any],
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> dict[str, Any]:
+    """Proxy an article upsert request to the RAG service."""
+    rag_url = resolve_rag_base_url()
+    return await _proxy_rag_request(
+        rag_url=rag_url,
+        method="POST",
+        endpoint="/article",
+        timeout=10.0,
+        action_name="article",
+        unavailable_detail="RAG article endpoint unavailable via Stargate passthrough.",
+        invalid_payload_detail="Invalid RAG article response payload.",
+        json_body=body,
+    )
+
+
+@router.delete("/rag/source")
+async def delete_rag_source(
+    path: str,
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> dict[str, Any]:
+    """Proxy a source deletion request to the RAG service."""
+    rag_url = resolve_rag_base_url()
+    return await _proxy_rag_request(
+        rag_url=rag_url,
+        method="DELETE",
+        endpoint="/source",
+        timeout=30.0,
+        action_name="source delete",
+        unavailable_detail=(
+            "RAG source delete endpoint unavailable via Stargate passthrough."
+        ),
+        invalid_payload_detail="Invalid RAG source delete response payload.",
+        params={"path": path},
+    )
+
+
+@router.delete("/rag/directory")
+async def delete_rag_directory(
+    path: str,
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> dict[str, Any]:
+    """Proxy a directory deletion request to the RAG service."""
+    rag_url = resolve_rag_base_url()
+    return await _proxy_rag_request(
+        rag_url=rag_url,
+        method="DELETE",
+        endpoint="/directory",
+        timeout=60.0,
+        action_name="directory delete",
+        unavailable_detail="RAG directory delete endpoint unavailable via passthrough.",
+        invalid_payload_detail="Invalid RAG directory delete response payload.",
+        params={"path": path},
+    )

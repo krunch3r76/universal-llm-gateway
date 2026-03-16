@@ -44,6 +44,10 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Add or update article citation metadata for a document.
 
+        This does NOT index content or create chunks — it only writes
+        metadata to the articles table. Indexing happens separately via
+        the file watcher or POST /index.
+
         The metadata is joined to search results at query time via
         content_hash (the plain SHA-256 of the file bytes). Non-empty
         fields overwrite existing values; empty strings preserve
@@ -131,6 +135,77 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
             "rag_upsert_article: %s source_path=%s in %.1fs",
             "created" if created else "updated",
             source_path,
+            duration,
+        )
+        return result if isinstance(result, dict) else {"error": "Invalid response"}
+
+    @mcp.tool()
+    def rag_delete_source(source_path: str) -> dict[str, Any]:
+        """Remove a source file from all RAG storage surfaces.
+
+        Deletes ChromaDB chunks, FTS entries, property index entries,
+        and the articles table row for the given source_path. Use this
+        to clean up files that should no longer be in the index.
+
+        For bulk removal of an entire directory, use the DELETE
+        /api/v1/rag/directory endpoint directly (no MCP tool yet).
+
+        Args:
+            source_path: Absolute path to the source file to remove.
+
+        Returns:
+            On success: {"source": "...", "chunks_deleted": N,
+                         "fts_removed": N, "properties_removed": N,
+                         "article_deleted": true/false}
+            On error:   {"error": "<message>"}
+        """
+        t0 = monotonic_now()
+        record("mcp.rag.source.delete.called", source_path=source_path)
+
+        url = f"{_STARGATE_URL}/api/v1/rag/source"
+        try:
+            with httpx.Client(timeout=_ARTICLE_TIMEOUT) as client:
+                resp = client.delete(url, params={"path": source_path})
+                resp.raise_for_status()
+                result = resp.json()
+        except httpx.ConnectError as exc:
+            logger.warning("RAG source delete connection failed: %s", exc)
+            record("mcp.rag.source.delete.failed", error="connect_error")
+            return {
+                "error": "RAG service not reachable. Ensure Stargate and RAG are running."
+            }
+        except httpx.HTTPStatusError as exc:
+            logger.warning("RAG source delete HTTP error: %s", exc)
+            record(
+                "mcp.rag.source.delete.failed",
+                error=f"{exc.response.status_code}",
+            )
+            return {
+                "error": f"Source delete failed: {exc.response.status_code} "
+                f"{exc.response.text}"
+            }
+        except httpx.RequestError as exc:
+            logger.warning("RAG source delete request error: %s", exc)
+            record("mcp.rag.source.delete.failed", error=str(exc))
+            return {"error": f"Source delete request failed: {exc}"}
+
+        duration = monotonic_now() - t0
+        chunks = result.get("chunks_deleted", 0) if isinstance(result, dict) else 0
+        article = (
+            result.get("article_deleted", False) if isinstance(result, dict) else False
+        )
+        record(
+            "mcp.rag.source.delete.completed",
+            duration_s=round(duration, 3),
+            source_path=source_path,
+            chunks_deleted=chunks,
+            article_deleted=article,
+        )
+        logger.info(
+            "rag_delete_source: source_path=%s chunks=%d article=%s in %.1fs",
+            source_path,
+            chunks,
+            article,
             duration,
         )
         return result if isinstance(result, dict) else {"error": "Invalid response"}

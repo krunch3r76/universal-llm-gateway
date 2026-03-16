@@ -125,6 +125,25 @@ class ExtractionExportResponse(BaseModel):
     items: list[ExtractionExportItem]
 
 
+class SourceDeleteResponse(BaseModel):
+    """Result of deleting a single source from all storage surfaces."""
+
+    source: str
+    chunks_deleted: int
+    fts_removed: int
+    properties_removed: int
+    article_deleted: bool
+
+
+class DirectoryDeleteResponse(BaseModel):
+    """Result of deleting all sources under a directory prefix."""
+
+    path: str
+    sources_deleted: int
+    chunks_deleted: int
+    articles_deleted: int
+
+
 class ClearDirectoryRequest(BaseModel):
     path: str
 
@@ -217,3 +236,4 @@ class CoverageResponse(BaseModel):
     """Per-scope, per-prefix indexed file counts and recency."""
 
     scopes: dict[str, ScopeCoverage]
+    timestamp_scan_degraded: bool = False

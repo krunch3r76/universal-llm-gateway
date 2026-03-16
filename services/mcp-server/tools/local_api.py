@@ -55,7 +55,7 @@ def register_local_api_tools(mcp: FastMCP) -> None:
 
         Args:
             service: Service name from the registry above.
-            method: HTTP method — GET, POST, PUT, or DELETE.
+            method: HTTP method — GET, POST, PUT, PATCH, or DELETE.
             path: Request path with optional query string, e.g. "/entries?limit=5".
             body: Optional JSON body for POST/PUT requests.
             token: Bearer token override. Falls back to the service's env var.
@@ -64,7 +64,7 @@ def register_local_api_tools(mcp: FastMCP) -> None:
             Parsed JSON response from the service, or {"error": "<message>"}.
         """
         method = method.upper()
-        if method not in {"GET", "POST", "PUT", "DELETE"}:
+        if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
             return {"error": f"Unsupported HTTP method: {method!r}"}
 
         svc_config = _SERVICES.get(service)
@@ -96,11 +96,9 @@ def register_local_api_tools(mcp: FastMCP) -> None:
                 "path": path,
                 "error": error,
                 "duration_s": round(duration, 3),
+                **({"status": status} if status is not None else {}),
+                **({"detail": detail} if detail else {}),
             }
-            if status is not None:
-                payload["status"] = status
-            if detail:
-                payload["detail"] = detail
             record("mcp.local.api.failed", **payload)
 
         t0 = monotonic_now()
@@ -168,12 +166,12 @@ def register_local_api_tools(mcp: FastMCP) -> None:
                 _record_failed(
                     error="connect_error", duration=duration, detail=str(exc)
                 )
-                return {"error": f"Connection failed to {service}: {exc}"}
+                return {"error": f"Connection failed to {service}"}
             if isinstance(exc, httpx.TimeoutException):
                 _record_failed(error="timeout", duration=duration, detail=str(exc))
-                return {"error": f"Request to {service} timed out: {exc}"}
+                return {"error": f"Request to {service} timed out"}
             _record_failed(error="request_error", duration=duration, detail=str(exc))
-            return {"error": f"Request to {service} failed: {exc}"}
+            return {"error": f"Request to {service} failed"}
         except Exception as exc:
             duration = monotonic_now() - t0
             logger.error(

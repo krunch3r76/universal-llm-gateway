@@ -1,7 +1,9 @@
 """Admin/CRUD routes for the RAG service.
 
-Extracted during the rag_service module split to keep files under SLOC limits.
-Handles index, reindex, source, stats, watch status, and clear endpoints.
+Provides operational endpoints for indexing and reindexing files/directories,
+source lifecycle cleanup, extraction exports, and coverage/status reporting.
+These routes coordinate ChromaDB data with SQLite-backed metadata surfaces
+(property index, failures, articles) to keep retrieval state coherent.
 """
 
 from __future__ import annotations
@@ -15,7 +17,9 @@ from fastapi import APIRouter, HTTPException
 
 if TYPE_CHECKING:
     import chromadb
+    from universal_event_bus import EventBus
 
+    from services.rag.config import RagConfig
     from services.rag.property_index import PropertyIndex
     from services.rag.watcher_manager import WatcherManager
 
@@ -27,7 +31,11 @@ from services.rag.directory_ops import (
     find_sources_under_prefixes,
     index_directory_contents,
 )
-from services.rag.events.articles import rag_article_upserted
+from services.rag.events.articles import (
+    rag_article_upserted,
+    rag_directory_sources_deleted,
+    rag_source_deleted,
+)
 from services.rag.events.indexing import (
     rag_directory_cleared,
     rag_directory_index_completed,
@@ -40,6 +48,7 @@ from services.rag.models import (
     ClearDirectoryResponse,
     ClearResponse,
     CoverageResponse,
+    DirectoryDeleteResponse,
     ExtractionExportItem,
     ExtractionExportResponse,
     IndexDirectoryRequest,
@@ -48,6 +57,7 @@ from services.rag.models import (
     IndexResult,
     PrefixCoverage,
     ScopeCoverage,
+    SourceDeleteResponse,
     SourceResponse,
     SourcesResponse,
     StatsResponse,
@@ -66,12 +76,10 @@ def _align_list_length(
     default_factory: Callable[[], Any],
 ) -> list[Any]:
     """Return a list exactly `expected` long by trimming or padding defaults."""
-    if not isinstance(values, list):
-        return [default_factory() for _ in range(expected)]
-    if len(values) >= expected:
-        return values[:expected]
-    padded = list(values)
-    padded.extend(default_factory() for _ in range(expected - len(values)))
+    padded = list(values or [])
+    if len(padded) >= expected:
+        return padded[:expected]
+    padded.extend(default_factory() for _ in range(expected - len(padded)))
     return padded
 
 
@@ -109,7 +117,7 @@ async def _bulk_premark(
         for fp in dir_path.rglob(f"*{ext}"):
             if fp.is_file() and fp not in seen:
                 seen.add(fp)
-                if prop_idx is not None:
+                if prop_idx:
                     await prop_idx.mark_pending(str(fp))
     return sorted(seen)
 
@@ -147,8 +155,8 @@ def register_admin_routes(
     set_collection_fn: Callable[[chromadb.Collection], None],
     collection_name: str,
     get_property_index_fn: Callable[[], PropertyIndex | None],
-    get_event_bus_fn: Callable[[], Any | None] | None = None,
-    get_config_fn: Callable[[], Any | None] | None = None,
+    get_event_bus_fn: Callable[[], EventBus | None] | None = None,
+    get_config_fn: Callable[[], RagConfig | None] | None = None,
 ) -> APIRouter:
     """Register admin routes with the shared service state via closures."""
 
@@ -293,10 +301,9 @@ def register_admin_routes(
     async def index_file(request: IndexRequest) -> IndexResult:
         return await _index_single_file(request)
 
-    # ...
-
     @router.post("/reindex", response_model=IndexResult)
     async def reindex_file(request: IndexRequest) -> IndexResult:
+        # Keep /reindex as an explicit alias for operational clarity.
         return await _index_single_file(request)
 
     @router.post("/index_directory", response_model=IndexDirectoryResponse)
@@ -380,12 +387,14 @@ def register_admin_routes(
 
         items: list[ExtractionExportItem] = []
         sources_seen: set[str] = set()
+        malformed_count = 0
         for chunk_id, text, meta in zip(ids, docs, metas):
             if not isinstance(meta, dict):
                 logger.warning(
                     "Skipping chunk_id %s due to malformed metadata in extraction_export",
                     chunk_id,
                 )
+                malformed_count += 1
                 continue
             source = meta.get("source") or ""
             if not source:
@@ -407,6 +416,11 @@ def register_admin_routes(
                         str(v) if (v := meta.get("extraction_schema_version")) else None
                     ),
                 )
+            )
+        if malformed_count:
+            logger.warning(
+                "extraction_export omitted %d chunks with malformed metadata",
+                malformed_count,
             )
         items.sort(key=lambda x: (x.source, x.chunk_index))
         return ExtractionExportResponse(
@@ -435,9 +449,10 @@ def register_admin_routes(
             raise HTTPException(
                 status_code=404, detail=f"No chunks indexed for: {path}"
             )
-        documents = _align_list_length(raw_documents, len(raw_documents), lambda: "")
+        num_documents = len(raw_documents)
+        documents = _align_list_length(raw_documents, num_documents, lambda: "")
         metadatas_list = _align_list_length(
-            results.get("metadatas"), len(documents), dict
+            results.get("metadatas"), num_documents, dict
         )
         pairs = sorted(
             zip(documents, metadatas_list),
@@ -502,6 +517,7 @@ def register_admin_routes(
         collection = get_collection_fn()
         chunk_count = collection.count()
         max_chunks_for_ts_scan = 100_000
+        timestamp_scan_degraded = chunk_count > max_chunks_for_ts_scan
         if chunk_count <= max_chunks_for_ts_scan:
             try:
                 raw = collection.get(include=["metadatas"])
@@ -520,6 +536,7 @@ def register_admin_routes(
                     e,
                     exc_info=True,
                 )
+                timestamp_scan_degraded = True
 
         scopes: dict[str, ScopeCoverage] = {}
         for scope_name, scope_def in config.scopes.items():
@@ -542,7 +559,131 @@ def register_admin_routes(
                 prefixes=prefix_coverages, total_indexed=scope_total
             )
 
-        return CoverageResponse(scopes=scopes)
+        return CoverageResponse(
+            scopes=scopes,
+            timestamp_scan_degraded=timestamp_scan_degraded,
+        )
+
+    @router.delete("/source", response_model=SourceDeleteResponse)
+    async def delete_source(path: str) -> SourceDeleteResponse:
+        """Remove a single source from all storage surfaces.
+
+        Deletes ChromaDB chunks, FTS entries, property index entries,
+        failed extraction records, and the articles table row.
+        """
+        prop_idx = get_property_index_fn()
+        collection = get_collection_fn()
+
+        existing = collection.get(where={"source": path}, include=[])
+        chunk_ids: list[str] = existing.get("ids", [])
+        chunks_deleted = len(chunk_ids)
+
+        if chunk_ids:
+            collection.delete(ids=chunk_ids)
+
+        properties_removed = 0
+        if prop_idx is not None and chunk_ids:
+            properties_removed = await prop_idx.remove_properties_for_chunks(chunk_ids)
+            await prop_idx.fts.remove_batch(chunk_ids)
+
+        if prop_idx is not None:
+            await prop_idx.clear_failures_for(path)
+
+        article_deleted = False
+        if prop_idx is not None:
+            article_deleted = await prop_idx.remove_article(path)
+
+        logger.info(
+            "Source deleted: source=%s chunks=%d properties=%d article=%s",
+            path,
+            chunks_deleted,
+            properties_removed,
+            article_deleted,
+        )
+
+        eb = get_event_bus_fn() if get_event_bus_fn else None
+        if eb:
+            await eb.publish_async_nowait(
+                rag_source_deleted(
+                    source=path,
+                    chunks_deleted=chunks_deleted,
+                    article_deleted=article_deleted,
+                )
+            )
+
+        return SourceDeleteResponse(
+            source=path,
+            chunks_deleted=chunks_deleted,
+            fts_removed=chunks_deleted,
+            properties_removed=properties_removed,
+            article_deleted=article_deleted,
+        )
+
+    @router.delete("/directory", response_model=DirectoryDeleteResponse)
+    async def delete_directory(path: str) -> DirectoryDeleteResponse:
+        """Remove all sources under a directory prefix from all storage surfaces.
+
+        Prefix-matches source paths to find every file under the directory,
+        then deletes ChromaDB chunks, FTS, properties, and articles for each.
+        """
+        prop_idx = get_property_index_fn()
+        collection = get_collection_fn()
+        dir_prefix = path.rstrip("/") + "/"
+
+        sources = find_sources_under_prefixes(
+            collection=collection,
+            prefixes=[dir_prefix],
+            list_known_sources_fn=prop_idx.list_known_sources if prop_idx else None,
+        )
+        if not sources:
+            return DirectoryDeleteResponse(
+                path=path,
+                sources_deleted=0,
+                chunks_deleted=0,
+                articles_deleted=0,
+            )
+
+        total_chunks = 0
+        total_articles = 0
+        for source in sorted(sources):
+            existing = collection.get(where={"source": source}, include=[])
+            chunk_ids: list[str] = existing.get("ids", [])
+            if chunk_ids:
+                collection.delete(ids=chunk_ids)
+                total_chunks += len(chunk_ids)
+            if prop_idx is not None:
+                if chunk_ids:
+                    await prop_idx.remove_properties_for_chunks(chunk_ids)
+                    await prop_idx.fts.remove_batch(chunk_ids)
+                await prop_idx.clear_failures_for(source)
+                if await prop_idx.remove_article(source):
+                    total_articles += 1
+
+        logger.info(
+            "Directory deleted: path=%s sources=%d chunks=%d articles=%d",
+            path,
+            len(sources),
+            total_chunks,
+            total_articles,
+        )
+
+        eb = get_event_bus_fn() if get_event_bus_fn else None
+        if eb:
+            await eb.publish_async_nowait(
+                rag_directory_sources_deleted(
+                    path=path,
+                    sources_deleted=len(sources),
+                    chunks_deleted=total_chunks,
+                    articles_deleted=total_articles,
+                )
+            )
+
+        return DirectoryDeleteResponse(
+            path=path,
+            sources_deleted=len(sources),
+            chunks_deleted=total_chunks,
+            articles_deleted=total_articles,
+        )
 
     @router.post("/article", response_model=ArticleUpsertResponse)
     async def upsert_article(request: ArticleUpsertRequest) -> ArticleUpsertResponse:

@@ -119,7 +119,11 @@ class FailedChunk:
 
 
 class PropertyIndex:
-    """Inverted index mapping property keys to chunk IDs.
+    """SQLite-backed inverted index mapping property keys to chunk IDs.
+
+    Property keys use ``prop.{category}@@{value}`` (for example:
+    ``prop.name@@stargate``) so entity/topic filters can do exact lookup
+    against chunk IDs and complement vector retrieval.
 
     Write methods route through SequentialExecutor for lock-free serialization.
     Read methods access SQLite directly (safe with single writer).
@@ -129,7 +133,7 @@ class PropertyIndex:
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = None
         self._seq = SequentialExecutor()
-        self.fts = FtsIndex()
+        self.fts: FtsIndex = FtsIndex()
 
     @property
     def db_path(self) -> Path:
@@ -275,7 +279,8 @@ class PropertyIndex:
 
     async def add_batch(self, entries: list[tuple[str, str]], source: str = "") -> None:
         """Add multiple (key, chunk_id) pairs in one transaction. Scope defaults to 'all'."""
-        await self.add_batch_with_scope([(k, cid, "all", source) for k, cid in entries])
+        full_entries = [(k, cid, "all", source) for k, cid in entries]
+        await self.add_batch_with_scope(full_entries)
 
     async def add_batch_with_scope(
         self, entries: list[tuple[str, str, str, str]]
@@ -307,6 +312,23 @@ class PropertyIndex:
 
         return await self._seq.run(_write())
 
+    async def remove_properties_for_chunks(self, chunk_ids: list[str]) -> int:
+        """Remove property entries for a batch of chunk IDs. Returns total removed."""
+        if not chunk_ids:
+            return 0
+
+        async def _write() -> int:
+            conn = self._ensure_conn()
+            placeholders = ",".join("?" for _ in chunk_ids)
+            cursor = conn.execute(
+                f"DELETE FROM properties WHERE chunk_id IN ({placeholders})",
+                chunk_ids,
+            )
+            conn.commit()
+            return cursor.rowcount
+
+        return await self._seq.run(_write())
+
     async def clear(self) -> None:
         """Remove all entries."""
 
@@ -316,6 +338,7 @@ class PropertyIndex:
             conn.commit()
 
         await self._seq.run(_write())
+        await self.fts.clear()
 
     async def mark_pending(self, file: str) -> None:
         """Mark a file as having an in-flight indexing operation."""
@@ -421,15 +444,18 @@ class PropertyIndex:
 
         return await self._seq.run(_write())
 
-    async def remove_article(self, source_path: str) -> None:
-        """Remove the articles row for a source path."""
+    async def remove_article(self, source_path: str) -> bool:
+        """Remove the articles row for a source path. Returns True if a row existed."""
 
-        async def _write() -> None:
+        async def _write() -> bool:
             conn = self._ensure_conn()
-            conn.execute("DELETE FROM articles WHERE source_path = ?", (source_path,))
+            cursor = conn.execute(
+                "DELETE FROM articles WHERE source_path = ?", (source_path,)
+            )
             conn.commit()
+            return cursor.rowcount > 0
 
-        await self._seq.run(_write())
+        return await self._seq.run(_write())
 
     async def remove_articles_by_prefix(self, prefix: str) -> int:
         """Remove all articles rows whose source_path starts with *prefix*."""
@@ -543,8 +569,9 @@ class PropertyIndex:
                         rows,
                     )
                 conn.execute("COMMIT")
-            except sqlite3.Error:
+            except sqlite3.Error as e:
                 conn.execute("ROLLBACK")
+                logger.exception("replace_corpus_hints_rows failed: %s", e)
                 raise
 
         await self._seq.run(_write())
@@ -573,8 +600,9 @@ class PropertyIndex:
                         rows,
                     )
                 conn.execute("COMMIT")
-            except sqlite3.Error:
+            except sqlite3.Error as e:
                 conn.execute("ROLLBACK")
+                logger.exception("replace_scope_vocabulary failed: %s", e)
                 raise
 
         await self._seq.run(_write())
@@ -700,7 +728,8 @@ class PropertyIndex:
         Order by chunk_count DESC.
         """
         conn = self._ensure_conn()
-        prefix_len = len(key_prefix) + 1  # 1-based substr in SQLite
+        # SQLite substr() is 1-indexed; +1 starts right after the key prefix.
+        prefix_len = len(key_prefix) + 1
         like_pattern = f"{key_prefix}%"
         rows = conn.execute(
             "SELECT scope, substr(key, ?),"
@@ -754,9 +783,7 @@ class PropertyIndex:
         )
         for sql in queries:
             for (candidate,) in conn.execute(sql).fetchall():
-                if isinstance(candidate, str) and any(
-                    candidate.startswith(prefix) for prefix in prefixes
-                ):
+                if any(candidate.startswith(prefix) for prefix in prefixes):
                     sources.add(candidate)
         return sources
 
@@ -876,6 +903,9 @@ class PropertyIndex:
 
     def rescope_all(self, scope_resolver: Callable[[str], str]) -> tuple[int, int]:
         """Re-resolve scope for all entries using the given resolver.
+
+        Resolver runs only for rows with a non-empty ``source`` field.
+        Empty-source rows are legacy/unbackfilled entries and are skipped.
 
         Returns (total_entries, updated_count). Uses a single transaction
         for atomicity.

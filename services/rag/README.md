@@ -116,6 +116,15 @@ Pipeline configuration: `pipelines/rag/rag_context_v1/rag-context-v1.yaml`
 
 Also available as MCP tool `rag_upsert_article` via Stargate passthrough (`POST /api/v1/rag/article`).
 
+### Source Deletion
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `DELETE /source?path=...` | DELETE | Remove a single source from all 4 surfaces (ChromaDB, FTS, property index, articles table) |
+| `DELETE /directory?path=...` | DELETE | Remove all sources under a directory prefix from all surfaces |
+
+Also available as MCP tool `rag_delete_source` via Stargate passthrough (`DELETE /api/v1/rag/source?path=...`).
+
 ### Corpus Management
 
 | Endpoint | Method | Purpose |
