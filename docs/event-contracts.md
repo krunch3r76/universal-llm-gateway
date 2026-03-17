@@ -1469,6 +1469,7 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.sse.stream.started` | — | SSE stream opened |
 | `mcp.sse.stream.ended` | `duration_s`, `reason` | SSE stream closed cleanly |
 | `mcp.sse.stream.aborted` | `duration_s`, `reason`, `exc_type` | SSE stream dropped on error |
+| `mcp.tool.dispatch.success` | `tool` | `dispatch` completed successfully |
 | `mcp.tool.file.edited` | `sandbox`, `path`, `operation`, `content_chars` | `edit_file` completed |
 | `mcp.tool.file.edit_failed` | `sandbox`, `path`, `operation`, `reason`, `error_message` | `edit_file` failed |
 | `mcp.tool.file.deleted` | `sandbox`, `path` | `delete_file` completed |

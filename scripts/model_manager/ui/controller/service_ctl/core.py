@@ -121,8 +121,11 @@ class ServiceController:
             *(["--cpu-native"] if cpu_native else []),
             *(["--gpu-native"] if gpu_native else []),
             *(["--no-cache"] if no_cache else []),
+            *(["--no-vllm"] if scope == "llama" else []),
             "--refresh-source",
         ]
+
+        env = build_service_env(self._root)
 
         log_path = Path("/tmp/rebuild-gpu.log")
         cmd_line = f"$ {' '.join(args)}"
@@ -130,8 +133,9 @@ class ServiceController:
         process = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,  # Merges stderr into stdout
+            stderr=asyncio.subprocess.STDOUT,
             cwd=str(self._root),
+            env=env,
             start_new_session=True,
         )
         self._build_process = process
@@ -638,11 +642,14 @@ class ServiceController:
             port_open = self._service_state._port_open(port)
             if not port_open:
                 pid_file.unlink(missing_ok=True)
-                return (
-                    f"PID {recorded_pid} is alive but port {port} is closed — "
-                    "not Stargate. Stale PID file removed."
+                logger.warning(
+                    "PID %d is alive but port %d is closed; removing stale PID and checking listener",
+                    recorded_pid,
+                    port,
                 )
-            return await self._kill_and_wait(recorded_pid, pid_file)
+                recorded_pid = None
+            else:
+                return await self._kill_and_wait(recorded_pid, pid_file)
 
         pid_file.unlink(missing_ok=True)
         port_open = self._service_state._port_open(port)

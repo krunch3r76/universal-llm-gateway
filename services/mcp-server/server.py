@@ -186,38 +186,25 @@ def _build_oauth_service(config: OAuthServerConfig | None) -> OAuthService | Non
 
 
 _PRIMARY_TOOLS: set[str] = {
-    "write_file",
-    "read_file",
-    "edit_file",
-    "delete_file",
-    "list_files",
-    "write_context_file",
-    "read_context_file",
-    "edit_context_file",
-    "delete_context_file",
-    "list_context_directory",
-    "read_project_file",
-    "list_project_files",
-    "sqlite_query",
-    "sqlite_execute",
-    "sqlite_schema",
-    "sqlite_list_databases",
+    # Meta
+    "dispatch",
     "web_search",
+    # Consolidated file surfaces
+    "files",
+    "context",
+    "project",
+    # SQLite
+    "sqlite_query",
+    # Infra
     "pipeline_run",
     "manage_service",
-    "quality_gate",
-    "todo",
-    "list_journal_entries",
-    "list_clips",
+    # Agent-bus
     "agent_bus_fetch",
     "agent_bus_reply",
     "agent_bus_threads",
     "agent_bus_update_thread",
+    # Cortex
     "cortex_assert",
-    "write_project_file",
-    "edit_project_file",
-    "health",
-    "dispatch",
 }
 
 
@@ -267,43 +254,64 @@ def _build_server() -> FastMCP:
         to reach any tool not in your direct list.
 
         Dispatchable tools:
-          File ops:
+          Sandboxed files (individual — prefer primary `files` tool):
+            read_file(path) — read file
+            write_file(path, content) — write/create file
+            edit_file(path, operation, content, ...) — edit file
+            list_files(directory?) — list sandboxed files
+            delete_file(path) — delete sandboxed file
+          File utilities:
             view_image(path, max_dimension?, quality?) — view photo/screenshot
             move_file(source, destination) — move/rename any file
             copy_file(source, destination) — copy any file
             remove_directory(directory) — delete directory and contents
+          Context files (individual — prefer primary `context` tool):
+            read_context_file(path) — read context file
+            write_context_file(path, content) — write context file
+            edit_context_file(path, operation, content, ...) — edit context file
+            delete_context_file(path) — delete context file
+            list_context_directory(path?) — list context directory
+          Project files (individual — prefer primary `project` tool):
+            read_project_file(path) — read project file
+            write_project_file(path, content) — write project file
+            edit_project_file(path, operation, content, ...) — edit project file
+            list_project_files(directory?, max_depth?) — list project files
+            search_project_files(pattern, directory?, max_results?) — search code
           Search & knowledge:
             rag_search(query, scope?, limit?) — semantic search
             rag_answer(question, scope?) — RAG-grounded answer
             rag_list_scopes() — list available scopes
             rag_upsert_article(url, title?, scope?) — index article
-            search_project_files(query, glob?) — search source code
+            rag_delete_source(source_hash) — delete indexed source
           Web:
             web_fetch(url) — fetch URL content
-          Observability:
-            query_observability(operation, params?) — event queries
-          Pipeline:
+          Database:
+            sqlite_execute(db, statement, params?) — execute SQL write
+            sqlite_schema(db?) — show table schemas
+            sqlite_list_databases() — list configured DBs
+          Quality & infra:
+            quality_gate(files) — run ruff + compileall
             pipeline_consult(execution_id, step_name, problem)
             validate_pipeline(path)
+            health() — server health check
+          Observability:
+            query_observability(operation, params?) — event queries
           Internal services:
-            local_api(service, method, path, body?, token?) — relay to Docker network services
-            agent_bus_fetch(to?, thread?, last?, unread?, mark_read?, compact?) — fetch turns
-            agent_bus_reply(thread, to, subject, body, after_turn, from_agent?, status?) — post turn
-            agent_bus_threads(status?) — list threads
-            agent_bus_update_thread(thread, status?, summary?) — update thread metadata
-            cortex_assert(entity_id, claim, confidence, evidence, evidence_uris?) — seed Cortex assertion
-          Journal & clips:
+            local_api(service, method, path, body?, token?) — relay to Docker services
+          Todos & journal:
+            todo(method, ...) — list/add/done/defer todos
+            list_journal_entries() — list recent entries
             read_journal_entry(id) — read entry
             write_journal_entry(title, content, tags?)
+            list_clips() — list saved clips
             read_clip(name) — read a clip
-            todo(method, ...) — list/add/done/defer todos
           Browser (if enabled):
             browser_navigate, browser_click, browser_fill,
             browser_screenshot, browser_get_structure, browser_get_content
 
         Example:
-            dispatch(tool="view_image", arguments='{"path": "photos/note.jpg"}')
-            dispatch(tool="move_file", arguments='{"source": "a.jpg", "destination": "b/a.jpg"}')
+            dispatch(tool="quality_gate", arguments='{"files": ["server.py"]}')
+            dispatch(tool="read_file", arguments='{"path": "notes.md"}')
 
         Args:
             tool: Name of the tool to invoke.
@@ -322,6 +330,7 @@ def _build_server() -> FastMCP:
             )
         parsed = _json.loads(arguments)
         result = fn(**parsed)
+        record("mcp.tool.dispatch.success", tool=tool)
         return {"tool": tool, "result": _json.dumps(result)}
 
     primary_count = len(_PRIMARY_TOOLS)

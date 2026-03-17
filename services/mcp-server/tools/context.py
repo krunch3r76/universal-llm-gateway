@@ -14,12 +14,14 @@ import datetime
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlencode
 
 import yaml
 from mcp_events import record
 
 from .file_editor import perform_edit
+from .local_api import _relay
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -27,7 +29,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TASKS_ROOT = Path(os.environ.get("TASKS_ROOT", "/data/tasks"))
-_TODOS_DB = Path(os.environ.get("TODOS_DB", "/data/cortex/todos.db"))
 _ALLOWED_WRITE_SUFFIXES = {".md", ".txt", ".yaml", ".yml"}
 _TASKS_READ_ONLY = os.environ.get("TASKS_READ_ONLY", "false").strip().lower() in {
     "1",
@@ -75,85 +76,191 @@ def _safe_tasks_path(relative: str) -> Path:
     return candidate
 
 
+def _todo_list(
+    *,
+    status: str,
+    domain: str | None,
+    context: str | None,
+    priority: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    params: dict[str, str | int] = {}
+    if status != "all":
+        params["status"] = status
+    if domain:
+        params["domain"] = domain
+    if context:
+        params["context"] = context
+    if priority:
+        params["priority"] = priority
+    params["limit"] = limit
+
+    qs = urlencode(params)
+    result = _relay("cortex-api", "GET", f"/todos?{qs}")
+
+    if "error" in result:
+        return {"error": f"cortex-api error: {result['error']}"}
+
+    items: list[dict[str, Any]] = (
+        result if isinstance(result, list) else result.get("items", [])
+    )
+    logger.info(
+        "todo list: status=%s domain=%s context=%s → %d items",
+        status,
+        domain,
+        context,
+        len(items),
+    )
+    record(
+        "mcp.tool.todo.listed",
+        status=status,
+        domain=domain or "",
+        context=context or "",
+        priority=priority or "",
+        limit=limit,
+        count=len(items),
+    )
+    return {"items": items}
+
+
+def _todo_add(
+    *,
+    id: str,
+    title: str,
+    domain: str,
+    context: str,
+    priority: str,
+    description: str,
+    notes: str,
+) -> dict[str, str]:
+    body = {
+        "id": id,
+        "title": title,
+        "domain": domain,
+        "context": context,
+        "priority": priority,
+        "description": description,
+        "notes": notes,
+    }
+    result = _relay("cortex-api", "POST", "/todos", body=body)
+
+    if "error" in result:
+        status_code = result.get("status_code")
+        if status_code == 409:
+            return {"error": f"todo already exists: {id}"}
+        return {"error": f"cortex-api error: {result['error']}"}
+
+    logger.info("todo add: %s (domain=%s)", id, domain)
+    record(
+        "mcp.tool.todo.added", id=id, domain=domain, context=context, priority=priority
+    )
+    return {"status": "created", "id": id}
+
+
+def _todo_set_status(
+    *,
+    id: str,
+    new_status: str,
+) -> dict[str, str]:
+    result = _relay("cortex-api", "PATCH", f"/todos/{id}", body={"status": new_status})
+
+    if "error" in result:
+        status_code = result.get("status_code")
+        if status_code == 404:
+            return {"error": f"todo not found: {id}"}
+        return {"error": f"cortex-api error: {result['error']}"}
+
+    signal = "mcp.tool.todo.done" if new_status == "done" else "mcp.tool.todo.deferred"
+    logger.info("todo %s: %s", new_status, id)
+    record(signal, id=id)
+    return {"status": new_status, "id": id}
+
+
 def register_context_tools(mcp: FastMCP) -> None:
     """Register context bridge tools on *mcp*."""
 
     @mcp.tool()
-    def list_todos(
+    def todo(
+        method: str,
         status: str = "open",
         domain: str | None = None,
         context: str | None = None,
         priority: str | None = None,
         limit: int = 30,
-    ) -> dict[str, list[dict[str, str]] | str]:
-        """List todo items from the todos database.
+        id: str | None = None,
+        title: str | None = None,
+        description: str = "",
+        notes: str = "",
+    ) -> dict[str, Any]:
+        """List, add, complete, or defer todo items.
 
-        Filters by status, domain, context, and/or priority. Returns
-        structured items for quick scanning without loading full descriptions.
+        Methods:
+            list  — query todos by status/domain/context/priority
+            add   — create a new todo (requires id, title, domain)
+            done  — mark a todo as done (requires id)
+            defer — mark a todo as deferred (requires id)
 
         Args:
-            status: Filter by status (default "open"). Use "all" for everything.
-            domain: Optional domain filter (substring match, e.g. "routing").
-            context: Optional context filter (e.g. "universal-llm-gateway").
-            priority: Optional priority filter (e.g. "short_term", "high").
-            limit: Maximum items to return (default 30).
+            method: One of "list", "add", "done", "defer".
+            status: Filter by status for list (default "open"). Use "all" for everything.
+            domain: Domain filter (list) or domain tag (add).
+            context: Context filter (list) or context tag (add, default "universal-llm-gateway").
+            priority: Priority filter (list) or priority tag (add, default "short_term").
+            limit: Maximum items for list (default 30).
+            id: Todo identifier — required for add/done/defer. Must match [a-z0-9-]+.
+            title: Human-readable title — required for add.
+            description: Optional longer description (add only).
+            notes: Optional notes (add only).
 
         Returns:
-            {"items": [{"id", "title", "status", "priority", "domain", "context"}, ...]}
+            list:  {"items": [...]}
+            add:   {"status": "created", "id": "..."}
+            done:  {"status": "done", "id": "..."}
+            defer: {"status": "deferred", "id": "..."}
         """
-        import sqlite3 as _sqlite3
+        import re
 
-        db_path = _TODOS_DB
-        if not db_path.exists():
-            return {"error": f"todos.db not found at {db_path}"}
+        if method == "list":
+            return _todo_list(
+                status=status,
+                domain=domain,
+                context=context,
+                priority=priority,
+                limit=limit,
+            )
+        if method == "add":
+            if _TASKS_READ_ONLY:
+                _record_read_only_violation(tool="todo", operation="add")
+                return _read_only_error()
+            if not id or not title or not domain:
+                return {"error": "add requires id, title, and domain"}
+            if not re.fullmatch(r"[a-z0-9-]+", id):
+                return {"error": f"id must match [a-z0-9-]+, got: {id!r}"}
+            return _todo_add(
+                id=id,
+                title=title,
+                domain=domain,
+                context=context or "universal-llm-gateway",
+                priority=priority or "short_term",
+                description=description,
+                notes=notes,
+            )
+        if method == "done":
+            if _TASKS_READ_ONLY:
+                _record_read_only_violation(tool="todo", operation="done")
+                return _read_only_error()
+            if not id:
+                return {"error": "done requires id"}
+            return _todo_set_status(id=id, new_status="done")
+        if method == "defer":
+            if _TASKS_READ_ONLY:
+                _record_read_only_violation(tool="todo", operation="defer")
+                return _read_only_error()
+            if not id:
+                return {"error": "defer requires id"}
+            return _todo_set_status(id=id, new_status="deferred")
 
-        clauses: list[str] = []
-        params: list[str] = []
-
-        if status != "all":
-            clauses.append("status = ?")
-            params.append(status)
-        if domain:
-            clauses.append("domain LIKE ?")
-            params.append(f"%{domain}%")
-        if context:
-            clauses.append("context = ?")
-            params.append(context)
-        if priority:
-            clauses.append("priority = ?")
-            params.append(priority)
-
-        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        sql = f"SELECT id, title, status, priority, domain, context FROM todos{where} ORDER BY rowid LIMIT ?"
-        params.append(str(limit))
-
-        try:
-            conn = _sqlite3.connect(str(db_path))
-            conn.row_factory = _sqlite3.Row
-            rows = conn.execute(sql, params).fetchall()
-            conn.close()
-        except _sqlite3.Error as exc:
-            return {"error": f"DB query failed: {exc}"}
-
-        items = [dict(row) for row in rows]
-
-        logger.info(
-            "list_todos: status=%s domain=%s context=%s → %d items",
-            status,
-            domain,
-            context,
-            len(items),
-        )
-        record(
-            "mcp.tool.todo.listed",
-            status=status,
-            domain=domain or "",
-            context=context or "",
-            priority=priority or "",
-            limit=limit,
-            count=len(items),
-        )
-        return {"items": items}
+        return {"error": f"unknown method: {method}. Use list, add, done, defer"}
 
     @mcp.tool()
     def list_journal_entries(
@@ -347,7 +454,9 @@ def register_context_tools(mcp: FastMCP) -> None:
         logger.info(
             "list_context_directory: %s → %d entries", path or "/", len(entries)
         )
-        record("mcp.tool.context.directory.listed", path=path or "/", count=len(entries))
+        record(
+            "mcp.tool.context.directory.listed", path=path or "/", count=len(entries)
+        )
         return {"entries": entries}
 
     @mcp.tool()
@@ -534,6 +643,88 @@ def register_context_tools(mcp: FastMCP) -> None:
                 "edit_context_file encountered an unexpected error on %s", path
             )
             return {"error": f"An unexpected error occurred: {exc}"}
+
+    @mcp.tool()
+    def context(
+        op: str = "",
+        path: str = "",
+        content: str = "",
+        target: str = "",
+        line: int = 0,
+        all_occurrences: bool = False,
+    ) -> dict[str, Any]:
+        """Unified file operations for the tasks/ workspace context directory.
+
+        Ops:
+          read    — read file contents (path required)
+          write   — create/overwrite file (path, content required)
+          append  — append to end of file (path, content required)
+          prepend — insert at beginning of file (path, content required)
+          replace — find-and-replace in file (path, target required; content = replacement)
+          insert_at_line — insert at line N (path, content, line required)
+          delete  — delete a file (path required)
+          list    — list directory entries (path optional, defaults to root)
+
+        For journal entries, use dispatch(tool="write_journal_entry").
+        For todos, use dispatch(tool="todo").
+
+        Args:
+            op: Operation name (see above).
+            path: Relative path within tasks/, e.g. "discoveries/new-insight.md".
+            content: Text content for write/edit ops (replacement text for replace).
+            target: String to find — required for replace.
+            line: 1-indexed line number — required for insert_at_line.
+            all_occurrences: For replace: replace all matches (default false).
+
+        Returns:
+            Operation-dependent result dict.
+        """
+        if not op:
+            raise ValueError("'op' is required")
+        if op == "read":
+            if not path:
+                raise ValueError("'path' is required for read")
+            return read_context_file(path)
+        if op == "write":
+            if not path:
+                raise ValueError("'path' is required for write")
+            if not content:
+                raise ValueError("'content' is required for write")
+            return write_context_file(path, content)
+        if op == "list":
+            return list_context_directory(path)
+        if op in ("append", "prepend"):
+            if not path:
+                raise ValueError(f"'path' is required for {op}")
+            if not content:
+                raise ValueError(f"'content' is required for {op}")
+            return edit_context_file(path, op, content)
+        if op == "replace":
+            if not path:
+                raise ValueError("'path' is required for replace")
+            if not target:
+                raise ValueError("'target' is required for replace")
+            return edit_context_file(
+                path,
+                "replace",
+                content,
+                target=target,
+                all_occurrences=all_occurrences,
+            )
+        if op == "insert_at_line":
+            if not path:
+                raise ValueError("'path' is required for insert_at_line")
+            if not line:
+                raise ValueError("'line' is required for insert_at_line")
+            return edit_context_file(path, "insert_at_line", content, line=line)
+        if op == "delete":
+            if not path:
+                raise ValueError("'path' is required for delete")
+            return delete_context_file(path)
+        raise ValueError(
+            f"Unknown op: {op!r}. "
+            "Use: read, write, append, prepend, replace, insert_at_line, delete, list"
+        )
 
     @mcp.tool()
     def delete_context_file(path: str) -> dict[str, str]:

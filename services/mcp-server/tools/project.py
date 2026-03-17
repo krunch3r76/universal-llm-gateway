@@ -22,7 +22,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from mcp_events import record
 
@@ -462,3 +462,77 @@ def register_project_tools(mcp: FastMCP) -> None:
         logger.info("edit_project_file: %s op=%s", rel, operation)
         record("mcp.project.file.edited", path=rel, operation=operation)
         return result
+
+    @mcp.tool()
+    def project(
+        op: str = "",
+        path: str = "",
+        content: str = "",
+        target: str = "",
+        line: int = 0,
+        all_occurrences: bool = False,
+    ) -> dict[str, Any]:
+        """Unified file operations for the mounted project directory.
+
+        Ops:
+          read    — read file contents (path required)
+          write   — create/overwrite file (path, content required; needs rw access)
+          append  — append to end of file (path, content required; needs rw access)
+          prepend — insert at beginning of file (path, content required; needs rw access)
+          replace — find-and-replace (path, target required; content = replacement; needs rw)
+          insert_at_line — insert at line N (path, content, line required; needs rw)
+          list    — list git-tracked files (path optional, defaults to root)
+
+        Args:
+            op: Operation name (see above).
+            path: Relative path, e.g. "services/mcp-server/server.py".
+            content: Text content for write/edit ops (replacement text for replace).
+            target: String to find — required for replace.
+            line: 1-indexed line number — required for insert_at_line.
+            all_occurrences: For replace: replace all matches (default false).
+
+        Returns:
+            Operation-dependent result dict.
+        """
+        if not op:
+            raise ValueError("'op' is required")
+        if op == "read":
+            if not path:
+                raise ValueError("'path' is required for read")
+            return read_project_file(path)
+        if op == "write":
+            if not path:
+                raise ValueError("'path' is required for write")
+            if not content:
+                raise ValueError("'content' is required for write")
+            return write_project_file(path, content)
+        if op == "list":
+            return list_project_files(path)
+        if op in ("append", "prepend"):
+            if not path:
+                raise ValueError(f"'path' is required for {op}")
+            if not content:
+                raise ValueError(f"'content' is required for {op}")
+            return edit_project_file(path, op, content)
+        if op == "replace":
+            if not path:
+                raise ValueError("'path' is required for replace")
+            if not target:
+                raise ValueError("'target' is required for replace")
+            return edit_project_file(
+                path,
+                "replace",
+                content,
+                target_str=target,
+                all_occurrences=all_occurrences,
+            )
+        if op == "insert_at_line":
+            if not path:
+                raise ValueError("'path' is required for insert_at_line")
+            if not line:
+                raise ValueError("'line' is required for insert_at_line")
+            return edit_project_file(path, "insert_at_line", content, line=line)
+        raise ValueError(
+            f"Unknown op: {op!r}. "
+            "Use: read, write, append, prepend, replace, insert_at_line, list"
+        )

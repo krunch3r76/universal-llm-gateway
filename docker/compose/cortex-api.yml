@@ -1,0 +1,41 @@
+# cortex-api — REST gateway to cortex.db and todos.db
+#
+# Prerequisites (host):
+#   - `docker network create mcp-network` (shared with mcp-server)
+#   - CORTEX_DATA_DIR defaults to ~/.cortex
+#
+# Usage: docker compose -f docker/compose/cortex-api.yml up -d
+
+services:
+  cortex-api:
+    build:
+      context: ../../services/cortex-api
+      dockerfile: Dockerfile
+    container_name: cortex-api
+    user: "1000:1000"
+    volumes:
+      - ${CORTEX_DATA_DIR:-~/.cortex}:/data/cortex:rw
+    environment:
+      - CORTEX_DB_PATH=/data/cortex/cortex.db
+      - TODOS_DB_PATH=/data/cortex/todos.db
+    ports:
+      - "127.0.0.1:8300:8300"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8300/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+networks:
+  mcp-network:
+    external: true

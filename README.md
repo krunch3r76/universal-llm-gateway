@@ -115,6 +115,7 @@ The **Gateway (inference engine)** is never exposed. It listens on `localhost:99
 | **RAG Service** (host, UDS default) | Semantic search, file indexing, knowledge extraction, ChromaDB vector store |
 | **Cloud Proxy** (host, UDS default) | Optional cloud API relay (OpenRouter, Anthropic, OpenAI, Google); UDS at `/tmp/universal-protocol/cloud-proxy.sock` |
 | **MCP Server** (container, port 443) | Internet-facing tool server for cloud model APIs (Anthropic MCP); TLS + bearer auth |
+| **Cortex API** (container, port 8300) | REST gateway to cortex.db (knowledge graph) and todos.db; sole access path for agents |
 
 ### Key Design Decisions
 
@@ -372,7 +373,8 @@ universal-llm-gateway/
 │   │   └── systems/                  # Subsystems: pipeline, federation, routing,..
 │   ├── rag/                          # RAG service (UDS default)
 │   ├── universal_cloud_proxy/        # Cloud proxy service (UDS default)
-│   └── mcp-server/                   # MCP tool server (port 443, TLS)
+│   ├── mcp-server/                   # MCP tool server (port 443, TLS)
+│   └── cortex-api/                   # Cortex knowledge system API (port 8300, mcp-network)
 ├── libs/                             # Shared libraries
 ├── scripts/
 │   └── model_manager/                # TUI application (Textual, MVC)
@@ -395,6 +397,7 @@ universal-llm-gateway/
 | RAG service | [`services/rag/README.md`](services/rag/README.md) | New — capability overview |
 | Cloud proxy | [`services/universal_cloud_proxy/README.md`](services/universal_cloud_proxy/README.md) | New — capability overview |
 | MCP server | [`services/mcp-server/README.md`](services/mcp-server/README.md) | New — capability overview |
+| Cortex API | [`services/cortex-api/openapi.yaml`](services/cortex-api/openapi.yaml) | OpenAPI spec |
 | Gateway internals | [`services/_universal-llm-gateway/README.md`](services/_universal-llm-gateway/README.md) | Exists |
 | Stargate internals | [`services/universal-stargate/README.md`](services/universal-stargate/README.md) | Exists |
 | Event contracts | [`docs/event-contracts.md`](docs/event-contracts.md) | Reference |

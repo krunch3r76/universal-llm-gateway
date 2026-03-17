@@ -1,0 +1,471 @@
+openapi: "3.1.0"
+info:
+  title: cortex-api
+  version: "1.0.0"
+  description: >
+    REST API for the Cortex knowledge system. Cortex holds entities and
+    relationships (graph), epistemic state (confidence taxonomy), operational
+    intent (todos), episodic memory (session journals), temporal awareness
+    (deadlines with urgency), and provenance (evidence URIs). cortex-api is
+    the sole access path to cortex.db and todos.db — no direct
+    sqlite_query(db="cortex") from agents.
+
+servers:
+  - url: http://cortex-api:8300
+
+components:
+  schemas:
+    TodoCreate:
+      type: object
+      required: [id, title, domain]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        domain:
+          type: string
+          description: >
+            Domain within the context. Meaning shifts per context — service
+            name in a software project, matter name in legal, lead type in
+            job search, area in personal.
+        context:
+          type: string
+          default: "universal-llm-gateway"
+          description: >
+            Life domain that generates this work. Not project-scoped — any
+            trackable domain of life (e.g. "legal-case", "job-search",
+            "personal", "universal-llm-gateway").
+        priority: { type: string, default: "short_term" }
+        description: { type: string, default: "" }
+        refs: { type: object, default: {} }
+
+    TodoStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [done, deferred, open]
+
+    TodoItem:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        status: { type: string }
+        priority: { type: string }
+        domain:
+          type: string
+          description: Domain within the context (service, matter, lead type, area).
+        context:
+          type: string
+          description: Life domain that generated this work.
+        description: { type: string }
+        refs:
+          type: object
+          additionalProperties: { type: string }
+          default: {}
+        notes: { type: string }
+        created_at: { type: string, nullable: true }
+        updated_at: { type: string, nullable: true }
+
+    TodoList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TodoItem" }
+
+    EntityCreate:
+      type: object
+      required: [id, type, name]
+      properties:
+        id: { type: string }
+        type: { type: string }
+        name: { type: string }
+        aliases:
+          type: array
+          items: { type: string }
+          nullable: true
+        attributes:
+          type: object
+          additionalProperties: true
+          nullable: true
+        notes: { type: string, nullable: true }
+        source_uri: { type: string, nullable: true }
+
+    EntitySummary:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string }
+        name: { type: string }
+        created_at: { type: string }
+
+    EntityDetail:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string }
+        name: { type: string }
+        aliases:
+          type: array
+          items: { type: string }
+          nullable: true
+        attributes:
+          type: object
+          additionalProperties: true
+          nullable: true
+        notes: { type: string, nullable: true }
+        source_uri: { type: string, nullable: true }
+        created_at: { type: string }
+        updated_at: { type: string }
+        assertions:
+          type: array
+          items: { $ref: "#/components/schemas/AssertionItem" }
+
+    EntityList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/EntitySummary" }
+
+    AssertionCreate:
+      type: object
+      required: [entity_id, claim, confidence, evidence]
+      properties:
+        entity_id: { type: string }
+        claim: { type: string }
+        confidence:
+          type: string
+          enum: [confirmed, believed, suspected, hypothesized]
+        evidence: { type: string }
+        evidence_uris:
+          type: array
+          items: { type: string }
+          nullable: true
+
+    AssertionItem:
+      type: object
+      properties:
+        id: { type: integer }
+        entity_id: { type: string, nullable: true }
+        claim: { type: string }
+        confidence: { type: string }
+        evidence: { type: string, nullable: true }
+        evidence_uris:
+          type: array
+          items: { type: string }
+          nullable: true
+        created_at: { type: string }
+
+    AssertionList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AssertionItem" }
+
+    DeadlineItem:
+      type: object
+      properties:
+        matter_id: { type: string }
+        matter_name: { type: string }
+        deadline_name: { type: string }
+        deadline_date: { type: string, nullable: true }
+        deadline_description: { type: string, nullable: true }
+
+    DeadlineList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DeadlineItem" }
+
+    SessionJournalCreate:
+      type: object
+      required: [timestamp, agent, summary]
+      properties:
+        timestamp: { type: string }
+        agent: { type: string }
+        summary: { type: string }
+        domains:
+          type: array
+          items: { type: string }
+          nullable: true
+        decisions:
+          type: array
+          items: { type: string }
+          nullable: true
+        open_items:
+          type: array
+          items: { type: string }
+          nullable: true
+        file_path: { type: string, nullable: true }
+
+    SessionJournalItem:
+      type: object
+      properties:
+        id: { type: integer }
+        timestamp: { type: string }
+        agent: { type: string }
+        summary: { type: string }
+        domains:
+          type: array
+          items: { type: string }
+          nullable: true
+        decisions:
+          type: array
+          items: { type: string }
+          nullable: true
+        open_items:
+          type: array
+          items: { type: string }
+          nullable: true
+        file_path: { type: string, nullable: true }
+
+    SessionJournalList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SessionJournalItem" }
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail: { type: string }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail: { type: string }
+
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Health check (no auth)
+      security: []
+      responses:
+        "200":
+          description: Service status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  cortex_db: { type: string }
+                  todos_db: { type: string }
+
+  /todos:
+    get:
+      operationId: listTodos
+      summary: List todos with optional filters
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, default: "open" }
+        - name: context
+          in: query
+          description: >
+            Filter by life domain (e.g. "universal-llm-gateway",
+            "legal-case", "job-search", "personal"). Exact match.
+            Examples: "universal-llm-gateway", "legal-case".
+          schema: { type: string }
+        - name: domain
+          in: query
+          description: >
+            Filter by domain within context (substring match). Meaning
+            varies by context — service name, matter name, lead type, etc.
+            Examples: "cortex-api", "Acme acquisition", "AI lead".
+          schema: { type: string }
+        - name: priority
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 30 }
+      responses:
+        "200":
+          description: Filtered todo list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TodoList" }
+    post:
+      operationId: createTodo
+      summary: Create a new todo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TodoCreate" }
+      responses:
+        "201":
+          description: Created todo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TodoItem" }
+        "409":
+          description: A todo with the provided ID already exists.
+
+  /todos/{todo_id}:
+    patch:
+      operationId: updateTodoStatus
+      summary: Update todo status (done, deferred, open)
+      parameters:
+        - name: todo_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TodoStatusUpdate" }
+      responses:
+        "200":
+          description: Updated todo
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TodoItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /entities:
+    get:
+      operationId: listEntities
+      summary: List entities with optional type filter
+      parameters:
+        - name: type
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Entity list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntityList" }
+    post:
+      operationId: createEntity
+      summary: Create a new entity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EntityCreate" }
+      responses:
+        "201":
+          description: Created entity
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntityDetail" }
+        "409":
+          description: An entity with the provided ID already exists.
+
+  /entities/{entity_id}:
+    get:
+      operationId: getEntity
+      summary: Get entity with its assertions
+      parameters:
+        - name: entity_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Entity detail with assertions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntityDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /assertions:
+    get:
+      operationId: listAssertions
+      summary: List assertions with optional filters
+      parameters:
+        - name: entity_id
+          in: query
+          schema: { type: string }
+        - name: confidence
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Assertion list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssertionList" }
+    post:
+      operationId: createAssertion
+      summary: Create a new assertion about an entity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssertionCreate" }
+      responses:
+        "201":
+          description: Created assertion
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssertionItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404":
+          description: Referenced entity not found
+
+  /deadlines:
+    get:
+      operationId: listDeadlines
+      summary: Get matters with deadlines view
+      responses:
+        "200":
+          description: Deadline list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeadlineList" }
+
+  /session-journals:
+    get:
+      operationId: listSessionJournals
+      summary: List recent session journals
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 3 }
+      responses:
+        "200":
+          description: Session journal list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionJournalList" }
+    post:
+      operationId: createSessionJournal
+      summary: Create a session journal entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionJournalCreate" }
+      responses:
+        "201":
+          description: Created session journal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionJournalItem" }

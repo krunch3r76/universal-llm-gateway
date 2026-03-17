@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mcp_events import record
 
@@ -575,3 +575,77 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         record("mcp.tool.file.listed", directory=directory or ".", count=len(files))
         logger.debug("list_files: %s → %d files", target, len(files))
         return {"files": files}
+
+    @mcp.tool()
+    def files(
+        op: str = "",
+        path: str = "",
+        content: str = "",
+        target: str = "",
+        line: int = 0,
+        all_occurrences: bool = False,
+    ) -> dict[str, Any]:
+        """Unified file operations for the sandboxed /data/files directory.
+
+        Ops:
+          read   — read file contents (path required)
+          write  — create/overwrite file (path, content required)
+          append — append to end of file (path, content required)
+          prepend — insert at beginning of file (path, content required)
+          replace — find-and-replace in file (path, target required; content = replacement)
+          insert_at_line — insert at line N (path, content, line required)
+          list   — list files in directory (path optional, defaults to root)
+
+        Args:
+            op: Operation name (see above).
+            path: Relative file path, e.g. "documents/resume.md".
+            content: Text content for write/edit ops (replacement text for replace).
+            target: String to find — required for replace.
+            line: 1-indexed line number — required for insert_at_line.
+            all_occurrences: For replace: replace all matches (default false).
+
+        Returns:
+            Operation-dependent result dict.
+        """
+        if not op:
+            raise ValueError("'op' is required")
+        if op == "read":
+            if not path:
+                raise ValueError("'path' is required for read")
+            return read_file(path)
+        if op == "write":
+            if not path:
+                raise ValueError("'path' is required for write")
+            if not content:
+                raise ValueError("'content' is required for write")
+            return write_file(path, content)
+        if op == "list":
+            return list_files(path)
+        if op in ("append", "prepend"):
+            if not path:
+                raise ValueError(f"'path' is required for {op}")
+            if not content:
+                raise ValueError(f"'content' is required for {op}")
+            return edit_file(path, op, content)
+        if op == "replace":
+            if not path:
+                raise ValueError("'path' is required for replace")
+            if not target:
+                raise ValueError("'target' is required for replace")
+            return edit_file(
+                path,
+                "replace",
+                content,
+                target=target,
+                all_occurrences=all_occurrences,
+            )
+        if op == "insert_at_line":
+            if not path:
+                raise ValueError("'path' is required for insert_at_line")
+            if not line:
+                raise ValueError("'line' is required for insert_at_line")
+            return edit_file(path, "insert_at_line", content, line=line)
+        raise ValueError(
+            f"Unknown op: {op!r}. "
+            "Use: read, write, append, prepend, replace, insert_at_line, list"
+        )
