@@ -31,9 +31,12 @@ from oauth_service import OAuthService
 from oauth_store import OAuthStore
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from starlette.types import Send
+
+from tools.agent_bus import register_agent_bus_tools
 from tools.browser import register_browser_tools
 from tools.clip import register_clip_tools
 from tools.context import register_context_tools
+from tools.cortex import register_cortex_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
 from tools.local_api import register_local_api_tools
@@ -203,8 +206,16 @@ _PRIMARY_TOOLS: set[str] = {
     "pipeline_run",
     "manage_service",
     "quality_gate",
+    "todo",
     "list_journal_entries",
     "list_clips",
+    "agent_bus_fetch",
+    "agent_bus_reply",
+    "agent_bus_threads",
+    "agent_bus_update_thread",
+    "cortex_assert",
+    "write_project_file",
+    "edit_project_file",
     "health",
     "dispatch",
 }
@@ -238,6 +249,8 @@ def _build_server() -> FastMCP:
     register_pipeline_consult_tools(mcp)
     register_quality_tools(mcp)
     register_local_api_tools(mcp)
+    register_agent_bus_tools(mcp)
+    register_cortex_tools(mcp)
 
     @mcp.tool()
     def health() -> dict[str, str]:
@@ -274,11 +287,16 @@ def _build_server() -> FastMCP:
             validate_pipeline(path)
           Internal services:
             local_api(service, method, path, body?, token?) — relay to Docker network services
+            agent_bus_fetch(to?, thread?, last?, unread?, mark_read?, compact?) — fetch turns
+            agent_bus_reply(thread, to, subject, body, after_turn, from_agent?, status?) — post turn
+            agent_bus_threads(status?) — list threads
+            agent_bus_update_thread(thread, status?, summary?) — update thread metadata
+            cortex_assert(entity_id, claim, confidence, evidence, evidence_uris?) — seed Cortex assertion
           Journal & clips:
             read_journal_entry(id) — read entry
             write_journal_entry(title, content, tags?)
             read_clip(name) — read a clip
-            list_todos() — list todo items
+            todo(method, ...) — list/add/done/defer todos
           Browser (if enabled):
             browser_navigate, browser_click, browser_fill,
             browser_screenshot, browser_get_structure, browser_get_content

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SANDBOX_ROOT = Path("/data/files")
-_ALLOWED_WRITE_SUFFIXES = {".md", ".txt", ".docx", ".pdf", ".yaml", ".yml"}
+_ALLOWED_WRITE_SUFFIXES = {".md", ".txt", ".docx", ".pdf", ".yaml", ".yml", ".py"}
 _ALLOWED_READ_SUFFIXES = {
     ".md",
     ".txt",
@@ -36,6 +36,7 @@ _ALLOWED_READ_SUFFIXES = {
     ".html",
     ".json",
     ".yaml",
+    ".py",
 }
 _ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
 _EDITABLE_SUFFIXES = {".md", ".txt"}
