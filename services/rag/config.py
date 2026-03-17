@@ -134,6 +134,53 @@ class RagConfig:
         return candidates[0][0]
 
 
+def save_scope(
+    name: str,
+    prefixes: list[str],
+    description: str = "",
+    *,
+    watch: bool = False,
+) -> None:
+    """Persist a scope (and optional watch dirs) to ~/.gateway/rag.yaml.
+
+    Reads the existing YAML, merges the scope into the ``scopes`` mapping,
+    and optionally appends watch_directories entries for each prefix. Writes
+    back atomically via a temp file to avoid partial-write corruption.
+    """
+    import tempfile
+
+    config_path = _CONFIG_PATH
+    if config_path.exists():
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    else:
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+
+    scopes_section = raw.setdefault("scopes", {})
+    scopes_section[name] = {"prefixes": prefixes, "description": description}
+
+    if watch:
+        watchers = raw.setdefault("watch_directories", [])
+        existing_paths = {w.get("path") for w in watchers if isinstance(w, dict)}
+        for pfx in prefixes:
+            if pfx not in existing_paths:
+                watchers.append({"path": pfx, "recursive": True})
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=str(config_path.parent), suffix=".yaml.tmp")
+    try:
+        import os
+
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+        Path(tmp_path).replace(config_path)
+    except Exception:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
+    logger.info("Persisted scope '%s' to %s", name, config_path)
+
+
 def _normalize_extensions(raw_extensions: object) -> list[str]:
     if not isinstance(raw_extensions, list):
         return []

@@ -56,6 +56,8 @@ from services.rag.models import (
     IndexRequest,
     IndexResult,
     PrefixCoverage,
+    RefreshCorpusHintsRequest,
+    RefreshCorpusHintsResponse,
     ScopeCoverage,
     SourceDeleteResponse,
     SourceResponse,
@@ -582,9 +584,10 @@ def register_admin_routes(
             collection.delete(ids=chunk_ids)
 
         properties_removed = 0
+        fts_removed = 0
         if prop_idx is not None and chunk_ids:
             properties_removed = await prop_idx.remove_properties_for_chunks(chunk_ids)
-            await prop_idx.fts.remove_batch(chunk_ids)
+            fts_removed = await prop_idx.fts.remove_batch(chunk_ids)
 
         if prop_idx is not None:
             await prop_idx.clear_failures_for(path)
@@ -614,7 +617,7 @@ def register_admin_routes(
         return SourceDeleteResponse(
             source=path,
             chunks_deleted=chunks_deleted,
-            fts_removed=chunks_deleted,
+            fts_removed=fts_removed,
             properties_removed=properties_removed,
             article_deleted=article_deleted,
         )
@@ -640,10 +643,12 @@ def register_admin_routes(
                 path=path,
                 sources_deleted=0,
                 chunks_deleted=0,
+                fts_removed=0,
                 articles_deleted=0,
             )
 
         total_chunks = 0
+        total_fts = 0
         total_articles = 0
         for source in sorted(sources):
             existing = collection.get(where={"source": source}, include=[])
@@ -654,16 +659,17 @@ def register_admin_routes(
             if prop_idx is not None:
                 if chunk_ids:
                     await prop_idx.remove_properties_for_chunks(chunk_ids)
-                    await prop_idx.fts.remove_batch(chunk_ids)
+                    total_fts += await prop_idx.fts.remove_batch(chunk_ids)
                 await prop_idx.clear_failures_for(source)
                 if await prop_idx.remove_article(source):
                     total_articles += 1
 
         logger.info(
-            "Directory deleted: path=%s sources=%d chunks=%d articles=%d",
+            "Directory deleted: path=%s sources=%d chunks=%d fts=%d articles=%d",
             path,
             len(sources),
             total_chunks,
+            total_fts,
             total_articles,
         )
 
@@ -682,7 +688,86 @@ def register_admin_routes(
             path=path,
             sources_deleted=len(sources),
             chunks_deleted=total_chunks,
+            fts_removed=total_fts,
             articles_deleted=total_articles,
+        )
+
+    @router.get("/orphaned_articles")
+    def get_orphaned_articles() -> dict[str, Any]:
+        """Return articles that have no corresponding indexed chunks.
+
+        An article is "orphaned" when rag_upsert_article was called but
+        the file was never indexed (or its chunks were deleted). These
+        rows accumulate silently and should be cleaned up periodically.
+        """
+        prop_idx = get_property_index_fn()
+        if prop_idx is None:
+            return {"orphans": [], "count": 0}
+        conn = prop_idx._ensure_conn()
+        rows = conn.execute(
+            "SELECT a.source_path, a.title, a.scope, a.updated_at "
+            "FROM articles a "
+            "LEFT JOIN (SELECT DISTINCT source FROM properties WHERE source != '') p "
+            "  ON a.source_path = p.source "
+            "WHERE p.source IS NULL "
+            "ORDER BY a.updated_at DESC"
+        ).fetchall()
+        return {
+            "orphans": [
+                {
+                    "source_path": r[0],
+                    "title": r[1],
+                    "scope": r[2],
+                    "updated_at": r[3],
+                }
+                for r in rows
+            ],
+            "count": len(rows),
+        }
+
+    @router.post("/refresh_corpus_hints", response_model=RefreshCorpusHintsResponse)
+    async def refresh_corpus_hints(
+        request: RefreshCorpusHintsRequest,
+    ) -> RefreshCorpusHintsResponse:
+        """Refresh corpus hints, optionally for a single scope with tuning params."""
+        from services.rag.corpus_hints import update_corpus_hints
+
+        prop_idx = get_property_index_fn()
+        if prop_idx is None:
+            raise HTTPException(status_code=503, detail="Property index not available")
+        eb = get_event_bus_fn() if get_event_bus_fn else None
+
+        bl_override: frozenset[str] | None = None
+        if request.blocklist_override is not None:
+            bl_override = frozenset(t.lower() for t in request.blocklist_override)
+
+        extra_bl = frozenset[str]()
+        if request.extra_blocklist:
+            extra_bl = frozenset(t.lower() for t in request.extra_blocklist)
+
+        result = await update_corpus_hints(
+            prop_idx,
+            scope=request.scope,
+            entity_boost_hyphen=request.entity_boost_hyphen,
+            entity_boost_single=request.entity_boost_single,
+            blocklist_override=bl_override,
+            extra_blocklist=extra_bl,
+            event_bus=eb,
+        )
+        if result:
+            await prop_idx.stamp_watermark("corpus_hints")
+        terms_by_scope = {
+            s: len([t for t in csv.split(",") if t.strip()])
+            for s, csv in result.items()
+        }
+        logger.info(
+            "Corpus hints refreshed: scope=%s scopes_updated=%s",
+            request.scope or "(all)",
+            sorted(result),
+        )
+        return RefreshCorpusHintsResponse(
+            scopes_updated=sorted(result),
+            terms_by_scope=terms_by_scope,
         )
 
     @router.post("/article", response_model=ArticleUpsertResponse)

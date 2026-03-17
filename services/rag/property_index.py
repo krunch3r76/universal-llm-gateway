@@ -576,6 +576,36 @@ class PropertyIndex:
 
         await self._seq.run(_write())
 
+    async def replace_corpus_hints_for_scope(
+        self, scope: str, rows: list[tuple[str, str, float, str]]
+    ) -> None:
+        """Atomically replace corpus hints for a single scope.
+
+        Deletes only the rows matching *scope*, then inserts the new rows.
+        Other scopes' hints remain untouched.
+        """
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute("DELETE FROM corpus_hints WHERE scope = ?", (scope,))
+                if rows:
+                    conn.executemany(
+                        "INSERT INTO corpus_hints (scope, term, score, prefix)"
+                        " VALUES (?, ?, ?, ?)",
+                        rows,
+                    )
+                conn.execute("COMMIT")
+            except sqlite3.Error as e:
+                conn.execute("ROLLBACK")
+                logger.exception(
+                    "replace_corpus_hints_for_scope(%s) failed: %s", scope, e
+                )
+                raise
+
+        await self._seq.run(_write())
+
     async def replace_scope_vocabulary(
         self, vocabulary: dict[str, dict[str, list[str]]]
     ) -> None:

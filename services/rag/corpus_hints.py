@@ -76,6 +76,25 @@ _GENERIC_BLOCKLIST: frozenset[str] = frozenset(
 )
 
 
+def _entity_shape_boost(
+    term: str,
+    *,
+    hyphen_boost: float = 1.3,
+    single_token_boost: float = 1.2,
+) -> float:
+    """Return a multiplicative boost based on term shape.
+
+    Hyphenated terms (e.g. "chain-of-thought", "bge-m3") get *hyphen_boost*.
+    Single-token terms (e.g. "NEPOMUK") get *single_token_boost*.
+    Multi-word phrases get 1.0 (no boost).
+    """
+    if "-" in term:
+        return hyphen_boost
+    if " " not in term:
+        return single_token_boost
+    return 1.0
+
+
 def _score_term(chunk_count: int, doc_count: int, total_docs: int) -> float:
     """Hybrid IDF + chunk-boost score using document frequency.
 
@@ -297,6 +316,7 @@ def filter_hints_by_cooccurrence(
 
             where_clause = " OR ".join(wb_conditions)
             try:
+                _ = conn.execute("DROP TABLE IF EXISTS query_chunks")
                 _ = conn.execute(
                     "CREATE TEMP TABLE query_chunks AS"
                     " SELECT DISTINCT source, chunk_id FROM properties"
@@ -304,6 +324,7 @@ def filter_hints_by_cooccurrence(
                     wb_params,
                 )
 
+                _ = conn.execute("DROP TABLE IF EXISTS hint_chunks")
                 key_ph = ",".join("?" for _ in hint_keys)
                 _ = conn.execute(
                     "CREATE TEMP TABLE hint_chunks AS"
@@ -396,6 +417,7 @@ def _order_hints_by_overlap(
 async def update_corpus_hints(
     property_index: PropertyIndex,
     *,
+    scope: str | None = None,
     names_budget: int = 10,
     topics_budget: int = 8,
     min_chunks_name: int = _DEFAULT_MIN_CHUNKS_NAME,
@@ -403,6 +425,10 @@ async def update_corpus_hints(
     max_chunks_name: int = _DEFAULT_MAX_CHUNKS_NAME,
     max_chunks_topic: int = _DEFAULT_MAX_CHUNKS_TOPIC,
     min_docs: int = 2,
+    entity_boost_hyphen: float = 1.3,
+    entity_boost_single: float = 1.2,
+    extra_blocklist: frozenset[str] = frozenset(),
+    blocklist_override: frozenset[str] | None = None,
     key_prefixes: list[str] | None = None,
     event_bus: EventBus | None = None,
 ) -> dict[str, str]:
@@ -411,6 +437,15 @@ async def update_corpus_hints(
     The function computes per-scope winners for configured key prefixes, writes
     normalized rows into ``corpus_hints``, and returns ``scope -> CSV terms`` for
     prompt-oriented call sites that need an in-memory representation.
+
+    When *scope* is set, only that scope is refreshed and only its rows are
+    replaced in the database — other scopes' hints remain untouched.
+
+    *entity_boost_hyphen* / *entity_boost_single* control shape-based score
+    multipliers (set both to 1.0 to disable).
+
+    *blocklist_override* replaces the default generic blocklist when set.
+    *extra_blocklist* adds terms to the active blocklist.
     """
     prefixes = key_prefixes if key_prefixes is not None else _DEFAULT_KEY_PREFIXES
     if property_index.get_total_chunks() == 0:
@@ -420,6 +455,12 @@ async def update_corpus_hints(
                 rag_corpus_hints_skipped(reason="property index has zero chunks")
             )
         return {}
+
+    active_blocklist = (
+        blocklist_override if blocklist_override is not None else _GENERIC_BLOCKLIST
+    )
+    if extra_blocklist:
+        active_blocklist = active_blocklist | extra_blocklist
 
     total_docs = property_index.get_total_docs()
 
@@ -437,17 +478,21 @@ async def update_corpus_hints(
     )
     for prefix in prefixes:
         for (
-            scope,
+            scope_name,
             term,
             chunk_count,
             doc_count,
         ) in property_index.get_term_counts_by_scope(prefix):
             if term:
-                scope_prefix_terms[scope][prefix].append((term, chunk_count, doc_count))
+                if scope is not None and scope_name != scope:
+                    continue
+                scope_prefix_terms[scope_name][prefix].append(
+                    (term, chunk_count, doc_count)
+                )
 
     rows_for_db: list[tuple[str, str, float, str]] = []
     result: dict[str, str] = {}
-    for scope, prefix_terms in scope_prefix_terms.items():
+    for scope_name, prefix_terms in scope_prefix_terms.items():
         winners: list[tuple[str, float, str]] = []
         for prefix, term_counts in prefix_terms.items():
             min_c, max_c = band_limits.get(prefix, (min_chunks_name, max_chunks_name))
@@ -458,9 +503,15 @@ async def update_corpus_hints(
                     continue
                 if doc_count > 0 and doc_count < min_docs:
                     continue
-                if term.lower() in _GENERIC_BLOCKLIST:
+                if term.lower() in active_blocklist:
                     continue
-                score = _score_term(chunk_count, doc_count, total_docs)
+                base_score = _score_term(chunk_count, doc_count, total_docs)
+                boost = _entity_shape_boost(
+                    term,
+                    hyphen_boost=entity_boost_hyphen,
+                    single_token_boost=entity_boost_single,
+                )
+                score = base_score * boost
                 scored.append((term, score, prefix))
             scored.sort(key=lambda x: (-x[1], x[0]))
             winners.extend(scored[:budget])
@@ -473,10 +524,14 @@ async def update_corpus_hints(
                 continue
             seen.add(key)
             deduped_terms.append(term)
-            rows_for_db.append((scope, term, score, prefix))
-        result[scope] = ", ".join(t for t in deduped_terms if t)
+            rows_for_db.append((scope_name, term, score, prefix))
+        result[scope_name] = ", ".join(t for t in deduped_terms if t)
 
-    await property_index.replace_corpus_hints_rows(rows_for_db)
+    if scope is not None:
+        await property_index.replace_corpus_hints_for_scope(scope, rows_for_db)
+    else:
+        await property_index.replace_corpus_hints_rows(rows_for_db)
+
     if event_bus is not None:
         update_timestamp = datetime.now(UTC).isoformat()
         await event_bus.publish_async_nowait(
@@ -519,12 +574,24 @@ def _cli_generate_hints() -> None:
     """Run one-shot corpus-hints generation from the local property index.
 
     Supports ``--backfill`` to populate missing source values in the property
-    index from Chroma metadata before generating hints.
+    index from Chroma metadata before generating hints, and ``--scope NAME``
+    to refresh a single scope with optional tuning via ``--no-entity-boost``
+    and ``--no-blocklist``.
     """
     import asyncio
     import sys
 
-    do_backfill = "--backfill" in sys.argv
+    args = sys.argv[1:]
+    do_backfill = "--backfill" in args
+
+    cli_scope: str | None = None
+    if "--scope" in args:
+        idx_pos = args.index("--scope")
+        if idx_pos + 1 < len(args):
+            cli_scope = args[idx_pos + 1]
+
+    no_entity_boost = "--no-entity-boost" in args
+    no_blocklist = "--no-blocklist" in args
 
     chunk_to_source: dict[str, str] | None = None
     if do_backfill:
@@ -567,7 +634,16 @@ def _cli_generate_hints() -> None:
                     f" {out} out-of-band, {has_doc_count}/{len(all_terms)} with doc freq"
                 )
 
-            result = await update_corpus_hints(idx)
+            tuning_kwargs: dict[str, object] = {}
+            if cli_scope is not None:
+                tuning_kwargs["scope"] = cli_scope
+            if no_entity_boost:
+                tuning_kwargs["entity_boost_hyphen"] = 1.0
+                tuning_kwargs["entity_boost_single"] = 1.0
+            if no_blocklist:
+                tuning_kwargs["blocklist_override"] = frozenset()
+
+            result = await update_corpus_hints(idx, **tuning_kwargs)  # type: ignore[arg-type]
             if result:
                 await idx.stamp_watermark("corpus_hints")
             return result
@@ -580,9 +656,9 @@ def _cli_generate_hints() -> None:
         sys.exit(1)
 
     print(f"\nGenerated hints for {len(result)} scope(s):")
-    for scope, terms in sorted(result.items()):
+    for scope_name, terms in sorted(result.items()):
         term_list = [t.strip() for t in terms.split(",") if t.strip()]
-        print(f"  {scope}: {len(term_list)} terms")
+        print(f"  {scope_name}: {len(term_list)} terms")
 
     print(f"\nWritten DB rows to: {Path.home() / '.rag' / 'store' / 'rag_metadata.db'}")
 

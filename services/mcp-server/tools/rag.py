@@ -247,14 +247,23 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def rag_list_scopes() -> dict[str, Any]:
-        """List available retrieval scopes from the RAG scope registry.
+        """List available retrieval scopes with coverage status.
+
+        Merges scope definitions (prefixes, description) with live coverage
+        data (indexed file counts) so agents see which scopes actually have
+        content. Scopes with zero indexed files are flagged ``"status": "empty"``.
 
         Returns:
             On success:
                 {
                   "scopes": ["scope_a", "scope_b", ...],
                   "details": {
-                    "scope_a": {"prefixes": [...], "description": "..."},
+                    "scope_a": {
+                      "prefixes": [...],
+                      "description": "...",
+                      "indexed_files": 42,
+                      "status": "indexed"
+                    },
                     ...
                   }
                 }
@@ -278,6 +287,21 @@ def register_rag_tools(mcp: FastMCP) -> None:
             record("mcp.rag.scopes.failed", error="invalid_payload")
             return {"error": "RAG scopes endpoint returned invalid payload."}
 
+        coverage_by_scope: dict[str, int] = {}
+        try:
+            coverage_payload = _rag_call("api/v1/rag/coverage", timeout=_SCOPES_TIMEOUT)
+            for name, scope_cov in coverage_payload.get("scopes", {}).items():
+                if isinstance(scope_cov, dict):
+                    coverage_by_scope[name] = int(scope_cov.get("total_indexed", 0))
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+            ValueError,
+        ):
+            logger.warning("Coverage enrichment failed; proceeding without it")
+
         scopes_typed = cast(dict[str, object], scopes_obj)
         scope_names = sorted(scopes_typed.keys())
         db_metadata = _scope_metadata_from_db()
@@ -289,6 +313,9 @@ def register_rag_tools(mcp: FastMCP) -> None:
             else:
                 detail = {}
             detail.update(db_metadata.get(scope_name, {}))
+            indexed_files = coverage_by_scope.get(scope_name, 0)
+            detail["indexed_files"] = indexed_files
+            detail["status"] = "indexed" if indexed_files > 0 else "empty"
             details[scope_name] = detail
         duration = monotonic_now() - t0
         record(
@@ -580,3 +607,73 @@ def register_rag_tools(mcp: FastMCP) -> None:
             deep=deep,
         )
         return {"answer": content, "pipeline": pipeline}
+
+    @mcp.tool()
+    def rag_refresh_corpus_hints(
+        scope: str | None = None,
+        entity_boost_hyphen: float = 1.3,
+        entity_boost_single: float = 1.2,
+        blocklist_override: list[str] | None = None,
+        extra_blocklist: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Refresh corpus hints for one or all scopes with optional tuning.
+
+        Corpus hints are discriminative vocabulary terms used by query
+        rewriting to constrain LLM-generated queries to terms that actually
+        exist in the corpus. After indexing new content into a scope, run
+        this to generate/update its hints.
+
+        The default tuning is optimized for research paper corpora. For
+        project-doc or design-thread corpora, set entity_boost_hyphen=1.0,
+        entity_boost_single=1.0, and blocklist_override=[] to disable
+        shape boosts and the generic blocklist.
+
+        Args:
+            scope: Refresh hints for this scope only. None = all scopes.
+            entity_boost_hyphen: Score multiplier for hyphenated terms
+                (e.g. "chain-of-thought"). Default 1.3.
+            entity_boost_single: Score multiplier for single-token terms
+                (e.g. "NEPOMUK"). Default 1.2.
+            blocklist_override: If set, replaces the default generic
+                blocklist entirely. Pass [] to disable blocklisting.
+            extra_blocklist: Additional terms to add to the active blocklist.
+
+        Returns:
+            On success: {"scopes_updated": [...], "terms_by_scope": {...}}
+            On error: {"error": "<message>"}
+        """
+        t0 = monotonic_now()
+        record("mcp.rag.hints.refresh.called", scope=scope)
+        body: dict[str, Any] = {
+            "entity_boost_hyphen": entity_boost_hyphen,
+            "entity_boost_single": entity_boost_single,
+        }
+        if scope is not None:
+            body["scope"] = scope
+        if blocklist_override is not None:
+            body["blocklist_override"] = blocklist_override
+        if extra_blocklist is not None:
+            body["extra_blocklist"] = extra_blocklist
+
+        url = f"{_STARGATE_URL}/api/v1/rag/refresh_corpus_hints"
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                resp = client.post(url, json=body)
+                resp.raise_for_status()
+                payload = resp.json()
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+        ) as e:
+            return _handle_rag_call_error(e, endpoint_name="refresh_corpus_hints")
+
+        duration = monotonic_now() - t0
+        record(
+            "mcp.rag.hints.refresh.completed",
+            scope=scope,
+            duration_s=round(duration, 3),
+            scopes_updated=payload.get("scopes_updated", []),
+        )
+        return payload

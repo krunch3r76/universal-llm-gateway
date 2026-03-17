@@ -96,19 +96,21 @@ class FtsIndex:
 
         await seq.run(_write())
 
-    async def remove_batch(self, chunk_ids: list[str]) -> None:
+    async def remove_batch(self, chunk_ids: list[str]) -> int:
+        """Delete FTS entries for the given chunk IDs. Returns rows removed."""
         if not chunk_ids:
-            return
+            return 0
         conn, seq = self._ensure()
 
-        async def _write() -> None:
-            conn.executemany(
-                "DELETE FROM chunks_fts WHERE chunk_id = ?",
-                [(cid,) for cid in chunk_ids],
+        async def _write() -> int:
+            cursor = conn.execute(
+                f"DELETE FROM chunks_fts WHERE chunk_id IN ({','.join('?' for _ in chunk_ids)})",
+                chunk_ids,
             )
             conn.commit()
+            return cursor.rowcount
 
-        await seq.run(_write())
+        return await seq.run(_write())
 
     async def clear(self) -> None:
         conn, seq = self._ensure()

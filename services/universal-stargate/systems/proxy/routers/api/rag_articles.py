@@ -35,11 +35,13 @@ async def _proxy_rag_request(
     """Proxy a request to RAG and enforce a dict JSON response."""
     try:
         async with make_async_client(rag_url, timeout=timeout) as client:
-            if method == "POST":
+            if method == "GET":
+                response = await client.get(endpoint, params=params)
+            elif method == "POST":
                 response = await client.post(endpoint, json=json_body)
             elif method == "DELETE":
                 response = await client.delete(endpoint, params=params)
-            else:  # Defensive guard for future callsites.
+            else:
                 raise ValueError(f"Unsupported RAG proxy method: {method}")
         response.raise_for_status()
         payload = cast(object, response.json())
@@ -98,6 +100,46 @@ async def delete_rag_source(
         ),
         invalid_payload_detail="Invalid RAG source delete response payload.",
         params={"path": path},
+    )
+
+
+@router.get("/rag/orphaned_articles")
+async def get_orphaned_articles(
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> dict[str, Any]:
+    """Proxy orphaned-articles diagnostic query to the RAG service."""
+    rag_url = resolve_rag_base_url()
+    return await _proxy_rag_request(
+        rag_url=rag_url,
+        method="GET",
+        endpoint="/orphaned_articles",
+        timeout=15.0,
+        action_name="orphaned articles",
+        unavailable_detail=(
+            "RAG orphaned_articles endpoint unavailable via passthrough."
+        ),
+        invalid_payload_detail="Invalid RAG orphaned_articles response payload.",
+    )
+
+
+@router.post("/rag/refresh_corpus_hints")
+async def refresh_corpus_hints(
+    body: dict[str, Any],
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> dict[str, Any]:
+    """Proxy a corpus hints refresh request to the RAG service."""
+    rag_url = resolve_rag_base_url()
+    return await _proxy_rag_request(
+        rag_url=rag_url,
+        method="POST",
+        endpoint="/refresh_corpus_hints",
+        timeout=60.0,
+        action_name="refresh corpus hints",
+        unavailable_detail=(
+            "RAG corpus hints refresh unavailable via Stargate passthrough."
+        ),
+        invalid_payload_detail="Invalid RAG corpus hints refresh response payload.",
+        json_body=body,
     )
 
 

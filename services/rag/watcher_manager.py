@@ -110,9 +110,9 @@ class WatcherManager:
         self._watchers = []
         self._watch_configs = []
         configured_baseline = _normalize_extensions(config.baseline_extensions)
-        self._baseline_extensions = configured_baseline or _normalize_extensions(
-            BASELINE_EXTENSIONS
-        )
+        if configured_baseline:
+            self._baseline_extensions = configured_baseline
+        # Else keep the initially set self._baseline_extensions from __init__
         for watch_directory in config.watch_directories:
             await self._start_one(watch_directory)
         if self._watch_configs and self._reconcile_interval_s > 0:
@@ -182,6 +182,19 @@ class WatcherManager:
                 )
             )
 
+    async def register_directory(self, watch_directory: WatchDirectory) -> bool:
+        """Add a new watch directory at runtime (no restart required).
+
+        Returns True if the watcher was started successfully, False if the
+        directory is missing or the watcher failed to start.
+        """
+        await self._start_one(watch_directory)
+        return any(
+            str(Path(wd.path).expanduser().resolve())
+            == str(Path(watch_directory.path).expanduser().resolve())
+            for wd in self._watch_configs
+        )
+
     async def _reconcile_loop(self) -> None:
         """Periodically re-sweep watched directories to recover missed files.
 
@@ -190,7 +203,6 @@ class WatcherManager:
         This covers files that failed indexing during startup (e.g. embedding race).
         """
         # watch_configs is immutable after start(); precompute once.
-        await asyncio.sleep(self._reconcile_interval_s)
         while True:
             ext_sets = [
                 frozenset(_effective_extensions(wd, self._baseline_extensions))
@@ -275,6 +287,7 @@ class WatcherManager:
                 logger.error("Reconcile loop iteration failed unexpectedly: %s", exc)
             await asyncio.sleep(self._reconcile_interval_s)
 
+
     async def _initial_reindex(
         self,
         watch_path: Path,
@@ -324,17 +337,18 @@ class WatcherManager:
         for fp in file_paths:
             queue.put_nowait(fp)
 
-        async def _emit_progress_snapshot() -> None:
-            async with progress_lock:
-                processed = reindexed_total + unchanged_total + error_total
+        async def _emit_progress_snapshot(
+            reindexed: int, unchanged: int, errors: int
+        ) -> None:
+            processed = reindexed + unchanged + errors
             await self._emit(
                 rag_watch_initial_progress(
                     path=str(watch_path),
                     total_files=total_files,
                     processed=processed,
-                    reindexed=reindexed_total,
-                    unchanged=unchanged_total,
-                    errors=error_total,
+                    reindexed=reindexed,
+                    unchanged=unchanged,
+                    errors=errors,
                 )
             )
 
@@ -358,7 +372,9 @@ class WatcherManager:
                             unchanged_total += 1
                         else:
                             reindexed_total += 1
-                    await _emit_progress_snapshot()
+                        await _emit_progress_snapshot(
+                            reindexed_total, unchanged_total, error_total
+                        )
                 except TimeoutError:
                     logger.error(
                         "Initial reindex timed out after %.0fs for %s",
@@ -373,7 +389,9 @@ class WatcherManager:
                     )
                     async with progress_lock:
                         error_total += 1
-                    await _emit_progress_snapshot()
+                        await _emit_progress_snapshot(
+                            reindexed_total, unchanged_total, error_total
+                        )
                 except Exception as exc:
                     logger.warning(
                         "Initial reindex skipped for %s: %s", fp, exc, exc_info=True
@@ -383,7 +401,9 @@ class WatcherManager:
                     )
                     async with progress_lock:
                         error_total += 1
-                    await _emit_progress_snapshot()
+                        await _emit_progress_snapshot(
+                            reindexed_total, unchanged_total, error_total
+                        )
                 finally:
                     queue.task_done()
 

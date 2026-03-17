@@ -177,7 +177,7 @@ reasoning/thinking models. Claude Sonnet and Gemini Pro carry the `general`
 fallback tag and are excluded. They appear for `architect`/`researcher`.
 For a general-purpose code review using those models, pass `--models` explicitly.
 
-RAG `/search` accepts `scope` as a single name or a list of names (union of scopes). Scope maps to `source_prefixes` via config; e.g. `project`: `docs/architecture`, `docs/vision`, `docs/engram`; `research`: `docs/research`. Use `GET /scopes` to list available scope names.
+RAG `/search` accepts `scope` as a single name or a list of names (union of scopes). Scope maps to `source_prefixes` via config; e.g. `project`: `docs/architecture`, `docs/vision`, `docs/engram`; `research`: `docs/research`. Use `GET /scopes` to list available scope names; register new scopes at runtime (no RAG restart) via `POST /api/v1/rag/scopes`.
 
 ## scripts/ask
 

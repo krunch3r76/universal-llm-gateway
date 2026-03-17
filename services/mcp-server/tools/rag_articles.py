@@ -140,6 +140,73 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         return result if isinstance(result, dict) else {"error": "Invalid response"}
 
     @mcp.tool()
+    def rag_delete_directory(directory_path: str) -> dict[str, Any]:
+        """Remove all sources under a directory from all RAG storage surfaces.
+
+        Prefix-matches source paths to find every file under the directory,
+        then deletes ChromaDB chunks, FTS, properties, failed extractions,
+        and articles for each matched source.
+
+        Args:
+            directory_path: Absolute directory path. All sources whose
+                source_path starts with this prefix (plus trailing slash)
+                will be removed.
+
+        Returns:
+            On success: {"path": "...", "sources_deleted": N,
+                         "chunks_deleted": N, "articles_deleted": N}
+            On error:   {"error": "<message>"}
+        """
+        t0 = monotonic_now()
+        record("mcp.rag.directory.delete.called", directory_path=directory_path)
+
+        url = f"{_STARGATE_URL}/api/v1/rag/directory"
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                resp = client.delete(url, params={"path": directory_path})
+                resp.raise_for_status()
+                result = resp.json()
+        except httpx.ConnectError as exc:
+            logger.warning("RAG directory delete connection failed: %s", exc)
+            record("mcp.rag.directory.delete.failed", error="connect_error")
+            return {
+                "error": "RAG service not reachable. Ensure Stargate and RAG are running."
+            }
+        except httpx.HTTPStatusError as exc:
+            logger.warning("RAG directory delete HTTP error: %s", exc)
+            record(
+                "mcp.rag.directory.delete.failed",
+                error=f"{exc.response.status_code}",
+            )
+            return {
+                "error": f"Directory delete failed: {exc.response.status_code} "
+                f"{exc.response.text}"
+            }
+        except httpx.RequestError as exc:
+            logger.warning("RAG directory delete request error: %s", exc)
+            record("mcp.rag.directory.delete.failed", error=str(exc))
+            return {"error": f"Directory delete request failed: {exc}"}
+
+        duration = monotonic_now() - t0
+        sources = result.get("sources_deleted", 0) if isinstance(result, dict) else 0
+        chunks = result.get("chunks_deleted", 0) if isinstance(result, dict) else 0
+        record(
+            "mcp.rag.directory.delete.completed",
+            duration_s=round(duration, 3),
+            directory_path=directory_path,
+            sources_deleted=sources,
+            chunks_deleted=chunks,
+        )
+        logger.info(
+            "rag_delete_directory: path=%s sources=%d chunks=%d in %.1fs",
+            directory_path,
+            sources,
+            chunks,
+            duration,
+        )
+        return result if isinstance(result, dict) else {"error": "Invalid response"}
+
+    @mcp.tool()
     def rag_delete_source(source_path: str) -> dict[str, Any]:
         """Remove a source file from all RAG storage surfaces.
 
@@ -147,8 +214,8 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         and the articles table row for the given source_path. Use this
         to clean up files that should no longer be in the index.
 
-        For bulk removal of an entire directory, use the DELETE
-        /api/v1/rag/directory endpoint directly (no MCP tool yet).
+        For bulk removal of an entire directory, use
+        rag_delete_directory instead.
 
         Args:
             source_path: Absolute path to the source file to remove.
@@ -208,4 +275,57 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
             article,
             duration,
         )
+        return result if isinstance(result, dict) else {"error": "Invalid response"}
+
+    @mcp.tool()
+    def rag_orphaned_articles() -> dict[str, Any]:
+        """List articles with no corresponding indexed chunks.
+
+        An article is "orphaned" when rag_upsert_article was called but
+        the source file was never indexed (or its chunks were later deleted).
+        Use this to detect metadata-only rows that should be cleaned up.
+
+        Returns:
+            {"orphans": [{"source_path", "title", "scope", "updated_at"}, ...],
+             "count": N}
+            On error: {"error": "<message>"}
+        """
+        t0 = monotonic_now()
+        record("mcp.rag.orphaned.articles.called")
+
+        url = f"{_STARGATE_URL}/api/v1/rag/orphaned_articles"
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.get(url)
+                resp.raise_for_status()
+                result = resp.json()
+        except httpx.ConnectError as exc:
+            logger.warning("RAG orphaned articles connection failed: %s", exc)
+            record("mcp.rag.orphaned.articles.failed", error="connect_error")
+            return {
+                "error": "RAG service not reachable. Ensure Stargate and RAG are running."
+            }
+        except httpx.HTTPStatusError as exc:
+            logger.warning("RAG orphaned articles HTTP error: %s", exc)
+            record(
+                "mcp.rag.orphaned.articles.failed",
+                error=f"{exc.response.status_code}",
+            )
+            return {
+                "error": f"Orphaned articles query failed: {exc.response.status_code} "
+                f"{exc.response.text}"
+            }
+        except httpx.RequestError as exc:
+            logger.warning("RAG orphaned articles request error: %s", exc)
+            record("mcp.rag.orphaned.articles.failed", error=str(exc))
+            return {"error": f"Orphaned articles request failed: {exc}"}
+
+        duration = monotonic_now() - t0
+        count = result.get("count", 0) if isinstance(result, dict) else 0
+        record(
+            "mcp.rag.orphaned.articles.completed",
+            duration_s=round(duration, 3),
+            orphan_count=count,
+        )
+        logger.info("rag_orphaned_articles: count=%d in %.1fs", count, duration)
         return result if isinstance(result, dict) else {"error": "Invalid response"}

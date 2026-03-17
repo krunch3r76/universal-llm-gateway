@@ -141,6 +141,7 @@ class DirectoryDeleteResponse(BaseModel):
     path: str
     sources_deleted: int
     chunks_deleted: int
+    fts_removed: int
     articles_deleted: int
 
 
@@ -215,6 +216,37 @@ class ArticleUpsertRequest(BaseModel):
 class ArticleUpsertResponse(BaseModel):
     source_path: str
     created: bool
+
+
+class ScopeRegisterRequest(BaseModel):
+    """Register a new retrieval scope at runtime."""
+
+    name: str
+    prefixes: list[str]
+    description: str = ""
+    watch: bool = False
+    force: bool = False
+
+
+class ScopeRegisterResponse(BaseModel):
+    name: str
+    created: bool
+    watching: list[str]
+
+
+class RefreshCorpusHintsRequest(BaseModel):
+    """Per-scope corpus hints refresh with optional tuning parameters."""
+
+    scope: str | None = None
+    entity_boost_hyphen: float = 1.3
+    entity_boost_single: float = 1.2
+    blocklist_override: list[str] | None = None
+    extra_blocklist: list[str] | None = None
+
+
+class RefreshCorpusHintsResponse(BaseModel):
+    scopes_updated: list[str]
+    terms_by_scope: dict[str, int]
 
 
 class PrefixCoverage(BaseModel):

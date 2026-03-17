@@ -1,11 +1,12 @@
-"""RAG scope catalog passthrough endpoint.
+"""RAG scope catalog passthrough endpoints.
 
-Exposes the RAG /scopes registry through Stargate's administrative API.
+Exposes the RAG /scopes registry (GET) and runtime scope registration (POST)
+through Stargate's administrative API.
 """
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 from httpx import HTTPError
@@ -13,6 +14,7 @@ from transport_utils.rag_client import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
 
 from ...dependencies import get_auth_dependency
+from .rag_articles import _proxy_rag_request
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["rag"])
@@ -51,3 +53,24 @@ async def list_rag_scopes(
         )
 
     return {"scopes": scopes}
+
+
+@router.post("/rag/scopes")
+async def register_rag_scope(
+    body: dict[str, Any],
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> dict[str, Any]:
+    """Proxy a scope registration request to the RAG service."""
+    rag_url = resolve_rag_base_url()
+    return await _proxy_rag_request(
+        rag_url=rag_url,
+        method="POST",
+        endpoint="/scopes",
+        timeout=30.0,
+        action_name="scope register",
+        unavailable_detail=(
+            "RAG scope registration unavailable via Stargate passthrough."
+        ),
+        invalid_payload_detail="Invalid RAG scope registration response payload.",
+        json_body=body,
+    )

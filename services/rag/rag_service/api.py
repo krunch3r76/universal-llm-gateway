@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 import chromadb
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from services.rag.admin_routes import register_admin_routes
 from services.rag.events.query import rag_scopes_listed
@@ -21,6 +21,8 @@ from services.rag.models import (
     FailedChunkItem,
     FailedExtractionResponse,
     ScopeInfo,
+    ScopeRegisterRequest,
+    ScopeRegisterResponse,
     ScopesResponse,
     SearchRequest,
     SearchResponse,
@@ -114,6 +116,59 @@ async def get_scopes() -> ScopesResponse:
             name: ScopeInfo(prefixes=scope.prefixes, description=scope.description)
             for name, scope in loaded_config.scopes.items()
         },
+    )
+
+
+@router.post("/scopes", response_model=ScopeRegisterResponse, status_code=201)
+async def register_scope(request: ScopeRegisterRequest) -> ScopeRegisterResponse:
+    """Register a new retrieval scope at runtime.
+
+    Adds the scope to the live config (immediately queryable), optionally
+    starts file watchers for the prefixes, and persists to rag.yaml so
+    the scope survives restarts.  Returns 409 if the scope already exists
+    unless ``force`` is set.
+    """
+    from services.rag.config import ScopeDefinition, WatchDirectory, save_scope
+
+    loaded_config = require_loaded_config(state._config)
+    already_exists = request.name in loaded_config.scopes
+    if already_exists and not request.force:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Scope '{request.name}' already exists. Set force=true to overwrite.",
+        )
+
+    scope_def = ScopeDefinition(
+        prefixes=request.prefixes, description=request.description
+    )
+    loaded_config.scopes[request.name] = scope_def
+
+    watching: list[str] = []
+    if request.watch and state._watcher_manager is not None:
+        for pfx in request.prefixes:
+            wd = WatchDirectory(path=pfx)
+            started = await state._watcher_manager.register_directory(wd)
+            if started:
+                watching.append(pfx)
+
+    save_scope(
+        request.name,
+        request.prefixes,
+        request.description,
+        watch=request.watch,
+    )
+
+    logger.info(
+        "Scope registered: name=%s prefixes=%s watch=%s watching=%s",
+        request.name,
+        request.prefixes,
+        request.watch,
+        watching,
+    )
+    return ScopeRegisterResponse(
+        name=request.name,
+        created=not already_exists,
+        watching=watching,
     )
 
 

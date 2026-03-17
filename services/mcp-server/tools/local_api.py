@@ -1,8 +1,8 @@
-"""Local API relay — HTTP passthrough into Docker internal network services.
+"""Local API relay — HTTP passthrough into internal services (UDS or Docker network).
 
 Agents call `local_api(service, method, path, ...)` via dispatch. The MCP
-server forwards the request to the named service inside the Docker network
-and returns the parsed JSON response.
+server forwards the request to the named service via Unix Domain Socket or
+Docker bridge network and returns the parsed JSON response.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ _SERVICES: dict[str, dict[str, str]] = {
         "token_env": "BRIDGE_TOKEN",
     },
     "agent-bus": {
-        "base_url": "http://agent-bus:8100",
+        "uds": "/tmp/universal-protocol/agent-bus.sock",
         "token_env": "AGENT_BUS_TOKEN",
     },
     "cortex-api": {
@@ -43,7 +43,7 @@ def _relay(
     body: dict[str, Any] | None = None,
     token: str | None = None,
 ) -> dict[str, Any]:
-    """Forward an HTTP request to an internal Docker network service.
+    """Forward an HTTP request to an internal service (UDS or Docker network).
 
     Module-level relay function used by both the ``local_api`` MCP tool
     and other internal callers (e.g. context tools routing through cortex-api).
@@ -61,8 +61,17 @@ def _relay(
             "error": (f"Unknown service: {service!r}. Available: {sorted(_SERVICES)}")
         }
 
-    base_url = svc_config["base_url"]
-    url = f"{base_url}{path}"
+    uds_path = svc_config.get("uds")
+    if uds_path:
+        transport = httpx.HTTPTransport(uds=uds_path)
+        client_kwargs: dict[str, Any] = {
+            "transport": transport,
+            "timeout": _REQUEST_TIMEOUT,
+        }
+        url = f"http://localhost{path}"
+    else:
+        client_kwargs = {"timeout": _REQUEST_TIMEOUT}
+        url = f"{svc_config['base_url']}{path}"
 
     token_env = svc_config.get("token_env", "")
     bearer = token or (os.environ.get(token_env, "") if token_env else "")
@@ -97,7 +106,7 @@ def _relay(
     )
 
     try:
-        with httpx.Client(timeout=_REQUEST_TIMEOUT) as client:
+        with httpx.Client(**client_kwargs) as client:
             response = client.request(
                 method,
                 url,
@@ -135,7 +144,11 @@ def _relay(
                     duration=duration,
                     detail=str(exc),
                 )
-                return {"text": response.text}
+                return {
+                    "error": "Invalid JSON response",
+                    "detail": str(exc),
+                    "text": response.text,
+                }
 
             record(
                 "mcp.local.api.completed",
@@ -175,15 +188,15 @@ def register_local_api_tools(mcp: FastMCP) -> None:
         body: dict[str, Any] | None = None,
         token: str | None = None,
     ) -> dict[str, Any]:
-        """Forward an HTTP request to an internal Docker network service.
+        """Forward an HTTP request to an internal service (UDS or Docker network).
 
-        Acts as a relay from MCP into services on the Docker bridge network
-        that are not directly reachable from the internet.
+        Acts as a relay from MCP into services that are not directly reachable
+        from the internet — via Unix Domain Socket or Docker bridge network.
 
         Services:
-          journal-bridge — Journal Bridge API (port 8200)
-          agent-bus      — Agent Bus API (port 8100)
-          cortex-api     — Cortex Knowledge System API (port 8300)
+          agent-bus      — Agent Bus API (UDS: /tmp/universal-protocol/agent-bus.sock)
+          journal-bridge — Journal Bridge API (Docker bridge, port 8200)
+          cortex-api     — Cortex Knowledge System API (Docker bridge, port 8300)
 
         Args:
             service: Service name from the registry above.

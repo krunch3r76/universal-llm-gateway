@@ -123,16 +123,30 @@ Also available as MCP tool `rag_upsert_article` via Stargate passthrough (`POST 
 | `DELETE /source?path=...` | DELETE | Remove a single source from all 4 surfaces (ChromaDB, FTS, property index, articles table) |
 | `DELETE /directory?path=...` | DELETE | Remove all sources under a directory prefix from all surfaces |
 
-Also available as MCP tool `rag_delete_source` via Stargate passthrough (`DELETE /api/v1/rag/source?path=...`).
+Responses: `DELETE /source` returns `source`, `chunks_deleted`, `fts_removed`, `properties_removed`, `article_deleted`. `DELETE /directory` returns `path`, `sources_deleted`, `chunks_deleted`, `fts_removed`, `articles_deleted`.
+
+Also available as MCP tools: `rag_delete_source` (`DELETE /api/v1/rag/source?path=...`) and `rag_delete_directory` (`DELETE /api/v1/rag/directory?path=...`).
+
+### Diagnostics
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `GET /orphaned_articles` | GET | Articles with no corresponding indexed chunks (metadata-only rows) |
+
+Also available as MCP tool `rag_orphaned_articles` via Stargate passthrough (`GET /api/v1/rag/orphaned_articles`).
 
 ### Corpus Management
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `GET /scopes` | GET | List the named scope registry |
+| `GET /scopes` | GET | List the named scope registry (prefixes, description per scope) |
+| `POST /scopes` | POST | Register a scope at runtime — adds to live config, optional watcher registration, persists to `~/.gateway/rag.yaml`. Body: `name`, `prefixes`, `description?`, `watch?`, `force?`. 409 if scope exists unless `force: true`. |
+| `GET /coverage` | GET | Per-scope, per-prefix indexed file counts and last-indexed timestamps |
 | `GET /sources` | GET | List indexed source paths (optional prefix filter) |
 | `GET /source` | GET | Get all chunks for a source path |
 | `GET /stats` | GET | Collection statistics (chunk count) |
+
+The MCP tool `rag_list_scopes` merges `GET /scopes` with `GET /coverage`: each scope in `details` includes `indexed_files` and `status` (`"indexed"` or `"empty"`).
 
 ### Knowledge Extraction
 
@@ -219,16 +233,16 @@ The `articles` table in `rag_metadata.db` is the runtime source of truth for cit
 | `content_hash` | TEXT | Plain SHA-256 of file bytes — join key to `source_hash` on chunks |
 | `subdirectory` | TEXT | Subdirectory within the corpus root |
 
-Population: `python scripts/populate-articles.py` reads `docs/research/article_registry.yaml` and upserts validated entries. Idempotent, does not require the RAG service to be running.
+Population: **`scripts/backfill_article_metadata.py`** reads `docs/research/article_registry.yaml`, maps subdirectory→scope (e.g. `rag-systems`→`rag_systems`, `prompting`→`small_llm_prompting`), and upserts via Stargate `POST /api/v1/rag/article`. Idempotent; requires Stargate on :9999. **`scripts/populate-articles.py`** does the same from the YAML but sets scope to `all` for every entry; supports `--dry-run` and direct RAG URL (e.g. UDS). Use backfill for scope-aware corpus seeding.
 
 Article metadata is **not** baked into chunks at index time. Instead, the search handler enriches results at query time by joining `source_hash` → `content_hash`.
 
 ### Clean-Slate Reindex
 
 ```bash
-rm -rf ~/.rag/*                          # wipe both ChromaDB and rag_metadata.db
-python scripts/populate-articles.py      # recreate DB + seed articles table
-./manage                                 # start services — indexes all files with source_hash
+rm -rf ~/.rag/*                              # wipe both ChromaDB and rag_metadata.db
+python scripts/backfill_article_metadata.py  # seed articles with subdirectory→scope mapping (Stargate :9999)
+./manage                                     # start services — indexes all files with source_hash
 ```
 
 ## Post-Index Enrichment
@@ -253,7 +267,8 @@ Full procedure: [Post-Index Refresh Runbook](../../tasks/runbooks/rag-post-index
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/populate-articles.py` | Seed `articles` table from curated YAML registry (`--dry-run` supported) |
+| `scripts/backfill_article_metadata.py` | Seed `articles` from YAML with subdirectory→scope mapping (Stargate; idempotent) |
+| `scripts/populate-articles.py` | Seed `articles` from YAML with scope=`all` (`--dry-run`, direct RAG URL supported) |
 | `scripts/rag/classify_vocabulary.py` | LLM-classify scope vocabulary registers from corpus hints |
 | `scripts/rag/classify_bibliography.py` | LLM-classify chunk-level bibliography/noise metadata |
 | `scripts/rag/ingest-arxiv` | Ingest arXiv papers into the RAG corpus |

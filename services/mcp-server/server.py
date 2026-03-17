@@ -18,7 +18,7 @@ import sys
 import time
 from asyncio.transports import BaseTransport
 from collections.abc import Callable
-from typing import Any, cast, override
+from typing import Any, override
 
 import uvicorn
 from auth_middleware import AuthMiddleware
@@ -119,7 +119,12 @@ def _patch_sse_lifecycle_events() -> None:
                 reason=str(exc),
                 exc_type=type(exc).__name__,
             )
-            logger.warning("SSE stream aborted after %.1fs: %s", duration, exc)
+            logger.warning(
+                "SSE stream aborted after %.1fs: %s",
+                duration,
+                exc,
+                exc_info=True,
+            )
             raise
         else:
             duration = monotonic_now() - t0
@@ -205,6 +210,12 @@ _PRIMARY_TOOLS: set[str] = {
     "agent_bus_update_thread",
     # Cortex
     "cortex_assert",
+    "cortex_journal_write",
+    "cortex_deadlines",
+    "cortex_entities",
+    "cortex_entity_get",
+    "cortex_assertions",
+    "cortex_journal_read",
 }
 
 
@@ -462,9 +473,9 @@ def main() -> None:
     class KeepaliveProtocol(orig_protocol_class):
         @override
         def connection_made(self, transport: BaseTransport) -> None:
-            # get_extra_info('socket') returns the raw socket; cast for _set_tcp_keepalive.
-            sock = cast(socket.socket | None, transport.get_extra_info("socket"))
-            if sock is not None:
+            # get_extra_info('socket') returns an object; narrow before keepalive setup.
+            sock = transport.get_extra_info("socket")
+            if isinstance(sock, socket.socket):
                 _set_tcp_keepalive(sock)
             super().connection_made(transport)
 
