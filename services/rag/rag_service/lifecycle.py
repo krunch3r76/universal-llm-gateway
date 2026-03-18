@@ -44,7 +44,7 @@ from services.rag.events.lifecycle import (
     rag_shutdown,
     rag_started,
 )
-from services.rag.knowledge_extractor import configure_timeouts
+from services.rag.knowledge_extractor import configure_circuit, configure_timeouts
 from services.rag.models import DeleteResult, IndexResult
 from services.rag.property_index import PropertyIndex
 from services.rag.watcher_manager import WatcherManager
@@ -374,6 +374,7 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
         else DEFAULT_INDEX_WORKERS
     )
     configure_timeouts(config.knowledge_extraction)
+    configure_circuit(config.knowledge_extraction, state._event_bus)
     state._watcher_manager = WatcherManager(
         index_fn=_watcher_index_fn,
         delete_fn=_watcher_delete_fn,

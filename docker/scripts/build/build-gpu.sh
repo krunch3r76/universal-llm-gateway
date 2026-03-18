@@ -467,9 +467,13 @@ export LLAMA_SERVER_VERSION
 
 cd "${PROJECT_ROOT}"
 
+BUILD_LOG="/tmp/gateway-build-$(date +%Y%m%d-%H%M%S).log"
+
 # Always build base image (tagged for potential obfuscation consumption)
 echo "🔨 Building base image..."
+echo "📋 Build log: ${BUILD_LOG}"
 docker build \
+    --progress=plain \
     ${NO_CACHE} \
     --build-arg CUDA_VERSION="${CUDA_VERSION}" \
     --build-arg PYTHON_VERSION="${PYTHON_VERSION}" \
@@ -488,7 +492,7 @@ docker build \
     ${SOURCE_VERSION:+--build-arg SOURCE_VERSION="${SOURCE_VERSION}"} \
     -f docker/dockerfiles/Dockerfile.gpu \
     -t gateway-base:runtime \
-    .
+    . > "${BUILD_LOG}" 2>&1
 
 if [[ "${OBFUSCATE}" == "true" ]]; then
     echo ""
@@ -512,6 +516,7 @@ if [[ "${OBFUSCATE}" == "true" ]]; then
     cp docker/dockerfiles/Dockerfile.obfuscated "${BUILD_CONTEXT}/docker/dockerfiles/"
     
     docker build \
+        --progress=plain \
         ${NO_CACHE} \
         --build-arg PYTHON_VERSION="${PYTHON_VERSION}" \
         --build-arg CUDA_VERSION="${CUDA_VERSION}" \
@@ -530,7 +535,7 @@ if [[ "${OBFUSCATE}" == "true" ]]; then
         ${SOURCE_VERSION:+--build-arg SOURCE_VERSION="${SOURCE_VERSION}"} \
         -f "${BUILD_CONTEXT}/docker/dockerfiles/Dockerfile.obfuscated" \
         -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-        "${BUILD_CONTEXT}"
+        "${BUILD_CONTEXT}" >> "${BUILD_LOG}" 2>&1
     
     DEPLOYMENT_TYPE="obfuscated"
 else

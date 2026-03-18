@@ -28,13 +28,18 @@ Sandboxed read/write/list in `/data/files`. Path traversal rejected at code leve
 
 ### Project (`tools/project.py`)
 
-Read-only access to the mounted project directory. Only git-tracked, non-binary files are visible.
+Access to the mounted project directory (`PROJECT_ROOT`). By default, listing and
+search use `git ls-files` (gitignored paths hidden). **`include_untracked=True`**
+enumerates the filesystem instead — needed for `tmp/`, `prompts/`, etc. Direct
+`read_project_file` works for any on-disk path under the mount. Writes require
+`project_access: rw` and `PROJECT_READ_ONLY=false`.
 
 | Tool | Purpose |
 |------|---------|
-| `list_project_files` | List tracked files (uses `git ls-files`) |
-| `read_project_file` | Read file contents with line range support |
-| `search_project` | Grep project files with regex |
+| `list_project_files` | List files; optional `include_untracked` for gitignored trees |
+| `read_project_file` | Read text file by relative path |
+| `search_project_files` | Regex search; optional `include_untracked` |
+| `project` | Unified read/write/list/**search** (same flags) |
 
 ### Pipeline Consultation (`tools/pipeline_consult.py`)
 
@@ -184,7 +189,7 @@ Covers request lifecycle, tool invocations, browser sessions, SSE stream lifecyc
 | `server.py` | FastMCP app, bearer auth middleware, TLS config, clip endpoint |
 | `mcp_events.py` | Event emission helpers |
 | `tools/filesystem.py` | Sandboxed file read/write/edit/delete |
-| `tools/project.py` | Read-only project browsing (git-tracked files) |
+| `tools/project.py` | Project files: git-tracked by default; `include_untracked` for ignored dirs |
 | `tools/pipeline_consult.py` | RAG-grounded prompt consultation |
 | `tools/rag.py` | RAG pipeline integration via Stargate |
 | `tools/web.py` | Brave Search + URL fetch with SSRF guard |

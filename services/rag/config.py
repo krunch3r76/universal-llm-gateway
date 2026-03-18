@@ -57,6 +57,9 @@ class KnowledgeExtractionConfig:
     )
     per_chunk_timeout_s: float = 60.0
     batch_timeout_overhead_s: float = 30.0
+    circuit_failure_threshold: int = 3
+    circuit_base_cooldown_s: float = 30.0
+    circuit_max_cooldown_s: float = 300.0
 
 
 DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-40960-cpu"
@@ -312,6 +315,21 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
         0.0,
         float(raw_overhead) if isinstance(raw_overhead, int | float) else 30.0,
     )
+    raw_circuit_threshold = raw.get("circuit_failure_threshold", 3)
+    circuit_failure_threshold = max(
+        1,
+        int(raw_circuit_threshold) if isinstance(raw_circuit_threshold, int) else 3,
+    )
+    raw_circuit_base = raw.get("circuit_base_cooldown_s", 30.0)
+    circuit_base_cooldown_s = max(
+        1.0,
+        float(raw_circuit_base) if isinstance(raw_circuit_base, int | float) else 30.0,
+    )
+    raw_circuit_max = raw.get("circuit_max_cooldown_s", 300.0)
+    circuit_max_cooldown_s = max(
+        circuit_base_cooldown_s,
+        float(raw_circuit_max) if isinstance(raw_circuit_max, int | float) else 300.0,
+    )
     return KnowledgeExtractionConfig(
         pipeline=str(pipeline) if isinstance(pipeline, str) else "rag-extraction",
         schema_version=int(schema_version) if isinstance(schema_version, int) else 1,
@@ -322,6 +340,9 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
         extraction_model=extraction_model,
         per_chunk_timeout_s=per_chunk_timeout_s,
         batch_timeout_overhead_s=batch_timeout_overhead_s,
+        circuit_failure_threshold=circuit_failure_threshold,
+        circuit_base_cooldown_s=circuit_base_cooldown_s,
+        circuit_max_cooldown_s=circuit_max_cooldown_s,
     )
 
 

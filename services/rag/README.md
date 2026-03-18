@@ -132,6 +132,7 @@ Also available as MCP tools: `rag_delete_source` (`DELETE /api/v1/rag/source?pat
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `GET /orphaned_articles` | GET | Articles with no corresponding indexed chunks (metadata-only rows) |
+| `GET /indexing/status` | GET | Unified pending/failure/watcher/chunk-count operational status (bounded sample via `sample_limit`) |
 
 Also available as MCP tool `rag_orphaned_articles` via Stargate passthrough (`GET /api/v1/rag/orphaned_articles`).
 

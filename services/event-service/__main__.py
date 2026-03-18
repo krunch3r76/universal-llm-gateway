@@ -37,12 +37,13 @@ _RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "7"))
 _MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "2"))
 _SECONDS_PER_DAY = 86400
 _RETENTION_INTERVAL_S = _SECONDS_PER_DAY
+_QUERY_SOCK_MODE = int(os.environ.get("QUERY_UDS_MODE", "660"), 8)
 
 
 def _event_timestamp() -> tuple[int, str]:
     """Return (unix_ms, ISO8601 Z) timestamp tuple for service events."""
     ts_ms = int(time.time() * 1000)
-    ts_iso = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    ts_iso = datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     return ts_ms, ts_iso
 
 
@@ -54,29 +55,37 @@ async def _retention_loop(store: EventStore) -> None:
     when few sessions exist across many days.
     """
     max_age_ms = _RETENTION_DAYS * _SECONDS_PER_DAY * 1000
-    debug_deleted = await store.prune_debug_events()
-    startup_deleted = await store.run_session_retention(_MAX_SESSIONS)
-    if debug_deleted or startup_deleted:
-        logger.info(
-            "Retention (startup): debug=%d session=%d (keeping %d sessions)",
-            debug_deleted,
-            startup_deleted,
-            _MAX_SESSIONS,
-        )
-    while True:
-        await asyncio.sleep(_RETENTION_INTERVAL_S)
+
+    async def _run_retention_cycle(*, startup: bool) -> None:
         debug_deleted = await store.prune_debug_events()
+        heartbeat_deleted = await store.prune_heartbeat_signals()
         session_deleted = await store.run_session_retention(_MAX_SESSIONS)
-        age_deleted = await store.run_retention(max_age_ms)
-        if debug_deleted or session_deleted or age_deleted:
+        age_deleted = 0 if startup else await store.run_retention(max_age_ms)
+        if debug_deleted or heartbeat_deleted or session_deleted or age_deleted:
+            if startup:
+                logger.info(
+                    "Retention (startup): debug=%d heartbeat=%d session=%d (keeping %d sessions)",
+                    debug_deleted,
+                    heartbeat_deleted,
+                    session_deleted,
+                    _MAX_SESSIONS,
+                )
+                return
             logger.info(
-                "Retention: debug=%d session=%d age=%d (max_sessions=%d, max_days=%d)",
+                "Retention: debug=%d heartbeat=%d session=%d age=%d "
+                "(max_sessions=%d, max_days=%d)",
                 debug_deleted,
+                heartbeat_deleted,
                 session_deleted,
                 age_deleted,
                 _MAX_SESSIONS,
                 _RETENTION_DAYS,
             )
+
+    await _run_retention_cycle(startup=True)
+    while True:
+        await asyncio.sleep(_RETENTION_INTERVAL_S)
+        await _run_retention_cycle(startup=False)
 
 
 async def run_service() -> None:
@@ -95,9 +104,17 @@ async def run_service() -> None:
     retention_task: asyncio.Task[None] | None = None
     started = False
     stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
 
     def _signal_handler() -> None:
+        if stop_event.is_set():
+            return
         stop_event.set()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.remove_signal_handler(sig)
+            except RuntimeError:
+                pass
 
     try:
         await store.open()
@@ -114,15 +131,20 @@ async def run_service() -> None:
         app.router.add_get("/metrics", metrics_handler)
 
         query_sock = Path(_QUERY_SOCK)
-        if query_sock.exists():
-            query_sock.unlink()
         query_sock.parent.mkdir(parents=True, exist_ok=True)
 
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.UnixSite(runner, _QUERY_SOCK)
-        await site.start()
-        os.chmod(_QUERY_SOCK, 0o777)
+        try:
+            if query_sock.exists():
+                query_sock.unlink()
+            await site.start()
+            os.chmod(_QUERY_SOCK, _QUERY_SOCK_MODE)
+        except Exception:
+            if query_sock.exists():
+                query_sock.unlink()
+            raise
 
         logger.info(
             "Event service started (ingest=%s, query=%s, db=%s)",
@@ -151,7 +173,6 @@ async def run_service() -> None:
         started = True
 
         retention_task = asyncio.create_task(_retention_loop(store))
-        loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, _signal_handler)
 

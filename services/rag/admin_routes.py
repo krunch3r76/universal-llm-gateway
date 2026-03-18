@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 if TYPE_CHECKING:
     import chromadb
@@ -53,6 +53,7 @@ from services.rag.models import (
     ExtractionExportResponse,
     IndexDirectoryRequest,
     IndexDirectoryResponse,
+    IndexingStatusResponse,
     IndexRequest,
     IndexResult,
     PrefixCoverage,
@@ -63,6 +64,7 @@ from services.rag.models import (
     SourceResponse,
     SourcesResponse,
     StatsResponse,
+    WatcherStatusItem,
 )
 
 logger = logging.getLogger(__name__)
@@ -475,6 +477,89 @@ def register_admin_routes(
         if wm is None:
             return []
         return wm.get_status()
+
+    @router.get("/indexing/status", response_model=IndexingStatusResponse)
+    def indexing_status(
+        sample_limit: int = Query(default=20, ge=0, le=100),
+    ) -> IndexingStatusResponse:
+        """Return bounded indexing backlog and health from live RAG-owned state."""
+        normalized_limit = max(0, min(sample_limit, 100))
+        pending_count = 0
+        pending_sample: list[str] = []
+        pending_sample_truncated = False
+        failed_extractions_count = 0
+        failed_extractions_permanent_count = 0
+        property_index_available = True
+        watchers: list[WatcherStatusItem] = []
+        chunks: int | None = None
+        collection: str | None = None
+        chroma_available = True
+        chroma_error: str | None = None
+
+        prop_idx = get_property_index_fn()
+        if prop_idx is None:
+            property_index_available = False
+        else:
+            try:
+                pending_snapshot = prop_idx.get_pending_snapshot(normalized_limit)
+                pending_count = pending_snapshot.count
+                pending_sample = pending_snapshot.sample
+                pending_sample_truncated = (
+                    normalized_limit > 0 and pending_count > len(pending_sample)
+                )
+                failure_snapshot = prop_idx.get_failure_snapshot()
+                failed_extractions_count = failure_snapshot.failed_extractions_count
+                failed_extractions_permanent_count = (
+                    failure_snapshot.failed_extractions_permanent_count
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Indexing status degraded while reading property index: %s",
+                    exc,
+                    exc_info=True,
+                )
+                property_index_available = False
+
+        wm = get_watcher_manager_fn()
+        if wm is not None:
+            for row in wm.get_status():
+                if not isinstance(row, dict):
+                    continue
+                watchers.append(
+                    WatcherStatusItem(
+                        path=str(row.get("path", "")),
+                        enabled=bool(row.get("enabled", False)),
+                        reload_count=int(row.get("reload_count", 0)),
+                        error_count=int(row.get("error_count", 0)),
+                    )
+                )
+
+        try:
+            current_collection = get_collection_fn()
+            chunks = int(current_collection.count())
+            collection = collection_name
+        except Exception as exc:
+            chroma_available = False
+            chroma_error = str(exc)
+            logger.warning(
+                "Indexing status degraded while reading ChromaDB count: %s",
+                exc,
+                exc_info=True,
+            )
+
+        return IndexingStatusResponse(
+            pending_count=pending_count,
+            pending_sample=pending_sample,
+            pending_sample_truncated=pending_sample_truncated,
+            chunks=chunks,
+            collection=collection,
+            chroma_available=chroma_available,
+            chroma_error=chroma_error,
+            watchers=watchers,
+            failed_extractions_count=failed_extractions_count,
+            failed_extractions_permanent_count=failed_extractions_permanent_count,
+            property_index_available=property_index_available,
+        )
 
     @router.post("/clear", response_model=ClearResponse)
     async def clear() -> ClearResponse:

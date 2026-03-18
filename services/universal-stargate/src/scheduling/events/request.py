@@ -499,6 +499,7 @@ def FederationSnapshotSent(
     gateway_id: str,
     all_models_count: int,
     available_models_count: int,
+    trigger: str = "initial",
 ) -> Event:
     """
     Create FEDERATION_SNAPSHOT_SENT event.
@@ -515,6 +516,8 @@ def FederationSnapshotSent(
         gateway_id: Gateway identifier
         all_models_count: Total models from ws_client.get_models()
         available_models_count: Models with resource data (routable by Master)
+        trigger: What caused this snapshot ("initial" at wiring, "periodic"
+                 from reconciliation timer)
 
     Returns:
         Event with FederationSnapshotSent signal
@@ -526,6 +529,7 @@ def FederationSnapshotSent(
             "all_models_count": all_models_count,
             "available_models_count": available_models_count,
             "gap_count": all_models_count - available_models_count,
+            "trigger": trigger,
         },
     )
 

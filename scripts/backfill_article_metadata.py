@@ -15,12 +15,7 @@ from typing import Any
 import httpx
 import yaml
 
-REGISTRY_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "docs"
-    / "research"
-    / "article_registry.yaml"
-)
+REGISTRY_PATH = Path.home() / ".rag" / "article_registry.yaml"
 RESEARCH_DIR = Path(__file__).resolve().parent.parent / "docs" / "research"
 STARGATE_URL = "http://localhost:9999/api/v1/rag/article"
 

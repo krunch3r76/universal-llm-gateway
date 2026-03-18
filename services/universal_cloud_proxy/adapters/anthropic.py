@@ -49,6 +49,8 @@ _MCP_SERVER_NAME = "vortex"
 
 
 class AnthropicAdapter:
+    """Translate OpenAI-compatible requests to Anthropic APIs and back."""
+
     def __init__(
         self,
         *,
@@ -74,6 +76,7 @@ class AnthropicAdapter:
         return self._client
 
     def normalize_catalog_model_id(self, raw_model_id: str) -> str:
+        """Normalize provider model IDs into the catalog namespace."""
         if raw_model_id.startswith("native/"):
             return raw_model_id
         if "/" in raw_model_id:
@@ -81,6 +84,7 @@ class AnthropicAdapter:
         return f"native/anthropic/{raw_model_id}"
 
     def to_upstream_model_id(self, catalog_model_id: str) -> str:
+        """Map catalog model IDs back to Anthropic upstream IDs."""
         if catalog_model_id.startswith("native/anthropic/"):
             return catalog_model_id.removeprefix("native/anthropic/")
         if catalog_model_id.startswith("native/"):
@@ -90,18 +94,18 @@ class AnthropicAdapter:
         return catalog_model_id
 
     def _headers(self) -> dict[str, str]:
+        """Build HTTP headers for Anthropic API requests."""
         headers = {
             "x-api-key": self._config.api_key,
             "anthropic-version": _ANTHROPIC_VERSION,
             "Content-Type": "application/json",
         }
         if self._config.mcp_server_url:
-            beta = (
+            headers["anthropic-beta"] = (
                 _ANTHROPIC_BETA_MCP_V2
                 if self._config.mcp_v2
                 else _ANTHROPIC_BETA_MCP_V1
             )
-            headers["anthropic-beta"] = beta
         return headers
 
     @staticmethod
@@ -125,28 +129,31 @@ class AnthropicAdapter:
 
     @staticmethod
     def _finish_reason(stop_reason: str | None) -> str | None:
+        """Map Anthropic stop reasons to OpenAI-compatible finish reasons."""
         mapping = {
             "end_turn": "stop",
             "stop_sequence": "stop",
             "max_tokens": "length",
             "tool_use": "tool_calls",
         }
-        if stop_reason is None:
-            return None
-        return mapping.get(stop_reason, "stop")
+        return mapping.get(stop_reason, stop_reason)
 
     @staticmethod
     def _to_int(value: Any) -> int:
+        """Coerce numeric values from provider payloads to integers."""
         try:
             return int(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.warning("Failed to coerce int from value=%r: %s", value, exc)
             return 0
 
     @staticmethod
     def _sse_data(payload: dict[str, Any]) -> bytes:
+        """Encode an SSE data frame from a JSON payload."""
         return f"data: {json.dumps(payload)}\n\n".encode()
 
     def _openai_to_anthropic(self, request_body: dict[str, Any]) -> dict[str, Any]:
+        """Convert OpenAI-compatible request payloads into Anthropic format."""
         model_id = str(request_body.get("model", "")).strip()
         anthropic_model = self.to_upstream_model_id(model_id)
 
@@ -157,6 +164,33 @@ class AnthropicAdapter:
 
         system_text = extract_system_text(openai_messages)
         anthropic_messages = convert_messages(openai_messages)
+
+        response_format = request_body.get("response_format")
+        json_mode = False
+        json_schema: dict[str, Any] | None = None
+
+        if isinstance(response_format, dict):
+            rf_type = response_format.get("type")
+            if rf_type == "json_object":
+                json_mode = True
+            elif rf_type == "json_schema":
+                json_mode = True
+                json_schema = response_format.get("json_schema")
+
+        if json_mode:
+            json_instruction = (
+                "Respond with valid JSON only. "
+                "Do not wrap in markdown code fences. "
+                "Do not include any text outside the JSON object."
+            )
+            if isinstance(json_schema, dict):
+                schema_obj = json_schema.get("schema")
+                if isinstance(schema_obj, dict):
+                    json_instruction += (
+                        f" The response must conform to this JSON schema: "
+                        f"{json.dumps(schema_obj)}"
+                    )
+            system_text = f"{system_text}\n\n{json_instruction}".strip() if system_text else json_instruction
 
         max_tokens = request_body.get("max_tokens")
         if not isinstance(max_tokens, int):
@@ -218,12 +252,10 @@ class AnthropicAdapter:
         if bool(request_body.get("stream", False)):
             payload["stream"] = True
 
-        # Inject MCP server only when tools remain enabled after request-level
-        # tool_choice handling (including explicit tool_choice="none").
-        # Tool-free requests (e.g. pipeline generates) skip MCP to avoid
-        # Anthropic-side MCP server connection overhead and potential 400s.
-        caller_wants_tools = bool(tools_out)
-        if self._config.mcp_server_url and caller_wants_tools:
+        # Inject MCP server when configured so the model can see and use it.
+        # Inject whenever mcp_server_url is set except when the client explicitly
+        # requested no tools (tool_choice="none"), so chat-only requests still get MCP.
+        if self._config.mcp_server_url and tool_choice_in != "none":
             payload["mcp_servers"] = [
                 {
                     "type": "url",
@@ -246,6 +278,7 @@ class AnthropicAdapter:
         response_json: dict[str, Any],
         requested_model_id: str,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Convert a non-streaming Anthropic response to OpenAI shape."""
         raw_usage = response_json.get("usage")
         usage: dict[str, Any] = raw_usage if isinstance(raw_usage, dict) else {}
         prompt_tokens = self._to_int(usage.get("input_tokens", 0))
@@ -287,6 +320,7 @@ class AnthropicAdapter:
         return result, mcp_meta
 
     async def fetch_catalog(self) -> list[dict[str, Any]]:
+        """Fetch model catalog entries from the Anthropic endpoint."""
         response = await self._client.get(
             f"{self._config.base_url}/models",
             headers=self._headers(),
@@ -297,6 +331,7 @@ class AnthropicAdapter:
         return data if isinstance(data, list) else []
 
     async def forward_chat(self, request_body: dict[str, Any]) -> dict[str, Any]:
+        """Forward non-streaming chat requests and normalize the response."""
         body = self._openai_to_anthropic(request_body)
         response = await self._client.post(
             f"{self._config.base_url}/messages",
@@ -313,6 +348,7 @@ class AnthropicAdapter:
     async def forward_chat_stream(
         self, request_body: dict[str, Any]
     ) -> AsyncIterator[bytes]:
+        """Forward streaming chat requests as OpenAI-compatible SSE chunks."""
         body = self._openai_to_anthropic({**request_body, "stream": True})
         async with self._client.stream(
             "POST",
@@ -338,11 +374,12 @@ class AnthropicAdapter:
                     response=response,
                 )
                 for chunk in chunks:
-                    yield chunk
                     if chunk == b"data: [DONE]\n\n":
+                        if done_seen:
+                            continue
                         done_seen = True
-                if done_seen:
-                    break
+                    yield chunk
+                # Do not break; allow all chunks from process_line. finalize() skips duplicate [DONE].
 
             for chunk in translator.finalize():
                 if done_seen and chunk == b"data: [DONE]\n\n":
@@ -368,6 +405,7 @@ class AnthropicAdapter:
             )
 
     async def forward_embeddings(self, request_body: dict[str, Any]) -> dict[str, Any]:
+        """Reject embeddings because Anthropic does not expose that API."""
         raise ValueError(
             "Provider 'anthropic' does not support OpenAI embeddings forwarding"
         )

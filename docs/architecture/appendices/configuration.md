@@ -140,6 +140,8 @@ Optional. Controls the internet-facing MCP server container. If absent or `auth_
 
 Fields: `auth_token` (bearer token for client auth), `data_dir` (host path mounted as `/data/files`, default `~/mcp-data`), `project_dir` (host path mounted read-only as `/data/project`, defaults to workspace root), `tls_cert_dir` (host path containing `fullchain.pem`/`privkey.pem`, default `/etc/letsencrypt/live/mcp.k-1.me`).
 
+Project list/search MCP tools default to git-tracked files only; **`include_untracked=True`** lists or searches the real tree (e.g. gitignored `tmp/`). See `docs/mcp-integration.md`.
+
 ## Log Paths
 
 | Service | Path |

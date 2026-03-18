@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx
 import yaml
 
-REGISTRY_PATH = Path(__file__).resolve().parents[1] / "docs/research/article_registry.yaml"
+REGISTRY_PATH = Path.home() / ".rag" / "article_registry.yaml"
 RESTORE_SCRIPT = Path(__file__).resolve().parents[1] / "scripts/restore-research-corpus.py"
 ARXIV_API = "https://export.arxiv.org/api/query"
 BATCH_SIZE = 20

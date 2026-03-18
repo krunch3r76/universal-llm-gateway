@@ -4,7 +4,8 @@ version: "1.0"
 type: journal_extract
 description: >
   Extract entities, relationships, assertions, and events from a single
-  journal entry into structured Cortex proposals. Two steps: LLM extraction
+  journal entry into structured Cortex proposals. Three steps: resolve
+  existing entities from Cortex (injected into prompt), LLM extraction
   via Claude Sonnet (native Anthropic only), then Python schema validation
   against Cortex entity/relationship types.
 output: validate
@@ -13,6 +14,9 @@ options:
   timeout_seconds: 120
 
 steps:
+  - name: resolve
+    type: journal_extract_resolve_v1
+
   - name: extract
     type: generate
     model_ref: sonnet
@@ -21,6 +25,7 @@ steps:
       text: sourceNs.text
       entry_id: optionsNs.entry_id
       entry_date: optionsNs.entry_date
+      known_entities: resolve.json.known_entities
     output_declarations:
       proposals:
         binding: json
@@ -39,7 +44,9 @@ steps:
           type: object
           properties:
             entry_id:
-              type: integer
+              anyOf:
+                - type: integer
+                - type: string
             entry_date:
               type: string
             entities:
@@ -56,11 +63,12 @@ steps:
                     type: string
                   notes:
                     type: string
+                    description: "Human-readable context that is not already encoded in attributes."
                   attributes:
                     type: object
                   action:
                     type: string
-                    enum: ["create_if_not_exists"]
+                    enum: ["create_if_not_exists", "update"]
                 required: ["id", "type", "name", "action"]
             relationships:
               type: array
@@ -77,7 +85,7 @@ steps:
                     type: string
                   action:
                     type: string
-                    enum: ["create_if_not_exists"]
+                    enum: ["create_if_not_exists", "update"]
                 required: ["type", "from_entity", "to_entity", "action"]
             assertions:
               type: array
@@ -108,7 +116,7 @@ steps:
                     description: "Format: event:{slug} (stable unique event identifier)"
                   type:
                     type: string
-                    enum: ["event"]
+                    description: "Must be the literal string 'event'."
                   name:
                     type: string
                   notes:
@@ -117,7 +125,7 @@ steps:
                     type: object
                   action:
                     type: string
-                    enum: ["create_if_not_exists"]
+                    enum: ["create_if_not_exists", "update"]
                 required: ["id", "type", "name", "action"]
           required: ["entry_id", "entry_date"]
 

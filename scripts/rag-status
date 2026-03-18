@@ -7,19 +7,27 @@ Usage:
     rag-status --summary  # compact one-liner (for scripting)
     rag-status --failures # permanently skipped chunks (from property index DB)
     rag-status --reset    # clear pending journal + permanent extraction failures
-    rag-status --pending  # show files stuck in the pending journal
+    rag-status --pending  # show bounded pending sample from /indexing/status
 """
 
 import argparse
 import asyncio
 import json
+import socket
 import sqlite3
+import sys
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+try:
+    from transport_utils.rag_client import make_sync_client, resolve_rag_base_url
+except ModuleNotFoundError:
+    make_sync_client = None
+    resolve_rag_base_url = None
 
 EVENT_QUERY_SOCKET = Path("/tmp/universal-protocol/events-query.sock")
 EVENT_QUERY_URL = "http://localhost/v1/subscribe"
@@ -30,6 +38,8 @@ WS_RETRY_BASE_SECONDS = 1.0
 WS_RETRY_MAX_SECONDS = 30.0
 DB_PATH = Path.home() / ".rag" / "store" / "property_index.db"
 _error_truncate_chars: int | None = 120
+_DEFAULT_SAMPLE_LIMIT = 20
+_MAX_SAMPLE_LIMIT = 100
 
 
 @dataclass
@@ -338,6 +348,181 @@ def _print_summary(state: dict[str, Any]) -> None:
         f"failed={len(failed)} chunks={total_written}/{total_chunks} "
         f"in_progress={len(in_prog)}"
     )
+
+
+def _clamp_sample_limit(value: int) -> int:
+    """Clamp requested status sample limit into endpoint-supported range."""
+    return max(0, min(value, _MAX_SAMPLE_LIMIT))
+
+
+def _fetch_indexing_status(url: str, sample_limit: int) -> dict[str, Any]:
+    """Fetch unified indexing status from the live RAG admin endpoint.
+
+    Returns a dict payload on success; exits non-zero on transport or HTTP
+    failure so shell automation can detect degraded status checks.
+    """
+    normalized_limit = _clamp_sample_limit(sample_limit)
+    try:
+        if make_sync_client is not None:
+            with make_sync_client(url=url, timeout=10.0) as client:
+                response = client.get(
+                    "/indexing/status",
+                    params={"sample_limit": normalized_limit},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if isinstance(payload, dict):
+                    return payload
+                return {}
+        return _fetch_indexing_status_fallback(url, normalized_limit)
+    except Exception as exc:
+        print(f"Failed to query /indexing/status at {url}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+def _fetch_indexing_status_fallback(url: str, sample_limit: int) -> dict[str, Any]:
+    """Fallback status fetch without transport_utils/httpx dependency."""
+    from http.client import HTTPConnection
+    from urllib.request import Request, urlopen
+
+    if url.startswith("unix://"):
+        rest = url[7:].lstrip("/")
+        uds_path = f"/{rest}" if rest else "/tmp/universal-protocol/rag.sock"
+
+        class _UnixHTTPConnection(HTTPConnection):
+            def __init__(self, path: str, timeout: float = 10.0) -> None:
+                super().__init__("localhost", timeout=timeout)
+                self._path = path
+
+            def connect(self) -> None:  # pragma: no cover - exercised in CLI smoke
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                sock.settimeout(self.timeout)
+                sock.connect(self._path)
+                self.sock = sock
+
+        conn = _UnixHTTPConnection(uds_path, timeout=10.0)
+        try:
+            conn.request("GET", f"/indexing/status?sample_limit={sample_limit}")
+            response = conn.getresponse()
+            body = response.read().decode("utf-8")
+            if response.status >= 400:
+                raise RuntimeError(f"HTTP {response.status}: {body}")
+            payload = json.loads(body)
+            return payload if isinstance(payload, dict) else {}
+        finally:
+            conn.close()
+
+    base = url.rstrip("/")
+    endpoint = f"{base}/indexing/status?sample_limit={sample_limit}"
+    request = Request(endpoint, method="GET")
+    with urlopen(request, timeout=10.0) as response:
+        body = response.read().decode("utf-8")
+    payload = json.loads(body)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _default_rag_url() -> str:
+    """Resolve default RAG URL with transport_utils when available."""
+    if resolve_rag_base_url is not None:
+        try:
+            return resolve_rag_base_url()
+        except Exception:
+            pass
+    config_path = Path.home() / ".gateway" / "stargate.yaml"
+    if not config_path.exists():
+        return "unix:///tmp/universal-protocol/rag.sock"
+    try:
+        import yaml
+
+        data = yaml.safe_load(config_path.read_text()) or {}
+    except Exception:
+        return "unix:///tmp/universal-protocol/rag.sock"
+    rag = data.get("rag")
+    if not isinstance(rag, dict):
+        return "unix:///tmp/universal-protocol/rag.sock"
+    host = rag.get("host")
+    port_val = rag.get("port")
+    if host is None or port_val is None or not str(host).strip():
+        return "unix:///tmp/universal-protocol/rag.sock"
+    try:
+        port = int(port_val)
+    except (TypeError, ValueError):
+        return "unix:///tmp/universal-protocol/rag.sock"
+    if not (1 <= port <= 65535):
+        return "unix:///tmp/universal-protocol/rag.sock"
+    return f"http://{host}:{port}"
+
+
+def _print_status_snapshot(status: dict[str, Any]) -> None:
+    """Render human-readable status snapshot from `/indexing/status` payload."""
+    print("RAG Operational Status")
+    print("======================")
+    print("Pending count includes in-flight indexing; after idle it should be zero.")
+    print()
+    print(f"Pending work      : {int(status.get('pending_count', 0))}")
+    print(f"Failed chunks     : {int(status.get('failed_extractions_count', 0))}")
+    print(
+        "Permanent failures: "
+        f"{int(status.get('failed_extractions_permanent_count', 0))}"
+    )
+    if bool(status.get("chroma_available", True)):
+        print(
+            "Chroma chunks     : "
+            f"{status.get('chunks', 0)} ({status.get('collection', 'unknown')})"
+        )
+    else:
+        print(f"Chroma chunks     : degraded ({status.get('chroma_error', 'unknown')})")
+    print(
+        "Property index    : "
+        f"{'available' if bool(status.get('property_index_available', False)) else 'degraded'}"
+    )
+    watchers = status.get("watchers", [])
+    if isinstance(watchers, list) and watchers:
+        print("\nWatchers:")
+        for watcher in watchers:
+            if not isinstance(watcher, dict):
+                continue
+            print(
+                "  - "
+                f"{watcher.get('path', '')} "
+                f"(enabled={watcher.get('enabled', False)}, "
+                f"reload_count={watcher.get('reload_count', 0)}, "
+                f"error_count={watcher.get('error_count', 0)})"
+            )
+
+
+def _print_status_summary(status: dict[str, Any]) -> None:
+    """Render compact one-line status suitable for scripts and shell checks."""
+    chroma_state = "ok" if bool(status.get("chroma_available", True)) else "degraded"
+    prop_state = (
+        "ok" if bool(status.get("property_index_available", False)) else "degraded"
+    )
+    print(
+        " ".join(
+            [
+                f"pending={int(status.get('pending_count', 0))}",
+                f"failed={int(status.get('failed_extractions_count', 0))}",
+                f"permanent={int(status.get('failed_extractions_permanent_count', 0))}",
+                f"chunks={status.get('chunks', 'na')}",
+                f"watchers={len(status.get('watchers', [])) if isinstance(status.get('watchers'), list) else 0}",
+                f"chroma={chroma_state}",
+                f"property_index={prop_state}",
+            ]
+        )
+    )
+
+
+def _print_status_pending(status: dict[str, Any]) -> None:
+    """Print bounded pending sample from status payload."""
+    sample = status.get("pending_sample", [])
+    if not isinstance(sample, list) or not sample:
+        print("No pending files.")
+        return
+    print(f"Pending sample: {len(sample)}")
+    for source in sample:
+        print(f"  {source}")
+    if bool(status.get("pending_sample_truncated", False)):
+        print("\n  (sample truncated; increase --sample-limit up to 100)")
 
 
 def _print_failures() -> None:
@@ -1400,7 +1585,7 @@ def main() -> None:
         "--pending",
         "-p",
         action="store_true",
-        help="show files stuck in the pending journal",
+        help="show bounded pending sample from /indexing/status",
     )
     _ = group.add_argument(
         "--reset",
@@ -1412,22 +1597,57 @@ def main() -> None:
         action="store_true",
         help="show full error text in status/watch output (no truncation)",
     )
+    _ = parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit raw /indexing/status JSON (default/summary/pending paths)",
+    )
+    _ = parser.add_argument(
+        "--url",
+        default=_default_rag_url(),
+        help="override RAG base URL (defaults to stargate.yaml resolution)",
+    )
+    _ = parser.add_argument(
+        "--sample-limit",
+        type=int,
+        default=_DEFAULT_SAMPLE_LIMIT,
+        help="pending sample limit for /indexing/status (0-100)",
+    )
     args = parser.parse_args()
     if args.full_errors:
         _error_truncate_chars = None
 
     if args.watch:
         _watch_mode()
-    elif args.summary:
-        _print_summary(_build_state(_load_events()))
-    elif args.failures:
+        return
+    if args.failures:
         _print_failures()
-    elif args.pending:
-        _print_pending()
-    elif args.reset:
+        return
+    if args.reset:
         _reset()
-    else:
-        _print_snapshot(_build_state(_load_events()))
+        return
+
+    sample_limit = _clamp_sample_limit(args.sample_limit)
+    if args.summary:
+        status = _fetch_indexing_status(args.url, 0)
+        if args.json:
+            print(json.dumps(status, indent=2, sort_keys=True))
+            return
+        _print_status_summary(status)
+        return
+    if args.pending:
+        status = _fetch_indexing_status(args.url, sample_limit)
+        if args.json:
+            print(json.dumps(status, indent=2, sort_keys=True))
+            return
+        _print_status_pending(status)
+        return
+
+    status = _fetch_indexing_status(args.url, sample_limit)
+    if args.json:
+        print(json.dumps(status, indent=2, sort_keys=True))
+        return
+    _print_status_snapshot(status)
 
 
 if __name__ == "__main__":

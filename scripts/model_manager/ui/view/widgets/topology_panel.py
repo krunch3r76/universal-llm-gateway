@@ -248,11 +248,15 @@ class TopologyPanel(Widget):
         log.clear()
 
         try:
-            if build:
-                await self._build_local(scope)
-
             assert self._workspace_root is not None
-            await self._deploy_remotes_parallel(build=build, scope=scope)
+            if build:
+                remote_results = await self._parallel_build(scope)
+                await self._restart_local_services()
+                for hostname, ok in remote_results.items():
+                    if ok:
+                        await self._verify_relay_connection(hostname)
+            else:
+                await self._deploy_remotes_parallel(build=False, scope=scope)
         finally:
             self._deploying = False
             self.post_message(self.DeployStateChanged(deploying=False))
@@ -263,12 +267,38 @@ class TopologyPanel(Widget):
         if not self._deploying and deploy_run_id == self._deploy_run_id:
             self.query_one("#topo-progress", LogStream).display = False
 
-    async def _build_local(self, scope: str) -> None:
-        """Build image + restart local services (sequential)."""
+    async def _parallel_build(self, scope: str) -> dict[str, bool]:
+        """Build images on localhost and all remotes in parallel.
+
+        Returns remote hostname → success mapping for deferred connection
+        verification (remotes start their relay, but master may not be up yet).
+        """
+        remotes = list_remotes()
+        targets = _parse_remote_targets(remotes)
+        results: dict[str, bool] = {}
+
+        self._set_node_status(_MASTER_ROW_KEY, "⟳ building...")
+        for hostname, _ in targets:
+            self._set_node_status(hostname, "⟳ building...")
+
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self._build_local_image(scope))
+            for hostname, address in targets:
+                tg.create_task(
+                    self._deploy_and_build_remote(
+                        hostname=hostname,
+                        address=address,
+                        scope=scope,
+                        results=results,
+                    )
+                )
+
+        return results
+
+    async def _build_local_image(self, scope: str) -> None:
+        """Build the Docker image locally (no service restart)."""
         svc = cast("ModelManagerApp", self.app).service_controller
         mk = _MASTER_ROW_KEY
-        self._set_node_status(mk, "⟳ building...")
-
         self._append_line(mk, f"Building image (scope={scope})...")
         summary = tee_with_summary(
             svc.build_image(scope=scope),
@@ -277,6 +307,13 @@ class TopologyPanel(Widget):
         )
         async for line in summary:
             self._append_line(mk, line)
+
+    async def _restart_local_services(self) -> None:
+        """Restart local services after image build completes."""
+        svc = cast("ModelManagerApp", self.app).service_controller
+        mk = _MASTER_ROW_KEY
+        self._switch_to_node(mk)
+        self._set_node_status(mk, "⟳ restarting...")
 
         self._append_line(mk, "Restarting event service (triggers retention prune)...")
         result = await svc.restart_event_service()
@@ -292,7 +329,7 @@ class TopologyPanel(Widget):
             self._set_node_status(mk, "✗ event service unhealthy")
             self._append_line(mk, "⚠ event_service did not become healthy; aborting.")
             return
-        self._append_line(mk, "Event service healthy. Proceeding with rebuild.")
+        self._append_line(mk, "Event service healthy. Proceeding with restart.")
 
         self._append_line(mk, "Restarting local services...")
         stop_ops: list[tuple[str, Any]] = [
@@ -314,26 +351,21 @@ class TopologyPanel(Widget):
             ("start gateway", svc.start_gateway),
             ("start rag", svc.start_rag),
             ("start cloud_proxy", svc.start_cloud_proxy),
+            ("start stargate", svc.start_stargate),
         ]
         for idx, (label, op) in enumerate(start_ops):
             result = await op()
             self._append_line(mk, result)
-            if _service_operation_failed(result):
+            if label == "start stargate":
+                failed = not result.startswith("Stargate starting")
+            else:
+                failed = _service_operation_failed(result)
+            if failed:
                 self._set_node_status(mk, "✗ local restart failed")
                 self._append_line(mk, f"⚠ {label} failed; aborting restart.")
                 return
             if idx == 0:
                 await asyncio.sleep(0.5)
-
-        result = await svc.start_stargate()
-        self._append_line(mk, result)
-        if not result.startswith("Stargate starting"):
-            self._set_node_status(mk, "✗ stargate failed")
-            self._append_line(
-                mk,
-                "⚠ Stargate did not restart — events file NOT truncated.",
-            )
-            return
         self._set_node_status(mk, "● running")
 
         assert self._workspace_root is not None
@@ -344,6 +376,62 @@ class TopologyPanel(Widget):
             self._append_line(
                 mk, "MCP skipped (not configured in ~/.gateway/mcp.yaml)."
             )
+
+    async def _deploy_and_build_remote(
+        self,
+        *,
+        hostname: str,
+        address: str,
+        scope: str,
+        results: dict[str, bool],
+    ) -> None:
+        """Deploy and build on a remote node (connection verification deferred)."""
+        assert self._workspace_root is not None
+        raw: AsyncIterator[str] = deploy_remote(
+            hostname=hostname,
+            address=address,
+            workspace_root=self._workspace_root,
+            build=True,
+            restart=True,
+            scope=scope,
+        )
+        summary = tee_with_summary(raw, operation="deploy", host=hostname)
+        failed = False
+        async for line in summary:
+            self._append_line(hostname, line)
+            if "[red]" in line:
+                failed = True
+
+        if failed:
+            self._set_node_status(hostname, "✗ failed")
+            self._append_line(hostname, f"--- {hostname}: ✗ failed ---")
+            results[hostname] = False
+        else:
+            results[hostname] = True
+
+    async def _verify_relay_connection(self, hostname: str) -> None:
+        """Verify a relay registered with master after deploy."""
+        remote_id = f"relay-{hostname}"
+        self._set_node_status(hostname, "⟳ connecting...")
+        self._append_line(
+            hostname, f"[{hostname}] Waiting for relay to register with master..."
+        )
+        result = await wait_for_relay_connected(remote_id)
+        status = "● connected" if result.connected else "◌ unreachable"
+        self._set_node_status(hostname, status)
+        if not result.connected and result.reason:
+            self._append_line(hostname, f"  reason: {result.reason}")
+        if not result.connected:
+            self._append_line(hostname, "  relay did not register in time")
+            self._append_line(
+                hostname,
+                "  check: SSH_USER, ~/.gateway/nodes/<host>.env, FEDERATION_KEY_RELAY",
+            )
+            self._append_line(
+                hostname,
+                "  check: remote ./manage relay --restart output for auth/connection errors",
+            )
+        self._append_line(hostname, f"--- {hostname}: {status} ---")
 
     async def _deploy_remotes_parallel(self, *, build: bool, scope: str) -> None:
         """Deploy all remotes in parallel via TaskGroup."""
@@ -379,7 +467,6 @@ class TopologyPanel(Widget):
     ) -> None:
         """Deploy one remote, buffering output to its node key."""
         assert self._workspace_root is not None
-        remote_id = f"relay-{hostname}"
         raw: AsyncIterator[str] = deploy_remote(
             hostname=hostname,
             address=address,
@@ -392,7 +479,6 @@ class TopologyPanel(Widget):
         failed = False
         async for line in summary:
             self._append_line(hostname, line)
-            # deploy_remote uses [red]...[/red] exclusively to signal errors
             if "[red]" in line:
                 failed = True
 
@@ -401,26 +487,7 @@ class TopologyPanel(Widget):
             self._append_line(hostname, f"--- {hostname}: ✗ failed ---")
             return
 
-        self._set_node_status(hostname, "⟳ connecting...")
-        self._append_line(
-            hostname, f"[{hostname}] Waiting for relay to register with master..."
-        )
-        result = await wait_for_relay_connected(remote_id)
-        status = "● connected" if result.connected else "◌ unreachable"
-        self._set_node_status(hostname, status)
-        if not result.connected and result.reason:
-            self._append_line(hostname, f"  reason: {result.reason}")
-        if not result.connected:
-            self._append_line(hostname, "  relay did not register in time")
-            self._append_line(
-                hostname,
-                "  check: SSH_USER, ~/.gateway/nodes/<host>.env, FEDERATION_KEY_RELAY",
-            )
-            self._append_line(
-                hostname,
-                "  check: remote ./manage relay --restart output for auth/connection errors",
-            )
-        self._append_line(hostname, f"--- {hostname}: {status} ---")
+        await self._verify_relay_connection(hostname)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────

@@ -343,6 +343,11 @@ class FederationConfig:
     # Master must poll this Remote via HTTP to receive telemetry
     disable_websocket: bool = False
 
+    # Edge mode: periodic full-state snapshot interval (milliseconds)
+    # Reconciles Master's view of loaded_models after disconnect/reconnect.
+    # 0 = disabled (current behavior — snapshot only at wiring time).
+    snapshot_interval_ms: int = 120_000
+
     # Circuit breaker (Master mode) - explicit field with defaults
     circuit_breaker: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
 

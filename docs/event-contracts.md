@@ -11,7 +11,7 @@ All events follow this structure:
   "type": "stargate_event",
   "signal": "string",
   "payload": {},
-  "role": "observation | coordination",
+  "role": "observation | coordination | debug | realtime",
   "scope": "global | node",
   "timestamp": "ISO-8601",
   "id": "integer (monotonic)",
@@ -29,6 +29,7 @@ Validated by `@event_factory` at call time.
 | `role` | `coordination` | Consumed by state machines, admission control, queues. Suppressing breaks correctness. |
 | `role` | `observation` | Debugging/monitoring only. Safe to suppress, deduplicate, or scope to originating node. |
 | `role` | `debug` | Temporary diagnostic instrumentation. Pruned at session boundary (current session only). Excluded from business-metric operations. |
+| `role` | `realtime` | High-frequency ephemeral events stored only in an in-memory ring buffer (not SQLite). Broadcast to WebSocket subscribers. Excluded from business-metric operations. |
 | `scope` | `node` | Meaningful only where the action originates. Not re-emitted on master. |
 | `scope` | `global` | Needs master-level visibility. Available in master event stream. |
 
@@ -57,6 +58,34 @@ await emit_debug_event(
 ```
 
 **Convention**: Debug signals use `*.debug.*` naming (e.g., `pipeline.debug.validate`).
+
+### Realtime Events
+
+Signals with `role="realtime"` are high-frequency ephemeral events that bypass
+SQLite entirely. They are stored in an in-memory ring buffer (default 10,000
+events, configurable via `REALTIME_BUFFER_SIZE` env var) and broadcast to
+WebSocket subscribers in real-time.
+
+**Storage**: In-memory `deque(maxlen=N)` only — never written to SQLite. Events
+are lost on service restart. The ring buffer overwrites oldest events when full.
+
+**WebSocket replay**: On new WebSocket subscription, the current ring buffer
+contents are sent as a replay burst before switching to live push. This gives
+clients a window of recent realtime activity without needing SQLite.
+
+**Query visibility**: Not present in SQLite, so excluded from all named operations
+except `realtime-snapshot` (which reads directly from the ring buffer). Also
+excluded defensively from business-metric operations via `role NOT IN ('debug',
+'realtime')` filters.
+
+**Query**: Use `realtime-snapshot` operation to read the buffer:
+```python
+query_observability(operation="realtime-snapshot", params={"limit": 50})
+```
+
+**Use cases**: Heartbeat telemetry, high-frequency resource updates, live
+streaming metrics — any signal where persistence is unnecessary and volume
+would bloat the SQLite store.
 
 ### Coordination Events
 
@@ -309,9 +338,12 @@ rag.started
           └─> rag.watch.initial.complete
       └─> rag.watch.reindex.complete*        (* zero or more)
           └─> rag.file.skipped               (* if unchanged or duplicate PDF)
+          └─> rag.extraction.circuit.skipped  (* if circuit breaker is OPEN — batch skipped entirely)
           └─> rag.extraction.batch.started   (* if extraction enabled and content changed)
               └─> rag.extraction.completed | rag.extraction.failed  (* N per chunk)
               └─> rag.extraction.permanently.skipped  (* ≤ M; when chunk crosses max_attempts)
+              └─> rag.extraction.circuit.opened  (* when consecutive capacity failures trip the circuit)
+              └─> rag.extraction.circuit.closed  (* when a probe succeeds and capacity recovers)
               └─> rag.extraction.batch.completed | rag.extraction.batch.timed.out
           └─> rag.extraction.batch.skipped    (* if all chunks permanently failed)
           └─> rag.embedding.chunk.fallback*   (* zero or more; chunk kept as zero vector on persistent embedding fault)
@@ -400,6 +432,9 @@ Payload semantics:
 | `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | All chunks permanently failed — no pipeline call made |
 | `rag.extraction.failed` | `chunk_id`, `error` | Per-chunk extraction failure (expected iteration result missing or invalid after batch parsing) |
 | `rag.extraction.permanently.skipped` | `chunk_id`, `source`, `attempt_count` | Chunk crossed `max_extraction_attempts`; permanently abandoned. Persisted as `permanent=1` in `failed_extractions`. Emitted exactly once per chunk. |
+| `rag.extraction.circuit.opened` | `consecutive_failures`, `cooldown_s` | Circuit breaker tripped — consecutive capacity errors from Stargate exceeded threshold. All workers skip extraction until cooldown elapses and probe succeeds. |
+| `rag.extraction.circuit.closed` | _(empty)_ | Circuit breaker closed after successful probe — capacity recovered. |
+| `rag.extraction.circuit.skipped` | `file`, `chunk_count` | Extraction batch skipped because circuit breaker is OPEN. Chunks remain indexed; extraction deferred to next reconcile sweep after circuit closes. |
 
 Between these, per-chunk signals fire: N × `rag.extraction.completed` + M × `rag.extraction.failed`
 where N + M ≤ `chunk_count`. `file` is the correlation key — matches `rag.watch.reindex.complete.file`.
@@ -1100,7 +1135,7 @@ provider HTTP failures.
 | `federation.connection.established` | `remote_id`, `transport` | `latency_ms` |
 | `federation.connection.authenticated` | `remote_id`, `method` | - |
 | `federation.connection.lost` | `remote_id`, `reason` | - |
-| `federation.snapshot.sent` | `gateway_id`, `all_models_count`, `available_models_count`, `gap_count` | - |
+| `federation.snapshot.sent` | `gateway_id`, `all_models_count`, `available_models_count`, `gap_count`, `trigger` | `trigger`: `"initial"` (wiring) or `"periodic"` (reconciliation timer) |
 | `federation.telemetry.received` | `remote_id`, `model_count` | `resource_summary`, `telemetry_age_ms`, `msg_type`, `catalog_model_count`, `loaded_model_count`, `count_source` |
 | `federation.telemetry.applied` | `remote_id`, `changes` | - |
 | `federation.telemetry.marked.stale` | `remote_id`, `age_seconds`, `threshold_seconds` | - |
@@ -1169,6 +1204,9 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.extraction.recovery.completed` | `file`, `entities`, `topics` | recovery pass for missing extraction metadata completed successfully |
 | `rag.extraction.recovery.skipped` | `file`, `reason` | recovery skipped (e.g. no documents in ChromaDB, all chunks permanently failed) |
 | `rag.extraction.recovery.failed` | `file`, `reason` | recovery attempted but extraction metadata could not be committed |
+| `rag.extraction.circuit.opened` | `consecutive_failures`, `cooldown_s` | circuit breaker tripped on capacity errors |
+| `rag.extraction.circuit.closed` | _(empty)_ | circuit breaker closed after successful probe |
+| `rag.extraction.circuit.skipped` | `file`, `chunk_count` | batch skipped due to open circuit breaker |
 | `rag.extraction.completed` | `chunk_id`, `entities`, `topics` | - |
 | `rag.extraction.failed` | `chunk_id`, `error` | - |
 | `rag.property.index.rebuilt` | `collection`, `count` | - |
@@ -1466,6 +1504,10 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.request.started` | `method`, `client_ip`, `mcp_method`, `auth_mode` | HTTP request received at `/mcp` |
 | `mcp.request.completed` | `method`, `client_ip`, `duration_s`, `auth_mode` | Request completed normally |
 | `mcp.request.failed` | `method`, `client_ip`, `duration_s`, `error`, `exc_type`, `auth_mode` | Request raised an exception |
+| `mcp.profile.bound` | `profile`, `auth_mode` | Auth middleware mapped request token to profile |
+| `mcp.profile.rejected` | `reason` | Profile admission rejected token/profile mapping |
+| `mcp.profile.tool.denied` | `profile`, `tool`, `entrypoint`, `reason` | Profile policy denied a direct or dispatch tool |
+| `mcp.profile.dispatch.routed` | `profile`, `tool` | Dispatch accepted subtool under active profile |
 | `mcp.sse.stream.started` | — | SSE stream opened |
 | `mcp.sse.stream.ended` | `duration_s`, `reason` | SSE stream closed cleanly |
 | `mcp.sse.stream.aborted` | `duration_s`, `reason`, `exc_type` | SSE stream dropped on error |
@@ -1476,6 +1518,20 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.manage.service.called` | `action`, `service` | manage_service tool invoked |
 | `mcp.manage.service.completed` | `action`, `service`, `duration_s` | manage_service completed successfully |
 | `mcp.manage.service.failed` | `action`, `service`, `error`, `duration_s` | manage_service returned error |
+
+## MCP Stdio Proxy Signals
+
+Fallback-only stdio proxy (`source: "mcp-stdio-proxy"`) emits transport-level
+signals. These remain documented while proxy fallback remains supported.
+
+| Signal | Payload fields | Description |
+|---|---|---|
+| `proxy.started` | `watchdog_s`, `socket_s`, `max_inflight`, `mcp_url` | Proxy process initialized |
+| `proxy.request.started` | `msg_id`, `mcp_method`, `is_notification` | JSON-RPC message accepted for relay |
+| `proxy.request.completed` | `msg_id`, `mcp_method`, `duration_s` | Request relay completed |
+| `proxy.request.error` | `msg_id`, `mcp_method`, `duration_s`, `error`, `error_type` | Request relay failed |
+| `proxy.request.timeout` | `msg_id`, `mcp_method`, `duration_s`, `watchdog_s` | Watchdog timeout fired |
+| `proxy.heartbeat.forwarded` | `msg_id`, `mcp_method`, `count` | SSE heartbeat forwarded as progress |
 
 ### OAuth Signals
 

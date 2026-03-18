@@ -30,6 +30,7 @@ from .telemetry import (
     build_initial_telemetry_payload,
     create_model_lifecycle_callbacks,
     create_periodic_heartbeat_task,
+    create_periodic_snapshot_task,
     create_resource_update_callback,
 )
 
@@ -105,6 +106,8 @@ class EdgeFederationServer:
 
         # Periodic heartbeat task (for preventing telemetry staleness)
         self._heartbeat_task: asyncio.Task[None] | None = None
+        # Periodic snapshot task (for federation state reconciliation)
+        self._snapshot_task: asyncio.Task[None] | None = None
 
         # Pending measurement requests awaiting response from Master
         self._pending_requests: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -181,15 +184,15 @@ class EdgeFederationServer:
                     )
                 return False
 
-        # Register authenticated peer (atomic — no await between check and write)
-        self._authenticated_peers[peer_id] = websocket
-
         await self._send_auth_result(
             websocket,
             True,
             "Authenticated",
             stargate_id=self._config.stargate_id,
         )
+
+        # Register peer only after auth acknowledgement is successfully sent.
+        self._authenticated_peers[peer_id] = websocket
 
         logger.info(f"✅ Peer {peer_id} authenticated")
         if self._event_bus is not None:
@@ -585,6 +588,10 @@ class EdgeFederationServer:
         # Start periodic heartbeat to prevent telemetry staleness
         self._start_periodic_heartbeat(ws_client)
 
+        # ─── Periodic Snapshot ─────────────────────────────────────────────
+        # Reconcile Master's federation state (loaded_models, resources)
+        self._start_periodic_snapshot(ws_client)
+
         logger.info(
             f"✅ Gateway telemetry wired for Edge forwarding (gateway={gateway_url})"
         )
@@ -719,6 +726,66 @@ class EdgeFederationServer:
             node_id=self._config.node_id,
             broadcast_callback=self._broadcast_to_peers,
         )
+
+    def _start_periodic_snapshot(self, ws_client: GatewayWebSocketClient) -> None:
+        """
+        Start periodic GATEWAY_SNAPSHOT task for federation state reconciliation.
+
+        Heals Master's loaded_models view after disconnect/reconnect cycles where
+        the gateway was recreated and discrete MODEL_LOADED events were lost.
+
+        Interval from config (snapshot_interval_ms). 0 = disabled.
+        """
+        interval_ms = self._config.snapshot_interval_ms
+        if interval_ms <= 0:
+            logger.info(
+                "📊 Periodic GATEWAY_SNAPSHOT disabled (snapshot_interval_ms=0)"
+            )
+            return
+
+        interval_s = interval_ms / 1000.0
+
+        self._snapshot_task = create_periodic_snapshot_task(
+            ws_client=ws_client,
+            source=self._source,
+            interval_s=interval_s,
+            refresh_callback=self._apply_periodic_snapshot,
+        )
+
+    async def _apply_periodic_snapshot(self, payload: dict[str, Any]) -> None:
+        """
+        Replace cached GATEWAY_SNAPSHOT and broadcast to all peers.
+
+        Atomic overwrite (not merge) — ensures stale models don't persist.
+        """
+        self._cached_gateway_snapshot = {
+            "type": FederationMessageType.GATEWAY_SNAPSHOT.value,
+            "data": payload,
+        }
+
+        await self._broadcast_to_peers(self._cached_gateway_snapshot)
+
+        loaded_count = len(payload.get("loaded_models", []))
+        model_count = len(payload.get("available_models", []))
+        logger.info(
+            f"📊 Periodic GATEWAY_SNAPSHOT broadcast: "
+            f"{model_count} available, {loaded_count} loaded"
+        )
+
+        if self._event_bus is not None:
+            from src.scheduling.events import FederationSnapshotSent
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    FederationSnapshotSent(
+                        gateway_id=self._source.gateway_id,
+                        all_models_count=model_count,
+                        available_models_count=model_count,
+                        trigger="periodic",
+                    )
+                ),
+                name="emit-federation-periodic-snapshot-sent",
+            )
 
     async def _forward_request_inference_started(self, event: Any) -> None:
         """Forward request.inference.started to connected Master peers.

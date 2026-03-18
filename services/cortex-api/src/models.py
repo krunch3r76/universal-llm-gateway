@@ -1,10 +1,19 @@
+"""Pydantic schemas for Cortex API request/response payloads."""
+
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+# Schema migration to structured types (list[str], etc.) was deferred as intentional
+# debt. API contract is string-passthrough at the boundary; callers parse. Do not
+# "fix" to strict types without a product decision — see thread 045.
+
 # --- Todos ---
+
+TodoStatus = Literal["done", "deferred", "open"]
+AssertionConfidence = Literal["confirmed", "believed", "suspected", "hypothesized"]
 
 
 class TodoCreate(BaseModel):
@@ -14,22 +23,24 @@ class TodoCreate(BaseModel):
     context: str = "universal-llm-gateway"
     priority: str = "short_term"
     description: str = ""
-    refs: dict[str, str] = Field(default_factory=dict)
+    refs: dict[str, Any] = Field(default_factory=dict)
 
 
 class TodoStatusUpdate(BaseModel):
-    status: str = Field(description="One of: done, deferred, open")
+    status: TodoStatus = Field(
+        description="One of: done, deferred, open"
+    )
 
 
 class TodoItem(BaseModel):
     id: str
     title: str
-    status: str
+    status: TodoStatus
     priority: str
     domain: str
     context: str
     description: str = ""
-    refs: dict[str, str] = Field(default_factory=dict)
+    refs: dict[str, Any] = Field(default_factory=dict)
     notes: str = ""
     created_at: str | None = None
     updated_at: str | None = None
@@ -42,14 +53,17 @@ class TodoList(BaseModel):
 # --- Entities ---
 
 
-class EntityCreate(BaseModel):
-    id: str
-    type: str
-    name: str
+class _EntityCommon(BaseModel):
     aliases: list[str] | None = None
     attributes: dict[str, Any] | None = None
     notes: str | None = None
     source_uri: str | None = None
+
+
+class EntityCreate(_EntityCommon):
+    id: str
+    type: str
+    name: str
 
 
 class EntitySummary(BaseModel):
@@ -59,14 +73,10 @@ class EntitySummary(BaseModel):
     created_at: str
 
 
-class EntityDetail(BaseModel):
+class EntityDetail(_EntityCommon):
     id: str
     type: str
     name: str
-    aliases: list[str] | None = None
-    attributes: dict[str, Any] | None = None
-    notes: str | None = None
-    source_uri: str | None = None
     created_at: str
     updated_at: str
     assertions: list[AssertionItem] = Field(default_factory=list)
@@ -82,7 +92,7 @@ class EntityList(BaseModel):
 class AssertionCreate(BaseModel):
     entity_id: str
     claim: str
-    confidence: str = Field(
+    confidence: AssertionConfidence = Field(
         description="One of: confirmed, believed, suspected, hypothesized"
     )
     evidence: str
@@ -93,7 +103,7 @@ class AssertionItem(BaseModel):
     id: int
     entity_id: str | None = None
     claim: str
-    confidence: str
+    confidence: AssertionConfidence
     evidence: str | None = None
     evidence_uris: list[str] | None = None
     created_at: str
@@ -121,7 +131,7 @@ class DeadlineList(BaseModel):
 # --- Session Journals ---
 
 
-class SessionJournalCreate(BaseModel):
+class _SessionJournalCommon(BaseModel):
     timestamp: str
     agent: str
     summary: str
@@ -131,15 +141,12 @@ class SessionJournalCreate(BaseModel):
     file_path: str | None = None
 
 
-class SessionJournalItem(BaseModel):
+class SessionJournalCreate(_SessionJournalCommon):
+    pass
+
+
+class SessionJournalItem(_SessionJournalCommon):
     id: int
-    timestamp: str
-    agent: str
-    summary: str
-    domains: list[str] | None = None
-    decisions: list[str] | None = None
-    open_items: list[str] | None = None
-    file_path: str | None = None
 
 
 class SessionJournalList(BaseModel):

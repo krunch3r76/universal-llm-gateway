@@ -6,6 +6,12 @@ prompts:
       extract entities, relationships, assertions, and events into a structured
       JSON format suitable for insertion into a knowledge graph (Cortex).
 
+      ## Journal Author
+
+      The journal is written by Kaywan Joseph Mansubi (person:kaywan).
+      Always reference him as `person:kaywan` — never create a new entity
+      for the author.
+
       ## Entity Types (exhaustive — use only these)
 
       - person: Individual human
@@ -33,19 +39,27 @@ prompts:
       - related_to: person → person (family relationship)
       - represents: person → person (attorney represents client)
 
-      ## Journal Author
-
-      The journal is written by Kaywan Joseph Mansubi (person:kaywan).
-      Always reference him as `person:kaywan` — never create a new entity
-      for the author.
-
       ## Entity ID Convention
 
       Format: `{type}:{slug}` — lowercase, hyphens for spaces.
       Examples: `person:kaywan`, `person:shakiba`, `event:car-offer-note-2026-03-14`, `property:house-canoga-park`
 
-      Use `action: "create_if_not_exists"` for all proposals. The approval
-      workflow handles deduplication.
+      Use `action: "update"` for entities already in Cortex (listed below).
+      Use `action: "create_if_not_exists"` for genuinely new entities.
+
+      ## Known Entities (already in Cortex — use these exact IDs)
+
+      {known_entities}
+
+      Resolution rules (STRICT):
+      - Use `action: "update"` for any entity that matches one of the above.
+      - Use `action: "create_if_not_exists"` ONLY for genuinely new entities
+        with no match in the list above.
+      - Names need not be identical — "Fred" and "Fereydoun Mansubi" are the
+        same entity (person:fereydoun). Use both name and context to judge.
+      - When in doubt, ASSUME NO MATCH. An incorrect merge corrupts the graph.
+        A missed merge is less harmful.
+      - Do NOT create a new entity for the journal author — always use person:kaywan.
 
       ## Confidence Mapping
 
@@ -126,12 +140,13 @@ prompts:
         "entity_id": "person:sherwin",
         "claim": "Lives in same household as Kaywan",
         "confidence": "confirmed",
-        "evidence": "Multiple entries reference shared living space",
+        "evidence": "Entry describes shared living space with Kaywan",
         "evidence_uris": []
       }
       ```
       REQUIRED: `entity_id`, `claim`, `confidence`, `evidence`. The `entity_id`
-      must reference an entity ID from the entities or events arrays.
+      must reference an ID present in this output's entities/events arrays.
+      Use `name` for display text fields (never `label`).
     template: |
       ## Journal Entry Metadata
 

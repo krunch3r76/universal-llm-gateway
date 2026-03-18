@@ -110,8 +110,13 @@ class VramReconciler:
         tracked_models = set(self._resource_tracker.get_loaded_models())
         running_processes = self._worker_controller.get_running_worker_processes()
 
-        # Sweep 1: orphaned processes (running but not tracked)
-        phantom_models = sorted(set(running_processes) - tracked_models)
+        # Sweep 1: orphaned processes (running but not tracked as loaded/busy)
+        # Models in LOADING or UNLOADING state have legitimate running workers —
+        # they are transitioning and must not be killed as phantoms.
+        transitioning = self._get_transitioning_models()
+        phantom_models = sorted(
+            set(running_processes) - tracked_models - transitioning
+        )
         for model_id in phantom_models:
             pid = running_processes.get(model_id)
             tracker_status = self._get_tracker_status(model_id)
@@ -286,6 +291,19 @@ class VramReconciler:
         if info and info.status:
             return info.status.value
         return None
+
+    def _get_transitioning_models(self) -> set[str]:
+        """Return model IDs currently in LOADING or UNLOADING state.
+
+        These have legitimate worker processes and must not be treated as phantoms.
+        """
+        from .types import ModelStatus
+
+        return {
+            model_id
+            for model_id, info in self._resource_tracker._models.items()
+            if info.status in (ModelStatus.LOADING, ModelStatus.UNLOADING)
+        }
 
     async def _emit_phantom_detected(
         self, model_id: str, tracker_status: str | None

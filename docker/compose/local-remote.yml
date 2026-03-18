@@ -126,6 +126,7 @@ services:
     environment:
       # Stargate config
       - STARGATE_CONFIG=/app/config/stargate_config.override.yaml
+      - CORTEX_API_URL=http://cortex-api:8300
       
       # Federation mode
       - REMOTE_ID=${REMOTE_ID:-local-remote}

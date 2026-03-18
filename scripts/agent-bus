@@ -1,0 +1,402 @@
+#!/usr/bin/env python3
+"""Agent Bus CLI — fetch, reply, list threads over UDS.
+
+Bypasses the MCP stdio proxy entirely, talking directly to the agent-bus
+service over its Unix domain socket.  Designed for use by Cursor agents
+(via Shell tool) to avoid extension-host freezes on large payloads.
+
+Usage:
+  agent-bus fetch --to cursor --last 1 --unread --mark-read
+  agent-bus fetch --thread 049 --last 5
+  agent-bus post --slug "my-topic" --to web --subject "Title" --body-file /tmp/body.md
+  agent-bus reply --thread 049 --to web --subject "done" --body "Phase 1 shipped" --after-turn 3
+  agent-bus reply --thread 049 --to web --subject "done" --body-file /tmp/reply.md --after-turn 3
+  agent-bus threads
+  agent-bus threads --status closed
+  agent-bus update-thread --thread 049 --status closed --summary "Entity resolution shipped"
+  agent-bus delete-thread --thread 054
+  agent-bus delete-thread --thread 054 --force
+  agent-bus delete-turn --thread 053 --turn 14
+  agent-bus delete-turn --thread 053 --turn 14 --force
+  agent-bus mark-closed-read   # mark every turn read in all closed threads (incl. superseded)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlencode
+
+_SOCKET = "/tmp/universal-protocol/agent-bus.sock"
+_MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
+
+
+def _resolve_token() -> str:
+    """Read AGENT_BUS_TOKEN from ~/.gateway/mcp.yaml."""
+    try:
+        import yaml
+
+        with open(_MCP_YAML) as f:
+            cfg = yaml.safe_load(f)
+        token = cfg.get("AGENT_BUS_TOKEN", "")
+        if not token:
+            print("AGENT_BUS_TOKEN not found in ~/.gateway/mcp.yaml", file=sys.stderr)
+            sys.exit(1)
+        return token
+    except Exception as e:
+        print(f"Failed to read token from {_MCP_YAML}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _request(
+    method: str,
+    path: str,
+    token: str,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """HTTP request to agent-bus over UDS."""
+    import httpx
+
+    transport = httpx.HTTPTransport(uds=_SOCKET)
+    headers = {"Authorization": f"Bearer {token}"}
+    with httpx.Client(transport=transport, timeout=10.0) as client:
+        resp = client.request(
+            method, f"http://localhost{path}", json=body, headers=headers
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
+    params: dict[str, Any] = {"last": args.last}
+    if args.thread:
+        params["thread"] = args.thread
+    if args.to:
+        params["to"] = args.to
+        if args.unread:
+            params["unread"] = "true"
+        if args.compact:
+            params["compact"] = "true"
+    if args.mark_read:
+        params["mark_read"] = "true"
+    result = _request("GET", f"/turns?{urlencode(params)}", token)
+    indent = None if args.compact else 2
+    print(json.dumps(result, indent=indent, default=str))
+
+
+def _cmd_post(args: argparse.Namespace, token: str) -> None:
+    """Create a new thread (auto-assigned ID) and post the first turn."""
+    if args.body_file:
+        body_text = Path(args.body_file).read_text(encoding="utf-8")
+    elif args.body:
+        body_text = args.body
+    else:
+        print("post requires --body or --body-file", file=sys.stderr)
+        sys.exit(1)
+    thread_body: dict[str, Any] = {"slug": args.slug}
+    if args.summary:
+        thread_body["summary"] = args.summary
+    thread_result = _request("POST", "/threads", token, body=thread_body)
+    thread_id = thread_result["id"]
+    turn_payload = {
+        "thread": thread_id,
+        "from": args.from_agent,
+        "to": args.to,
+        "subject": args.subject,
+        "body": body_text,
+        "status": "open",
+        "after_turn": 0,
+    }
+    turn_result = _request("POST", "/turns", token, body=turn_payload)
+    print(
+        json.dumps(
+            {"thread": thread_result, "turn": turn_result}, indent=2, default=str
+        )
+    )
+
+
+def _cmd_reply(args: argparse.Namespace, token: str) -> None:
+    if args.body_file:
+        body_text = Path(args.body_file).read_text(encoding="utf-8")
+    elif args.body:
+        body_text = args.body
+    else:
+        print("reply requires --body or --body-file", file=sys.stderr)
+        sys.exit(1)
+    payload = {
+        "thread": args.thread,
+        "from": args.from_agent,
+        "to": args.to,
+        "subject": args.subject,
+        "body": body_text,
+        "status": args.status,
+        "after_turn": args.after_turn,
+    }
+    result = _request("POST", "/turns", token, body=payload)
+    print(json.dumps(result, indent=2, default=str))
+
+
+def _cmd_append(args: argparse.Namespace, token: str) -> None:
+    """Append content to an unread turn's body."""
+    if args.body_file:
+        content = Path(args.body_file).read_text(encoding="utf-8")
+    elif args.body:
+        content = args.body
+    else:
+        print("append requires --body or --body-file", file=sys.stderr)
+        sys.exit(1)
+
+    turns_resp = _request(
+        "GET",
+        f"/turns?{urlencode({'thread': args.thread, 'last': 50, 'compact': 'true'})}",
+        token,
+    )
+    turns = turns_resp.get("turns", turns_resp) if isinstance(turns_resp, dict) else turns_resp
+    turn_id = None
+    for t in turns:
+        if isinstance(t, dict) and t.get("turn_number") == args.turn:
+            turn_id = t["id"]
+            break
+    if turn_id is None:
+        print(f"Turn {args.turn} not found in thread {args.thread}", file=sys.stderr)
+        sys.exit(1)
+
+    result = _request("PATCH", f"/turns/{turn_id}", token, body={"append": content})
+    print(json.dumps(result, indent=2, default=str))
+
+
+def _cmd_threads(args: argparse.Namespace, token: str) -> None:
+    params = {} if args.status == "all" else {"status": args.status}
+    qs = urlencode(params)
+    path = f"/threads?{qs}" if qs else "/threads"
+    result = _request("GET", path, token)
+    print(json.dumps(result, indent=2, default=str))
+
+
+def _cmd_mark_closed_read(args: argparse.Namespace, token: str) -> None:
+    """Set read_at on all turns in threads with status=closed (incl. superseded)."""
+    result = _request("GET", "/threads?status=closed", token)
+    threads = result.get("threads", [])
+    for t in threads:
+        tid = t["id"]
+        qs = urlencode(
+            {
+                "thread": tid,
+                "last": args.last,
+                "mark_read": "true",
+                "include_superseded": "true",
+            }
+        )
+        _request("GET", f"/turns?{qs}", token)
+    after = _request("GET", "/threads?status=closed", token)
+    still = [
+        x["id"] for x in after.get("threads", []) if (x.get("unread_count") or 0) > 0
+    ]
+    print(
+        json.dumps(
+            {
+                "threads_marked": len(threads),
+                "threads_still_unread": still,
+            },
+            indent=2,
+        )
+    )
+    if still:
+        sys.exit(1)
+
+
+def _cmd_update_thread(args: argparse.Namespace, token: str) -> None:
+    payload: dict[str, str] = {}
+    if args.status:
+        payload["status"] = args.status
+    if args.summary:
+        payload["summary"] = args.summary
+    if not payload:
+        print("update-thread requires --status and/or --summary", file=sys.stderr)
+        sys.exit(1)
+    result = _request("PATCH", f"/threads/{args.thread}", token, body=payload)
+    print(json.dumps(result, indent=2, default=str))
+
+
+def _cmd_delete_thread(args: argparse.Namespace, token: str) -> None:
+    import httpx
+
+    params = urlencode({"force": "true"}) if args.force else ""
+    path = f"/threads/{args.thread}?{params}" if params else f"/threads/{args.thread}"
+    try:
+        result = _request("DELETE", path, token)
+    except httpx.HTTPStatusError as e:
+        detail = ""
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            pass
+        msg = detail or f"HTTP {e.response.status_code}"
+        print(f"delete-thread failed: {msg}", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(result, indent=2, default=str))
+
+
+def _cmd_delete_turn(args: argparse.Namespace, token: str) -> None:
+    import httpx
+
+    turns_resp = _request(
+        "GET",
+        f"/turns?{urlencode({'thread': args.thread, 'last': 50, 'compact': 'true'})}",
+        token,
+    )
+    turns = turns_resp.get("turns", turns_resp) if isinstance(turns_resp, dict) else turns_resp
+    turn_id = None
+    for t in turns:
+        if isinstance(t, dict) and t.get("turn_number") == args.turn:
+            turn_id = t["id"]
+            break
+    if turn_id is None:
+        print(f"Turn {args.turn} not found in thread {args.thread}", file=sys.stderr)
+        sys.exit(1)
+
+    force_params = urlencode({"force": "true"}) if args.force else ""
+    path = f"/turns/{turn_id}?{force_params}" if force_params else f"/turns/{turn_id}"
+    try:
+        result = _request("DELETE", path, token)
+    except httpx.HTTPStatusError as e:
+        detail = ""
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            pass
+        msg = detail or f"HTTP {e.response.status_code}"
+        print(f"delete-turn failed: {msg}", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(result, indent=2, default=str))
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Agent Bus CLI — direct UDS access.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    sub = p.add_subparsers(dest="command", required=True)
+
+    # fetch
+    f = sub.add_parser("fetch", help="Fetch turns (inbox or thread history)")
+    f.add_argument("--to", help="Agent name for inbox mode")
+    f.add_argument("--thread", help="Thread ID for thread history mode")
+    f.add_argument("--last", type=int, default=5, help="Max turns (default 5)")
+    f.add_argument(
+        "--unread", action="store_true", help="Filter to unread (inbox mode)"
+    )
+    f.add_argument(
+        "--mark-read", action="store_true", help="Mark returned turns as read"
+    )
+    f.add_argument("--compact", action="store_true", help="Omit turn bodies")
+
+    # post (new thread + first turn)
+    po = sub.add_parser("post", help="Create a new thread and post the first turn")
+    po.add_argument("--slug", required=True, help="Thread slug (human-readable name)")
+    po.add_argument("--to", required=True, help="Recipient agent")
+    po.add_argument("--subject", required=True)
+    po.add_argument("--body", help="Inline body text")
+    po.add_argument("--body-file", help="Read body from file path")
+    po.add_argument("--summary", help="Thread summary")
+    po.add_argument("--from-agent", default="cursor", help="Sender (default: cursor)")
+
+    # reply
+    r = sub.add_parser("reply", help="Post a turn to a thread")
+    r.add_argument("--thread", required=True)
+    r.add_argument("--to", required=True, help="Recipient agent")
+    r.add_argument("--subject", required=True)
+    r.add_argument("--body", help="Inline body text")
+    r.add_argument("--body-file", help="Read body from file path")
+    r.add_argument("--after-turn", type=int, required=True)
+    r.add_argument("--from-agent", default="cursor", help="Sender (default: cursor)")
+    r.add_argument(
+        "--status", default="open", help="Thread status hint (default: open)"
+    )
+
+    # append
+    ap = sub.add_parser(
+        "append", help="Append content to an unread turn's body"
+    )
+    ap.add_argument("--thread", required=True)
+    ap.add_argument("--turn", type=int, required=True, help="Turn number")
+    ap.add_argument("--body", help="Inline text to append")
+    ap.add_argument("--body-file", help="Read append content from file")
+
+    # threads
+    t = sub.add_parser("threads", help="List threads")
+    t.add_argument(
+        "--status",
+        default="active",
+        help="Filter: active, closed, all (default: active)",
+    )
+
+    mcr = sub.add_parser(
+        "mark-closed-read",
+        help="Mark all turns read in closed threads (incl. superseded)",
+    )
+    mcr.add_argument(
+        "--last",
+        type=int,
+        default=50_000,
+        help="Max turns per thread to fetch/mark (default 50000)",
+    )
+
+    # update-thread
+    u = sub.add_parser("update-thread", help="Update thread status/summary")
+    u.add_argument("--thread", required=True)
+    u.add_argument("--status", help="New status")
+    u.add_argument("--summary", help="Thread summary")
+
+    # delete-thread
+    d = sub.add_parser("delete-thread", help="Delete a thread and all its turns")
+    d.add_argument("--thread", required=True)
+    d.add_argument(
+        "--force", action="store_true",
+        help="Delete even if turns have been read",
+    )
+
+    # delete-turn
+    dt = sub.add_parser("delete-turn", help="Delete a single turn from a thread")
+    dt.add_argument("--thread", required=True)
+    dt.add_argument("--turn", type=int, required=True, help="Turn number")
+    dt.add_argument(
+        "--force", action="store_true",
+        help="Delete even if the turn has been read",
+    )
+
+    return p
+
+
+def main() -> None:
+    args = _build_parser().parse_args()
+    token = _resolve_token()
+    try:
+        {
+            "fetch": _cmd_fetch,
+            "post": _cmd_post,
+            "reply": _cmd_reply,
+            "append": _cmd_append,
+            "threads": _cmd_threads,
+            "mark-closed-read": _cmd_mark_closed_read,
+            "update-thread": _cmd_update_thread,
+            "delete-thread": _cmd_delete_thread,
+            "delete-turn": _cmd_delete_turn,
+        }[args.command](args, token)
+    except FileNotFoundError:
+        print(
+            "Agent-bus socket not found. Is the agent-bus service running?",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except Exception as e:
+        print(f"agent-bus error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

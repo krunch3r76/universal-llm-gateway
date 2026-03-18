@@ -36,11 +36,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from dataclasses import dataclass, field
 
 import httpx
+from universal_event_bus import Event, EventBus
 
 from services.rag.config import KnowledgeExtractionConfig
+from services.rag.events.extraction import (
+    rag_extraction_circuit_closed,
+    rag_extraction_circuit_opened,
+)
+from services.rag.extraction_circuit import ExtractionCircuit
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +67,9 @@ _batch_overhead_s: float = 30.0
 # accepting requests. MODEL_NOT_FOUND 404s during this window are transient.
 _PIPELINE_REGISTRATION_TIMEOUT_S = 60.0
 _PIPELINE_REGISTRATION_POLL_S = 3.0
+
+_circuit: ExtractionCircuit | None = None
+_event_bus: EventBus | None = None
 
 
 class BatchTimeoutError(Exception):
@@ -91,6 +101,46 @@ def configure_timeouts(config: KnowledgeExtractionConfig) -> None:
     )
 
 
+def configure_circuit(
+    config: KnowledgeExtractionConfig,
+    event_bus: EventBus | None = None,
+) -> None:
+    """Create the shared extraction circuit breaker from config at RAG startup."""
+    global _circuit, _event_bus
+    _circuit = ExtractionCircuit(
+        failure_threshold=config.circuit_failure_threshold,
+        base_cooldown_s=config.circuit_base_cooldown_s,
+        max_cooldown_s=config.circuit_max_cooldown_s,
+    )
+    _event_bus = event_bus
+    logger.info(
+        "Extraction circuit breaker configured: threshold=%d, cooldown=%.0f-%.0fs",
+        config.circuit_failure_threshold,
+        config.circuit_base_cooldown_s,
+        config.circuit_max_cooldown_s,
+    )
+
+
+def get_circuit() -> ExtractionCircuit | None:
+    """Expose circuit for external observability."""
+    return _circuit
+
+
+def _emit_circuit_event(event: Event) -> None:
+    """Fire-and-forget circuit state change event."""
+    if _event_bus is None:
+        return
+    task: asyncio.Task[None] = asyncio.create_task(
+        _event_bus.publish_async_nowait(event)
+    )
+
+    def _on_done(t: asyncio.Task[None]) -> None:
+        if not t.cancelled() and (exc := t.exception()):
+            logger.warning("Circuit event publish failed: %s", exc)
+
+    task.add_done_callback(_on_done)
+
+
 def _is_pipeline_not_registered(exc: Exception, pipeline_model: str) -> bool:
     """Detect a transient MODEL_NOT_FOUND 404 for the configured pipeline model."""
     if not isinstance(exc, httpx.HTTPStatusError):
@@ -108,6 +158,46 @@ def _is_pipeline_not_registered(exc: Exception, pipeline_model: str) -> bool:
             "message", ""
         )
     return False
+
+
+@dataclass(slots=True, kw_only=True)
+class StargateError:
+    code: str
+    retryable: bool
+    message: str
+
+
+def _parse_stargate_error(exc: httpx.HTTPStatusError) -> StargateError | None:
+    """Parse Stargate's structured error envelope from a 4xx/5xx response."""
+    try:
+        body = exc.response.json()
+    except Exception:
+        return None
+
+    error_block = body.get("error", {})
+    if not isinstance(error_block, dict):
+        error_block = {}
+
+    code = body.get("code", "")
+    if not isinstance(code, str) or not code:
+        code = error_block.get("code", "")
+    if not isinstance(code, str) or not code:
+        return None
+
+    retryable = body.get("retryable", False)
+    if not isinstance(retryable, bool):
+        retryable = False
+    if not retryable:
+        nested_retryable = error_block.get("retryable", False)
+        if isinstance(nested_retryable, bool):
+            retryable = nested_retryable
+
+    message = body.get("message", "")
+    if not isinstance(message, str) or not message:
+        nested_message = error_block.get("message", "")
+        message = nested_message if isinstance(nested_message, str) else ""
+
+    return StargateError(code=code, retryable=retryable, message=message)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -270,7 +360,7 @@ async def _call_extraction(
     chunks: list[dict[str, str]],
     chunk_ids: list[str],
     config: KnowledgeExtractionConfig,
-) -> tuple[list[ExtractedKnowledge | None], dict[str, float]]:
+) -> tuple[list[ExtractedKnowledge | None], dict[str, object]]:
     """Execute one extraction HTTP call with a dynamic per-batch timeout.
 
     Timeout is computed as ``per_chunk_budget * chunk_count + overhead``, then
@@ -301,7 +391,7 @@ async def _await_pipeline_registration(
     chunks: list[dict[str, str]],
     chunk_ids: list[str],
     config: KnowledgeExtractionConfig,
-) -> tuple[list[ExtractedKnowledge | None], dict[str, float]]:
+) -> tuple[list[ExtractedKnowledge | None], dict[str, object]]:
     """Poll until the pipeline model registers or the deadline expires.
 
     Called when the first MODEL_NOT_FOUND 404 is seen — the pipeline has not
@@ -364,7 +454,7 @@ async def extract_knowledge_batch(
     chunk_ids: list[str],
     chunk_texts: list[str],
     config: KnowledgeExtractionConfig,
-) -> tuple[list[ExtractedKnowledge | None], dict[str, float]]:
+) -> tuple[list[ExtractedKnowledge | None], dict[str, object]]:
     """Extract structured knowledge from all chunks in a file via one pipeline call.
 
     HTTP timeout scales with chunk count so small batches fail fast under model
@@ -373,6 +463,12 @@ async def extract_knowledge_batch(
     """
     if not chunk_ids:
         return [], {}
+
+    if _circuit is not None and not await _circuit.should_attempt():
+        logger.info(
+            "Extraction circuit open — skipping batch (%d chunks)", len(chunk_ids)
+        )
+        return [None] * len(chunk_ids), {"circuit_open": True}
 
     chunks = [
         {"id": cid, "text": text}
@@ -384,6 +480,7 @@ async def extract_knowledge_batch(
     )
 
     last_exc: Exception | None = None
+    capacity_retries = 0
 
     async def _retry_with_backoff(exc: Exception, attempt: int) -> None:
         nonlocal last_exc
@@ -402,7 +499,12 @@ async def extract_knowledge_batch(
 
     for attempt in range(_MAX_RETRIES):
         try:
-            return await _call_extraction(chunks, chunk_ids, config)
+            parsed, timing = await _call_extraction(chunks, chunk_ids, config)
+            if _circuit is not None and await _circuit.record_success():
+                _emit_circuit_event(rag_extraction_circuit_closed())
+            if capacity_retries > 0:
+                timing = {**timing, "capacity_retries": capacity_retries}
+            return parsed, timing
         except httpx.TimeoutException:
             logger.warning(
                 "Batch extraction timed out (%d chunks, budget %.0fs); not retrying",
@@ -413,6 +515,41 @@ async def extract_knowledge_batch(
         except httpx.HTTPStatusError as exc:
             if _is_pipeline_not_registered(exc, config.pipeline):
                 return await _await_pipeline_registration(chunks, chunk_ids, config)
+            parsed = _parse_stargate_error(exc)
+            if parsed is not None:
+                if not parsed.retryable:
+                    logger.warning(
+                        "Non-retryable Stargate error for extraction: code=%s message=%s",
+                        parsed.code,
+                        parsed.message,
+                    )
+                    return [None] * len(chunk_ids), {"stargate_error": parsed.code}
+
+                capacity_retries += 1
+                if _circuit is not None and await _circuit.record_failure(
+                    capacity_error=True
+                ):
+                    _emit_circuit_event(
+                        rag_extraction_circuit_opened(
+                            consecutive_failures=_circuit.consecutive_failures,
+                            cooldown_s=_circuit.current_cooldown_s,
+                        )
+                    )
+                last_exc = exc
+                if attempt < _MAX_RETRIES - 1:
+                    delay = min(
+                        60.0, _BACKOFF_BASE_S ** (attempt + 2)
+                    ) + random.uniform(0.0, 3.0)
+                    logger.info(
+                        "Stargate retryable extraction error (attempt %d/%d, code=%s); "
+                        "backing off %.1fs",
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        parsed.code,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                continue
             await _retry_with_backoff(exc, attempt)
         except httpx.RequestError as exc:
             await _retry_with_backoff(exc, attempt)
@@ -430,4 +567,15 @@ async def extract_knowledge_batch(
         logger.error(
             "Batch extraction finished without success and without captured exception"
         )
-    return [None] * len(chunk_ids), {}
+    if _circuit is not None and capacity_retries > 0:
+        if await _circuit.record_failure(capacity_error=True):
+            _emit_circuit_event(
+                rag_extraction_circuit_opened(
+                    consecutive_failures=_circuit.consecutive_failures,
+                    cooldown_s=_circuit.current_cooldown_s,
+                )
+            )
+    timing: dict[str, object] = {}
+    if capacity_retries > 0:
+        timing["capacity_retries"] = capacity_retries
+    return [None] * len(chunk_ids), timing

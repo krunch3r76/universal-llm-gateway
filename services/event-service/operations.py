@@ -32,6 +32,8 @@ class OperationDef:
 
 class ParamDef(TypedDict, total=False):
     type: str
+    # TypedDict cannot express "default type follows the string in `type`";
+    # runtime coercion/validation is handled by operation implementations.
     default: str | int | float | bool | None
     required: bool
 
@@ -93,7 +95,10 @@ _register(
     OperationDef(
         name="request-trace",
         description="All events sharing a request_id",
-        params={"request_id": {"type": "string", "required": True}},
+        params={
+            "request_id": {"type": "string", "required": True},
+            "limit": {"type": "int", "default": 200},
+        },
         returns="event rows",
     )
 )
@@ -102,7 +107,10 @@ _register(
     OperationDef(
         name="request-lifecycle",
         description="Full snapshot phases for a request",
-        params={"request_id": {"type": "string", "required": True}},
+        params={
+            "request_id": {"type": "string", "required": True},
+            "limit": {"type": "int", "default": 200},
+        },
         returns="snapshot rows",
     )
 )
@@ -120,7 +128,10 @@ _register(
     OperationDef(
         name="pipeline-trace",
         description="Step-by-step trace for a pipeline execution",
-        params={"execution_id": {"type": "string", "required": True}},
+        params={
+            "execution_id": {"type": "string", "required": True},
+            "limit": {"type": "int", "default": 200},
+        },
         returns="compiled trace",
     )
 )
@@ -175,6 +186,15 @@ _register(
     )
 )
 
+_register(
+    OperationDef(
+        name="realtime-snapshot",
+        description="Last N events from the in-memory realtime ring buffer (no SQLite)",
+        params={"limit": {"type": "int", "default": 100}},
+        returns="realtime event rows",
+    )
+)
+
 _STARTUP_SIGNALS: tuple[str, ...] = (
     "cloud.proxy.started",
     "event.service.started",
@@ -217,8 +237,27 @@ async def execute_operation(
     try:
         return await _DISPATCH[name](params, store)
     except Exception as e:
-        logger.exception("Operation %s failed", name)
+        logger.exception("Operation %s failed with params=%s", name, params)
         return {"error": "Operation failed", "error_type": e.__class__.__name__}
+
+
+async def _resolve_window_minutes_and_cutoff(
+    params: dict[str, Any],
+    store: EventStore,
+    *,
+    default_minutes: int = 5,
+) -> tuple[int, int]:
+    """Return `(minutes, cutoff_ts_ms)` using session-aware default semantics."""
+    minutes = _coerce_minutes(params.get("minutes"))
+    if minutes is None:
+        session_start_ts = await _get_session_start_ts(store)
+        if session_start_ts is not None:
+            elapsed_ms = int(time.time() * 1000) - session_start_ts
+            minutes = max(1, elapsed_ms // 60_000 + 1)
+        else:
+            minutes = default_minutes
+    cutoff = int(time.time() * 1000) - (minutes * 60 * 1000)
+    return minutes, cutoff
 
 
 async def _recent_failures(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
@@ -226,7 +265,10 @@ async def _recent_failures(params: dict[str, Any], store: EventStore) -> dict[st
     since_ts = _coerce_since_ts(params.get("since_ts"))
     if since_ts is None:
         since_ts = await _get_session_start_ts(store)
-    where = ["(signal LIKE '%.failed' OR signal LIKE '%.error')", "role != 'debug'"]
+    where = [
+        "(signal LIKE '%.failed' OR signal LIKE '%.error')",
+        "role NOT IN ('debug', 'realtime')",
+    ]
     query_params: list[Any] = []
     if since_ts is not None:
         where.append("ts_unix_ms >= ?")
@@ -242,18 +284,11 @@ async def _recent_failures(params: dict[str, Any], store: EventStore) -> dict[st
 
 
 async def _noise_profile(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    minutes = _coerce_minutes(params.get("minutes"))
-    if minutes is None:
-        session_start_ts = await _get_session_start_ts(store)
-        if session_start_ts is not None:
-            elapsed_ms = int(time.time() * 1000) - session_start_ts
-            minutes = max(1, elapsed_ms // 60_000 + 1)
-        else:
-            minutes = 5
-    cutoff = int(time.time() * 1000) - (minutes * 60 * 1000)
+    minutes, cutoff = await _resolve_window_minutes_and_cutoff(params, store)
     rows = await store.query(
         "SELECT signal, COUNT(*) as count FROM events "
-        "WHERE ts_unix_ms > ? AND role != 'debug' GROUP BY signal ORDER BY count DESC",
+        "WHERE ts_unix_ms > ? AND role NOT IN ('debug', 'realtime') "
+        "GROUP BY signal ORDER BY count DESC",
         (cutoff,),
     )
     return {"signals": rows, "minutes": minutes}
@@ -281,7 +316,7 @@ async def _coordination_audit(
 
 
 async def _model_timeline(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    model_id = params.get("model_id") or ""
+    model_id = params.get("model_id")
     if not model_id:
         return {"error": "model_id is required"}
     since_ts = _coerce_since_ts(params.get("since_ts"))
@@ -298,39 +333,35 @@ async def _model_timeline(params: dict[str, Any], store: EventStore) -> dict[str
 
 
 async def _request_trace(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    request_id = params.get("request_id") or ""
+    request_id = params.get("request_id")
     if not request_id:
         return {"error": "request_id is required"}
+    limit = _coerce_limit(params.get("limit", 200), default=200)
     rows = await store.query(
-        "SELECT * FROM events WHERE request_id = ? ORDER BY seq",
-        (request_id,),
+        "SELECT * FROM events WHERE request_id = ? ORDER BY seq DESC LIMIT ?",
+        (request_id, limit),
     )
-    return {"rows": rows, "count": len(rows), "request_id": request_id}
+    rows.reverse()
+    return {"rows": rows, "count": len(rows), "request_id": request_id, "limit": limit}
 
 
 async def _request_lifecycle(
     params: dict[str, Any], store: EventStore
 ) -> dict[str, Any]:
-    request_id = params.get("request_id") or ""
+    request_id = params.get("request_id")
     if not request_id:
         return {"error": "request_id is required"}
+    limit = _coerce_limit(params.get("limit", 200), default=200)
     rows = await store.query(
-        "SELECT * FROM request_snapshots WHERE request_id = ? ORDER BY seq",
-        (request_id,),
+        "SELECT * FROM request_snapshots WHERE request_id = ? ORDER BY seq DESC LIMIT ?",
+        (request_id, limit),
     )
-    return {"rows": rows, "count": len(rows), "request_id": request_id}
+    rows.reverse()
+    return {"rows": rows, "count": len(rows), "request_id": request_id, "limit": limit}
 
 
 async def _request_summary(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    minutes = _coerce_minutes(params.get("minutes"))
-    if minutes is None:
-        session_start_ts = await _get_session_start_ts(store)
-        if session_start_ts is not None:
-            elapsed_ms = int(time.time() * 1000) - session_start_ts
-            minutes = max(1, elapsed_ms // 60_000 + 1)
-        else:
-            minutes = 5
-    cutoff = int(time.time() * 1000) - (minutes * 60 * 1000)
+    minutes, cutoff = await _resolve_window_minutes_and_cutoff(params, store)
     rows = await store.query(
         "SELECT phase, COUNT(*) as count FROM request_snapshots "
         "WHERE ts_unix_ms > ? GROUP BY phase",
@@ -393,12 +424,8 @@ async def _signal_events(params: dict[str, Any], store: EventStore) -> dict[str,
     if since_ts is None:
         since_ts = await _get_session_start_ts(store)
 
-    if "*" in signal:
-        signal_clause = "signal LIKE ?"
-        signal_value = signal.replace("*", "%")
-    else:
-        signal_clause = "signal = ?"
-        signal_value = signal
+    signal_clause = "signal LIKE ?" if "*" in signal else "signal = ?"
+    signal_value = signal.replace("*", "%") if "*" in signal else signal
 
     sql = (
         "SELECT seq, signal, source, timestamp, execution_id, model_id, payload "
@@ -422,7 +449,12 @@ async def _signal_events(params: dict[str, Any], store: EventStore) -> dict[str,
         if isinstance(payload, str):
             try:
                 row_dict["payload"] = json.loads(payload)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Failed to decode payload JSON for seq=%s: %s",
+                    row_dict.get("seq"),
+                    e,
+                )
                 row_dict["payload"] = payload
         out_rows.append(row_dict)
 
@@ -433,11 +465,13 @@ async def _pipeline_trace(params: dict[str, Any], store: EventStore) -> dict[str
     execution_id = params.get("execution_id") or ""
     if not execution_id:
         return {"error": "execution_id is required"}
+    limit = _coerce_limit(params.get("limit", 200), default=200)
 
     rows = await store.query(
-        "SELECT * FROM events WHERE execution_id = ? ORDER BY seq",
-        (execution_id,),
+        "SELECT * FROM events WHERE execution_id = ? ORDER BY seq DESC LIMIT ?",
+        (execution_id, limit),
     )
+    rows.reverse()
 
     steps: list[dict[str, Any]] = []
     total_tokens_in = 0
@@ -449,7 +483,12 @@ async def _pipeline_trace(params: dict[str, Any], store: EventStore) -> dict[str
         if isinstance(raw_payload, str) and raw_payload:
             try:
                 payload = json.loads(raw_payload)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Failed to decode pipeline payload JSON for seq=%s: %s",
+                    row.get("seq"),
+                    e,
+                )
                 payload = {}
 
         step_info: dict[str, Any] = {
@@ -477,6 +516,7 @@ async def _pipeline_trace(params: dict[str, Any], store: EventStore) -> dict[str
         "execution_id": execution_id,
         "steps": steps,
         "event_count": len(rows),
+        "limit": limit,
         "total_tokens_in": total_tokens_in,
         "total_tokens_out": total_tokens_out,
         "total_tokens": total_tokens,
@@ -511,7 +551,7 @@ async def _federation_health(
     since_ts = _coerce_since_ts(params.get("since_ts"))
     if since_ts is None:
         since_ts = await _get_session_start_ts(store)
-    sql = "SELECT * FROM events WHERE signal LIKE 'federation.%' AND role != 'debug'"
+    sql = "SELECT * FROM events WHERE signal LIKE 'federation.%' AND role NOT IN ('debug', 'realtime')"
     query_params: list[Any] = []
     if since_ts is not None:
         sql += " AND ts_unix_ms >= ?"
@@ -536,7 +576,7 @@ async def _capacity_snapshot(
         "SELECT * FROM events "
         "WHERE signal IN ('model.execution.completed', 'model.execution.failed', "
         "'model.capacity.freed', 'model.loaded', 'model.unloaded') "
-        "AND role != 'debug'"
+        "AND role NOT IN ('debug', 'realtime')"
     )
     query_params: list[Any] = []
     if since_ts is not None:
@@ -549,6 +589,15 @@ async def _capacity_snapshot(
         tuple(query_params),
     )
     return {"rows": rows, "count": len(rows)}
+
+
+async def _realtime_snapshot(
+    params: dict[str, Any], store: EventStore
+) -> dict[str, Any]:
+    """Return events from the in-memory realtime ring buffer."""
+    limit = _coerce_limit(params.get("limit", 100), default=100)
+    rows = store.get_realtime_snapshot(limit)
+    return {"rows": rows, "count": len(rows), "buffer_source": "memory"}
 
 
 async def _stack_last_started(
@@ -602,4 +651,5 @@ _DISPATCH: dict[str, OperationCallable] = {
     "capacity-snapshot": _capacity_snapshot,
     "signal-events": _signal_events,
     "stack-last-started": _stack_last_started,
+    "realtime-snapshot": _realtime_snapshot,
 }

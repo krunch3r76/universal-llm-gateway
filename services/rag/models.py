@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 # Decay constant for recency scoring; half-life ≈ 69 days.
 RECENCY_DECAY_LAMBDA = 0.01
@@ -78,6 +78,31 @@ class IndexDirectoryResponse(BaseModel):
 class StatsResponse(BaseModel):
     count: int
     collection: str
+
+
+class WatcherStatusItem(BaseModel):
+    """Single watcher state row from WatcherManager status output."""
+
+    path: str
+    enabled: bool
+    reload_count: int
+    error_count: int
+
+
+class IndexingStatusResponse(BaseModel):
+    """Unified indexing health payload for operator-facing status clients."""
+
+    pending_count: int
+    pending_sample: list[str] = Field(default_factory=list)
+    pending_sample_truncated: bool = False
+    chunks: int | None = None
+    collection: str | None = None
+    chroma_available: bool = True
+    chroma_error: str | None = None
+    watchers: list[WatcherStatusItem] = Field(default_factory=list)
+    failed_extractions_count: int = 0
+    failed_extractions_permanent_count: int = 0
+    property_index_available: bool = True
 
 
 class ClearResponse(BaseModel):

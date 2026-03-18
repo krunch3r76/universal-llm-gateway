@@ -15,10 +15,18 @@ from typing import Any, cast
 from .event import Event
 from .validation import validate_event_signal
 
-# Thread-local flag for Event construction authorization
-_allow_construction = threading.local()
+class _ConstructionFlag(threading.local):
+    """Thread-local guard toggled only during factory execution."""
 
-_VALID_ROLES = frozenset({"coordination", "observation", "debug"})
+    value: bool = False
+
+
+# Thread-local flag for Event construction authorization.
+_allow_construction = _ConstructionFlag()
+
+# Valid role taxonomy: coordination (state changes), observation (normal telemetry),
+# debug (temporary diagnostics), realtime (ephemeral high-frequency stream).
+_VALID_ROLES = frozenset({"coordination", "observation", "debug", "realtime"})
 _VALID_SCOPES = frozenset({"node", "global"})
 
 
@@ -56,8 +64,8 @@ def event_factory[F: Callable[..., Event]](func: F) -> F:
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Event:
-        _allow_construction.value = True
         try:
+            _allow_construction.value = True
             event = func(*args, **kwargs)
             # Verify factory actually returns an Event
             if not isinstance(event, Event):

@@ -27,7 +27,7 @@ import httpx  # noqa: E402
 
 from services.rag.article_registry import ArticleEntry, load_registry  # noqa: E402
 
-REGISTRY_PATH = WORKSPACE / "docs" / "research" / "article_registry.yaml"
+REGISTRY_PATH = Path.home() / ".rag" / "article_registry.yaml"
 RESEARCH_DIR = WORKSPACE / "docs" / "research"
 
 _DEFAULT_STARGATE_URL = "http://localhost:9999"

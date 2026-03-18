@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from typing import Any, override
 
+import httpx
 from systems.pipeline.core.handlers.builtin import BaseHandler
-from systems.pipeline.core.handlers.protocol import StepOutput
+from systems.pipeline.core.handlers.protocol import PipelineContext, StepOutput
+from systems.pipeline.core.step_config import StepConfig
 from universal_event_bus.events.debug import emit_debug_event
+
+logger = logging.getLogger(__name__)
+
+CORTEX_API_URL = os.getenv("CORTEX_API_URL", "http://cortex-api:8300").rstrip("/")
 
 VALID_ENTITY_TYPES = frozenset(
     {
@@ -125,11 +133,65 @@ def _validate_event(event: dict[str, Any]) -> str | None:
     return None
 
 
+async def _fetch_existing_entity_ids() -> frozenset[str]:
+    """Query cortex-api for all existing entity IDs. Best-effort: returns empty on failure."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{CORTEX_API_URL}/entities", params={"limit": 500})
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+            return frozenset(item["id"] for item in items if "id" in item)
+    except Exception:
+        logger.warning(
+            "Failed to fetch existing entities from cortex-api — collision detection disabled"
+        )
+        return frozenset()
+
+
+def _check_exact_id_collisions(
+    proposed: list[dict[str, Any]],
+    existing_ids: frozenset[str],
+) -> list[str]:
+    """Warn when a proposed create_if_not_exists entity already exists by exact ID."""
+    warnings: list[str] = []
+    for entity in proposed:
+        eid = entity.get("id", "")
+        action = entity.get("action", "")
+        if eid in existing_ids and action == "create_if_not_exists":
+            warnings.append(
+                f"Entity {eid!r} already exists in Cortex — use action: 'update'"
+            )
+    return warnings
+
+
 class ValidateHandler(BaseHandler):
     step_type = "journal_extract_validate_v1"
 
+    @staticmethod
+    def _create_error_response(
+        *,
+        error: str,
+        validation_errors: list[str],
+        entry_id: Any = None,
+        entry_date: Any = None,
+        available_outputs: list[str] | None = None,
+    ) -> StepOutput:
+        body: dict[str, Any] = {
+            "entry_id": entry_id,
+            "entry_date": entry_date,
+            "error": error,
+            "entities": [],
+            "relationships": [],
+            "assertions": [],
+            "events": [],
+            "validation_errors": validation_errors,
+        }
+        if available_outputs is not None:
+            body["available_outputs"] = available_outputs
+        return StepOutput(raw=json.dumps(body))
+
     @override
-    async def execute(self, step: Any, context: Any) -> StepOutput:
+    async def execute(self, step: StepConfig, context: PipelineContext) -> StepOutput:
         available_keys = list(context.outputs.keys())
         extract_output = context.get_output("extract")
 
@@ -158,20 +220,12 @@ class ValidateHandler(BaseHandler):
         )
 
         if extract_output is None:
-            return StepOutput(
-                raw=json.dumps(
-                    {
-                        "error": "Extract step output not found in context",
-                        "available_outputs": available_keys,
-                        "entities": [],
-                        "relationships": [],
-                        "assertions": [],
-                        "events": [],
-                        "validation_errors": [
-                            f"Extract step output missing. Available: {available_keys}"
-                        ],
-                    }
-                ),
+            return self._create_error_response(
+                error="Extract step output not found in context",
+                validation_errors=[
+                    f"Extract step output missing. Available: {available_keys}"
+                ],
+                available_outputs=available_keys,
             )
 
         entry_id = context.get_option("entry_id")
@@ -182,6 +236,15 @@ class ValidateHandler(BaseHandler):
             try:
                 raw = (extract_output.raw or "").strip()
                 if not raw:
+                    await emit_debug_event(
+                        "pipeline.debug.validate",
+                        {
+                            "execution_id": str(getattr(context, "execution_id", "")),
+                            "phase": "empty_raw_output",
+                            "error": "Empty raw output from extract step.",
+                        },
+                        source="pipeline.journal_extract.validate",
+                    )
                     raise json.JSONDecodeError("empty response", doc="", pos=0)
                 if raw.startswith("```"):
                     if "\n" not in raw:
@@ -200,22 +263,25 @@ class ValidateHandler(BaseHandler):
                     },
                     source="pipeline.journal_extract.validate",
                 )
-                return StepOutput(
-                    raw=json.dumps(
-                        {
-                            "entry_id": entry_id,
-                            "entry_date": entry_date,
-                            "error": f"JSON parse failure: {e}",
-                            "entities": [],
-                            "relationships": [],
-                            "assertions": [],
-                            "events": [],
-                            "validation_errors": [f"JSON parse failure: {e}"],
-                        }
-                    ),
+                return self._create_error_response(
+                    error=f"JSON parse failure: {e}",
+                    validation_errors=[f"JSON parse failure: {e}"],
+                    entry_id=entry_id,
+                    entry_date=entry_date,
                 )
 
+        if not isinstance(proposals, dict):
+            return self._create_error_response(
+                error="Expected JSON object but got a different type",
+                validation_errors=["Extract output is not a JSON object."],
+                entry_id=entry_id,
+                entry_date=entry_date,
+            )
+
+        existing_entity_ids = await _fetch_existing_entity_ids()
+
         errors: list[str] = []
+        collision_warnings: list[str] = []
         valid_entities: list[dict[str, Any]] = []
         valid_relationships: list[dict[str, Any]] = []
         valid_assertions: list[dict[str, Any]] = []
@@ -235,7 +301,13 @@ class ValidateHandler(BaseHandler):
             else:
                 valid_events.append(event)
 
-        all_entity_ids = frozenset(e["id"] for e in valid_entities + valid_events)
+        proposed_ids = frozenset(e["id"] for e in valid_entities + valid_events)
+        all_entity_ids = proposed_ids | existing_entity_ids
+
+        if existing_entity_ids:
+            collision_warnings = _check_exact_id_collisions(
+                valid_entities + valid_events, existing_entity_ids
+            )
 
         for rel in proposals.get("relationships", []):
             err = _validate_relationship(rel, all_entity_ids)
@@ -259,6 +331,8 @@ class ValidateHandler(BaseHandler):
             "assertions": valid_assertions,
             "events": valid_events,
             "validation_errors": errors,
+            "collision_warnings": collision_warnings,
+            "cortex_entity_count": len(existing_entity_ids),
             "summary": {
                 "entities_accepted": len(valid_entities),
                 "entities_rejected": len(proposals.get("entities", []))
@@ -272,6 +346,7 @@ class ValidateHandler(BaseHandler):
                 "events_accepted": len(valid_events),
                 "events_rejected": len(proposals.get("events", [])) - len(valid_events),
                 "total_errors": len(errors),
+                "collision_warnings": len(collision_warnings),
             },
         }
 
@@ -283,12 +358,16 @@ class ValidateHandler(BaseHandler):
                 "execution_id": str(getattr(context, "execution_id", "")),
                 "phase": "complete",
                 "entry_id": entry_id,
+                "cortex_entities_loaded": len(existing_entity_ids),
                 "entities_accepted": len(valid_entities),
                 "relationships_accepted": len(valid_relationships),
                 "assertions_accepted": len(valid_assertions),
                 "events_accepted": len(valid_events),
                 "total_errors": len(errors),
                 "errors": errors[:10] if errors else [],
+                "collision_warnings": collision_warnings[:10]
+                if collision_warnings
+                else [],
             },
             source="pipeline.journal_extract.validate",
         )

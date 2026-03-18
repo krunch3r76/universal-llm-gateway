@@ -182,26 +182,6 @@ def raise_inference_banned_error(model_id: str, banned_gateway_ids: list[str]) -
     )
 
 
-def raise_load_failed_error(model_id: str, gateway_ids: list[str]) -> None:
-    """Raise retryable error when recent load failures exclude every candidate."""
-    raise HTTPException(
-        status_code=get_http_status(ErrorCode.RESOURCE_UNAVAILABLE),
-        detail=error_envelope(
-            code=ErrorCode.RESOURCE_UNAVAILABLE,
-            message=(
-                f"Model {model_id} recently failed to load on all available gateways"
-            ),
-            source="master",
-            retryable=True,
-            data={
-                "model_id": str(model_id),
-                "gateway_ids": gateway_ids,
-                "reason": "load_failed",
-            },
-        ),
-    )
-
-
 def raise_insufficient_resources_error(model_id: str, reason: str) -> None:
     """Non-retryable: model in catalog but hardware cannot load it even after eviction.
 

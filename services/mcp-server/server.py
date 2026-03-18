@@ -29,9 +29,10 @@ from oauth_config import OAuthServerConfig, load_oauth_config
 from oauth_routes import build_oauth_routes
 from oauth_service import OAuthService
 from oauth_store import OAuthStore
+from request_profile import current_profile
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from starlette.types import Send
-
+from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tools.agent_bus import register_agent_bus_tools
 from tools.browser import register_browser_tools
 from tools.clip import register_clip_tools
@@ -205,6 +206,7 @@ _PRIMARY_TOOLS: set[str] = {
     "manage_service",
     # Agent-bus
     "agent_bus_fetch",
+    "agent_bus_post",
     "agent_bus_reply",
     "agent_bus_threads",
     "agent_bus_update_thread",
@@ -289,11 +291,20 @@ def _build_server() -> FastMCP:
             list_project_files(directory?, max_depth?) — list project files
             search_project_files(pattern, directory?, max_results?) — search code
           Search & knowledge:
-            rag_search(query, scope?, limit?) — semantic search
-            rag_answer(question, scope?) — RAG-grounded answer
-            rag_list_scopes() — list available scopes
+            rag_search(query, scope?, prefix?, top_k?) — semantic search.
+                scope: named scope or list (e.g. "research", ["rag_systems","workflows"]).
+                prefix: absolute source-path prefix or list for ad-hoc filtering
+                    (e.g. "/mnt/torus/projects/.../docs/research/rag-systems").
+                scope and prefix are mutually exclusive. top_k default 20.
+            rag_answer(question, scope?, prefix?, deep?) — RAG-grounded answer.
+                scope/prefix same as rag_search. deep=True for iterative retrieval.
+            rag_list_scopes() — list available scopes with prefixes and coverage
+            rag_coverage() — per-scope, per-prefix indexed file counts
             rag_upsert_article(url, title?, scope?) — index article
             rag_delete_source(source_hash) — delete indexed source
+            rag_refresh_corpus_hints(scope?) — regenerate discriminative vocabulary hints
+            rag_orphaned_articles() — find articles not in any scope
+            rag_delete_directory(directory) — delete all indexed content under a path
           Web:
             web_fetch(url) — fetch URL content
           Database:
@@ -309,6 +320,19 @@ def _build_server() -> FastMCP:
             query_observability(operation, params?) — event queries
           Internal services:
             local_api(service, method, path, body?, token?) — relay to Docker services
+          Agent bus (supplementary):
+            agent_bus_turn_update(thread, turn_number, body?, append?, subject?)
+                — update/append to an unread turn. Use append to build long
+                turns incrementally (each call commits immediately).
+                Append responses return body_length + body_tail (last 200 chars)
+                instead of the full body.
+            agent_bus_fetch_preview(to?, thread?, last?, unread?, mark_read?)
+                — compact turn previews (metadata only)
+            agent_bus_turn_get(thread, turn_number) — fetch one turn body
+            agent_bus_delete_thread(thread, force?) — delete a thread and all
+                its turns. Refuses if any turns are read unless force=True.
+            agent_bus_delete_turn(thread, turn_number, force?) — delete a
+                single turn. Refuses if the turn has been read unless force=True.
           Todos & journal:
             todo(method, ...) — list/add/done/defer todos
             list_journal_entries() — list recent entries
@@ -333,6 +357,18 @@ def _build_server() -> FastMCP:
         """
         import json as _json
 
+        profile = current_profile()
+        if not is_dispatch_tool_allowed(profile, tool):
+            reason = dispatch_denial_reason(tool)
+            record(
+                "mcp.profile.tool.denied",
+                profile=profile,
+                tool=tool,
+                entrypoint="dispatch",
+                reason=reason,
+            )
+            return {"tool": tool, "result": _json.dumps({"error": reason})}
+
         fn = overflow_registry.get(tool)
         if fn is None:
             raise ValueError(
@@ -340,6 +376,11 @@ def _build_server() -> FastMCP:
                 f"Available: {sorted(overflow_registry)}"
             )
         parsed = _json.loads(arguments)
+        record(
+            "mcp.profile.dispatch.routed",
+            profile=profile,
+            tool=tool,
+        )
         result = fn(**parsed)
         record("mcp.tool.dispatch.success", tool=tool)
         return {"tool": tool, "result": _json.dumps(result)}

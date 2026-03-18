@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -20,7 +21,6 @@ from oauth_service import OAuthService
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
-
 from tools.clip import normalize_clip_content
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,7 @@ class AuthMiddleware:
         self._app = app
         self._token = token
         self._oauth_service = oauth_service
+        self._cursor_token = os.getenv("MCP_CURSOR_AUTH_TOKEN", "").strip()
 
     @staticmethod
     def _slugify(text: str, max_len: int = 60) -> str:
@@ -86,6 +87,27 @@ class AuthMiddleware:
             'Bearer realm="mcp", '
             f'resource_metadata="{self._oauth_service.resource_metadata_url}"'
         )
+
+    def _resolve_profile(self, auth_header: str) -> str:
+        """Map static bearer tokens to MCP request profiles.
+
+        If no dedicated Cursor token is configured, all static tokens map to
+        ``default``. When a Cursor token is configured and matched, requests map
+        to ``cursor_safe``. All other static tokens map to ``default``.
+        """
+        if not self._cursor_token:
+            return "default"
+        if auth_header == f"Bearer {self._cursor_token}":
+            return "cursor_safe"
+        return "default"
+
+    def _is_static_token_authorized(self, auth_header: str) -> bool:
+        """Return True when auth header matches configured static token(s)."""
+        if auth_header == f"Bearer {self._token}":
+            return True
+        if self._cursor_token and auth_header == f"Bearer {self._cursor_token}":
+            return True
+        return False
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -131,8 +153,14 @@ class AuthMiddleware:
             return
 
         auth_header = request.headers.get("authorization", "")
-        if auth_header == f"Bearer {self._token}":
+        if self._is_static_token_authorized(auth_header):
             scope["auth_mode"] = "static"
+            scope["mcp_profile"] = self._resolve_profile(auth_header)
+            record(
+                "mcp.profile.bound",
+                profile=scope["mcp_profile"],
+                auth_mode="static",
+            )
             await self._app(scope, receive, send)
             return
 
@@ -143,9 +171,21 @@ class AuthMiddleware:
                 record("mcp.oauth.token.accepted", client_id=token_record.client_id)
                 scope["auth_mode"] = "oauth"
                 scope["oauth_client_id"] = token_record.client_id
+                scope["mcp_profile"] = "default"
+                record(
+                    "mcp.profile.bound",
+                    profile="default",
+                    auth_mode="oauth",
+                )
                 await self._app(scope, receive, send)
                 return
             record("mcp.oauth.token.rejected", reason="unknown_or_expired")
+
+        if token is not None:
+            record(
+                "mcp.profile.rejected",
+                reason="unauthorized_token",
+            )
 
         headers: dict[str, str] = {}
         if www_authenticate := self._build_www_authenticate_header():

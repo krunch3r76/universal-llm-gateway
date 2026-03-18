@@ -755,7 +755,7 @@ def _add_ingest_papers_parser(sub: argparse._SubParsersAction) -> None:
         "--registry",
         default=str(ingest_svc.DEFAULT_REGISTRY_PATH),
         metavar="PATH",
-        help="Path to article_registry.yaml (default: docs/research/article_registry.yaml)",
+        help="Path to article_registry.yaml (default: ~/.rag/article_registry.yaml)",
     )
     p.add_argument(
         "--rag-url",

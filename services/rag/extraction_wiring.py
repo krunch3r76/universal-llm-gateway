@@ -31,6 +31,7 @@ from services.rag.events.extraction import (
     rag_extraction_batch_skipped,
     rag_extraction_batch_started,
     rag_extraction_batch_timed_out,
+    rag_extraction_circuit_skipped,
     rag_extraction_completed,
     rag_extraction_failed,
     rag_extraction_permanently_skipped,
@@ -297,8 +298,12 @@ async def run_extraction(
                 )
         return result
     if isinstance(timing, dict):
-        result.processing_seconds = timing.get("processing_seconds")
-        result.queue_wait_seconds = timing.get("queue_wait_seconds")
+        processing_seconds = timing.get("processing_seconds")
+        if isinstance(processing_seconds, int | float):
+            result.processing_seconds = float(processing_seconds)
+        queue_wait_seconds = timing.get("queue_wait_seconds")
+        if isinstance(queue_wait_seconds, int | float):
+            result.queue_wait_seconds = float(queue_wait_seconds)
 
     staged: dict[str, ExtractedKnowledge] = {}
     for knowledge in knowledge_list:
@@ -312,6 +317,17 @@ async def run_extraction(
 
     failed_ids = [cid for cid in ids if cid not in staged]
     successful = len(staged)
+    is_circuit_open = isinstance(timing, dict) and "circuit_open" in timing
+    if is_circuit_open and event_bus is not None:
+        _publish_event_nonblocking(
+            event_bus,
+            rag_extraction_circuit_skipped(file=file, chunk_count=len(ids)),
+        )
+    is_infrastructure_failure = isinstance(timing, dict) and (
+        "stargate_error" in timing
+        or "circuit_open" in timing
+        or ("capacity_retries" in timing and successful == 0)
+    )
     # Threshold applied to the active (non-permanently-failed) chunk set.
     failure_ratio = len(failed_ids) / len(ids) if ids else 0.0
     accept_partial = bool(failed_ids) and failure_ratio <= _FAILURE_THRESHOLD
@@ -319,7 +335,13 @@ async def run_extraction(
     failure_counts_snapshot = property_index.get_failure_counts(file)
 
     if failed_ids:
-        if accept_partial:
+        if is_infrastructure_failure:
+            logger.info(
+                "Extraction deferred for %s due to Stargate infrastructure state"
+                " — will retry on next sweep",
+                file,
+            )
+        elif accept_partial:
             logger.info(
                 "Partial extraction for %s: %d/%d chunks failed (within threshold)"
                 " — writing %d successful",
@@ -339,12 +361,13 @@ async def run_extraction(
         for chunk_id in failed_ids:
             new_attempt_count = failure_counts_snapshot.get(chunk_id, 0) + 1
             is_permanent = new_attempt_count >= config.max_extraction_attempts
-            await property_index.record_failure(
-                chunk_id=chunk_id,
-                source=file,
-                error="missing or invalid result after batch parsing",
-                permanent=is_permanent,
-            )
+            if not is_infrastructure_failure:
+                await property_index.record_failure(
+                    chunk_id=chunk_id,
+                    source=file,
+                    error="missing or invalid result after batch parsing",
+                    permanent=is_permanent,
+                )
             if event_bus is not None:
                 _publish_event_nonblocking(
                     event_bus,
@@ -353,7 +376,7 @@ async def run_extraction(
                         error="missing or invalid result after batch parsing",
                     ),
                 )
-                if is_permanent:
+                if is_permanent and not is_infrastructure_failure:
                     _publish_event_nonblocking(
                         event_bus,
                         rag_extraction_permanently_skipped(

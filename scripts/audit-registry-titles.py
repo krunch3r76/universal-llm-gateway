@@ -21,7 +21,7 @@ from pathlib import Path
 import httpx
 import yaml
 
-REGISTRY_PATH = Path(__file__).resolve().parents[1] / "docs/research/article_registry.yaml"
+REGISTRY_PATH = Path.home() / ".rag" / "article_registry.yaml"
 RESEARCH_ROOT = Path(__file__).resolve().parents[1] / "docs/research"
 OUT_DIR = Path(__file__).resolve().parents[1] / "tmp/article-registry-titles"
 STARGATE_URL = "http://localhost:9999/v1/chat/completions"

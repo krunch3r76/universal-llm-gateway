@@ -40,6 +40,7 @@ class ArticleEntry:
     abstract: str = ""
     content_hash: str = ""
     subdirectory: str = ""
+    comments: str = ""
 
 
 def load_registry(path: Path) -> dict[str, ArticleEntry]:
@@ -66,6 +67,7 @@ def load_registry(path: Path) -> dict[str, ArticleEntry]:
             abstract=_str(v.get("abstract")),
             content_hash=_str(v.get("content_hash")),
             subdirectory=_str(v.get("subdirectory")),
+            comments=_str(v.get("comments")),
         )
     return result
 
@@ -80,7 +82,7 @@ def load_registry_from_db(db_path: Path) -> dict[str, ArticleEntry]:
         ) as conn:
             rows = conn.execute(
                 "SELECT filename, title, authors, venue, published_date, doi, "
-                "abstract, content_hash, subdirectory "
+                "abstract, content_hash, subdirectory, comments "
                 "FROM articles ORDER BY filename ASC"
             ).fetchall()
     except sqlite3.Error as exc:
@@ -100,13 +102,14 @@ def load_registry_from_db(db_path: Path) -> dict[str, ArticleEntry]:
             abstract=_str(row[6]),
             content_hash=_str(row[7]),
             subdirectory=_str(row[8]),
+            comments=_str(row[9]),
         )
     return result
 
 
 def replace_article_rows(
     db_path: Path,
-    rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str]],
+    rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str, str]],
 ) -> None:
     """Replace all rows in the SQLite ``articles`` table in one transaction."""
     if not db_path.exists():
@@ -119,8 +122,8 @@ def replace_article_rows(
                 conn.executemany(
                     "INSERT INTO articles ("
                     "source_path, filename, title, authors, venue, published_date, "
-                    "doi, abstract, scope, content_hash, subdirectory"
-                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "doi, abstract, scope, content_hash, subdirectory, comments"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
             conn.execute("COMMIT")
@@ -159,9 +162,9 @@ def to_article_rows(
     *,
     source_root: Path,
     scope_resolver: Callable[[str], str],
-) -> list[tuple[str, str, str, str, str, str, str, str, str, str, str]]:
+) -> list[tuple[str, str, str, str, str, str, str, str, str, str, str, str]]:
     """Convert filename-keyed article metadata into normalized SQLite article row tuples."""
-    rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str]] = []
+    rows: list[tuple[str, str, str, str, str, str, str, str, str, str, str, str]] = []
     for filename, entry in registry.items():
         source_path = str((source_root / filename).resolve())
         scope = scope_resolver(source_path)
@@ -178,6 +181,7 @@ def to_article_rows(
                 scope,
                 entry.content_hash,
                 entry.subdirectory,
+                entry.comments,
             )
         )
     return rows

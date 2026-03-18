@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from mcp_events import monotonic_now, record
+from request_profile import current_profile
+from tool_access import CURSOR_SAFE_PROFILE
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -29,6 +31,11 @@ _SCOPES_TIMEOUT = 15.0
 _RAG_METADATA_DB = os.environ.get(
     "RAG_METADATA_DB_PATH", "/data/rag-store/rag_metadata.db"
 )
+_CURSOR_PREVIEW_MAX_TOP_K = max(1, int(os.getenv("MCP_RAG_PREVIEW_MAX_TOP_K", "10")))
+_CURSOR_PREVIEW_SNIPPET_CHARS = max(
+    100, int(os.getenv("MCP_RAG_PREVIEW_SNIPPET_CHARS", "300"))
+)
+_CURSOR_DETAIL_MAX_CHUNKS = max(1, int(os.getenv("MCP_RAG_DETAIL_MAX_CHUNKS", "20")))
 
 
 def _pipeline_call(
@@ -58,6 +65,18 @@ def _rag_call(path: str, *, timeout: float) -> dict[str, Any]:
     url = f"{_STARGATE_URL.rstrip('/')}/{path.lstrip('/')}"
     with httpx.Client(timeout=timeout) as client:
         resp = client.get(url)
+        resp.raise_for_status()
+        payload_obj = cast(object, resp.json())
+        if not isinstance(payload_obj, dict):
+            raise ValueError("RAG response payload must be a JSON object")
+        return cast(dict[str, Any], payload_obj)
+
+
+def _rag_post(path: str, body: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+    """POST JSON to Stargate passthrough and return parsed object payload."""
+    url = f"{_STARGATE_URL.rstrip('/')}/{path.lstrip('/')}"
+    with httpx.Client(timeout=timeout) as client:
+        resp = client.post(url, json=body)
         resp.raise_for_status()
         payload_obj = cast(object, resp.json())
         if not isinstance(payload_obj, dict):
@@ -129,6 +148,21 @@ def _handle_pipeline_error(
     logger.warning(log_message, exc_info=True)
     record("mcp.rag.pipeline.failed", pipeline=pipeline, error=error_type, **extra)
     return {"error": user_message}
+
+
+def _deny_cursor_safe(tool: str, reason: str) -> dict[str, str] | None:
+    """Return a profile-denial payload when running in cursor_safe mode."""
+    profile = current_profile()
+    if profile != CURSOR_SAFE_PROFILE:
+        return None
+    record(
+        "mcp.profile.tool.denied",
+        profile=profile,
+        tool=tool,
+        entrypoint="direct",
+        reason=reason,
+    )
+    return {"error": reason}
 
 
 def _extract_content(response: dict[str, Any]) -> str:
@@ -379,6 +413,9 @@ def register_rag_tools(mcp: FastMCP) -> None:
     ) -> dict[str, str]:
         """Search the knowledge base and return raw context chunks.
 
+        This full-surface tool is disabled for cursor_safe profile because it
+        can return oversized assembled context payloads.
+
         Returns assembled context with source labels for the agent to
         reason over. Prefer this over rag_answer when exploring a topic,
         gathering evidence for broader analysis, or when the question is
@@ -406,6 +443,14 @@ def register_rag_tools(mcp: FastMCP) -> None:
                          "pipeline": "rag-context"}
             On error:   {"error": "<message>"}
         """
+        reason = (
+            "rag_search is disabled for cursor_safe profile. "
+            "Use rag_search_preview + rag_get_chunks."
+        )
+        denial = _deny_cursor_safe("rag_search", reason)
+        if denial is not None:
+            return denial
+
         pipeline_options: dict[str, Any] = {}
         scope_override, scope_error = _normalize_scope_override(scope)
         prefixes, prefix_error = _normalize_prefix_override(prefix)
@@ -496,6 +541,9 @@ def register_rag_tools(mcp: FastMCP) -> None:
     ) -> dict[str, str]:
         """Ask a specific question and get a grounded, synthesized answer.
 
+        This full-surface tool is disabled for cursor_safe profile because it
+        can return large synthesized markdown in one call.
+
         Prefer this over rag_search for direct factual or technical
         questions where a synthesized answer is the end goal. Use
         rag_search instead when you need raw context chunks to weave
@@ -524,6 +572,14 @@ def register_rag_tools(mcp: FastMCP) -> None:
             On success: {"answer": "<grounded answer>", "pipeline": "<pipeline used>"}
             On error:   {"error": "<message>"}
         """
+        reason = (
+            "rag_answer is disabled for cursor_safe profile. "
+            "Use rag_search_preview + rag_get_chunks."
+        )
+        denial = _deny_cursor_safe("rag_answer", reason)
+        if denial is not None:
+            return denial
+
         pipeline = "rag-answer-deep" if deep else "rag-answer"
         pipeline_options: dict[str, Any] = {}
         scope_override, scope_error = _normalize_scope_override(scope)
@@ -607,6 +663,117 @@ def register_rag_tools(mcp: FastMCP) -> None:
             deep=deep,
         )
         return {"answer": content, "pipeline": pipeline}
+
+    @mcp.tool()
+    def rag_search_preview(
+        query: str,
+        top_k: int = 5,
+        scope: str | list[str] | None = None,
+        prefix: str | list[str] | None = None,
+        snippet_chars: int = 300,
+    ) -> dict[str, Any]:
+        """Return bounded retrieval previews for Cursor-safe RAG exploration.
+
+        Results include truncated snippets and chunk references for explicit
+        follow-up detail fetches.
+        """
+        safe_k = max(1, min(top_k, _CURSOR_PREVIEW_MAX_TOP_K))
+        safe_snippet = max(100, min(snippet_chars, _CURSOR_PREVIEW_SNIPPET_CHARS))
+        scope_override, scope_error = _normalize_scope_override(scope)
+        prefixes, prefix_error = _normalize_prefix_override(prefix)
+        if scope_error:
+            return {"error": scope_error}
+        if prefix_error:
+            return {"error": prefix_error}
+        if scope_override is not None and prefixes is not None:
+            return {"error": "scope and prefix are mutually exclusive; set only one."}
+
+        body: dict[str, Any] = {"query": query, "top_k": safe_k}
+        if scope_override is not None:
+            body["scope"] = scope_override
+        if prefixes is not None:
+            body["source_prefixes"] = prefixes
+
+        t0 = monotonic_now()
+        record("mcp.rag.preview.called", top_k=safe_k)
+        try:
+            payload = _rag_post("api/v1/rag/search", body, timeout=_CONTEXT_TIMEOUT)
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+            ValueError,
+        ) as exc:
+            return _handle_rag_call_error(exc, endpoint_name="search_preview")
+
+        chunks = payload.get("chunks", [])
+        metadata = payload.get("metadata", [])
+        items: list[dict[str, Any]] = []
+        if isinstance(chunks, list):
+            for idx, text in enumerate(chunks):
+                if not isinstance(text, str):
+                    continue
+                md = metadata[idx] if isinstance(metadata, list) and idx < len(metadata) else {}
+                source = md.get("source") if isinstance(md, dict) else ""
+                chunk_index = md.get("chunk_index") if isinstance(md, dict) else None
+                items.append(
+                    {
+                        "source": source,
+                        "chunk_index": chunk_index,
+                        "snippet": text[:safe_snippet],
+                    }
+                )
+
+        duration = monotonic_now() - t0
+        record(
+            "mcp.rag.preview.completed",
+            count=len(items),
+            duration_s=round(duration, 3),
+        )
+        return {"items": items, "count": len(items), "top_k": safe_k}
+
+    @mcp.tool()
+    def rag_get_chunks(source: str, chunk_indices: list[int]) -> dict[str, Any]:
+        """Fetch explicit chunk text by source and chunk indices."""
+        if not chunk_indices:
+            return {"error": "chunk_indices is required"}
+
+        normalized_indices: list[int] = []
+        for value in chunk_indices:
+            try:
+                normalized_indices.append(int(value))
+            except (TypeError, ValueError):
+                return {"error": "chunk_indices must contain only integers"}
+
+        if len(normalized_indices) > _CURSOR_DETAIL_MAX_CHUNKS:
+            return {
+                "error": (
+                    f"Maximum {_CURSOR_DETAIL_MAX_CHUNKS} chunk indices are "
+                    "allowed per call."
+                )
+            }
+
+        body = {"groups": [{"source": source, "chunk_indices": normalized_indices}]}
+        try:
+            payload = _rag_post(
+                "api/v1/rag/chunks_by_index",
+                body,
+                timeout=_CONTEXT_TIMEOUT,
+            )
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+            ValueError,
+        ) as exc:
+            return _handle_rag_call_error(exc, endpoint_name="chunks_by_index")
+
+        chunks = payload.get("chunks", [])
+        count = len(chunks) if isinstance(chunks, list) else 0
+        record("mcp.rag.chunks.fetched", source=source, count=count)
+        return payload
 
     @mcp.tool()
     def rag_refresh_corpus_hints(

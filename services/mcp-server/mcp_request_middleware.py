@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 
 from mcp_events import monotonic_now, record
+from request_profile import bind_profile
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -34,6 +35,7 @@ class McpRequestEventsMiddleware:
         client_ip = request.client.host if request.client else "unknown"
         method = request.method
         auth_mode = str(scope.get("auth_mode", "unknown"))
+        profile = str(scope.get("mcp_profile", "default"))
         t0 = monotonic_now()
         mcp_method = ""
 
@@ -67,26 +69,27 @@ class McpRequestEventsMiddleware:
             auth_mode=auth_mode,
         )
 
-        try:
-            await self._app(scope, receive, send)
-        except Exception as exc:
-            duration = monotonic_now() - t0
-            record(
-                "mcp.request.failed",
-                method=method,
-                client_ip=client_ip,
-                duration_s=round(duration, 3),
-                error=str(exc),
-                exc_type=type(exc).__name__,
-                auth_mode=auth_mode,
-            )
-            raise
-        else:
-            duration = monotonic_now() - t0
-            record(
-                "mcp.request.completed",
-                method=method,
-                client_ip=client_ip,
-                duration_s=round(duration, 3),
-                auth_mode=auth_mode,
-            )
+        with bind_profile(profile):
+            try:
+                await self._app(scope, receive, send)
+            except Exception as exc:
+                duration = monotonic_now() - t0
+                record(
+                    "mcp.request.failed",
+                    method=method,
+                    client_ip=client_ip,
+                    duration_s=round(duration, 3),
+                    error=str(exc),
+                    exc_type=type(exc).__name__,
+                    auth_mode=auth_mode,
+                )
+                raise
+            else:
+                duration = monotonic_now() - t0
+                record(
+                    "mcp.request.completed",
+                    method=method,
+                    client_ip=client_ip,
+                    duration_s=round(duration, 3),
+                    auth_mode=auth_mode,
+                )

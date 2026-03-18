@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .resolve import ResolveHandler
 from .validate import ValidateHandler
 
 if TYPE_CHECKING:
@@ -10,5 +11,12 @@ if TYPE_CHECKING:
 
 def register_handlers(router: DomainRouter) -> None:
     router.register_domain_handler_class(
-        "journal_extract", "journal_extract_validate_v1", ValidateHandler,
+        "journal_extract",
+        "journal_extract_resolve_v1",
+        ResolveHandler,
+    )
+    router.register_domain_handler_class(
+        "journal_extract",
+        "journal_extract_validate_v1",
+        ValidateHandler,
     )

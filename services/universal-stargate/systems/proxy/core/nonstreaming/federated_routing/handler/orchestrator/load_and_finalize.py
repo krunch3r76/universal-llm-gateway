@@ -243,28 +243,12 @@ async def _ensure_remote_model_loaded(
                         "waited_ms": waited_ms,
                     },
                 )
-            try:
-                await federated_load_orchestrator.ensure_model_loaded_on_remote(
-                    selected_gateway.ref,
-                    context.selected_model,
-                    sticky=context.model_sticky,
-                    request_id=context.request_id,
-                )
-            except Exception:
-                federated_manager.mark_load_failed(
-                    selected_gateway.ref.gateway_id, context.selected_model
-                )
-                raise
+            await federated_load_orchestrator.ensure_model_loaded_on_remote(
+                selected_gateway.ref,
+                context.selected_model,
+                sticky=context.model_sticky,
+                request_id=context.request_id,
+            )
             return
 
-        if federated_manager is not None:
-            federated_manager.mark_load_failed(
-                selected_gateway.ref.gateway_id, context.selected_model
-            )
-        raise
-    except Exception:
-        if federated_manager is not None:
-            federated_manager.mark_load_failed(
-                selected_gateway.ref.gateway_id, context.selected_model
-            )
         raise

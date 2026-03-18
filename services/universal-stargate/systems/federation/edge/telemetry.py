@@ -233,6 +233,53 @@ def create_periodic_heartbeat_task(
     return task
 
 
+def create_periodic_snapshot_task(
+    ws_client: GatewayWebSocketClient,
+    source: Any,
+    interval_s: float,
+    refresh_callback: Callable[[dict[str, Any]], Any],
+) -> asyncio.Task[None]:
+    """
+    Create periodic GATEWAY_SNAPSHOT task for federation state reconciliation.
+
+    Rebuilds the full snapshot from the Gateway's current state and broadcasts
+    it to all connected peers. This heals Master's view of loaded_models after
+    disconnect/reconnect cycles where discrete MODEL_LOADED events were missed.
+
+    Args:
+        ws_client: Gateway WebSocket client (for building payload)
+        source: TelemetrySource identifying this Edge
+        interval_s: Seconds between snapshots (derived from snapshot_interval_ms)
+        refresh_callback: Async callback to update cache and broadcast snapshot
+
+    Returns:
+        Asyncio task running the periodic snapshot loop
+    """
+
+    async def snapshot_loop() -> None:
+        while True:
+            await asyncio.sleep(interval_s)
+            try:
+                if not getattr(ws_client, "is_connected", True):
+                    logger.debug("Gateway disconnected, skipping periodic snapshot")
+                    continue
+
+                payload = build_initial_telemetry_payload(ws_client, source)
+                await refresh_callback(payload)
+
+            except asyncio.CancelledError:
+                logger.debug("Periodic snapshot task cancelled")
+                break
+            except Exception as e:
+                logger.warning(f"Periodic snapshot error: {e}")
+
+    task = asyncio.create_task(
+        snapshot_loop(), name="federation-periodic-gateway-snapshot"
+    )
+    logger.info(f"🔄 Started periodic GATEWAY_SNAPSHOT (interval={interval_s}s)")
+    return task
+
+
 def create_resource_update_callback(
     ws_client: GatewayWebSocketClient,
     forward_callback: Callable[[str, dict[str, Any]], Any],

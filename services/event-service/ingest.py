@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import queue
 import time
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,12 @@ class IngestServer:
         socket_path: str,
         subscriber_queues: set[asyncio.Queue[dict[str, Any]]],
     ) -> None:
+        """Initialize ingest state and queue-backed write pipeline.
+
+        The ingest socket accepts NDJSON from publishers and places parsed events
+        into an internal bounded queue. A single writer task batches DB writes and
+        fans committed events out to subscriber queues.
+        """
         self._store = store
         self._socket_path = socket_path
         self._subscriber_queues = subscriber_queues
@@ -70,9 +77,15 @@ class IngestServer:
             self._server.close()
             await self._server.wait_closed()
         if self._writer_task:
-            self._writer_task.cancel()
             try:
-                await self._writer_task
+                # Give the writer loop a chance to drain queued events cleanly.
+                await asyncio.wait_for(self._writer_task, timeout=2.0)
+            except TimeoutError:
+                self._writer_task.cancel()
+                try:
+                    await self._writer_task
+                except asyncio.CancelledError:
+                    pass
             except asyncio.CancelledError:
                 pass
         sock = Path(self._socket_path)
@@ -113,48 +126,68 @@ class IngestServer:
                     self._events_dropped_publish += 1
                     logger.debug("Ingest queue full, dropping event")
         except (ConnectionResetError, BrokenPipeError):
-            pass
+            logger.debug("Publisher disconnected: %s", peer)
         except Exception as e:
-            logger.warning("Publisher connection error: %s", e)
+            logger.exception("Publisher connection error from %s: %s", peer, e)
         finally:
             writer.close()
 
     async def _db_writer_loop(self) -> None:
         """Drain the queue, batch-insert into SQLite, fan out to subscribers."""
-        while self._running or not self._db_queue.empty():
+        while True:
             batch: list[dict[str, Any]] = []
             try:
-                event = await asyncio.wait_for(
-                    self._db_queue.get(), timeout=_FLUSH_INTERVAL
-                )
+                if self._running:
+                    event = await asyncio.wait_for(
+                        self._db_queue.get(), timeout=_FLUSH_INTERVAL
+                    )
+                else:
+                    event = self._db_queue.get_nowait()
                 batch.append(event)
-            except (TimeoutError, asyncio.CancelledError):
+            except TimeoutError:
                 if not self._running and self._db_queue.empty():
                     break
                 if not batch:
                     continue
+            except asyncio.CancelledError:
+                # During shutdown, allow graceful loop exit if queue is drained.
+                if not self._running and self._db_queue.empty():
+                    break
+                raise
+            except queue.Empty:
+                if not self._running and self._db_queue.empty():
+                    break
+                continue
 
             while len(batch) < _BATCH_SIZE:
                 try:
                     batch.append(self._db_queue.get_nowait())
-                except asyncio.QueueEmpty:
+                except queue.Empty:
                     break
 
             if not batch:
                 continue
 
+            realtime = [e for e in batch if e.get("role") == "realtime"]
+            for rt_ev in realtime:
+                self._store.push_realtime(rt_ev)
+                self._fan_out(rt_ev)
+
+            persistent = [e for e in batch if e.get("role") != "realtime"]
             snapshots = [
                 e
-                for e in batch
+                for e in persistent
                 if str(e.get("signal", "")).startswith("request.snapshot.")
             ]
             regular = [
                 e
-                for e in batch
+                for e in persistent
                 if not str(e.get("signal", "")).startswith("request.snapshot.")
             ]
 
-            accepted = await self._store.insert_events(regular + snapshots)
+            accepted: list[dict[str, Any]] = await self._store.insert_events(
+                regular + snapshots
+            )
             for snap in snapshots:
                 payload = snap.get("payload", {})
                 await self._store.insert_snapshot(
@@ -177,6 +210,7 @@ class IngestServer:
             try:
                 sq.put_nowait(event)
             except asyncio.QueueFull:
+                logger.warning("Subscriber queue full; dropping one event")
                 try:
                     sq.get_nowait()
                     drop_notice = {
@@ -186,8 +220,9 @@ class IngestServer:
                         "payload": {"count": 1},
                     }
                     sq.put_nowait(drop_notice)
-                    sq.put_nowait(event)
-                except Exception:
+                except queue.Empty:
+                    dead.append(sq)
+                except asyncio.QueueFull:
                     dead.append(sq)
 
         for sq in dead:

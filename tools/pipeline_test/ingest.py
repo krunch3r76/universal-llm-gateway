@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CORPUS_DIR = Path("docs/research/prompting")
 DEFAULT_RAG_TIMEOUT = 30.0
-DEFAULT_REGISTRY_PATH = Path("docs/research/article_registry.yaml")
+DEFAULT_REGISTRY_PATH = Path.home() / ".rag" / "article_registry.yaml"
 
 
 @dataclass(slots=True, kw_only=True)
@@ -231,7 +231,8 @@ def update_article_registry(
         raw: object = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
         if isinstance(raw, dict) and isinstance(raw.get("articles"), dict):
             data["articles"] = dict(raw["articles"])
-    data["articles"][filename] = {k: str(v) for k, v in entry.items()}
+    # Preserve YAML-native types instead of coercing everything to string.
+    data["articles"][filename] = dict(entry)
     registry_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         mode="w",

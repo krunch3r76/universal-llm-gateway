@@ -17,7 +17,6 @@ from .....endpoint_category import derive_endpoint_category
 from ....selection_errors import (
     raise_all_gateways_excluded_error,
     raise_inference_banned_error,
-    raise_load_failed_error,
     raise_no_gateways_error,
 )
 from .overflow import apply_non_sticky_overflow
@@ -205,22 +204,6 @@ async def run_initial_selection(
                 upstream_errors=context.excluded_gateway_errors or None,
             )
         gateways_for_routing = kept
-
-    load_failed_ids = [
-        gateway.name
-        for gateway in gateways_for_routing
-        if federated_manager.is_load_failed(gateway.name, model_id)
-    ]
-    if load_failed_ids:
-        failed_set = set(load_failed_ids)
-        eligible = [
-            gateway
-            for gateway in gateways_for_routing
-            if gateway.name not in failed_set
-        ]
-        if not eligible:
-            raise_load_failed_error(str(model_id), sorted(load_failed_ids))
-        gateways_for_routing = eligible
 
     inference_banned_ids = [
         gateway.name

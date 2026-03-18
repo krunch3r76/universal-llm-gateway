@@ -104,6 +104,7 @@ def _parse_federation_config(config_dict: dict[str, Any]) -> FederationConfig:
         ws_server=_parse_ws_server(config_dict.get("ws_server")),
         orchestration=_parse_orchestration(config_dict.get("orchestration")),
         disable_websocket=config_dict.get("disable_websocket", False),
+        snapshot_interval_ms=config_dict.get("snapshot_interval_ms", 120_000),
     )
 
 

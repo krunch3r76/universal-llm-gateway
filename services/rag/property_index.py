@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS articles (
     scope TEXT NOT NULL DEFAULT 'all',
     content_hash TEXT NOT NULL DEFAULT '',
     subdirectory TEXT NOT NULL DEFAULT '',
+    comments TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_articles_scope ON articles(scope);
@@ -116,6 +117,22 @@ class FailedChunk:
     attempt_count: int
     permanent: bool
     recorded_at: str
+
+
+@dataclass(slots=True, kw_only=True)
+class PendingSnapshot:
+    """Bounded view of pending journal rows for operational status APIs."""
+
+    count: int
+    sample: list[str]
+
+
+@dataclass(slots=True, kw_only=True)
+class FailureSnapshot:
+    """Count view of failed extraction rows used by status/health endpoints."""
+
+    failed_extractions_count: int
+    failed_extractions_permanent_count: int
 
 
 class PropertyIndex:
@@ -193,6 +210,14 @@ class PropertyIndex:
         current = conn.execute(
             "SELECT COALESCE(MAX(version), 0) FROM schema_version"
         ).fetchone()[0]
+        def _migration_v3_articles_comments(conn: sqlite3.Connection) -> None:
+            """Add comments column to articles for ArticleEntry parity."""
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(articles)")}
+            if "comments" not in cols:
+                conn.execute(
+                    "ALTER TABLE articles ADD COLUMN comments TEXT NOT NULL DEFAULT ''"
+                )
+
         migrations: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
             (
                 1,
@@ -203,6 +228,11 @@ class PropertyIndex:
                 2,
                 "metadata tables: corpus_hints, scope_vocabulary, articles",
                 self._migration_v2_metadata,
+            ),
+            (
+                3,
+                "articles.comments column for ArticleEntry parity",
+                _migration_v3_articles_comments,
             ),
         ]
         for version, description, fn in migrations:
@@ -694,6 +724,24 @@ class PropertyIndex:
         rows = conn.execute("SELECT file FROM pending").fetchall()
         return [row[0] for row in rows]
 
+    def get_pending_snapshot(self, sample_limit: int = 20) -> PendingSnapshot:
+        """Return pending journal count plus a bounded file sample.
+
+        Used by operational status APIs that need O(1)+O(limit) visibility
+        without loading the full pending table into memory.
+        """
+        normalized_limit = max(0, min(sample_limit, 100))
+        conn = self._ensure_conn()
+        count_row = conn.execute("SELECT COUNT(*) FROM pending").fetchone()
+        pending_count = int(count_row[0] if count_row else 0)
+        if normalized_limit == 0:
+            return PendingSnapshot(count=pending_count, sample=[])
+        rows = conn.execute(
+            "SELECT file FROM pending ORDER BY file LIMIT ?",
+            (normalized_limit,),
+        ).fetchall()
+        return PendingSnapshot(count=pending_count, sample=[str(row[0]) for row in rows])
+
     async def rebuild_from_metadata(
         self, metadata_entries: list[tuple[str, str, str]]
     ) -> int:
@@ -893,6 +941,13 @@ class PropertyIndex:
         return conn.execute(
             "SELECT COUNT(*) FROM failed_extractions WHERE permanent = 1"
         ).fetchone()[0]
+
+    def get_failure_snapshot(self) -> FailureSnapshot:
+        """Return failed extraction counts used by operational status endpoints."""
+        return FailureSnapshot(
+            failed_extractions_count=self.get_failed_count(),
+            failed_extractions_permanent_count=self.get_permanent_count(),
+        )
 
     def get_permanent_chunks_by_file(self) -> dict[str, list[str]]:
         """Return {source: [chunk_id, ...]} for all permanently failed chunks."""

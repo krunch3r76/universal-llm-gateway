@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from mcp_events import monotonic_now, record
+from request_profile import current_profile
+from tool_access import CURSOR_SAFE_PROFILE
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -23,6 +25,15 @@ _QUERY_SOCKET = os.environ.get(
     "EVENT_QUERY_SOCKET", "/tmp/universal-protocol/events-query.sock"
 )
 _QUERY_TIMEOUT = 10.0
+_CURSOR_PREVIEW_LIMIT = 50
+_CURSOR_PREVIEW_BLOCKED = frozenset(
+    {
+        "raw_sql",
+        "request-trace",
+        "pipeline-trace",
+        "request-lifecycle",
+    }
+)
 
 _VALID_OPERATIONS = frozenset(
     {
@@ -39,6 +50,7 @@ _VALID_OPERATIONS = frozenset(
         "capacity-snapshot",
         "signal-events",
         "stack-last-started",
+        "realtime-snapshot",
         "operations",
         "raw_sql",
     }
@@ -46,7 +58,11 @@ _VALID_OPERATIONS = frozenset(
 
 
 def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
-    """POST to event service query endpoint over UDS."""
+    """POST a structured query payload to the event service over UDS.
+
+    Returns the decoded response body. On transport/query failures, returns an
+    error envelope with a human-readable `error` field for MCP callers.
+    """
     try:
         with httpx.Client(
             transport=httpx.HTTPTransport(uds=_QUERY_SOCKET),
@@ -93,6 +109,9 @@ def register_event_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Query system telemetry, traces, and request snapshots.
 
+        This full-surface tool is disabled for cursor_safe profile because
+        some operations can return very large payloads.
+
         Single entry point for all event service operations. Use
         operation='operations' to discover available operations and
         their detailed parameter schemas.
@@ -114,6 +133,7 @@ def register_event_tools(mcp: FastMCP) -> None:
           capacity-snapshot  — Current slot usage
           signal-events      — Recent events for a signal pattern, with payload
           stack-last-started — Per-service last startup timestamp + overall session start
+          realtime-snapshot  — Last N events from in-memory ring buffer (no SQLite)
           operations         — List all available operations
           raw_sql            — Raw SQL query (SELECT only, use "params" list for bindings)
 
@@ -127,6 +147,21 @@ def register_event_tools(mcp: FastMCP) -> None:
             On success: operation-specific result dict
             On error: {"error": "<message>"}
         """
+        profile = current_profile()
+        if profile == CURSOR_SAFE_PROFILE:
+            reason = (
+                "query_observability is disabled for cursor_safe profile. "
+                "Use query_observability_preview."
+            )
+            record(
+                "mcp.profile.tool.denied",
+                profile=profile,
+                tool="query_observability",
+                entrypoint="direct",
+                reason=reason,
+            )
+            return {"error": reason}
+
         if operation not in _VALID_OPERATIONS:
             return {
                 "error": f"Unknown operation: {operation}. "
@@ -136,9 +171,9 @@ def register_event_tools(mcp: FastMCP) -> None:
         t0 = monotonic_now()
         record("mcp.events.query.called", operation=operation)
 
+        body: dict[str, Any]
         if operation == "operations":
-            body: dict[str, Any] = {"type": "operations"}
-            result = _query_event_service(body)
+            body = {"type": "operations"}
         elif operation == "raw_sql":
             params_dict = params or {}
             body = {
@@ -147,10 +182,9 @@ def register_event_tools(mcp: FastMCP) -> None:
                 "params": params_dict.get("params", []),
                 "limit": params_dict.get("limit", 100),
             }
-            result = _query_event_service(body)
         else:
             body = {"type": "operation", "name": operation, "params": params or {}}
-            result = _query_event_service(body)
+        result = _query_event_service(body)
 
         duration = monotonic_now() - t0
         if "error" in result:
@@ -167,4 +201,52 @@ def register_event_tools(mcp: FastMCP) -> None:
                 duration_s=round(duration, 3),
             )
 
+        return result
+
+    @mcp.tool()
+    def query_observability_preview(
+        operation: str,
+        params: dict[str, Any] | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Run bounded observability queries suitable for cursor_safe profile."""
+        if operation not in _VALID_OPERATIONS:
+            return {
+                "error": f"Unknown operation: {operation}. "
+                f"Valid: {', '.join(sorted(_VALID_OPERATIONS))}"
+            }
+        if operation in _CURSOR_PREVIEW_BLOCKED:
+            return {"error": f"Operation '{operation}' is not allowed in preview mode."}
+
+        safe_limit = max(1, min(limit, _CURSOR_PREVIEW_LIMIT))
+        params_dict = dict(params or {})
+        try:
+            requested_limit = int(params_dict.get("limit", safe_limit))
+        except (TypeError, ValueError):
+            requested_limit = safe_limit
+        params_dict["limit"] = min(requested_limit, safe_limit)
+
+        t0 = monotonic_now()
+        record(
+            "mcp.events.preview.called",
+            operation=operation,
+            limit=params_dict["limit"],
+        )
+        body = {"type": "operation", "name": operation, "params": params_dict}
+        result = _query_event_service(body)
+        duration = monotonic_now() - t0
+        if "error" in result:
+            record(
+                "mcp.events.preview.failed",
+                operation=operation,
+                error=result["error"],
+                duration_s=round(duration, 3),
+            )
+            return result
+
+        record(
+            "mcp.events.preview.completed",
+            operation=operation,
+            duration_s=round(duration, 3),
+        )
         return result
