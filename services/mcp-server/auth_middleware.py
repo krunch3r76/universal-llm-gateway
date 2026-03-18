@@ -22,6 +22,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 from tools.clip import normalize_clip_content
+from workbench_relay import (
+    _CORS_HEADERS as RELAY_CORS_HEADERS,
+    handle_preflight,
+    handle_relay,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +153,32 @@ class AuthMiddleware:
                 {"error": "Method not allowed"},
                 status_code=405,
                 headers=self._CORS_HEADERS,
+            )
+            await response(scope, receive, send)
+            return
+
+        if path == "/workbench/relay":
+            if request.method == "OPTIONS":
+                response = handle_preflight()
+                await response(scope, receive, send)
+                return
+            auth = request.headers.get("authorization", "")
+            if not self._is_static_token_authorized(auth):
+                response = JSONResponse(
+                    {"error": "Unauthorized"},
+                    status_code=401,
+                    headers=RELAY_CORS_HEADERS,
+                )
+                await response(scope, receive, send)
+                return
+            if request.method == "POST":
+                response = await handle_relay(request)
+                await response(scope, receive, send)
+                return
+            response = JSONResponse(
+                {"error": "Method not allowed"},
+                status_code=405,
+                headers=RELAY_CORS_HEADERS,
             )
             await response(scope, receive, send)
             return

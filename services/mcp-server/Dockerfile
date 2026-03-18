@@ -43,6 +43,7 @@ COPY --chown=mcp:mcp oauth_store.py .
 COPY --chown=mcp:mcp oauth_service.py .
 COPY --chown=mcp:mcp oauth_routes.py .
 COPY --chown=mcp:mcp auth_middleware.py .
+COPY --chown=mcp:mcp workbench_relay.py .
 COPY --chown=mcp:mcp mcp_request_middleware.py .
 COPY --chown=mcp:mcp request_profile.py .
 COPY --chown=mcp:mcp tool_access.py .

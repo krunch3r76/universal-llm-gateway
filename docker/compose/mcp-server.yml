@@ -62,6 +62,8 @@ services:
       - MCP_OAUTH_ISSUER=${MCP_OAUTH_ISSUER:-https://mcp.k-1.me}
       - BRIDGE_TOKEN=${BRIDGE_TOKEN:-}
       - AGENT_BUS_TOKEN=${AGENT_BUS_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - MCP_SERVER_URL=${MCP_SERVER_URL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:

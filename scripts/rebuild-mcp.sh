@@ -62,6 +62,12 @@ if bridge:
 agent_bus = (cfg.get('AGENT_BUS_TOKEN') or cfg.get('agent_bus_token') or '').strip()
 if agent_bus:
     print('export AGENT_BUS_TOKEN=' + shlex.quote(agent_bus))
+anthropic = (cfg.get('ANTHROPIC_API_KEY') or cfg.get('anthropic_api_key') or os.environ.get('ANTHROPIC_API_KEY') or '').strip()
+if anthropic:
+    print('export ANTHROPIC_API_KEY=' + shlex.quote(anthropic))
+mcp_url = (cfg.get('mcp_server_url') or '').strip()
+if mcp_url:
+    print('export MCP_SERVER_URL=' + shlex.quote(mcp_url))
 fp = (cfg.get('firefox_profile_dir') or '').strip()
 if fp:
     print('export FIREFOX_PROFILE_DIR=' + shlex.quote(str(Path(fp).expanduser())))

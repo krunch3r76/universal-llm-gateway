@@ -129,6 +129,7 @@ def _agent_bus_reply_impl(
     after_turn: int,
     from_agent: str,
     status: str,
+    mark_read: bool,
 ) -> dict[str, Any]:
     payload = {
         "thread": thread,
@@ -152,6 +153,12 @@ def _agent_bus_reply_impl(
         to=to,
         turn_number=str(turn_number) if turn_number is not None else "",
     )
+
+    if mark_read:
+        qs = urlencode({"thread": thread, "last": 1, "mark_read": "true"})
+        _relay("agent-bus", "GET", f"/turns?{qs}")
+        logger.info("agent_bus_reply: marked turn %s read (self-note)", turn_number)
+
     return result
 
 
@@ -251,11 +258,28 @@ def _agent_bus_turn_update_impl(
     return patch_result
 
 
+def _mark_thread_turns_read(thread: str) -> int:
+    """Mark all turns in a thread as read. Returns count of turns marked."""
+    qs = urlencode({
+        "thread": thread,
+        "last": 50000,
+        "mark_read": "true",
+        "include_superseded": "true",
+    })
+    result = _relay("agent-bus", "GET", f"/turns?{qs}")
+    if isinstance(result, dict) and "error" in result:
+        logger.warning("Failed to mark turns read for thread %s: %s", thread, result["error"])
+        return 0
+    turns: list[Any] = result if isinstance(result, list) else result.get("turns", [])
+    return len(turns)
+
+
 def _agent_bus_update_thread_impl(
     *,
     thread: str,
     status: str | None,
     summary: str | None,
+    mark_all_read: bool | None,
 ) -> dict[str, Any]:
     payload: dict[str, str] = {}
     if status is not None:
@@ -267,6 +291,11 @@ def _agent_bus_update_thread_impl(
         return {
             "error": "agent_bus_update_thread requires at least one of: status, summary"
         }
+
+    should_mark_read = mark_all_read if mark_all_read is not None else (status == "closed")
+    if should_mark_read:
+        marked = _mark_thread_turns_read(thread)
+        logger.info("agent_bus_update_thread: marked %d turns read in thread %s", marked, thread)
 
     result = _relay("agent-bus", "PATCH", f"/threads/{thread}", body=payload)
 
@@ -523,12 +552,18 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         after_turn: int,
         from_agent: str = "web",
         status: str = "open",
+        mark_read: bool = False,
     ) -> dict[str, Any]:
         """Post a turn to an existing Agent Bus thread.
 
         after_turn prevents out-of-order posts by asserting the turn_number
         this reply follows. Do NOT use this to create new threads — use
         agent_bus_post instead.
+
+        Use mark_read=True for self-closing notes — turns the sender posts
+        that are not intended to be read by the recipient (e.g. "Verified —
+        closing"). This prevents the turn from inflating unread_count on
+        closed threads.
 
         Args:
             thread: Thread ID to post into (e.g. '034').
@@ -538,6 +573,8 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
             after_turn: The turn_number this reply follows.
             from_agent: Sender identity (default 'web').
             status: Thread status hint — 'open' (default) or 'resolved'.
+            mark_read: Mark this turn as read immediately (default False).
+                Use for self-closing notes not intended for the recipient.
 
         Returns:
             {"id": <turn_id>, "turn_number": <n>, ...} or {"error": "<message>"}.
@@ -550,6 +587,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
             after_turn=after_turn,
             from_agent=from_agent,
             status=status,
+            mark_read=mark_read,
         )
 
     @mcp.tool()
@@ -615,10 +653,16 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         thread: str,
         status: str | None = None,
         summary: str | None = None,
+        mark_all_read: bool | None = None,
     ) -> dict[str, Any]:
         """Update Agent Bus thread metadata — status and/or summary.
 
         Primary use: thread close protocol. Always set summary when closing.
+
+        When closing (status='closed'), all unread turns are automatically marked
+        as read — closed threads should have unread_count == 0. Override with
+        mark_all_read=False if the closing agent wants to leave turns unread
+        (rare — prefer having the recipient read and close instead).
 
         agent_bus_update_thread(
             thread='034',
@@ -630,6 +674,8 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
             thread: Thread ID to update (e.g. '034').
             status: New status — 'active', 'closed', 'blocked', or 'waiting'.
             summary: 1-2 sentence summary. Required when closing a thread.
+            mark_all_read: Mark all turns read. Defaults to True when closing,
+                False otherwise. Set explicitly to override.
 
         Returns:
             Updated thread object, or {"error": "<message>"}.
@@ -638,6 +684,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
             thread=thread,
             status=status,
             summary=summary,
+            mark_all_read=mark_all_read,
         )
 
     @mcp.tool()

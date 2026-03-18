@@ -136,6 +136,9 @@ def _cmd_reply(args: argparse.Namespace, token: str) -> None:
         "after_turn": args.after_turn,
     }
     result = _request("POST", "/turns", token, body=payload)
+    if args.mark_read:
+        qs = urlencode({"thread": args.thread, "last": 1, "mark_read": "true"})
+        _request("GET", f"/turns?{qs}", token)
     print(json.dumps(result, indent=2, default=str))
 
 
@@ -217,6 +220,15 @@ def _cmd_update_thread(args: argparse.Namespace, token: str) -> None:
     if not payload:
         print("update-thread requires --status and/or --summary", file=sys.stderr)
         sys.exit(1)
+    should_mark = args.mark_read if args.mark_read is not None else (args.status == "closed")
+    if should_mark:
+        qs = urlencode({
+            "thread": args.thread,
+            "last": 50000,
+            "mark_read": "true",
+            "include_superseded": "true",
+        })
+        _request("GET", f"/turns?{qs}", token)
     result = _request("PATCH", f"/threads/{args.thread}", token, body=payload)
     print(json.dumps(result, indent=2, default=str))
 
@@ -317,6 +329,10 @@ def _build_parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--status", default="open", help="Thread status hint (default: open)"
     )
+    r.add_argument(
+        "--mark-read", action="store_true",
+        help="Mark this turn as read immediately (for self-closing notes)",
+    )
 
     # append
     ap = sub.add_parser(
@@ -351,6 +367,15 @@ def _build_parser() -> argparse.ArgumentParser:
     u.add_argument("--thread", required=True)
     u.add_argument("--status", help="New status")
     u.add_argument("--summary", help="Thread summary")
+    mark_grp = u.add_mutually_exclusive_group()
+    mark_grp.add_argument(
+        "--mark-read", dest="mark_read", action="store_true", default=None,
+        help="Mark all turns read (default when closing)",
+    )
+    mark_grp.add_argument(
+        "--no-mark-read", dest="mark_read", action="store_false",
+        help="Skip marking turns read even when closing",
+    )
 
     # delete-thread
     d = sub.add_parser("delete-thread", help="Delete a thread and all its turns")
