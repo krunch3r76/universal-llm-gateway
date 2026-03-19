@@ -47,6 +47,7 @@ COPY --chown=mcp:mcp services/mcp-server/oauth_store.py .
 COPY --chown=mcp:mcp services/mcp-server/oauth_service.py .
 COPY --chown=mcp:mcp services/mcp-server/oauth_routes.py .
 COPY --chown=mcp:mcp services/mcp-server/auth_middleware.py .
+COPY --chown=mcp:mcp services/mcp-server/artifact_proxy.py .
 COPY --chown=mcp:mcp services/mcp-server/cortex_proxy.py .
 COPY --chown=mcp:mcp services/mcp-server/llm_proxy.py .
 COPY --chown=mcp:mcp services/mcp-server/workbench_relay.py .

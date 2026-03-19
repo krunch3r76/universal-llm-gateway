@@ -17,6 +17,16 @@ import re
 import time
 from pathlib import Path
 
+from artifact_proxy import (
+    _ALLOWED_ORIGINS as ARTIFACT_ALLOWED_ORIGINS,
+)
+from artifact_proxy import (
+    _cors_headers as artifact_cors_headers,
+)
+from artifact_proxy import (
+    handle_artifact_preflight,
+    handle_artifact_proxy,
+)
 from cortex_proxy import (
     _CORS_HEADERS as CORTEX_CORS_HEADERS,
 )
@@ -146,6 +156,16 @@ class AuthMiddleware:
 
         if path == "/health":
             response = JSONResponse({"status": "ok"})
+            await response(scope, receive, send)
+            return
+
+        # Artifact proxy — origin-validated, no bearer token required
+        if path.startswith("/artifact/cortex"):
+            if request.method == "OPTIONS":
+                response = handle_artifact_preflight(request)
+                await response(scope, receive, send)
+                return
+            response = await handle_artifact_proxy(request)
             await response(scope, receive, send)
             return
 

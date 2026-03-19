@@ -1,6 +1,10 @@
-// Cortex Workbench v2.1.1 — React JSX, dual transport (sandbox + standalone)
-// Sandbox (claude.ai):  Anthropic API → MCP tools for data + AI (via llm_generate tool)
+// Cortex Workbench v2.2.0 — React JSX, dual transport (sandbox + standalone)
+// Sandbox (claude.ai):  Anthropic API → MCP tools for data, Anthropic API direct for AI
 // Standalone (Vite):    REST to mcp.k-1.me/cortex-api + /llm/v1/messages
+//
+// Model tiering (cost optimization):
+//   HAIKU  — MCP data ops, structured extraction (12x cheaper than Sonnet)
+//   SONNET — Description generation, nuanced writing
 
 import { useState, useEffect, useCallback, useRef } from "react";
 
@@ -8,6 +12,12 @@ const CORTEX_API = "https://mcp.k-1.me/cortex-api";
 const LLM_API = "https://mcp.k-1.me/llm/v1/messages";
 const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 const MCP_SERVER = { type: "url", url: "https://mcp.k-1.me/mcp", name: "vortex" };
+
+// Model tiering — cheap models for structured tasks, capable models for nuance
+const MODELS = {
+  haiku: "claude-haiku-4-5-20251001",   // MCP ops, JSON extraction
+  sonnet: "claude-sonnet-4-20250514",   // Description generation
+};
 
 const TYPE_META = {
   person: { icon: "👤", color: "text-blue-400", bg: "bg-blue-400/10" },
@@ -35,20 +45,46 @@ let _detectPromise = null;
 async function detectMode() {
   if (_mode) return _mode;
   if (_detectPromise) return _detectPromise;
+  
   _detectPromise = (async () => {
+    // URL param override for testing
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("mode") === "sandbox") { _mode = "sandbox"; return _mode; }
+    if (params.get("mode") === "standalone") { _mode = "standalone"; return _mode; }
+    
+    // Primary detection: try Anthropic API without auth
+    // In claude.ai artifacts, this succeeds (env provides auth)
+    // Outside artifacts, this fails with 401
     try {
-      await fetch(`${CORTEX_API}/health`, { method: "HEAD", mode: "cors" });
-      _mode = "standalone";
-    } catch {
-      _mode = "sandbox";
+      const res = await fetch(ANTHROPIC_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-haiku-4-5-20251001", // Haiku for ping — cheapest
+          max_tokens: 1,
+          messages: [{ role: "user", content: "ping" }],
+        }),
+      });
+      // 200 or 529 (overloaded) = API is reachable with implicit auth = sandbox
+      // 401 = no auth = standalone
+      _mode = res.status === 401 ? "standalone" : "sandbox";
+    } catch (e) {
+      // Network error or CORS block → fallback to health check
+      try {
+        await fetch(`${CORTEX_API}/health`, { method: "HEAD", mode: "cors" });
+        _mode = "standalone";
+      } catch {
+        _mode = "sandbox";
+      }
     }
     return _mode;
   })();
+  
   return _detectPromise;
 }
 
 function getMode() {
-  return _mode || "standalone";
+  return _mode || "sandbox"; // default to sandbox if detection hasn't run
 }
 
 function authHeaders() {
@@ -66,8 +102,6 @@ const MCP_PROMPTS = {
     `Call the cortex_assert tool with entity_id="${args.entity_id}", claim="${args.claim}", confidence="${args.confidence}", evidence="${args.evidence}"${args.evidence_uris ? `, evidence_uris="${Array.isArray(args.evidence_uris) ? args.evidence_uris.join(",") : args.evidence_uris}"` : ""}. Return confirmation.`,
   sqlite_execute: (args) =>
     `Call dispatch with tool="sqlite_execute" and arguments='${JSON.stringify({ db: "cortex", statement: args.statement, params: args.params })}'. Return the result.`,
-  llm_generate: (args) =>
-    `Call dispatch with tool="llm_generate" and arguments='${JSON.stringify({ messages: args.messages, system: args.system || "", model: args.model || "claude-sonnet-4-20250514", max_tokens: args.max_tokens || 4096 })}'. Return the complete response JSON.`,
 };
 
 function extractMCPResult(data) {
@@ -103,7 +137,7 @@ async function mcpCall(toolName, args) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: MODELS.haiku, // Haiku for MCP ops — structured tool calls
       max_tokens: 4096,
       messages: [{ role: "user", content: prompt }],
       mcp_servers: [MCP_SERVER],
@@ -159,22 +193,25 @@ async function cortexCreateAssertion(assertion) {
 // ===== Unified AI Layer =====
 
 async function callLLM(messages, { system, model, max_tokens } = {}) {
-  if (getMode() === "sandbox") {
-    return mcpCall("llm_generate", {
-      messages,
-      system: system || "",
-      model: model || "claude-sonnet-4-20250514",
-      max_tokens: max_tokens || 4096,
-    });
-  }
-
-  if (!_bearerToken) throw new Error("Vortex token not set — open Settings");
   const payload = {
-    model: model || "claude-sonnet-4-20250514",
+    model: model || MODELS.sonnet, // Default to Sonnet for quality
     max_tokens: max_tokens || 4096,
     messages,
   };
   if (system) payload.system = system;
+
+  if (getMode() === "sandbox") {
+    payload.mcp_servers = [MCP_SERVER];
+    const res = await fetch(ANTHROPIC_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    return res.json();
+  }
+
+  if (!_bearerToken) throw new Error("Vortex token not set — open Settings");
   const res = await fetch(LLM_API, { method: "POST", headers: authHeaders(), body: JSON.stringify(payload) });
   if (!res.ok) throw new Error(`LLM proxy ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return res.json();
@@ -252,20 +289,23 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
   const addLog = useCallback((msg, type = "info") => {
     const entry = { ts: new Date().toLocaleTimeString(), msg, type };
     setLog((prev) => [...prev.slice(-50), entry]);
-  }, [initialToken, isSandbox]);
+  }, []);
 
   const setLoadingKey = (key, val) => setLoading((prev) => ({ ...prev, [key]: val }));
 
   useEffect(() => {
     (async () => {
       await detectMode();
-      if (getMode() !== "sandbox") {
-        try {
-          const saved = localStorage.getItem("cortex_wb_token") || "";
-          const effective = initialToken || saved;
-          if (effective) { setToken(effective); _bearerToken = effective; }
-        } catch {}
+      const mode = getMode();
+      if (mode === "sandbox") {
+        setTokenReady(true);
+        return;
       }
+      try {
+        const saved = localStorage.getItem("cortex_wb_token") || "";
+        const effective = initialToken || saved;
+        if (effective) { setToken(effective); _bearerToken = effective; }
+      } catch {}
       setTokenReady(true);
     })();
   }, []);
@@ -274,7 +314,7 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
     if (!isSandbox && !_bearerToken) { setShowSettings(true); return; }
     setLoadingKey("entities", true);
     setError(null);
-    addLog(isSandbox ? "Claude is fetching entities via MCP..." : "Loading entities...");
+    addLog(isSandbox ? "Haiku is fetching entities via MCP..." : "Loading entities...");
     try {
       const data = await cortexGetEntities(200);
       const items = data.items || [];
@@ -299,7 +339,7 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
 
   const loadDetail = useCallback(async (entityId) => {
     setSelectedId(entityId); setDetail(null); setProposedDesc(null); setLoadingKey("detail", true);
-    addLog(isSandbox ? `Claude is retrieving ${entityId} via MCP...` : `Loading ${entityId}...`);
+    addLog(isSandbox ? `Haiku is retrieving ${entityId} via MCP...` : `Loading ${entityId}...`);
     try {
       const entityData = await cortexGetEntity(entityId);
       setDetail(entityData);
@@ -311,7 +351,7 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
   const generateDescription = useCallback(async () => {
     if (!detail) return;
     setLoadingKey("description", true); setProposedDesc(null);
-    addLog(`Generating description for ${detail.name}...`);
+    addLog(`Sonnet generating description for ${detail.name}...`);
     try {
       const assertionsSummary = (detail.assertions || []).map((a) => `- [${a.confidence}] ${a.claim}`).join("\n");
       const entityList = entities.filter((e) => e.type === detail.type && e.id !== detail.id).map((e) => `  ${e.id}: ${e.name}`).join("\n");
@@ -331,7 +371,7 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
   const commitDescription = useCallback(async (desc) => {
     if (!detail) return;
     setLoadingKey("commitDesc", true);
-    addLog(isSandbox ? `Claude is committing description via MCP...` : `Committing description for ${detail.name}...`);
+    addLog(isSandbox ? `Haiku committing description via MCP...` : `Committing description for ${detail.name}...`);
     try {
       const updated = await cortexUpdateEntity(detail.id, desc);
       if (isSandbox) {
@@ -348,12 +388,13 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
   const extractKnowledge = useCallback(async () => {
     if (!ingestText.trim()) return;
     setLoadingKey("extract", true); setExtraction(null);
-    addLog("Extracting knowledge from text...");
+    addLog("Haiku extracting knowledge from text...");
     try {
       const entityContext = entities.map((e) => `${e.id}: ${e.name} (${e.type})`).join("\n");
       const data = await callLLM(
         [{ role: "user", content: `EXISTING ENTITIES:\n${entityContext}\n\nTEXT TO EXTRACT FROM:\n${ingestText}` }],
         {
+          model: MODELS.haiku, // Haiku for structured JSON extraction
           system: `You are a knowledge extraction system for a personal knowledge graph. Given text, extract structured assertions.\n\nRULES:\n- Each assertion must be atomic (one fact), faithful (accurate to source), and decontextualized (no pronouns — use full names).\n- Resolve mentions to existing entities when possible. Use the entity ID format type:slug.\n- Confidence levels: confirmed (verified fact), believed (high confidence), suspected (pattern-based), hypothesized (theory).\n- Include reasoning for each assertion.\n\nRespond with ONLY a JSON object in this format:\n{\n  "assertions": [\n    {\n      "entity_id": "type:slug",\n      "entity_name": "Display Name",\n      "claim": "The atomic assertion",\n      "confidence": "believed",\n      "evidence": "Why we believe this — 1 sentence",\n      "reasoning": "How this was derived from the source text"\n    }\n  ],\n  "new_entities": [\n    {\n      "id": "type:slug",\n      "name": "Display Name",\n      "type": "person|organization|event|etc",\n      "description": "2-3 sentence description"\n    }\n  ]\n}`,
           max_tokens: 4096,
         }
@@ -367,7 +408,7 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
   }, [ingestText, entities, addLog]);
 
   const commitAssertion = useCallback(async (assertion) => {
-    addLog(isSandbox ? `Claude is committing assertion via MCP...` : `Committing: ${assertion.claim.slice(0, 60)}...`);
+    addLog(isSandbox ? `Haiku committing assertion via MCP...` : `Committing: ${assertion.claim.slice(0, 60)}...`);
     try {
       await cortexCreateAssertion({
         entity_id: assertion.entity_id,
@@ -395,7 +436,7 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
         <div className="flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
           <h1 className="text-base font-semibold tracking-wide" style={{ color: "#c8a24e", fontFamily: "'IBM Plex Mono', 'SF Mono', monospace" }}>CORTEX WORKBENCH</h1>
-          <span className="text-xs px-2 py-0.5 rounded" style={{ background: "#1a1a2e", color: "#666680" }}>v2.1.1</span>
+          <span className="text-xs px-2 py-0.5 rounded" style={{ background: "#1a1a2e", color: "#666680" }}>v2.2.0</span>
           <span className="text-xs px-2 py-0.5 rounded" style={{ background: isSandbox ? "#1a2e1a" : "#1a1a2e", color: isSandbox ? "#4a9e6a" : "#888898" }}>{isSandbox ? "sandbox" : "standalone"}</span>
         </div>
         <div className="flex items-center gap-1">
@@ -407,9 +448,18 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
       {showSettings && (
         <div className="px-5 py-3 border-b space-y-2" style={{ borderColor: "#1a1a2e", background: "#0c0c16" }}>
           {isSandbox ? (
-            <div className="flex items-center gap-3">
-              <span className="text-xs" style={{ color: "#4a9e6a" }}>✓ Sandbox mode</span>
-              <p className="text-xs" style={{ color: "#444460" }}>Authentication is automatic. Data and AI ops route through your Claude.ai session via Anthropic API + MCP.</p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <span className="text-xs" style={{ color: "#4a9e6a" }}>✓ Sandbox mode</span>
+                <p className="text-xs" style={{ color: "#444460" }}>Auth via claude.ai session. Data + AI route through Anthropic API + MCP.</p>
+              </div>
+              <div className="flex items-center gap-4 text-xs" style={{ color: "#555570" }}>
+                <span>Models:</span>
+                <span style={{ color: "#6a9eca" }}>Haiku</span>
+                <span style={{ color: "#444460" }}>→ MCP ops, extraction</span>
+                <span style={{ color: "#c8a24e" }}>Sonnet</span>
+                <span style={{ color: "#444460" }}>→ descriptions</span>
+              </div>
             </div>
           ) : (
             <>
@@ -466,7 +516,7 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6">
-              {loading.detail && (<div className="flex items-center gap-3 justify-center py-20"><Spinner size="w-5 h-5" /><span style={{ color: "#666680" }}>{isSandbox ? "Claude is retrieving entity via MCP..." : "Loading entity..."}</span></div>)}
+              {loading.detail && (<div className="flex items-center gap-3 justify-center py-20"><Spinner size="w-5 h-5" /><span style={{ color: "#666680" }}>{isSandbox ? "Haiku retrieving entity via MCP..." : "Loading entity..."}</span></div>)}
               {!detail && !loading.detail && (<div className="flex items-center justify-center py-20" style={{ color: "#333350" }}><span>Select an entity to view details</span></div>)}
               {detail && !loading.detail && (
                 <div className="max-w-3xl space-y-6">
@@ -486,7 +536,7 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
                     </div>
                     {detail.notes && !proposedDesc && (<p className="text-sm leading-relaxed" style={{ color: "#b0b0c0" }}>{detail.notes}</p>)}
                     {!detail.notes && !proposedDesc && !loading.description && (<p className="text-sm italic" style={{ color: "#444460" }}>No description yet. Generate one to enable entity resolution.</p>)}
-                    {loading.description && (<div className="flex items-center gap-2 py-2"><Spinner /><span className="text-sm" style={{ color: "#666680" }}>Claude is writing a description...</span></div>)}
+                    {loading.description && (<div className="flex items-center gap-2 py-2"><Spinner /><span className="text-sm" style={{ color: "#666680" }}>Sonnet writing description...</span></div>)}
                     {proposedDesc && (
                       <div className="space-y-3">
                         <div className="rounded-md border p-3" style={{ borderColor: "#c8a24e30", background: "#c8a24e08" }}>
@@ -526,7 +576,7 @@ export default function CortexWorkbench({ initialToken = "" } = {}) {
                   <button onClick={extractKnowledge} disabled={loading.extract || !ingestText.trim()} className="px-5 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-30" style={{ background: "#c8a24e", color: "#0a0a14" }}>{loading.extract ? "Extracting..." : "Extract Knowledge"}</button>
                 </div>
               </div>
-              {loading.extract && (<div className="flex items-center gap-3 py-8 justify-center"><Spinner size="w-5 h-5" /><span style={{ color: "#666680" }}>{isSandbox ? "Claude is extracting knowledge via MCP..." : "Claude is reading and extracting knowledge..."}</span></div>)}
+              {loading.extract && (<div className="flex items-center gap-3 py-8 justify-center"><Spinner size="w-5 h-5" /><span style={{ color: "#666680" }}>{isSandbox ? "Haiku extracting knowledge..." : "Haiku extracting knowledge..."}</span></div>)}
               {extraction && !loading.extract && (
                 <div className="space-y-6">
                   {extraction.new_entities?.length > 0 && (
