@@ -10,10 +10,12 @@ Supported write formats: .md, .txt, .docx, .pdf, .yaml, .yml.
 
 from __future__ import annotations
 
+import base64
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
+from mcp.types import ImageContent
 from mcp_events import record
 
 from .file_editor import perform_edit
@@ -276,28 +278,29 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def view_image(
-        path: str, max_dimension: int = 1024, quality: int = 60
-    ) -> dict[str, str]:
+        path: str,
+        max_dimension: int = 1024,
+        quality: int = 60,
+        mode: Literal["url", "image"] = "url",
+    ) -> ImageContent | dict[str, str | int]:
         """View a photo or image from the sandbox filesystem.
 
-        Resizes and compresses the image to a JPEG thumbnail saved at
-        .thumbnails/<name>.jpg inside the sandbox. Returns the thumbnail
-        path and metadata — no base64 in the response, so it won't
-        overflow the context window.
+        Resizes to a JPEG thumbnail. In ``url`` mode (default), returns a
+        URL pointing to the thumbnail for HTTP retrieval. In ``image`` mode,
+        returns an MCP ImageContent block with inline base64 data.
 
-        To actually see the image, read the thumbnail file with your
-        file viewer or bash tool.
-
-        Supported formats: .jpg, .jpeg, .png, .gif, .webp
+        Supported formats: .jpg, .jpeg, .png, .gif, .webp, .svg
 
         Args:
             path: Relative file path, e.g. "dropbox/photo.jpg".
             max_dimension: Max width or height in pixels (default 1024).
             quality: JPEG compression quality 1-95 (default 60).
+            mode: "url" returns a thumbnail URL; "image" returns inline
+                  ImageContent. Default "url".
 
         Returns:
-            {"thumbnail": "<path to compressed JPEG>", "original": "<source path>",
-             "original_size": "WxH", "thumbnail_size": "WxH", "bytes": "<file size>"}
+            URL mode: {"url", "dimensions", "original", "bytes"}.
+            Image mode: MCP ImageContent block (JPEG).
         """
         from PIL import Image as PILImage
 
@@ -328,31 +331,38 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         img.save(str(thumb_path), format="JPEG", quality=quality, optimize=True)
 
         thumb_size = f"{img.width}x{img.height}"
-        file_bytes = thumb_path.stat().st_size
-        thumb_rel = str(thumb_path.relative_to(_SANDBOX_ROOT))
+        jpeg_bytes = thumb_path.read_bytes()
 
         record(
             "mcp.tool.image.viewed",
             path=path,
             resolved=str(src),
             original=original_size,
-            thumbnail=thumb_rel,
             thumbnail_size=thumb_size,
-            bytes=file_bytes,
+            bytes=len(jpeg_bytes),
+            mode=mode,
         )
         logger.info(
-            "view_image: %s %s -> %s (%d bytes)",
+            "view_image: %s %s -> %s (%d bytes, mode=%s)",
             src,
             original_size,
             thumb_size,
-            file_bytes,
+            len(jpeg_bytes),
+            mode,
         )
+
+        if mode == "image":
+            return ImageContent(
+                type="image",
+                data=base64.b64encode(jpeg_bytes).decode(),
+                mimeType="image/jpeg",
+            )
+
         return {
-            "thumbnail": thumb_rel,
-            "original": path,
-            "original_size": original_size,
-            "thumbnail_size": thumb_size,
-            "bytes": str(file_bytes),
+            "url": f"https://mcp.k-1.me/thumbnails/{thumb_name}",
+            "dimensions": thumb_size,
+            "original": original_size,
+            "bytes": len(jpeg_bytes),
         }
 
     @mcp.tool()

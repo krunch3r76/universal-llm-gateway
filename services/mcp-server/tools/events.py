@@ -15,6 +15,7 @@ import httpx
 from mcp_events import monotonic_now, record
 from request_profile import current_profile
 from tool_access import CURSOR_SAFE_PROFILE
+from transport_utils import make_sync_client
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -64,11 +65,11 @@ def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
     error envelope with a human-readable `error` field for MCP callers.
     """
     try:
-        with httpx.Client(
-            transport=httpx.HTTPTransport(uds=_QUERY_SOCKET),
+        with make_sync_client(
+            f"unix://{_QUERY_SOCKET}",
             timeout=_QUERY_TIMEOUT,
         ) as client:
-            resp = client.post("http://localhost/v1/query", json=body)
+            resp = client.post("/v1/query", json=body)
             resp.raise_for_status()
             return resp.json()
     except FileNotFoundError as e:
@@ -93,7 +94,9 @@ def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
             e.response.text,
             exc_info=True,
         )
-        return {"error": f"Event service error: {e.response.status_code} - {e.response.text}"}
+        return {
+            "error": f"Event service error: {e.response.status_code} - {e.response.text}"
+        }
     except Exception as e:
         logger.error("Event query failed: %s", e, exc_info=True)
         return {"error": f"Event query failed: {e}"}

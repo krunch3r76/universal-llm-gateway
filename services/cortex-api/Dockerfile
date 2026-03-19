@@ -2,11 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY services/cortex-api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/ src/
+# Shared libs — available as `from transport_utils import ...`, `from model_id import ...`
+COPY libs/ /app/libs/
+ENV PYTHONPATH=/app/libs
 
-EXPOSE 8300
+COPY services/cortex-api/src/ src/
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8300"]
+CMD ["uvicorn", "src.main:app", "--uds", "/tmp/universal-protocol/cortex-api.sock"]

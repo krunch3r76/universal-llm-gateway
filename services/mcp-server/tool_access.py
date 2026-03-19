@@ -7,10 +7,12 @@ from typing import Final
 CURSOR_SAFE_PROFILE: Final[str] = "cursor_safe"
 DEFAULT_PROFILE: Final[str] = "default"
 
+# HISTORY: agent_bus_fetch and agent_bus_threads were previously in this
+# deny list because large markdown bodies could freeze the Cursor IDE via
+# stdio pipe saturation. Removed 2026-03 during transport_utils migration.
+# If stdio freezes return, see tasks/lessons/tooling-agent-bus-stdio-freeze.md
 _CURSOR_DISPATCH_DENY: Final[frozenset[str]] = frozenset(
     {
-        "agent_bus_fetch",
-        "agent_bus_threads",
         "rag_search",
         "rag_answer",
         "query_observability",

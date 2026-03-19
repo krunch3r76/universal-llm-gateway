@@ -29,9 +29,11 @@ from .routers import (
     cloud_passthrough,
     forwarding,
     health,
+    local_models,
     monitoring,
     schedule,
     v1,
+    workbench,
 )
 
 logger = get_logger(__name__)
@@ -56,17 +58,22 @@ async def _check_if_streaming_request(request: Request) -> bool:
         True if client requested streaming, False otherwise
     """
     try:
-        # Check if request body is already consumed
+        # Reuse parsed JSON if another path already decoded the payload.
         if hasattr(request.state, "_json"):
             body = request.state._json
-        else:
-            # Try to get cached JSON body from request
-            # This avoids re-reading the body which would fail
-            body = await request.json()
-            request.state._json = body  # Cache for future use
+            return body.get("stream", False) if isinstance(body, dict) else False
 
+        # Avoid consuming the request stream in exception handlers. Raw body
+        # bytes are cached by RawBodyCacheMiddleware for POST/PUT/PATCH requests.
+        raw_body = getattr(request.state, "raw_body_bytes", b"")
+        if not raw_body:
+            return False
+
+        body = json.loads(raw_body.decode("utf-8"))
+        request.state._json = body
         return body.get("stream", False) if isinstance(body, dict) else False
-    except json.JSONDecodeError:
+
+    except (UnicodeDecodeError, json.JSONDecodeError):
         logger.debug("Could not decode request body as JSON, assuming non-streaming.")
         return False
     except Exception as e:
@@ -346,7 +353,8 @@ async def openai_http_exception_handler(request: Request, exc: HTTPException):
         # Return error as streaming response for proper client handling
         logger.warning(
             f"Streaming request error before stream started: {exc.status_code} "
-            f"{request.method} {request.url.path}"
+            f"{request.method} {request.url.path}",
+            exc_info=True,
         )
         return await _create_streaming_error_response(error_dict, exc.status_code)
 
@@ -481,6 +489,12 @@ app.include_router(
 app.include_router(health.router)  # /health
 app.include_router(schedule.router)  # /scheduler/* endpoints
 app.include_router(monitoring.router)  # /api/v1/monitoring/* endpoints (Phase 4)
+app.include_router(local_models.api_router)  # /api/v1/local-models (local models data)
+app.include_router(local_models.ui_router)  # /local-ui (local models browser)
+local_models.mount_static(app)  # /local-ui/static/* (must be after router registration)
+workbench.mount_workbench(
+    app
+)  # /workbench (Cortex Workbench SPA, must be after routers)
 
 # Gateway forwarding under /gateway/* namespace
 # Conditional mounting based on federation mode:

@@ -504,6 +504,29 @@ logged at DEBUG level in `MasterRequestTracker`.
 - ∀ cancel_group(g): cancels ∀ r ∈ g that are still ACTIVE
 - ∀ completed request: removed from its cancel group (no stale references)
 
+### Pipeline Admission Contract
+
+**INVARIANT**: `pipeline.admission.admitted` ⟹ `pipeline.admission.released`
+(every admitted pipeline returns its token — the `finally` block guarantees this).
+
+**INVARIANT**: `pipeline.admission.queued` is emitted only when all tokens are held
+(i.e., when the request will actually block on admission).
+
+| Signal | Role | Payload |
+|--------|------|---------|
+| `pipeline.admission.queued` | observation | `pipeline_id`, `execution_id`, `queue_depth`, `active_count` |
+| `pipeline.admission.admitted` | observation | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` |
+| `pipeline.admission.rejected` | observation | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` |
+| `pipeline.admission.released` | observation | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` |
+
+```
+pipeline.admission.queued? (only if contention)
+  └─> pipeline.admission.admitted
+      └─> pipeline.started → ... → pipeline.completed | pipeline.failed | pipeline.cancelled
+      └─> pipeline.admission.released
+  └─> pipeline.admission.rejected (admission timeout)
+```
+
 ### Pipeline Lifecycle Contract
 
 **INVARIANT**: `pipeline.started` ⟹ (`pipeline.completed` ∨ `pipeline.failed` ∨ `pipeline.cancelled`)
@@ -1267,6 +1290,10 @@ Pipeline events are persisted to the Event Service and can be queried with
 
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
+| `pipeline.admission.queued` | `pipeline_id`, `execution_id`, `queue_depth`, `active_count` | emitted only under contention |
+| `pipeline.admission.admitted` | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` | - |
+| `pipeline.admission.rejected` | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` | admission timeout |
+| `pipeline.admission.released` | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` | - |
 | `pipeline.started` | `pipeline_id`, `execution_id`, `domain`, `step_count`, `timeout_seconds` | - |
 | `pipeline.completed` | `pipeline_id`, `execution_id`, `duration_seconds`, `step_count`, `output_step` | - |
 | `pipeline.failed` | `pipeline_id`, `execution_id`, `duration_seconds`, `error`, `failed_step` | - |

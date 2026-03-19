@@ -4,18 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any, override
 
-import httpx
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import PipelineContext, StepOutput
 from systems.pipeline.core.step_config import StepConfig
+from transport_utils.rag_client import DEFAULT_CORTEX_URL, make_async_client
 from universal_event_bus.events.debug import emit_debug_event
 
 logger = logging.getLogger(__name__)
-
-CORTEX_API_URL = os.getenv("CORTEX_API_URL", "http://cortex-api:8300").rstrip("/")
 
 VALID_ENTITY_TYPES = frozenset(
     {
@@ -136,8 +133,8 @@ def _validate_event(event: dict[str, Any]) -> str | None:
 async def _fetch_existing_entity_ids() -> frozenset[str]:
     """Query cortex-api for all existing entity IDs. Best-effort: returns empty on failure."""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{CORTEX_API_URL}/entities", params={"limit": 500})
+        async with make_async_client(DEFAULT_CORTEX_URL, timeout=5.0) as client:
+            resp = await client.get("/entities", params={"limit": 500})
             resp.raise_for_status()
             items = resp.json().get("items", [])
             return frozenset(item["id"] for item in items if "id" in item)

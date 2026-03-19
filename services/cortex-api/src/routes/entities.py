@@ -5,13 +5,14 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from src.db import cortex_conn, decode_row, json_encode, query
+from src.db import cortex_conn, decode_row, execute, json_encode, query
 from src.models import (
     AssertionItem,
     EntityCreate,
     EntityDetail,
     EntityList,
     EntitySummary,
+    EntityUpdate,
 )
 
 logger = logging.getLogger("cortex-api.entities")
@@ -77,6 +78,57 @@ def get_entity(entity_id: str) -> EntityDetail:
     ]
     return EntityDetail(
         **decode_row(entity, _ENTITY_JSON_FIELDS), assertions=assertions
+    )
+
+
+@router.patch("/{entity_id}", response_model=EntityDetail)
+def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
+    """Update mutable fields on an entity (currently: notes)."""
+    conn = cortex_conn()
+    try:
+        existing = query(conn, "SELECT id FROM entities WHERE id = ?", (entity_id,))
+        if not existing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Entity not found: {entity_id}",
+            )
+
+        sets: list[str] = []
+        params: list[str] = []
+        if body.notes is not None:
+            sets.append("notes = ?")
+            params.append(body.notes)
+
+        if not sets:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No updatable fields provided",
+            )
+
+        now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        sets.append("updated_at = ?")
+        params.append(now)
+        params.append(entity_id)
+
+        execute(conn, f"UPDATE entities SET {', '.join(sets)} WHERE id = ?", tuple(params))
+
+        rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
+        assertion_rows = query(
+            conn,
+            "SELECT id, entity_id, claim, confidence, evidence, "
+            "evidence_uris, created_at FROM assertions WHERE entity_id = ? "
+            "ORDER BY created_at DESC",
+            (entity_id,),
+        )
+    finally:
+        conn.close()
+
+    assertions = [
+        AssertionItem(**decode_row(row, _ASSERTION_JSON_FIELDS))
+        for row in assertion_rows
+    ]
+    return EntityDetail(
+        **decode_row(rows[0], _ENTITY_JSON_FIELDS), assertions=assertions
     )
 
 

@@ -9,6 +9,7 @@ PipelineContext (provided by executor in later phases) contains:
 - outputs: dict[str, StepOutput] - Completed step outputs
 """
 
+from .admission import PipelineAdmissionQueue
 from .checkpoint import (
     CheckpointBackend,
     CheckpointData,
@@ -55,6 +56,8 @@ from .step_wrapper import execute_step_with_wrappers
 from .timeout import execute_with_handler_timeout, execute_with_step_timeout
 
 __all__ = [
+    # Admission control
+    "PipelineAdmissionQueue",
     # Executor
     "DAGExecutor",
     # Critical path analysis

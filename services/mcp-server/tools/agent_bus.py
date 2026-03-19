@@ -18,8 +18,6 @@ from urllib.parse import urlencode
 
 from fastmcp import FastMCP
 from mcp_events import record
-from request_profile import current_profile
-from tool_access import CURSOR_SAFE_PROFILE
 
 from .local_api import _relay
 
@@ -109,7 +107,10 @@ def _agent_bus_post_impl(
         return {"error": f"agent-bus error posting turn: {turn_result['error']}"}
 
     logger.info(
-        "agent_bus_post: thread=%s slug=%s to=%s", thread_id, slug, to,
+        "agent_bus_post: thread=%s slug=%s to=%s",
+        thread_id,
+        slug,
+        to,
     )
     record(
         "mcp.agentbus.thread.created",
@@ -239,7 +240,10 @@ def _agent_bus_turn_update_impl(
         return {"error": f"agent-bus error: {patch_result['error']}"}
 
     logger.info(
-        "agent_bus_turn_update: thread=%s turn=%d id=%d", thread, turn_number, turn_id,
+        "agent_bus_turn_update: thread=%s turn=%d id=%d",
+        thread,
+        turn_number,
+        turn_id,
     )
     record(
         "mcp.agentbus.turn.updated",
@@ -248,27 +252,27 @@ def _agent_bus_turn_update_impl(
         has_append=append is not None,
     )
 
-    if append is not None and isinstance(patch_result, dict):
-        full_body = patch_result.pop("body", "")
-        if full_body is None:
-            full_body = ""
-        patch_result["body_length"] = len(full_body)
-        patch_result["body_tail"] = full_body[-200:]
-
+    # HISTORY: body_tail truncation was here — popped the full body and returned
+    # only last 200 chars on append. Removed 2026-03 to support large messages.
+    # If stdio freezes return, see tasks/lessons/tooling-agent-bus-stdio-freeze.md
     return patch_result
 
 
 def _mark_thread_turns_read(thread: str) -> int:
     """Mark all turns in a thread as read. Returns count of turns marked."""
-    qs = urlencode({
-        "thread": thread,
-        "last": 50000,
-        "mark_read": "true",
-        "include_superseded": "true",
-    })
+    qs = urlencode(
+        {
+            "thread": thread,
+            "last": 50000,
+            "mark_read": "true",
+            "include_superseded": "true",
+        }
+    )
     result = _relay("agent-bus", "GET", f"/turns?{qs}")
     if isinstance(result, dict) and "error" in result:
-        logger.warning("Failed to mark turns read for thread %s: %s", thread, result["error"])
+        logger.warning(
+            "Failed to mark turns read for thread %s: %s", thread, result["error"]
+        )
         return 0
     turns: list[Any] = result if isinstance(result, list) else result.get("turns", [])
     return len(turns)
@@ -292,10 +296,14 @@ def _agent_bus_update_thread_impl(
             "error": "agent_bus_update_thread requires at least one of: status, summary"
         }
 
-    should_mark_read = mark_all_read if mark_all_read is not None else (status == "closed")
+    should_mark_read = (
+        mark_all_read if mark_all_read is not None else (status == "closed")
+    )
     if should_mark_read:
         marked = _mark_thread_turns_read(thread)
-        logger.info("agent_bus_update_thread: marked %d turns read in thread %s", marked, thread)
+        logger.info(
+            "agent_bus_update_thread: marked %d turns read in thread %s", marked, thread
+        )
 
     result = _relay("agent-bus", "PATCH", f"/threads/{thread}", body=payload)
 
@@ -326,7 +334,10 @@ def _agent_bus_delete_turn_impl(
 
     logger.info(
         "agent_bus_delete_turn: thread=%s turn=%d id=%d force=%s",
-        thread, turn_number, turn_id, force,
+        thread,
+        turn_number,
+        turn_id,
+        force,
     )
     record(
         "mcp.agentbus.turn.deleted",
@@ -354,7 +365,9 @@ def _agent_bus_delete_thread_impl(
     deleted_turns = result.get("deleted_turns", 0) if isinstance(result, dict) else 0
     logger.info(
         "agent_bus_delete_thread: thread=%s force=%s deleted_turns=%d",
-        thread, force, deleted_turns,
+        thread,
+        force,
+        deleted_turns,
     )
     record(
         "mcp.agentbus.thread.deleted",
@@ -379,10 +392,6 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Fetch turns from the Agent Bus — inbox or thread history.
 
-        This full-surface tool is disabled in cursor_safe profile because it can
-        return large markdown bodies. Cursor-safe clients must use
-        ``agent_bus_fetch_preview`` followed by ``agent_bus_turn_get``.
-
         Inbox mode (to provided): returns unread turns addressed to an agent.
         Thread mode (thread provided): returns full history for a thread.
         At least one of to or thread is required.
@@ -401,21 +410,15 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         Returns:
             Agent-bus response with turns list, or {"error": "<message>"}.
         """
-        profile = current_profile()
-        if profile == CURSOR_SAFE_PROFILE:
-            reason = (
-                "agent_bus_fetch is disabled for cursor_safe profile. "
-                "Use agent_bus_fetch_preview + agent_bus_turn_get."
-            )
-            record(
-                "mcp.profile.tool.denied",
-                profile=profile,
-                tool="agent_bus_fetch",
-                entrypoint="direct",
-                reason=reason,
-            )
-            return {"error": reason}
-
+        # HISTORY: This tool was previously blocked for cursor_safe profile
+        # because fetching multiple turns with large markdown bodies could freeze
+        # the Cursor IDE (stdio pipe saturation). The block was removed in the
+        # transport_utils migration (2026-03).
+        #
+        # FALLBACK if freezes return: write large turn bodies to context files
+        # via context(op="write", path="agent-bus/<thread>.md", content=body)
+        # and return file references instead of inline content. See lesson:
+        # tasks/lessons/tooling-agent-bus-stdio-freeze.md
         return _agent_bus_fetch_impl(
             to=to,
             thread=thread,
@@ -484,7 +487,9 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         if isinstance(result, dict) and "error" in result:
             return {"error": f"agent-bus error: {result['error']}"}
 
-        turns: list[Any] = result.get("turns", []) if isinstance(result, dict) else result
+        turns: list[Any] = (
+            result.get("turns", []) if isinstance(result, dict) else result
+        )
         for turn in turns:
             if not isinstance(turn, dict):
                 continue
@@ -729,5 +734,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
             or {"error": "<message>"}.
         """
         return _agent_bus_delete_turn_impl(
-            thread=thread, turn_number=turn_number, force=force,
+            thread=thread,
+            turn_number=turn_number,
+            force=force,
         )

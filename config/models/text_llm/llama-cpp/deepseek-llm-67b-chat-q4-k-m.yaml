@@ -11,9 +11,9 @@ metadata:
     input_schema: messages
     modalities:
       input:
-      - text
+        - text
       output:
-      - text
+        - text
     interaction:
       chat_template: true
     reasoning:

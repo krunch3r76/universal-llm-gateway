@@ -25,7 +25,7 @@ from oauth_store import OAuthStore
 logger = logging.getLogger(__name__)
 
 _AUTHORIZATION_CODE_TTL_SECONDS = 300
-_ACCESS_TOKEN_TTL_SECONDS = 3600
+_ACCESS_TOKEN_TTL_SECONDS = 604_800  # 7 days — persisted tokens need long TTL
 
 
 @dataclass(slots=True, kw_only=True)
@@ -234,7 +234,6 @@ class OAuthService:
 
         code_record = self._store.fetch_authorization_code(request.code)
         if code_record is None:
-            self._store.purge_expired()
             record(
                 "mcp.oauth.token.exchange.failed",
                 client_id=request.client_id,

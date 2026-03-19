@@ -1,6 +1,8 @@
-"""Transport utilities for RAG and other services."""
+"""Transport utilities — UDS/TCP service client factories."""
 
 from transport_utils.rag_client import (
+    CORTEX_SOCKET_PATH,
+    DEFAULT_CORTEX_URL,
     DEFAULT_RAG_URL,
     RAG_SOCKET_PATH,
     make_async_client,
@@ -10,6 +12,8 @@ from transport_utils.rag_client import (
 )
 
 __all__ = [
+    "CORTEX_SOCKET_PATH",
+    "DEFAULT_CORTEX_URL",
     "DEFAULT_RAG_URL",
     "RAG_SOCKET_PATH",
     "make_async_client",

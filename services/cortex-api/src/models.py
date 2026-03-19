@@ -82,6 +82,10 @@ class EntityDetail(_EntityCommon):
     assertions: list[AssertionItem] = Field(default_factory=list)
 
 
+class EntityUpdate(BaseModel):
+    notes: str | None = None
+
+
 class EntityList(BaseModel):
     items: list[EntitySummary]
 

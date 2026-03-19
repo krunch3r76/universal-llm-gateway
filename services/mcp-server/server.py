@@ -33,6 +33,7 @@ from request_profile import current_profile
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from starlette.types import Send
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
+
 from tools.agent_bus import register_agent_bus_tools
 from tools.browser import register_browser_tools
 from tools.clip import register_clip_tools
@@ -40,6 +41,7 @@ from tools.context import register_context_tools
 from tools.cortex import register_cortex_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
+from tools.llm import register_llm_tools
 from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
 from tools.pipeline import register_pipeline_tools
@@ -183,11 +185,14 @@ def _set_tcp_keepalive(sock: socket.socket) -> None:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, _TCP_KEEPCNT)
 
 
+_OAUTH_DB_PATH = "/data/cortex/oauth.db"
+
+
 def _build_oauth_service(config: OAuthServerConfig | None) -> OAuthService | None:
     """Construct an OAuthService from config, or None if OAuth is disabled."""
     if config is None:
         return None
-    store = OAuthStore()
+    store = OAuthStore(db_path=_OAUTH_DB_PATH)
     return OAuthService(config=config, store=store)
 
 
@@ -251,6 +256,7 @@ def _build_server() -> FastMCP:
     register_local_api_tools(mcp)
     register_agent_bus_tools(mcp)
     register_cortex_tools(mcp)
+    register_llm_tools(mcp)
 
     @mcp.tool()
     def health() -> dict[str, str]:
@@ -260,7 +266,7 @@ def _build_server() -> FastMCP:
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
 
     @mcp.tool()
-    def dispatch(tool: str, arguments: str = "{}") -> dict[str, str]:
+    def dispatch(tool: str, arguments: str = "{}") -> Any:
         """Call any server tool by name — gateway to tools beyond the primary set.
 
         Some MCP clients enumerate only a limited number of tools. Use dispatch
@@ -274,7 +280,8 @@ def _build_server() -> FastMCP:
             list_files(directory?) — list sandboxed files
             delete_file(path) — delete sandboxed file
           File utilities:
-            view_image(path, max_dimension?, quality?) — view photo/screenshot
+            view_image(path, max_dimension?, quality?, mode?) — view photo/screenshot
+                mode: "url" (default) returns thumbnail URL; "image" returns inline ImageContent
             move_file(source, destination) — move/rename any file
             copy_file(source, destination) — copy any file
             remove_directory(directory) — delete directory and contents
@@ -311,6 +318,9 @@ def _build_server() -> FastMCP:
             sqlite_execute(db, statement, params?) — execute SQL write
             sqlite_schema(db?) — show table schemas
             sqlite_list_databases() — list configured DBs
+          LLM generation:
+            llm_generate(messages, system?, model?, max_tokens?) — generate text
+                via Anthropic API with server-side credentials
           Quality & infra:
             quality_gate(files) — run ruff + compileall
             pipeline_consult(execution_id, step_name, problem)
@@ -353,7 +363,8 @@ def _build_server() -> FastMCP:
             arguments: JSON string of tool arguments (default "{}").
 
         Returns:
-            {"tool": "<name>", "result": "<JSON string of tool output>"}
+            Native MCP content for passthrough tool outputs, otherwise
+            {"tool": "<name>", "result": "<JSON string of tool output>"}.
         """
         import json as _json
 
@@ -383,6 +394,8 @@ def _build_server() -> FastMCP:
         )
         result = fn(**parsed)
         record("mcp.tool.dispatch.success", tool=tool)
+        if hasattr(result, "model_dump"):
+            return result
         return {"tool": tool, "result": _json.dumps(result)}
 
     primary_count = len(_PRIMARY_TOOLS)

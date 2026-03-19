@@ -18,6 +18,9 @@ from dataclasses import dataclass
 # Context length pattern: 3-6 digits (128 to 999999)
 _CONTEXT_PATTERN = re.compile(r"-(\d{3,6})$")
 
+# Known routing layer prefixes — tell the system HOW to reach the provider
+_ROUTING_PREFIXES = frozenset({"native", "openrouter"})
+
 
 @dataclass(frozen=True, slots=True)
 class ModelId:
@@ -64,7 +67,16 @@ class ModelId:
     """Backend type: None (local), 'federated', 'cloud_api', 'vps'."""
 
     provider: str | None = None
-    """Cloud provider name (e.g., 'openrouter'). None for local models."""
+    """Cloud provider name (e.g., 'anthropic'). None for local models."""
+
+    routing_layer: str | None = None
+    """Routing prefix: 'native' for direct API, 'openrouter' for cost proxy.
+
+    Parsed from model ID strings like ``native/anthropic/claude-sonnet-4``
+    or ``openrouter/anthropic/claude-3.5-sonnet``.  None when no routing
+    prefix is present.  Not part of model identity — excluded from
+    ``normalized``, ``__eq__``, and ``__hash__``.
+    """
 
     @classmethod
     def parse(cls, model_id: str | ModelId) -> ModelId:
@@ -98,6 +110,14 @@ class ModelId:
 
         original = model_id_str
 
+        # Strip known routing prefix (native/, openrouter/) before parsing.
+        routing_layer: str | None = None
+        if "/" in model_id_str:
+            first_segment = model_id_str.split("/", 1)[0]
+            if first_segment in _ROUTING_PREFIXES:
+                routing_layer = first_segment
+                model_id_str = model_id_str[len(first_segment) + 1 :]
+
         # Cloud model IDs contain '/' (e.g., 'anthropic/claude-sonnet-4-20250514').
         # Skip all suffix parsing — the ID is opaque and pass-through.
         if "/" in model_id_str:
@@ -110,6 +130,7 @@ class ModelId:
                 is_hybrid=False,
                 backend_type="cloud_api",
                 provider=provider_prefix,
+                routing_layer=routing_layer,
             )
 
         is_cpu = False
@@ -201,6 +222,21 @@ class ModelId:
         return result
 
     @property
+    def api_model_id(self) -> str:
+        """Model ID to send to the upstream API.
+
+        For ``native/`` routing, strips the provider prefix so the upstream
+        receives just the model name (e.g. ``claude-sonnet-4``).  For
+        ``openrouter/`` routing and unrouted models, returns ``base_id``
+        as-is (OpenRouter expects ``provider/model``).
+        """
+        if self.routing_layer == "native" and self.provider:
+            prefix = f"{self.provider}/"
+            if self.base_id.startswith(prefix):
+                return self.base_id[len(prefix) :]
+        return self.base_id
+
+    @property
     def is_synthetic(self) -> bool:
         """True if this is a synthetic ID with context length."""
         return self.context_length is not None
@@ -278,6 +314,7 @@ class ModelId:
             is_hybrid=self.is_hybrid,
             backend_type=self.backend_type,
             provider=self.provider,
+            routing_layer=self.routing_layer,
         )
 
     def with_suffix(self, *, cpu: bool = False, hybrid: bool = False) -> ModelId:
@@ -292,6 +329,7 @@ class ModelId:
             is_hybrid=hybrid,
             backend_type=self.backend_type,
             provider=self.provider,
+            routing_layer=self.routing_layer,
         )
 
     def __str__(self) -> str:
@@ -325,6 +363,8 @@ class ModelId:
             parts.append(f"backend={self.backend_type}")
         if self.provider:
             parts.append(f"provider={self.provider}")
+        if self.routing_layer:
+            parts.append(f"routing={self.routing_layer}")
         return ", ".join(parts) + ")"
 
     # String-like behavior for compatibility

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from mcp_events import monotonic_now, record
+from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -23,15 +24,15 @@ _REQUEST_TIMEOUT = 30.0
 
 _SERVICES: dict[str, dict[str, str]] = {
     "journal-bridge": {
-        "base_url": "http://journal-bridge:8200",
+        "url": "http://journal-bridge:8200",
         "token_env": "BRIDGE_TOKEN",
     },
     "agent-bus": {
-        "uds": "/tmp/universal-protocol/agent-bus.sock",
+        "url": "unix:///tmp/universal-protocol/agent-bus.sock",
         "token_env": "AGENT_BUS_TOKEN",
     },
     "cortex-api": {
-        "base_url": "http://cortex-api:8300",
+        "url": DEFAULT_CORTEX_URL,
     },
 }
 
@@ -61,17 +62,7 @@ def _relay(
             "error": (f"Unknown service: {service!r}. Available: {sorted(_SERVICES)}")
         }
 
-    uds_path = svc_config.get("uds")
-    if uds_path:
-        transport = httpx.HTTPTransport(uds=uds_path)
-        client_kwargs: dict[str, Any] = {
-            "transport": transport,
-            "timeout": _REQUEST_TIMEOUT,
-        }
-        url = f"http://localhost{path}"
-    else:
-        client_kwargs = {"timeout": _REQUEST_TIMEOUT}
-        url = f"{svc_config['base_url']}{path}"
+    service_url = svc_config["url"]
 
     token_env = svc_config.get("token_env", "")
     bearer = token or (os.environ.get(token_env, "") if token_env else "")
@@ -106,10 +97,10 @@ def _relay(
     )
 
     try:
-        with httpx.Client(**client_kwargs) as client:
+        with make_sync_client(service_url, timeout=_REQUEST_TIMEOUT) as client:
             response = client.request(
                 method,
-                url,
+                path,
                 json=body,
                 headers=headers,
             )
@@ -196,7 +187,7 @@ def register_local_api_tools(mcp: FastMCP) -> None:
         Services:
           agent-bus      — Agent Bus API (UDS: /tmp/universal-protocol/agent-bus.sock)
           journal-bridge — Journal Bridge API (Docker bridge, port 8200)
-          cortex-api     — Cortex Knowledge System API (Docker bridge, port 8300)
+          cortex-api     — Cortex Knowledge System API (UDS: /tmp/universal-protocol/cortex-api.sock)
 
         Args:
             service: Service name from the registry above.

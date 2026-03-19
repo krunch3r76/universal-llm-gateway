@@ -11,7 +11,6 @@ server starts cleanly even when the event service is down.
 from __future__ import annotations
 
 import json
-import logging
 import os
 import queue
 import socket
@@ -20,7 +19,9 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from universal_logging import get_logger
+
+logger = get_logger(__name__)
 
 _EVENTS_SOCK = os.getenv("EVENTS_SOCK", "/tmp/universal-protocol/events.sock")
 _ENABLED = os.getenv("MCP_EVENTS_ENABLED", "true").lower() in ("true", "1", "yes")
@@ -72,8 +73,11 @@ class _UDSPublisher:
                     logger.warning("UDS publisher connection/send error: %s", e)
                     try:
                         sock.close()
-                    except OSError:
-                        pass
+                    except OSError as close_error:
+                        logger.warning(
+                            "UDS publisher socket close failed during reconnect: %s",
+                            close_error,
+                        )
                     sock = None
                     time.sleep(_RECONNECT_DELAY)
                     continue
@@ -85,8 +89,11 @@ class _UDSPublisher:
             except OSError:
                 try:
                     sock.close()
-                except OSError:
-                    pass
+                except OSError as close_error:
+                    logger.warning(
+                        "UDS publisher socket close failed after send error: %s",
+                        close_error,
+                    )
                 sock = None
                 time.sleep(_RECONNECT_DELAY)
 

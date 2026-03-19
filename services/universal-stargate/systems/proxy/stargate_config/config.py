@@ -46,6 +46,11 @@ class StargateConfig:
 
         with open(self.config_path) as f:
             config = yaml.safe_load(f)
+            if not isinstance(config, dict):
+                raise TypeError(
+                    "Invalid Stargate config root type: expected mapping, "
+                    f"got {type(config).__name__}"
+                )
             logger.info(f"Loaded configuration from {self.config_path}")
             return config
 
@@ -207,6 +212,21 @@ class StargateConfig:
                 "search_paths": ["pipelines", "pipelines.local", "~/.pipelines"],
             },
         )
+
+    def get_pipeline_admission_config(self) -> dict[str, Any]:
+        """Return pipeline admission control settings.
+
+        Lives under ``pipeline`` top-level key (not ``pipelines``).
+        """
+        pipeline_section = self.config.get("pipeline", {})
+        return {
+            "max_concurrent_executions": pipeline_section.get(
+                "max_concurrent_executions", 2
+            ),
+            "admission_timeout_seconds": pipeline_section.get(
+                "admission_timeout_seconds", 120.0
+            ),
+        }
 
     def get_cloud_proxy_config(self) -> dict[str, Any] | None:
         """Return cloud proxy config when present, otherwise None for disabled mode."""

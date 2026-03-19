@@ -1,11 +1,13 @@
-// Cortex Workbench v1.3.0 — React JSX artifact
-// Deploy: paste into claude.ai artifact panel
-// Relay: POST <your-relay-url>/workbench/relay (Vortex bearer token auth)
-// Fix: tokenReady gate prevents loadEntities firing before localStorage is read
+// Cortex Workbench v2.1.1 — React JSX, dual transport (sandbox + standalone)
+// Sandbox (claude.ai):  Anthropic API → MCP tools for data + AI (via llm_generate tool)
+// Standalone (Vite):    REST to mcp.k-1.me/cortex-api + /llm/v1/messages
 
 import { useState, useEffect, useCallback, useRef } from "react";
 
-let _relayUrl = "";
+const CORTEX_API = "https://mcp.k-1.me/cortex-api";
+const LLM_API = "https://mcp.k-1.me/llm/v1/messages";
+const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
+const MCP_SERVER = { type: "url", url: "https://mcp.k-1.me/mcp", name: "vortex" };
 
 const TYPE_META = {
   person: { icon: "👤", color: "text-blue-400", bg: "bg-blue-400/10" },
@@ -27,38 +29,159 @@ const CONF_COLORS = {
 };
 
 let _bearerToken = "";
+let _mode = null; // "sandbox" | "standalone"
+let _detectPromise = null;
 
-async function callClaude(system, userMsg, maxTokens = 4096) {
-  if (!_bearerToken) throw new Error("Vortex token not set — open Settings");
-  if (!_relayUrl) throw new Error("Relay URL not set — open Settings");
-  const res = await fetch(_relayUrl, {
+async function detectMode() {
+  if (_mode) return _mode;
+  if (_detectPromise) return _detectPromise;
+  _detectPromise = (async () => {
+    try {
+      await fetch(`${CORTEX_API}/health`, { method: "HEAD", mode: "cors" });
+      _mode = "standalone";
+    } catch {
+      _mode = "sandbox";
+    }
+    return _mode;
+  })();
+  return _detectPromise;
+}
+
+function getMode() {
+  return _mode || "standalone";
+}
+
+function authHeaders() {
+  return { Authorization: `Bearer ${_bearerToken}`, "Content-Type": "application/json" };
+}
+
+// ===== MCP Transport (sandbox mode) =====
+
+const MCP_PROMPTS = {
+  cortex_entities: (args) =>
+    `Call the cortex_entities tool with limit=${args.limit || 200}. Return ONLY the raw JSON tool result, no commentary.`,
+  cortex_entity_get: (args) =>
+    `Call the cortex_entity_get tool with entity_id="${args.entity_id}". Return ONLY the raw JSON tool result, no commentary.`,
+  cortex_assert: (args) =>
+    `Call the cortex_assert tool with entity_id="${args.entity_id}", claim="${args.claim}", confidence="${args.confidence}", evidence="${args.evidence}"${args.evidence_uris ? `, evidence_uris="${Array.isArray(args.evidence_uris) ? args.evidence_uris.join(",") : args.evidence_uris}"` : ""}. Return confirmation.`,
+  sqlite_execute: (args) =>
+    `Call dispatch with tool="sqlite_execute" and arguments='${JSON.stringify({ db: "cortex", statement: args.statement, params: args.params })}'. Return the result.`,
+  llm_generate: (args) =>
+    `Call dispatch with tool="llm_generate" and arguments='${JSON.stringify({ messages: args.messages, system: args.system || "", model: args.model || "claude-sonnet-4-20250514", max_tokens: args.max_tokens || 4096 })}'. Return the complete response JSON.`,
+};
+
+function extractMCPResult(data) {
+  if (data.error) throw new Error(`Anthropic API error: ${data.error.message}`);
+
+  const errorBlocks = (data.content || []).filter((item) => item.type === "mcp_tool_result" && item.is_error);
+  if (errorBlocks.length > 0) {
+    const errorText = errorBlocks.map((b) => b.content?.[0]?.text).join("; ");
+    throw new Error(`MCP tool error: ${errorText}`);
+  }
+
+  const toolResults = (data.content || [])
+    .filter((item) => item.type === "mcp_tool_result")
+    .map((item) => {
+      const text = item.content?.[0]?.text;
+      if (!text) return null;
+      try { return JSON.parse(text); } catch { return text; }
+    })
+    .filter(Boolean);
+
+  if (toolResults.length === 0) {
+    const textBlocks = (data.content || []).filter((item) => item.type === "text").map((item) => item.text);
+    return { raw: textBlocks.join("\n") };
+  }
+  return toolResults.length === 1 ? toolResults[0] : toolResults;
+}
+
+async function mcpCall(toolName, args) {
+  const promptFn = MCP_PROMPTS[toolName];
+  const prompt = promptFn ? promptFn(args) : `Call ${toolName} with ${JSON.stringify(args)}. Return the raw result.`;
+
+  const res = await fetch(ANTHROPIC_API, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${_bearerToken}`,
-    },
-    body: JSON.stringify({ system, user_msg: userMsg, max_tokens: maxTokens }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      messages: [{ role: "user", content: prompt }],
+      mcp_servers: [MCP_SERVER],
+    }),
   });
   if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Relay ${res.status}: ${errText.slice(0, 200)}`);
+    const text = await res.text().catch(() => "");
+    throw new Error(`Anthropic API ${res.status}: ${text.slice(0, 200)}`);
   }
+  const data = await res.json();
+  return extractMCPResult(data);
+}
+
+// ===== Unified Data Layer =====
+
+async function cortexGetEntities(limit = 200) {
+  if (getMode() === "sandbox") return mcpCall("cortex_entities", { limit });
+  const res = await fetch(`${CORTEX_API}/entities?limit=${limit}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`cortex-api ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return res.json();
 }
 
-function extractFromResponse(data) {
-  const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-  const toolResults = (data.content || []).filter((b) => b.type === "mcp_tool_result").map((b) => {
-    const raw = b.content?.[0]?.text || "{}";
-    try { return JSON.parse(raw); } catch { return raw; }
-  });
-  const toolCalls = (data.content || []).filter((b) => b.type === "mcp_tool_use").map((b) => ({ name: b.name, input: b.input }));
-  return { text, toolResults, toolCalls };
+async function cortexGetEntity(entityId) {
+  if (getMode() === "sandbox") return mcpCall("cortex_entity_get", { entity_id: entityId });
+  const res = await fetch(`${CORTEX_API}/entities/${entityId}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`cortex-api ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return res.json();
 }
 
-function tryParseJSON(text) {
-  const clean = text.replace(/```json\s*/g, "").replace(/```/g, "").trim();
-  try { return JSON.parse(clean); } catch { return null; }
+async function cortexUpdateEntity(entityId, notes) {
+  if (getMode() === "sandbox") {
+    return mcpCall("sqlite_execute", {
+      statement: "UPDATE entities SET notes = ?, updated_at = datetime('now') WHERE id = ?",
+      params: [notes, entityId],
+    });
+  }
+  const res = await fetch(`${CORTEX_API}/entities/${entityId}`, {
+    method: "PATCH", headers: authHeaders(), body: JSON.stringify({ notes }),
+  });
+  if (!res.ok) throw new Error(`cortex-api PATCH ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return res.json();
+}
+
+async function cortexCreateAssertion(assertion) {
+  if (getMode() === "sandbox") return mcpCall("cortex_assert", assertion);
+  const res = await fetch(`${CORTEX_API}/assertions`, {
+    method: "POST", headers: authHeaders(), body: JSON.stringify(assertion),
+  });
+  if (!res.ok) throw new Error(`cortex-api POST ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return res.json();
+}
+
+// ===== Unified AI Layer =====
+
+async function callLLM(messages, { system, model, max_tokens } = {}) {
+  if (getMode() === "sandbox") {
+    return mcpCall("llm_generate", {
+      messages,
+      system: system || "",
+      model: model || "claude-sonnet-4-20250514",
+      max_tokens: max_tokens || 4096,
+    });
+  }
+
+  if (!_bearerToken) throw new Error("Vortex token not set — open Settings");
+  const payload = {
+    model: model || "claude-sonnet-4-20250514",
+    max_tokens: max_tokens || 4096,
+    messages,
+  };
+  if (system) payload.system = system;
+  const res = await fetch(LLM_API, { method: "POST", headers: authHeaders(), body: JSON.stringify(payload) });
+  if (!res.ok) throw new Error(`LLM proxy ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return res.json();
+}
+
+function extractText(data) {
+  return (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
 }
 
 function Spinner({ size = "w-4 h-4" }) {
@@ -96,12 +219,17 @@ function AssertionCard({ assertion }) {
         <Badge className={confClass}>{assertion.confidence}</Badge>
       </div>
       {assertion.evidence && <p className="text-xs text-slate-500 leading-relaxed"><span className="text-slate-600 font-medium">Evidence:</span> {assertion.evidence}</p>}
-      {assertion.evidence_uris && <p className="text-xs text-slate-600 font-mono">{assertion.evidence_uris}</p>}
+      {assertion.evidence_uris && <p className="text-xs text-slate-600 font-mono">{Array.isArray(assertion.evidence_uris) ? assertion.evidence_uris.join(", ") : assertion.evidence_uris}</p>}
     </div>
   );
 }
 
-export default function CortexWorkbench() {
+function tryParseJSON(text) {
+  const clean = text.replace(/```json\s*/g, "").replace(/```/g, "").trim();
+  try { return JSON.parse(clean); } catch { return null; }
+}
+
+export default function CortexWorkbench({ initialToken = "" } = {}) {
   const [entities, setEntities] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -116,81 +244,69 @@ export default function CortexWorkbench() {
   const [committed, setCommitted] = useState([]);
   const [showSettings, setShowSettings] = useState(false);
   const [token, setToken] = useState("");
-  const [relayUrl, setRelayUrl] = useState("");
   const [tokenReady, setTokenReady] = useState(false);
   const logRef = useRef(null);
+  const mode = getMode();
+  const isSandbox = mode === "sandbox";
 
   const addLog = useCallback((msg, type = "info") => {
     const entry = { ts: new Date().toLocaleTimeString(), msg, type };
     setLog((prev) => [...prev.slice(-50), entry]);
-  }, []);
+  }, [initialToken, isSandbox]);
 
   const setLoadingKey = (key, val) => setLoading((prev) => ({ ...prev, [key]: val }));
 
-  // Step 1: read localStorage, then gate on tokenReady before any API calls
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("cortex_wb_token") || "";
-      if (saved) { setToken(saved); _bearerToken = saved; }
-      const savedUrl = localStorage.getItem("cortex_wb_relay_url") || "";
-      if (savedUrl) { setRelayUrl(savedUrl); _relayUrl = savedUrl; }
-    } catch {}
-    setTokenReady(true);
+    (async () => {
+      await detectMode();
+      if (getMode() !== "sandbox") {
+        try {
+          const saved = localStorage.getItem("cortex_wb_token") || "";
+          const effective = initialToken || saved;
+          if (effective) { setToken(effective); _bearerToken = effective; }
+        } catch {}
+      }
+      setTokenReady(true);
+    })();
   }, []);
 
   const loadEntities = useCallback(async () => {
-    if (!_bearerToken || !_relayUrl) { setShowSettings(true); return; }
+    if (!isSandbox && !_bearerToken) { setShowSettings(true); return; }
     setLoadingKey("entities", true);
     setError(null);
-    addLog("Loading entities from Cortex...");
+    addLog(isSandbox ? "Claude is fetching entities via MCP..." : "Loading entities...");
     try {
-      const data = await callClaude("You are a data accessor. Use MCP tools to query Cortex. Return only the tool results, no commentary.", "Call the cortex_entities tool with limit 200. Just call the tool, nothing else.");
-      const { toolResults, text } = extractFromResponse(data);
-      let items = [];
-      for (const r of toolResults) { if (r.items) items = r.items; else if (Array.isArray(r)) items = r; }
-      if (items.length === 0 && text) { const parsed = tryParseJSON(text); if (parsed?.items) items = parsed.items; }
-      if (items.length > 0) { setEntities(items); addLog(`Loaded ${items.length} entities`, "success"); }
-      else { addLog("No entities found in response.", "warn"); }
+      const data = await cortexGetEntities(200);
+      const items = data.items || [];
+      setEntities(items);
+      addLog(`Loaded ${items.length} entities`, "success");
     } catch (e) { setError(e.message); addLog("Error: " + e.message, "error"); }
     setLoadingKey("entities", false);
-  }, [addLog]);
+  }, [addLog, isSandbox]);
 
-  // Step 2: fire loadEntities only after localStorage read is complete
   useEffect(() => {
-    if (tokenReady && _bearerToken && _relayUrl) loadEntities();
-    else if (tokenReady && (!_bearerToken || !_relayUrl)) setShowSettings(true);
-  }, [tokenReady, loadEntities]);
+    if (tokenReady && (isSandbox || _bearerToken)) loadEntities();
+    else if (tokenReady && !isSandbox && !_bearerToken) setShowSettings(true);
+  }, [tokenReady, loadEntities, isSandbox]);
 
   const saveToken = useCallback((t) => {
     const trimmed = t.trim();
     setToken(trimmed);
     _bearerToken = trimmed;
     try { localStorage.setItem("cortex_wb_token", trimmed); } catch {}
-    if (trimmed && _relayUrl) loadEntities();
-  }, [loadEntities]);
-
-  const saveRelayUrl = useCallback((url) => {
-    const trimmed = url.trim();
-    setRelayUrl(trimmed);
-    _relayUrl = trimmed;
-    try { localStorage.setItem("cortex_wb_relay_url", trimmed); } catch {}
-    if (trimmed && _bearerToken) loadEntities();
+    if (trimmed) loadEntities();
   }, [loadEntities]);
 
   const loadDetail = useCallback(async (entityId) => {
     setSelectedId(entityId); setDetail(null); setProposedDesc(null); setLoadingKey("detail", true);
-    addLog(`Loading ${entityId}...`);
+    addLog(isSandbox ? `Claude is retrieving ${entityId} via MCP...` : `Loading ${entityId}...`);
     try {
-      const data = await callClaude("You are a data accessor. Use MCP tools. Return tool results only.", `Call cortex_entity_get with entity_id "${entityId}". Just call the tool.`);
-      const { toolResults, text } = extractFromResponse(data);
-      let entityData = null;
-      for (const r of toolResults) { if (r.id || r.entity_id || r.name) { entityData = r; break; } }
-      if (!entityData && text) entityData = tryParseJSON(text);
-      if (entityData) { setDetail(entityData); addLog(`Loaded ${entityData.name || entityId}`, "success"); }
-      else { addLog("Could not parse entity detail", "warn"); }
+      const entityData = await cortexGetEntity(entityId);
+      setDetail(entityData);
+      addLog(`Loaded ${entityData.name || entityId}`, "success");
     } catch (e) { addLog("Error loading detail: " + e.message, "error"); }
     setLoadingKey("detail", false);
-  }, [addLog]);
+  }, [addLog, isSandbox]);
 
   const generateDescription = useCallback(async () => {
     if (!detail) return;
@@ -199,11 +315,14 @@ export default function CortexWorkbench() {
     try {
       const assertionsSummary = (detail.assertions || []).map((a) => `- [${a.confidence}] ${a.claim}`).join("\n");
       const entityList = entities.filter((e) => e.type === detail.type && e.id !== detail.id).map((e) => `  ${e.id}: ${e.name}`).join("\n");
-      const data = await callClaude(
-        `You are writing entity descriptions for a personal knowledge graph belonging to Kaywan Joseph Mansubi, a PharmD pursuing a legal case involving his parents' estate. Write 2-4 sentences that: 1) State who/what this entity is, 2) Describe their role or relationship to Kaywan, 3) Distinguish from similar entities of the same type. Be specific, factual, and contrastive. Respond with ONLY the description text, nothing else.`,
-        `Entity: ${detail.name} (${detail.id})\nType: ${detail.type}\n${detail.notes ? `Current notes: ${detail.notes}\n` : ""}\nAssertions:\n${assertionsSummary || "(none)"}\n\nSimilar entities to distinguish from:\n${entityList || "(none)"}`, 1000
+      const data = await callLLM(
+        [{ role: "user", content: `Entity: ${detail.name} (${detail.id})\nType: ${detail.type}\n${detail.notes ? `Current notes: ${detail.notes}\n` : ""}\nAssertions:\n${assertionsSummary || "(none)"}\n\nSimilar entities to distinguish from:\n${entityList || "(none)"}` }],
+        {
+          system: `You are writing entity descriptions for a personal knowledge graph belonging to Kaywan Joseph Mansubi, a PharmD pursuing a legal case involving his parents' estate. Write 2-4 sentences that: 1) State who/what this entity is, 2) Describe their role or relationship to Kaywan, 3) Distinguish from similar entities of the same type. Be specific, factual, and contrastive. Respond with ONLY the description text, nothing else.`,
+          max_tokens: 1000,
+        }
       );
-      const desc = extractFromResponse(data).text.trim();
+      const desc = extractText(data).trim();
       setProposedDesc(desc); addLog("Description generated", "success");
     } catch (e) { addLog("Error generating description: " + e.message, "error"); }
     setLoadingKey("description", false);
@@ -212,15 +331,19 @@ export default function CortexWorkbench() {
   const commitDescription = useCallback(async (desc) => {
     if (!detail) return;
     setLoadingKey("commitDesc", true);
-    addLog(`Committing description for ${detail.name}...`);
+    addLog(isSandbox ? `Claude is committing description via MCP...` : `Committing description for ${detail.name}...`);
     try {
-      const escaped = desc.replace(/'/g, "''");
-      await callClaude("You are a data writer. Use the dispatch tool to execute a SQL update. Just call the tool, no commentary.", `Use the dispatch tool to call sqlite_execute with these arguments: {"db": "cortex", "sql": "UPDATE entities SET notes = '${escaped}' WHERE id = '${detail.id}'"}`);
-      setDetail((prev) => prev ? { ...prev, notes: desc } : prev);
-      setProposedDesc(null); addLog(`Description committed for ${detail.name}`, "success");
+      const updated = await cortexUpdateEntity(detail.id, desc);
+      if (isSandbox) {
+        setDetail((prev) => prev ? { ...prev, notes: desc } : prev);
+      } else {
+        setDetail(updated);
+      }
+      setProposedDesc(null);
+      addLog(`Description committed for ${detail.name}`, "success");
     } catch (e) { addLog("Error committing: " + e.message, "error"); }
     setLoadingKey("commitDesc", false);
-  }, [detail, addLog]);
+  }, [detail, addLog, isSandbox]);
 
   const extractKnowledge = useCallback(async () => {
     if (!ingestText.trim()) return;
@@ -228,11 +351,14 @@ export default function CortexWorkbench() {
     addLog("Extracting knowledge from text...");
     try {
       const entityContext = entities.map((e) => `${e.id}: ${e.name} (${e.type})`).join("\n");
-      const data = await callClaude(
-        `You are a knowledge extraction system for a personal knowledge graph. Given text, extract structured assertions.\n\nRULES:\n- Each assertion must be atomic (one fact), faithful (accurate to source), and decontextualized (no pronouns — use full names).\n- Resolve mentions to existing entities when possible. Use the entity ID format type:slug.\n- Confidence levels: confirmed (verified fact), believed (high confidence), suspected (pattern-based), hypothesized (theory).\n- Include reasoning for each assertion.\n\nRespond with ONLY a JSON object in this format:\n{\n  "assertions": [\n    {\n      "entity_id": "type:slug",\n      "entity_name": "Display Name",\n      "claim": "The atomic assertion",\n      "confidence": "believed",\n      "evidence": "Why we believe this — 1 sentence",\n      "reasoning": "How this was derived from the source text"\n    }\n  ],\n  "new_entities": [\n    {\n      "id": "type:slug",\n      "name": "Display Name",\n      "type": "person|organization|event|etc",\n      "description": "2-3 sentence description"\n    }\n  ]\n}`,
-        `EXISTING ENTITIES:\n${entityContext}\n\nTEXT TO EXTRACT FROM:\n${ingestText}`, 4096
+      const data = await callLLM(
+        [{ role: "user", content: `EXISTING ENTITIES:\n${entityContext}\n\nTEXT TO EXTRACT FROM:\n${ingestText}` }],
+        {
+          system: `You are a knowledge extraction system for a personal knowledge graph. Given text, extract structured assertions.\n\nRULES:\n- Each assertion must be atomic (one fact), faithful (accurate to source), and decontextualized (no pronouns — use full names).\n- Resolve mentions to existing entities when possible. Use the entity ID format type:slug.\n- Confidence levels: confirmed (verified fact), believed (high confidence), suspected (pattern-based), hypothesized (theory).\n- Include reasoning for each assertion.\n\nRespond with ONLY a JSON object in this format:\n{\n  "assertions": [\n    {\n      "entity_id": "type:slug",\n      "entity_name": "Display Name",\n      "claim": "The atomic assertion",\n      "confidence": "believed",\n      "evidence": "Why we believe this — 1 sentence",\n      "reasoning": "How this was derived from the source text"\n    }\n  ],\n  "new_entities": [\n    {\n      "id": "type:slug",\n      "name": "Display Name",\n      "type": "person|organization|event|etc",\n      "description": "2-3 sentence description"\n    }\n  ]\n}`,
+          max_tokens: 4096,
+        }
       );
-      const { text } = extractFromResponse(data);
+      const text = extractText(data);
       const parsed = tryParseJSON(text);
       if (parsed) { setExtraction(parsed); addLog(`Extracted ${parsed.assertions?.length || 0} assertions, ${parsed.new_entities?.length || 0} new entities`, "success"); }
       else { addLog("Could not parse extraction results", "warn"); setExtraction({ raw: text }); }
@@ -241,14 +367,19 @@ export default function CortexWorkbench() {
   }, [ingestText, entities, addLog]);
 
   const commitAssertion = useCallback(async (assertion) => {
-    addLog(`Committing: ${assertion.claim.slice(0, 60)}...`);
+    addLog(isSandbox ? `Claude is committing assertion via MCP...` : `Committing: ${assertion.claim.slice(0, 60)}...`);
     try {
-      await callClaude("You are a data writer. Use the cortex_assert MCP tool to seed an assertion. Just call the tool.",
-        `Call cortex_assert with: entity_id="${assertion.entity_id}", claim="${assertion.claim}", confidence="${assertion.confidence}", evidence="${assertion.evidence}", evidence_uris=["workbench:ingest-${new Date().toISOString().slice(0, 10)}"]`);
+      await cortexCreateAssertion({
+        entity_id: assertion.entity_id,
+        claim: assertion.claim,
+        confidence: assertion.confidence,
+        evidence: assertion.evidence,
+        evidence_uris: [`workbench:ingest-${new Date().toISOString().slice(0, 10)}`],
+      });
       setCommitted((prev) => [...prev, assertion.claim]);
       addLog(`Committed: ${assertion.claim.slice(0, 50)}...`, "success"); return true;
     } catch (e) { addLog("Commit error: " + e.message, "error"); return false; }
-  }, [addLog]);
+  }, [addLog, isSandbox]);
 
   const types = [...new Set(entities.map((e) => e.type))].sort();
   const filteredEntities = typeFilter ? entities.filter((e) => e.type === typeFilter) : entities;
@@ -264,7 +395,8 @@ export default function CortexWorkbench() {
         <div className="flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
           <h1 className="text-base font-semibold tracking-wide" style={{ color: "#c8a24e", fontFamily: "'IBM Plex Mono', 'SF Mono', monospace" }}>CORTEX WORKBENCH</h1>
-          <span className="text-xs px-2 py-0.5 rounded" style={{ background: "#1a1a2e", color: "#666680" }}>v1.2.1</span>
+          <span className="text-xs px-2 py-0.5 rounded" style={{ background: "#1a1a2e", color: "#666680" }}>v2.1.1</span>
+          <span className="text-xs px-2 py-0.5 rounded" style={{ background: isSandbox ? "#1a2e1a" : "#1a1a2e", color: isSandbox ? "#4a9e6a" : "#888898" }}>{isSandbox ? "sandbox" : "standalone"}</span>
         </div>
         <div className="flex items-center gap-1">
           <TabButton active={tab === "entities"} onClick={() => setTab("entities")}>Entities</TabButton>
@@ -274,31 +406,28 @@ export default function CortexWorkbench() {
       </div>
       {showSettings && (
         <div className="px-5 py-3 border-b space-y-2" style={{ borderColor: "#1a1a2e", background: "#0c0c16" }}>
-          <div className="flex items-center gap-3">
-            <label className="text-xs font-medium w-24 flex-shrink-0" style={{ color: "#666680" }}>RELAY URL</label>
-            <input
-              type="text"
-              value={relayUrl}
-              onChange={(e) => saveRelayUrl(e.target.value)}
-              placeholder="https://your-mcp-host/workbench/relay"
-              className="flex-1 px-3 py-1.5 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-400/30"
-              style={{ background: "#0a0a14", border: "1px solid #1e1e32", color: "#c8c8d8", fontFamily: "'IBM Plex Mono', monospace" }}
-            />
-            {relayUrl && <span className="text-xs" style={{ color: "#4a9e6a" }}>✓ Set</span>}
-          </div>
-          <div className="flex items-center gap-3">
-            <label className="text-xs font-medium w-24 flex-shrink-0" style={{ color: "#666680" }}>VORTEX TOKEN</label>
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => saveToken(e.target.value)}
-              placeholder="Paste your Vortex bearer token"
-              className="flex-1 px-3 py-1.5 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-400/30"
-              style={{ background: "#0a0a14", border: "1px solid #1e1e32", color: "#c8c8d8", fontFamily: "'IBM Plex Mono', monospace" }}
-            />
-            {token && <span className="text-xs" style={{ color: "#4a9e6a" }}>✓ Set</span>}
-          </div>
-          <p className="text-xs" style={{ color: "#444460" }}>Relay URL: your MCP server's workbench relay endpoint. Token: Vortex bearer token (same as MCP auth).</p>
+          {isSandbox ? (
+            <div className="flex items-center gap-3">
+              <span className="text-xs" style={{ color: "#4a9e6a" }}>✓ Sandbox mode</span>
+              <p className="text-xs" style={{ color: "#444460" }}>Authentication is automatic. Data and AI ops route through your Claude.ai session via Anthropic API + MCP.</p>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <label className="text-xs font-medium w-24 flex-shrink-0" style={{ color: "#666680" }}>VORTEX TOKEN</label>
+                <input
+                  type="password"
+                  value={token}
+                  onChange={(e) => saveToken(e.target.value)}
+                  placeholder="Paste your Vortex bearer token"
+                  className="flex-1 px-3 py-1.5 rounded text-sm focus:outline-none focus:ring-1 focus:ring-amber-400/30"
+                  style={{ background: "#0a0a14", border: "1px solid #1e1e32", color: "#c8c8d8", fontFamily: "'IBM Plex Mono', monospace" }}
+                />
+                {token && <span className="text-xs" style={{ color: "#4a9e6a" }}>✓ Set</span>}
+              </div>
+              <p className="text-xs" style={{ color: "#444460" }}>Vortex bearer token — authenticates data ops (cortex-api) and AI ops (LLM proxy). Persisted in localStorage.</p>
+            </>
+          )}
         </div>
       )}
       {error && (
@@ -337,7 +466,7 @@ export default function CortexWorkbench() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-6">
-              {loading.detail && (<div className="flex items-center gap-3 justify-center py-20"><Spinner size="w-5 h-5" /><span style={{ color: "#666680" }}>Loading entity...</span></div>)}
+              {loading.detail && (<div className="flex items-center gap-3 justify-center py-20"><Spinner size="w-5 h-5" /><span style={{ color: "#666680" }}>{isSandbox ? "Claude is retrieving entity via MCP..." : "Loading entity..."}</span></div>)}
               {!detail && !loading.detail && (<div className="flex items-center justify-center py-20" style={{ color: "#333350" }}><span>Select an entity to view details</span></div>)}
               {detail && !loading.detail && (
                 <div className="max-w-3xl space-y-6">
@@ -397,7 +526,7 @@ export default function CortexWorkbench() {
                   <button onClick={extractKnowledge} disabled={loading.extract || !ingestText.trim()} className="px-5 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-30" style={{ background: "#c8a24e", color: "#0a0a14" }}>{loading.extract ? "Extracting..." : "Extract Knowledge"}</button>
                 </div>
               </div>
-              {loading.extract && (<div className="flex items-center gap-3 py-8 justify-center"><Spinner size="w-5 h-5" /><span style={{ color: "#666680" }}>Claude is reading and extracting knowledge...</span></div>)}
+              {loading.extract && (<div className="flex items-center gap-3 py-8 justify-center"><Spinner size="w-5 h-5" /><span style={{ color: "#666680" }}>{isSandbox ? "Claude is extracting knowledge via MCP..." : "Claude is reading and extracting knowledge..."}</span></div>)}
               {extraction && !loading.extract && (
                 <div className="space-y-6">
                   {extraction.new_entities?.length > 0 && (

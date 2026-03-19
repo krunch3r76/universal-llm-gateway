@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local Models Browser</title>
+<link rel="stylesheet" href="/local-ui/static/style.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="header-left">
+      <h1>Local Models Browser</h1>
+      <div class="subtitle">Activated models by node &mdash; federation topology view</div>
+    </div>
+    <div class="header-controls">
+      <div class="search-box">
+        <input type="text" id="search-input" placeholder="Filter by model ID...">
+      </div>
+      <label class="view-toggle">
+        <input type="checkbox" id="show-all-toggle">
+        <span>Show all available models</span>
+      </label>
+      <div class="model-count" id="model-count"></div>
+    </div>
+  </header>
+
+  <div id="runtime-bar" class="runtime-bar"></div>
+  <div id="node-bar" class="node-bar"></div>
+
+  <div class="table-container">
+    <table id="models-table">
+      <thead>
+        <tr>
+          <th data-sort="id" data-type="string">Model</th>
+          <th data-sort="node" data-type="string">Node</th>
+          <th data-sort="context_length" data-type="number" class="col-num">Context</th>
+          <th data-sort="effective_context_per_slot" data-type="number" class="col-num">Ctx/Slot</th>
+          <th data-sort="activated" data-type="string">Status</th>
+          <th data-sort="type" data-type="string">Type</th>
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        <tr><td colspan="6" class="loading">Loading models...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div id="pipelines-section" class="pipelines-section" style="display:none">
+    <h3>Pipelines</h3>
+    <div id="pipelines-list" class="pipelines-list"></div>
+  </div>
+
+  <footer>
+    <span class="footer-note">Local inference models served by <a href="/">Universal Stargate</a></span>
+    <span class="footer-note" id="last-refresh"></span>
+  </footer>
+</div>
+
+<script src="/local-ui/static/app.js?v=3"></script>
+</body>
+</html>

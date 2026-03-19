@@ -1,4 +1,10 @@
-"""RAG client factory — UDS/TCP transport resolution and httpx client creation."""
+"""Service client factory — UDS/TCP transport resolution and httpx client creation.
+
+Generic factory for any service reachable via UDS (``unix:///path``) or TCP
+(``http://host:port``). Originally built for RAG; used by all UDS-connected
+services including cortex-api. RAG-specific helpers (``resolve_rag_base_url``)
+remain here alongside generic ones (``make_sync_client``, ``make_async_client``).
+"""
 
 from __future__ import annotations
 
@@ -9,6 +15,9 @@ import yaml
 
 RAG_SOCKET_PATH = "/tmp/universal-protocol/rag.sock"
 DEFAULT_RAG_URL = f"unix://{RAG_SOCKET_PATH}"
+
+CORTEX_SOCKET_PATH = "/tmp/universal-protocol/cortex-api.sock"
+DEFAULT_CORTEX_URL = f"unix://{CORTEX_SOCKET_PATH}"
 _STARGATE_CONFIG_PATH = Path.home() / ".gateway" / "stargate.yaml"
 
 
@@ -52,8 +61,10 @@ def parse_rag_url(url: str) -> tuple[str | None, str]:
     """
     url = url.strip()
     if url.startswith("unix://"):
-        rest = url[7:].lstrip("/")
-        path = f"/{rest}" if rest else RAG_SOCKET_PATH
+        rest = url[7:]
+        path = rest if rest else RAG_SOCKET_PATH
+        if not path.startswith("/"):
+            path = f"/{path}"
         return path, "http://localhost"
     return None, url.rstrip("/")
 

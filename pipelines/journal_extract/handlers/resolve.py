@@ -3,24 +3,22 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, override
 
-import httpx
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
+from transport_utils.rag_client import DEFAULT_CORTEX_URL, make_async_client
 
 logger = logging.getLogger(__name__)
 
-CORTEX_API_URL = os.getenv("CORTEX_API_URL", "http://cortex-api:8300").rstrip("/")
 EMBED_THRESHOLD = 200
 
 
 async def _fetch_all_entities() -> list[dict[str, Any]]:
     """Query cortex-api for all entities. Returns empty list on failure."""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{CORTEX_API_URL}/entities", params={"limit": 500})
+        async with make_async_client(DEFAULT_CORTEX_URL, timeout=5.0) as client:
+            resp = await client.get("/entities", params={"limit": 500})
             resp.raise_for_status()
             return resp.json().get("items", [])
     except Exception:

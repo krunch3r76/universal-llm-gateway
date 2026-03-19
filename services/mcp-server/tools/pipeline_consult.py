@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from mcp_events import monotonic_now, record
+from transport_utils import make_sync_client
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -44,11 +45,11 @@ _QUERY_SOCKET = os.environ.get(
 def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
     """POST to event service query endpoint over UDS."""
     try:
-        with httpx.Client(
-            transport=httpx.HTTPTransport(uds=_QUERY_SOCKET),
+        with make_sync_client(
+            f"unix://{_QUERY_SOCKET}",
             timeout=10.0,
         ) as client:
-            resp = client.post("http://localhost/v1/query", json=body)
+            resp = client.post("/v1/query", json=body)
             resp.raise_for_status()
             return resp.json()
     except httpx.RequestError as e:
@@ -251,6 +252,7 @@ def register_pipeline_consult_tools(mcp: FastMCP) -> None:
             )
             return {"error": f"Consultation timed out after {_CONSULT_TIMEOUT}s."}
         except httpx.ConnectError as e:
+            logger.error("Stargate connection failed during pipeline_consult", exc_info=True)
             record(
                 "mcp.pipeline.consult.failed",
                 execution_id=execution_id,
@@ -259,6 +261,10 @@ def register_pipeline_consult_tools(mcp: FastMCP) -> None:
             )
             return {"error": f"Stargate not reachable: {e}"}
         except httpx.HTTPStatusError as e:
+            logger.error(
+                "Stargate HTTP status error during pipeline_consult",
+                exc_info=True,
+            )
             record(
                 "mcp.pipeline.consult.failed",
                 execution_id=execution_id,

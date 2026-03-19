@@ -11,22 +11,40 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 import re
 import time
 from pathlib import Path
 
+from cortex_proxy import (
+    _CORS_HEADERS as CORTEX_CORS_HEADERS,
+)
+from cortex_proxy import (
+    handle_cortex_preflight,
+    handle_cortex_proxy,
+)
+from llm_proxy import (
+    _CORS_HEADERS as LLM_CORS_HEADERS,
+)
+from llm_proxy import (
+    handle_llm_preflight,
+    handle_llm_proxy,
+)
 from mcp_events import record
 from oauth_service import OAuthService
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import FileResponse, JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
-from tools.clip import normalize_clip_content
 from workbench_relay import (
     _CORS_HEADERS as RELAY_CORS_HEADERS,
+)
+from workbench_relay import (
     handle_preflight,
     handle_relay,
 )
+
+from tools.clip import normalize_clip_content
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +56,10 @@ PUBLIC_PATHS = frozenset(
         "/oauth/token",
     }
 )
+
+
+_THUMBNAILS_PREFIX = "/thumbnails/"
+_THUMBNAILS_DIR = Path("/data/files/.thumbnails")
 
 
 class AuthMiddleware:
@@ -183,6 +205,71 @@ class AuthMiddleware:
             await response(scope, receive, send)
             return
 
+        if path.startswith("/cortex-api"):
+            if request.method == "OPTIONS":
+                response = handle_cortex_preflight()
+                await response(scope, receive, send)
+                return
+            auth = request.headers.get("authorization", "")
+            if not self._is_static_token_authorized(auth):
+                response = JSONResponse(
+                    {"error": "Unauthorized"},
+                    status_code=401,
+                    headers=CORTEX_CORS_HEADERS,
+                )
+                await response(scope, receive, send)
+                return
+            response = await handle_cortex_proxy(request)
+            await response(scope, receive, send)
+            return
+
+        if path.startswith("/llm/"):
+            if request.method == "OPTIONS":
+                response = handle_llm_preflight()
+                await response(scope, receive, send)
+                return
+            auth = request.headers.get("authorization", "")
+            if not self._is_static_token_authorized(auth):
+                response = JSONResponse(
+                    {"error": "Unauthorized"},
+                    status_code=401,
+                    headers=LLM_CORS_HEADERS,
+                )
+                await response(scope, receive, send)
+                return
+            if request.method == "POST" and path == "/llm/v1/messages":
+                response = await handle_llm_proxy(request)
+                await response(scope, receive, send)
+                return
+            response = JSONResponse(
+                {"error": "Not found"},
+                status_code=404,
+                headers=LLM_CORS_HEADERS,
+            )
+            await response(scope, receive, send)
+            return
+
+        if path.startswith(_THUMBNAILS_PREFIX) and request.method == "GET":
+            auth = request.headers.get("authorization", "")
+            if not self._is_static_token_authorized(auth):
+                response = JSONResponse({"error": "Unauthorized"}, status_code=401)
+                await response(scope, receive, send)
+                return
+            filename = path[len(_THUMBNAILS_PREFIX) :]
+            if not filename or "/" in filename or filename.startswith("."):
+                response = JSONResponse({"error": "Invalid filename"}, status_code=400)
+                await response(scope, receive, send)
+                return
+            thumb_path = _THUMBNAILS_DIR / filename
+            if not thumb_path.is_file():
+                response = JSONResponse({"error": "Not found"}, status_code=404)
+                await response(scope, receive, send)
+                return
+            media_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
+            response = FileResponse(str(thumb_path), media_type=media_type)
+            await response(scope, receive, send)
+            return
+
         auth_header = request.headers.get("authorization", "")
         if self._is_static_token_authorized(auth_header):
             scope["auth_mode"] = "static"
@@ -228,10 +315,13 @@ class AuthMiddleware:
 
     async def _handle_clip(self, request: Request) -> JSONResponse:
         """Process a bookmarklet clip upload after static-token authentication."""
-        body = b""
+        body = bytearray()
         async for chunk in request.stream():
-            body += chunk
+            body.extend(chunk)
             if len(body) > self._MAX_BODY_BYTES:
+                logger.warning(
+                    "clip: rejected oversized payload (%d bytes)", len(body)
+                )
                 return JSONResponse(
                     {"error": "Payload too large (5MB limit)"},
                     status_code=413,
@@ -241,6 +331,7 @@ class AuthMiddleware:
         try:
             data = json.loads(body.decode("utf-8"))
         except json.JSONDecodeError:
+            logger.warning("clip: rejected invalid JSON payload")
             return JSONResponse(
                 {"error": "Invalid JSON"},
                 status_code=400,
@@ -253,6 +344,7 @@ class AuthMiddleware:
         selected = bool(data.get("selected", False))
 
         if not content:
+            logger.warning("clip: rejected empty content payload")
             return JSONResponse(
                 {"error": "Missing required field: content"},
                 status_code=400,
@@ -294,7 +386,17 @@ class AuthMiddleware:
                 break
             except FileExistsError:
                 continue
+            except OSError as exc:
+                logger.error("clip: failed writing %s: %s", candidate, exc)
+                return JSONResponse(
+                    {"error": "Failed to save clip"},
+                    status_code=500,
+                    headers=self._CORS_HEADERS,
+                )
         else:
+            logger.error(
+                "clip: unable to allocate unique filename for slug '%s'", slug
+            )
             return JSONResponse(
                 {"error": f"Unable to allocate unique clip filename for slug '{slug}'"},
                 status_code=409,

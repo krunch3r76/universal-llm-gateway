@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from mcp_events import monotonic_now, record
+from transport_utils import make_sync_client
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -118,10 +119,9 @@ def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
     logs a warning and returns an error dictionary so MCP callers receive a
     structured failure instead of an uncaught exception.
     """
-    transport = httpx.HTTPTransport(uds=_QUERY_SOCKET)
     try:
-        with httpx.Client(transport=transport, timeout=10.0) as client:
-            resp = client.post("http://localhost/v1/query", json=body)
+        with make_sync_client(f"unix://{_QUERY_SOCKET}", timeout=10.0) as client:
+            resp = client.post("/v1/query", json=body)
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPError as exc:
@@ -215,7 +215,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                 "error": f"Pipeline '{pipeline}' timed out after {effective_timeout}s."
             }
         except httpx.ConnectError as e:
-            record("mcp.pipeline.run.failed", pipeline=pipeline, error=str(e))
+            record("mcp.pipeline.run.failed", pipeline=pipeline, error="connect_error")
             return {"error": f"Stargate not reachable: {e}"}
         except httpx.HTTPStatusError as e:
             record(
@@ -311,7 +311,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         _cache_pipeline_timeouts(pipelines)
 
         if pipeline not in pipelines:
-            available = sorted(pipelines.keys()) if isinstance(pipelines, dict) else []
+            available = sorted(pipelines.keys())
             return _validate_error(
                 pipeline,
                 f"Pipeline '{pipeline}' not found. Available: {available}",

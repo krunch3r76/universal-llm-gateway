@@ -13,8 +13,8 @@
 services:
   mcp-server:
     build:
-      context: ../../services/mcp-server
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: services/mcp-server/Dockerfile
       args:
         SOURCE_VERSION: "0"
     container_name: mcp-server
