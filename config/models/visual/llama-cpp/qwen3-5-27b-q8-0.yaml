@@ -1,3 +1,6 @@
+# Configuration for the Qwen3.5-27B-Q8_0 Llama-CPP visual model.
+# This file defines the model's metadata, loader specifics, and download information.
+# It is intended for use with visual applications requiring Qwen3.5 architecture.
 catalog_schema: 4
 schema: llama-cpp
 metadata:
@@ -16,7 +19,7 @@ metadata:
     interaction:
       chat_template: false
     reasoning:
-      supports_thinking: false
+      supports_thinking: true
     limits: {}
     provenance: {}
 loader:
@@ -26,7 +29,7 @@ download:
   huggingface:
     repo: unsloth/Qwen3.5-27B-GGUF
     file: Qwen3.5-27B-Q8_0.gguf
-    verified: false
+    verified: true
     local_subdir: Qwen3.5-27B-GGUF
   size_bytes: 28595763104
   sha256: 6b0a101b0a86697fe11eabcc1a7db72699a9f3d4b18b6a1ac75ea3fb2c26c450

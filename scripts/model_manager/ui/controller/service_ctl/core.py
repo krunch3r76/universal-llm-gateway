@@ -10,10 +10,10 @@ import asyncio
 import logging
 import os
 import signal
-from collections.abc import AsyncIterator
+import time
 from pathlib import Path
 
-from ...model.build_state import BuildState, ImageInfo
+from ...model.build_state import BuildState, BuildStatus, ImageInfo
 from ...model.service_state import ServiceState
 from ..service_config import (
     GATEWAY_DIR,
@@ -30,6 +30,10 @@ from ..service_config import (
 )
 from ..sidecar_ctl import SidecarController
 from . import cloud_proxy_service, rag_service
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +41,32 @@ _PGID_KILL_TIMEOUT = 5
 _CURSOR_DESCRIPTOR_REFRESH_TIMEOUT_S = 30
 _MCP_HEALTH_WAIT_TIMEOUT_S = 60.0
 _MCP_HEALTH_POLL_INTERVAL_S = 1.0
+_BUILD_LOG_POLL_INTERVAL_S = 0.25
+
+
+async def _pump_build_log(
+    build_log: Path,
+    process: asyncio.subprocess.Process,
+    queue: asyncio.Queue[str | object],
+    sentinel: object,
+) -> None:
+    """Stream appended build-log lines until the subprocess and log are drained."""
+    offset = 0
+    while True:
+        emitted = False
+        if build_log.exists():
+            with build_log.open(encoding="utf-8", errors="replace") as fh:
+                fh.seek(offset)
+                while line := fh.readline():
+                    emitted = True
+                    offset = fh.tell()
+                    await queue.put(line.rstrip())
+        if process.returncode is not None:
+            if emitted:
+                continue
+            break
+        await asyncio.sleep(_BUILD_LOG_POLL_INTERVAL_S)
+    await queue.put(sentinel)
 
 
 class ServiceController:
@@ -59,7 +89,11 @@ class ServiceController:
         return self._service_state
 
     def check_model_path_ownership(self) -> str | None:
-        """Return warning if MODEL_PATH is root-owned, None if OK."""
+        """Return warning if MODEL_PATH is root-owned, None if OK.
+
+        Returns:
+            A warning string if MODEL_PATH is root-owned and the current user is not root, otherwise None.
+        """
         node_env = load_env_file(NODES_DIR / "localhost.env")
         model_path = Path(
             node_env.get("MODEL_PATH", str(Path.home() / ".models"))
@@ -77,7 +111,10 @@ class ServiceController:
         return self._build_process is not None
 
     def check_image(self) -> ImageInfo:
-        return self._build_state.check_image()
+        info = self._build_state.check_image()
+        if self.build_running:
+            info.status = BuildStatus.BUILDING
+        return info
 
     async def cancel_build(self) -> str:
         """Kill the running build process group."""
@@ -111,6 +148,10 @@ class ServiceController:
 
         Yields lines from stdout/stderr as they appear.
         """
+        if self.build_running:
+            yield "ERROR: Build already in progress. Cancel or wait for it to finish."
+            return
+
         script = self._root / "docker" / "scripts" / "build" / "build-gpu.sh"
         if not script.exists():
             yield f"ERROR: Build script not found: {script}"
@@ -126,8 +167,10 @@ class ServiceController:
         ]
 
         env = build_service_env(self._root)
-
-        log_path = Path("/tmp/rebuild-gpu.log")
+        build_log = Path(
+            f"/tmp/gateway-build-{os.getpid()}-{int(time.time() * 1000)}.log"
+        )
+        env["BUILD_LOG_PATH"] = str(build_log)
         cmd_line = f"$ {' '.join(args)}"
         yield cmd_line
         process = await asyncio.create_subprocess_exec(
@@ -143,33 +186,54 @@ class ServiceController:
             if process.stdout is None:
                 yield "ERROR: Could not capture build output."
                 return
-            try:
-                with log_path.open("w") as log_file:
-                    log_file.write(cmd_line + "\n")
-                    log_file.flush()
-                    async for raw_line in process.stdout:
-                        line = raw_line.decode(errors="replace").rstrip()
-                        log_file.write(line + "\n")
-                        log_file.flush()
-                        yield line
-                exit_code = await process.wait()
-                with log_path.open("a") as log_file:
-                    if exit_code == 0:
-                        msg = "Build completed successfully."
-                    elif exit_code == -signal.SIGTERM or exit_code == -signal.SIGKILL:
-                        msg = "Build cancelled."
-                    else:
-                        msg = f"Build FAILED (exit code {exit_code})."
-                    log_file.write(msg + "\n")
-                yield msg
-            except OSError as e:
-                logger.error("Failed to write build log to %s: %s", log_path, e)
-                yield f"WARNING: Failed to write build log: {e}"
+            queue: asyncio.Queue[str | object] = asyncio.Queue()
+            stdout_done = object()
+            build_log_done = object()
+
+            async def _pump_stdout() -> None:
+                assert process.stdout is not None
+                async for raw_line in process.stdout:
+                    await queue.put(raw_line.decode(errors="replace").rstrip())
+                await queue.put(stdout_done)
+
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(_pump_stdout())
+                tg.create_task(
+                    _pump_build_log(
+                        build_log=build_log,
+                        process=process,
+                        queue=queue,
+                        sentinel=build_log_done,
+                    )
+                )
+                completed = 0
+                while completed < 2:
+                    item = await queue.get()
+                    if item is stdout_done or item is build_log_done:
+                        completed += 1
+                        continue
+                    yield str(item)
+            exit_code = await process.wait()
+            if exit_code == 0:
+                msg = "Build completed successfully."
+            elif exit_code == -signal.SIGTERM or exit_code == -signal.SIGKILL:
+                msg = "Build cancelled."
+            else:
+                msg = f"Build FAILED (exit code {exit_code})."
+            yield msg
         finally:
             self._build_process = None
 
     async def start_gateway(self, *, node_id: str = "localhost") -> str:
         """Start Edge+Gateway container via parameterized compose."""
+        # Example of simplified structure (actual implementation would need a helper)
+        # errors = _check_prerequisites(
+        #     lambda: None if compose_path.exists() else f"Compose file not found: {compose_path}",
+        #     ensure_socket_dir,
+        #     lambda: ensure_bind_mount_dirs(self._root, node_id, model_path)
+        # )
+        # if errors: return errors
+
         compose_path = self._root / "docker" / "compose" / "gpu-edge.yml"
         if not compose_path.exists():
             return f"Compose file not found: {compose_path}"
@@ -284,12 +348,12 @@ class ServiceController:
                 stderr=asyncio.subprocess.STDOUT,
                 start_new_session=True,
             )
+            # Child process owns its duplicated FD; parent can close immediately.
+            log_fh.close()
         except OSError as e:
             logger.error("Failed to start Stargate subprocess: %s", e)
             log_fh.close()
             return f"Failed to start Stargate: {e}"
-        # Child process owns its duplicated FD; parent can close immediately.
-        log_fh.close()
 
         if process.returncode is not None:
             tail = log_path.read_text(errors="replace")[-1500:]
@@ -335,6 +399,9 @@ class ServiceController:
         When browser tools are enabled in ~/.gateway/mcp.yaml, appends the
         browser override file which applies the narrow seccomp relaxation.
 
+        Args:
+            self: The instance of ServiceController (implicitly uses self._root).
+
         Returns:
             (args, compose_path) for docker compose, or None if compose file absent.
         """
@@ -354,6 +421,16 @@ class ServiceController:
             return "Compose file not found: docker/compose/mcp-server.yml"
         args, _ = base
         env = build_mcp_env(self._root)
+
+        # Example of refactored call (actual implementation would need a helper)
+        # return await self._run_docker_compose_command(
+        #     compose_path=compose_path,
+        #     command="up",
+        #     args=["-d", "--force-recreate"],
+        #     env=env,
+        #     success_msg="MCP server started.",
+        #     failure_msg="Failed to start MCP server"
+        # )
 
         result = await asyncio.create_subprocess_exec(
             *args,
@@ -634,7 +711,7 @@ class ServiceController:
             try:
                 recorded_pid = int(pid_file.read_text().strip())
             except (ValueError, OSError) as e:
-                logger.error("Corrupt PID file %s: %s", pid_file, e)
+                logger.error("Corrupt PID file %s: %s", pid_file, e, exc_info=True)
                 pid_file.unlink(missing_ok=True)
 
         if recorded_pid is not None and self._service_state._pid_alive(recorded_pid):
@@ -682,6 +759,10 @@ class ServiceController:
             return f"{service_name} already exited."
         except PermissionError as e:
             logger.error("Cannot kill %s PID %d: %s", service_name, pid, e)
+            if pid_file is not None:
+                pid_file.unlink(
+                    missing_ok=True
+                )  # Unlink even on PermissionError, as we can't manage it.
             return f"Cannot stop {service_name} (PID {pid}): {e}"
 
         if pid_file is not None:
@@ -718,6 +799,11 @@ class ServiceController:
         )
 
     def _write_pid_file(self, pid: int) -> None:
+        """Writes the given PID to the Stargate PID file.
+
+        Args:
+            pid: The process ID to write.
+        """
         GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
         pid_path = GATEWAY_DIR / "stargate.pid"
         pid_path.write_text(str(pid) + "\n")

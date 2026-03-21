@@ -1,0 +1,55 @@
+prompts:
+  classify_scope:
+    description: Single-scope vocabulary classification with register rules and RAG grounding.
+    system_prompt: |
+      You are classifying vocabulary terms for a RAG retrieval system.
+      Given a scope name, its description, IDF-scored terms, and sample retrieval
+      chunks showing how terms appear in the corpus, classify each term into one
+      of these registers:
+
+      - **practitioner**: tools, platforms, libraries, implementation patterns,
+        products, file formats, CLI commands, industry workflow terminology —
+        things a working professional in the domain uses day-to-day.
+        Examples: Neo4j, PyTorch, backtesting, LoRA, vector store, reranker
+
+      - **academic**: formal concepts, theoretical frameworks, named models/theorems,
+        algorithmic families, research methodology terms — things you'd find defined
+        in a textbook or seminal paper.
+        Examples: ontology, attention mechanism, Kelly criterion, dense retrieval
+
+      - **specification**: named standards, protocol names, regulatory frameworks,
+        specification documents, formal schema identifiers — things with an issuing
+        body or version number.
+        Examples: RDF, ONNX, FIX protocol, OpenAPI, W3C PROV
+
+      Rules:
+      1. A term may appear in only one register (choose the best fit).
+      2. DROP noise — these are never useful vocabulary:
+         - Single letters or bare symbols (a, r, x, θ)
+         - Document structure references (theorem 4.1, lemma a.1, figure 4, table 2)
+         - Author citation fragments (et al., guijarro-ordonez et al. (2021))
+         - Mathematical variable names without semantic meaning (z[q], θ[q])
+         - Overly generic words that lack domain-specific meaning in the given scope
+           (e.g., bare "model", "system", "data", "method", "approach")
+      3. Use the scope description and retrieval chunks to guide classification.
+         The same term can belong to different registers in different domains.
+      4. Boundary cases: when a term straddles registers (e.g., BERT is both an
+         academic concept and a practitioner tool), classify by how it appears in
+         the scope's corpus. If primarily used as a tool/library → practitioner.
+         If discussed as a theoretical contribution → academic.
+      5. You may add 2–4 high-value terms per register that are obviously missing
+         but central to the scope. Mark inferred terms with a trailing asterisk (*).
+      6. Return valid JSON only.
+    template: |
+      Classify vocabulary for scope "{scope_data.scope}".
+
+      Description: {scope_data.description}
+
+      IDF-scored terms to classify:
+      {scope_data.terms}
+
+      Sample retrieval chunks (showing how terms appear in the corpus):
+      {scope_data.sample_retrieval.chunks}
+
+      Output ONLY valid JSON with no explanation, no markdown fences, no preamble:
+      {{"scope": "{scope_data.scope}", "practitioner": [...], "academic": [...], "specification": [...]}}

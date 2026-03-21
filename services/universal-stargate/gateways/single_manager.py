@@ -7,7 +7,6 @@ Replaces MultiGatewayManager. Routing happens at Stargate level via federation.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from model_id import ModelId
@@ -23,6 +22,7 @@ from .queue import ExecutionCompletionWaiter
 from .types import GatewayInstance
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from gateway_client import GatewayConfig
 
 logger = get_logger(__name__)
@@ -630,6 +630,8 @@ class SingleGatewayManager:
             - total_ram_mb: int
             - available_ram_mb: int
             - models: list[str] (available models)
+            - loaded_models: list[str]
+            - busy_models: list[str]
         """
         gateway = self.get_gateway()
         gateway_name = self.gateway_config.name
@@ -644,6 +646,8 @@ class SingleGatewayManager:
                     "total_ram_mb": 0,
                     "available_ram_mb": 0,
                     "models": [],
+                    "loaded_models": [],
+                    "busy_models": [],
                 }
             }
 
@@ -660,6 +664,8 @@ class SingleGatewayManager:
                 "total_ram_mb": resource_status.total_ram_mb,
                 "available_ram_mb": resource_status.available_ram_mb,
                 "models": list(gateway.client.get_models()),
+                "loaded_models": list(gateway.client.get_loaded_models()),
+                "busy_models": list(ws_client.get_busy_models()),
             }
         }
 

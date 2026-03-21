@@ -1,8 +1,8 @@
 """
-Monitoring consumer that provides real-time gateway state for dashboards and monitoring.
+Monitoring consumer — real-time gateway and model state for dashboards.
 
-This consumer subscribes to GATEWAY_STATE_CHANGED events and maintains
-state information for monitoring dashboards, WebSocket updates, and metrics export.
+Subscribes to gateway state transitions and model lifecycle events,
+maintains state for monitoring dashboards, WebSocket push, and metrics.
 """
 
 import asyncio
@@ -13,7 +13,14 @@ from datetime import datetime
 from universal_event_bus import Event, EventBus
 from universal_logging import get_logger
 
-from ..events import GATEWAY_STATE_CHANGED
+from ..events import (
+    GATEWAY_STATE_CHANGED,
+    MODEL_EXECUTION_COMPLETED,
+    MODEL_EXECUTION_STARTED,
+    MODEL_LOADED,
+    MODEL_LOADING_STARTED,
+    MODEL_UNLOADED,
+)
 from ..gateway_state import ConnectivityState, HealthState
 
 logger = get_logger(__name__)
@@ -87,9 +94,17 @@ class MonitoringConsumer:
         self._websocket_subscribers: list[asyncio.Queue] = []
 
     def start(self):
-        """Start consuming events"""
-        # Subscribe to unified state change events (synchronous in EventBus v0.2.0)
+        """Start consuming gateway state and model lifecycle events."""
         self.event_bus.subscribe_async(GATEWAY_STATE_CHANGED, self._handle_state_change)
+        self.event_bus.subscribe_async(MODEL_LOADED, self._handle_model_event)
+        self.event_bus.subscribe_async(MODEL_UNLOADED, self._handle_model_event)
+        self.event_bus.subscribe_async(MODEL_LOADING_STARTED, self._handle_model_event)
+        self.event_bus.subscribe_async(
+            MODEL_EXECUTION_STARTED, self._handle_model_event
+        )
+        self.event_bus.subscribe_async(
+            MODEL_EXECUTION_COMPLETED, self._handle_model_event
+        )
         logger.info("✅ MonitoringConsumer started")
 
     def stop(self):
@@ -166,6 +181,31 @@ class MonitoringConsumer:
                 "connectivity": connectivity,
                 "health": health,
                 "timestamp": current_time,
+            }
+        )
+
+    async def _handle_model_event(self, event: Event) -> None:
+        """Forward model lifecycle events to WebSocket subscribers.
+
+        Translates internal EventBus model signals into a uniform
+        ``model_status_change`` message shape for dashboard consumers.
+        """
+        payload = event.payload
+        signal_to_status = {
+            MODEL_LOADED: "loaded",
+            MODEL_UNLOADED: "unloaded",
+            MODEL_LOADING_STARTED: "loading",
+            MODEL_EXECUTION_STARTED: "busy",
+            MODEL_EXECUTION_COMPLETED: "idle",
+        }
+        await self._notify_websocket_subscribers(
+            {
+                "type": "model_status_change",
+                "model_id": payload.get("model_id", ""),
+                "node_id": payload.get("url", ""),
+                "status": signal_to_status.get(event.signal, event.signal),
+                "signal": event.signal,
+                "timestamp": time.time(),
             }
         )
 
@@ -260,9 +300,8 @@ class MonitoringConsumer:
         metrics.append("# TYPE gateway_uptime_seconds counter")
         for url in self._current_states.keys():
             stats = self.get_uptime_stats(url)
-            metrics.append(
-                f'gateway_uptime_seconds{{url="{url}"}} {stats["total_uptime_seconds"]:.2f}'
-            )
+            uptime = stats["total_uptime_seconds"]
+            metrics.append(f'gateway_uptime_seconds{{url="{url}"}} {uptime:.2f}')
 
         # Transition counts
         metrics.append("# HELP gateway_state_transitions_total Total state transitions")
@@ -270,7 +309,8 @@ class MonitoringConsumer:
         for key, count in self._transition_counts.items():
             url, connectivity, health = key.split(":", 2)
             metrics.append(
-                f'gateway_state_transitions_total{{url="{url}",connectivity="{connectivity}",health="{health}"}} {count}'
+                f'gateway_state_transitions_total{{url="{url}",'
+                f'connectivity="{connectivity}",health="{health}"}} {count}'
             )
 
         return "\n".join(metrics)

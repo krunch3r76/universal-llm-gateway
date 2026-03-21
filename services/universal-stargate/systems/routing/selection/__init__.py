@@ -23,6 +23,7 @@ from .catalog import (
     get_activated_models_for_display,
     get_all_available_models,
     get_model_source_map,
+    is_model_in_any_catalog,
 )
 from .collector import build_placement, collect_gateways
 
@@ -40,6 +41,7 @@ __all__ = [
     # Catalog functions
     "collect_stargate_model_sets",
     "get_all_available_models",
+    "is_model_in_any_catalog",
     "get_activated_models_for_display",
     "get_model_source_map",
     # Collectors

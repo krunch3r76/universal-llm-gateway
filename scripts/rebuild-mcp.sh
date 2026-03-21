@@ -1,9 +1,38 @@
 #!/usr/bin/env bash
-# Rebuild MCP server image (no cache) and start the container.
+# Rebuild MCP server image and start the container.
 # Reads MCP_PROJECT_DIR, MCP_AUTH_TOKEN, etc. from ~/.gateway/mcp.yaml.
-# Usage: ./scripts/rebuild-mcp.sh [from repo root or any subdir]
+# Usage: ./scripts/rebuild-mcp.sh [--use-cache] [from repo root or any subdir]
 
 set -e
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/rebuild-mcp.sh [--use-cache]
+
+Options:
+  --use-cache  Rebuild with normal Docker layer cache instead of --no-cache.
+  -h, --help   Show this help text.
+EOF
+}
+
+USE_CACHE=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --use-cache)
+      USE_CACHE=true
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -74,17 +103,21 @@ if fp:
 ")"
 
 cd "$WORKSPACE_ROOT"
-COMPOSE_BASE="-f docker/compose/mcp-server.yml"
+COMPOSE_ARGS=(-f docker/compose/mcp-server.yml)
 if [[ "$ENABLE_BROWSER_TOOLS" == "true" ]]; then
-  COMPOSE_FILES="$COMPOSE_BASE -f docker/compose/mcp-server-browser.override.yml"
-else
-  COMPOSE_FILES="$COMPOSE_BASE"
+  COMPOSE_ARGS+=(-f docker/compose/mcp-server-browser.override.yml)
 fi
 
-echo "Building MCP server (no cache)..."
-docker compose $COMPOSE_FILES build --no-cache mcp-server
+BUILD_ARGS=(build mcp-server)
+if [[ "$USE_CACHE" == "true" ]]; then
+  echo "Building MCP server (using cache)..."
+else
+  echo "Building MCP server (no cache)..."
+  BUILD_ARGS=(build --no-cache mcp-server)
+fi
+docker compose "${COMPOSE_ARGS[@]}" "${BUILD_ARGS[@]}"
 
 echo "Starting MCP server..."
-docker compose $COMPOSE_FILES up -d mcp-server
+docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
 
 echo "Done. Check: docker ps --filter name=mcp-server"

@@ -21,7 +21,7 @@ from textual.widgets import Button, DataTable, Select, Static
 if TYPE_CHECKING:
     from ...app import ModelManagerApp
 
-from scripts.model_manager.topology import TopologySnapshot
+from scripts.model_manager.topology import TopologySnapshot, build_snapshot
 
 from ...controller.operation_log import tee_with_summary
 from ...controller.service_config import is_mcp_configured
@@ -53,7 +53,7 @@ class TopologyPanel(Widget):
     """DataTable showing all nodes with live status + parallel fleet operations."""
 
     class DeployStateChanged(Message):
-        """Posted when a fleet deploy starts or finishes.
+        """Message posted when a fleet deploy operation changes state.
 
         Args:
             deploying: True while a deploy operation is running, False when complete.
@@ -232,10 +232,28 @@ class TopologyPanel(Widget):
     def _run_fleet_operation(self, *, build: bool) -> None:
         if self._workspace_root is None or self._deploying:
             return
+        svc = cast("ModelManagerApp", self.app).service_controller
+        if build and svc.build_running:
+            self._node_buffers.clear()
+            self._active_node = _MASTER_ROW_KEY
+            log = self.query_one("#topo-progress", LogStream)
+            log.display = True
+            log.clear()
+            self._set_node_status(_MASTER_ROW_KEY, "⟳ build already running")
+            self._append_line(
+                _MASTER_ROW_KEY,
+                "[localhost] Local image build already in progress.",
+            )
+            self._append_line(
+                _MASTER_ROW_KEY,
+                "[localhost] Wait for it to finish or cancel it from Services before running Rebuild + Deploy All again.",
+            )
+            return
         scope = self._selected_scope()
         self.run_worker(self._do_fleet_deploy(build=build, scope=scope), exclusive=True)
 
     async def _do_fleet_deploy(self, *, build: bool, scope: str) -> None:
+        svc = cast("ModelManagerApp", self.app).service_controller
         self._deploying = True
         self._deploy_run_id += 1
         deploy_run_id = self._deploy_run_id
@@ -250,8 +268,15 @@ class TopologyPanel(Widget):
         try:
             assert self._workspace_root is not None
             if build:
-                remote_results = await self._parallel_build(scope)
-                await self._restart_local_services()
+                local_build_ok, remote_results = await self._parallel_build(scope)
+                if local_build_ok:
+                    await self._restart_local_services()
+                else:
+                    self._switch_to_node(_MASTER_ROW_KEY)
+                    self._append_line(
+                        _MASTER_ROW_KEY,
+                        "⚠ Local build failed; skipped local restart.",
+                    )
                 for hostname, ok in remote_results.items():
                     if ok:
                         await self._verify_relay_connection(hostname)
@@ -261,28 +286,45 @@ class TopologyPanel(Widget):
             self._deploying = False
             self.post_message(self.DeployStateChanged(deploying=False))
             self.set_timer(10, lambda: self._auto_hide_log(deploy_run_id))
+            # Refresh UI state after workflow completes so the topology table
+            # reflects restarted local services and any redeployed remotes.
+            try:
+                assert self._workspace_root is not None
+                services = svc.service_state.check_all()
+                snapshot = build_snapshot(self._workspace_root, services=services)
+                self.update_from_snapshot(snapshot)
+            except Exception:
+                logger.exception("Failed to refresh topology snapshot after deploy")
 
     def _auto_hide_log(self, deploy_run_id: int) -> None:
-        """Collapse the deploy log stream after idle timeout."""
+        """Collapse the deploy log stream after idle timeout.
+
+        Args:
+            deploy_run_id: The ID of the deploy run that scheduled this hide operation.
+                           Used to prevent stale timers from hiding new logs.
+        """
         if not self._deploying and deploy_run_id == self._deploy_run_id:
             self.query_one("#topo-progress", LogStream).display = False
 
-    async def _parallel_build(self, scope: str) -> dict[str, bool]:
+    async def _parallel_build(self, scope: str) -> tuple[bool, dict[str, bool]]:
         """Build images on localhost and all remotes in parallel.
 
-        Returns remote hostname → success mapping for deferred connection
+        Args:
+            scope: The build scope (e.g., 'all', 'llama').
+
+        Returns local-build success and remote hostname → success mapping for deferred connection
         verification (remotes start their relay, but master may not be up yet).
         """
         remotes = list_remotes()
         targets = _parse_remote_targets(remotes)
         results: dict[str, bool] = {}
 
-        self._set_node_status(_MASTER_ROW_KEY, "⟳ building...")
+        self._set_node_status(_MASTER_ROW_KEY, "● running (build in progress)")
         for hostname, _ in targets:
-            self._set_node_status(hostname, "⟳ building...")
+            self._set_node_status(hostname, "⟳ building image...")
 
         async with asyncio.TaskGroup() as tg:
-            tg.create_task(self._build_local_image(scope))
+            local_build = tg.create_task(self._build_local_image(scope))
             for hostname, address in targets:
                 tg.create_task(
                     self._deploy_and_build_remote(
@@ -293,20 +335,41 @@ class TopologyPanel(Widget):
                     )
                 )
 
-        return results
+        return local_build.result(), results
 
-    async def _build_local_image(self, scope: str) -> None:
-        """Build the Docker image locally (no service restart)."""
+    async def _build_local_image(self, scope: str) -> bool:
+        """Build the Docker image locally (no service restart).
+
+        Args:
+            scope: The build scope (e.g., 'all', 'llama').
+
+        Returns: True if the build was successful, False otherwise.
+        """
         svc = cast("ModelManagerApp", self.app).service_controller
         mk = _MASTER_ROW_KEY
+        self._set_node_status(mk, "● running (build in progress)")
         self._append_line(mk, f"Building image (scope={scope})...")
         summary = tee_with_summary(
             svc.build_image(scope=scope),
             operation="build",
             host=mk,
         )
+        # Be robust to log-shape changes: if we see an explicit failure marker,
+        # treat it as failed; otherwise assume success and proceed to restart.
+        build_ok = True
+        saw_success_marker = False
         async for line in summary:
             self._append_line(mk, line)
+            if _build_summary_failed(line):
+                build_ok = False
+            if "Build completed successfully." in line:
+                saw_success_marker = True
+                build_ok = True
+        if build_ok or saw_success_marker:
+            self._set_node_status(mk, "○ built image, restart pending")
+            return True
+        self._set_node_status(mk, "✗ build failed")
+        return False
 
     async def _restart_local_services(self) -> None:
         """Restart local services after image build completes."""
@@ -349,15 +412,29 @@ class TopologyPanel(Widget):
         await asyncio.sleep(1)
         start_ops: list[tuple[str, Any]] = [
             ("start gateway", svc.start_gateway),
+            ("start stargate", svc.start_stargate),
             ("start rag", svc.start_rag),
             ("start cloud_proxy", svc.start_cloud_proxy),
-            ("start stargate", svc.start_stargate),
         ]
         for idx, (label, op) in enumerate(start_ops):
             result = await op()
             self._append_line(mk, result)
+            # Prefer deterministic success checks over keyword heuristics.
+            # Service start_* helpers return well-known prefixes on success.
             if label == "start stargate":
                 failed = not result.startswith("Stargate starting")
+            elif label == "start gateway":
+                failed = not result.startswith("Gateway container started")
+            elif label == "start rag":
+                failed = not (
+                    result.startswith("RAG service starting")
+                    or result.startswith("RAG service is already running")
+                )
+            elif label == "start cloud_proxy":
+                failed = not (
+                    result.startswith("Cloud Proxy starting")
+                    or result.startswith("Cloud Proxy is already running")
+                )
             else:
                 failed = _service_operation_failed(result)
             if failed:
@@ -397,16 +474,22 @@ class TopologyPanel(Widget):
         )
         summary = tee_with_summary(raw, operation="deploy", host=hostname)
         failed = False
-        async for line in summary:
-            self._append_line(hostname, line)
-            if "[red]" in line:
-                failed = True
+        try:
+            async for line in summary:
+                self._append_line(hostname, line)
+                if "[red]" in line:
+                    failed = True
+        except Exception as e:
+            self._append_line(hostname, f"Error during remote deploy: {e}")
+            logger.exception("Error deploying remote %s", hostname)
+            failed = True
 
         if failed:
             self._set_node_status(hostname, "✗ failed")
             self._append_line(hostname, f"--- {hostname}: ✗ failed ---")
             results[hostname] = False
         else:
+            self._set_node_status(hostname, "✓ built")
             results[hostname] = True
 
     async def _verify_relay_connection(self, hostname: str) -> None:
@@ -434,7 +517,12 @@ class TopologyPanel(Widget):
         self._append_line(hostname, f"--- {hostname}: {status} ---")
 
     async def _deploy_remotes_parallel(self, *, build: bool, scope: str) -> None:
-        """Deploy all remotes in parallel via TaskGroup."""
+        """Deploy all remotes in parallel via TaskGroup.
+
+        Args:
+            build: Whether to build the image on the remote before deploying.
+            scope: The build scope (e.g., 'all', 'llama').
+        """
         remotes = list_remotes()
         if not remotes:
             self._append_line(_MASTER_ROW_KEY, "No remotes configured.")
@@ -465,7 +553,14 @@ class TopologyPanel(Widget):
         build: bool,
         scope: str,
     ) -> None:
-        """Deploy one remote, buffering output to its node key."""
+        """Deploy one remote, buffering output to its node key.
+
+        Args:
+            hostname: The hostname of the remote node.
+            address: The network address of the remote node.
+            build: Whether to build the image on the remote before deploying.
+            scope: The build scope (e.g., 'all', 'llama').
+        """
         assert self._workspace_root is not None
         raw: AsyncIterator[str] = deploy_remote(
             hostname=hostname,
@@ -477,10 +572,15 @@ class TopologyPanel(Widget):
         )
         summary = tee_with_summary(raw, operation="deploy", host=hostname)
         failed = False
-        async for line in summary:
-            self._append_line(hostname, line)
-            if "[red]" in line:
-                failed = True
+        try:
+            async for line in summary:
+                self._append_line(hostname, line)
+                if "[red]" in line:
+                    failed = True
+        except Exception as e:
+            self._append_line(hostname, f"Error during remote deploy: {e}")
+            logger.exception("Error deploying remote %s", hostname)
+            failed = True
 
         if failed:
             self._set_node_status(hostname, "✗ failed")
@@ -551,4 +651,15 @@ def _service_operation_failed(result: str) -> bool:
         or text.startswith("error")
         or " failed " in text
         or " not found" in text
+    )
+
+
+def _build_summary_failed(line: str) -> bool:
+    """Classify summarized build lines that should block restart."""
+    text = line.strip()
+    return (
+        "Build FAILED" in text
+        or "Build cancelled" in text
+        or "ERROR:" in text
+        or "[red]" in text
     )

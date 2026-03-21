@@ -19,6 +19,7 @@ import json
 import time as _time
 from typing import TYPE_CHECKING, Any, override
 
+from systems.pipeline.core.dag import ResponseTruncatedError
 from systems.pipeline.core.events.step import RagRerankCompleted
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
@@ -151,9 +152,7 @@ class RagRerankAssembleHandler(BaseHandler):
 
         windows = build_windows(len(candidates), window_size, overlap)
 
-        model_id = await self._resolve_model_alias_async(
-            step.model_ref, context, step_name=step.name
-        )
+        model_id, model_profile = self._resolve_rerank_model(step, context)
         json_schema = None
         if step.generation_parameters.get("response_format"):
             json_schema = step.generation_parameters["response_format"].get("schema")
@@ -187,7 +186,10 @@ class RagRerankAssembleHandler(BaseHandler):
                     json_schema=json_schema,
                     call_label=f"rerank_w{w_idx}",
                     model_id_is_resolved=True,
+                    model_profile=model_profile,
                 )
+            except ResponseTruncatedError:
+                raise
             except Exception as e:
                 logger.error(
                     "rerank window %d LLM call failed: %s", w_idx, e, exc_info=True
@@ -288,6 +290,34 @@ class RagRerankAssembleHandler(BaseHandler):
                 total_rerank_seconds=seconds,
             ),
         )
+
+    def _resolve_rerank_model(
+        self,
+        step: StepConfig,
+        context: PipelineContext,
+    ) -> tuple[str, str | None]:
+        """Resolve model ID and profile from models.yaml registry.
+
+        The profile carries ``chat_template_kwargs`` (e.g. ``enable_thinking:
+        false``) that must reach the inference engine. Without it, Qwen3 models
+        default to thinking mode and spend the entire token budget on hidden
+        ``<think>`` blocks, producing empty visible content.
+        """
+        alias = step.model_ref
+        if alias and alias.startswith("optionsNs."):
+            key = alias[len("optionsNs."):]
+            alias = (context.options or {}).get(key, alias)
+        registry = context._registry
+        try:
+            model_config = registry.get_model_config(
+                alias,
+                domain=context.pipeline.domain,
+                search_path=context.pipeline.source_search_path,
+            )
+            return model_config.model, model_config.profile
+        except KeyError:
+            resolved = self._resolve_model_alias(step.model_ref, context)
+            return resolved, None
 
     @override
     def validate(self, step: StepConfig) -> list[str]:

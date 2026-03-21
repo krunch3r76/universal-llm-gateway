@@ -48,6 +48,8 @@ class GatewayStatus(TypedDict):
     total_ram_mb: int
     available_ram_mb: int
     models: list[str]
+    loaded_models: list[str]
+    busy_models: list[str]
 
 
 class _CatalogCacheEntry(TypedDict):
@@ -503,6 +505,8 @@ class FederatedGatewayManager(Sequential):
             - total_ram_mb: int
             - available_ram_mb: int
             - models: list[str] (available models on this gateway)
+            - loaded_models: list[str]
+            - busy_models: list[str]
         """
         result: dict[str, GatewayStatus] = {}
         for gw in self._gateways.values():
@@ -514,6 +518,8 @@ class FederatedGatewayManager(Sequential):
                 "total_ram_mb": gw.ram_total_mb,
                 "available_ram_mb": gw.ram_free_mb,
                 "models": [str(model_id) for model_id in gw.available_models],
+                "loaded_models": [str(mid) for mid in gw.loaded_models],
+                "busy_models": [str(mid) for mid in gw.busy_models],
             }
         return result
 

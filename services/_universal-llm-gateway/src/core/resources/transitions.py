@@ -2,15 +2,22 @@
 
 Provides functions for handling state machine transitions during model
 loading, idle, and error recovery operations.
+
+Status is derived from the WorkerStateMachine — these functions perform SM
+transitions only. Status auto-derives via ModelResourceInfo.status property.
 """
 
 import time
+from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
 
 from src.core.workers.state_machine import WorkerState, WorkerStateMachine
 
 from .types import ModelResourceInfo, ModelStatus
+
+if TYPE_CHECKING:
+    from universal_event_bus import EventBus
 
 logger = get_logger(__name__)
 
@@ -23,8 +30,8 @@ def handle_error_state_recovery(
 ) -> None:
     """Clear ERROR state if present to allow retry.
 
-    When a model is in ERROR state, this function resets it to NOT_LOADED
-    so that a new load attempt can be made.
+    SM clear_error transitions to UNLOADED; status auto-derives to NOT_LOADED.
+    SM on_transition callback handles event emission and error_message clearing.
 
     Args:
         state_machines: Dict mapping normalized string keys to their state machines.
@@ -35,8 +42,7 @@ def handle_error_state_recovery(
     if key not in models:
         return
 
-    current_status = models[key].status
-    if current_status != ModelStatus.ERROR:
+    if models[key].status != ModelStatus.ERROR:
         return
 
     error_msg = models[key].error_message or "unknown"
@@ -48,40 +54,38 @@ def handle_error_state_recovery(
         success = state_machines[key].clear_error("Retry load attempt")
         if success:
             logger.debug(f"Cleared error state for {model_id}")
-            models[key].status = ModelStatus.NOT_LOADED
-            models[key].error_message = None
         else:
             logger.warning(f"Failed to clear error state for {model_id}")
     else:
-        models[key].error_message = None
-        models[key].status = ModelStatus.NOT_LOADED
+        logger.warning(
+            f"State machine not found for {model_id} — cannot clear ERROR"
+        )
 
 
 def transition_to_loading(
     state_machines: dict[str, WorkerStateMachine],
     key: str,
     model_id: str,
-    set_status_callback,
-) -> None:
-    """Transition model to LOADING state.
+) -> bool:
+    """Transition model SM to LOADING state. Status auto-derives.
 
-    Args:
-        state_machines: Dict mapping normalized string keys to their state machines.
-        key: The normalized string key for lookups.
-        model_id: The original model ID string for logging.
-        set_status_callback: Callback to set model status (model_id, status).
+    Returns:
+        True if transitioned to LOADING, already in LOADING, or no SM exists.
+        False if SM rejected the transition (caller must abort load).
     """
     if key in state_machines:
-        success = state_machines[key].transition(
-            WorkerState.LOADING, reason="model_loading_started"
-        )
-        if success:
-            set_status_callback(model_id, ModelStatus.LOADING)
-        else:
-            logger.error(f"Failed to transition {model_id} to LOADING")
-    else:
-        logger.warning(f"No state machine for {model_id}")
-        set_status_callback(model_id, ModelStatus.LOADING)
+        sm = state_machines[key]
+        if sm.current_state == WorkerState.LOADING:
+            return True
+        current = sm.current_state
+        success = sm.transition(WorkerState.LOADING, reason="model_loading_started")
+        if not success:
+            logger.error(
+                f"Failed to transition {model_id} to LOADING "
+                f"(current_state={current.value})"
+            )
+            return False
+    return True
 
 
 def transition_to_idle(
@@ -144,43 +148,41 @@ async def update_model_idle_status_async(
     models: dict[str, ModelResourceInfo],
     key: str,
     model_id: str,
-    event_bus,
+    event_bus: "EventBus",
 ) -> None:
-    """Update model status fields when marking idle.
+    """Update inference timing fields when marking idle and emit event.
 
-    Directly emits INFERENCE_COMPLETED event via EventBus.
+    SM transition (in transition_to_idle) already set the state to LOADED;
+    status auto-derives. This function handles timing field cleanup and
+    INFERENCE_COMPLETED event emission.
 
     Args:
         models: Dict mapping normalized string keys to their resource info.
         key: The normalized string key for lookups.
         model_id: The original model ID string for logging.
-        event_bus: EventBus instance for event emission.
+        event_bus: The EventBus instance for event emission.
     """
     if key not in models:
         return
 
-    if models[key].status == ModelStatus.BUSY:
-        models[key].status = ModelStatus.LOADED
+    m = models[key]
+    had_active_inference = m.current_inference_start is not None
+
+    if had_active_inference:
         current_time = time.time()
-        models[key].last_inference_end = current_time
-        models[key].last_inference_time = current_time
-        models[key].current_inference_start = None
-        models[key].inference_state = None
+        m.last_inference_end = current_time
+        m.last_inference_time = current_time
+        m.current_inference_start = None
+        m.inference_state = None
         logger.info(f"✅ Model {model_id} marked idle")
-    elif models[key].status != ModelStatus.LOADED:
-        models[key].status = ModelStatus.LOADED
-        logger.debug(f"Model {model_id} status updated to LOADED")
-
-    models[key].last_updated = time.time()
-
-    # Emit event with timestamp (fire-and-forget)
-    from .events import emit_inference_completed
-
-    last_inference_time = models[key].last_inference_end or time.time()
-    if models[key].last_inference_end is None:
-        logger.warning(
-            f"MODEL_IDLE emitted for {model_id} without "
-            "pre-recorded last_inference_end; falling back to current time"
+    else:
+        logger.debug(
+            "Model %s idle bookkeeping ran without active inference", model_id
         )
 
-    await emit_inference_completed(event_bus, model_id, last_inference_time)
+    if not had_active_inference:
+        return
+
+    from .events import emit_inference_completed
+
+    await emit_inference_completed(event_bus, model_id, m.last_inference_end)

@@ -55,8 +55,10 @@ function disconnectStream() {
 function renderLiveUpdate() {
   if (!currentExecution) return;
   setQuestion(currentExecution.question);
+  renderExecutionMeta(currentExecution);
   renderSummaryBanner(currentExecution.summary);
   renderPipelineFlow(currentExecution.steps);
+  updateExecutionCard(currentExecution);
 }
 
 // -- Client-side event aggregation (mirrors Python aggregator.py) ---------
@@ -75,11 +77,12 @@ function aggregateClientSide(events) {
     if (!stepData[sname]) {
       stepData[sname] = {
         step_id: sname, step_type: null, model: null, model_ref: null,
+        active_model_call: null,
         latency_ms: null, inference_ms: 0, status: 'pending',
         tokens: { prompt: 0, completion: 0, total: 0 },
         inputs: {}, raw_output: null, json_data: null,
         iterations: null, domain_routing: null,
-        model_calls: [], error: null, traceback: null,
+        model_calls: [], prompt_text_bytes: 0, error: null, traceback: null,
       };
       stepOrder.push(sname);
     }
@@ -102,6 +105,9 @@ function aggregateClientSide(events) {
   return {
     pipeline_id: first.pipeline_id || '',
     execution_id: first.execution_id || '',
+    started_at_utc: started?.wall_clock || first?.wall_clock || null,
+    is_live: true,
+    step_count: steps.length,
     question,
     steps,
     summary: buildSummary(steps, wallClockMs),
@@ -114,6 +120,27 @@ function applyEvent(sd, ev) {
       sd.step_type = ev.step_type || sd.step_type;
       sd.status = 'running';
       if (ev.model_id) { sd.model = ev.model_id; sd.model_ref = ev.model_id; }
+      break;
+    case 'model_invocation_started':
+      if (ev.model_id) {
+        sd.model = ev.model_id;
+        sd.model_ref = ev.model_id;
+      }
+      sd.active_model_call = {
+        call_label: ev.call_label || '',
+        model: ev.model_id || '',
+        system_prompt: ev.system_prompt || null,
+        user_prompt: ev.user_prompt || '',
+        request_body: ev.request_body || null,
+        metadata: ev.metadata || null,
+      };
+      break;
+    case 'step_model_resolved':
+      if (ev.model_id) {
+        sd.model = ev.model_id;
+        sd.model_ref = ev.model_id;
+      }
+      sd.model_selection_source = ev.selection_source || sd.model_selection_source;
       break;
     case 'step_inputs_captured':
       sd.inputs = ev.inputs || {};
@@ -170,6 +197,7 @@ function applyEvent(sd, ev) {
       break;
     case 'step_completed':
       sd.status = 'completed';
+      sd.active_model_call = null;
       if (ev.duration_ms) sd.latency_ms = ev.duration_ms;
       if (ev.prompt_tokens != null) {
         if (!sd.tokens) sd.tokens = { prompt: 0, completion: 0, total: 0 };
@@ -181,13 +209,20 @@ function applyEvent(sd, ev) {
       break;
     case 'step_failed':
       sd.status = 'failed';
+      sd.active_model_call = null;
       sd.error = ev.error || null;
       sd.traceback = ev.traceback || null;
       if (ev.duration_ms) sd.latency_ms = ev.duration_ms;
       break;
     case 'model_invocation':
+      if (ev.model_id) {
+        sd.model = ev.model_id;
+        sd.model_ref = ev.model_id;
+      }
+      sd.active_model_call = null;
       if (!sd.model_calls) sd.model_calls = [];
       const callInferenceMs = ev.inference_ms || 0;
+      const callPromptBytes = promptTextBytes(ev);
       sd.model_calls.push({
         call_label: ev.call_label || '',
         model: ev.model_id || '',
@@ -201,11 +236,13 @@ function applyEvent(sd, ev) {
         inference_ms: callInferenceMs,
         prompt_tokens: ev.prompt_tokens || 0,
         completion_tokens: ev.completion_tokens || 0,
+        prompt_text_bytes: callPromptBytes,
         success: ev.success !== false,
         wall_clock: ev.wall_clock || '',
         metadata: ev.metadata || null,
       });
       sd.inference_ms = (sd.inference_ms || 0) + callInferenceMs;
+      sd.prompt_text_bytes = (sd.prompt_text_bytes || 0) + callPromptBytes;
       break;
     case 'step_skipped':
       sd.status = 'skipped';
@@ -318,8 +355,15 @@ function categorizeStep(stepId) {
   return 'other';
 }
 
+function promptTextBytes(ev) {
+  let total = 0;
+  if (ev.system_prompt) total += new Blob([ev.system_prompt]).size;
+  if (ev.user_prompt) total += new Blob([ev.user_prompt]).size;
+  return total;
+}
+
 function buildSummary(steps, wallClockMs) {
-  let totalPrompt = 0, totalCompletion = 0, summedLatency = 0;
+  let totalPrompt = 0, totalCompletion = 0, totalPromptTextBytes = 0, summedLatency = 0;
   let totalClaims = 0, totalAccepted = 0, totalRejected = 0;
   let totalModelCalls = 0;
   const models = new Set();
@@ -328,6 +372,7 @@ function buildSummary(steps, wallClockMs) {
     const tok = step.tokens || {};
     totalPrompt += tok.prompt || 0;
     totalCompletion += tok.completion || 0;
+    totalPromptTextBytes += step.prompt_text_bytes || 0;
     if (step.latency_ms) summedLatency += step.latency_ms;
     if (step.model) models.add(step.model);
     if (step.iterations) {
@@ -355,6 +400,7 @@ function buildSummary(steps, wallClockMs) {
     total_tokens: totalPrompt + totalCompletion,
     prompt_tokens: totalPrompt,
     completion_tokens: totalCompletion,
+    prompt_text_bytes: totalPromptTextBytes,
     wall_clock_ms: wallClockMs,
     total_latency_ms: wallClockMs != null ? wallClockMs : summedLatency,
     summed_latency_ms: summedLatency,

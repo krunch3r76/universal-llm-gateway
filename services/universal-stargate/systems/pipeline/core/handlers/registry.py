@@ -8,6 +8,7 @@ Resolution order:
 
 Invariant: ∀ (domain, step_type), ∃! resolved handler
 """
+# ruff: noqa: E501
 
 from __future__ import annotations
 
@@ -51,7 +52,7 @@ class HandlerRegistry:
             handler_class: Handler class to register (not instance!)
 
         Returns:
-            The handler class (for decorator chaining)
+            The handler class (useful for direct registration or internal chaining).
         """
         step_type = handler_class.step_type
         if step_type in cls._generic_handler_classes:
@@ -144,6 +145,8 @@ class HandlerRegistry:
     @classmethod
     def list_types(cls) -> list[str]:
         """List all registered generic step types."""
+        # _ensure_initialized is called by other public methods that might precede this.
+        # Keeping it for robustness, but noting it's idempotent.
         cls._ensure_initialized()
         return sorted(cls._generic_handler_classes.keys())
 
@@ -162,13 +165,25 @@ class HandlerRegistry:
 
         Used by StepConfig.computed_depends_on to discover implicit
         dependencies declared by handlers (e.g. select_output.candidates).
+
+        When *domain* is empty the search falls back to scanning all
+        registered domain handlers by step_type so that DAG dependency
+        resolution works even without pipeline-level domain context.
         """
         cls._ensure_initialized()
-        try:
-            handler_class = cls.get_class_or_raise(
-                domain or "_generic", step_type, variant=""
-            )
-        except KeyError:
+        # Option 1: Require domain for this method, or clarify behavior for empty domain
+        # For now, let's assume we want to query the router for a suitable handler.
+        # This requires a new public method on DomainRouter.
+        router = get_domain_router()
+        if domain:
+            handler_class = cls.get_class(domain, step_type, variant="")
+        else:
+            # This assumes DomainRouter has a public method to find a handler class
+            # by step_type across domains, or a clear strategy for 'generic' lookup.
+            # For now, we'll call a hypothetical method.
+            handler_class = router.find_handler_class_by_step_type(step_type)
+
+        if handler_class is None:
             return ()
         return getattr(handler_class, "dependency_fields", ())
 
@@ -178,7 +193,8 @@ class HandlerRegistry:
         if cls._initialized:
             return
 
-        # Import builtin handlers to trigger registration
+        # Import builtin handlers to trigger their module-level `register_handler` decorators,
+        # which populate the registry.
         from . import builtin  # noqa: F401
 
         # Trigger domain handler loading via router

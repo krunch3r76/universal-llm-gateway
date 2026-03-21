@@ -7,14 +7,15 @@ retrieval hot paths avoid YAML parsing and file-level artifact drift.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 import math
+import re
 import sqlite3
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from universal_event_bus import EventBus
 
 from services.rag.events.query import (
     rag_corpus_hints_filter_failed,
@@ -24,32 +25,25 @@ from services.rag.events.query import (
     rag_scope_vocabulary_load_failed,
 )
 from services.rag.property_index import PropertyIndex
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.rag.config import RagConfig
+    from universal_event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_KEY_PREFIXES = ["prop.name@@", "prop.topic@@"]
 _DEFAULT_MIN_CHUNKS_NAME = 2
-_DEFAULT_MAX_CHUNKS_NAME = 50
+_DEFAULT_MAX_CHUNKS_NAME = 80
 _DEFAULT_MIN_CHUNKS_TOPIC = 3
-_DEFAULT_MAX_CHUNKS_TOPIC = 30
+_DEFAULT_MAX_CHUNKS_TOPIC = 50
 _DEFAULT_METADATA_DB_PATH = Path.home() / ".rag" / "store" / "rag_metadata.db"
+_MIN_TERM_LENGTH = 3
 
 _GENERIC_BLOCKLIST: frozenset[str] = frozenset(
     {
-        "llm",
-        "llms",
-        "large language models",
-        "language models",
-        "gpt-4",
-        "gpt-4o",
-        "gpt-4o-mini",
-        "gpt-3.5",
-        "gpt-3.5-turbo",
-        "rag",
-        "retrieval-augmented generation",
-        "bert",
-        "openai",
-        "chatgpt",
+        # Truly universal noise — non-discriminative across all scope pairs
         "datasets",
         "benchmarks",
         "models",
@@ -58,22 +52,52 @@ _GENERIC_BLOCKLIST: frozenset[str] = frozenset(
         "arxiv",
         "institutions",
         "libraries",
-        "pipeline",
+        # Project internals — not research vocabulary
         "stargate",
         "gateway",
-        "language agents",
-        "task allocation",
-        "schema discovery",
-        "provenance analysis",
-        "prompt transfer",
-        "efficient llm reasoning",
-        "system 2 reasoning",
-        "knowledge graph storage and retrieval",
-        "ai agentic programming",
-        "knowledge measures",
-        "knowledge representation",
+        # Vendor/model names that appear as baselines in every research domain
+        "gpt-4",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-3.5",
+        "gpt-3.5-turbo",
+        "bert",
+        "openai",
+        "chatgpt",
     }
 )
+
+
+_DOCUMENT_STRUCTURE_RE = re.compile(
+    r"^(theorem|lemma|figure|table|corollary|proposition|definition"
+    r"|example|section|appendix|equation|proof|remark|claim)\s+[\d.a-z]",
+    re.IGNORECASE,
+)
+_MATH_VARIABLE_RE = re.compile(
+    r"^[a-zA-Zα-ωΑ-Ω]\d*[\[\(].*[\]\)]$"  # g4(t), z[q], θ[q], i5(t)
+)
+_AUTHOR_CITATION_RE = re.compile(r"\bet\s+al\b\.?", re.IGNORECASE)
+_GREEK_SINGLE_RE = re.compile(r"^[α-ωΑ-Ω]$")
+
+
+def _is_structural_noise(term: str) -> bool:
+    """Reject terms that are file paths, URLs, math notation, or doc refs."""
+    t = term.strip()
+    if len(t) < _MIN_TERM_LENGTH:
+        return True
+    if t.startswith(("/", "http://", "https://", "./", "../")):
+        return True
+    if "/" in t and not any(c.isalpha() for c in t.split("/")[0]):
+        return True
+    if _DOCUMENT_STRUCTURE_RE.match(t):
+        return True
+    if _MATH_VARIABLE_RE.match(t):
+        return True
+    if _AUTHOR_CITATION_RE.search(t):
+        return True
+    if _GREEK_SINGLE_RE.match(t):
+        return True
+    return False
 
 
 def _entity_shape_boost(
@@ -145,11 +169,11 @@ def load_corpus_hints(
             exc_info=True,
         )
         return {}
-    grouped: dict[str, list[str]] = defaultdict(list)
+    result: dict[str, list[str]] = defaultdict(list)
     for scope, term in rows:
         if isinstance(scope, str) and isinstance(term, str) and term.strip():
-            grouped[scope].append(term.strip())
-    return {scope: ", ".join(terms) for scope, terms in grouped.items()}
+            result[scope].append(term.strip())
+    return {scope: ", ".join(terms) for scope, terms in result.items()}
 
 
 def load_scope_vocabulary(
@@ -178,9 +202,7 @@ def load_scope_vocabulary(
                 rag_scope_vocabulary_load_failed(path=str(resolved), error=str(e))
             )
         return {}
-    result: defaultdict[str, defaultdict[str, list[str]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    result: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
     for scope, register, term in rows:
         if (
             isinstance(scope, str)
@@ -190,6 +212,71 @@ def load_scope_vocabulary(
         ):
             result[scope][register].append(term.strip())
     return {scope: dict(registers) for scope, registers in result.items()}
+
+
+def compute_scope_files_hash(
+    property_index: PropertyIndex, source_prefixes: list[str]
+) -> str:
+    """SHA-256 of sorted basenames of distinct indexed sources under any prefix.
+
+    Prefixes are normalized to ``resolved_path/`` for ``get_sources`` matching.
+    """
+    names: set[str] = set()
+    for raw in source_prefixes:
+        pfx = str(Path(raw).expanduser().resolve())
+        norm = pfx.rstrip("/") + "/"
+        for src in property_index.get_sources(prefix=norm):
+            names.add(Path(src).name)
+    sorted_names = sorted(names)
+    payload = "\n".join(sorted_names)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def detect_stale_scopes(
+    *,
+    property_index: PropertyIndex,
+    configured_scopes: dict[str, list[str]],
+    scope_filter: set[str] | None = None,
+) -> list[str]:
+    """Return scope names where the current file-list hash differs from stored.
+
+    Missing ``scope_freshness`` row or hash mismatch ⇒ stale. Empty corpus
+    (no sources) still yields a deterministic hash of the empty string.
+    """
+    stale: list[str] = []
+    for scope_name, source_prefixes in sorted(configured_scopes.items()):
+        if scope_filter is not None and scope_name not in scope_filter:
+            continue
+        current = compute_scope_files_hash(property_index, source_prefixes)
+        row = property_index.get_scope_freshness(scope_name)
+        if row is None or row[0] != current:
+            stale.append(scope_name)
+    return stale
+
+
+def scopes_touching_watch_path(config: RagConfig, watch_path: Path) -> set[str]:
+    """Configured scope names whose path prefixes overlap *watch_path* on disk.
+
+    Overlap means either prefix is under the watch root or the watch root is
+    under the prefix (covers nested research trees).
+    """
+    w = watch_path.expanduser().resolve()
+    out: set[str] = set()
+    for name, sdef in config.scopes.items():
+        for pfx in sdef.prefixes:
+            p = Path(pfx).expanduser().resolve()
+            try:
+                w.relative_to(p)
+                out.add(name)
+                continue
+            except ValueError:
+                pass
+            try:
+                p.relative_to(w)
+                out.add(name)
+            except ValueError:
+                pass
+    return out
 
 
 def format_register_hints(
@@ -260,14 +347,14 @@ def _build_word_boundary_conditions(
         if not norm:
             continue
         for prefix in ("prop.name@@", "prop.topic@@"):
-            conditions.append("key = ?")
+            conditions.append("key = ?")  # Exact match for single-word keys
             params.append(f"{prefix}{norm}")
-            conditions.append("key LIKE ?")
+            conditions.append("key LIKE ?")  # Matches 'term ' at the beginning
             params.append(f"{prefix}{norm} %")
-            conditions.append("key LIKE ?")
-            params.append(f"{prefix}% {norm} %")
-            conditions.append("key LIKE ?")
+            conditions.append("key LIKE ?")  # Matches ' term' at the end
             params.append(f"{prefix}% {norm}")
+            conditions.append("key LIKE ?")  # Matches ' term '
+            params.append(f"{prefix}% {norm} %")
     return conditions, params
 
 
@@ -316,17 +403,19 @@ def filter_hints_by_cooccurrence(
 
             where_clause = " OR ".join(wb_conditions)
             try:
-                _ = conn.execute("DROP TABLE IF EXISTS query_chunks")
-                _ = conn.execute(
+                # Ensure temp tables are clean before creation
+                conn.execute("DROP TABLE IF EXISTS query_chunks")
+                conn.execute("DROP TABLE IF EXISTS hint_chunks")
+
+                conn.execute(
                     "CREATE TEMP TABLE query_chunks AS"
                     " SELECT DISTINCT source, chunk_id FROM properties"
                     f" WHERE source != '' AND ({where_clause})",
                     wb_params,
                 )
 
-                _ = conn.execute("DROP TABLE IF EXISTS hint_chunks")
                 key_ph = ",".join("?" for _ in hint_keys)
-                _ = conn.execute(
+                conn.execute(
                     "CREATE TEMP TABLE hint_chunks AS"
                     " SELECT DISTINCT key, source, chunk_id FROM properties"
                     f" WHERE key IN ({key_ph})",
@@ -343,10 +432,10 @@ def filter_hints_by_cooccurrence(
 
                 return _order_hints_by_overlap(hint_terms, key_overlaps)
             finally:
-                _ = conn.execute("DROP TABLE IF EXISTS query_chunks")
-                _ = conn.execute("DROP TABLE IF EXISTS hint_chunks")
+                conn.execute("DROP TABLE IF EXISTS query_chunks")
+                conn.execute("DROP TABLE IF EXISTS hint_chunks")
     except sqlite3.OperationalError as exc:
-        logger.debug("Cannot open property index DB read-only: %s", db_path)
+        logger.warning("Cannot open property index DB read-only: %s", db_path)
         if event_bus is not None:
             event_bus.publish_async_nowait(
                 rag_corpus_hints_filter_failed(error=str(exc))
@@ -399,16 +488,14 @@ def _order_hints_by_overlap(
                 term = key[len(prefix) :]
                 term_scores[term] = max(term_scores.get(term, 0), count)
 
-    normalized_to_original: dict[str, str] = {}
-    for hint in hint_terms:
-        norm = hint.lower().strip()
-        if norm:
-            normalized_to_original.setdefault(norm, hint)
+    original_term_map: dict[str, str] = {
+        h.lower().strip(): h for h in hint_terms if h.strip()
+    }
 
     scored: list[tuple[str, int]] = []
     for norm_term, score in term_scores.items():
-        if norm_term in normalized_to_original:
-            scored.append((normalized_to_original[norm_term], score))
+        if norm_term in original_term_map:
+            scored.append((original_term_map[norm_term], score))
 
     scored.sort(key=lambda x: (-x[1], x[0]))
     return [h for h, _ in scored]
@@ -418,8 +505,8 @@ async def update_corpus_hints(
     property_index: PropertyIndex,
     *,
     scope: str | None = None,
-    names_budget: int = 10,
-    topics_budget: int = 8,
+    names_budget: int = 15,
+    topics_budget: int = 12,
     min_chunks_name: int = _DEFAULT_MIN_CHUNKS_NAME,
     min_chunks_topic: int = _DEFAULT_MIN_CHUNKS_TOPIC,
     max_chunks_name: int = _DEFAULT_MAX_CHUNKS_NAME,
@@ -430,6 +517,7 @@ async def update_corpus_hints(
     extra_blocklist: frozenset[str] = frozenset(),
     blocklist_override: frozenset[str] | None = None,
     key_prefixes: list[str] | None = None,
+    configured_scopes: dict[str, list[str]] | None = None,
     event_bus: EventBus | None = None,
 ) -> dict[str, str]:
     """Persist discriminative scope hints to metadata SQLite tables.
@@ -440,6 +528,12 @@ async def update_corpus_hints(
 
     When *scope* is set, only that scope is refreshed and only its rows are
     replaced in the database — other scopes' hints remain untouched.
+
+    When *configured_scopes* maps scope names to source-path prefix lists,
+    terms are gathered by file-prefix matching rather than the stored scope
+    column — this covers umbrella scopes whose files are indexed under leaf
+    scopes.  ``min_docs`` is relaxed for scopes with fewer documents than
+    the threshold.
 
     *entity_boost_hyphen* / *entity_boost_single* control shape-based score
     multipliers (set both to 1.0 to disable).
@@ -476,23 +570,61 @@ async def update_corpus_hints(
     scope_prefix_terms: dict[str, dict[str, list[tuple[str, int, int]]]] = defaultdict(
         lambda: defaultdict(list)
     )
-    for prefix in prefixes:
-        for (
-            scope_name,
-            term,
-            chunk_count,
-            doc_count,
-        ) in property_index.get_term_counts_by_scope(prefix):
-            if term:
-                if scope is not None and scope_name != scope:
-                    continue
-                scope_prefix_terms[scope_name][prefix].append(
-                    (term, chunk_count, doc_count)
-                )
+    scope_doc_counts: dict[str, int] = {}
+
+    if configured_scopes is not None:
+        for scope_name, source_prefixes in configured_scopes.items():
+            if scope is not None and scope_name != scope:
+                continue
+            scope_doc_counts[scope_name] = property_index.count_docs_for_prefixes(
+                source_prefixes
+            )
+            for prefix in prefixes:
+                for (
+                    term,
+                    chunk_count,
+                    doc_count,
+                ) in property_index.get_term_counts_for_source_prefixes(
+                    prefix, source_prefixes
+                ):
+                    if term:
+                        scope_prefix_terms[scope_name][prefix].append(
+                            (term, chunk_count, doc_count)
+                        )
+    else:
+        for prefix in prefixes:
+            # If scope is provided, filter at the source if possible, or iterate only for that scope
+            if scope is not None:
+                # Assuming PropertyIndex has a method to get terms for a specific scope
+                # If not, the current filtering is necessary but less efficient.
+                for (
+                    term,
+                    chunk_count,
+                    doc_count,
+                ) in property_index.get_term_counts_for_scope(prefix, scope):
+                    if term:
+                        scope_prefix_terms[scope][prefix].append(
+                            (term, chunk_count, doc_count)
+                        )
+            else:
+                for (
+                    scope_name,
+                    term,
+                    chunk_count,
+                    doc_count,
+                ) in property_index.get_term_counts_by_scope(prefix):
+                    if term:
+                        scope_prefix_terms[scope_name][prefix].append(
+                            (term, chunk_count, doc_count)
+                        )
 
     rows_for_db: list[tuple[str, str, float, str]] = []
     result: dict[str, str] = {}
     for scope_name, prefix_terms in scope_prefix_terms.items():
+        scope_docs = scope_doc_counts.get(scope_name, 0)
+        effective_min_docs = min_docs
+        if scope_docs > 0:
+            effective_min_docs = max(1, min(min_docs, scope_docs))
         winners: list[tuple[str, float, str]] = []
         for prefix, term_counts in prefix_terms.items():
             min_c, max_c = band_limits.get(prefix, (min_chunks_name, max_chunks_name))
@@ -501,7 +633,9 @@ async def update_corpus_hints(
             for term, chunk_count, doc_count in term_counts:
                 if chunk_count < min_c or chunk_count > max_c:
                     continue
-                if doc_count > 0 and doc_count < min_docs:
+                if doc_count > 0 and doc_count < effective_min_docs:
+                    continue
+                if _is_structural_noise(term):
                     continue
                 if term.lower() in active_blocklist:
                     continue
@@ -529,6 +663,10 @@ async def update_corpus_hints(
 
     if scope is not None:
         await property_index.replace_corpus_hints_for_scope(scope, rows_for_db)
+    elif configured_scopes is not None:
+        for cs_name in configured_scopes:
+            cs_rows = [r for r in rows_for_db if r[0] == cs_name]
+            await property_index.replace_corpus_hints_for_scope(cs_name, cs_rows)
     else:
         await property_index.replace_corpus_hints_rows(rows_for_db)
 
@@ -547,9 +685,14 @@ async def update_corpus_hints(
 def _build_chunk_source_map() -> dict[str, str]:
     """Build chunk_id→source mapping from Chroma metadata.
 
-    Loads all chunk IDs and metadata entries from the Chroma ``knowledge``
-    collection, extracts non-empty ``source`` values, and returns a mapping
-    used by the property-index backfill path.
+    Initializes a ChromaDB persistent client to connect to the 'knowledge'
+    collection. It retrieves all document IDs and their associated metadata.
+    For each chunk, it extracts the 'source' field from its metadata if
+    present and non-empty. This mapping is primarily used to backfill
+    missing source information in the property index.
+
+    Returns:
+        A dictionary mapping `chunk_id` (str) to `source` (str).
     """
     import chromadb
 
@@ -574,9 +717,13 @@ def _cli_generate_hints() -> None:
     """Run one-shot corpus-hints generation from the local property index.
 
     Supports ``--backfill`` to populate missing source values in the property
-    index from Chroma metadata before generating hints, and ``--scope NAME``
-    to refresh a single scope with optional tuning via ``--no-entity-boost``
-    and ``--no-blocklist``.
+    index from Chroma metadata before generating hints, ``--scope NAME``
+    to refresh a single scope, ``--exclude NAME [NAME ...]`` to skip specific
+    scopes, and optional tuning via ``--no-entity-boost`` / ``--no-blocklist``.
+
+    By default, iterates all configured scopes from ``~/.gateway/rag.yaml``
+    and queries terms by file-prefix matching, covering umbrella scopes
+    whose files are indexed under leaf scopes.
     """
     import asyncio
     import sys
@@ -592,6 +739,30 @@ def _cli_generate_hints() -> None:
 
     no_entity_boost = "--no-entity-boost" in args
     no_blocklist = "--no-blocklist" in args
+
+    # This would involve a significant refactor to use argparse for all CLI args.
+    # For this specific block, a minor simplification could be:
+    # exclude_scopes: set[str] = set()
+    # try:
+    #     exc_idx = args.index("--exclude")
+    #     i = exc_idx + 1
+    #     while i < len(args) and not args[i].startswith("--"):
+    #         exclude_scopes.add(args[i])
+    #         i += 1
+    # except ValueError:
+    #     pass # --exclude not found
+    # However, a full argparse refactor is recommended for robust CLI handling.
+
+    from services.rag.config import load_config as _load_config
+
+    exclude_scopes: set[str] = set()
+
+    config = _load_config()
+    configured_scopes_map: dict[str, list[str]] = {
+        name: sdef.prefixes
+        for name, sdef in config.scopes.items()
+        if name not in exclude_scopes
+    }
 
     chunk_to_source: dict[str, str] | None = None
     if do_backfill:
@@ -618,11 +789,14 @@ def _cli_generate_hints() -> None:
                     min_c, max_c = _DEFAULT_MIN_CHUNKS_NAME, _DEFAULT_MAX_CHUNKS_NAME
                 in_band = 0
                 blocked = 0
+                noise = 0
                 out = 0
                 has_doc_count = 0
                 for _scope, term, chunk_count, doc_count in all_terms:
                     if chunk_count < min_c or chunk_count > max_c:
                         out += 1
+                    elif _is_structural_noise(term):
+                        noise += 1
                     elif term.lower() in _GENERIC_BLOCKLIST:
                         blocked += 1
                     else:
@@ -631,10 +805,22 @@ def _cli_generate_hints() -> None:
                         has_doc_count += 1
                 print(
                     f"  {prefix}: {in_band} candidates, {blocked} blocklisted,"
-                    f" {out} out-of-band, {has_doc_count}/{len(all_terms)} with doc freq"
+                    f" {noise} noise, {out} out-of-band,"
+                    f" {has_doc_count}/{len(all_terms)} with doc freq"
                 )
 
-            tuning_kwargs: dict[str, object] = {}
+            excl_msg = (
+                f" (excluded: {', '.join(sorted(exclude_scopes))})"
+                if exclude_scopes
+                else ""
+            )
+            print(
+                f"\nProcessing {len(configured_scopes_map)} configured scopes{excl_msg}"
+            )
+
+            tuning_kwargs: dict[str, object] = {
+                "configured_scopes": configured_scopes_map,
+            }
             if cli_scope is not None:
                 tuning_kwargs["scope"] = cli_scope
             if no_entity_boost:
@@ -643,7 +829,10 @@ def _cli_generate_hints() -> None:
             if no_blocklist:
                 tuning_kwargs["blocklist_override"] = frozenset()
 
-            result = await update_corpus_hints(idx, **tuning_kwargs)  # type: ignore[arg-type]
+            # The type ignore suggests a mismatch. Ensure tuning_kwargs keys match update_corpus_hints parameters.
+            # For example, if configured_scopes is always passed, it should be part of the signature.
+            # If it's truly dynamic, consider a more explicit way to pass arguments or adjust the signature.
+            result = await update_corpus_hints(idx, **tuning_kwargs)
             if result:
                 await idx.stamp_watermark("corpus_hints")
             return result

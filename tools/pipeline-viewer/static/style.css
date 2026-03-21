@@ -108,6 +108,67 @@ header .subtitle { color: var(--text-dim); font-size: 13px; letter-spacing: 0.2p
 }
 .exec-card .meta { font-size: 12px; color: var(--text-dim); font-family: var(--mono); }
 .exec-card .pipeline-label { color: var(--accent); opacity: 0.8; }
+.exec-status-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.exec-live-model {
+  font-size: 12px;
+  color: var(--accent);
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.exec-live-model.pending {
+  color: var(--text-dim);
+  font-style: italic;
+}
+.exec-failed-model {
+  font-size: 12px;
+  color: var(--red);
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* -- Execution Meta Strip ------------------------------------------------ */
+#execution-meta {
+  display: none;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+#execution-meta.visible { display: flex; }
+.execution-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 1px 6px rgba(0,0,0,0.12);
+}
+.execution-chip.live {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.chip-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.chip-value {
+  font-size: 12px;
+  color: var(--text);
+  font-family: var(--mono);
+}
 
 /* -- Summary Banner ------------------------------------------------------ */
 #summary-banner {

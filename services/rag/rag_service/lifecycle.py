@@ -25,6 +25,10 @@ from services.rag.article_registry import (
     to_article_rows,
 )
 from services.rag.config import DEFAULT_INDEX_WORKERS, RagConfig, load_config
+from services.rag.corpus_hints import (
+    detect_stale_scopes,
+    scopes_touching_watch_path,
+)
 from services.rag.directory_ops import (
     delete_sources,
     find_sources_under_prefixes,
@@ -34,9 +38,11 @@ from services.rag.embeddings import close as close_embeddings
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import set_event_bus as set_embeddings_event_bus
 from services.rag.embeddings import wait_until_healthy
+from services.rag.events.extraction import rag_extraction_unavailable
 from services.rag.events.lifecycle import (
     rag_article_registry_failed,
     rag_article_registry_loaded,
+    rag_embeddings_unavailable,
     rag_exclusion_purged,
     rag_orphan_purged,
     rag_pending_reconciled,
@@ -44,16 +50,122 @@ from services.rag.events.lifecycle import (
     rag_shutdown,
     rag_started,
 )
-from services.rag.knowledge_extractor import configure_circuit, configure_timeouts
-from services.rag.models import DeleteResult, IndexResult
+from services.rag.knowledge_extractor import (
+    configure_circuit,
+    configure_timeouts,
+    wait_until_extraction_ready,
+)
 from services.rag.property_index import PropertyIndex
+from services.rag.vocabulary import configured_scopes_map, run_scope_freshness_repair
 from services.rag.watcher_manager import WatcherManager
 
 from . import indexing, state
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.rag.models import DeleteResult, IndexResult
 
 logger = logging.getLogger(__name__)
 
 _RECONCILE_FILE_TIMEOUT_S = 300.0
+
+_POST_INDEX_STEPS = ("corpus_hints", "vocabulary", "bibliography")
+
+
+def _maybe_clear_post_index_stale_after_repair(config: RagConfig) -> None:
+    """If strict gate was set at startup, clear it once watermarks catch up."""
+    if not state._post_index_stale:
+        return
+    still = state._property_index.check_watermarks(
+        list(_POST_INDEX_STEPS), reference="reindex"
+    )
+    if not still:
+        state._post_index_stale = False
+        logger.info("Post-index strict gate cleared after automatic scope repair")
+
+
+async def _run_startup_scope_freshness_repair(config: RagConfig) -> None:
+    pi = state._property_index
+    if pi is None:
+        return
+    stale = detect_stale_scopes(
+        property_index=pi,
+        configured_scopes=configured_scopes_map(config),
+        scope_filter=None,
+    )
+    if not stale:
+        return
+    logger.warning(
+        "Automatic scope freshness repair (startup): %d stale scopes: %s",
+        len(stale),
+        stale,
+    )
+    await run_scope_freshness_repair(
+        property_index=pi,
+        config=config,
+        stale_scopes=stale,
+        event_bus=state._event_bus,
+        trigger="startup",
+    )
+    _maybe_clear_post_index_stale_after_repair(config)
+
+
+async def _post_reconcile_scope_freshness(prefix_paths: list[str]) -> None:
+    cfg = state._config
+    pi = state._property_index
+    if cfg is None or pi is None or not prefix_paths:
+        return
+    affected: set[str] = set()
+    for p in prefix_paths:
+        affected |= scopes_touching_watch_path(cfg, Path(p))
+    scope_filter = affected if affected else None
+    stale = detect_stale_scopes(
+        property_index=pi,
+        configured_scopes=configured_scopes_map(cfg),
+        scope_filter=scope_filter,
+    )
+    if not stale:
+        return
+    logger.warning(
+        "Automatic scope freshness repair (reconcile): %d stale scopes: %s",
+        len(stale),
+        stale,
+    )
+    await run_scope_freshness_repair(
+        property_index=pi,
+        config=cfg,
+        stale_scopes=stale,
+        event_bus=state._event_bus,
+        trigger="reconcile",
+    )
+    _maybe_clear_post_index_stale_after_repair(cfg)
+
+
+async def _watcher_debounced_scope_freshness(scopes: set[str]) -> None:
+    cfg = state._config
+    pi = state._property_index
+    if cfg is None or pi is None or not scopes:
+        return
+    stale = detect_stale_scopes(
+        property_index=pi,
+        configured_scopes=configured_scopes_map(cfg),
+        scope_filter=scopes,
+    )
+    if not stale:
+        return
+    logger.warning(
+        "Automatic scope freshness repair (watcher): %d stale scopes: %s",
+        len(stale),
+        stale,
+    )
+    await run_scope_freshness_repair(
+        property_index=pi,
+        config=cfg,
+        stale_scopes=stale,
+        event_bus=state._event_bus,
+        trigger="watcher",
+    )
+    _maybe_clear_post_index_stale_after_repair(cfg)
 
 
 async def _startup() -> None:
@@ -77,49 +189,48 @@ async def _startup() -> None:
     set_embeddings_event_bus(state._event_bus)
     state._property_index = PropertyIndex()
     await state._property_index.start()
-    if state._property_index is not None:
-        db_path = state._property_index.db_path
-        try:
-            state._registry = await asyncio.to_thread(load_registry_from_db, db_path)
-            legacy_path = state._config.article_registry_path
-            if not state._registry and legacy_path is not None and legacy_path.exists():
-                logger.info(
-                    "Articles table empty; importing one-time legacy registry from %s",
-                    legacy_path,
-                )
-                yaml_registry = await asyncio.to_thread(
-                    load_article_registry_yaml, legacy_path
-                )
-                if yaml_registry is not None:
-                    rows = to_article_rows(
-                        yaml_registry,
-                        source_root=legacy_path.parent,
-                        scope_resolver=state._config.get_scope_for_path,
-                    )
-                    await asyncio.to_thread(replace_article_rows, db_path, rows)
-                    state._registry = yaml_registry
-            if state._event_bus is not None:
-                await state._event_bus.publish_async(
-                    rag_article_registry_loaded(
-                        path=str(db_path),
-                        article_count=len(state._registry) if state._registry else 0,
-                    )
-                )
-        except Exception as e:
-            logger.error(
-                "Failed to load article registry from metadata DB %s: %s",
-                db_path,
-                e,
-                exc_info=True,
+    db_path = state._property_index.db_path
+    try:
+        state._registry = await asyncio.to_thread(load_registry_from_db, db_path)
+        legacy_path = state._config.article_registry_path
+        if not state._registry and legacy_path is not None and legacy_path.exists():
+            logger.info(
+                "Articles table empty; importing one-time legacy registry from %s",
+                legacy_path,
             )
-            if state._event_bus is not None:
-                await state._event_bus.publish_async(
-                    rag_article_registry_failed(
-                        path=str(db_path),
-                        error=str(e),
-                    )
+            yaml_registry = await asyncio.to_thread(
+                load_article_registry_yaml, legacy_path
+            )
+            if yaml_registry is not None:
+                rows = to_article_rows(
+                    yaml_registry,
+                    source_root=legacy_path.parent,
+                    scope_resolver=state._config.get_scope_for_path,
                 )
-            state._registry = None
+                await asyncio.to_thread(replace_article_rows, db_path, rows)
+                state._registry = yaml_registry
+        if state._event_bus is not None:
+            await state._event_bus.publish_async(
+                rag_article_registry_loaded(
+                    path=str(db_path),
+                    article_count=len(state._registry) if state._registry else 0,
+                )
+            )
+    except Exception as e:
+        logger.error(
+            "Failed to load article registry from metadata DB %s: %s",
+            db_path,
+            e,
+            exc_info=True,
+        )
+        if state._event_bus is not None:
+            await state._event_bus.publish_async(
+                rag_article_registry_failed(
+                    path=str(db_path),
+                    error=str(e),
+                )
+            )
+        state._registry = None
     if state._config.automatic_indexing_enabled and state._config.watch_directories:
         state._init_task = asyncio.create_task(
             _deferred_watcher_start(state._config), name="rag-watcher-init"
@@ -229,7 +340,7 @@ async def _reconcile_pending(config: RagConfig) -> None:
             finally:
                 queue.task_done()
 
-    n_workers = min(worker_count, queue.qsize())
+    n_workers = min(worker_count, len(pending_files))
     workers = [
         asyncio.create_task(_reconcile_worker(), name=f"reconcile-worker-{i}")
         for i in range(n_workers)
@@ -267,15 +378,14 @@ async def _purge_orphans(config: RagConfig) -> None:
         for wd in config.watch_directories
     ]
     remove_source_fn = (
-        state._property_index.remove_source_metadata
-        if state._property_index is not None
-        else None
+        state._property_index.remove_source_metadata if state._property_index else None
     )
     list_known_fn = (
-        state._property_index.list_known_sources
-        if state._property_index is not None
-        else None
+        state._property_index.list_known_sources if state._property_index else None
     )
+    if remove_source_fn is None or list_known_fn is None:
+        logger.warning("Property index not available, skipping orphan purge.")
+        return
     files_purged, chunks_purged, purged_sources = await purge_orphaned_sources(
         collection=state._collection,
         watch_prefixes=watch_prefixes,
@@ -360,10 +470,48 @@ async def _purge_excluded_sources(config: RagConfig) -> None:
 
 
 async def _deferred_watcher_start(config: RagConfig) -> None:
-    """Start watcher after embeddings are healthy, then launch recovery tasks."""
+    """Start watcher only after embeddings and extraction are healthy."""
 
-    async def _watcher_index_fn(path: Path, chunk_tokens: int | None) -> IndexResult:
-        return await indexing._index_file(path, chunk_tokens=chunk_tokens)
+    try:
+        await wait_until_healthy()
+    except TimeoutError as exc:
+        logger.error(
+            "Embedding endpoint not healthy after timeout — watcher not started. %s",
+            exc,
+        )
+        if state._event_bus is not None:
+            await state._event_bus.publish_async(
+                rag_embeddings_unavailable(error=str(exc))
+            )
+        return
+
+    try:
+        await wait_until_extraction_ready(config.knowledge_extraction.pipeline)
+    except TimeoutError as exc:
+        logger.error(
+            "Extraction pipeline not available after timeout — watcher not started. %s",
+            exc,
+        )
+        if state._event_bus is not None:
+            await state._event_bus.publish_async(
+                rag_extraction_unavailable(
+                    pipeline=config.knowledge_extraction.pipeline,
+                    error=str(exc),
+                )
+            )
+        return
+
+    async def _watcher_index_fn(
+        path: Path,
+        chunk_tokens: int | None,
+        *,
+        emit_skip_event: bool = True,
+    ) -> IndexResult:
+        return await indexing._index_file(
+            path,
+            chunk_tokens=chunk_tokens,
+            emit_skip_event=emit_skip_event,
+        )
 
     async def _watcher_delete_fn(path: Path) -> DeleteResult:
         return await indexing._delete_file(path)
@@ -382,16 +530,11 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
         index_workers=worker_count,
         reconcile_interval_s=config.reconcile_interval_s,
         file_timeout_s=config.file_timeout_s,
+        post_reconcile_repair=_post_reconcile_scope_freshness,
+        scope_repair_runner=_watcher_debounced_scope_freshness,
     )
-    try:
-        await wait_until_healthy()
-    except TimeoutError:
-        logger.error(
-            "Embedding endpoint not healthy after timeout; "
-            "initial watcher sweep will be skipped for files requiring embedding"
-        )
 
-    post_index_steps = ["corpus_hints", "vocabulary", "bibliography"]
+    post_index_steps = list(_POST_INDEX_STEPS)
     if state._property_index is not None:
         stale = state._property_index.check_watermarks(post_index_steps)
         if stale:
@@ -407,6 +550,8 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
             if config.post_index_enforcement != "warn":
                 state._post_index_stale = True
 
+    await _run_startup_scope_freshness_repair(config)
+
     for coro, name in (
         (_reconcile_pending(config), "rag-reconcile-pending"),
         (_purge_orphans(config), "rag-orphan-purge"),
@@ -420,21 +565,18 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
 
 
 def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | None:
-    """Resolve watch-directory chunk token override for a specific file path.
+    """Resolves the chunk token override for a file based on watch directory configurations.
 
-    This function determines the appropriate `chunk_tokens` value for a given
-    file based on the configured watch directories. It checks if the file
-    resides within a watched directory, respects recursive settings, file
-    extensions, and exclusion patterns. If a matching watch directory specifies
-    `chunk_tokens`, that value is returned. Otherwise, `None` is returned.
+    Checks if the file is within a watched directory, considering recursion, extensions,
+    and exclusion patterns. Returns the `chunk_tokens` from the matching watch directory
+    or `None` if no override applies.
 
     Args:
-        file_path: The path to the file for which to resolve chunk tokens.
-        config: The RAG configuration containing watch directory settings.
+        file_path: The path to the file.
+        config: The RAG configuration.
 
     Returns:
-        An integer representing the `chunk_tokens` override for the file, or
-        `None` if no specific override applies from the watch directories.
+        The `chunk_tokens` override (int) or `None`.
     """
     resolved_file = file_path.expanduser().resolve()
     baseline: set[str] = {f".{ext.lower()}" for ext in config.baseline_extensions}
@@ -461,10 +603,9 @@ async def _shutdown() -> None:
     """Shutdown RAG resources and stop background services."""
     if state._event_bus is not None:
         await state._event_bus.publish_async(rag_shutdown())
-    if state._broadcaster is not None:
-        await state._broadcaster.stop_debug_server()
-        state._broadcaster = None
-    if state._event_bus is not None:
+        if state._broadcaster is not None:
+            await state._broadcaster.stop_debug_server()
+            state._broadcaster = None
         state._event_bus = None
     if state._property_index is not None:
         await state._property_index.stop()

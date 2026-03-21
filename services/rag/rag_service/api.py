@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 
-import chromadb
 from fastapi import APIRouter, HTTPException
 
 from services.rag.admin_routes import register_admin_routes
@@ -30,6 +29,10 @@ from services.rag.models import (
 from services.rag.search_scope import require_loaded_config
 
 from . import indexing, search, state
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import chromadb
 
 logger = logging.getLogger(__name__)
 
@@ -79,14 +82,20 @@ async def chunks_by_index(request: ChunksByIndexRequest) -> ChunksByIndexRespons
             )
             raise
 
-        ids = raw.get("ids") or []
-        docs = raw.get("documents") or []
-        metas = raw.get("metadatas") or []
-        # Add type hints for clarity, assuming these are lists of str/dict
-        # ids: list[str] = raw.get("ids") or []
-        # docs: list[str] = raw.get("documents") or []
-        # metas: list[dict] = raw.get("metadatas") or []
+        ids: list[str] = raw.get("ids") or []
+        docs: list[str] = raw.get("documents") or []
+        metas: list[dict] = raw.get("metadatas") or []
         requested_set = set(group.chunk_indices)
+        if not (len(ids) == len(docs) == len(metas)):
+            logger.warning(
+                "Mismatched lengths from chromadb.get for source=%s: ids=%d, docs=%d, metas=%d",
+                group.source,
+                len(ids),
+                len(docs),
+                len(metas),
+            )
+            # Depending on desired behavior, could raise, skip, or try to continue with min length
+            # For now, we'll let zip(strict=True) handle it, but with a warning.
         for chunk_id, doc, meta in zip(ids, docs, metas, strict=True):
             idx = meta.get("chunk_index")
             if idx is not None and int(idx) in requested_set:
@@ -179,9 +188,11 @@ def get_failed_extractions(source: str | None = None) -> FailedExtractionRespons
     When `source` is provided, results are restricted to that document path;
     otherwise all known failed extraction rows are returned.
     """
-    if state._property_index is None:
-        return FailedExtractionResponse(total=0, chunks=[])
-    records = state._property_index.get_failed_chunks(source=source)
+    records = (
+        state._property_index.get_failed_chunks(source=source)
+        if state._property_index is not None
+        else []
+    )
     return FailedExtractionResponse(
         total=len(records),
         chunks=[
@@ -201,7 +212,9 @@ def _set_collection(col: chromadb.Collection) -> None:
     """Replace the active collection reference for admin mutations and tests.
 
     This helper centralizes collection swapping so route wiring can inject
-    replacement collections without importing mutable state directly.
+    replacement collections without importing mutable state directly. It is
+    primarily used in testing scenarios or during administrative operations
+    where the underlying ChromaDB collection needs to be swapped out dynamically.
     """
     state._collection = col
 
@@ -216,5 +229,7 @@ _admin_router = register_admin_routes(
     get_property_index_fn=lambda: state._property_index,
     get_event_bus_fn=lambda: state._event_bus,
     get_config_fn=lambda: state._config,
+    refresh_article_registry_from_row_fn=state.refresh_article_registry_from_row,
+    reconcile_article_registry_delete_fn=state.reconcile_article_registry_delete,
 )
 router.include_router(_admin_router)

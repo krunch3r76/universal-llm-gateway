@@ -6,7 +6,6 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol, Self
 
 from ..map_output_collection import MapOutputCollection
@@ -16,6 +15,7 @@ from .execution_modes import MapExecutionModes
 from .iteration_preparer import MapIterationPreparer
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from universal_event_bus import Subscription
 
     from ....schemas import StepConfig, StepOutput
@@ -151,7 +151,7 @@ class MapExecutor:
         )
 
         pool_assignments = await self._iteration_preparer.build_pool_assignments(
-            iteration_items, self._runtime
+            iteration_items
         )
 
         iteration_context = self._build_iteration_context(

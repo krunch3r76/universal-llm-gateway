@@ -1,7 +1,9 @@
 """Model loading operations for WorkerController.
 
 Single-flight guarantee: concurrent callers requesting the same model_id
-coalesce onto one in-flight load future via _pending_loads.
+coalesce onto one in-flight load future via `_pending_loads`. Completed
+futures remain cached for a short TTL so rapid follow-up callers reuse the
+same result instead of stampeding the loader again.
 """
 
 import asyncio
@@ -22,7 +24,8 @@ def _get_resource_tracker():
 
 
 logger = get_logger(__name__)
-structured_logger = get_logger("universal_llm_gateway.model_loader")
+
+_LOAD_CACHE_TTL_S = 10.0
 
 
 class ModelLoader:
@@ -30,6 +33,7 @@ class ModelLoader:
 
     Single-flight: _pending_loads maps model_id → Future[bool].
     First caller creates the future and runs _load_model_inner; followers await it.
+    Completed futures stay cached briefly for stampede protection.
     """
 
     def __init__(self, controller: "WorkerController"):
@@ -50,6 +54,9 @@ class ModelLoader:
         synthetic_info = self._controller.model_registry._resolve_synthetic_id_info(
             model_id
         )
+        is_valid = True
+        error_message = ""
+
         if not synthetic_info:
             return True, ""
 
@@ -58,37 +65,35 @@ class ModelLoader:
             model_id
         )
         if not loader_config:
-            return False, f"No loader config found for {model_id}"
-
-        actual_ctx = loader_config.get("n_ctx")
-        if actual_ctx is None:
-            # vLLM or config-less model — no context validation needed
-            return True, ""
-
-        if actual_ctx != requested_ctx:
-            # Should not happen after profile loader has selected the correct config.
-            # If it does, something else in the stack is overriding n_ctx.
-            logger.error(
-                f"❌ Context mismatch for {model_id}: "
-                f"requested={requested_ctx}, resolved loader n_ctx={actual_ctx}. "
-                f"Check profile loader config and re-run measurement."
-            )
-            if self._controller.event_bus:
-                await self._controller.event_bus.publish_async_nowait(
-                    ModelLoadContextMismatch(
-                        model_id=model_id,
-                        requested_context=requested_ctx,
-                        actual_context=actual_ctx,
-                        reason="stale_profile_loader",
-                    )
+            is_valid = False
+            error_message = f"No loader config found for {model_id}"
+        else:
+            actual_ctx = loader_config.get("n_ctx")
+            if actual_ctx is not None and actual_ctx != requested_ctx:
+                logger.error(
+                    f"❌ Context mismatch for {model_id}: "
+                    f"requested={requested_ctx}, resolved loader n_ctx={actual_ctx}. "
+                    f"Check profile loader config and re-run measurement."
                 )
-            return False, (
-                f"Context mismatch: model ID encodes context={requested_ctx} but "
-                f"resolved loader n_ctx={actual_ctx}. "
-                f"Re-run model measurement on this edge node."
-            )
+                if self._controller.event_bus:
+                    from src.core.events.types import ModelLoadContextMismatch
 
-        return True, ""
+                    await self._controller.event_bus.publish_async_nowait(
+                        ModelLoadContextMismatch(
+                            model_id=model_id,
+                            requested_context=requested_ctx,
+                            actual_context=actual_ctx,
+                            reason="stale_profile_loader",
+                        )
+                    )
+                is_valid = False
+                error_message = (
+                    f"Context mismatch: model ID encodes context={requested_ctx} but "
+                    f"resolved loader n_ctx={actual_ctx}. "
+                    f"Re-run model measurement on this edge node."
+                )
+
+        return is_valid, error_message
 
     async def ensure_model_loaded(self, model_id: str) -> bool:
         """Ensure a model is loaded and available for inference."""
@@ -100,8 +105,6 @@ class ModelLoader:
                 resource_tracker.set_model_error(model_id, ctx_error)
                 return False
 
-            resource_tracker.register_model(model_id)
-
             if await self._controller.is_model_loaded(model_id):
                 return True
 
@@ -112,25 +115,32 @@ class ModelLoader:
                 logger.warning(f"⚠️ Model {model_id} not loaded and auto-load disabled")
                 return False
         except Exception as e:
-            _get_resource_tracker().set_model_error(model_id, str(e))
+            error_message = str(e)
+            _get_resource_tracker().set_model_error(model_id, error_message)
             logger.error(
-                f"Error ensuring model {model_id} is loaded: {e}", exc_info=True
+                f"Error ensuring model {model_id} is loaded: {error_message}",
+                exc_info=True,
             )
+            # Depending on desired behavior, could re-raise specific exceptions or wrap them.
+            # For now, just ensuring the error message is clear.
             return False
 
     async def load_model(self, model_id: str) -> bool:
-        """Load a model with single-flight coalescing.
+        """Load a model with single-flight coalescing + TTL cache.
 
         If a load for the same model_id is already in progress, await
-        that future instead of starting a duplicate load.
+        that future instead of starting a duplicate load. Completed futures
+        are cached for _LOAD_CACHE_TTL_S to prevent stampede from rapid-fire
+        callers (e.g. RAG sending N concurrent embedding requests).
         """
         existing = self._pending_loads.get(model_id)
-        if existing is not None and not existing.done():
-            logger.info(f"🔗 Coalescing onto in-flight load for {model_id}")
-            return await existing
+        if existing is not None:
+            if not existing.done():
+                logger.info(f"🔗 Coalescing onto in-flight load for {model_id}")
+                return await existing
+            return existing.result()
 
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[bool] = loop.create_future()
+        future: asyncio.Future[bool] = asyncio.Future()
         self._pending_loads[model_id] = future
         try:
             result = await self._load_model_inner(model_id)
@@ -140,41 +150,31 @@ class ModelLoader:
             future.set_exception(exc)
             raise
         finally:
-            self._pending_loads.pop(model_id, None)
+            loop = asyncio.get_running_loop()
+            _f = future
+            loop.call_later(
+                _LOAD_CACHE_TTL_S,
+                lambda mid=model_id, f=_f: (
+                    self._pending_loads.pop(mid, None)
+                    if self._pending_loads.get(mid) is f
+                    else None
+                ),
+            )
 
     async def _load_model_inner(self, model_id: str) -> bool:
         """Actual load logic — called at most once per model_id at a time."""
         try:
             resource_tracker = _get_resource_tracker()
 
-            # Guard: skip redundant load for models already on GPU.
-            # Prevents spurious MODEL_LOADING_STARTED that defeats TTL watchdogs.
             from src.core.resources.types import ModelStatus
 
             model_info = resource_tracker.get_model_info(model_id)
+
             if model_info and model_info.status in (
                 ModelStatus.LOADED,
                 ModelStatus.BUSY,
             ):
-                logger.info(
-                    f"Model {model_id} already {model_info.status.value}, "
-                    f"skipping redundant load"
-                )
-                # Emit MODEL_LOADED for idempotent loads so WebSocket-based
-                # waiters receive a definitive completion signal.
-                if self._controller.event_bus:
-                    from src.core.events.types import ModelLoaded
-
-                    await self._controller.event_bus.publish_async_nowait(
-                        ModelLoaded(
-                            model_id=model_id,
-                            vram_usage_mb=model_info.vram_usage_mb,
-                            ram_usage_mb=model_info.ram_usage_mb,
-                        )
-                    )
                 return True
-
-            logger.info(f"📦 Loading model: {model_id}")
 
             resources_ok, resource_details = await preflight.check_resources_and_block(
                 self._controller, model_id
@@ -208,11 +208,20 @@ class ModelLoader:
                 return False
 
             await load_flow.emit_loading_event(self._controller, model_id, "started")
-            resource_tracker.register_model(model_id)
-            resource_tracker.set_model_loading(model_id)
+
+            loading_ok = resource_tracker.set_model_loading(model_id)
+            if not loading_ok:
+                await load_flow.emit_loading_event(
+                    self._controller,
+                    model_id,
+                    "failed",
+                    "Rejected transition to LOADING (invalid worker state)",
+                )
+                return False
             load_flow.reset_state_machine(model_id)
 
             vram_before = await load_flow.measure_vram_before(model_id)
+
             if not await load_flow.start_worker_if_needed(self._controller, model_id):
                 return False
 
@@ -222,7 +231,6 @@ class ModelLoader:
             if not config_result:
                 return False
 
-            # Store engine subprocess PID for ghost detection in VramReconciler
             engine_pid = config_result.get("engine_pid")
             if engine_pid is not None:
                 self._controller._process_state.set_engine_pid(model_id, engine_pid)
@@ -242,7 +250,10 @@ class ModelLoader:
             )
             return True
         except Exception as e:
-            logger.error(f"Error loading model {model_id}: {e}", exc_info=True)
+            error_message = str(e)
+            logger.error(
+                f"Error loading model {model_id}: {error_message}", exc_info=True
+            )
             await load_flow.handle_load_exception(self._controller, model_id, e)
             return False
 
@@ -254,9 +265,7 @@ class ModelLoader:
             get_python_executable(self._controller.gateway_config)
         )
         if not is_valid:
-            logger.error(f"❌ Missing dependencies: {missing}")
-            _get_resource_tracker().set_model_error(
-                model_id, f"Missing: {', '.join(missing)}"
-            )
-            return False
-        return True
+            error_msg = f"Missing: {', '.join(missing)}"
+            logger.error(f"❌ {error_msg}")
+            _get_resource_tracker().set_model_error(model_id, error_msg)
+        return is_valid

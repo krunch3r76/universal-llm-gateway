@@ -1,0 +1,96 @@
+# Virtual model id: vocab-classify-v1
+# pipeline_options: mode (local|frontier), scopes (optional list), skip_fresh (bool),
+#   model_ref_overrides (optional dict, e.g. {"classify": "native/anthropic/claude-opus-4"})
+#
+# Per-scope frontier classification with single-pass RAG grounding.
+# Each scope is classified independently — fault isolation, parallelism,
+# per-scope skip_fresh, and ~4-18k tokens per call (vs 82-91k monolithic).
+#
+# For local models, use scripts/rag/classify_vocabulary.py --mode local which
+# classifies per-scope without the pipeline (fits in 8-32k context).
+schema_version: 6
+id: vocab-classify-v1
+version: "2.0"
+type: vocab_classify
+description: >
+  Per-scope RAG-grounded vocabulary classification into registers with SQLite persist.
+  Maps classify over scopes for fault isolation and parallelism.
+output: reconcile
+
+options:
+  timeout_seconds: 1800
+  skip_fresh: true
+  mode: frontier
+
+steps:
+  - name: load_hints
+    type: data_source_v1
+    source_type: rag_corpus_hints
+
+  - name: retrieve_samples
+    type: rag_search_v1
+    map_over:
+      row: load_hints.json.scopes
+    map_inputs:
+      query: mapNs.iteration.value.terms
+      scope: mapNs.iteration.value.scope
+    top_k: 5
+
+  - name: bundle
+    type: vocab_classify_bundle_v1
+    bundle_upstream_steps:
+      - load_hints
+      - retrieve_samples
+
+  - name: classify
+    type: generate
+    model_ref: frontier_classify
+    map_over:
+      scope: bundle.json.scopes
+    map_inputs:
+      scope_data: mapNs.iteration.value
+    prompt_ref: vocab_classify.v1.classify_scope
+    generation_parameters:
+      temperature: 0.2
+      max_tokens: 8192
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            scope:
+              type: string
+            practitioner:
+              type: array
+              items:
+                type: string
+            academic:
+              type: array
+              items:
+                type: string
+            specification:
+              type: array
+              items:
+                type: string
+          required:
+            - scope
+            - practitioner
+            - academic
+            - specification
+    timeout_seconds: 300
+    inference_timeout_seconds: 120
+    min_success_threshold: 0.5
+
+  - name: reconcile
+    type: vocab_classify_reconcile_v1
+    reconcile_inputs:
+      - bundle
+      - classify
+
+  - name: write_vocab
+    type: data_sink_v1
+    sink_type: scope_vocabulary
+    handler_inputs:
+      vocabulary: reconcile.json.vocabulary
+      scope_hashes: reconcile.json.scope_hashes
+      all_scopes: load_hints.json.scopes

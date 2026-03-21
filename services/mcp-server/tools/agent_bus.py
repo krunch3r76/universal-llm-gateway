@@ -1,82 +1,35 @@
-"""Agent-bus tools — first-class MCP interface to the Agent Bus service.
+"""Agent-bus tools — dispatch-style MCP interface to the Agent Bus service.
 
-Provides typed, discoverable tools for agent-to-agent communication via
-the Agent Bus REST API (http://agent-bus:8100). Replaces the raw
-`local_api(service='agent-bus', ...)` passthrough pattern with ergonomic
-wrappers that validate inputs and emit structured observability events.
+Exposes a single ``agent_bus(tool=..., arguments=...)`` tool that routes to
+the Agent Bus REST API over UDS. Uses the same dispatch calling convention
+as the primary dispatch() tool.
 
-All tools delegate HTTP I/O to `_relay()` from `local_api.py` — the same
-function used by the `todo()` tool and other internal callers.
+All HTTP I/O delegates to ``_relay()`` from ``local_api.py``.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from urllib.parse import urlencode
 
-from fastmcp import FastMCP
 from mcp_events import record
 
 from .local_api import _relay
 
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
+    from collections.abc import Callable
+
 logger = logging.getLogger(__name__)
 _PREVIEW_MAX_LAST = max(1, int(os.getenv("MCP_AGENT_BUS_PREVIEW_MAX_LAST", "20")))
-_DETAIL_WINDOW = max(1, int(os.getenv("MCP_AGENT_BUS_DETAIL_WINDOW", "20")))
 
 
-def _agent_bus_fetch_impl(
-    *,
-    to: str | None,
-    thread: str | None,
-    last: int,
-    unread: bool,
-    mark_read: bool,
-    compact: bool,
-) -> dict[str, Any]:
-    if to is None and thread is None:
-        return {"error": "agent_bus_fetch requires at least one of: to, thread"}
-
-    params: dict[str, Any] = {}
-    if thread is not None:
-        params["thread"] = thread
-    if to is not None:
-        params["to"] = to
-        if unread:
-            params["unread"] = "true"
-        if compact:
-            params["compact"] = "true"
-    params["last"] = last
-    if mark_read:
-        params["mark_read"] = "true"
-
-    qs = urlencode(params)
-    result = _relay("agent-bus", "GET", f"/turns?{qs}")
-
-    if "error" in result:
-        return {"error": f"agent-bus error: {result['error']}"}
-
-    turns: list[Any] = result if isinstance(result, list) else result.get("turns", [])
-    count = len(turns)
-    logger.info(
-        "agent_bus_fetch: to=%s thread=%s mark_read=%s -> %d turns",
-        to,
-        thread,
-        mark_read,
-        count,
-    )
-    record(
-        "mcp.agentbus.turns.fetched",
-        to=to or "",
-        thread=thread or "",
-        count=count,
-        mark_read=mark_read,
-    )
-    return result
+# ── Impl helpers ────────────────────────────────────────────────────
 
 
-def _agent_bus_post_impl(
+def _post_impl(
     *,
     slug: str,
     to: str,
@@ -85,16 +38,9 @@ def _agent_bus_post_impl(
     from_agent: str,
     summary: str | None,
 ) -> dict[str, Any]:
-    thread_payload: dict[str, Any] = {"slug": slug}
-    if summary is not None:
-        thread_payload["summary"] = summary
-    thread_result = _relay("agent-bus", "POST", "/threads", body=thread_payload)
-    if "error" in thread_result:
-        return {"error": f"agent-bus error creating thread: {thread_result['error']}"}
-
-    thread_id = thread_result.get("id", "")
-    turn_payload = {
-        "thread": thread_id,
+    """Atomic thread+turn creation via POST /threads/with-turn."""
+    payload: dict[str, Any] = {
+        "slug": slug,
         "from": from_agent,
         "to": to,
         "subject": subject,
@@ -102,26 +48,31 @@ def _agent_bus_post_impl(
         "status": "open",
         "after_turn": 0,
     }
-    turn_result = _relay("agent-bus", "POST", "/turns", body=turn_payload)
-    if "error" in turn_result:
-        return {"error": f"agent-bus error posting turn: {turn_result['error']}"}
+    if summary is not None:
+        payload["summary"] = summary
 
-    logger.info(
-        "agent_bus_post: thread=%s slug=%s to=%s",
-        thread_id,
-        slug,
-        to,
-    )
+    result = _relay("agent-bus", "POST", "/threads/with-turn", body=payload)
+    if "error" in result:
+        record("mcp.agentbus.post.failed", slug=slug, to=to, error=str(result["error"]))
+        return {"error": f"agent-bus error creating thread: {result['error']}"}
+
+    thread_data = result.get("thread", {})
+    turn_data = result.get("turn", {})
+    thread_id = thread_data.get("id", "")
+    turn_number = turn_data.get("turn_number", 1)
+
+    logger.info("agent_bus post: thread=%s slug=%s to=%s", thread_id, slug, to)
     record(
         "mcp.agentbus.thread.created",
         thread=thread_id,
         slug=slug,
         to=to,
+        turn_number=turn_number,
     )
-    return {"thread": thread_result, "turn": turn_result}
+    return result
 
 
-def _agent_bus_reply_impl(
+def _reply_impl(
     *,
     thread: str,
     to: str,
@@ -147,26 +98,107 @@ def _agent_bus_reply_impl(
         return {"error": f"agent-bus error: {result['error']}"}
 
     turn_number = result.get("turn_number") or result.get("id")
-    logger.info("agent_bus_reply: thread=%s to=%s turn=%s", thread, to, turn_number)
+    # If turn_number is still None, it indicates a problem, consider raising or logging an error more prominently.
+    # For now, default to 1 if it's expected to be a positive integer.
+    effective_turn_number = (
+        turn_number if turn_number is not None else 1
+    )  # Or handle as an error if 1 is not a safe default
+    logger.info(
+        "agent_bus reply: thread=%s to=%s turn=%s", thread, to, effective_turn_number
+    )
     record(
         "mcp.agentbus.turn.posted",
         thread=thread,
         to=to,
-        turn_number=str(turn_number) if turn_number is not None else "",
+        turn_number=effective_turn_number,
     )
 
     if mark_read:
-        qs = urlencode({"thread": thread, "last": 1, "mark_read": "true"})
-        _relay("agent-bus", "GET", f"/turns?{qs}")
-        logger.info("agent_bus_reply: marked turn %s read (self-note)", turn_number)
+        turn_id = result.get("id")
+        if turn_id is not None:
+            _relay("agent-bus", "PATCH", f"/turns/{turn_id}/read")
+            logger.info("agent_bus reply: marked turn %s read (self-note)", turn_number)
 
     return result
 
 
-def _agent_bus_threads_impl(*, status: str) -> dict[str, Any]:
+def _fetch_impl(
+    *,
+    to: str | None,
+    thread: str | None,
+    last: int,
+    unread: bool,
+    mark_read: bool,
+    compact: bool,
+) -> dict[str, Any]:
+    if to is None and thread is None:
+        return {"error": "fetch requires at least one of: to, thread"}
+
+    params: dict[str, Any] = {}
+    if thread is not None:
+        params["thread"] = thread
+    if to is not None:
+        params["to"] = to
+        params["unread"] = unread
+        params["compact"] = compact
+    params["last"] = last
+    if mark_read:
+        params["mark_read"] = "true"
+
+    qs = urlencode(params)
+    result = _relay("agent-bus", "GET", f"/turns?{qs}")
+
+    if "error" in result:
+        return {"error": f"agent-bus error: {result['error']}"}
+
+    turns: list[Any] = result if isinstance(result, list) else result.get("turns", [])
+    count = len(turns)
+    logger.info(
+        "agent_bus fetch: to=%s thread=%s mark_read=%s -> %d turns",
+        to,
+        thread,
+        mark_read,
+        count,
+    )
+    record(
+        "mcp.agentbus.turns.fetched",
+        to=to or "",
+        thread=thread or "",
+        count=count,
+        mark_read=mark_read,
+    )
+    return result
+
+
+def _get_impl(*, thread: str, turn_number: int) -> dict[str, Any]:
+    """Direct single-turn lookup via GET /turns/by-number."""
+    qs = urlencode({"thread": thread, "turn_number": turn_number})
+    result = _relay("agent-bus", "GET", f"/turns/by-number?{qs}")
+    if isinstance(result, dict) and "error" in result:
+        return {"error": f"agent-bus error: {result['error']}"}
+    record("mcp.agentbus.turn.detail.fetched", thread=thread, turn_number=turn_number)
+    return {"turn": result}  # Return type should be dict[str, dict[str, Any]]
+
+
+def _resolve_turn_id(
+    *, thread: str, turn_number: int
+) -> tuple[int | None, dict[str, Any] | None]:
+    """Resolve (thread, turn_number) to turn id via direct lookup."""
+    qs = urlencode({"thread": thread, "turn_number": turn_number})
+    result = _relay("agent-bus", "GET", f"/turns/by-number?{qs}")
+    if isinstance(result, dict) and "error" in result:
+        return None, {"error": f"agent-bus error: {result['error']}"}
+    if isinstance(result, dict) and "id" in result:
+        # Consider adding a check if result["id"] is actually an int or can be safely cast.
+        # For now, assuming it's safe based on API contract.
+        return int(result["id"]), None
+    return None, {"error": f"Turn {turn_number} not found in thread {thread}"}
+
+
+def _threads_impl(*, status: str) -> dict[str, Any]:
     params = {} if status == "all" else {"status": status}
     qs = urlencode(params)
-    path = f"/threads{f'?{qs}' if qs else ''}"
+    path = f"/threads?{qs}" if qs else "/threads"
     result = _relay("agent-bus", "GET", path)
 
     if "error" in result:
@@ -176,62 +208,71 @@ def _agent_bus_threads_impl(*, status: str) -> dict[str, Any]:
         result if isinstance(result, list) else result.get("threads", [])
     )
     count = len(threads)
-    logger.info("agent_bus_threads: status=%s -> %d threads", status, count)
+    logger.info("agent_bus threads: status=%s -> %d threads", status, count)
     record("mcp.agentbus.threads.listed", status=status, count=count)
     return result
 
 
-def _resolve_turn_id(
+def _close_impl(
     *,
     thread: str,
-    turn_number: int,
-    last: int = 50,
-) -> tuple[int | None, dict[str, Any] | None]:
-    """Resolve (thread, turn_number) to turn id from a bounded recent window."""
-    params = {"thread": thread, "last": last, "compact": "true"}
-    qs = urlencode(params)
-    result = _relay("agent-bus", "GET", f"/turns?{qs}")
-    if isinstance(result, dict) and "error" in result:
-        return None, {"error": f"agent-bus error: {result['error']}"}
-
-    turns: list[Any] = result if isinstance(result, list) else result.get("turns", [])
-    for turn in turns:
-        if not isinstance(turn, dict):
-            continue
-        raw = turn.get("turn_number")
-        try:
-            if raw is not None and int(raw) == turn_number:
-                return int(turn["id"]), None
-        except (TypeError, ValueError):
-            continue
-
-    return (
-        None,
-        {
-            "error": f"Turn {turn_number} not found in thread {thread} "
-            f"(searched last {last} turns)"
-        },
-    )
+    summary: str | None,
+    mark_all_read: bool,
+) -> dict[str, Any]:
+    """Atomic close via PATCH /threads/{id}/close."""
+    payload: dict[str, Any] = {"mark_all_read": mark_all_read}
+    if summary is not None:
+        payload["summary"] = summary
+    result = _relay("agent-bus", "PATCH", f"/threads/{thread}/close", body=payload)
+    if "error" in result:
+        return {"error": f"agent-bus error: {result['error']}"}
+    logger.info("agent_bus close: thread=%s", thread)
+    record("mcp.agentbus.thread.closed", thread=thread)
+    return result
 
 
-def _agent_bus_turn_update_impl(
+def _update_thread_impl(
+    *,
+    thread: str,
+    status: str | None,
+    summary: str | None,
+) -> dict[str, Any]:
+    payload: dict[str, str] = {}
+    if status is not None:
+        payload["status"] = status
+    if summary is not None:
+        payload["summary"] = summary
+    if not payload:
+        return {"error": "update_thread requires at least one of: status, summary"}
+    result = _relay("agent-bus", "PATCH", f"/threads/{thread}", body=payload)
+    if "error" in result:
+        return {"error": f"agent-bus error: {result['error']}"}
+    logger.info("agent_bus update_thread: thread=%s status=%s", thread, status)
+    record("mcp.agentbus.thread.updated", thread=thread, status=status or "")
+    return result
+
+
+def _update_impl(
     *,
     thread: str,
     turn_number: int,
     body: str | None,
-    append: str | None,
+    append: bool | str | None,
     subject: str | None,
 ) -> dict[str, Any]:
-    """Resolve thread+turn_number to turn_id, then PATCH."""
     turn_id, resolve_error = _resolve_turn_id(thread=thread, turn_number=turn_number)
     if resolve_error is not None:
         return resolve_error
 
-    patch_body: dict[str, str] = {}
-    if body is not None:
-        patch_body["body"] = body
-    if append is not None:
+    patch_body: dict[str, str | None] = {}
+    if isinstance(append, str):
         patch_body["append"] = append
+    elif append:
+        if body is None:
+            return {"error": "update with append=true requires body"}
+        patch_body["append"] = body
+    elif body is not None:
+        patch_body["body"] = body
     if subject is not None:
         patch_body["subject"] = subject
 
@@ -240,131 +281,27 @@ def _agent_bus_turn_update_impl(
         return {"error": f"agent-bus error: {patch_result['error']}"}
 
     logger.info(
-        "agent_bus_turn_update: thread=%s turn=%d id=%d",
-        thread,
-        turn_number,
-        turn_id,
+        "agent_bus update: thread=%s turn=%d id=%d", thread, turn_number, turn_id
     )
     record(
         "mcp.agentbus.turn.updated",
         thread=thread,
         turn_number=turn_number,
-        has_append=append is not None,
+        has_append=bool(append),
     )
-
-    # HISTORY: body_tail truncation was here — popped the full body and returned
-    # only last 200 chars on append. Removed 2026-03 to support large messages.
-    # If stdio freezes return, see tasks/lessons/tooling-agent-bus-stdio-freeze.md
     return patch_result
 
 
-def _mark_thread_turns_read(thread: str) -> int:
-    """Mark all turns in a thread as read. Returns count of turns marked."""
-    qs = urlencode(
-        {
-            "thread": thread,
-            "last": 50000,
-            "mark_read": "true",
-            "include_superseded": "true",
-        }
-    )
-    result = _relay("agent-bus", "GET", f"/turns?{qs}")
-    if isinstance(result, dict) and "error" in result:
-        logger.warning(
-            "Failed to mark turns read for thread %s: %s", thread, result["error"]
-        )
-        return 0
-    turns: list[Any] = result if isinstance(result, list) else result.get("turns", [])
-    return len(turns)
-
-
-def _agent_bus_update_thread_impl(
-    *,
-    thread: str,
-    status: str | None,
-    summary: str | None,
-    mark_all_read: bool | None,
-) -> dict[str, Any]:
-    payload: dict[str, str] = {}
-    if status is not None:
-        payload["status"] = status
-    if summary is not None:
-        payload["summary"] = summary
-
-    if not payload:
-        return {
-            "error": "agent_bus_update_thread requires at least one of: status, summary"
-        }
-
-    should_mark_read = (
-        mark_all_read if mark_all_read is not None else (status == "closed")
-    )
-    if should_mark_read:
-        marked = _mark_thread_turns_read(thread)
-        logger.info(
-            "agent_bus_update_thread: marked %d turns read in thread %s", marked, thread
-        )
-
-    result = _relay("agent-bus", "PATCH", f"/threads/{thread}", body=payload)
-
-    if "error" in result:
-        return {"error": f"agent-bus error: {result['error']}"}
-
-    logger.info("agent_bus_update_thread: thread=%s status=%s", thread, status)
-    record("mcp.agentbus.thread.updated", thread=thread, status=status or "")
-    return result
-
-
-def _agent_bus_delete_turn_impl(
-    *,
-    thread: str,
-    turn_number: int,
-    force: bool,
-) -> dict[str, Any]:
-    """Resolve thread+turn_number to turn_id, then DELETE."""
-    turn_id, resolve_error = _resolve_turn_id(thread=thread, turn_number=turn_number)
-    if resolve_error is not None:
-        return resolve_error
-
-    force_params = urlencode({"force": "true"}) if force else ""
-    path = f"/turns/{turn_id}?{force_params}" if force_params else f"/turns/{turn_id}"
-    delete_result = _relay("agent-bus", "DELETE", path)
-    if isinstance(delete_result, dict) and "error" in delete_result:
-        return {"error": f"agent-bus error: {delete_result['error']}"}
-
-    logger.info(
-        "agent_bus_delete_turn: thread=%s turn=%d id=%d force=%s",
-        thread,
-        turn_number,
-        turn_id,
-        force,
-    )
-    record(
-        "mcp.agentbus.turn.deleted",
-        thread=thread,
-        turn_number=turn_number,
-        force=force,
-    )
-    return delete_result
-
-
-def _agent_bus_delete_thread_impl(
-    *,
-    thread: str,
-    force: bool,
-) -> dict[str, Any]:
-    """Delete a thread and all its turns via the agent-bus service."""
+def _delete_thread_impl(*, thread: str, force: bool) -> dict[str, Any]:
     params = {"force": "true"} if force else {}
     qs = urlencode(params)
-    path = f"/threads/{thread}{f'?{qs}' if qs else ''}"
+    path = f"/threads/{thread}?{qs}" if qs else f"/threads/{thread}"
     result = _relay("agent-bus", "DELETE", path)
-
     if isinstance(result, dict) and "error" in result:
         return {"error": f"agent-bus error: {result['error']}"}
-
     deleted_turns = result.get("deleted_turns", 0) if isinstance(result, dict) else 0
     logger.info(
-        "agent_bus_delete_thread: thread=%s force=%s deleted_turns=%d",
+        "agent_bus delete_thread: thread=%s force=%s deleted_turns=%d",
         thread,
         force,
         deleted_turns,
@@ -378,363 +315,235 @@ def _agent_bus_delete_thread_impl(
     return result
 
 
+def _delete_turn_impl(*, thread: str, turn_number: int, force: bool) -> dict[str, Any]:
+    turn_id, resolve_error = _resolve_turn_id(thread=thread, turn_number=turn_number)
+    if resolve_error is not None:
+        return resolve_error
+    force_params = urlencode({"force": "true"}) if force else ""
+    path = f"/turns/{turn_id}?{force_params}" if force_params else f"/turns/{turn_id}"
+    delete_result = _relay("agent-bus", "DELETE", path)
+    if isinstance(delete_result, dict) and "error" in delete_result:
+        return {"error": f"agent-bus error: {delete_result['error']}"}
+    logger.info(
+        "agent_bus delete_turn: thread=%s turn=%d id=%d force=%s",
+        thread,
+        turn_number,
+        turn_id,
+        force,
+    )
+    record(
+        "mcp.agentbus.turn.deleted", thread=thread, turn_number=turn_number, force=force
+    )
+    return delete_result
+
+
+# ── Dispatch wrappers (validation + defaults for JSON dispatch) ─────────────
+
+
+def _fetch_dispatch(
+    *,
+    to: str | None = None,
+    thread: str | None = None,
+    last: int = 5,
+    unread: bool = True,
+    mark_read: bool = False,
+    compact: bool = True,
+) -> dict[str, Any]:
+    """Dispatch wrapper for fetch — applies preview cap and normalizes empty strings."""
+    effective_to = to if to else None
+    effective_thread = thread if thread else None
+    safe_last = max(1, min(last, _PREVIEW_MAX_LAST))
+    return _fetch_impl(
+        to=effective_to,
+        thread=effective_thread,
+        last=safe_last,
+        unread=unread,
+        mark_read=mark_read,
+        compact=compact,
+    )
+
+
+def _post_dispatch(
+    *,
+    slug: str = "",
+    to: str = "",
+    subject: str = "",
+    body: str = "",
+    from_agent: str = "web",
+    summary: str | None = None,
+) -> dict[str, Any]:
+    if not slug or not to or not subject or not body:
+        return {"error": "post requires: slug, to, subject, body"}
+    return _post_impl(
+        slug=slug,
+        to=to,
+        subject=subject,
+        body=body,
+        from_agent=from_agent,
+        summary=summary,
+    )
+
+
+def _reply_dispatch(
+    *,
+    thread: str = "",
+    to: str = "",
+    subject: str = "",
+    body: str = "",
+    after_turn: int = 0,
+    from_agent: str = "web",
+    status: str = "open",
+    mark_read: bool = False,
+) -> dict[str, Any]:
+    if not thread or not to or not subject or not body or after_turn < 1:
+        return {"error": "reply requires: thread, to, subject, body, after_turn"}
+    return _reply_impl(
+        thread=thread,
+        to=to,
+        subject=subject,
+        body=body,
+        after_turn=after_turn,
+        from_agent=from_agent,
+        status=status,
+        mark_read=mark_read,
+    )
+
+
+def _get_dispatch(*, thread: str = "", turn_number: int = 0) -> dict[str, Any]:
+    if not thread or turn_number < 1:
+        return {"error": "get requires: thread, turn_number (>= 1)"}
+    return _get_impl(thread=thread, turn_number=turn_number)
+
+
+def _threads_dispatch(*, status: str = "active") -> dict[str, Any]:
+    return _threads_impl(status=status)
+
+
+def _update_dispatch(
+    *,
+    thread: str = "",
+    turn_number: int = 0,
+    body: str | None = None,
+    append: bool | str | None = None,
+    subject: str | None = None,
+) -> dict[str, Any]:
+    if not thread or turn_number < 1:
+        return {"error": "update requires: thread, turn_number (>= 1)"}
+    if body is None and append is None and not subject:
+        return {"error": "update requires at least one of: body, append, subject"}
+    if append is True and body is None:
+        return {"error": "update with append=true requires body"}
+    return _update_impl(
+        thread=thread,
+        turn_number=turn_number,
+        body=body,
+        append=append,
+        subject=subject,
+    )
+
+
+def _update_thread_dispatch(
+    *,
+    thread: str = "",
+    status: str | None = None,
+    summary: str | None = None,
+) -> dict[str, Any]:
+    if not thread:
+        return {"error": "update_thread requires: thread"}
+    # If an empty string status is not allowed, add explicit validation here.
+    # For now, assuming empty string should be treated as None for status updates.
+    effective_status = status if (status and status != "open") else None
+    return _update_thread_impl(thread=thread, status=effective_status, summary=summary)
+
+
+def _close_dispatch(
+    *,
+    thread: str = "",
+    summary: str | None = None,
+    mark_all_read: bool = True,
+) -> dict[str, Any]:
+    if not thread:
+        return {"error": "close requires: thread"}
+    return _close_impl(
+        thread=thread,
+        summary=summary,
+        mark_all_read=mark_all_read,
+    )
+
+
+def _delete_thread_dispatch(*, thread: str = "", force: bool = False) -> dict[str, Any]:
+    if not thread:
+        return {"error": "delete_thread requires: thread"}
+    return _delete_thread_impl(thread=thread, force=force)
+
+
+def _delete_turn_dispatch(
+    *, thread: str = "", turn_number: int = 0, force: bool = False
+) -> dict[str, Any]:
+    if not thread or turn_number < 1:
+        return {"error": "delete_turn requires: thread, turn_number (>= 1)"}
+    return _delete_turn_impl(thread=thread, turn_number=turn_number, force=force)
+
+
+_AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
+    "post": _post_dispatch,
+    "reply": _reply_dispatch,
+    "fetch": _fetch_dispatch,
+    "get": _get_dispatch,
+    "threads": _threads_dispatch,
+    "close": _close_dispatch,
+    "update_thread": _update_thread_dispatch,
+    "update": _update_dispatch,
+    "delete_thread": _delete_thread_dispatch,
+    "delete_turn": _delete_turn_dispatch,
+}
+
+
+# ── Registration ────────────────────────────────────────────────────
+
+
 def register_agent_bus_tools(mcp: FastMCP) -> None:
-    """Register first-class agent-bus tools on the MCP server instance."""
+    """Register the dispatch-style agent_bus tool on the MCP server instance."""
 
     @mcp.tool()
-    def agent_bus_fetch(
-        to: str | None = None,
-        thread: str | None = None,
-        last: int = 5,
-        unread: bool = True,
-        mark_read: bool = True,
-        compact: bool = True,
-    ) -> dict[str, Any]:
-        """Fetch turns from the Agent Bus — inbox or thread history.
+    def agent_bus(tool: str, arguments: str = "{}") -> Any:
+        """Agent bus — inter-agent communication, dispatch by tool name.
 
-        Inbox mode (to provided): returns unread turns addressed to an agent.
-        Thread mode (thread provided): returns full history for a thread.
-        At least one of to or thread is required.
+        Available tools:
+          post(slug, to, subject, body, from_agent?, summary?) — create thread + first turn
+          reply(thread, to, subject, body, after_turn, from_agent?, status='open', mark_read?) — reply
+          fetch(to?, thread?, last?, unread?, mark_read?, compact?) — fetch turns (inbox or thread)
+          get(thread, turn_number) — fetch one turn by number
+          threads(status?) — list threads (status: active|closed|blocked|waiting|all; default active)
+          close(thread, summary?, mark_all_read?) — close thread + mark all read
+          update_thread(thread, status?, summary?) — update thread metadata
+          update(thread, turn_number, body?, append?, subject?) — edit unread turn
+              Prefer update() over reply() when correcting or expanding your own
+              unread turns — it avoids cluttering the thread with fixup turns.
+              append=true appends `body` to the existing turn body instead of
+              replacing it. Read turns are immutable.
+          delete_thread(thread, force?) — delete thread and turns
+          delete_turn(thread, turn_number, force?) — delete single turn
 
-        agent_bus_fetch(to='web', last=1)       # next unread for web
-        agent_bus_fetch(thread='034')           # all turns in thread 034
+        Example:
+            agent_bus(tool="fetch", arguments='{"thread": "111", "last": 10, "compact": false}')
+            agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "Details..."}')
 
         Args:
-            to: Agent name for inbox mode (e.g. 'web', 'cursor').
-            thread: Thread ID for thread history mode (e.g. '034').
-            last: Maximum turns to return (default 5).
-            unread: Inbox mode only — filter to unread turns (default True).
-            mark_read: Mark returned turns as read (default True).
-            compact: Omit turn bodies, return subject and metadata only (default False).
+            tool: Name of the agent-bus operation to invoke.
+            arguments: JSON string of operation arguments (default "{}").
 
         Returns:
-            Agent-bus response with turns list, or {"error": "<message>"}.
+            Operation-specific result dict, or {"error": "<message>"}.
         """
-        # HISTORY: This tool was previously blocked for cursor_safe profile
-        # because fetching multiple turns with large markdown bodies could freeze
-        # the Cursor IDE (stdio pipe saturation). The block was removed in the
-        # transport_utils migration (2026-03).
-        #
-        # FALLBACK if freezes return: write large turn bodies to context files
-        # via context(op="write", path="agent-bus/<thread>.md", content=body)
-        # and return file references instead of inline content. See lesson:
-        # tasks/lessons/tooling-agent-bus-stdio-freeze.md
-        return _agent_bus_fetch_impl(
-            to=to,
-            thread=thread,
-            last=last,
-            unread=unread,
-            mark_read=mark_read,
-            compact=compact,
-        )
+        import json as _json
 
-    @mcp.tool()
-    def agent_bus_fetch_preview(
-        to: str | None = None,
-        thread: str | None = None,
-        last: int = 10,
-        unread: bool = True,
-        mark_read: bool = False,
-    ) -> dict[str, Any]:
-        """Fetch bounded compact turn previews for Cursor-safe workflows.
-
-        Returns metadata and subjects only (no turn body text). Detail expansion
-        is a second explicit step via ``agent_bus_turn_get``.
-        """
-        safe_last = max(1, min(last, _PREVIEW_MAX_LAST))
-        record(
-            "mcp.agentbus.preview.called",
-            to=to or "",
-            thread=thread or "",
-            requested_last=last,
-            effective_last=safe_last,
-        )
-        result = _agent_bus_fetch_impl(
-            to=to,
-            thread=thread,
-            last=safe_last,
-            unread=unread,
-            mark_read=mark_read,
-            compact=True,
-        )
-        if not (isinstance(result, dict) and "error" in result):
-            turns = result if isinstance(result, list) else result.get("turns", [])
-            record(
-                "mcp.agentbus.preview.completed",
-                to=to or "",
-                thread=thread or "",
-                count=len(turns) if isinstance(turns, list) else 0,
-            )
-        return result
-
-    @mcp.tool()
-    def agent_bus_turn_get(
-        thread: str,
-        turn_number: int,
-    ) -> dict[str, Any]:
-        """Fetch one turn body from a bounded recent-thread window.
-
-        Until Agent Bus exposes a first-class single-turn endpoint, this tool
-        performs a bounded lookup over recent turns and returns one match.
-        """
-        params = {
-            "thread": thread,
-            "last": _DETAIL_WINDOW,
-            "compact": "false",
-        }
-        qs = urlencode(params)
-        result = _relay("agent-bus", "GET", f"/turns?{qs}")
-        if isinstance(result, dict) and "error" in result:
-            return {"error": f"agent-bus error: {result['error']}"}
-
-        turns: list[Any] = (
-            result.get("turns", []) if isinstance(result, dict) else result
-        )
-        for turn in turns:
-            if not isinstance(turn, dict):
-                continue
-            raw_turn_number = turn.get("turn_number")
-            try:
-                if raw_turn_number is not None and int(raw_turn_number) == turn_number:
-                    record(
-                        "mcp.agentbus.turn.detail.fetched",
-                        thread=thread,
-                        turn_number=turn_number,
-                        window=_DETAIL_WINDOW,
-                    )
-                    return {"turn": turn, "window": _DETAIL_WINDOW}
-            except (TypeError, ValueError):
-                continue
-
-        return {
-            "error": (
-                f"Turn {turn_number} not found in recent window "
-                f"(last {_DETAIL_WINDOW} turns)."
-            )
-        }
-
-    @mcp.tool()
-    def agent_bus_post(
-        slug: str,
-        to: str,
-        subject: str,
-        body: str,
-        from_agent: str = "web",
-        summary: str | None = None,
-    ) -> dict[str, Any]:
-        """Create a new Agent Bus thread with auto-assigned numeric ID and post the first turn.
-
-        Use this instead of agent_bus_reply when starting a new conversation.
-        The thread ID is auto-assigned (e.g. '057') — never invent thread IDs.
-
-        Args:
-            slug: Human-readable thread name (e.g. 'vram-investigation').
-            to: Recipient agent name (e.g. 'cursor', 'web').
-            subject: Short summary shown in thread listings.
-            body: Full turn content in Markdown.
-            from_agent: Sender identity (default 'web').
-            summary: Optional thread summary.
-
-        Returns:
-            {"thread": {...}, "turn": {...}} with auto-assigned thread ID,
-            or {"error": "<message>"}.
-        """
-        return _agent_bus_post_impl(
-            slug=slug,
-            to=to,
-            subject=subject,
-            body=body,
-            from_agent=from_agent,
-            summary=summary,
-        )
-
-    @mcp.tool()
-    def agent_bus_reply(
-        thread: str,
-        to: str,
-        subject: str,
-        body: str,
-        after_turn: int,
-        from_agent: str = "web",
-        status: str = "open",
-        mark_read: bool = False,
-    ) -> dict[str, Any]:
-        """Post a turn to an existing Agent Bus thread.
-
-        after_turn prevents out-of-order posts by asserting the turn_number
-        this reply follows. Do NOT use this to create new threads — use
-        agent_bus_post instead.
-
-        Use mark_read=True for self-closing notes — turns the sender posts
-        that are not intended to be read by the recipient (e.g. "Verified —
-        closing"). This prevents the turn from inflating unread_count on
-        closed threads.
-
-        Args:
-            thread: Thread ID to post into (e.g. '034').
-            to: Recipient agent name (e.g. 'cursor', 'web').
-            subject: Short summary shown in thread listings.
-            body: Full turn content in Markdown.
-            after_turn: The turn_number this reply follows.
-            from_agent: Sender identity (default 'web').
-            status: Thread status hint — 'open' (default) or 'resolved'.
-            mark_read: Mark this turn as read immediately (default False).
-                Use for self-closing notes not intended for the recipient.
-
-        Returns:
-            {"id": <turn_id>, "turn_number": <n>, ...} or {"error": "<message>"}.
-        """
-        return _agent_bus_reply_impl(
-            thread=thread,
-            to=to,
-            subject=subject,
-            body=body,
-            after_turn=after_turn,
-            from_agent=from_agent,
-            status=status,
-            mark_read=mark_read,
-        )
-
-    @mcp.tool()
-    def agent_bus_turn_update(
-        thread: str,
-        turn_number: int,
-        body: str | None = None,
-        append: str | None = None,
-        subject: str | None = None,
-    ) -> dict[str, Any]:
-        """Update an unread turn's body or subject, or append to its body.
-
-        Only works while the turn has not been read (read_at is null).
-        Use ``append`` to concatenate content to the existing body — each
-        call is committed immediately, surviving disconnections.
-
-        Typical incremental-build pattern:
-            1. agent_bus_reply(...) → creates turn N with initial content
-            2. agent_bus_turn_update(thread, N, append="## Section 2\\n...")
-            3. agent_bus_turn_update(thread, N, append="## Section 3\\n...")
-            4. agent_bus_turn_update(thread, N, subject="Final title")
-
-        If the session disconnects after step 2, sections 1-2 are committed.
-
-        Args:
-            thread: Thread ID (e.g. '053').
-            turn_number: The turn_number within the thread (e.g. 13).
-            body: Replace the entire body (mutually exclusive with append).
-            append: Concatenate this text to the existing body.
-            subject: Replace the subject line.
-
-        Returns:
-            Updated turn object, or {"error": "<message>"}.
-        """
-        if body is None and append is None and subject is None:
-            return {"error": "At least one of body, append, or subject required"}
-        if body is not None and append is not None:
-            return {"error": "Cannot specify both body (replace) and append"}
-        return _agent_bus_turn_update_impl(
-            thread=thread,
-            turn_number=turn_number,
-            body=body,
-            append=append,
-            subject=subject,
-        )
-
-    @mcp.tool()
-    def agent_bus_threads(
-        status: str = "active",
-    ) -> dict[str, Any]:
-        """List Agent Bus threads, optionally filtered by status.
-
-        Args:
-            status: 'active' (default), 'closed', 'blocked', 'waiting', or 'all'.
-
-        Returns:
-            Agent-bus response with threads list, or {"error": "<message>"}.
-        """
-        return _agent_bus_threads_impl(status=status)
-
-    @mcp.tool()
-    def agent_bus_update_thread(
-        thread: str,
-        status: str | None = None,
-        summary: str | None = None,
-        mark_all_read: bool | None = None,
-    ) -> dict[str, Any]:
-        """Update Agent Bus thread metadata — status and/or summary.
-
-        Primary use: thread close protocol. Always set summary when closing.
-
-        When closing (status='closed'), all unread turns are automatically marked
-        as read — closed threads should have unread_count == 0. Override with
-        mark_all_read=False if the closing agent wants to leave turns unread
-        (rare — prefer having the recipient read and close instead).
-
-        agent_bus_update_thread(
-            thread='034',
-            status='closed',
-            summary='First-class agent-bus MCP tools shipped...',
-        )
-
-        Args:
-            thread: Thread ID to update (e.g. '034').
-            status: New status — 'active', 'closed', 'blocked', or 'waiting'.
-            summary: 1-2 sentence summary. Required when closing a thread.
-            mark_all_read: Mark all turns read. Defaults to True when closing,
-                False otherwise. Set explicitly to override.
-
-        Returns:
-            Updated thread object, or {"error": "<message>"}.
-        """
-        return _agent_bus_update_thread_impl(
-            thread=thread,
-            status=status,
-            summary=summary,
-            mark_all_read=mark_all_read,
-        )
-
-    @mcp.tool()
-    def agent_bus_delete_thread(
-        thread: str,
-        force: bool = False,
-    ) -> dict[str, Any]:
-        """Delete a thread and all its turns.
-
-        By default, refuses to delete threads with read turns (safety check).
-        Use force=True to delete regardless.
-
-        Args:
-            thread: Thread ID to delete (e.g. '054').
-            force: If True, delete even if turns have been read.
-
-        Returns:
-            {"deleted_turns": <count>, "thread": "<id>"},
-            or {"error": "<message>"}.
-        """
-        return _agent_bus_delete_thread_impl(thread=thread, force=force)
-
-    @mcp.tool()
-    def agent_bus_delete_turn(
-        thread: str,
-        turn_number: int,
-        force: bool = False,
-    ) -> dict[str, Any]:
-        """Delete a single turn from an Agent Bus thread.
-
-        By default, refuses to delete turns that have been read (read_at set).
-        Use force=True to delete regardless. Does not auto-delete the parent
-        thread if it becomes empty.
-
-        Args:
-            thread: Thread ID containing the turn (e.g. '053').
-            turn_number: The turn_number within the thread (e.g. 14).
-            force: If True, delete even if the turn has been read.
-
-        Returns:
-            {"deleted_turn": <id>, "thread": "<id>", "turn_number": <n>},
-            or {"error": "<message>"}.
-        """
-        return _agent_bus_delete_turn_impl(
-            thread=thread,
-            turn_number=turn_number,
-            force=force,
-        )
+        handler = _AGENT_BUS_OPS.get(tool)
+        if handler is None:
+            return {
+                "error": f"Unknown agent_bus tool {tool!r}. "
+                f"Available: {sorted(_AGENT_BUS_OPS.keys())}"
+            }
+        parsed = _json.loads(arguments)
+        record("mcp.agentbus.dispatch", tool=tool)
+        return handler(**parsed)

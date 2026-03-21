@@ -309,18 +309,10 @@ class EngineFactory:
             ImportError: If engine module is not available
             ValueError: If engine type is not supported
         """
-        # Validate model path
         cls.validate_model_path(model_path, engine_type)
-
-        # Get engine class
         engine_class = cls.get_engine_class(engine_type)
-
-        # Create engine instance
         engine = await cls.create_engine(
             engine_class, model_path, config, timeout=creation_timeout
         )
-
-        # Load engine
         await cls.load_engine(engine, engine_type, timeout=loading_timeout)
-
         return engine

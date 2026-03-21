@@ -1,117 +1,160 @@
 #!/usr/bin/env python3
-"""Classify corpus hint terms into vocabulary registers per scope.
+"""Classify corpus hint terms into vocabulary registers.
 
-Reads per-scope IDF terms from the metadata database, sends each scope's terms
-through an LLM classification prompt, and writes register-structured output to
-the ``scope_vocabulary`` table in the metadata database.
+Two execution paths:
+
+- **local** (default): Per-scope classification via a single loaded gateway
+  model. Each scope's terms + description fit easily in 8–32k context.
+  No pipeline overhead, no multi-model consensus.
+
+- **frontier**: Full pipeline (vocab-classify-v1) with per-scope RAG-grounded
+  classification via cloud/frontier models.
 
 Usage:
-    python scripts/rag/classify_vocabulary.py [--model MODEL_ID] [--dry-run]
+    python scripts/rag/classify_vocabulary.py [--mode local|frontier] [--force]
+    python scripts/rag/classify_vocabulary.py --dry-run
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import sys
 
-import requests
+import httpx
 
 from services.rag.config import load_config
 from services.rag.corpus_hints import load_corpus_hints
+from services.rag.vocabulary import (
+    DEFAULT_STARGATE_CHAT_URL,
+    classify_scope_async,
+    pick_loaded_stargate_model,
+)
 
 logger = logging.getLogger(__name__)
 
-STARGATE_URL = "http://localhost:9999/v1/chat/completions"
-CLASSIFICATION_PROMPT = """\
-You are classifying vocabulary terms for a RAG retrieval system.
-Given a scope name, its description, and a list of IDF-scored terms extracted
-from that scope's corpus, classify each term into one of these registers:
 
-- **practitioner**: tool names, framework names, implementation patterns,
-  product names, file formats, CLI commands, workflow terminology
-  (e.g. Obsidian, Zettelkasten, Neo4j, Cypher, vault, backlinks)
-- **academic**: formal concepts, theoretical frameworks, research terminology,
-  algorithmic names, mathematical constructs
-  (e.g. personal knowledge graph, entity-centric, ontology, reification)
-- **specification**: standard names, protocol names, specification documents,
-  formal language names, W3C/ISO/IEEE identifiers
-  (e.g. RDF, OWL, SHACL, PROV-O, JSON-LD, SPARQL, SQL/PGQ)
+async def _run_local(
+    hints_map: dict[str, str],
+    scope_names: list[str],
+    config: object,
+    model_override: str,
+    force: bool,
+) -> int:
+    """Per-scope classification using a single local model."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
+        model = model_override or await pick_loaded_stargate_model(client)
+        if not model:
+            print(
+                "No gateway model loaded — cannot classify in local mode.\n"
+                "Load a model or use --mode frontier.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"Local model: {model}")
 
-Rules:
-1. A term may appear in only one register (choose the best fit).
-2. Drop terms that are too generic, ambiguous, or clearly noise.
-3. You may add 2-4 additional high-value terms per register that are
-   obviously missing but central to the scope. Mark these with a trailing
-   asterisk (*) so the caller knows they were inferred.
-4. Return valid JSON only.
+        from services.rag.property_index import PropertyIndex
 
-Output format:
-{
-  "practitioner": ["term1", "term2", ...],
-  "academic": ["term1", "term2", ...],
-  "specification": ["term1", "term2", ...]
-}
-"""
+        idx = PropertyIndex()
+        await idx.start()
+        try:
+            ok: list[str] = []
+            failed: list[str] = []
+            for scope in scope_names:
+                text = hints_map.get(scope, "")
+                terms = [t.strip() for t in text.split(",") if t.strip()]
+                if not terms:
+                    continue
+                desc = ""
+                if hasattr(config, "scopes"):
+                    sdef = config.scopes.get(scope)
+                    desc = getattr(sdef, "description", "") or "" if sdef else ""
+                result = await classify_scope_async(
+                    scope=scope,
+                    description=desc,
+                    terms=terms,
+                    model=model,
+                    client=client,
+                )
+                if result is None:
+                    print(f"  FAIL: {scope}")
+                    failed.append(scope)
+                    await idx.invalidate_scope_freshness(scope)
+                    continue
+                await idx.replace_scope_vocabulary_for_scopes({scope: result})
+                from services.rag.corpus_hints import compute_scope_files_hash
 
+                if hasattr(config, "scopes") and scope in config.scopes:
+                    prefixes = list(config.scopes[scope].prefixes)
+                    fh = compute_scope_files_hash(idx, prefixes)
+                    await idx.store_scope_freshness(scope, fh, classified_tier="local")
+                ok.append(scope)
+                n_terms = sum(len(v) for v in result.values())
+                print(f"  OK: {scope} ({n_terms} terms)")
 
-def classify_scope(
-    scope: str,
-    description: str,
-    terms: list[str],
-    model: str,
-) -> dict[str, list[str]] | None:
-    """Classify scope terms into practitioner/academic/specification registers.
+            if ok:
+                await idx.stamp_watermark("vocabulary")
+                await idx.stamp_watermark("corpus_hints")
+        finally:
+            await idx.stop()
 
-    Returns parsed register buckets on success, otherwise ``None`` when the
-    model call or JSON parsing fails.
-    """
-    user_msg = (
-        f"Scope: {scope}\n"
-        f"Description: {description}\n"
-        f"Terms to classify:\n{json.dumps(terms)}\n\n"
-        "Return JSON with keys: practitioner, academic, specification."
-    )
-    try:
-        resp = requests.post(
-            STARGATE_URL,
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": CLASSIFICATION_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-                "temperature": 0.2,
-                "max_tokens": 1024,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=120,
+    if failed:
+        print(
+            f"\nCompleted {len(ok)}/{len(ok) + len(failed)} scopes "
+            f"({len(failed)} failed)."
         )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        return json.loads(content)
+    else:
+        print(f"\nAll {len(ok)} scopes classified (local).")
+    return 0 if not failed else 1
+
+
+async def _run_frontier(
+    scope_names: list[str],
+    model_override: str,
+    force: bool,
+) -> int:
+    """Full pipeline classification using frontier/cloud models."""
+    pipeline_options: dict = {
+        "mode": "frontier",
+        "scopes": scope_names,
+        "skip_fresh": not force,
+    }
+    if model_override:
+        pipeline_options["model_ref_overrides"] = {"classify": model_override}
+
+    payload: dict = {
+        "model": "vocab-classify-v1",
+        "messages": [{"role": "user", "content": "vocabulary classification"}],
+        "pipeline_options": pipeline_options,
+    }
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(3600.0),
+        ) as client:
+            resp = await client.post(DEFAULT_STARGATE_CHAT_URL, json=payload)
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        logger.exception(
+            "vocab-classify-v1 failed: status %d: %s",
+            e.response.status_code,
+            e.response.text,
+        )
+        return 1
+    except httpx.RequestError as e:
+        logger.exception("vocab-classify-v1 network error: %s", e)
+        return 1
     except Exception:
-        logger.exception("Classification failed for scope '%s'", scope)
-        return None
+        logger.exception("vocab-classify-v1 unexpected error")
+        return 1
+
+    written = _report_partial_success(resp, scope_names)
+    return 0 if written is not None else 1
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Classify corpus hints into vocabulary registers"
-    )
-    parser.add_argument(
-        "--model",
-        default="qwen3-14b-q4-k-m-32768",
-        help="Model ID for classification",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print plan without calling LLM",
-    )
-    args = parser.parse_args()
-
+async def _main_async(args: argparse.Namespace) -> int:
     config = load_config()
     hints_map = load_corpus_hints()
 
@@ -120,119 +163,117 @@ def main() -> None:
             "No corpus hints found. Run `python -m services.rag.corpus_hints` first.",
             file=sys.stderr,
         )
-        sys.exit(1)
+        return 1
 
-    scope_descriptions: dict[str, str] = {}
-    for scope_name, scope_def in config.scopes.items():
-        scope_descriptions[scope_name] = getattr(scope_def, "description", "") or ""
-
-    processable_scopes: list[tuple[str, list[str]]] = []
-    for scope, text in sorted(hints_map.items()):
-        terms = [t.strip() for t in text.split(",") if t.strip()]
-        if terms:
-            processable_scopes.append((scope, terms))
-
-    print(
-        f"Loaded {len(processable_scopes)} processable scopes from "
-        "rag_metadata.db corpus_hints table"
+    exclude = set(args.exclude or [])
+    scope_names = sorted(
+        s for s in hints_map if s not in exclude and hints_map.get(s, "").strip()
     )
-    for scope, terms in processable_scopes:
-        desc = scope_descriptions.get(scope, "")
-        print(f"  {scope}: {len(terms)} terms — {desc[:60]}")
+
+    mode = (args.mode or config.vocabulary_mode or "local").strip().lower()
+    if mode not in ("local", "frontier"):
+        print(f"Invalid mode {mode!r} (use local or frontier)", file=sys.stderr)
+        return 2
+
+    print(f"Vocabulary classification — {len(scope_names)} scope(s), mode={mode}")
+    for s in scope_names:
+        desc = getattr(config.scopes.get(s, None), "description", "") or ""
+        print(f"  {s}: {desc[:60]}")
 
     if args.dry_run:
-        print("\n--dry-run: would classify the above scopes. Exiting.")
-        return
-    if not processable_scopes:
-        print("\nNo scopes to classify (all empty).", file=sys.stderr)
-        sys.exit(1)
-
-    expected_scopes = [scope for scope, _ in processable_scopes]
-    result: dict[str, dict[str, list[str]]] = {}
-    failed_scopes: list[str] = []
-
-    for scope, terms in processable_scopes:
-        desc = scope_descriptions.get(scope, "")
-        print(f"\nClassifying {scope} ({len(terms)} terms)...")
-        classified = classify_scope(scope, desc, terms, args.model)
-        if classified:
-            clean: dict[str, list[str]] = {}
-            for reg in ("practitioner", "academic", "specification"):
-                reg_terms = classified.get(reg, [])
-                if isinstance(reg_terms, list):
-                    clean[reg] = [
-                        str(t) for t in reg_terms if isinstance(t, str) and t.strip()
-                    ]
-            result[scope] = clean
-            for reg, ts in clean.items():
-                print(f"  {reg}: {len(ts)} terms")
+        if mode == "local":
+            print("\n--dry-run: would classify per-scope via local model")
+            print(f"  model: {args.model or '(auto-detect loaded model)'}")
+            print(f"  scopes: {scope_names}")
         else:
-            failed_scopes.append(scope)
-            print("  FAILED")
+            opts: dict = {
+                "model": "vocab-classify-v1",
+                "mode": mode,
+                "scopes": scope_names,
+                "skip_fresh": not args.force,
+            }
+            if args.model:
+                opts["model_ref_overrides"] = {"classify": args.model}
+            print("\n--dry-run: would POST to Stargate with pipeline_options:")
+            print(json.dumps(opts, indent=2))
+        return 0
 
-    if failed_scopes:
-        print(
-            f"\n{len(failed_scopes)}/{len(expected_scopes)} scopes failed: "
-            f"{', '.join(failed_scopes)}",
-            file=sys.stderr,
-        )
-        print(
-            "Aborting — no DB changes applied (all-or-nothing).",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    if not scope_names:
+        print("No scopes to classify.", file=sys.stderr)
+        return 1
 
-    if not result:
-        print("\nNo scopes to classify (all empty).", file=sys.stderr)
-        sys.exit(1)
-
-    _write_scope_vocabulary_db(result)
-    print(f"\nWritten DB rows for {len(result)} scopes to ~/.rag/store/rag_metadata.db")
-
-    _stamp_watermark()
+    if mode == "local":
+        return await _run_local(hints_map, scope_names, config, args.model, args.force)
+    return await _run_frontier(scope_names, args.model, args.force)
 
 
-def _write_scope_vocabulary_db(vocabulary: dict[str, dict[str, list[str]]]) -> None:
-    """Persist register-structured vocabulary to the metadata SQLite database."""
-    import asyncio
-
-    from services.rag.property_index import PropertyIndex
-
-    async def _write() -> None:
-        idx = PropertyIndex()
-        await idx.start()
-        try:
-            await idx.replace_scope_vocabulary(vocabulary)
-        finally:
-            await idx.stop()
-
+def _report_partial_success(
+    resp: httpx.Response,
+    requested_scopes: list[str],
+) -> set[str] | None:
+    """Parse pipeline response and report scope-level results."""
     try:
-        asyncio.run(_write())
-    except Exception as exc:
-        logger.error("Failed to write scope vocabulary to SQLite: %s", exc)
-        raise
+        choices = resp.json().get("choices", [])
+        content = choices[0]["message"]["content"] if choices else "{}"
+        result = json.loads(content)
+        vocab = result.get("vocabulary", {})
+        written = set(vocab.keys())
+    except (KeyError, json.JSONDecodeError, IndexError):
+        print("vocab-classify-v1 completed (response not parseable).")
+        return set()
+
+    dropped = sorted(set(requested_scopes) - written)
+    if dropped:
+        print(
+            f"WARNING: {len(dropped)} scope(s) failed "
+            f"(freshness invalidated — will retry next run):"
+        )
+        for s in dropped:
+            print(f"  - {s}")
+        print(f"Completed {len(written)}/{len(requested_scopes)} scopes.")
+    else:
+        print(
+            f"vocab-classify-v1 completed: "
+            f"all {len(requested_scopes)} scopes classified."
+        )
+    return written
 
 
-def _stamp_watermark() -> None:
-    """Record vocabulary classification completion in the property index watermarks."""
-    import asyncio
-
-    from services.rag.property_index import PropertyIndex
-
-    async def _stamp() -> None:
-        idx = PropertyIndex()
-        await idx.start()
-        try:
-            await idx.stamp_watermark("vocabulary")
-        finally:
-            await idx.stop()
-
-    try:
-        asyncio.run(_stamp())
-    except Exception as exc:
-        logger.error("Failed to stamp 'vocabulary' watermark: %s", exc)
-        raise
-    print("Watermark 'vocabulary' stamped.")
+def main() -> None:
+    """Entry point for vocabulary classification."""
+    parser = argparse.ArgumentParser(
+        description="Classify corpus hints into vocabulary registers"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("local", "frontier"),
+        default=None,
+        help="Override rag.yaml vocabulary_mode (default: config vocabulary_mode)",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Single model ID override (local: gateway model, frontier: cloud model)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Set skip_fresh=false (reclassify despite tier/hash)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print planned operation only",
+    )
+    parser.add_argument(
+        "--exclude",
+        nargs="*",
+        default=[],
+        help="Scope names to exclude",
+    )
+    args = parser.parse_args()
+    code = asyncio.run(_main_async(args))
+    raise SystemExit(code)
 
 
 if __name__ == "__main__":

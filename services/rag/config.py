@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from dataclasses import field as _field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -23,10 +22,10 @@ class WatchDirectory:
     """
 
     path: str
-    extensions: list[str] = _field(default_factory=list)
+    extensions: list[str] = field(default_factory=list)
     recursive: bool = True
     chunk_tokens: int | None = None
-    exclude: list[str] = _field(default_factory=list)
+    exclude: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -62,7 +61,7 @@ class KnowledgeExtractionConfig:
     circuit_max_cooldown_s: float = 300.0
 
 
-DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-40960-cpu"
+DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-4096"
 DEFAULT_INDEX_WORKERS = 8
 # Used when contextualize_model is omitted; set to "" to disable contextualization.
 DEFAULT_CONTEXTUALIZE_MODEL = "qwen3-5-9b-q8-0-262144"
@@ -89,7 +88,7 @@ class RagConfig:
     watch_directories: list[WatchDirectory]
     scopes: dict[str, ScopeDefinition]
     automatic_indexing_enabled: bool = True
-    knowledge_extraction: KnowledgeExtractionConfig = _field(
+    knowledge_extraction: KnowledgeExtractionConfig = field(
         default_factory=KnowledgeExtractionConfig
     )
     embedding_model: str = DEFAULT_EMBEDDING_MODEL
@@ -104,6 +103,8 @@ class RagConfig:
     # Seconds between watcher reconcile sweeps (recover files missed by inotify). 0 = disabled.
     # Higher values reduce idle CPU; default 300 (5 min).
     reconcile_interval_s: float = 300.0
+    # Default for scripts/rag/classify_vocabulary.py when calling vocab-classify-v1 pipeline.
+    vocabulary_mode: str = "local"
     # Per-file timeout for watcher workers (initial reindex + reconcile). 0 = no timeout.
     # Prevents a single hung extraction from blocking an entire watcher worker indefinitely.
     file_timeout_s: float = 600.0
@@ -149,6 +150,9 @@ def save_scope(
     Reads the existing YAML, merges the scope into the ``scopes`` mapping,
     and optionally appends watch_directories entries for each prefix. Writes
     back atomically via a temp file to avoid partial-write corruption.
+
+    Returns:
+        None
     """
     import tempfile
 
@@ -303,40 +307,21 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
     schema_version = raw.get("schema_version", 1)
     boost = raw.get("property_boost_factor", 0.5)
     max_attempts = raw.get("max_extraction_attempts", 3)
-    raw_model = raw.get("extraction_model", "")
-    extraction_model = str(raw_model) if isinstance(raw_model, str) else ""
-    raw_per_chunk = raw.get("per_chunk_timeout_s", 60.0)
-    per_chunk_timeout_s = max(
-        1.0,
-        float(raw_per_chunk) if isinstance(raw_per_chunk, int | float) else 60.0,
-    )
-    raw_overhead = raw.get("batch_timeout_overhead_s", 30.0)
+    extraction_model = str(raw.get("extraction_model", ""))
+    per_chunk_timeout_s = max(1.0, float(raw.get("per_chunk_timeout_s", 60.0)))
     batch_timeout_overhead_s = max(
-        0.0,
-        float(raw_overhead) if isinstance(raw_overhead, int | float) else 30.0,
+        0.0, float(raw.get("batch_timeout_overhead_s", 30.0))
     )
-    raw_circuit_threshold = raw.get("circuit_failure_threshold", 3)
-    circuit_failure_threshold = max(
-        1,
-        int(raw_circuit_threshold) if isinstance(raw_circuit_threshold, int) else 3,
-    )
-    raw_circuit_base = raw.get("circuit_base_cooldown_s", 30.0)
-    circuit_base_cooldown_s = max(
-        1.0,
-        float(raw_circuit_base) if isinstance(raw_circuit_base, int | float) else 30.0,
-    )
-    raw_circuit_max = raw.get("circuit_max_cooldown_s", 300.0)
+    circuit_failure_threshold = max(1, int(raw.get("circuit_failure_threshold", 3)))
+    circuit_base_cooldown_s = max(1.0, float(raw.get("circuit_base_cooldown_s", 30.0)))
     circuit_max_cooldown_s = max(
-        circuit_base_cooldown_s,
-        float(raw_circuit_max) if isinstance(raw_circuit_max, int | float) else 300.0,
+        circuit_base_cooldown_s, float(raw.get("circuit_max_cooldown_s", 300.0))
     )
     return KnowledgeExtractionConfig(
-        pipeline=str(pipeline) if isinstance(pipeline, str) else "rag-extraction",
-        schema_version=int(schema_version) if isinstance(schema_version, int) else 1,
-        property_boost_factor=float(boost) if isinstance(boost, int | float) else 0.5,
-        max_extraction_attempts=int(max_attempts)
-        if isinstance(max_attempts, int)
-        else 3,
+        pipeline=str(pipeline),
+        schema_version=int(schema_version),
+        property_boost_factor=float(boost),
+        max_extraction_attempts=int(max_attempts),
         extraction_model=extraction_model,
         per_chunk_timeout_s=per_chunk_timeout_s,
         batch_timeout_overhead_s=batch_timeout_overhead_s,
@@ -381,10 +366,10 @@ def load_config() -> RagConfig:
     knowledge_extraction = _parse_knowledge_extraction(
         parsed_root.get("knowledge_extraction", {})
     )
-    raw_model = parsed_root.get("embedding_model", DEFAULT_EMBEDDING_MODEL)
     embedding_model = (
-        raw_model.strip()
-        if isinstance(raw_model, str) and raw_model.strip()
+        parsed_root.get("embedding_model", DEFAULT_EMBEDDING_MODEL).strip()
+        if isinstance(parsed_root.get("embedding_model", DEFAULT_EMBEDDING_MODEL), str)
+        and parsed_root.get("embedding_model", DEFAULT_EMBEDDING_MODEL).strip()
         else DEFAULT_EMBEDDING_MODEL
     )
     raw_index_workers = parsed_root.get("index_workers", DEFAULT_INDEX_WORKERS)
@@ -426,6 +411,14 @@ def load_config() -> RagConfig:
         file_timeout_s = float(raw_file_timeout)
     else:
         file_timeout_s = 600.0
+    raw_vocab_mode = parsed_root.get("vocabulary_mode", "local")
+    if isinstance(raw_vocab_mode, str) and raw_vocab_mode.strip().lower() in (
+        "local",
+        "frontier",
+    ):
+        vocabulary_mode = raw_vocab_mode.strip().lower()
+    else:
+        vocabulary_mode = "local"
     return RagConfig(
         watch_directories=watch_directories,
         scopes=scopes,
@@ -439,4 +432,5 @@ def load_config() -> RagConfig:
         contextualize_model=contextualize_model,
         reconcile_interval_s=reconcile_interval_s,
         file_timeout_s=file_timeout_s,
+        vocabulary_mode=vocabulary_mode,
     )

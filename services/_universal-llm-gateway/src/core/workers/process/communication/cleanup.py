@@ -188,52 +188,23 @@ def _reset_model_state_after_cleanup(
     model_id: str,
     cleanup_succeeded: bool,
 ) -> None:
-    """
-    Reset model state to NOT_LOADED after cleanup to allow retry.
+    """Reset model state to NOT_LOADED after cleanup to allow retry.
 
-    This ensures ERROR state doesn't permanently block retries.
-
-    Args:
-        model_id: Model identifier
-        cleanup_succeeded: Whether cleanup succeeded
+    Delegates SM synchronization to ResourceTracker.set_model_not_loaded(),
+    which handles ERROR→UNLOADED transitions and stale data cleanup.
     """
     try:
-        from ....resources import ModelStatus, resource_tracker
+        from ....resources import resource_tracker
 
-        current_info = resource_tracker.get_model_info(model_id)
-        if current_info and current_info.status == ModelStatus.ERROR:
-            reason = (
-                "Process cleanup - allowing retry"
-                if cleanup_succeeded
-                else "Failed cleanup - still allowing retry"
-            )
-
-            logger.info(
-                f"🔄 Resetting {model_id} from ERROR to NOT_LOADED to allow retry "
-                + f"(cleanup {'succeeded' if cleanup_succeeded else 'failed'})"
-            )
-
-            state_machine = resource_tracker.get_state_machine(model_id)
-            if state_machine:
-                # Clear error state (ERROR → UNLOADED transition)
-                clear_success = state_machine.clear_error(reason)
-                if clear_success:
-                    # Update resource tracker to match
-                    resource_tracker.set_model_status(model_id, ModelStatus.NOT_LOADED)
-                    logger.info(f"✅ Successfully reset {model_id} state after cleanup")
-                else:
-                    logger.warning(
-                        f"⚠️ Failed to clear error state for {model_id} via state machine"
-                    )
-            else:
-                # Fallback: directly reset without state machine
-                resource_tracker.set_model_status(model_id, ModelStatus.NOT_LOADED)
-                logger.info(f"✅ Directly reset {model_id} state after cleanup")
-
-    except Exception as state_reset_error:
+        reason = "cleanup_completed" if cleanup_succeeded else "cleanup_failed_retry"
+        resource_tracker.set_model_not_loaded(model_id, reason)
+        logger.info(
+            f"✅ Reset {model_id} state after cleanup "
+            f"(cleanup {'succeeded' if cleanup_succeeded else 'failed'})"
+        )
+    except Exception as e:
         logger.warning(
-            f"⚠️ Could not reset model state for {model_id} after cleanup: "
-            + f"{state_reset_error}"
+            f"⚠️ Could not reset model state for {model_id} after cleanup: {e}"
         )
 
 

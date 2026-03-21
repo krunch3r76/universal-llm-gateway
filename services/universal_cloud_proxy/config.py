@@ -41,6 +41,7 @@ class ProviderConfig:
     mcp_auth_token: str | None = None
     mcp_auth_token_env: str | None = None
     mcp_v2: bool = False
+    default_max_tokens: int | None = None
 
 
 DEFAULT_STARGATE_URL = "http://localhost:9999"
@@ -120,12 +121,9 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
         raise ValueError("Provider entry missing 'provider' string")
     provider = _normalized_provider(raw_provider)
 
-    api_key = ""
-    raw_key = entry.get("api_key")
-    if raw_key is not None:
-        api_key = str(raw_key).strip()
+    api_key = str(entry.get("api_key", "")).strip()
     if not api_key:
-        api_key_env = entry.get("api_key_env", "")
+        api_key_env = entry.get("api_key_env")
         if not api_key_env or not isinstance(api_key_env, str):
             raise ValueError(
                 f"providers[{provider}] must set 'api_key' (literal) or 'api_key_env' (env var name)"
@@ -172,10 +170,8 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
         if isinstance(raw_mcp_url, str) and raw_mcp_url.strip():
             mcp_server_url = raw_mcp_url.strip()
         else:
-            logger.error(
-                "providers[%s].mcp_server_url must be a non-empty string, got: %r",
-                provider,
-                raw_mcp_url,
+            raise ValueError(
+                f"providers[{provider}].mcp_server_url must be a non-empty string, got: {raw_mcp_url!r}"
             )
 
     mcp_auth_token_env: str | None = None
@@ -216,6 +212,18 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
 
     mcp_v2 = bool(entry.get("mcp_v2", False))
 
+    default_max_tokens: int | None = None
+    raw_dmt = entry.get("default_max_tokens")
+    if raw_dmt is not None:
+        try:
+            default_max_tokens = int(raw_dmt)
+        except (TypeError, ValueError):
+            logger.error(
+                "providers[%s].default_max_tokens must be an integer, got: %r",
+                provider,
+                raw_dmt,
+            )
+
     return ProviderConfig(
         provider=provider,
         api_key=api_key,
@@ -228,6 +236,7 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
         mcp_auth_token=mcp_auth_token,
         mcp_auth_token_env=mcp_auth_token_env,
         mcp_v2=mcp_v2,
+        default_max_tokens=default_max_tokens,
     )
 
 
@@ -260,8 +269,8 @@ def load_config(config_path: Path | None = None) -> CloudProxyConfig:
         if isinstance(socket_path_val, str) and socket_path_val.strip():
             socket_path = socket_path_val.strip()
         else:
-            logger.error(
-                "Invalid socket_path in cloud proxy config: %r", socket_path_val
+            raise ValueError(
+                f"Invalid socket_path in cloud proxy config: {socket_path_val!r}"
             )
 
     host_val = raw.get("host")

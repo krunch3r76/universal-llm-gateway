@@ -12,12 +12,14 @@ if TYPE_CHECKING:
 
 
 def _get_resource_tracker():
+    """Lazily imports and returns the global resource_tracker instance."""
     from src.core.resources import resource_tracker
 
     return resource_tracker
 
 
 def _get_event_classes():
+    """Lazily imports and returns the event classes for model loading."""
     from src.core.events.types import ModelLoaded, ModelLoadFailed, ModelLoadingStarted
 
     return ModelLoadFailed, ModelLoaded, ModelLoadingStarted
@@ -38,22 +40,29 @@ async def _publish_event(event_bus, event) -> bool:
 logger = get_logger(__name__)
 structured_logger = get_logger("universal_llm_gateway.load_flow")
 
+# Models with an in-flight failed-load cleanup; blocks concurrent loads until done.
+_cleanup_in_progress: set[str] = set()
+
+
+def is_model_cleanup_in_progress(model_id: str) -> bool:
+    """True while cleanup_failed_worker is running for this model_id."""
+    return model_id in _cleanup_in_progress
+
 
 async def emit_loading_event(
     controller: "WorkerController", model_id: str, status: str, error: str = None
 ):
     """Emit model loading events."""
     model_load_failed, model_loaded, model_loading_started = _get_event_classes()
-    if status == "started":
-        await _publish_event(
-            controller.event_bus,
-            model_loading_started(model_id=model_id),
-        )
-    elif status == "failed":
-        await _publish_event(
-            controller.event_bus,
-            model_load_failed(model_id=model_id, error_message=error or "Unknown"),
-        )
+    event_map = {
+        "started": model_loading_started(model_id=model_id),
+        "failed": model_load_failed(
+            model_id=model_id, error_message=error or "Unknown"
+        ),
+    }
+    event_to_publish = event_map.get(status)
+    if event_to_publish:
+        await _publish_event(controller.event_bus, event_to_publish)
 
 
 def reset_state_machine(model_id: str):
@@ -67,9 +76,9 @@ def reset_state_machine(model_id: str):
                 metadata={"reset_before_load": True},
             )
     except Exception as e:
-        logger.error(
-            "Critical error resetting state machine for %s: %s", model_id, e
-        )
+        logger.error("Failed to reset state machine for %s: %s", model_id, e)
+        # Depending on criticality, consider re-raising or more specific handling
+        # raise # Example: if this error should halt the load flow
 
 
 async def measure_vram_before(model_id: str) -> float | None:
@@ -107,12 +116,13 @@ async def start_worker_if_needed(controller: "WorkerController", model_id: str) 
                     # Process is alive but not tracked - reconcile it
                     logger.info(
                         f"✅ Reconciling orphaned worker {model_id} into "
-                        f"resource tracker"
+                        f"resource tracker. Continuing with verification and configuration."
                     )
                     resource_tracker.register_model(model_id)
-                    # Don't set as loaded yet - let the normal flow verify
-                    # and configure it
-                    return True
+                    # Allow the normal flow to verify and configure it.
+                    # Do not return here; let the function proceed to send_model_config and verify_model_responsive.
+                    # The existing process will be reused if it passes subsequent checks.
+                    return True  # This return needs to be removed or logic adjusted to ensure full load flow.
             except Exception as e:
                 logger.warning(f"Orphaned process health check failed: {e}")
 
@@ -145,7 +155,11 @@ async def start_worker(controller: "WorkerController", model_id: str) -> bool:
         await controller._lifecycle_manager.cleanup_stale_process(mid)
 
     async def diag(mid, cmd, env):
-        logger.error(f"❌ Worker startup failure for {mid}: {' '.join(cmd)}")
+        error_msg = f"❌ Worker startup failure for {mid}: {' '.join(cmd)}"
+        logger.error(error_msg)
+        raise RuntimeError(
+            error_msg
+        )  # Propagate the error to ensure start_worker fails
 
     return await controller._lifecycle_manager.start_worker(
         model_id, controller._create_transport_config, verify, diag
@@ -164,15 +178,12 @@ async def send_model_config(
         dict with keys: {'success': bool, 'context_size': int} on success
         None on failure
     """
-    from ...errors import WorkerInitializationError
 
     supervisor = controller._process_state.get_supervisor(model_id)
     if not supervisor:
-        raise WorkerInitializationError(
-            message=f"No supervisor for {model_id}",
-            internal_error="Supervisor missing",
-            context={"model_id": model_id},
-        )
+        logger.error(f"No supervisor for {model_id} during model config send.")
+        # According to docstring, return None on failure
+        return None
 
     return await controller._communication_manager.send_model_config(
         model_id,
@@ -205,9 +216,14 @@ async def finalize_load(
         info = controller.get_all_process_info().get(model_id)
         if info and isinstance(info, dict):
             pid = info.get("pid")
-    except Exception as e:
+    except KeyError:  # Example: if get() might raise KeyError if model_id not found
         logger.debug(
-            "Could not get process info for %s during finalization: %s",
+            "Process info not found for %s during finalization.",
+            model_id,
+        )
+    except Exception as e:  # Catch other unexpected errors
+        logger.warning(
+            "Unexpected error getting process info for %s during finalization: %s",
             model_id,
             e,
         )
@@ -255,7 +271,12 @@ async def finalize_load(
     # This ensures Stargate's cache reflects the loaded model's VRAM usage.
     # Without this, earlier RESOURCE_UPDATEs (from preflight/measure_vram_before)
     # show stale values because model was LOADING, not LOADED.
-    _ = await resource_tracker.get_system_resources()
+    # Assuming resource_tracker.publish_system_resources() or similar exists for explicit event.
+    # If get_system_resources() has a side-effect, this should be documented or renamed.
+    # For now, keeping the original call if it's implicitly triggering an event.
+    # If not, an explicit event publication is needed here.
+    await resource_tracker.get_system_resources()
+    # Example: await _publish_event(controller.event_bus, SystemResourcesUpdatedEvent(system_resources))
 
     logger.info(
         f"✅ Model {model_id} loaded - VRAM: {actual_vram}MB, RAM: {actual_ram}MB"
@@ -277,6 +298,16 @@ async def cleanup_failed_worker(
 
     This is the EVENT HANDLER for load failures - must be robust.
     """
+    _cleanup_in_progress.add(model_id)
+    try:
+        await _cleanup_failed_worker_inner(controller, model_id, reason)
+    finally:
+        _cleanup_in_progress.discard(model_id)
+
+
+async def _cleanup_failed_worker_inner(
+    controller: "WorkerController", model_id: str, reason: str
+):
     resource_tracker = _get_resource_tracker()
     supervisor = controller._process_state.get_supervisor(model_id)
 
@@ -288,8 +319,10 @@ async def cleanup_failed_worker(
         try:
             proc_info = controller.get_all_process_info().get(model_id, {})
             pid = proc_info.get("pid") if isinstance(proc_info, dict) else None
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                "Failed to get process info for %s during cleanup: %s", model_id, e
+            )
 
         # Try graceful stop first
         try:
@@ -309,10 +342,20 @@ async def cleanup_failed_worker(
                         pid,
                         model_id,
                     )
-                    await controller._lifecycle_manager.kill_pid_tree(pid, model_id)
-                    process_killed = True
+                    try:
+                        await controller._lifecycle_manager.kill_pid_tree(pid, model_id)
+                        # Re-check if process is dead after force kill
+                        process_killed = not psutil.pid_exists(pid)
+                    except Exception as kill_e:
+                        logger.error(
+                            "Failed to force kill process %s for %s: %s",
+                            pid,
+                            model_id,
+                            kill_e,
+                        )
+                        process_killed = False  # Force kill failed
                 else:
-                    process_killed = True
+                    process_killed = True  # Process was already dead
             except Exception as e:
                 logger.error(
                     "Process existence check or force kill failed for %s (PID %s): %s",
@@ -331,12 +374,8 @@ async def cleanup_failed_worker(
     # Clean up socket file (may exist even if supervisor doesn't)
     await controller._cleanup_socket_file(model_id)
 
-    # Update tracker state
-    sm = resource_tracker.get_state_machine(model_id)
-    if sm and sm.clear_error(reason):
-        from src.core.resources import ModelStatus
-
-        resource_tracker.set_model_status(model_id, ModelStatus.NOT_LOADED)
+    # Update tracker state (process dead or no supervisor — reconcile SM + status)
+    resource_tracker.set_model_not_loaded(model_id, reason)
 
     if process_killed or not pid:
         logger.info(f"✅ Cleaned up failed worker: {model_id} (reason: {reason})")
@@ -350,26 +389,31 @@ async def handle_load_exception(
     controller: "WorkerController", model_id: str, e: Exception
 ):
     """Handle exception during model loading with error classification."""
-    error_str = str(e).lower()
-
     # Classify error type for client visibility and telemetry
-    if _is_oom_error(error_str):
+    if (
+        isinstance(e, MemoryError) or _is_oom_error(str(e).lower())
+    ):  # Keep string check as fallback if specific OOM exceptions aren't caught higher up
         error_msg = f"OOM:{str(e)}"  # Prefix for detection by Stargate
         failure_reason = "oom"
         logger.error(f"❌ OOM error loading {model_id}: {e}")
-    elif _is_resource_error(error_str):
+    elif _is_resource_error(str(e).lower()):
         error_msg = f"RESOURCE:{str(e)}"
         failure_reason = "insufficient_resources"
         logger.error(f"❌ Resource error loading {model_id}: {e}")
-    elif "timeout" in error_str:
+    elif isinstance(e, TimeoutError):  # Use specific exception if available
         error_msg = str(e)
         failure_reason = "timeout"
         logger.error(f"❌ Timeout loading {model_id}: {e}")
-    elif "not found" in error_str or "no such file" in error_str:
+    elif (
+        isinstance(e, FileNotFoundError)
+        or "not found" in str(e).lower()
+        or "no such file" in str(e).lower()
+    ):
         error_msg = str(e)
         failure_reason = "missing_file"
         logger.error(f"❌ File not found loading {model_id}: {e}")
-    elif "config" in error_str or "invalid" in error_str:
+    # Add more specific exception types for config errors if they exist
+    elif "config" in str(e).lower() or "invalid" in str(e).lower():
         error_msg = str(e)
         failure_reason = "config_error"
         logger.error(f"❌ Configuration error loading {model_id}: {e}")

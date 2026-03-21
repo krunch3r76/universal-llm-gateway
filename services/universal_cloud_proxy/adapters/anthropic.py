@@ -3,13 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import httpx
-from universal_event_bus import EventBus
 
-from ..config import ProviderConfig
 from ..events import (
     McpAdapterMcpToolUseSeen,
     McpAdapterToolSearchSeen,
@@ -25,10 +22,14 @@ from .anthropic_format import (
 from .anthropic_response import convert_response_content
 from .anthropic_stream import StreamTranslator
 
+if TYPE_CHECKING:
+    from ..config import ProviderConfig
+    from universal_event_bus import EventBus
+    from collections.abc import AsyncIterator
+
 logger = logging.getLogger(__name__)
 
 _ANTHROPIC_VERSION = "2023-06-01"
-_ANTHROPIC_DEFAULT_MAX_TOKENS = 4096
 _ANTHROPIC_BETA_MCP_V1 = "mcp-client-2025-04-04"
 _ANTHROPIC_BETA_MCP_V2 = "mcp-client-2025-11-20"
 
@@ -190,24 +191,26 @@ class AnthropicAdapter:
                         f" The response must conform to this JSON schema: "
                         f"{json.dumps(schema_obj)}"
                     )
-            system_text = f"{system_text}\n\n{json_instruction}".strip() if system_text else json_instruction
+            system_text = (
+                f"{system_text}\n\n{json_instruction}".strip()
+                if system_text
+                else json_instruction
+            )
 
         max_tokens = request_body.get("max_tokens")
         if not isinstance(max_tokens, int):
-            max_tokens = request_body.get("max_completion_tokens")
-        if not isinstance(max_tokens, int):
-            max_tokens = _ANTHROPIC_DEFAULT_MAX_TOKENS
-            logger.warning(
-                "Anthropic request missing max_tokens/max_completion_tokens; "
-                "using default %d",
-                _ANTHROPIC_DEFAULT_MAX_TOKENS,
-            )
+            max_tokens_from_completion = request_body.get("max_completion_tokens")
+            if isinstance(max_tokens_from_completion, int):
+                max_tokens = max_tokens_from_completion
+            elif self._config.default_max_tokens is not None:
+                max_tokens = self._config.default_max_tokens
 
         payload: dict[str, Any] = {
             "model": anthropic_model,
             "messages": anthropic_messages,
-            "max_tokens": max_tokens,
         }
+        if isinstance(max_tokens, int):
+            payload["max_tokens"] = max_tokens
         if system_text:
             payload["system"] = system_text
 
@@ -266,10 +269,7 @@ class AnthropicAdapter:
             ]
             if self._config.mcp_v2:
                 mcp_tools = self._build_mcp_v2_tools(_MCP_SERVER_NAME)
-                if "tools" in payload:
-                    payload["tools"].extend(mcp_tools)
-                else:
-                    payload["tools"] = mcp_tools
+                payload.setdefault("tools", []).extend(mcp_tools)
 
         return payload
 
@@ -375,16 +375,19 @@ class AnthropicAdapter:
                 )
                 for chunk in chunks:
                     if chunk == b"data: [DONE]\n\n":
-                        if done_seen:
-                            continue
-                        done_seen = True
+                        if not done_seen:
+                            yield chunk
+                            done_seen = True
+                        continue  # Skip subsequent [DONE] from process_line
                     yield chunk
-                # Do not break; allow all chunks from process_line. finalize() skips duplicate [DONE].
 
             for chunk in translator.finalize():
-                if done_seen and chunk == b"data: [DONE]\n\n":
-                    continue
-                yield chunk
+                if chunk == b"data: [DONE]\n\n":
+                    if not done_seen:
+                        yield chunk
+                        done_seen = True
+                else:
+                    yield chunk
             await self._emit_mcp_response_events(translator.mcp_meta)
 
     async def _emit_mcp_response_events(self, mcp_meta: dict[str, Any]) -> None:

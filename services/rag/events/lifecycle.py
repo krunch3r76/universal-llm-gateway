@@ -47,30 +47,6 @@ def rag_watch_initial_started(*, path: str, total_files: int) -> Event:
 
 
 @event_factory
-def rag_watch_initial_progress(
-    *,
-    path: str,
-    total_files: int,
-    processed: int,
-    reindexed: int,
-    unchanged: int,
-    errors: int,
-) -> Event:
-    """Emitted on each terminal file result during startup sweep with monotonic counters."""
-    return Event(
-        signal="rag.watch.initial.progress",
-        payload={
-            "path": path,
-            "total_files": total_files,
-            "processed": processed,
-            "reindexed": reindexed,
-            "unchanged": unchanged,
-            "errors": errors,
-        },
-    )
-
-
-@event_factory
 def rag_watch_initial_complete(
     *,
     path: str,
@@ -104,7 +80,12 @@ def rag_watch_reindex_complete(
     indexed: int,
     unchanged: bool,
 ) -> Event:
-    """Emit per-file reindex outcome from watcher or startup sweep."""
+    """Emit per-file reindex outcome from watcher or startup sweep.
+
+    `deleted` indicates the number of chunks deleted for the file.
+    `indexed` indicates the number of chunks newly indexed.
+    `unchanged` is true if the file content was identical to the previously indexed version.
+    """
     return Event(
         signal="rag.watch.reindex.complete",
         payload={
@@ -122,7 +103,10 @@ def rag_watch_file_deleted(
     file: str,
     deleted: int,
 ) -> Event:
-    """Emitted when watcher deletion removes all chunks for a source file."""
+    """Emitted when watcher deletion removes all chunks for a source file.
+
+    `deleted` indicates the number of chunks deleted for the file.
+    """
     return Event(
         signal="rag.watch.file.deleted",
         payload={"file": file, "deleted": deleted},
@@ -208,7 +192,7 @@ def rag_orphan_purged(
     ∀ source ∈ ChromaDB ∩ watched_prefixes: ¬Path(source).exists() ⟹ purged before watcher starts.
     Emitted even when files=0 so startup sequence is always observable.
     """
-    payload: dict[str, object] = {"files": files, "chunks": chunks}
+    payload = {"files": files, "chunks": chunks}
     if sources:
         payload["sources"] = sources
     return Event(signal="rag.orphan.purged", payload=payload)
@@ -226,8 +210,8 @@ def rag_exclusion_purged(
     ∀ source ∈ ChromaDB ∩ watched_prefixes: fnmatch(name, exclude_pattern) ⟹ purged.
     Emitted even when files=0 so startup sequence is always observable.
     """
-    payload: dict[str, object] = {"files": files, "chunks": chunks}
-    if sources:
+    payload = {"files": files, "chunks": chunks}
+    if sources is not None:
         payload["sources"] = sources
     return Event(signal="rag.exclusion.purged", payload=payload)
 
@@ -243,3 +227,39 @@ def rag_post_index_stale(*, stale_steps: list[str]) -> Event:
         signal="rag.post.index.stale",
         payload={"stale_steps": stale_steps},
     )
+
+
+@event_factory
+def rag_hints_gaps_repaired(*, scopes: list[str], trigger: str) -> Event:
+    """Corpus hints were refreshed for scopes whose indexed file-set hash drifted."""
+    return Event(
+        signal="rag.hints.gaps.repaired",
+        payload={"scopes": scopes, "trigger": trigger},
+    )
+
+
+@event_factory
+def rag_vocabulary_gaps_detected(*, scopes: list[str], reason: str) -> Event:
+    """Vocabulary could not be auto-filled (e.g. no local Stargate model loaded)."""
+    return Event(
+        signal="rag.vocabulary.gaps.detected",
+        payload={"scopes": scopes, "reason": reason},
+    )
+
+
+@event_factory
+def rag_vocabulary_gaps_repaired(*, scopes: list[str], model: str) -> Event:
+    """Scope vocabulary rows were written after LLM classification."""
+    return Event(
+        signal="rag.vocabulary.gaps.repaired",
+        payload={"scopes": scopes, "model": model},
+    )
+
+
+@event_factory
+def rag_embeddings_unavailable(*, error: str) -> Event:
+    """Emitted when the watcher is not started because the embedding endpoint is unhealthy.
+
+    RAG requires embeddings for indexing; without them the watcher is not started.
+    """
+    return Event(signal="rag.embeddings.unavailable", payload={"error": error})

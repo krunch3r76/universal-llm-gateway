@@ -17,7 +17,9 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def _get_local_model_ids(gateway_manager: SingleGatewayManager | None) -> set[str]:
+def get_local_model_ids(
+    gateway_manager: SingleGatewayManager | None,
+) -> set[str]:
     """
     Get model IDs from local gateway.
 
@@ -38,6 +40,81 @@ def _get_local_model_ids(gateway_manager: SingleGatewayManager | None) -> set[st
     return set()
 
 
+def _local_gateway_catalog_id_strings(client: object) -> frozenset[str]:
+    """All synthetic model IDs known to the gateway (not activation-filtered).
+
+    Unions the INIT/CATALOG_UPDATE ``models`` cache with ``catalog.model_resources``
+    keys. The latter is the full context grid; ``activated_contexts`` only affects
+    display/routing filters, not catalog membership for pipeline availability.
+    """
+    combined: set[str] = set(client.get_models())
+    raw_catalog = client.get_ws_catalog()
+    model_resources = raw_catalog.get("model_resources")
+    if isinstance(model_resources, dict):
+        combined.update(str(k) for k in model_resources)
+    return frozenset(combined)
+
+
+def _federated_gateway_catalog_model_ids(gateway: object) -> frozenset:
+    """Union telemetry ``available_models`` and ``model_resources`` keys."""
+    from model_id import ModelId
+
+    mids: set[ModelId] = set(getattr(gateway, "available_models", frozenset()))
+    model_resources = getattr(gateway, "model_resources", None) or {}
+    if isinstance(model_resources, dict):
+        for k in model_resources:
+            if isinstance(k, ModelId):
+                mids.add(k)
+            else:
+                try:
+                    mids.add(ModelId.parse(str(k)))
+                except (TypeError, ValueError):
+                    continue
+    return frozenset(mids)
+
+
+def is_model_in_any_catalog(
+    model_id_str: str,
+    gateway_manager: SingleGatewayManager | None,
+    federated_manager: FederatedGatewayManager | None,
+) -> bool:
+    """True if *model_id_str* matches any gateway catalog entry (ModelId-aware).
+
+    Uses ``ModelId.__eq__`` like request-time routing. Candidate IDs include the
+    full ``model_resources`` grid (all contexts), not only activation-filtered lists.
+    """
+    from model_id import ModelId
+
+    try:
+        parsed = ModelId.parse(model_id_str)
+    except Exception as e:
+        logger.debug(
+            "is_model_in_any_catalog: failed to parse %r: %s",
+            model_id_str,
+            e,
+        )
+        return False
+
+    if gateway_manager:
+        local_gateway = gateway_manager.get_gateway()
+        if local_gateway and local_gateway.client.is_connected():
+            client = local_gateway.client
+            for mid_str in _local_gateway_catalog_id_strings(client):
+                try:
+                    if ModelId.parse(mid_str) == parsed:
+                        return True
+                except Exception:
+                    continue
+
+    if federated_manager:
+        for federated_gateway in federated_manager.get_healthy_gateways():
+            for catalog_id in _federated_gateway_catalog_model_ids(federated_gateway):
+                if catalog_id == parsed:
+                    return True
+
+    return False
+
+
 def collect_stargate_model_sets(
     gateway_manager: SingleGatewayManager | None,
     federated_manager: FederatedGatewayManager | None,
@@ -45,7 +122,7 @@ def collect_stargate_model_sets(
     """
     Collect model sets from all Stargates (local + remote).
 
-    Returns string-based sets for interface stability with PipelineRegistry.
+    Returns string-based sets (e.g. for ``get_all_available_models`` / ``source=all``).
 
     Args:
         gateway_manager: Local gateway manager (None for router-only Master)
@@ -60,7 +137,7 @@ def collect_stargate_model_sets(
     model_sets: list[set[str]] = []
 
     # Local Stargate's models (router-only Master returns empty set)
-    local_models = _get_local_model_ids(gateway_manager)
+    local_models = get_local_model_ids(gateway_manager)
     if local_models:
         model_sets.append(local_models)
 
@@ -73,7 +150,7 @@ def collect_stargate_model_sets(
             }
             model_sets.append(remote_set)
 
-    total_unique = len(set().union(*model_sets)) if model_sets else 0
+    total_unique = len(set().union(*model_sets))
     logger.debug(
         "collect_stargate_model_sets: %d sources, %d unique models",
         len(model_sets),
@@ -131,16 +208,16 @@ def _get_local_activated_models(
 
     if not activated_contexts:
         # No activation rules: all models are activated
+        logger.debug(
+            "📋 Local activation: no rules, all %d models activated", len(local_models)
+        )
         return local_models
 
     # Apply activation filtering
     from gateways.filtering import ActivationInfo, filter_by_activation
 
     activated_contexts_info: dict[str, ActivationInfo] = {
-        model_id: ActivationInfo(
-            cpu=contexts_data.get("cpu"),
-            gpu=contexts_data.get("gpu"),
-        )
+        model_id: ActivationInfo(**contexts_data)
         for model_id, contexts_data in activated_contexts.items()
     }
 
@@ -152,12 +229,26 @@ def _get_local_activated_models(
         }
     }
 
-    return filter_by_activation(
+    activated_models = filter_by_activation(
         local_models,
         activated_contexts_info,
         {},  # model_profile_resources not available from WS cache
         gateway_resources,
     )
+
+    if not activated_models and local_models:
+        logger.warning(
+            "⚠️ Local activation filter: %d available models but filtered to empty set",
+            len(local_models),
+        )
+    elif activated_models:
+        logger.debug(
+            "📋 Local activation: %d available models, %d activated after filtering",
+            len(local_models),
+            len(activated_models),
+        )
+
+    return activated_models
 
 
 def _get_federated_activated_models(
@@ -309,15 +400,14 @@ def get_model_context_metadata(
 
                 if entry["context_length"] > existing.get("context_length", 0):
                     metadata[mid_str] = entry
-                    continue
-
-                if (
-                    entry.get("effective_context_per_slot", 0)
-                    > existing.get("effective_context_per_slot", 0)
-                ):
-                    metadata[mid_str]["effective_context_per_slot"] = entry[
-                        "effective_context_per_slot"
-                    ]
+                elif entry["context_length"] == existing.get("context_length", 0):
+                    # For equal context length, keep the better per-slot context.
+                    if entry.get("effective_context_per_slot", 0) > existing.get(
+                        "effective_context_per_slot", 0
+                    ):
+                        metadata[mid_str]["effective_context_per_slot"] = entry[
+                            "effective_context_per_slot"
+                        ]
 
     return metadata
 
@@ -343,7 +433,7 @@ def get_model_source_map(
     source_map: dict[str, list[str]] = {}
 
     # Local models (router-only Master returns empty set)
-    for model_id in _get_local_model_ids(gateway_manager):
+    for model_id in get_local_model_ids(gateway_manager):
         source_map.setdefault(model_id, []).append(local_stargate_id)
 
     # Federated models
@@ -355,3 +445,49 @@ def get_model_source_map(
                 )
 
     return source_map
+
+
+def get_model_status_map(
+    local_stargate_id: str,
+    gateway_manager: SingleGatewayManager | None,
+    federated_manager: FederatedGatewayManager | None,
+) -> dict[str, dict[str, list[str]]]:
+    """Per-model load/busy/loading status across all gateways.
+
+    Returns:
+        Dict mapping model_id str → {
+            "loaded_on": [stargate_ids],
+            "busy_on": [stargate_ids],
+            "loading_on": [stargate_ids],
+        }
+    """
+    status: dict[str, dict[str, list[str]]] = {}
+
+    def _ensure(mid: str) -> dict[str, list[str]]:
+        return status.setdefault(
+            mid, {"loaded_on": [], "busy_on": [], "loading_on": []}
+        )
+
+    # Local gateway
+    if gateway_manager:
+        local_gw = gateway_manager.get_gateway()
+        if local_gw and local_gw.client.is_connected():
+            for mid in local_gw.client.get_loaded_models():
+                _ensure(mid)["loaded_on"].append(local_stargate_id)
+            for mid in local_gw.client._ws_client.get_busy_models():
+                _ensure(mid)["busy_on"].append(local_stargate_id)
+            for mid in local_gw.client._ws_client.get_loading_models():
+                _ensure(mid)["loading_on"].append(local_stargate_id)
+
+    # Federated gateways
+    if federated_manager:
+        for fed_gw in federated_manager.get_healthy_gateways():
+            node = fed_gw.remote_stargate_id
+            for mid in fed_gw.loaded_models:
+                _ensure(str(mid))["loaded_on"].append(node)
+            for mid in fed_gw.busy_models:
+                _ensure(str(mid))["busy_on"].append(node)
+            for mid in fed_gw.loading_models:
+                _ensure(str(mid))["loading_on"].append(node)
+
+    return status

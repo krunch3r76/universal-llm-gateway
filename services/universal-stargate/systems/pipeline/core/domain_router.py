@@ -157,6 +157,26 @@ class DomainRouter:
         )
         raise KeyError(msg)
 
+    def find_handler_class_by_step_type(self, step_type: str) -> type | None:
+        """Find a handler class by step_type without domain context.
+
+        Resolution: generic handlers first, then any domain handler matching
+        the step_type (first match wins — deterministic via sorted keys).
+        Returns None if no handler is registered for this step_type.
+        """
+        self._ensure_initialized()
+
+        if step_type in self._generic_handler_classes:
+            return self._generic_handler_classes[step_type]
+
+        for (_domain, _variant, st), handler_class in sorted(
+            self._domain_handler_classes.items()
+        ):
+            if st == step_type:
+                return handler_class
+
+        return None
+
     def is_external_domain(self, domain: str) -> bool:
         """Check if domain was registered by external plugin."""
         return domain in self._external_domains

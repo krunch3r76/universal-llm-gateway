@@ -11,13 +11,18 @@ Supported write formats: .md, .txt, .docx, .pdf, .yaml, .yml.
 from __future__ import annotations
 
 import base64
+import hashlib
+import io
 import logging
+import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp.types import ImageContent
 from mcp_events import record
 
+from ._file_helpers import read_file_result, read_files_batch
 from .file_editor import perform_edit
 
 if TYPE_CHECKING:
@@ -26,114 +31,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SANDBOX_ROOT = Path("/data/files")
+_SHARED_IMAGE_DIR = Path(
+    os.environ.get("MCP_SHARED_IMAGE_DIR", str(_SANDBOX_ROOT / ".shared-images"))
+)
+_SHARED_IMAGE_HOST_ROOT = Path(
+    os.environ.get("MCP_SHARED_IMAGE_HOST_ROOT", str(_SHARED_IMAGE_DIR))
+)
 _ALLOWED_WRITE_SUFFIXES = {".md", ".txt", ".docx", ".pdf", ".yaml", ".yml", ".py"}
-_ALLOWED_READ_SUFFIXES = {
-    ".md",
-    ".txt",
-    ".docx",
-    ".odt",
-    ".eml",
-    ".pdf",
-    ".doc",
-    ".html",
-    ".json",
-    ".yaml",
-    ".py",
-}
 _ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
 _EDITABLE_SUFFIXES = {".md", ".txt"}
-
-
-def _read_plain(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
-
-
-def _read_docx(path: Path) -> str:
-    from docx import Document  # type: ignore[import-untyped]
-
-    doc = Document(str(path))
-    return "\n".join(para.text for para in doc.paragraphs)
-
-
-def _read_odt(path: Path) -> str:
-    from odf import teletype  # type: ignore[import-untyped]
-    from odf.opendocument import load as odf_load  # type: ignore[import-untyped]
-    from odf.text import P  # type: ignore[import-untyped]
-
-    doc = odf_load(str(path))
-    return "\n".join(teletype.extractText(node) for node in doc.getElementsByType(P))
-
-
-def _read_pdf(path: Path) -> str:
-    import pymupdf4llm  # type: ignore[import-untyped]
-
-    return pymupdf4llm.to_markdown(str(path))
-
-
-def _read_eml(path: Path) -> str:
-    import email
-    import email.policy
-
-    with path.open("rb") as f:
-        msg = email.message_from_binary_file(f, policy=email.policy.default)
-
-    lines: list[str] = []
-
-    # Headers as frontmatter
-    lines.append("---")
-    for header in ("from", "to", "cc", "subject", "date", "message-id"):
-        val = msg.get(header, "")
-        if val:
-            lines.append(f"{header}: {val}")
-    lines.append("---")
-    lines.append("")
-
-    # Body — prefer text/plain, fall back to text/html via html2text
-    body = ""
-    if msg.is_multipart():
-        for part in msg.walk():
-            ct = part.get_content_type()
-            cd = str(part.get("Content-Disposition", ""))
-            if ct == "text/plain" and "attachment" not in cd:
-                body = part.get_content()
-                break
-        if not body:
-            for part in msg.walk():
-                ct = part.get_content_type()
-                cd = str(part.get("Content-Disposition", ""))
-                if ct == "text/html" and "attachment" not in cd:
-                    import html2text  # type: ignore[import-untyped]
-
-                    body = html2text.html2text(part.get_content())
-                    break
-    else:
-        body = msg.get_content()
-
-    lines.append(body.strip())
-
-    # Inline PDF attachments → extract as markdown sections
-    for part in msg.walk():
-        filename = part.get_filename()
-        if not filename:
-            continue
-        lines.append("")
-        lines.append("---")
-        lines.append(f"## Attachment: {filename}")
-        lines.append("")
-        ct = part.get_content_type()
-        if ct == "application/pdf":
-            import pymupdf  # type: ignore[import-untyped]
-            import pymupdf4llm  # type: ignore[import-untyped]
-
-            data = part.get_payload(decode=True)
-            doc = pymupdf.open(stream=data, filetype="pdf")
-            text = pymupdf4llm.to_markdown(doc)
-            doc.close()
-            lines.append(text.strip())
-        else:
-            lines.append(f"[{ct} — not extracted]")
-
-    return "\n".join(lines)
 
 
 def _safe_path(relative: str) -> Path:
@@ -145,7 +51,7 @@ def _safe_path(relative: str) -> Path:
     clean = relative.lstrip("/")
     candidate = (_SANDBOX_ROOT / clean).resolve()
     try:
-        candidate.relative_to(_SANDBOX_ROOT.resolve())
+        candidate.relative_to(_SANDBOX_ROOT)
     except ValueError:
         raise ValueError(
             f"Path {relative!r} resolves outside sandbox; traversal rejected"
@@ -159,7 +65,7 @@ def _write_plain(path: Path, content: str) -> None:
 
 
 def _write_docx(path: Path, content: str) -> None:
-    from docx import Document  # type: ignore[import-untyped]
+    from docx import Document
 
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()
@@ -169,7 +75,7 @@ def _write_docx(path: Path, content: str) -> None:
 
 
 def _write_pdf(path: Path, content: str) -> None:
-    from fpdf import FPDF  # type: ignore[import-untyped]
+    from fpdf import FPDF
 
     path.parent.mkdir(parents=True, exist_ok=True)
     pdf = FPDF()
@@ -179,6 +85,42 @@ def _write_pdf(path: Path, content: str) -> None:
         # multi_cell wraps long lines; empty string produces blank line
         pdf.multi_cell(0, 6, txt=line or " ")
     pdf.output(str(path))
+
+
+def _render_thumbnail_bytes(
+    src: Path, *, max_dimension: int, quality: int
+) -> tuple[bytes, str, str]:
+    from PIL import Image as PILImage
+
+    with PILImage.open(src) as opened:
+        original_size = f"{opened.width}x{opened.height}"
+        opened.thumbnail((max_dimension, max_dimension), PILImage.Resampling.LANCZOS)
+        if opened.mode in ("RGBA", "P"):
+            rendered = opened.convert("RGB")
+        else:
+            rendered = opened
+
+    thumb_size = f"{rendered.width}x{rendered.height}"
+    buffer = io.BytesIO()
+    rendered.save(buffer, format="JPEG", quality=quality, optimize=True)
+    return buffer.getvalue(), original_size, thumb_size
+
+
+def _shared_image_name(src: Path, *, max_dimension: int, quality: int) -> str:
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "-", src.stem).strip("-.") or "image"
+    rel_path = src.relative_to(_SANDBOX_ROOT).as_posix()
+    stat = src.stat()
+    fingerprint = hashlib.sha256(
+        f"{rel_path}:{stat.st_mtime_ns}:{stat.st_size}:{max_dimension}:{quality}".encode()
+    ).hexdigest()[:16]
+    return f"{safe_stem}-{fingerprint}.jpg"
+
+
+def _write_shared_image(filename: str, jpeg_bytes: bytes) -> tuple[Path, Path]:
+    _SHARED_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    shared_path = _SHARED_IMAGE_DIR / filename
+    shared_path.write_bytes(jpeg_bytes)
+    return shared_path, _SHARED_IMAGE_HOST_ROOT / filename
 
 
 def register_filesystem_tools(mcp: FastMCP) -> None:
@@ -249,45 +191,35 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
 
         Returns:
             {"content": "<file contents>", "path": "<resolved path>"}
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            ValueError: If the path is outside the sandbox or invalid.
         """
-        src = _safe_path(path)
-        if not src.exists():
-            raise FileNotFoundError(f"File not found: {path!r}")
-        if not src.is_file():
-            raise ValueError(f"Path is not a file: {path!r}")
-
-        suffix = src.suffix.lower()
-        if suffix not in _ALLOWED_READ_SUFFIXES:
-            raise ValueError(
-                f"Unsupported format {suffix!r} for reading. "
-                f"Allowed: {', '.join(sorted(_ALLOWED_READ_SUFFIXES))}"
-            )
-
-        read_handlers = {
-            ".docx": _read_docx,
-            ".odt": _read_odt,
-            ".eml": _read_eml,
-            ".pdf": _read_pdf,
-        }
-        read_handler = read_handlers.get(suffix, _read_plain)
-        content = read_handler(src)
-
-        record("mcp.tool.file.read", path=path, resolved=str(src), chars=len(content))
-        logger.debug("read_file: read %s (%d chars)", src, len(content))
-        return {"content": content, "path": str(src)}
+        result = read_file_result(path)
+        record(
+            "mcp.tool.file.read",
+            path=path,
+            resolved=result["path"],
+            chars=len(result["content"]),
+        )
+        logger.debug(
+            "read_file: read %s (%d chars)", result["path"], len(result["content"])
+        )
+        return result
 
     @mcp.tool()
     def view_image(
         path: str,
         max_dimension: int = 1024,
         quality: int = 60,
-        mode: Literal["url", "image"] = "url",
+        mode: Literal["copy", "image"] = "copy",
     ) -> ImageContent | dict[str, str | int]:
         """View a photo or image from the sandbox filesystem.
 
-        Resizes to a JPEG thumbnail. In ``url`` mode (default), returns a
-        URL pointing to the thumbnail for HTTP retrieval. In ``image`` mode,
-        returns an MCP ImageContent block with inline base64 data.
+        Resizes to a JPEG thumbnail. Prefer ``copy`` (default) when Claude or
+        another client can open local files without bloating the MCP payload.
+        Use ``image`` only when the response itself must carry inline pixels.
 
         Supported formats: .jpg, .jpeg, .png, .gif, .webp, .svg
 
@@ -295,15 +227,18 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             path: Relative file path, e.g. "dropbox/photo.jpg".
             max_dimension: Max width or height in pixels (default 1024).
             quality: JPEG compression quality 1-95 (default 60).
-            mode: "url" returns a thumbnail URL; "image" returns inline
-                  ImageContent. Default "url".
+            mode: "copy" writes a JPEG thumbnail to the shared host-visible
+                  image directory and returns its local path; "image" returns
+                  inline ImageContent. Default "copy".
 
         Returns:
-            URL mode: {"url", "dimensions", "original", "bytes"}.
+            Copy mode: {"path", "dimensions", "original", "bytes"}.
             Image mode: MCP ImageContent block (JPEG).
-        """
-        from PIL import Image as PILImage
 
+        Raises:
+            FileNotFoundError: If the image file does not exist.
+            ValueError: If the path is not a file, is outside the sandbox, or has an unsupported format.
+        """
         src = _safe_path(path)
         if not src.exists():
             raise FileNotFoundError(f"Image not found: {path!r}")
@@ -317,21 +252,11 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
                 f"Allowed: {', '.join(sorted(_ALLOWED_IMAGE_SUFFIXES))}"
             )
 
-        img = PILImage.open(src)
-        original_size = f"{img.width}x{img.height}"
-
-        img.thumbnail((max_dimension, max_dimension), PILImage.Resampling.LANCZOS)
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-
-        thumb_dir = _SANDBOX_ROOT / ".thumbnails"
-        thumb_dir.mkdir(parents=True, exist_ok=True)
-        thumb_name = src.stem + ".jpg"
-        thumb_path = thumb_dir / thumb_name
-        img.save(str(thumb_path), format="JPEG", quality=quality, optimize=True)
-
-        thumb_size = f"{img.width}x{img.height}"
-        jpeg_bytes = thumb_path.read_bytes()
+        jpeg_bytes, original_size, thumb_size = _render_thumbnail_bytes(
+            src,
+            max_dimension=max_dimension,
+            quality=quality,
+        )
 
         record(
             "mcp.tool.image.viewed",
@@ -358,8 +283,15 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
                 mimeType="image/jpeg",
             )
 
+        shared_name = _shared_image_name(
+            src,
+            max_dimension=max_dimension,
+            quality=quality,
+        )
+        shared_path, shared_host_path = _write_shared_image(shared_name, jpeg_bytes)
+        logger.info("view_image copy: %s", shared_path)
         return {
-            "url": f"https://mcp.k-1.me/thumbnails/{thumb_name}",
+            "path": str(shared_host_path),
             "dimensions": thumb_size,
             "original": original_size,
             "bytes": len(jpeg_bytes),
@@ -462,6 +394,10 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
 
         Returns:
             {"status": "moved", "from": "<old path>", "to": "<new path>"}
+
+        Raises:
+            FileNotFoundError: If the source file does not exist.
+            ValueError: If the source path is not a file or paths are outside the sandbox.
         """
         import shutil
 
@@ -492,6 +428,10 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
 
         Returns:
             {"status": "copied", "from": "<source path>", "to": "<new path>"}
+
+        Raises:
+            FileNotFoundError: If the source file does not exist.
+            ValueError: If the source path is not a file or paths are outside the sandbox.
         """
         import shutil
 
@@ -520,6 +460,10 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
 
         Returns:
             {"status": "removed", "path": "<resolved path>"}
+
+        Raises:
+            FileNotFoundError: If the directory does not exist.
+            ValueError: If the path is not a directory, is outside the sandbox, or attempts to remove the sandbox root.
         """
         import shutil
 
@@ -547,6 +491,10 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
 
         Returns:
             {"status": "deleted", "path": "<resolved path>"}
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+            ValueError: If the path is not a file or is outside the sandbox.
         """
         target = _safe_path(path)
         if not target.exists():
@@ -577,10 +525,11 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         if not target.is_dir():
             raise ValueError(f"Path is not a directory: {directory!r}")
 
+        generated_dir = _SHARED_IMAGE_DIR.resolve()
         files = sorted(
             str(p.relative_to(_SANDBOX_ROOT))
             for p in target.rglob("*")
-            if p.is_file() and not p.is_relative_to(_SANDBOX_ROOT / ".thumbnails")
+            if p.is_file() and not p.is_relative_to(generated_dir)
         )
         record("mcp.tool.file.listed", directory=directory or ".", count=len(files))
         logger.debug("list_files: %s → %d files", target, len(files))
@@ -590,6 +539,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
     def files(
         op: str = "",
         path: str = "",
+        paths: list[str] = [],  # noqa: B006 — Pydantic handles mutable default
         content: str = "",
         target: str = "",
         line: int = 0,
@@ -597,8 +547,13 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Unified file operations for the sandboxed /data/files directory.
 
+        Use `files` for persistent user documents, notes, uploads, and exports
+        under /data/files. For repository source code use `project`; for
+        workspace scratchpads, discoveries, and specs under tasks/ use `context`.
+
         Ops:
           read   — read file contents (path required)
+          read_multi — batch read multiple files (paths required)
           write  — create/overwrite file (path, content required)
           append — append to end of file (path, content required)
           prepend — insert at beginning of file (path, content required)
@@ -606,9 +561,15 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
           insert_at_line — insert at line N (path, content, line required)
           list   — list files in directory (path optional, defaults to root)
 
+        read_multi — batch read multiple files (paths required)
+            Use when loading multiple related files such as boot sequence prompts
+            or config + schema pairs. One call replaces N reads. Returns
+            {path: content} or {path: {error: msg}} for missing files.
+
         Args:
             op: Operation name (see above).
             path: Relative file path, e.g. "documents/resume.md".
+            paths: Relative file paths for read_multi.
             content: Text content for write/edit ops (replacement text for replace).
             target: String to find — required for replace.
             line: 1-indexed line number — required for insert_at_line.
@@ -623,6 +584,21 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             if not path:
                 raise ValueError("'path' is required for read")
             return read_file(path)
+        if op == "read_multi":
+            if not paths:
+                raise ValueError("'paths' is required for read_multi")
+            results = read_files_batch(paths)
+            for batch_path, batch_result in results.items():
+                if isinstance(batch_result, str):
+                    record(
+                        "mcp.tool.file.read",
+                        path=batch_path,
+                        resolved=str(_safe_path(batch_path)),
+                        chars=len(batch_result),
+                        batched=True,
+                    )
+            logger.debug("files: batch read %d file(s)", len(paths))
+            return {"files": results}
         if op == "write":
             if not path:
                 raise ValueError("'path' is required for write")
@@ -657,5 +633,5 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             return edit_file(path, "insert_at_line", content, line=line)
         raise ValueError(
             f"Unknown op: {op!r}. "
-            "Use: read, write, append, prepend, replace, insert_at_line, list"
+            "Use: read, read_multi, write, append, prepend, replace, insert_at_line, list"
         )

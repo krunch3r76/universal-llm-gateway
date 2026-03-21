@@ -8,15 +8,22 @@ Part of the pipeline registry package.
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from universal_logging import get_logger
 
-from ..availability import are_models_available, get_pipeline_required_models
+from ..availability import (
+    are_models_available,
+    get_pipeline_required_models,
+    missing_models,
+)
 from ..core.schemas import PipelineSpec
 from .access import PipelineAccessor
 from .loader import PipelineLoader
 from .validator import PipelineValidator
+
+if TYPE_CHECKING:
+    from ..schemas import ModelRef
 
 logger = get_logger(__name__)
 
@@ -28,13 +35,13 @@ class PipelineRegistry:
     Loads pipelines, models, and prompts from YAML configuration.
     Validates all configurations at load time (fail-fast).
 
-    Filtering: Pipeline p loaded ⟺ required_models(p) ⊆ available_models(gateways)
+    Filtering: Pipeline p loaded ⟺ each required model passes *is_model_available*.
     """
 
     def __init__(
         self,
         search_paths: list[str] | None = None,
-        get_gateway_catalogs: Callable[[], list[set[str]]] | None = None,
+        is_model_available: Callable[[str], bool] | None = None,
         config_defaults: dict[str, Any] | None = None,
         config_base_dir: Path | None = None,
     ):
@@ -46,17 +53,16 @@ class PipelineRegistry:
                           Each path is an isolated model namespace.
                           Later paths override earlier for same pipeline ID.
                           Relative paths resolved relative to config_base_dir.
-            get_gateway_catalogs: Callable returning Iterable[set[str]] of model sets
-                                  from connected gateways. None disables filtering.
+            is_model_available: Per-model availability (ModelId-aware catalog +
+                registered pipeline IDs). None disables filtering.
             config_defaults: Default pipeline options from stargate_config.yaml
                             (pipeline-specific options override these)
             config_base_dir: Base directory for resolving relative search paths.
                             Defaults to current working directory if None.
         """
-        from ..schemas import ModelRef
 
         self._search_paths = search_paths or ["config"]
-        self._get_gateway_catalogs = get_gateway_catalogs
+        self._is_model_available = is_model_available
         self._config_defaults = config_defaults or {}
         self._config_base_dir = config_base_dir or Path.cwd()
         self.pipelines: dict[str, PipelineSpec] = {}
@@ -167,7 +173,7 @@ class PipelineRegistry:
 
         fresh = PipelineRegistry(
             search_paths=self._search_paths,
-            get_gateway_catalogs=self._get_gateway_catalogs,
+            is_model_available=self._is_model_available,
             config_defaults=self._config_defaults,
             config_base_dir=self._config_base_dir,
         )
@@ -208,9 +214,9 @@ class PipelineRegistry:
           available_models(gateways)
         - required_models = set of model IDs needed by pipeline
 
-        If no gateway catalog provider, returns (False, set()) (no filtering).
+        If no availability checker, returns (False, set()) (no filtering).
         """
-        if self._get_gateway_catalogs is None:
+        if self._is_model_available is None:
             return (False, set())
 
         def resolve_for_domain(ref: str):
@@ -228,20 +234,11 @@ class PipelineRegistry:
         if not required:
             return (False, required)
 
-        gateway_catalogs = self._get_gateway_catalogs() or []
-        available = set().union(*gateway_catalogs) if gateway_catalogs else set()
-
-        pipeline_virtual_ids = set(self.pipelines.keys())
-        augmented_catalogs = [*gateway_catalogs, pipeline_virtual_ids]
-
-        should_filter = not are_models_available(
-            required,
-            gateway_catalogs=augmented_catalogs,
-        )
+        is_available = self._is_model_available
+        should_filter = not are_models_available(required, is_available=is_available)
 
         if should_filter:
-            augmented_available = available | pipeline_virtual_ids
-            missing = required - augmented_available
+            missing = missing_models(required, is_available=is_available)
             logger.info(
                 f"    🚫 Pipeline '{pipeline.id}' filtered - "
                 f"missing models: {sorted(missing)}"

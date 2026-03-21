@@ -9,12 +9,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, TYPE_CHECKING
 
 from universal_logging import get_logger
 
 from .hardware import get_vram_info
-from .types import ModelResourceInfo
+
+if TYPE_CHECKING:
+    from .types import ModelResourceInfo
 
 
 class _ResourceTrackerProto(Protocol):
@@ -232,16 +234,16 @@ class VramReconciler:
         )
 
     def _clear_ghost_from_tracker(self, model_id: str) -> None:
-        """Mark ghost model as NOT_LOADED in resource tracker."""
+        """Mark ghost model as NOT_LOADED via domain verb, clear resources."""
         try:
-            from .types import ModelStatus
-
+            self._resource_tracker.set_model_not_loaded(
+                model_id, "ghost_cleared_by_vram_reconciler"
+            )
             info = self._resource_tracker._models.get(model_id)
             if info is not None:
-                info.status = ModelStatus.NOT_LOADED
                 info.vram_usage_mb = 0
                 info.ram_usage_mb = 0
-                logger.info("Resource tracker cleared for ghost model %s", model_id)
+            logger.info("Resource tracker cleared for ghost model %s", model_id)
         except Exception:
             logger.error(
                 "Failed to clear tracker for ghost %s", model_id, exc_info=True

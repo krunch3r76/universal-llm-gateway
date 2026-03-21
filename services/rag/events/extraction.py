@@ -92,9 +92,9 @@ def rag_extraction_batch_completed(
             "written": written,
             "duration_seconds": duration_seconds,
             **(
-                {}
-                if extraction_model is None
-                else {"extraction_model": extraction_model}
+                {"extraction_model": extraction_model}
+                if extraction_model is not None
+                else {}
             ),
         },
     )
@@ -200,7 +200,7 @@ def rag_extraction_circuit_opened(
 
 @event_factory
 def rag_extraction_circuit_closed() -> Event:
-    """Emitted when the circuit breaker transitions back to CLOSED after a successful probe."""
+    """Emitted when the extraction circuit breaker transitions back to CLOSED. This typically occurs after a successful probe request indicates the upstream service (e.g., Stargate) has recovered, allowing extraction workers to resume processing."""
     return Event(
         signal="rag.extraction.circuit.closed",
         payload={},
@@ -241,4 +241,17 @@ def rag_extraction_batch_timed_out(
             "timeout_seconds": timeout_seconds,
             "duration_seconds": duration_seconds,
         },
+    )
+
+
+@event_factory
+def rag_extraction_unavailable(*, pipeline: str, error: str) -> Event:
+    """Emitted when the extraction pipeline is not available at watcher start.
+
+    The watcher will not start until the pipeline is routable via Stargate.
+    If the probe times out, this event fires and the watcher is not started.
+    """
+    return Event(
+        signal="rag.extraction.unavailable",
+        payload={"pipeline": pipeline, "error": error},
     )

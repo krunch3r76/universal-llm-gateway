@@ -1,7 +1,7 @@
 /**
  * Local Models Browser — client-side rendering, sort, filter, node chips.
  *
- * Fetches /api/v1/local-models and renders a flat table with a Node column.
+ * Fetches /api/v1/node-models and renders a flat table with a Node column.
  * Node chip bar filters by node; search filters by model ID.
  */
 
@@ -257,7 +257,7 @@
 
   async function fetchModels() {
     try {
-      var res = await fetch('/api/v1/local-models');
+      var res = await fetch('/api/v1/node-models');
       if (!res.ok) throw new Error('HTTP ' + res.status);
       var data = await res.json();
 

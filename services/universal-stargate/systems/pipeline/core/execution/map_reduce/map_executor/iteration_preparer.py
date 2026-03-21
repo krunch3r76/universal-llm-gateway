@@ -1,12 +1,15 @@
 """Map iteration preparation: input resolution, model selection, step creation."""
+# ruff: noqa: E501
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
 
+from ....schemas import InputBinding
+
 if TYPE_CHECKING:
-    from ....schemas import InputBinding, StepConfig
+    from ....schemas import StepConfig
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +43,8 @@ class MapIterationPreparer:
             return None
 
         _field_name, binding = next(iter(self._map_config.map_over.items()))
-        if hasattr(binding, "namespace") and binding.namespace == "step":
+        # Assuming binding is an InputBinding based on usage
+        if isinstance(binding, InputBinding) and binding.namespace == "step":
             return binding.step_name
         return None
 
@@ -69,12 +73,23 @@ class MapIterationPreparer:
         if exclude_self and originator:
             candidates = [m for m in pool if m != originator]
             if not candidates:
+                # If originator was the only item, or all other items were excluded,
+                # and we must exclude it, this is an issue. Re-add originator if no other options.
+                # However, if originator is None, this block is not entered.
+                # The invariant states |pool| > 0, so candidates should not be empty if pool wasn't.
+                # If pool was empty, that's a pre-condition violation.
                 candidates = [originator]
                 logger.debug(
                     "[%s] Pool exhausted after exclude_self, using originator: %s",
                     self._step.name,
                     originator,
                 )
+
+        # Ensure candidates is not empty before selection
+        if not candidates:
+            # This case should ideally be prevented by upstream logic or a clearer invariant.
+            # For now, raise an error as it indicates a failure to uphold the invariant.
+            raise ValueError("Model candidate pool is empty after filtering.")
 
         if selection == "random":
             import random
@@ -121,7 +136,10 @@ class MapIterationPreparer:
         elif isinstance(value, dict):
             return [(i, v, k) for i, (k, v) in enumerate(value.items())]
         elif isinstance(value, MapOutputCollection):
-            return [(i, v, k) for i, (k, v) in enumerate(value.items())]
+            try:
+                return [(i, v, k) for i, (k, v) in enumerate(value.items())]
+            except ValueError:
+                return [(i, v, None) for i, v in enumerate(value.all_outputs())]
         else:
             raise TypeError(
                 f"map_over field '{field_name}' must resolve to list, dict, or "
@@ -131,7 +149,7 @@ class MapIterationPreparer:
     async def build_pool_assignments(
         self,
         iteration_items: list[tuple[int, Any, str | None]],
-        runtime: Any,
+        # runtime: Any, # Parameter currently unused
     ) -> dict[int, str]:
         """
         Pre-compute model assignments for all iterations.
@@ -236,21 +254,27 @@ class MapIterationPreparer:
             iteration_total=total,
             assigned_model=assigned_model,
         )
-        iter_resolver = self._resolver.with_map_context(map_state)
+        # Assuming self._resolver is of type Resolver and with_map_context returns Resolver
+        iter_resolver: Any = self._resolver.with_map_context(map_state)
 
-        map_input_values: dict[str, Any] = {}
-        for field, binding in self._map_config.map_inputs.items():
-            root = iter_resolver.resolve(binding)
-            map_input_values[field] = traverse_path(
-                root, binding.field_path, resolver=iter_resolver
-            )
+        def _resolve_inputs_from_bindings(
+            bindings: dict[str, InputBinding],
+            resolver: Any,  # Should be Resolver
+        ) -> dict[str, Any]:
+            resolved_values: dict[str, Any] = {}
+            for field, binding in bindings.items():
+                root = resolver.resolve(binding)
+                resolved_values[field] = traverse_path(
+                    root, binding.field_path, resolver=resolver
+                )
+            return resolved_values
 
-        handler_input_values: dict[str, Any] = {}
-        for field, binding in self._step.handler_inputs.items():
-            root = iter_resolver.resolve(binding)
-            handler_input_values[field] = traverse_path(
-                root, binding.field_path, resolver=iter_resolver
-            )
+        map_input_values = _resolve_inputs_from_bindings(
+            self._map_config.map_inputs, iter_resolver
+        )
+        handler_input_values = _resolve_inputs_from_bindings(
+            self._step.handler_inputs, iter_resolver
+        )
 
         all_inputs = {**handler_input_values, **map_input_values}
         typed_inputs = (
@@ -274,7 +298,9 @@ class MapIterationPreparer:
         template_inputs: dict[str, Any] = {}
 
         for field, value in map_inputs.items():
-            if hasattr(self._step, field) and field != "resolved_map_inputs":
+            if hasattr(
+                self._step, field
+            ):  # 'resolved_map_inputs' is an internal field, not expected in map_inputs
                 if field == "generation_parameters" and isinstance(value, dict):
                     base_params = getattr(self._step, field, {}) or {}
                     merged_params = {**base_params, **value}

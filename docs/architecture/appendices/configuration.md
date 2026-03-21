@@ -99,7 +99,7 @@ Corpus hints and scope vocabulary are stored in `~/.rag/store/rag_metadata.db` (
 
 `contextualize_model`: model ID for per-chunk LLM-generated context prefixes prepended before embedding. Omit or set to a model ID to enable (default: `qwen3-embedding-8b`). Set to `""` to disable.
 
-`reconcile_interval_s` (default 300): seconds between watcher reconcile sweeps that recover files missed by inotify. Set to 0 to disable.
+`reconcile_interval_s` (default 300): base seconds between watcher reconcile sweeps that recover files missed by inotify. Reconcile runs with the same worker-pool concurrency as the initial reindex. When a sweep recovers at least one file, the next sweep runs after 30 s (busy interval); when idle (no recoveries), the full interval is used. Set to 0 to disable.
 
 ```yaml
 watch_directories:

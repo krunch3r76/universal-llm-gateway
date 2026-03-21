@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import httpx
 import yaml
@@ -29,10 +29,31 @@ SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
     "code-retrieval": "code_retrieval",
     "knowledge-management": "knowledge_systems",
     "llm/prompting": "llm_prompting",
+    "documentation": "code_documentation",
+    "software-agents": "software_agents",
+    "trading/strategies": "trading_strategies",
+    "trading/microstructure": "trading_microstructure",
+    "trading/risk": "trading_risk",
+    "trading/options": "trading_options",
+    "trading/ml-trading": "trading_ml",
+    "trading/crypto": "trading_crypto",
+    "trading/order-flow": "trading_order_flow",
+    "trading/stat-arb": "trading_stat_arb",
+    "trading/execution": "trading_execution",
+    "trading/intraday": "trading_intraday",
 }
 
 
-def load_registry(path: Path) -> dict[str, dict[str, Any]]:
+class ArticleEntry(TypedDict):
+    subdirectory: str
+    title: str
+    authors: str
+    venue: str
+    published_date: str
+    content_hash: str
+
+
+def load_registry(path: Path) -> dict[str, ArticleEntry]:
     with open(path) as f:
         data = yaml.safe_load(f)
     articles: dict[str, dict[str, Any]] = data.get("articles", {})
@@ -45,24 +66,29 @@ def load_registry(path: Path) -> dict[str, dict[str, Any]]:
 def build_payload(filename: str, entry: dict[str, Any]) -> dict[str, Any]:
     subdirectory = entry.get("subdirectory", "")
     scope = SUBDIRECTORY_TO_SCOPE.get(subdirectory, "default")
-    source_path = str(RESEARCH_DIR / subdirectory / filename)
+    if subdirectory:
+        source_path = str(RESEARCH_DIR / subdirectory / filename)
+    else:
+        # Decide on appropriate behavior: error, default to RESEARCH_DIR / filename, etc.
+        # For now, assuming it should be RESEARCH_DIR / filename if no subdirectory is specified
+        source_path = str(RESEARCH_DIR / filename)
+        # Consider adding logging here: logger.warning(f"Article {filename} has no subdirectory specified.")
 
-    return {
+    payload_fields = ["title", "authors", "venue", "content_hash", "subdirectory"]
+    payload = {
         "source_path": source_path,
         "filename": filename,
-        "title": entry.get("title", ""),
-        "authors": entry.get("authors", ""),
-        "venue": entry.get("venue", ""),
-        "published_date": str(entry.get("published_date", "")),
-        "content_hash": entry.get("content_hash", ""),
-        "subdirectory": subdirectory,
         "scope": scope,
+        **{field: entry.get(field, "") for field in payload_fields},
     }
+    payload["published_date"] = str(entry.get("published_date", ""))
+    return payload
 
 
 def main() -> None:
     articles = load_registry(REGISTRY_PATH)
     print(f"Loaded {len(articles)} entries from {REGISTRY_PATH.name}")
+    # logger.info(f"Starting article metadata backfill for {len(articles)} articles.")
 
     created = 0
     updated = 0
@@ -88,9 +114,15 @@ def main() -> None:
             except httpx.RequestError as exc:
                 errors += 1
                 print(f"  ERROR {filename}: request failed - {exc}", file=sys.stderr)
+            # Consider removing this general Exception catch if all expected errors are handled
+            # or if unhandled exceptions should cause the script to fail loudly.
+            # If kept, add more specific logging or error reporting.
             except Exception as exc:
                 errors += 1
-                print(f"  ERROR {filename}: unexpected error - {exc}", file=sys.stderr)
+                print(
+                    f"  ERROR {filename}: unexpected error - {type(exc).__name__} - {exc}",
+                    file=sys.stderr,
+                )
 
     total = created + updated + errors
     print(f"\nDone. Processed {total}/{len(articles)}:")

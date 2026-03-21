@@ -10,5 +10,6 @@ COPY libs/ /app/libs/
 ENV PYTHONPATH=/app/libs
 
 COPY services/cortex-api/src/ src/
+COPY services/cortex-api/migrations/ migrations/
 
 CMD ["uvicorn", "src.main:app", "--uds", "/tmp/universal-protocol/cortex-api.sock"]

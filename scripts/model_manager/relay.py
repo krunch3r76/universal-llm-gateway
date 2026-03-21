@@ -120,6 +120,9 @@ def _run_stop(node_id: str) -> int:
             return f"Error stopping Stargate: {e}"
 
     asyncio.run(stop())
+    node_env = load_env_file(_node_env_path(node_id))
+    compose_env = _build_env(node_env)
+    compose_env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
     result = subprocess.run(
         [
             "docker",
@@ -131,6 +134,7 @@ def _run_stop(node_id: str) -> int:
             "down",
         ],
         cwd=str(_ROOT),
+        env=compose_env,
         capture_output=True,
         text=True,
     )

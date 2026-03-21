@@ -45,7 +45,7 @@ def validate_file(
 
         if not pipeline_data.get("id"):
             errors.append("Missing 'id' field in pipeline YAML")
-            return (False, errors)
+            return False, errors
 
         # Parse pipeline using Pydantic (validates schema structure)
         try:
@@ -81,12 +81,16 @@ def validate_file(
 
 
 def _validate_schema_version(pipeline) -> list[str]:
-    """Check schema_version is 6."""
+    """Validate that the pipeline's schema_version is set to 6.
+
+    Schema version 6 introduces specific structural and semantic changes.
+    Pipelines not explicitly declaring or incorrectly declaring this version
+    may not be processed correctly by the system.
+    """
     errors = []
-    if pipeline.model_extra:
-        schema_version = pipeline.model_extra.get("schema_version")
-    else:
-        schema_version = None
+    schema_version = (
+        pipeline.model_extra.get("schema_version") if pipeline.model_extra else None
+    )
     if schema_version != 6:
         errors.append(
             f"Expected schema_version: 6, got {schema_version}. "
@@ -97,7 +101,12 @@ def _validate_schema_version(pipeline) -> list[str]:
 
 
 def _validate_no_depends_on(pipeline) -> list[str]:
-    """Check no depends_on usage (computed from handler_inputs in v6)."""
+    """Validate that `depends_on` is not used in any step.
+
+    In schema version 6, step dependencies are automatically computed
+    based on the `handler_inputs` configuration, making explicit `depends_on`
+    declarations redundant and potentially misleading.
+    """
     errors = []
     for step in pipeline.steps:
         if step.depends_on:
@@ -109,18 +118,22 @@ def _validate_no_depends_on(pipeline) -> list[str]:
 
 
 def _validate_generation_params(pipeline) -> list[str]:
-    """Validate generation parameters."""
+    """Validate generation parameters for pipeline steps.
+
+    Ensures that deprecated flat generation parameters (e.g., `temperature`,
+    `max_tokens`) are not used directly on the step, and that all parameters
+    within the `generation_parameters` dictionary are explicitly allowed.
+    This enforces a structured approach to generation configuration.
+    """
     errors = []
 
     # Check flat generation params not allowed
     for step in pipeline.steps:
-        deprecated_fields = []
-        if hasattr(step, "temperature") and step.temperature is not None:
-            deprecated_fields.append("temperature")
-        if hasattr(step, "max_tokens") and step.max_tokens is not None:
-            deprecated_fields.append("max_tokens")
-        if hasattr(step, "response_format") and step.response_format is not None:
-            deprecated_fields.append("response_format")
+        deprecated_fields = [
+            field
+            for field in ["temperature", "max_tokens", "response_format"]
+            if hasattr(step, field) and getattr(step, field) is not None
+        ]
 
         if deprecated_fields:
             errors.append(
@@ -165,7 +178,7 @@ def _validate_generation_params(pipeline) -> list[str]:
     return errors
 
 
-def _validate_handler_inputs(pipeline, validator) -> list[str]:
+def _validate_handler_inputs(pipeline, validator: object) -> list[str]:
     """Validate handler_inputs have valid namespaces."""
     errors = []
     step_names = {s.name for s in pipeline.steps}
@@ -191,7 +204,11 @@ def _validate_handler_inputs(pipeline, validator) -> list[str]:
 
 
 def _validate_handler_outputs(pipeline) -> list[str]:
-    """Validate handler_outputs bindings."""
+    """Validate that all `handler_outputs` bindings specify a non-empty `field_path`.
+
+    The `field_path` is crucial for defining where the output of a handler
+    should be stored and how it can be referenced by downstream steps.
+    """
     errors = []
     for step in pipeline.steps:
         for field_name, output_binding in step.handler_outputs.items():
@@ -207,7 +224,11 @@ def _validate_prompt_refs(
     pipeline,
     prompt_registry: dict[str, set[str]],
 ) -> list[str]:
-    """Validate prompt_ref values exist in prompt registry."""
+    """Validate that any `prompt_ref` values used in pipeline steps exist
+    within the provided `prompt_registry`.
+
+    This ensures that all referenced prompts are defined and available.
+    """
     errors = []
     for step in pipeline.steps:
         prompt_ref = getattr(step, "prompt_ref", None)
@@ -222,9 +243,22 @@ def _validate_step_types(
     pipeline,
     registered_step_types: set[str],
 ) -> list[str]:
-    """Validate step.type has registered handler."""
+    """Validate that each step's `type` corresponds to either a known built-in
+    step type or a type registered via `registered_step_types`.
+
+    This prevents pipelines from referencing non-existent or unsupported step handlers.
+    """
     errors = []
-    builtin_types = {"generate", "map", "loop", "conditional", "pipeline_call_v1"}
+    builtin_types = {
+        "generate",
+        "map",
+        "loop",
+        "conditional",
+        "pipeline_call_v1",
+        "data_source_v1",
+        "rag_search_v1",
+        "data_sink_v1",
+    }
     all_known_types = builtin_types | registered_step_types
 
     for step in pipeline.steps:

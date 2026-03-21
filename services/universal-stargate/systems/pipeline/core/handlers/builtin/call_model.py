@@ -8,18 +8,18 @@ explicitly — no instance state, safe for concurrent execution.
 from __future__ import annotations
 
 import time as _time
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
-from ..protocol import PipelineContext
 from .generation_params import ALLOWED_GENERATION_PARAMS, _build_generation_params
 from .model_resolution import _resolve_model_alias_async
 from .token_management import _check_context_feasibility
 from .types import ModelCallResult
 
 if TYPE_CHECKING:
+    from ..protocol import PipelineContext
+    from collections.abc import Callable
     from ...schemas import StepConfig
 
 logger = get_logger(__name__)
@@ -94,8 +94,8 @@ async def call_model(
         ContextExceededError: If prompt exceeds model context (pre-flight)
         ProxyClientError: If model call fails or response cannot be parsed
     """
-    from ...events.inference import ModelInvocation
     from ...dag import ContextExceededError
+    from ...events.inference import ModelInvocation, ModelInvocationStarted
     from ...execution.proxy_client import ProxyClientError
 
     # AUTO-RESOLVE model alias to full ID (unless caller already resolved it)
@@ -106,9 +106,9 @@ async def call_model(
     )
 
     # Build messages
-    messages: list[dict[str, str]] = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
+    messages: list[dict[str, str]] = (
+        [{"role": "system", "content": system_prompt}] if system_prompt else []
+    )
     messages.append({"role": "user", "content": prompt})
 
     resolved_cfg = {
@@ -212,7 +212,9 @@ async def call_model(
     effective_disable_profile = step.disable_profile
     if effective_disable_profile is None:
         effective_disable_profile = context.pipeline.options.disable_profile
-    effective_profile = step.profile or model_profile or context.pipeline.options.profile
+    effective_profile = (
+        step.profile or model_profile or context.pipeline.options.profile
+    )
     if model_profile and step.disable_profile is not True:
         effective_disable_profile = False
 
@@ -225,6 +227,18 @@ async def call_model(
 
     # Invoke via Stargate
     client = context.get_proxy_client()
+    if recorder:
+        recorder.emit(
+            ModelInvocationStarted(
+                step_name=step.name,
+                model_id=resolved_model_id,
+                call_label=call_label,
+                system_prompt=system_prompt,
+                user_prompt=prompt,
+                request_body=request_body,
+                metadata=metadata,
+            )
+        )
     try:
         (
             response,
@@ -269,7 +283,7 @@ async def call_model(
                     metadata=metadata,
                 )
             )
-        raise
+        raise e from None  # Re-raise the exception with notes
 
     # Extract token usage
     usage = response.get("usage", {})

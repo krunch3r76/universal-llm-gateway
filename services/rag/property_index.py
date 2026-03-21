@@ -18,7 +18,6 @@ import logging
 import shutil
 import sqlite3
 from collections import defaultdict
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,11 +25,20 @@ from universal_event_bus.actor.sequential import SequentialExecutor
 
 from services.rag.article_registry import ArticleEntry
 from services.rag.fts_index import FtsIndex
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_PATH = Path.home() / ".rag" / "store" / "rag_metadata.db"
 _LEGACY_DB_PATH = Path.home() / ".rag" / "store" / "property_index.db"
+
+
+def _row_str(value: object) -> str:
+    return "" if value is None else str(value)
+
 
 _V1_BASELINE_SQL = """
 CREATE TABLE IF NOT EXISTS properties (
@@ -100,6 +108,26 @@ CREATE TABLE IF NOT EXISTS articles (
 CREATE INDEX IF NOT EXISTS idx_articles_scope ON articles(scope);
 """
 
+_V4_SOURCE_CACHE_SQL = """
+CREATE TABLE IF NOT EXISTS indexed_sources (
+    source TEXT PRIMARY KEY,
+    mtime_ns INTEGER NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    extraction_schema_version INTEGER NOT NULL,
+    extraction_model TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_indexed_sources_updated_at ON indexed_sources(updated_at);
+"""
+
+_V5_SCOPE_FRESHNESS_SQL = """
+CREATE TABLE IF NOT EXISTS scope_freshness (
+    scope TEXT PRIMARY KEY,
+    files_hash TEXT NOT NULL,
+    classified_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
 _CREATE_SCHEMA_VERSION_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
@@ -133,6 +161,18 @@ class FailureSnapshot:
 
     failed_extractions_count: int
     failed_extractions_permanent_count: int
+
+
+@dataclass(slots=True, kw_only=True)
+class IndexedSourceSnapshot:
+    """Cached source freshness row used for stat-first unchanged checks."""
+
+    source: str
+    mtime_ns: int
+    size_bytes: int
+    extraction_schema_version: int
+    extraction_model: str
+    updated_at: str
 
 
 class PropertyIndex:
@@ -210,12 +250,55 @@ class PropertyIndex:
         current = conn.execute(
             "SELECT COALESCE(MAX(version), 0) FROM schema_version"
         ).fetchone()[0]
+
         def _migration_v3_articles_comments(conn: sqlite3.Connection) -> None:
-            """Add comments column to articles for ArticleEntry parity."""
+            """Adds the 'comments' column to the 'articles' table.
+
+            This migration ensures that the 'articles' table schema is aligned with
+            the ArticleEntry dataclass, allowing for storage of additional metadata
+            or user-provided comments associated with an article. This column was
+            missing in previous schema versions.
+            """
             cols = {row[1] for row in conn.execute("PRAGMA table_info(articles)")}
             if "comments" not in cols:
                 conn.execute(
                     "ALTER TABLE articles ADD COLUMN comments TEXT NOT NULL DEFAULT ''"
+                )
+
+        def _migration_v4_indexed_sources(conn: sqlite3.Connection) -> None:
+            """Creates the 'indexed_sources' table.
+
+            This table acts as a cache for source file metadata (mtime, size, schema version)
+            to enable 'stat-first' checks, significantly speeding up re-indexing by avoiding
+            costly content hash computations for unchanged files.
+            """
+            conn.executescript(_V4_SOURCE_CACHE_SQL)
+
+        def _migration_v5_scope_freshness(conn: sqlite3.Connection) -> None:
+            """Creates the 'scope_freshness' table.
+
+            This table stores a hash of filenames per scope, allowing the system to
+            quickly determine if the set of files within a scope has changed. This is
+            crucial for automatically triggering corpus hint or vocabulary repair
+            processes when staleness is detected.
+            """
+            conn.executescript(_V5_SCOPE_FRESHNESS_SQL)
+
+        def _migration_v6_classified_tier(conn: sqlite3.Connection) -> None:
+            """Adds the 'classified_tier' column to the 'scope_freshness' table.
+
+            This column records the processing tier (e.g., 'local' or 'frontier')
+            that last classified the vocabulary for a given scope. This helps in
+            optimizing vocabulary pipeline runs by allowing skips for scopes that
+            are already fresh according to the current pipeline mode.
+            """
+            cols = {
+                row[1] for row in conn.execute("PRAGMA table_info(scope_freshness)")
+            }
+            if "classified_tier" not in cols:
+                conn.execute(
+                    "ALTER TABLE scope_freshness ADD COLUMN classified_tier "
+                    "TEXT NOT NULL DEFAULT 'local'"
                 )
 
         migrations: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
@@ -233,6 +316,21 @@ class PropertyIndex:
                 3,
                 "articles.comments column for ArticleEntry parity",
                 _migration_v3_articles_comments,
+            ),
+            (
+                4,
+                "source freshness cache for mtime-first indexing checks",
+                _migration_v4_indexed_sources,
+            ),
+            (
+                5,
+                "scope_freshness: file-list hash per scope for hint/vocab staleness",
+                _migration_v5_scope_freshness,
+            ),
+            (
+                6,
+                "scope_freshness.classified_tier for vocabulary pipeline skip-fresh",
+                _migration_v6_classified_tier,
             ),
         ]
         for version, description, fn in migrations:
@@ -309,8 +407,7 @@ class PropertyIndex:
 
     async def add_batch(self, entries: list[tuple[str, str]], source: str = "") -> None:
         """Add multiple (key, chunk_id) pairs in one transaction. Scope defaults to 'all'."""
-        full_entries = [(k, cid, "all", source) for k, cid in entries]
-        await self.add_batch_with_scope(full_entries)
+        await self.add_batch_with_scope([(k, cid, "all", source) for k, cid in entries])
 
     async def add_batch_with_scope(
         self, entries: list[tuple[str, str, str, str]]
@@ -344,11 +441,11 @@ class PropertyIndex:
 
     async def remove_properties_for_chunks(self, chunk_ids: list[str]) -> int:
         """Remove property entries for a batch of chunk IDs. Returns total removed."""
-        if not chunk_ids:
-            return 0
 
         async def _write() -> int:
             conn = self._ensure_conn()
+            if not chunk_ids:
+                return 0
             placeholders = ",".join("?" for _ in chunk_ids)
             cursor = conn.execute(
                 f"DELETE FROM properties WHERE chunk_id IN ({placeholders})",
@@ -365,10 +462,56 @@ class PropertyIndex:
         async def _write() -> None:
             conn = self._ensure_conn()
             conn.execute("DELETE FROM properties")
+            conn.execute("DELETE FROM indexed_sources")
             conn.commit()
 
         await self._seq.run(_write())
         await self.fts.clear()
+
+    async def upsert_indexed_source(
+        self,
+        *,
+        source: str,
+        mtime_ns: int,
+        size_bytes: int,
+        extraction_schema_version: int,
+        extraction_model: str,
+    ) -> None:
+        """Record the latest successfully evaluated source state for fast unchanged checks."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute(
+                "INSERT INTO indexed_sources ("
+                "  source, mtime_ns, size_bytes, extraction_schema_version, extraction_model, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, datetime('now'))"
+                " ON CONFLICT(source) DO UPDATE SET"
+                "  mtime_ns = excluded.mtime_ns,"
+                "  size_bytes = excluded.size_bytes,"
+                "  extraction_schema_version = excluded.extraction_schema_version,"
+                "  extraction_model = excluded.extraction_model,"
+                "  updated_at = datetime('now')",
+                (
+                    source,
+                    mtime_ns,
+                    size_bytes,
+                    extraction_schema_version,
+                    extraction_model,
+                ),
+            )
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    async def remove_indexed_source(self, source: str) -> None:
+        """Remove one cached source freshness row."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute("DELETE FROM indexed_sources WHERE source = ?", (source,))
+            conn.commit()
+
+        await self._seq.run(_write())
 
     async def mark_pending(self, file: str) -> None:
         """Mark a file as having an in-flight indexing operation."""
@@ -474,6 +617,54 @@ class PropertyIndex:
 
         return await self._seq.run(_write())
 
+    def article_exists(self, source_path: str) -> bool:
+        """Return whether an articles row already exists for the exact source path."""
+        conn = self._ensure_conn()
+        row = conn.execute(
+            "SELECT 1 FROM articles WHERE source_path = ?",
+            (source_path,),
+        ).fetchone()
+        return row is not None
+
+    async def sync_article_structural_fields(
+        self,
+        *,
+        source_path: str,
+        filename: str,
+        content_hash: str,
+        scope: str,
+        subdirectory: str,
+    ) -> bool:
+        """Create or refresh non-curated article identity fields.
+
+        Returns True when a new row was created. Existing rows keep curated fields
+        like title/authors/venue while structural fields stay aligned with the
+        latest indexed file state.
+        """
+
+        async def _write() -> bool:
+            conn = self._ensure_conn()
+            existing = conn.execute(
+                "SELECT 1 FROM articles WHERE source_path = ?",
+                (source_path,),
+            ).fetchone()
+            conn.execute(
+                "INSERT INTO articles ("
+                "  source_path, filename, scope, content_hash, subdirectory, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, datetime('now'))"
+                " ON CONFLICT(source_path) DO UPDATE SET"
+                "  filename = excluded.filename,"
+                "  scope = excluded.scope,"
+                "  content_hash = excluded.content_hash,"
+                "  subdirectory = excluded.subdirectory,"
+                "  updated_at = datetime('now')",
+                (source_path, filename, scope, content_hash, subdirectory),
+            )
+            conn.commit()
+            return existing is None
+
+        return await self._seq.run(_write())
+
     async def remove_article(self, source_path: str) -> bool:
         """Remove the articles row for a source path. Returns True if a row existed."""
 
@@ -505,18 +696,23 @@ class PropertyIndex:
         self,
         source: str,
         chunk_ids: list[str] | None = None,
+        *,
+        remove_article: bool = True,
     ) -> None:
         """Remove source-scoped SQLite metadata for one source.
 
-        Cleanup always removes failure and article rows. Chunk-backed tables are
-        only cleaned when concrete chunk IDs are available.
+        Watcher cleanup may preserve the article row so a later move-detection or
+        re-index path can reuse curated metadata. Admin delete paths keep the
+        default `remove_article=True` and remain fully destructive.
         """
         normalized_chunk_ids = list(dict.fromkeys(chunk_ids or []))
 
         async def _write() -> None:
             conn = self._ensure_conn()
             conn.execute("DELETE FROM failed_extractions WHERE source = ?", (source,))
-            conn.execute("DELETE FROM articles WHERE source_path = ?", (source,))
+            if remove_article:
+                conn.execute("DELETE FROM articles WHERE source_path = ?", (source,))
+            conn.execute("DELETE FROM indexed_sources WHERE source = ?", (source,))
             if normalized_chunk_ids:
                 placeholders = ",".join("?" for _ in normalized_chunk_ids)
                 conn.execute(
@@ -545,11 +741,11 @@ class PropertyIndex:
         Used when a partial write succeeds: clear only the chunks that were
         written so failed chunks retain their attempt count for retry.
         """
-        if not chunk_ids:
-            return
 
         async def _write() -> None:
             conn = self._ensure_conn()
+            if not chunk_ids:
+                return
             placeholders = ",".join("?" * len(chunk_ids))
             conn.execute(
                 "DELETE FROM failed_extractions WHERE source = ? AND chunk_id IN ("
@@ -563,11 +759,11 @@ class PropertyIndex:
 
     async def backfill_source(self, chunk_to_source: dict[str, str]) -> int:
         """Set source for rows where source is empty. Returns count updated."""
-        if not chunk_to_source:
-            return 0
 
         async def _write() -> int:
             conn = self._ensure_conn()
+            if not chunk_to_source:
+                return 0
             batch = [(src, cid) for cid, src in chunk_to_source.items() if src]
             cursor = conn.executemany(
                 "UPDATE properties SET source = ? WHERE chunk_id = ? AND source = ''",
@@ -667,6 +863,99 @@ class PropertyIndex:
 
         await self._seq.run(_write())
 
+    async def replace_scope_vocabulary_for_scopes(
+        self, vocabulary: dict[str, dict[str, list[str]]]
+    ) -> None:
+        """Replace vocabulary rows only for scopes present in *vocabulary*.
+
+        Other scopes' rows are left unchanged (unlike replace_scope_vocabulary).
+        """
+        if not vocabulary:
+            return
+        rows: list[tuple[str, str, str]] = []
+        scope_names: list[str] = []
+        for scope, registers in sorted(vocabulary.items()):
+            scope_names.append(scope)
+            for register, terms in sorted(registers.items()):
+                for term in terms:
+                    normalized = term.strip()
+                    if normalized:
+                        rows.append((scope, register, normalized))
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                placeholders = ",".join("?" for _ in scope_names)
+                conn.execute(
+                    f"DELETE FROM scope_vocabulary WHERE scope IN ({placeholders})",
+                    scope_names,
+                )
+                if rows:
+                    conn.executemany(
+                        "INSERT INTO scope_vocabulary (scope, register, term)"
+                        " VALUES (?, ?, ?)",
+                        rows,
+                    )
+                conn.execute("COMMIT")
+            except sqlite3.Error as e:
+                conn.execute("ROLLBACK")
+                logger.exception("replace_scope_vocabulary_for_scopes failed: %s", e)
+                raise
+
+        await self._seq.run(_write())
+
+    def get_scope_freshness(self, scope: str) -> tuple[str, str, str] | None:
+        """Return (files_hash, classified_at, classified_tier) if a row exists."""
+        conn = self._ensure_conn()
+        row = conn.execute(
+            "SELECT files_hash, classified_at, classified_tier FROM scope_freshness "
+            "WHERE scope = ?",
+            (scope,),
+        ).fetchone()
+        if row is None:
+            return None
+        tier_raw = row[2] if len(row) > 2 else "local"
+        tier = str(tier_raw) if tier_raw is not None else "local"
+        return (str(row[0]), str(row[1]), tier)
+
+    async def store_scope_freshness(
+        self,
+        scope: str,
+        files_hash: str,
+        *,
+        classified_tier: str = "local",
+    ) -> None:
+        """Persist per-scope file-list hash and classification tier after repair."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute(
+                "INSERT INTO scope_freshness (scope, files_hash, classified_at, "
+                "classified_tier)"
+                " VALUES (?, ?, datetime('now'), ?)"
+                " ON CONFLICT(scope) DO UPDATE SET"
+                " files_hash = excluded.files_hash,"
+                " classified_at = datetime('now'),"
+                " classified_tier = excluded.classified_tier",
+                (scope, files_hash, classified_tier),
+            )
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    async def invalidate_scope_freshness(self, scope: str) -> None:
+        """Delete scope_freshness row so next run reclassifies this scope."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute(
+                "DELETE FROM scope_freshness WHERE scope = ?", (scope,)
+            )
+            conn.commit()
+
+        await self._seq.run(_write())
+
     async def stamp_watermark(self, step: str) -> None:
         """Record completion of a post-index enrichment step."""
 
@@ -724,6 +1013,26 @@ class PropertyIndex:
         rows = conn.execute("SELECT file FROM pending").fetchall()
         return [row[0] for row in rows]
 
+    def get_indexed_source(self, source: str) -> IndexedSourceSnapshot | None:
+        """Return the cached source freshness row, if present."""
+        conn = self._ensure_conn()
+        row = conn.execute(
+            "SELECT source, mtime_ns, size_bytes, extraction_schema_version,"
+            " extraction_model, updated_at"
+            " FROM indexed_sources WHERE source = ?",
+            (source,),
+        ).fetchone()
+        if row is None:
+            return None
+        return IndexedSourceSnapshot(
+            source=row[0],
+            mtime_ns=row[1],
+            size_bytes=row[2],
+            extraction_schema_version=row[3],
+            extraction_model=row[4],
+            updated_at=row[5],
+        )
+
     def get_pending_snapshot(self, sample_limit: int = 20) -> PendingSnapshot:
         """Return pending journal count plus a bounded file sample.
 
@@ -740,7 +1049,9 @@ class PropertyIndex:
             "SELECT file FROM pending ORDER BY file LIMIT ?",
             (normalized_limit,),
         ).fetchall()
-        return PendingSnapshot(count=pending_count, sample=[str(row[0]) for row in rows])
+        return PendingSnapshot(
+            count=pending_count, sample=[str(row[0]) for row in rows]
+        )
 
     async def rebuild_from_metadata(
         self, metadata_entries: list[tuple[str, str, str]]
@@ -819,6 +1130,48 @@ class PropertyIndex:
             (prefix_len, like_pattern, prefix_len),
         ).fetchall()
         return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+    def get_term_counts_for_source_prefixes(
+        self, key_prefix: str, source_prefixes: list[str]
+    ) -> list[tuple[str, int, int]]:
+        """Return (term, chunk_count, doc_count) for sources under any prefix.
+
+        Like ``get_term_counts_by_scope`` but matches on source path instead of
+        the stored scope column, enabling umbrella-scope aggregation where
+        files are indexed under more-specific leaf scopes.
+        """
+        if not source_prefixes:
+            return []
+        conn = self._ensure_conn()
+        prefix_len = len(key_prefix) + 1
+        like_pattern = f"{key_prefix}%"
+        source_clauses = " OR ".join("source LIKE ?" for _ in source_prefixes)
+        source_params = [f"{p}%" for p in source_prefixes]
+        rows = conn.execute(
+            f"SELECT substr(key, ?),"
+            f" COUNT(DISTINCT chunk_id),"
+            f" COUNT(DISTINCT CASE WHEN source != '' THEN source END)"
+            f" FROM properties"
+            f" WHERE key LIKE ? AND source != '' AND ({source_clauses})"
+            f" GROUP BY substr(key, ?)"
+            f" ORDER BY COUNT(DISTINCT chunk_id) DESC",
+            (prefix_len, like_pattern, *source_params, prefix_len),
+        ).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+
+    def count_docs_for_prefixes(self, source_prefixes: list[str]) -> int:
+        """Count distinct source documents matching any source prefix."""
+        if not source_prefixes:
+            return 0
+        conn = self._ensure_conn()
+        clauses = " OR ".join("source LIKE ?" for _ in source_prefixes)
+        params = [f"{p}%" for p in source_prefixes]
+        row = conn.execute(
+            f"SELECT COUNT(DISTINCT source) FROM properties"
+            f" WHERE source != '' AND ({clauses})",
+            params,
+        ).fetchone()
+        return row[0] if row else 0
 
     def get_total_chunks(self) -> int:
         """Return the total number of distinct chunks in the index."""
@@ -942,12 +1295,153 @@ class PropertyIndex:
             "SELECT COUNT(*) FROM failed_extractions WHERE permanent = 1"
         ).fetchone()[0]
 
+    def has_retriable_failures(self, source: str) -> bool:
+        """Return True if source has any non-permanent failed extraction rows."""
+        conn = self._ensure_conn()
+        row = conn.execute(
+            "SELECT 1 FROM failed_extractions"
+            " WHERE source = ? AND permanent = 0 LIMIT 1",
+            (source,),
+        ).fetchone()
+        return row is not None
+
     def get_failure_snapshot(self) -> FailureSnapshot:
         """Return failed extraction counts used by operational status endpoints."""
         return FailureSnapshot(
             failed_extractions_count=self.get_failed_count(),
             failed_extractions_permanent_count=self.get_permanent_count(),
         )
+
+    def get_article_row(self, source_path: str) -> dict[str, str] | None:
+        """Return one article row by exact source path."""
+        conn = self._ensure_conn()
+        row = conn.execute(
+            "SELECT source_path, filename, title, authors, venue, published_date, "
+            "doi, abstract, scope, content_hash, subdirectory, comments "
+            "FROM articles WHERE source_path = ?",
+            (source_path,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "source_path": _row_str(row[0]),
+            "filename": _row_str(row[1]),
+            "title": _row_str(row[2]),
+            "authors": _row_str(row[3]),
+            "venue": _row_str(row[4]),
+            "published_date": _row_str(row[5]),
+            "doi": _row_str(row[6]),
+            "abstract": _row_str(row[7]),
+            "scope": _row_str(row[8]),
+            "content_hash": _row_str(row[9]),
+            "subdirectory": _row_str(row[10]),
+            "comments": _row_str(row[11]),
+        }
+
+    def find_latest_article_by_filename(
+        self,
+        filename: str,
+        *,
+        exclude_source_path: str | None = None,
+    ) -> dict[str, str] | None:
+        """Return the newest surviving row for a basename, optionally excluding one path."""
+        conn = self._ensure_conn()
+        sql = (
+            "SELECT source_path, filename, title, authors, venue, published_date, "
+            "doi, abstract, scope, content_hash, subdirectory, comments "
+            "FROM articles WHERE filename = ?"
+        )
+        params: list[str] = [filename]
+        if exclude_source_path is not None:
+            sql += " AND source_path != ?"
+            params.append(exclude_source_path)
+        sql += " ORDER BY updated_at DESC LIMIT 1"
+        row = conn.execute(sql, params).fetchone()
+        if row is None:
+            return None
+        return {
+            "source_path": _row_str(row[0]),
+            "filename": _row_str(row[1]),
+            "title": _row_str(row[2]),
+            "authors": _row_str(row[3]),
+            "venue": _row_str(row[4]),
+            "published_date": _row_str(row[5]),
+            "doi": _row_str(row[6]),
+            "abstract": _row_str(row[7]),
+            "scope": _row_str(row[8]),
+            "content_hash": _row_str(row[9]),
+            "subdirectory": _row_str(row[10]),
+            "comments": _row_str(row[11]),
+        }
+
+    def find_orphaned_article_by_hash(
+        self,
+        *,
+        content_hash: str,
+        new_source_path: str,
+    ) -> dict[str, str] | None:
+        """Return a missing-on-disk article row with matching content hash."""
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT source_path, filename, title, authors, venue, published_date, "
+            "doi, abstract, scope, content_hash, subdirectory, comments "
+            "FROM articles WHERE content_hash = ? AND source_path != ? "
+            "ORDER BY updated_at DESC",
+            (content_hash, new_source_path),
+        ).fetchall()
+        for row in rows:
+            if not Path(str(row[0])).exists():
+                return {
+                    "source_path": _row_str(row[0]),
+                    "filename": _row_str(row[1]),
+                    "title": _row_str(row[2]),
+                    "authors": _row_str(row[3]),
+                    "venue": _row_str(row[4]),
+                    "published_date": _row_str(row[5]),
+                    "doi": _row_str(row[6]),
+                    "abstract": _row_str(row[7]),
+                    "scope": _row_str(row[8]),
+                    "content_hash": _row_str(row[9]),
+                    "subdirectory": _row_str(row[10]),
+                    "comments": _row_str(row[11]),
+                }
+        return None
+
+    async def move_article_source_path(
+        self,
+        *,
+        old_source_path: str,
+        new_source_path: str,
+        new_filename: str,
+        new_scope: str,
+        new_subdirectory: str,
+    ) -> bool:
+        """Move one article row to a new source path without touching curated fields."""
+
+        async def _write() -> bool:
+            conn = self._ensure_conn()
+            if conn.execute(
+                "SELECT 1 FROM articles WHERE source_path = ?",
+                (new_source_path,),
+            ).fetchone():
+                return False
+            cursor = conn.execute(
+                "UPDATE articles SET "
+                "source_path = ?, filename = ?, scope = ?, subdirectory = ?, "
+                "updated_at = datetime('now') "
+                "WHERE source_path = ?",
+                (
+                    new_source_path,
+                    new_filename,
+                    new_scope,
+                    new_subdirectory,
+                    old_source_path,
+                ),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+        return await self._seq.run(_write())
 
     def get_permanent_chunks_by_file(self) -> dict[str, list[str]]:
         """Return {source: [chunk_id, ...]} for all permanently failed chunks."""
@@ -963,9 +1457,9 @@ class PropertyIndex:
 
     def lookup_articles_by_hash(self, hashes: list[str]) -> dict[str, ArticleEntry]:
         """Batch-lookup articles by content_hash. Returns {hash: ArticleEntry}."""
+        conn = self._ensure_conn()
         if not hashes:
             return {}
-        conn = self._ensure_conn()
         placeholders = ",".join("?" for _ in hashes)
         rows = conn.execute(
             "SELECT content_hash, title, authors, venue, published_date, doi, abstract, subdirectory"

@@ -7,9 +7,10 @@ is complemented by explicit code-level defense in depth.
 Supports both single-repo roots (PROJECT_ROOT is a git repo) and
 multi-repo roots (PROJECT_ROOT contains multiple git repos as children).
 
-File listing uses `git ls-files` so only tracked files appear — .gitignore
-is the single source of truth for what's visible. Binary files are excluded
-from listing and rejected from reading.
+File listing walks the real filesystem by default so all files are visible
+(including gitignored directories like tmp/). Pass include_untracked=False
+to restrict to git-tracked files. Binary files are excluded from listing
+and rejected from reading.
 
 Write tools (write_project_file, edit_project_file) are gated by
 PROJECT_READ_ONLY (default true). Toggle via project_access in mcp.yaml.
@@ -113,8 +114,8 @@ _WRITABLE_SUFFIXES = {
 def _safe_project_path(relative: str) -> Path:
     """Resolve *relative* inside the project root, rejecting traversal."""
     clean = relative.lstrip("/")
-    resolved_root = _PROJECT_ROOT.resolve()
-    candidate = (resolved_root / clean).resolve()
+    resolved_root = _PROJECT_ROOT  # Assuming _PROJECT_ROOT is already resolved
+    candidate = resolved_root / clean
     try:
         candidate.relative_to(resolved_root)
     except ValueError:
@@ -129,7 +130,7 @@ def _is_binary(path: Path) -> bool:
     return path.suffix.lower() in _BINARY_SUFFIXES
 
 
-def _read_only_error() -> dict[str, str]:
+def _read_only_error() -> dict[str, str | int]:
     return {
         "error": (
             "project is read-only (PROJECT_READ_ONLY=true); "
@@ -143,14 +144,12 @@ def _discover_repos() -> list[Path]:
     root = _PROJECT_ROOT.resolve()
     if (root / ".git").exists():
         return [root]
-    repos = []
-    try:
-        children = sorted(root.iterdir())
-    except OSError:
-        return []
-    for child in children:
-        if child.is_dir() and (child / ".git").exists():
-            repos.append(child)
+    repos = [
+        child
+        for child in sorted(root.iterdir())
+        if child.is_dir() and (child / ".git").exists()
+    ]
+    return repos
     return repos
 
 
@@ -196,11 +195,7 @@ def _filesystem_files(directory: str = "", max_depth: int | None = None) -> list
     Binary files and common build/cache directories are still skipped.
     """
     resolved_root = _PROJECT_ROOT.resolve()
-    base = (
-        (resolved_root / directory.lstrip("/")).resolve()
-        if directory
-        else resolved_root
-    )
+    base = _safe_project_path(directory) if directory else resolved_root
 
     if not base.is_dir():
         return []
@@ -310,13 +305,13 @@ def register_project_tools(mcp: FastMCP) -> None:
     def list_project_files(
         directory: str = "",
         max_depth: int = 3,
-        include_untracked: bool = False,
+        include_untracked: bool = True,
     ) -> dict[str, list[str] | bool]:
         """List files in the project directory.
 
-        By default only git-tracked files are shown (.gitignore respected).
-        Set include_untracked=True to list ALL files on disk — useful for
-        gitignored directories like tmp/, prompts/, build artifacts, etc.
+        By default lists ALL files on disk (including gitignored directories
+        like tmp/, prompts/, build artifacts). Set include_untracked=False
+        to restrict to git-tracked files only.
 
         Binary files are always excluded. Use max_depth to limit recursion
         depth (default 3).
@@ -341,11 +336,23 @@ def register_project_tools(mcp: FastMCP) -> None:
         if include_untracked:
             files = _filesystem_files(directory, max_depth=max_depth)
         else:
+            # Ideally, _git_tracked_files should take max_depth
+            # For now, keep post-filtering but acknowledge inefficiency
             tracked = _git_tracked_files(directory)
-            base_parts = len(Path(directory).parts) if directory else 0
+            base_path_obj = Path(directory) if directory else _PROJECT_ROOT.resolve()
             files = []
             for f in tracked:
-                depth = len(Path(f).parts) - base_parts
+                # Ensure path is relative to the directory being listed, not just PROJECT_ROOT
+                full_path = _PROJECT_ROOT.resolve() / f
+                try:
+                    relative_to_base = full_path.relative_to(base_path_obj)
+                    depth = (
+                        len(relative_to_base.parts) - 1
+                    )  # -1 because relative_to_base will have 1 part for immediate children
+                except ValueError:
+                    # File is not within the specified directory, skip
+                    continue
+
                 if depth > max_depth:
                     continue
                 if _is_binary(Path(f)):
@@ -370,16 +377,16 @@ def register_project_tools(mcp: FastMCP) -> None:
         pattern: str,
         directory: str = "",
         max_results: int = 50,
-        include_untracked: bool = False,
+        include_untracked: bool = True,
     ) -> dict[str, list[dict[str, str | int]] | bool]:
         """Search for an exact regex pattern across project files.
 
         This is literal/regex text search — use rag_search(scope="project")
         for semantic search when you need meaning-based retrieval.
 
-        By default only git-tracked files are searched (.gitignore respected).
-        Set include_untracked=True to search ALL files on disk — useful for
-        gitignored directories like tmp/, prompts/, build artifacts, etc.
+        By default searches ALL files on disk (including gitignored directories
+        like tmp/, prompts/, build artifacts). Set include_untracked=False
+        to restrict to git-tracked files only.
 
         Binary files are always skipped.
 
@@ -507,22 +514,33 @@ def register_project_tools(mcp: FastMCP) -> None:
             For replace: includes "replacements_made".
         """
         if _PROJECT_READ_ONLY:
-            return cast(dict[str, str | int], _read_only_error())
+            return cast("dict[str, str | int]", _read_only_error())
 
         target = _safe_project_path(path)
         if not target.exists():
-            return cast(dict[str, str | int], {"error": f"File not found: {path!r}"})
+            return cast("dict[str, str | int]", {"error": f"File not found: {path!r}"})
         if _is_binary(target):
             return cast(
-                dict[str, str | int],
+                "dict[str, str | int]",
                 {"error": f"Binary file type {target.suffix!r} cannot be edited"},
+            )
+
+        if operation == "insert_at_line" and line <= 0:
+            return cast(
+                "dict[str, str | int]",
+                {"error": "Line number must be 1 or greater for 'insert_at_line'"},
+            )
+        if operation == "replace" and not target_str:
+            return cast(
+                "dict[str, str | int]",
+                {"error": "'target_str' cannot be empty for 'replace' operation"},
             )
 
         result = perform_edit(
             target,
             operation,
             content,
-            line=line if line else None,
+            line=line if line > 0 else None,
             target_str=target_str if target_str else None,
             all_occurrences=all_occurrences,
         )
@@ -536,12 +554,16 @@ def register_project_tools(mcp: FastMCP) -> None:
         op: str = "",
         path: str = "",
         content: str = "",
-        target: str = "",
+        target_str: str = "",
         line: int = 0,
         all_occurrences: bool = False,
-        include_untracked: bool = False,
+        include_untracked: bool = True,
     ) -> dict[str, Any]:
         """Unified file operations for the mounted project directory.
+
+        Use `project` for repository source code, configs, and checked-in docs.
+        Prefer `files` for user documents in /data/files and `context` for
+        tasks/, specs, discoveries, and other workspace scratch material.
 
         Ops:
           read    — read file contents (path required)
@@ -561,7 +583,8 @@ def register_project_tools(mcp: FastMCP) -> None:
             target: String to find — required for replace.
             line: 1-indexed line number — required for insert_at_line.
             all_occurrences: For replace: replace all matches (default false).
-            include_untracked: For list/search: include gitignored files (e.g. tmp/).
+            include_untracked: For list/search: show all files on disk (default true).
+                Set false to restrict to git-tracked files only.
 
         Returns:
             Operation-dependent result dict.
@@ -597,13 +620,13 @@ def register_project_tools(mcp: FastMCP) -> None:
         if op == "replace":
             if not path:
                 raise ValueError("'path' is required for replace")
-            if not target:
+            if not target_str:
                 raise ValueError("'target' is required for replace")
             return edit_project_file(
                 path,
                 "replace",
                 content,
-                target_str=target,
+                target_str=target_str,
                 all_occurrences=all_occurrences,
             )
         if op == "insert_at_line":

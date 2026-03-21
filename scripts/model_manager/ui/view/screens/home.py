@@ -2,7 +2,6 @@
 
 import logging
 import os
-from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -14,6 +13,10 @@ from textual.widgets import Collapsible, Footer, Header, Label, Static
 from scripts.model_manager.topology import build_snapshot
 
 from ..widgets.topology_panel import TopologyPanel
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +46,7 @@ class StepIndicator(Static):
     """
 
     class Clicked(Message):
-        """Posted when a step indicator is clicked."""
+        """Posted when a step indicator is clicked, carrying the ID of the clicked step."""
 
         def __init__(self, step_id: str) -> None:
             self.step_id = step_id
@@ -130,31 +133,39 @@ class HomeScreen(Screen):
     }
 
     def action_nav_catalog(self) -> None:
+        """Navigate to the catalog screen."""
         self.app.push_screen("catalog")
 
     def action_nav_services(self) -> None:
+        """Navigate to the services screen."""
         self.app.push_screen("services")
 
     def action_nav_remotes(self) -> None:
+        """Navigate to the remotes screen."""
         self.app.push_screen("remotes")
 
     def action_nav_footprint(self) -> None:
+        """Navigate to the footprint screen."""
         self.app.push_screen("footprint")
 
     def action_nav_settings(self) -> None:
+        """Navigate to the settings screen."""
         self.app.push_screen("settings")
 
-    def action_nav_download(self) -> None:
+    def action_nav_download_catalog(self) -> None:
         self.app.push_screen("catalog")
 
     def on_step_indicator_clicked(self, event: StepIndicator.Clicked) -> None:
-        match event.step_id:
-            case "step-config":
-                self.app.push_screen("settings")
-            case "step-build" | "step-start":
-                self.app.push_screen("services")
-            case "step-download" | "step-measure":
-                self.app.push_screen("catalog")
+        """Handle clicks on step indicators to navigate to relevant screens."""
+        screen_map = {
+            "step-config": "settings",
+            "step-build": "services",
+            "step-start": "services",
+            "step-download": "catalog",
+            "step-measure": "catalog",
+        }
+        if screen_name := screen_map.get(event.step_id):
+            self.app.push_screen(screen_name)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -163,15 +174,11 @@ class HomeScreen(Screen):
             id="welcome",
         )
         with Horizontal(id="steps-row"):
-            yield StepIndicator("Configure", id="step-config", classes="todo")
-            yield Static("→", classes="step-arrow")
-            yield StepIndicator("Build", id="step-build", classes="todo")
-            yield Static("→", classes="step-arrow")
-            yield StepIndicator("Start", id="step-start", classes="todo")
-            yield Static("→", classes="step-arrow")
-            yield StepIndicator("Download", id="step-download", classes="todo")
-            yield Static("→", classes="step-arrow")
-            yield StepIndicator("Measure", id="step-measure", classes="todo")
+            steps = list(self.STEP_LABELS.items())
+            for i, (step_id, label) in enumerate(steps):
+                yield StepIndicator(label, id=step_id, classes="todo")
+                if i < len(steps) - 1:
+                    yield Static("→", classes="step-arrow")
 
         yield Static("", id="steps-compact", markup=True)
         yield Static("", id="next-action", markup=True)
@@ -189,35 +196,44 @@ class HomeScreen(Screen):
     _REFRESH_INTERVAL_SECONDS = 30
 
     def on_mount(self) -> None:
+        """Called when the widget is mounted. Sets up refresh interval and initial status."""
         self.set_interval(self._REFRESH_INTERVAL_SECONDS, self.refresh_status)
         self.refresh_status()
 
     def on_screen_resume(self) -> None:
+        """Called when the screen is resumed. Refreshes the status."""
         self.refresh_status()
 
     def action_toggle_topology(self) -> None:
+        """Toggle the collapsed state of the topology panel."""
         collapsible = self.query_one("#topo-collapsible", Collapsible)
         collapsible.collapsed = not collapsible.collapsed
 
     def on_topology_panel_deploy_state_changed(
         self, event: TopologyPanel.DeployStateChanged
     ) -> None:
+        """Handles changes in the topology panel's deployment state."""
         if event.deploying:
             self.query_one("#topo-collapsible", Collapsible).collapsed = False
+            return
+        self.refresh_status()
 
     def refresh_status(self) -> None:
+        """Refreshes the application status by running a background worker."""
         self.run_worker(self._check_status(), exclusive=True)
 
     async def _check_status(self) -> None:
+        """Asynchronously checks the status of Docker, services, and models, then updates the UI."""
         app = self.app
-        svc = app.service_controller  # type: ignore[attr-defined]
+        # Assuming app is of type 'YourAppClass'
+        svc = app.service_controller
         build = svc.check_image()
         services = svc.service_state.check_all()
 
         gw = services[0]
         sg = services[1]
 
-        workspace_root: Path = app._workspace_root  # type: ignore[attr-defined]
+        workspace_root: Path = app._workspace_root
         try:
             snapshot = build_snapshot(workspace_root, services=services)
             topo_panel = self.query_one("#topology-panel", TopologyPanel)
@@ -245,10 +261,10 @@ class HomeScreen(Screen):
         self._update_steps(gw, sg, build, catalog)
 
     def _update_topo_title(self, snapshot: object) -> None:
-        statuses = [snapshot.master.status]  # type: ignore[union-attr]
-        if snapshot.local_edge:  # type: ignore[union-attr]
-            statuses.append(snapshot.local_edge.status)  # type: ignore[union-attr]
-        statuses.extend(r.status for r in snapshot.remotes)  # type: ignore[union-attr]
+        statuses = [snapshot.master.status]
+        if snapshot.local_edge:
+            statuses.append(snapshot.local_edge.status)
+        statuses.extend(r.status for r in snapshot.remotes)
         total = len(statuses)
         running = sum(1 for s in statuses if s == "running")
         self.query_one(
@@ -256,7 +272,7 @@ class HomeScreen(Screen):
         ).title = f"Topology ({total} nodes: {running} running)"
 
     def _update_model_paths(self, app: object) -> None:
-        search_paths = app.local_env.model_search_paths  # type: ignore[attr-defined]
+        search_paths = app.local_env.model_search_paths
         path_parts: list[str] = []
         for p in search_paths:
             if p.is_dir():
@@ -278,23 +294,22 @@ class HomeScreen(Screen):
         )
 
     def _update_model_count(self, app: object) -> None:
-        catalog = app.catalog  # type: ignore[attr-defined]
-        check = app.onboarding.check_downloaded  # type: ignore[attr-defined]
+        catalog = app.catalog
+        check = app.onboarding.check_downloaded
         models = list(catalog.models.values())
         total = len(models)
-        measured = sum(
-            1 for m in models if (m.has_gpu_profiles or m.has_cpu_profiles) and check(m)
-        )
-        missing = sum(
-            1
-            for m in models
-            if (m.has_gpu_profiles or m.has_cpu_profiles) and not check(m)
-        )
-        downloaded = sum(
-            1
-            for m in models
-            if not (m.has_gpu_profiles or m.has_cpu_profiles) and check(m)
-        )
+        measured = 0
+        missing = 0
+        downloaded = 0
+        for m in models:
+            has_profiles = m.has_gpu_profiles or m.has_cpu_profiles
+            is_checked = check(m)
+            if has_profiles and is_checked:
+                measured += 1
+            elif has_profiles and not is_checked:
+                missing += 1
+            elif not has_profiles and is_checked:
+                downloaded += 1
         not_local = total - measured - missing - downloaded
         parts = [f"  Models: {total} in catalog —"]
         parts.append(f"[green]{measured} measured[/]")
@@ -305,7 +320,9 @@ class HomeScreen(Screen):
         parts.append(f"{not_local} not on disk")
         self.query_one("#model-count", Static).update("  ".join(parts))
 
-    def _update_steps(self, gw, sg, build, catalog) -> None:  # type: ignore[no-untyped-def]
+    def _update_steps(
+        self, gw: object, sg: object, build: object, catalog: object
+    ) -> None:
         env_local = self.app._workspace_root / ".env.local"  # type: ignore[attr-defined]
         model_path = self.app.local_env.model_path_root  # type: ignore[attr-defined]
 
@@ -345,6 +362,7 @@ class HomeScreen(Screen):
         self._update_next_action(step_done, start_hint)
 
     def _update_next_action(self, step_done: dict[str, bool], start_hint: str) -> None:
+        """Updates the 'next action' hint based on the completion status of onboarding steps."""
         widget = self.query_one("#next-action", Static)
         first_incomplete = next(
             (step_id for step_id, done in step_done.items() if not done), None
@@ -360,6 +378,7 @@ class HomeScreen(Screen):
             widget.update(f"[yellow]Next →[/] {hints[first_incomplete]}")
 
     def _mark_step(self, step_id: str, complete: bool) -> None:
+        """Visually marks an onboarding step as complete or incomplete."""
         indicator = self.query_one(f"#{step_id}", StepIndicator)
         label = self.STEP_LABELS[step_id]
         if complete:
@@ -371,9 +390,12 @@ class HomeScreen(Screen):
 
 
 def _status_icon(status: str) -> str:
+    """Returns a rich text icon string based on the provided status."""
     match status:
         case "running" | "built":
             return "[green]●[/]"
+        case "building":
+            return "[cyan]◎[/]"
         case "stopped" | "not_built":
             return "[red]○[/]"
         case "unhealthy" | "failed":

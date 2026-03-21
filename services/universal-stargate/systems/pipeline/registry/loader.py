@@ -8,18 +8,19 @@ Part of the pipeline registry package.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
 from model_id import validate_model_id
 from universal_logging import get_logger
 
+from ..availability import missing_models
 from ..core.schemas import PipelineSpec, StepConfig
 from ..loader import resolve_sub_pipelines
 from ..schemas import ModelRef
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from .core import PipelineRegistry
 
 logger = get_logger(__name__)
@@ -283,13 +284,11 @@ class PipelineLoader:
 
             should_filter, required = self._registry._should_filter_pipeline(pipeline)
             if should_filter:
-                if self._registry._get_gateway_catalogs is not None:
-                    gateway_catalogs = self._registry._get_gateway_catalogs()
-                    available = (
-                        set().union(*gateway_catalogs) if gateway_catalogs else set()
+                if self._registry._is_model_available is not None:
+                    missing = missing_models(
+                        required,
+                        is_available=self._registry._is_model_available,
                     )
-                    available |= set(self._registry.pipelines.keys())
-                    missing = required - available
                     if _defer:
                         self._registry._deferred_pipelines.append(
                             (path, path_name, domain_dir)
@@ -306,7 +305,7 @@ class PipelineLoader:
                         logger.warning(
                             f"    ⏭️  Skipping pipeline '{pipeline.id}' - "
                             f"missing required models: {missing_list} "
-                            f"(required: {len(required)}, available: {len(available)})"
+                            f"(required: {len(required)}, missing: {len(missing_list)})"
                         )
                 return
 

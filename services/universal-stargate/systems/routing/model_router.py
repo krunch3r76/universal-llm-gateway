@@ -1,9 +1,6 @@
 """
 Unified model router using Predicate-Score Pipeline.
 
-Replaces inheritance-based CPUModelRouter/GPUModelRouter with
-composition-based selection.
-
 Architecture Benefits:
     - Robustness: Parallel collection, resilient eviction, isolated failures
     - Debugging: Function-based predicates/scorers testable in isolation

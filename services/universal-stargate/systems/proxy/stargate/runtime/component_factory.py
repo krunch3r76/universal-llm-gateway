@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
-from systems.routing.selection.catalog import collect_stargate_model_sets
+from systems.routing.selection.catalog import get_all_available_models
 
 from ....profiles import ProfileConfigLoader, ProfileManager
 from ....transformations import TransformationConfigLoader, TransformationEngine
@@ -16,6 +15,7 @@ from ...core.nonstreaming import RequestExecutor, RequestForwarder, RequestPrepa
 from ...core.streaming import StreamHandler
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from ..proxy import StargateProxy
 
 logger = get_logger(__name__)
@@ -330,31 +330,33 @@ async def initialize_hot_reload(proxy: StargateProxy) -> None:
         proxy.profile_watcher = None
 
 
-def create_catalog_provider(
+def create_model_checker(
     proxy: StargateProxy,
-) -> Callable[[], list[set[str]]]:
+) -> Callable[[str], bool]:
+    """Build per-model availability predicate for PipelineRegistry.
+
+    Reads proxy state at call time (not capture time) so catalog data is current.
+
+    A model ID is available when:
+    1. It is a registered pipeline virtual ID, OR
+    2. It appears in ``get_all_available_models`` (full union catalog from all
+       gateways — same data as ``GET /v1/models/{model_id}`` with activation=all)
+
+    If no gateway is connected yet, the catalog is empty and pipelines won't
+    register.  Stargate triggers ``reload_pipelines()`` once catalogs arrive
+    from edge gateways.
     """
-    Create catalog provider closure for PipelineRegistry.
 
-    CRITICAL: Accesses proxy.federated_manager at call time, not capture time.
-    Federation is initialized AFTER pipeline system, so the property
-    returns None during PipelineRegistry construction but returns the
-    actual manager when the provider is called later.
-
-    Args:
-        proxy: StargateProxy instance (captured by closure)
-
-    Returns:
-        Callable that returns list[set[str]] of model sets from all sources
-    """
-
-    def provider() -> list[set[str]]:
-        return collect_stargate_model_sets(
+    def checker(model_id: str) -> bool:
+        reg = proxy.pipeline_registry
+        if reg is not None and model_id in reg.pipelines:
+            return True
+        return model_id in get_all_available_models(
             proxy.gateway_manager,
-            proxy.federated_manager,  # Accessed when called, not when created
+            proxy.federated_manager,
         )
 
-    return provider
+    return checker
 
 
 async def _emit_pipeline_unavailable_events(proxy: StargateProxy) -> None:
@@ -382,6 +384,40 @@ async def _emit_pipeline_unavailable_events(proxy: StargateProxy) -> None:
                 pipeline_id,
                 e,
             )
+
+
+def _subscribe_pipeline_reload_on_gateway_connected(proxy: StargateProxy) -> None:
+    """Subscribe to local gateway connect events for pipeline reload (Edge mode).
+
+    When the gateway WebSocket connects after startup, the catalog data becomes
+    available and pipelines that were loaded optimistically should be revalidated.
+
+    INVARIANT: reload_pipelines() runs off-thread to avoid blocking event loop.
+    """
+    if proxy.event_bus is None:
+        return
+
+    from src.scheduling.events import GATEWAY_STATE_CHANGED
+
+    async def on_gateway_state(event) -> None:
+        if proxy.pipeline_registry is None:
+            return
+        if event.payload.get("connectivity") != "reachable":
+            return
+        try:
+            old_count, new_count = await asyncio.to_thread(
+                proxy.pipeline_registry.reload_pipelines
+            )
+            logger.info(
+                "🔄 Pipelines reloaded after gateway connected: %d → %d pipelines",
+                old_count,
+                new_count,
+            )
+        except Exception:
+            logger.exception("Pipeline reload failed after gateway connect")
+
+    proxy.event_bus.subscribe_async(GATEWAY_STATE_CHANGED, on_gateway_state)
+    logger.debug("Subscribed to GATEWAY_STATE_CHANGED for pipeline reload")
 
 
 def _subscribe_pipeline_reload_on_catalog_change(proxy: StargateProxy) -> None:
@@ -571,7 +607,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
 
         proxy.pipeline_registry = PipelineRegistry(
             search_paths=search_paths,
-            get_gateway_catalogs=create_catalog_provider(proxy),
+            is_model_available=create_model_checker(proxy),
             config_defaults=pipelines_config.get("defaults", {}),
             config_base_dir=config_base_dir,
         )
@@ -588,17 +624,14 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
         if proxy.gateway_manager is not None:
             healthy_gateway = proxy.gateway_manager.get_gateway()
             if healthy_gateway:
-                # reload_pipelines() returns (old_count, new_count)
                 _old, _new = proxy.pipeline_registry.reload_pipelines()
                 logger.info(
                     f"🔄 Pipelines reloaded after initialization: {_old} → {_new} "
                     "(local gateway already connected)"
                 )
                 await _emit_pipeline_unavailable_events(proxy)
+            _subscribe_pipeline_reload_on_gateway_connected(proxy)
         else:
-            # Master mode (no local gateway): subscribe to federation catalog
-            # changes for pipeline reload. Only Edge has gateway_manager (Stargate
-            # + Gateway colocated in same container).
             _subscribe_pipeline_reload_on_catalog_change(proxy)
 
         admission_config = proxy.config.get_pipeline_admission_config()

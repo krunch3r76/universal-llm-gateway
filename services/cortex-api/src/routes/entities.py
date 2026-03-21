@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -14,6 +15,7 @@ from src.models import (
     EntitySummary,
     EntityUpdate,
 )
+from src.routes.assertions import _ASSERTION_COLS
 
 logger = logging.getLogger("cortex-api.entities")
 router = APIRouter(prefix="/entities", tags=["entities"])
@@ -33,27 +35,32 @@ def list_entities(
         params.append(type)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    sql = f"SELECT id, type, name, created_at FROM entities{where} ORDER BY created_at DESC LIMIT ?"
+    sql = f"SELECT id, type, name, description, status, created_at FROM entities{where} ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
 
-    conn = cortex_conn()
+    conn = None
     try:
+        conn = cortex_conn()
         rows = query(conn, sql, tuple(params))
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
     return EntityList(items=[EntitySummary(**row) for row in rows])
 
 
+# Fields in the 'entities' table that store JSON data and need decoding.
 _ENTITY_JSON_FIELDS = frozenset({"aliases", "attributes"})
+# Fields in the 'assertions' table that store JSON data and need decoding.
 _ASSERTION_JSON_FIELDS = frozenset({"evidence_uris"})
 
 
 @router.get("/{entity_id}", response_model=EntityDetail)
 def get_entity(entity_id: str) -> EntityDetail:
     """Fetch one entity and include all linked assertions ordered by newest first."""
-    conn = cortex_conn()
+    conn = None
     try:
+        conn = cortex_conn()
         entities = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
         if not entities:
             raise HTTPException(
@@ -64,13 +71,13 @@ def get_entity(entity_id: str) -> EntityDetail:
 
         assertion_rows = query(
             conn,
-            "SELECT id, entity_id, claim, confidence, evidence, "
-            "evidence_uris, created_at FROM assertions WHERE entity_id = ? "
+            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE entity_id = ? "
             "ORDER BY created_at DESC",
             (entity_id,),
         )
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
     assertions = [
         AssertionItem(**decode_row(row, _ASSERTION_JSON_FIELDS))
@@ -83,9 +90,10 @@ def get_entity(entity_id: str) -> EntityDetail:
 
 @router.patch("/{entity_id}", response_model=EntityDetail)
 def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
-    """Update mutable fields on an entity (currently: notes)."""
-    conn = cortex_conn()
+    """Update mutable fields on an entity (notes, description, status)."""
+    conn = None
     try:
+        conn = cortex_conn()
         existing = query(conn, "SELECT id FROM entities WHERE id = ?", (entity_id,))
         if not existing:
             raise HTTPException(
@@ -93,11 +101,17 @@ def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
                 detail=f"Entity not found: {entity_id}",
             )
 
+        update_fields = {
+            "notes": body.notes,
+            "description": body.description,
+            "status": body.status,
+        }
         sets: list[str] = []
         params: list[str] = []
-        if body.notes is not None:
-            sets.append("notes = ?")
-            params.append(body.notes)
+        for field, value in update_fields.items():
+            if value is not None:
+                sets.append(f"{field} = ?")
+                params.append(value)
 
         if not sets:
             raise HTTPException(
@@ -110,18 +124,20 @@ def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
         params.append(now)
         params.append(entity_id)
 
-        execute(conn, f"UPDATE entities SET {', '.join(sets)} WHERE id = ?", tuple(params))
+        execute(
+            conn, f"UPDATE entities SET {', '.join(sets)} WHERE id = ?", tuple(params)
+        )
 
         rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
         assertion_rows = query(
             conn,
-            "SELECT id, entity_id, claim, confidence, evidence, "
-            "evidence_uris, created_at FROM assertions WHERE entity_id = ? "
+            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE entity_id = ? "
             "ORDER BY created_at DESC",
             (entity_id,),
         )
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
     assertions = [
         AssertionItem(**decode_row(row, _ASSERTION_JSON_FIELDS))
@@ -137,16 +153,19 @@ def create_entity(body: EntityCreate) -> EntityDetail:
     """Create an entity and return the stored entity detail payload."""
     now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    conn = cortex_conn()
+    conn = None
     try:
+        conn = cortex_conn()
         conn.execute(
-            "INSERT INTO entities (id, type, name, aliases, attributes, "
-            "notes, source_uri, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO entities (id, type, name, description, status, aliases, "
+            "attributes, notes, source_uri, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.id,
                 body.type,
                 body.name,
+                body.description,
+                body.status or "confirmed",
                 json_encode(body.aliases),
                 json_encode(body.attributes),
                 body.notes,
@@ -157,14 +176,15 @@ def create_entity(body: EntityCreate) -> EntityDetail:
         )
         conn.commit()
         rows = query(conn, "SELECT * FROM entities WHERE id = ?", (body.id,))
-    except conn.IntegrityError:
+    except sqlite3.IntegrityError:  # Assuming sqlite3 is the underlying DB
         logger.warning("Entity create conflict for id=%s", body.id)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Entity already exists: {body.id}",
         )
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
     if not rows:
         logger.error("Entity create succeeded but no row returned for id=%s", body.id)

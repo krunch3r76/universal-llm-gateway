@@ -16,9 +16,7 @@ import os
 import socket
 import sys
 import time
-from asyncio.transports import BaseTransport
-from collections.abc import Callable
-from typing import Any, override
+from typing import Any, override, TYPE_CHECKING
 
 import uvicorn
 from auth_middleware import AuthMiddleware
@@ -31,19 +29,18 @@ from oauth_service import OAuthService
 from oauth_store import OAuthStore
 from request_profile import current_profile
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
-from starlette.types import Send
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
-
 from tools.agent_bus import register_agent_bus_tools
 from tools.browser import register_browser_tools
-from tools.clip import register_clip_tools
 from tools.context import register_context_tools
 from tools.cortex import register_cortex_tools
+from tools.cortex_v2 import register_cortex_v2_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
 from tools.llm import register_llm_tools
 from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
+from tools.model_status import register_model_status_tools
 from tools.pipeline import register_pipeline_tools
 from tools.pipeline_consult import register_pipeline_consult_tools
 from tools.project import register_project_tools
@@ -52,6 +49,11 @@ from tools.rag import register_rag_tools
 from tools.rag_articles import register_rag_article_tools
 from tools.sqlite import register_sqlite_tools
 from tools.web import register_web_tools
+
+if TYPE_CHECKING:
+    from starlette.types import Send
+    from collections.abc import Callable
+    from asyncio.transports import BaseTransport
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,8 @@ def _patch_sse_ping() -> None:
         _orig_init(self, *args, **kwargs)
 
     # Monkey-patch __init__ to inject custom ping interval via kwargs.
-    # type: ignore[method-assign] required because the patched signature diverges from the original.
+    # This is a type-unsafe operation due to diverging signatures. Consider subclassing
+    # EventSourceResponse if a more type-safe approach is desired.
     EventSourceResponse.__init__ = _patched_init  # type: ignore[method-assign]
 
 
@@ -106,7 +109,7 @@ def _patch_sse_lifecycle_events() -> None:
     Emits `mcp.sse.stream.started`, `mcp.sse.stream.aborted`, and
     `mcp.sse.stream.ended` so stream health is visible in event telemetry.
     """
-    # Accessing protected member for lifecycle-event monkey-patch.
+    # Accessing protected member for lifecycle-event monkey-patch. This is brittle.
     _orig_stream = EventSourceResponse._stream_response  # type: ignore[attr-defined]
 
     async def _stream_with_events(self: EventSourceResponse, send: Send) -> None:
@@ -140,7 +143,7 @@ def _patch_sse_lifecycle_events() -> None:
             if duration >= 0.1:
                 logger.info("SSE stream ended cleanly after %.1fs", duration)
 
-    # Monkey-patch protected method to wrap stream with start/end events.
+    # Monkey-patch protected method to wrap stream with start/end events. This is brittle.
     EventSourceResponse._stream_response = _stream_with_events  # type: ignore[method-assign]
 
 
@@ -209,20 +212,12 @@ _PRIMARY_TOOLS: set[str] = {
     # Infra
     "pipeline_run",
     "manage_service",
-    # Agent-bus
-    "agent_bus_fetch",
-    "agent_bus_post",
-    "agent_bus_reply",
-    "agent_bus_threads",
-    "agent_bus_update_thread",
-    # Cortex
-    "cortex_assert",
-    "cortex_journal_write",
-    "cortex_deadlines",
-    "cortex_entities",
-    "cortex_entity_get",
-    "cortex_assertions",
-    "cortex_journal_read",
+    "model_status",
+    # Agent-bus (dispatch-style)
+    "agent_bus",
+    # Cortex (dispatch-style + boot)
+    "cortex",
+    "cortex_boot",
 }
 
 
@@ -235,19 +230,21 @@ def _build_server() -> FastMCP:
     mcp: FastMCP = FastMCP("gateway-tools")
     register_filesystem_tools(mcp)
     register_manage_tools(mcp)
+    register_model_status_tools(mcp)
     register_project_tools(mcp)
     register_web_tools(mcp)
     register_rag_tools(mcp)
     register_rag_article_tools(mcp)
-    if _env_truthy("ENABLE_CONTEXT_TOOLS", default=True):
-        register_context_tools(mcp)
-    else:
-        logger.info("Context tools disabled (ENABLE_CONTEXT_TOOLS=false)")
-    register_clip_tools(mcp)
-    if _env_truthy("ENABLE_BROWSER_TOOLS", default=False):
-        register_browser_tools(mcp)
-    else:
-        logger.info("Browser tools disabled (ENABLE_BROWSER_TOOLS=false)")
+    tool_configs = {
+        "ENABLE_CONTEXT_TOOLS": (register_context_tools, True, "Context tools"),
+        "ENABLE_BROWSER_TOOLS": (register_browser_tools, False, "Browser tools"),
+    }
+
+    for env_var, (register_fn, default_enabled, tool_name) in tool_configs.items():
+        if _env_truthy(env_var, default=default_enabled):
+            register_fn(mcp)
+        else:
+            logger.info(f"{tool_name} disabled ({env_var}=false)")
     register_sqlite_tools(mcp)
     register_event_tools(mcp)
     register_pipeline_tools(mcp)
@@ -256,6 +253,7 @@ def _build_server() -> FastMCP:
     register_local_api_tools(mcp)
     register_agent_bus_tools(mcp)
     register_cortex_tools(mcp)
+    register_cortex_v2_tools(mcp)
     register_llm_tools(mcp)
 
     @mcp.tool()
@@ -281,7 +279,7 @@ def _build_server() -> FastMCP:
             delete_file(path) — delete sandboxed file
           File utilities:
             view_image(path, max_dimension?, quality?, mode?) — view photo/screenshot
-                mode: "url" (default) returns thumbnail URL; "image" returns inline ImageContent
+                mode: "copy" (default) returns a shared local image path; "image" returns inline ImageContent
             move_file(source, destination) — move/rename any file
             copy_file(source, destination) — copy any file
             remove_directory(directory) — delete directory and contents
@@ -330,19 +328,13 @@ def _build_server() -> FastMCP:
             query_observability(operation, params?) — event queries
           Internal services:
             local_api(service, method, path, body?, token?) — relay to Docker services
-          Agent bus (supplementary):
-            agent_bus_turn_update(thread, turn_number, body?, append?, subject?)
-                — update/append to an unread turn. Use append to build long
-                turns incrementally (each call commits immediately).
-                Append responses return body_length + body_tail (last 200 chars)
-                instead of the full body.
-            agent_bus_fetch_preview(to?, thread?, last?, unread?, mark_read?)
-                — compact turn previews (metadata only)
-            agent_bus_turn_get(thread, turn_number) — fetch one turn body
-            agent_bus_delete_thread(thread, force?) — delete a thread and all
-                its turns. Refuses if any turns are read unless force=True.
-            agent_bus_delete_turn(thread, turn_number, force?) — delete a
-                single turn. Refuses if the turn has been read unless force=True.
+          Cortex (dispatch-only — primary ops use cortex(tool=...) directly):
+            cortex_chunk_create(content, source_uri?, ...) — create source chunk
+            cortex_chunk_get(chunk_id) — get chunk by ID
+            cortex_surface_form_create(mention, entity_id, chunk_id, ...) — resolved mention
+            cortex_surface_form_lookup(mention, context_hash) — resolution cache lookup
+            cortex_staging_list(status?, source_uri?, limit?) — list staging proposals
+            cortex_staging_reject(staging_id, reviewer?) — reject staging proposal
           Todos & journal:
             todo(method, ...) — list/add/done/defer todos
             list_journal_entries() — list recent entries
@@ -424,6 +416,8 @@ def _prune_to_primary(mcp: FastMCP) -> dict[str, Callable[..., Any]]:
                 registry[t.name] = tool_obj.fn
         return registry
 
+    # asyncio.run is used here during application startup, outside of an active event loop.
+    # If this function were to be called from within an active event loop, this would be problematic.
     registry = asyncio.run(_collect())
 
     import warnings
@@ -458,11 +452,15 @@ def main() -> None:
 
     # Apply UTC formatter to uvicorn's own loggers so none slip through
     # with localtime or the default no-timestamp format.
+    # Configure uvicorn's loggers to use the same stream handler and formatter
+    # by ensuring they propagate messages and clearing their default handlers.
     for _uvicorn_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         _uv_logger = logging.getLogger(_uvicorn_logger_name)
-        _uv_logger.handlers.clear()
+        _uv_logger.handlers.clear()  # Clear default uvicorn handlers
         _uv_logger.addHandler(stream_handler)
-        _uv_logger.propagate = False
+        _uv_logger.propagate = (
+            False  # Prevent propagation to root logger if it would cause duplication
+        )
 
     # Suppress high-volume internal chatter from fastmcp / MCP protocol layers.
     # These fire on every request and are fully covered by mcp.request.* events.
@@ -527,7 +525,7 @@ def main() -> None:
     class KeepaliveProtocol(orig_protocol_class):
         @override
         def connection_made(self, transport: BaseTransport) -> None:
-            # get_extra_info('socket') returns an object; narrow before keepalive setup.
+            # get_extra_info('socket') returns a socket.socket object or None; narrow before keepalive setup.
             sock = transport.get_extra_info("socket")
             if isinstance(sock, socket.socket):
                 _set_tcp_keepalive(sock)

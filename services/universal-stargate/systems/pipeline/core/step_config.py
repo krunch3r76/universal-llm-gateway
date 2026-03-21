@@ -3,14 +3,16 @@ Step configuration schema.
 
 Contains the StepConfig model and parsing/normalization helpers.
 """
+# ruff: noqa: E501
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .execution.retry import RetryPolicy
 from .step_types import (
     InputBinding,
     MapConfig,
@@ -18,9 +20,6 @@ from .step_types import (
     OutputDeclaration,
     ReadsFrom,
 )
-
-if TYPE_CHECKING:
-    from .execution.retry import RetryPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +32,13 @@ class StepConfig(BaseModel):
     """
 
     model_config: ConfigDict = ConfigDict(populate_by_name=True, extra="allow")
+    """Pydantic model configuration.
+
+    - `populate_by_name`: Allows fields to be populated by their original name (e.g., 'id')
+      even if an alias (e.g., 'name') is defined.
+    - `extra='allow'`: Permits additional fields not explicitly defined in the schema,
+      which are stored in `model_extra`.
+    """
 
     # Required
     name: str = Field(alias="id")
@@ -123,6 +129,10 @@ class StepConfig(BaseModel):
                 map_config["selection"] = values.pop("selection")
             if "exclude_self" in values:
                 map_config["exclude_self"] = values.pop("exclude_self")
+            if "inference_timeout_seconds" in values:
+                map_config["inference_timeout_seconds"] = values.pop(
+                    "inference_timeout_seconds"
+                )
             if (
                 "model_requirements" in values
                 and "model_requirements" not in map_config
@@ -470,8 +480,7 @@ class StepConfig(BaseModel):
         """Parse retry_policy dict to RetryPolicy object."""
         if not self.retry_policy:
             return None
-        from .execution.retry import RetryPolicy
-
+        # Import moved to top-level TYPE_CHECKING block
         return RetryPolicy(**self.retry_policy)
 
     def get_map_config(self) -> MapConfig | None:
@@ -485,46 +494,50 @@ class StepConfig(BaseModel):
                 f"map_config must be a dict when present, got {type(raw).__name__}"
             )
 
-        map_over: dict[str, InputBinding] = {}
-        for field, binding in raw.get("map_over", {}).items():
-            if isinstance(binding, str):
-                map_over[field] = InputBinding.parse(binding)
-            elif isinstance(binding, InputBinding):
-                map_over[field] = binding
-            else:
-                raise TypeError(
-                    f"map_over[{field!r}]: expected str or InputBinding, "
-                    f"got {type(binding).__name__}"
-                )
+        def _parse_binding_dict(
+            data: dict[str, Any], field_name: str
+        ) -> dict[str, InputBinding]:
+            parsed_data = {}
+            for key, value in data.items():
+                if isinstance(value, str):
+                    parsed_data[key] = InputBinding.parse(value)
+                elif isinstance(value, InputBinding):
+                    parsed_data[key] = value
+                else:
+                    raise TypeError(
+                        f"{field_name}[{key!r}]: expected str or InputBinding, "
+                        f"got {type(value).__name__}"
+                    )
+            return parsed_data
 
-        map_inputs: dict[str, InputBinding] = {}
-        for field, binding in raw.get("map_inputs", {}).items():
-            if isinstance(binding, str):
-                map_inputs[field] = InputBinding.parse(binding)
-            elif isinstance(binding, InputBinding):
-                map_inputs[field] = binding
-            else:
-                raise TypeError(
-                    f"map_inputs[{field!r}]: expected str or InputBinding, "
-                    f"got {type(binding).__name__}"
-                )
+        map_over = _parse_binding_dict(raw.get("map_over", {}), "map_over")
+        map_inputs = _parse_binding_dict(raw.get("map_inputs", {}), "map_inputs")
 
-        model_pool: InputBinding | None = None
-        if "model_pool" in raw:
-            pool_val = raw["model_pool"]
-            if isinstance(pool_val, str):
-                model_pool = InputBinding.parse(pool_val)
-            elif isinstance(pool_val, InputBinding):
-                model_pool = pool_val
-            elif pool_val is not None:
-                raise TypeError(
-                    f"model_pool: expected str or InputBinding, "
-                    f"got {type(pool_val).__name__}"
-                )
+        model_pool_val = raw.get("model_pool")
+        if model_pool_val is None:
+            model_pool: InputBinding | None = None
+        elif isinstance(model_pool_val, str):
+            model_pool = InputBinding.parse(model_pool_val)
+        elif isinstance(model_pool_val, InputBinding):
+            model_pool = model_pool_val
+        else:
+            raise TypeError(
+                f"model_pool: expected str, InputBinding, or None, "
+                f"got {type(model_pool_val).__name__}"
+            )
 
         timeout_seconds = raw.get("timeout_seconds")
         if timeout_seconds is None:
             timeout_seconds = self.timeout_seconds
+
+        inference_timeout = raw.get("inference_timeout_seconds")
+        kwargs: dict[str, Any] = {
+            "inference_timeout_seconds": float(inference_timeout)
+            if inference_timeout is not None
+            else None
+        }
+        if kwargs["inference_timeout_seconds"] is None:
+            del kwargs["inference_timeout_seconds"]
 
         return MapConfig(
             map_over=map_over,
@@ -536,4 +549,5 @@ class StepConfig(BaseModel):
             model_requirements=raw.get("model_requirements"),
             exclude_self=raw.get("exclude_self", False),
             selection=raw.get("selection", "rotate"),
+            **kwargs,
         )

@@ -1,8 +1,12 @@
-"""Local models browser — UI and API for viewing models per node.
+"""Node-grouped models browser — UI and API for viewing models per node.
 
 Serves a static HTML/JS/CSS browser at /local-ui and provides
-GET /api/v1/local-models with node-grouped model data aggregated
+GET /api/v1/node-models with node-grouped model data aggregated
 from catalog caches (no I/O — reads WebSocket + federation state).
+Includes local and federated models from all reachable nodes.
+
+Each model entry includes a ``status`` field indicating whether the model
+is loaded, busy, or loading on the node.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from systems.routing.selection.catalog import (
     get_activated_models_for_display,
     get_model_context_metadata,
     get_model_source_map,
+    get_model_status_map,
 )
 
 from ..dependencies import get_auth_dependency, get_proxy
@@ -35,89 +40,114 @@ _STATIC_DIR = (
     Path(__file__).resolve().parent.parent.parent.parent / "static" / "local-models"
 )
 
-api_router = APIRouter(prefix="/api/v1", tags=["local-models"])
+api_router = APIRouter(prefix="/api/v1", tags=["node-models"])
 ui_router = APIRouter(tags=["local-ui"])
 
 
-def _build_node_models_response(proxy: StargateProxy) -> dict:
-    """Aggregate model-per-node data from catalog caches.
+def _status_label_for_node(
+    node_id: str, model_status: dict[str, list[str]]
+) -> tuple[str, bool]:
+    """Compute display status for one model on one node from telemetry buckets.
 
-    Inverts the source map (model -> nodes) into a node-grouped structure
-    enriched with context metadata and activation status.
+    Returns a UI label with precedence busy, then loading, then loaded, then
+    available, plus whether the model counts as loaded on this node for summary
+    totals.
     """
-    federation_integration = get_federation_integration()
-    if federation_integration and federation_integration.config:
-        local_id = federation_integration.config.stargate_id
+    is_loaded = node_id in model_status.get("loaded_on", [])
+    is_busy = node_id in model_status.get("busy_on", [])
+    is_loading = node_id in model_status.get("loading_on", [])
+    if is_busy:
+        label = "busy"
+    elif is_loading:
+        label = "loading"
+    elif is_loaded:
+        label = "loaded"
     else:
-        local_id = "local"
+        label = "available"
+    return label, is_loaded
 
-    source_map = get_model_source_map(
-        local_id,
-        proxy.gateway_manager,
-        proxy.federated_manager,
-    )
 
-    context_metadata = get_model_context_metadata(
-        proxy.gateway_manager,
-        proxy.federated_manager,
-    )
-
-    activated_models = get_activated_models_for_display(
-        proxy.gateway_manager,
-        proxy.federated_manager,
-    )
-
-    if proxy.pipeline_registry:
-        pipeline_ids = sorted(proxy.pipeline_registry.pipelines.keys())
-    else:
-        pipeline_ids = []
-
+def _node_models_from_source(
+    source_map: dict[str, list[str]],
+    context_metadata: dict[str, dict],
+    activated_models: set[str],
+    status_map: dict[str, dict[str, list[str]]],
+) -> tuple[dict[str, list[dict]], set[str]]:
+    """Build per-node model rows and the set of model IDs loaded on ≥1 node."""
     node_models: dict[str, list[dict]] = {}
+    loaded_model_ids: set[str] = set()
     for model_id, node_ids in source_map.items():
         meta = context_metadata.get(model_id, {})
-        entry: dict = {
-            "id": model_id,
-            "type": "model",
-            "activated": model_id in activated_models,
-        }
-        if "context_length" in meta:
-            entry["context_length"] = meta["context_length"]
-        if "effective_context_per_slot" in meta:
-            entry["effective_context_per_slot"] = meta["effective_context_per_slot"]
-
+        model_status = status_map.get(model_id, {})
         for node_id in node_ids:
-            node_models.setdefault(node_id, []).append(entry)
-
-    nodes = []
-    for node_id in sorted(node_models):
-        models = sorted(node_models[node_id], key=lambda m: m["id"])
-        nodes.append(
-            {
-                "node_id": node_id,
-                "models": models,
-                "model_count": len(models),
+            status, is_loaded_on_node = _status_label_for_node(node_id, model_status)
+            if is_loaded_on_node:
+                loaded_model_ids.add(model_id)
+            entry: dict = {
+                "id": model_id,
+                "type": "model",
+                "activated": model_id in activated_models,
+                "status": status,
             }
-        )
+            if "context_length" in meta:
+                entry["context_length"] = meta["context_length"]
+            if "effective_context_per_slot" in meta:
+                entry["effective_context_per_slot"] = meta["effective_context_per_slot"]
+            node_models.setdefault(node_id, []).append(entry)
+    return node_models, loaded_model_ids
 
-    unique_model_ids = set()
-    for model_list in node_models.values():
-        for m in model_list:
-            unique_model_ids.add(m["id"])
+
+def _build_node_models_response(proxy: StargateProxy) -> dict:
+    """Build the JSON for GET /api/v1/node-models from catalog-backed caches.
+
+    Groups models by node, merges context metadata and activation flags, attaches
+    per-node load status from ``get_model_status_map``, and returns aggregate
+    counts including how many distinct models are loaded on at least one node.
+    """
+    fed = get_federation_integration()
+    local_id = fed.config.stargate_id if fed and fed.config else "local"
+    gm, fm = proxy.gateway_manager, proxy.federated_manager
+    source_map = get_model_source_map(local_id, gm, fm)
+    context_metadata = get_model_context_metadata(gm, fm)
+    activated_models = get_activated_models_for_display(gm, fm)
+    status_map = get_model_status_map(local_id, gm, fm)
+    pipeline_ids = (
+        sorted(proxy.pipeline_registry.pipelines.keys())
+        if proxy.pipeline_registry
+        else []
+    )
+    node_models, loaded_model_ids = _node_models_from_source(
+        source_map, context_metadata, activated_models, status_map
+    )
+
+    nodes = [
+        {
+            "node_id": nid,
+            "models": sorted(node_models[nid], key=lambda m: m["id"]),
+            "model_count": len(node_models[nid]),
+        }
+        for nid in sorted(node_models)
+    ]
+
+    unique_model_ids = {
+        m["id"] for model_list in node_models.values() for m in model_list
+    }
 
     return {
         "nodes": nodes,
         "pipelines": pipeline_ids,
         "total_models": len(unique_model_ids),
+        "loaded_models": len(loaded_model_ids),
         "total_nodes": len(nodes),
     }
 
 
-@api_router.get("/local-models")
-async def list_local_models(
+@api_router.get("/node-models")
+async def list_node_models(
     proxy: StargateProxy = Depends(get_proxy),
     _current_user: dict = Depends(get_auth_dependency),
 ) -> JSONResponse:
-    """Node-grouped local model listing for the browser UI."""
+    """Node-grouped model listing (local + federated) for the browser UI."""
     data = _build_node_models_response(proxy)
     return JSONResponse(content=data)
 

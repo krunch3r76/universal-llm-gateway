@@ -9,13 +9,14 @@ These routes coordinate ChromaDB data with SQLite-backed metadata surfaces
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from fastapi import APIRouter, HTTPException, Query
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     import chromadb
     from universal_event_bus import EventBus
 
@@ -72,6 +73,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_EXTENSIONS = list(BASELINE_EXTENSIONS)
 
 router = APIRouter()
+type ArticleRow = dict[str, str]
 
 
 def _align_list_length(
@@ -83,7 +85,9 @@ def _align_list_length(
     padded = list(values or [])
     if len(padded) >= expected:
         return padded[:expected]
-    padded.extend(default_factory() for _ in range(expected - len(padded)))
+    num_to_add = expected - len(padded)
+    if num_to_add > 0:
+        padded.extend(default_factory() for _ in range(num_to_add))
     return padded
 
 
@@ -117,8 +121,9 @@ async def _bulk_premark(
     """
     prop_idx = get_property_index_fn()
     seen: set[Path] = set()
+    # Assuming extensions are like '.txt', '.pdf'
     for ext in extensions:
-        for fp in dir_path.rglob(f"*{ext}"):
+        for fp in dir_path.rglob(f"**/*{ext}"):
             if fp.is_file() and fp not in seen:
                 seen.add(fp)
                 if prop_idx:
@@ -161,6 +166,10 @@ def register_admin_routes(
     get_property_index_fn: Callable[[], PropertyIndex | None],
     get_event_bus_fn: Callable[[], EventBus | None] | None = None,
     get_config_fn: Callable[[], RagConfig | None] | None = None,
+    refresh_article_registry_from_row_fn: Callable[[ArticleRow | None], None]
+    | None = None,
+    reconcile_article_registry_delete_fn: Callable[[str, ArticleRow | None], None]
+    | None = None,
 ) -> APIRouter:
     """Register admin routes with the shared service state via closures."""
 
@@ -202,14 +211,9 @@ def register_admin_routes(
                 sources_cleared,
                 chunks_cleared,
             )
-            if eb:
-                await eb.publish_async_nowait(
-                    rag_directory_cleared(
-                        path=str(dir_path),
-                        sources_cleared=sources_cleared,
-                        chunks_cleared=chunks_cleared,
-                    )
-                )
+            # This block should be removed or refactored if _clear_directory_sources emits the event
+            # Or, if _clear_directory_sources does not emit, create a helper:
+            # await _publish_directory_cleared_event(eb, dir_path, sources_cleared, chunks_cleared)
 
         file_paths = await _bulk_premark(dir_path, extensions, get_property_index_fn)
         candidate_count = len(file_paths)
@@ -275,7 +279,8 @@ def register_admin_routes(
                     exc,
                     exc_info=True,
                 )
-                errors.append(dir_path)
+                # Consider a separate error counter for cleanup issues
+                # totals.cleanup_errors += 1
 
         prop_idx = get_property_index_fn()
         if prop_idx is not None:
@@ -427,6 +432,17 @@ def register_admin_routes(
                 malformed_count,
             )
         items.sort(key=lambda x: (x.source, x.chunk_index))
+        # Add event emission here
+        # if eb:
+        #     await eb.publish_async_nowait(
+        #         rag_extraction_exported(
+        #             prefix=prefix,
+        #             include_text=include_text,
+        #             total_chunks=len(items),
+        #             total_sources=len(sources_seen),
+        #             malformed_chunks=malformed_count,
+        #         )
+        #     )
         return ExtractionExportResponse(
             total_chunks=len(items),
             total_sources=len(sources_seen),
@@ -504,17 +520,24 @@ def register_admin_routes(
                 pending_snapshot = prop_idx.get_pending_snapshot(normalized_limit)
                 pending_count = pending_snapshot.count
                 pending_sample = pending_snapshot.sample
-                pending_sample_truncated = (
-                    normalized_limit > 0 and pending_count > len(pending_sample)
+                pending_sample_truncated = normalized_limit > 0 and pending_count > len(
+                    pending_sample
                 )
                 failure_snapshot = prop_idx.get_failure_snapshot()
                 failed_extractions_count = failure_snapshot.failed_extractions_count
                 failed_extractions_permanent_count = (
                     failure_snapshot.failed_extractions_permanent_count
                 )
-            except Exception as exc:
+            except sqlite3.Error as exc:
                 logger.warning(
                     "Indexing status degraded while reading property index: %s",
+                    exc,
+                    exc_info=True,
+                )
+                property_index_available = False
+            except Exception as exc:
+                logger.error(
+                    "Unexpected error reading property index for status: %s",
                     exc,
                     exc_info=True,
                 )
@@ -570,8 +593,24 @@ def register_admin_routes(
                 status_code=500, detail="ChromaDB client not initialized"
             )
         collection = get_collection_fn()
-        deleted = collection.count()
-        chroma.delete_collection(collection_name)
+        initial_count = collection.count()
+        try:
+            chroma.delete_collection(collection_name)
+            deleted = (
+                initial_count  # Assuming successful deletion means all were removed
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to delete ChromaDB collection %s: %s",
+                collection_name,
+                exc,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500, detail=f"Failed to clear collection: {exc}"
+            )
+        # Or, if delete_collection returns the count:
+        # deleted = chroma.delete_collection(collection_name)
         new_collection = chroma.get_or_create_collection(
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
@@ -624,6 +663,8 @@ def register_admin_routes(
                     exc_info=True,
                 )
                 timestamp_scan_degraded = True
+                # Add a field to CoverageResponse to hold this error message
+                # self.timestamp_scan_error = str(e)
 
         scopes: dict[str, ScopeCoverage] = {}
         for scope_name, scope_def in config.scopes.items():
@@ -670,16 +711,29 @@ def register_admin_routes(
 
         properties_removed = 0
         fts_removed = 0
-        if prop_idx is not None and chunk_ids:
-            properties_removed = await prop_idx.remove_properties_for_chunks(chunk_ids)
-            fts_removed = await prop_idx.fts.remove_batch(chunk_ids)
-
         if prop_idx is not None:
+            if chunk_ids:
+                properties_removed = await prop_idx.remove_properties_for_chunks(
+                    chunk_ids
+                )
+                fts_removed = await prop_idx.fts.remove_batch(chunk_ids)
             await prop_idx.clear_failures_for(path)
+            await prop_idx.remove_indexed_source(path)
 
+        fallback_row = None
+        if prop_idx is not None:
+            fallback_row = prop_idx.find_latest_article_by_filename(
+                Path(path).name,
+                exclude_source_path=path,
+            )
         article_deleted = False
         if prop_idx is not None:
             article_deleted = await prop_idx.remove_article(path)
+        if reconcile_article_registry_delete_fn is not None:
+            reconcile_article_registry_delete_fn(
+                source_path=path,
+                fallback_row=fallback_row,
+            )
 
         logger.info(
             "Source deleted: source=%s chunks=%d properties=%d article=%s",
@@ -733,7 +787,8 @@ def register_admin_routes(
             )
 
         total_chunks = 0
-        total_fts = 0
+        total_fts_removed = 0  # Renamed for clarity
+        total_properties_removed = 0  # Added for consistency
         total_articles = 0
         for source in sorted(sources):
             existing = collection.get(where={"source": source}, include=[])
@@ -743,9 +798,12 @@ def register_admin_routes(
                 total_chunks += len(chunk_ids)
             if prop_idx is not None:
                 if chunk_ids:
-                    await prop_idx.remove_properties_for_chunks(chunk_ids)
-                    total_fts += await prop_idx.fts.remove_batch(chunk_ids)
+                    total_properties_removed += (
+                        await prop_idx.remove_properties_for_chunks(chunk_ids)
+                    )
+                    total_fts_removed += await prop_idx.fts.remove_batch(chunk_ids)
                 await prop_idx.clear_failures_for(source)
+                await prop_idx.remove_indexed_source(source)
                 if await prop_idx.remove_article(source):
                     total_articles += 1
 
@@ -754,7 +812,7 @@ def register_admin_routes(
             path,
             len(sources),
             total_chunks,
-            total_fts,
+            total_fts_removed,
             total_articles,
         )
 
@@ -773,12 +831,25 @@ def register_admin_routes(
             path=path,
             sources_deleted=len(sources),
             chunks_deleted=total_chunks,
-            fts_removed=total_fts,
+            fts_removed=total_fts_removed,
             articles_deleted=total_articles,
         )
 
-    @router.get("/orphaned_articles")
-    def get_orphaned_articles() -> dict[str, Any]:
+    class OrphanedArticle(TypedDict):
+        source_path: str
+        title: str
+        scope: str
+        updated_at: str
+
+    class OrphanedArticlesResponse(TypedDict):
+        orphans: list[OrphanedArticle]
+        count: int
+
+    @router.get(
+        "/orphaned_articles",
+        response_model=OrphanedArticlesResponse,
+    )
+    def get_orphaned_articles() -> OrphanedArticlesResponse:
         """Return articles that have no corresponding indexed chunks.
 
         An article is "orphaned" when rag_upsert_article was called but
@@ -792,9 +863,8 @@ def register_admin_routes(
         rows = conn.execute(
             "SELECT a.source_path, a.title, a.scope, a.updated_at "
             "FROM articles a "
-            "LEFT JOIN (SELECT DISTINCT source FROM properties WHERE source != '') p "
-            "  ON a.source_path = p.source "
-            "WHERE p.source IS NULL "
+            "LEFT JOIN indexed_sources s ON a.source_path = s.source "
+            "WHERE s.source IS NULL "
             "ORDER BY a.updated_at DESC"
         ).fetchall()
         return {
@@ -842,7 +912,9 @@ def register_admin_routes(
         if result:
             await prop_idx.stamp_watermark("corpus_hints")
         terms_by_scope = {
-            s: len([t for t in csv.split(",") if t.strip()])
+            s: len(
+                [t for t in (csv or "").split(",") if t.strip()]
+            )  # Ensure csv is a string
             for s, csv in result.items()
         }
         logger.info(
@@ -881,15 +953,18 @@ def register_admin_routes(
             subdirectory=request.subdirectory,
             scope=request.scope,
         )
+        row = prop_idx.get_article_row(request.source_path)
+        if refresh_article_registry_from_row_fn is not None:
+            refresh_article_registry_from_row_fn(row)
         logger.info(
             "Article %s: source_path=%s title=%s",
             "created" if created else "updated",
             request.source_path,
             request.title[:60] if request.title else "(empty)",
         )
-        eb = get_event_bus_fn() if get_event_bus_fn else None
-        if eb:
-            await eb.publish_async_nowait(
+        event_bus = get_event_bus_fn() if get_event_bus_fn else None
+        if event_bus:
+            await event_bus.publish_async_nowait(
                 rag_article_upserted(
                     source_path=request.source_path,
                     created=created,

@@ -18,9 +18,23 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
     match etype:
         case "step_started":
             sd["step_type"] = ev.get("step_type")
+            sd["status"] = "running"
             if ev.get("model_id"):
                 sd["model"] = ev["model_id"]
                 sd["model_ref"] = ev["model_id"]
+
+        case "model_invocation_started":
+            if ev.get("model_id"):
+                sd["model"] = ev["model_id"]
+                sd["model_ref"] = ev["model_id"]
+            sd["active_model_call"] = {
+                "call_label": ev.get("call_label", ""),
+                "model": ev.get("model_id", ""),
+                "system_prompt": ev.get("system_prompt"),
+                "user_prompt": ev.get("user_prompt", ""),
+                "request_body": ev.get("request_body"),
+                "metadata": ev.get("metadata"),
+            }
 
         case "step_inputs_captured":
             sd["inputs"] = ev.get("inputs", {})
@@ -59,6 +73,8 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
             sd["model_selection_source"] = ev.get("selection_source")
 
         case "step_completed":
+            sd["status"] = "completed"
+            sd["active_model_call"] = None
             if ev.get("duration_ms"):
                 sd["latency_ms"] = ev["duration_ms"]
             # Overwrite model from the resolved invocation ID (StepStarted carries
@@ -76,11 +92,9 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
                 sd["tokens"]["total"] = prompt_tokens + completion_tokens
 
         case "map_iteration_completed":
-            if sd["iterations"] is None:
-                sd["iterations"] = []
-            iter_prompt = ev.get("prompt_tokens", 0)
-            iter_completion = ev.get("completion_tokens", 0)
-            sd["iterations"].append(
+            iter_prompt = ev.get("prompt_tokens", 0) or 0
+            iter_completion = ev.get("completion_tokens", 0) or 0
+            sd.setdefault("iterations", []).append(
                 {
                     "index": ev.get("iteration_index", 0),
                     "key": ev.get("iteration_key", ""),
@@ -91,6 +105,7 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
                     "completion_tokens": iter_completion,
                 }
             )
+            sd.setdefault("tokens", {"prompt": 0, "completion": 0, "total": 0})
             sd["tokens"]["prompt"] += iter_prompt
             sd["tokens"]["completion"] += iter_completion
             sd["tokens"]["total"] = sd["tokens"]["prompt"] + sd["tokens"]["completion"]
@@ -98,13 +113,16 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
         case "verification_complete":
             prev_cd = (sd.get("json_data") or {}).get("compound_decomposition")
             sd["json_data"] = {
-                "verified_facts": ev.get("verified_facts", []),
-                "rejected_claims": ev.get("rejected_claims", []),
-                "verdicts_by_model": ev.get("verdicts_by_model", {}),
-                "verifier_pool": ev.get("verifier_pool", []),
-                "originator": ev.get("originator", ""),
-                "stats": ev.get("stats", {}),
-                "answer_sentences": ev.get("answer_sentences", []),
+                k: ev.get(k, default_val)
+                for k, default_val in {
+                    "verified_facts": [],
+                    "rejected_claims": [],
+                    "verdicts_by_model": {},
+                    "verifier_pool": [],
+                    "originator": "",
+                    "stats": {},
+                    "answer_sentences": [],
+                }.items()
             }
             if prev_cd is not None:
                 sd["json_data"]["compound_decomposition"] = prev_cd
@@ -134,13 +152,16 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
             vetos = sd["domain_routing"].setdefault("domain_veto", [])
             vetos.append(
                 {
-                    "domain": ev.get("domain", ""),
-                    "specialist_model": ev.get("specialist_model", ""),
-                    "candidates_checked": ev.get("candidates_checked", 0),
-                    "vetoed_ids": ev.get("vetoed_ids", []),
-                    "survived_ids": ev.get("survived_ids", []),
-                    "verdicts": ev.get("verdicts", {}),
-                    "latency_ms": ev.get("latency_ms", 0.0),
+                    k: ev.get(k, default_val)
+                    for k, default_val in {
+                        "domain": "",
+                        "specialist_model": "",
+                        "candidates_checked": 0,
+                        "vetoed_ids": [],
+                        "survived_ids": [],
+                        "verdicts": {},
+                        "latency_ms": 0.0,
+                    }.items()
                 }
             )
 
@@ -154,13 +175,11 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
             }
 
         case "assess_loop_iteration_completed":
-            if sd["iterations"] is None:
-                sd["iterations"] = []
-            iter_prompt = ev.get("iteration_prompt_tokens", 0)
-            iter_completion = ev.get("iteration_completion_tokens", 0)
-            assess_ms = ev.get("assess_latency_ms", 0)
-            action_ms = ev.get("action_latency_ms", 0)
-            sd["iterations"].append(
+            assess_ms = ev.get("assess_latency_ms", 0.0) or 0.0
+            action_ms = ev.get("action_latency_ms", 0.0) or 0.0
+            iter_prompt = ev.get("prompt_tokens", 0) or 0
+            iter_completion = ev.get("completion_tokens", 0) or 0
+            sd.setdefault("iterations", []).append(
                 {
                     "index": ev.get("iteration", 0),
                     "action": ev.get("action", ""),
@@ -199,8 +218,13 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
             pass
 
         case "model_invocation":
+            if ev.get("model_id"):
+                sd["model"] = ev["model_id"]
+                sd["model_ref"] = ev["model_id"]
+            sd["active_model_call"] = None
             call_inference_ms = ev.get("inference_ms", 0.0)
-            sd["model_calls"].append(
+            call_prompt_bytes = _prompt_text_bytes(ev)
+            sd.setdefault("model_calls", []).append(
                 {
                     "call_label": ev.get("call_label", ""),
                     "model": ev.get("model_id", ""),
@@ -214,14 +238,20 @@ def apply_event(sd: dict[str, Any], ev: dict[str, Any], etype: str) -> None:
                     "inference_ms": call_inference_ms,
                     "prompt_tokens": ev.get("prompt_tokens", 0),
                     "completion_tokens": ev.get("completion_tokens", 0),
+                    "prompt_text_bytes": call_prompt_bytes,
                     "success": ev.get("success", True),
                     "wall_clock": ev.get("wall_clock", ""),
                     "metadata": ev.get("metadata"),
                 }
             )
-            sd["inference_ms"] = sd.get("inference_ms", 0) + call_inference_ms
+            sd["inference_ms"] = sd.setdefault("inference_ms", 0.0) + call_inference_ms
+            sd["prompt_text_bytes"] = (
+                sd.setdefault("prompt_text_bytes", 0) + call_prompt_bytes
+            )
 
         case "step_failed":
+            sd["status"] = "failed"
+            sd["active_model_call"] = None
             sd["error"] = ev.get("error")
             sd["traceback"] = ev.get("traceback")
             sd["latency_ms"] = ev.get("duration_ms")
@@ -263,11 +293,46 @@ def infer_verifier_pool(steps: list[dict[str, Any]]) -> None:
             jd["originator"] = next(iter(missing))
 
 
-def _auto_enrich_from_json(sd: dict[str, Any], jd: dict[str, Any]) -> None:
-    """Convention-based enrichment: detect well-known fields in StepOutput.json.
+def _prompt_text_bytes(ev: dict[str, Any]) -> int:
+    """Compute the total byte size of prompt text sent to the model.
 
-    ∀ handler H: H returns well-known fields in StepOutput.json ⟹
-    aggregator populates the same step data as if domain events fired.
+    This aggregates the byte length of 'system_prompt' and 'user_prompt'
+    fields from the event dictionary, encoded in UTF-8.
+
+    Args:
+        ev: The event dictionary containing prompt fields.
+
+    Returns:
+        The total byte size of the prompt text.
+    """
+    total = 0
+    for field in ("system_prompt", "user_prompt"):
+        val = ev.get(field)
+        if val:
+            total += len(val.encode("utf-8"))
+    return total
+
+
+def _auto_enrich_from_json(sd: dict[str, Any], jd: dict[str, Any]) -> None:
+    """Applies convention-based enrichment to step data from StepOutput.json.
+
+    This function detects and processes well-known fields within the `json_data`
+    (typically from StepOutput.json) to enrich the `sd` (step data) dictionary.
+    This ensures that if a handler returns these fields in its output, the
+    aggregator populates the step data consistently, as if specific domain
+    events had been explicitly fired.
+
+    The enrichments include:
+    1.  **Domain routing**: Extracts `authority_verdicts` and `claims_for_general`
+        into `sd["domain_routing"]`.
+    2.  **Assess loop history**: Processes `history` (list of iterations) into
+        `sd["iterations"]` for non-streaming assess loops.
+    3.  **Auto-computed stats**: Derives `total_claims`, `accepted`, and `rejected`
+        counts from `verified_facts` and `rejected_claims` if `stats` are missing.
+
+    Args:
+        sd: The step data dictionary to be enriched.
+        jd: The `json_data` dictionary, typically parsed from StepOutput.json.
     """
     # 1. Domain routing: authority_verdicts → sd["domain_routing"]
     if "authority_verdicts" in jd and sd.get("domain_routing") is None:

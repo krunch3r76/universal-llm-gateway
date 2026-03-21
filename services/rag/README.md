@@ -185,7 +185,7 @@ scopes:
     union: true               # aggregates all scope prefixes
     description: "Everything"
 
-embedding_model: qwen3-embedding-8b-q8-0-40960-cpu
+embedding_model: qwen3-embedding-8b-q8-0-4096
 
 knowledge_extraction:
   pipeline: rag-extraction
@@ -207,14 +207,32 @@ post_index_enforcement: strict   # strict | warn — strict returns 503 until en
 | `knowledge_extraction` | LLM extraction config — pipeline, boost factor, retry limits |
 | `post_index_enforcement` | `strict` (default): return 503 on search until post-index enrichment watermarks are current. `warn`: log ERROR at startup but continue serving |
 | `contextualize_model` | Model ID for per-chunk context generation before embedding. Omit for default (on); set to `""` to disable |
-| `reconcile_interval_s` | Seconds between watcher reconcile sweeps. Default 300 (5 min). 0 = disabled |
+| `reconcile_interval_s` | Base seconds between watcher reconcile sweeps. Default 300 (5 min). 0 = disabled. Reconcile uses the same worker pool as initial reindex; when a sweep recovers files, the next sweep runs after 30 s (busy interval), otherwise after the full interval |
 
 ## Storage
 
 | Path | Contents |
 |------|----------|
 | `~/.rag/store/chroma/` | ChromaDB persistent vector data |
-| `~/.rag/store/rag_metadata.db` | SQLite metadata store (property index, corpus_hints, scope_vocabulary, articles, watermarks, schema_version) |
+| `~/.rag/store/rag_metadata.db` | SQLite metadata store (property index, pending journal, failed extractions, indexed_sources, corpus_hints, scope_vocabulary, articles, watermarks, schema_version) |
+
+### `indexed_sources` Table
+
+`indexed_sources` stores one row per source path with the last evaluated filesystem
+state used by the mtime-first unchanged fast path:
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `source` | TEXT PK | Absolute source path |
+| `mtime_ns` | INTEGER | Last observed filesystem modification time |
+| `size_bytes` | INTEGER | Last observed file size |
+| `extraction_schema_version` | INTEGER | Invalidates cache when extraction schema changes |
+| `extraction_model` | TEXT | Invalidates cache when extraction model changes |
+| `updated_at` | TEXT | Audit timestamp for the cache row |
+
+Operational note: the first sweep after deploying this change seeds `indexed_sources`
+for already-indexed files. Subsequent startup and reconcile sweeps skip unchanged
+files via `stat()` instead of reading file bytes or querying Chroma.
 
 ### `articles` Table
 
@@ -238,6 +256,14 @@ Population: **`scripts/backfill_article_metadata.py`** reads `docs/research/arti
 
 Article metadata is **not** baked into chunks at index time. Instead, the search handler enriches results at query time by joining `source_hash` → `content_hash`.
 
+## Article Metadata Lifecycle
+
+- Indexing maintains structural article identity (`source_path`, `filename`, `scope`, `content_hash`, `subdirectory`) in the `articles` table.
+- Watcher-driven file deletes preserve article rows so move detection can migrate curated metadata when the same bytes reappear at a new path.
+- Admin `DELETE /source` and `DELETE /directory` remain fully destructive across `articles` and `indexed_sources`.
+- Query-time enrichment still joins chunk `source_hash` to `articles.content_hash`; no chunk reindex is needed for curated metadata edits.
+- `POST /article` updates SQLite first and then refreshes the in-memory basename cache from the canonical row.
+
 ### Clean-Slate Reindex
 
 ```bash
@@ -245,6 +271,15 @@ rm -rf ~/.rag/*                              # wipe both ChromaDB and rag_metada
 python scripts/backfill_article_metadata.py  # seed articles with subdirectory→scope mapping (Stargate :9999)
 ./manage                                     # start services — indexes all files with source_hash
 ```
+
+### Corpus Drift Repair
+
+Use `scripts/repair-rag-article-lifecycle.py` (default dry-run) to audit
+`indexed_sources`/`articles` drift after deploying lifecycle changes.
+
+- `--apply` repairs indexed sources that are missing article rows.
+- `--apply --prune-missing` also deletes article-only rows whose files are gone.
+- Existing-on-disk metadata-only rows are reported but preserved.
 
 ## Post-Index Enrichment
 
@@ -321,6 +356,6 @@ For subsystem-specific investigation, reference these paths directly:
 | `article_registry.py` | Article citation metadata management |
 | `corpus_hints.py` | Scope-specific vocabulary hints |
 | `metadata_boost.py` | Score boosting from extracted metadata |
-| `watcher_manager.py` | Inotify file watching and reconciliation |
+| `watcher_manager.py` | Inotify file watching; reconciliation sweeps (worker pool, adaptive interval) |
 | `embeddings.py` | Embedding model client (via Gateway) |
 | `admin_routes.py` | Administrative API endpoints |

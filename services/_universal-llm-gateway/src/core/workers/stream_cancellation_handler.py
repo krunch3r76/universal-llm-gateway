@@ -98,23 +98,13 @@ class StreamCancellationHandler:
                     f"✅ Model {model_id} marked as idle after stream cancellation"
                 )
             else:
-                # If force_model_idle fails, try direct status update as failsafe
                 logger.warning(
-                    f"⚠️ force_model_idle failed for {model_id}, attempting direct status update"
+                    "⚠️ force_model_idle failed for %s — model is in a state "
+                    "where forcing LOADED is invalid (SM=%s). "
+                    "State will resolve on next load or cleanup.",
+                    model_id,
+                    resource_tracker.get_state_machine_state(model_id),
                 )
-                try:
-                    from src.core.resources import ModelStatus
-
-                    resource_tracker.set_model_status(
-                        model_id, ModelStatus.LOADED, error_message=None
-                    )
-                    logger.info(
-                        f"🔧 Direct status update succeeded for {model_id} - model forced to loaded state"
-                    )
-                except Exception as fallback_error:
-                    logger.error(
-                        f"❌ Both force_model_idle and direct status update failed for {model_id}: {fallback_error}"
-                    )
 
         except Exception as e:
             logger.error(

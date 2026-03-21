@@ -6,6 +6,24 @@ from universal_event_bus import Event, event_factory
 
 
 @event_factory
+def rag_article_auto_created(
+    *,
+    source_path: str,
+    content_hash: str,
+    scope: str,
+) -> Event:
+    """Emitted when indexing creates a minimal article row for a source."""
+    return Event(
+        signal="rag.article.auto.created",
+        payload={
+            "source_path": source_path,
+            "content_hash": content_hash,
+            "scope": scope,
+        },
+    )
+
+
+@event_factory
 def rag_article_upserted(
     *,
     source_path: str,
@@ -38,6 +56,24 @@ def rag_source_deleted(
             "source": source,
             "chunks_deleted": chunks_deleted,
             "article_deleted": article_deleted,
+        },
+    )
+
+
+@event_factory
+def rag_article_path_moved(
+    *,
+    old_path: str,
+    new_path: str,
+    content_hash: str,
+) -> Event:
+    """Emitted when indexing migrates an article row to a new source path."""
+    return Event(
+        signal="rag.article.path.moved",
+        payload={
+            "old_path": old_path,
+            "new_path": new_path,
+            "content_hash": content_hash,
         },
     )
 

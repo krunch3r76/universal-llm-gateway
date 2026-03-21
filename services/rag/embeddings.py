@@ -6,15 +6,20 @@ import random
 import re
 
 import httpx
-from universal_event_bus import EventBus
+
+from services.rag.events.query import rag_embedding_query_success
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from universal_event_bus import EventBus
 
 GATEWAY_URL = "http://localhost:9999"
 
 _client = httpx.AsyncClient(timeout=60.0)
 logger = logging.getLogger(__name__)
 
-_embed_model: str = "qwen3-embedding-8b-q8-0-40960-cpu"
-_probe_payload: dict[str, str | list[str]] = {"model": _embed_model, "input": ["probe"]}
+_embed_model: str = ""
+_probe_payload: dict[str, str | list[str]] = {}
 _event_bus: EventBus | None = None
 
 _CONTEXT_SUFFIX_RE = re.compile(r"-(\d+)(?:-(?:cpu|hybrid))?$")
@@ -37,8 +42,8 @@ def _extract_context_suffix(model_id: str) -> int | None:
 def configure(model_id: str) -> None:
     """Set the embedding model ID from config. Call once at startup before any embed calls.
 
-    Validates the model ID is non-blank and logs the resolved context size
-    so operators can detect 4096-vs-8192 mismatches at startup.
+    Must be called before any embed_chunks/embed_query call; the module starts
+    with an empty model ID and will raise on unconfigured use.
     """
     global _embed_model, _probe_payload
     if not model_id or not model_id.strip():
@@ -73,14 +78,77 @@ def set_event_bus(bus: EventBus) -> None:
     _event_bus = bus
 
 
+def _require_configured() -> None:
+    """Raise if configure() has not been called."""
+    if not _embed_model:
+        raise RuntimeError(
+            "Embedding module not configured — call configure(model_id) at startup"
+        )
+
+
 def get_model_id() -> str:
     """Return the currently configured embedding model ID."""
+    _require_configured()
     return _embed_model
 
 
 async def close() -> None:
     """Close the shared HTTP client during service shutdown."""
     await _client.aclose()
+
+
+async def _resolve_compatible_embedding_model() -> str | None:
+    """Find an activated sibling that satisfies the configured embedding model.
+
+    Queries Stargate's activated model list and finds the smallest context
+    variant from the same model family that meets or exceeds the configured
+    context length.
+
+    Returns the sibling's model ID string if a switch is needed, or None when
+    the configured model is already activated or no compatible sibling exists.
+    Raises on HTTP/connection errors so the caller can distinguish
+    "Stargate not ready" from "resolved, no change needed".
+    """
+    from model_id import ModelId
+
+    configured = ModelId.parse(_embed_model)
+    if configured.context_length is None:
+        return None
+
+    resp = await _client.get(
+        f"{GATEWAY_URL}/v1/models",
+        params={"type": "model"},
+        timeout=5.0,
+    )
+    resp.raise_for_status()
+    activated_ids: list[str] = [item["id"] for item in resp.json().get("data", [])]
+
+    for mid_str in activated_ids:
+        try:
+            if ModelId.parse(mid_str) == configured:
+                return None
+        except (ValueError, TypeError):
+            continue
+
+    candidates: list[tuple[int, str]] = []
+    for mid_str in activated_ids:
+        try:
+            mid = ModelId.parse(mid_str)
+        except (ValueError, TypeError):
+            continue
+        if (
+            mid.base_id == configured.base_id
+            and mid.is_cpu == configured.is_cpu
+            and mid.context_length is not None
+            and mid.context_length >= configured.context_length
+        ):
+            candidates.append((mid.context_length, mid_str))
+
+    if not candidates:
+        return None
+
+    candidates.sort()
+    return candidates[0][1]
 
 
 _PROBE_INTERVAL_S = 2.0
@@ -95,8 +163,31 @@ async def wait_until_healthy(
     embedding dimension from the probe response for zero-vector fallbacks.
 
     ∀ t < timeout_s: retries on connection/HTTP errors (Stargate not yet ready).
+    If the configured model is not activated, resolves a compatible sibling
+    with context >= configured context from the same model family.
     Raises TimeoutError if endpoint is still unhealthy after timeout_s seconds.
     """
+    global _embed_model, _probe_payload
+
+    resolution_done = False
+
+    # Pre-probe resolution: resolve before any probe to avoid triggering
+    # a model load for an unactivated variant that consumes VRAM.
+    try:
+        sibling = await _resolve_compatible_embedding_model()
+        resolution_done = True
+        if sibling is not None:
+            logger.info(
+                "Embedding model resolved: %s -> %s "
+                "(activated sibling with compatible context)",
+                _embed_model,
+                sibling,
+            )
+            _embed_model = sibling
+            _probe_payload = {"model": _embed_model, "input": ["probe"]}
+    except Exception:
+        logger.debug("Pre-probe sibling resolution deferred (Stargate not ready)")
+
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     attempt = 0
@@ -113,12 +204,17 @@ async def wait_until_healthy(
             if data:
                 _cache_embed_dim([item["embedding"] for item in data])
                 logger.info(
-                    "Embedding endpoint healthy after %d attempt(s) (dim=%s)",
+                    "Embedding endpoint healthy after %d attempt(s) (dim=%s, model=%s)",
                     attempt,
                     _embed_dim,
+                    _embed_model,
                 )
             else:
-                logger.info("Embedding endpoint healthy after %d attempt(s)", attempt)
+                logger.info(
+                    "Embedding endpoint healthy after %d attempt(s) (model=%s)",
+                    attempt,
+                    _embed_model,
+                )
             return
         except Exception as exc:
             remaining = deadline - loop.time()
@@ -126,6 +222,26 @@ async def wait_until_healthy(
                 raise TimeoutError(
                     f"Embedding endpoint not healthy after {timeout_s}s"
                 ) from exc
+            if not resolution_done:
+                try:
+                    sibling = await _resolve_compatible_embedding_model()
+                    resolution_done = True
+                    if sibling is not None:
+                        logger.info(
+                            "Embedding model resolved: %s -> %s "
+                            "(activated sibling with compatible context)",
+                            _embed_model,
+                            sibling,
+                        )
+                        _embed_model = sibling
+                        _probe_payload = {
+                            "model": _embed_model,
+                            "input": ["probe"],
+                        }
+                except Exception:
+                    logger.debug(
+                        "Sibling resolution not yet possible (Stargate not ready)"
+                    )
             logger.debug(
                 "Embedding probe attempt %d failed (%s); retrying in %.1fs (%.0fs left)",
                 attempt,
@@ -134,6 +250,35 @@ async def wait_until_healthy(
                 remaining,
             )
             await asyncio.sleep(min(interval_s, remaining))
+
+
+async def require_healthy(timeout_s: float = 10.0) -> None:
+    """Require the embedding endpoint to be healthy before indexing.
+
+    Performs a single probe request. Raises RuntimeError if the endpoint
+    is unreachable or returns an error (e.g. 404 model not found). Call
+    before every index operation so RAG does not index without embeddings.
+    """
+    try:
+        response = await _client.post(
+            f"{GATEWAY_URL}/v1/embeddings",
+            json=_probe_payload,
+            timeout=timeout_s,
+        )
+        response.raise_for_status()
+        data = response.json().get("data", [])
+        if data:
+            _cache_embed_dim([item["embedding"] for item in data])
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(
+            f"Embedding endpoint returned {exc.response.status_code}: "
+            f"{exc.response.text!r}. Indexing disabled until embeddings are available."
+        ) from exc
+    except httpx.RequestError as exc:
+        raise RuntimeError(
+            f"Embedding endpoint unreachable: {exc}. "
+            "Indexing disabled until embeddings are available."
+        ) from exc
 
 
 _SCOPE_INSTRUCTIONS: dict[str, str] = {
@@ -386,21 +531,21 @@ async def _post_embeddings(batch: list[str]) -> list[list[float]]:
             delay,
         )
         await asyncio.sleep(delay)
+    # A single-item batch that fails every attempt is a content-specific failure,
+    # not transient VRAM pressure (which clears between retries).
+    if isinstance(last_exc, _TransientEmbeddingError) and len(batch) == 1:
+        fallback = _fallback_to_zero_vector(len(batch[0]))
+        if fallback is not None:
+            return fallback
+        logger.error(
+            "Single-item embedding failed after %d attempts (model=%s, "
+            "text_len=%d) — embedding dimension unknown, cannot produce "
+            "zero-vector fallback",
+            _EMBED_RETRY_ATTEMPTS,
+            _embed_model,
+            len(batch[0]),
+        )
     if last_exc is not None:
-        # A single-item batch that fails every attempt is a content-specific failure,
-        # not transient VRAM pressure (which clears between retries).
-        if isinstance(last_exc, _TransientEmbeddingError) and len(batch) == 1:
-            fallback = _fallback_to_zero_vector(len(batch[0]))
-            if fallback is not None:
-                return fallback
-            logger.error(
-                "Single-item embedding failed after %d attempts (model=%s, "
-                "text_len=%d) — embedding dimension unknown, cannot produce "
-                "zero-vector fallback",
-                _EMBED_RETRY_ATTEMPTS,
-                _embed_model,
-                len(batch[0]),
-            )
         raise last_exc
     raise RuntimeError("Embedding request failed without capturing an exception")
 
@@ -413,6 +558,7 @@ async def embed_chunks(texts: list[str]) -> list[list[float]]:
     Prevents llama.cpp n_batch overflow when the aggregate input token count
     exceeds the model's physical batch size.
     """
+    _require_configured()
     max_batch_tokens = _max_batch_tokens_for_model(_embed_model)
     all_embeddings: list[list[float]] = []
     batch: list[str] = []
@@ -489,6 +635,7 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
     Raises EmbeddingTransientError when retries are exhausted so callers can
     distinguish transient unavailability from permanent errors.
     """
+    _require_configured()
     # When scope is a list, only the first element is used for instruction formatting.
     if isinstance(scope, list):
         if scope and len(scope) > 1:
@@ -528,8 +675,6 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
                 data = response.json()
                 embedding = data["data"][0]["embedding"]
                 if _event_bus is not None:
-                    from services.rag.events.query import rag_embedding_query_success
-
                     _event_bus.publish_async_nowait(
                         rag_embedding_query_success(
                             model_id=_embed_model,

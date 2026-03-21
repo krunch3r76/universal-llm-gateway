@@ -817,6 +817,7 @@ def _render_watch_event(
             dir_start_ts = None
             batch_start_by_file.clear()
             batch_active = False
+            sweep_by_path.clear()
             on_reset()
             emit(f"{ts}  [START   ]  RAG service started")
             return (None, False, False, 0, 0, 0, 0.0, seq)
@@ -1036,7 +1037,10 @@ def _render_watch_event(
         }:
             path = p.get("file", "")
             reason = p.get("reason", "skipped")
-            emit(f"{ts}  [↷ SKIP  ]  {_basename(path)}  {reason}")
+            # Per-file unchanged skips dominate follow-mode output; keep them in
+            # batch counts but suppress the individual line.
+            if reason != "unchanged":
+                emit(f"{ts}  [↷ SKIP  ]  {_basename(path)}  {reason}")
             new_skipped = batch_skipped + (1 if batch_active else 0)
             if path:
                 inflight_files.discard(path)
@@ -1119,23 +1123,8 @@ def _render_watch_event(
                     batch_effective_secs,
                     None,
                 )
-            state = sweep_by_path.get(path, _SweepState())
-            if state.started_seen:
-                return (
-                    dir_start_ts,
-                    batch_active,
-                    batch_seen_activity,
-                    batch_done,
-                    batch_failed,
-                    batch_skipped,
-                    batch_effective_secs,
-                    seq,
-                )
+            state = _SweepState()
             state.total_files = total
-            state.processed = 0
-            state.reindexed = 0
-            state.unchanged = 0
-            state.errors = 0
             state.started_seen = True
             sweep_by_path[path] = state
             emit(_render_sweep_line(ts, "SWEEP→ ", path, state))

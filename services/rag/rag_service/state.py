@@ -8,19 +8,23 @@ and API routes.
 
 from __future__ import annotations
 
-import asyncio
 import logging
+from pathlib import Path
 
-import chromadb
-from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
 from services.rag.article_registry import ArticleEntry
 from services.rag.article_registry import get_entry as get_article_entry
-from services.rag.config import RagConfig
 from services.rag.corpus_hints import update_corpus_hints
 from services.rag.events.query import rag_corpus_hints_update_failed
-from services.rag.property_index import PropertyIndex
-from services.rag.watcher_manager import WatcherManager
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.rag.watcher_manager import WatcherManager
+    from services.rag.property_index import PropertyIndex
+    from services.rag.config import RagConfig
+    from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
+    import chromadb
+    import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +48,7 @@ _post_index_stale: bool = False
 
 
 def _article_event_kwargs(
-    registry: dict[str, ArticleEntry], source: str
+    registry: dict[str, ArticleEntry] | None, source: str
 ) -> dict[str, str]:
     """Return optional article metadata for rag_file_indexed document metadata."""
     entry = get_article_entry(registry, source)
@@ -57,11 +61,12 @@ def _article_event_kwargs(
         "published_date": "published_date",
         "doi": "article_doi",
     }
-    return {
-        key: str(value)
-        for attr, key in field_map.items()
-        if (value := getattr(entry, attr))
-    }
+    result = {}
+    for attr, key in field_map.items():
+        value = getattr(entry, attr, None)
+        if value is not None:
+            result[key] = str(value)
+    return result
 
 
 async def _maybe_update_corpus_hints() -> None:
@@ -100,5 +105,64 @@ def _get_collection() -> chromadb.Collection:
 
 
 def get_event_bus() -> EventBus | None:
-    """Return the initialized event bus when startup has completed successfully."""
+    """Returns the initialized global EventBus instance.
+
+    This function should only be called after the RAG service has completed its
+    initialization phase. If called prematurely, it may return None.
+    """
     return _event_bus
+
+
+def refresh_article_registry_from_row(row: dict[str, str] | None) -> None:
+    """Refreshes or adds an ArticleEntry in the global registry from a database row.
+
+    The registry is keyed by article basename (filename). If the registry is not
+    initialized or the provided row is invalid/empty, no action is taken.
+
+    Args:
+        row: A dictionary representing a row from the article database, expected
+             to contain keys like 'filename', 'title', 'authors', etc.
+    """
+    global _registry
+    if _registry is None or row is None:
+        return
+    filename = row.get("filename", "")
+    if not filename:
+        return
+    _registry[filename] = ArticleEntry(
+        title=row.get("title", ""),
+        authors=row.get("authors", ""),
+        venue=row.get("venue", ""),
+        published_date=row.get("published_date", ""),
+        doi=row.get("doi", ""),
+        abstract=row.get("abstract", ""),
+        content_hash=row.get("content_hash", ""),
+        subdirectory=row.get("subdirectory", ""),
+        comments=row.get("comments", ""),
+    )
+
+
+def reconcile_article_registry_delete(
+    *,
+    source_path: str,
+    fallback_row: dict[str, str] | None,
+) -> None:
+    """Removes or updates an ArticleEntry in the global registry after an article deletion.
+
+    If `fallback_row` is None, the entry corresponding to `source_path` is removed.
+    Otherwise, the entry is refreshed using the provided `fallback_row`, which is
+    useful in scenarios where an article might be replaced rather than simply deleted.
+
+    Args:
+        source_path: The full path to the article file that was deleted.
+        fallback_row: An optional dictionary representing a replacement article's
+                      database row, if the deletion is part of an update or move.
+    """
+    global _registry
+    if _registry is None:
+        return
+    filename = Path(source_path).name
+    if fallback_row is None:
+        _registry.pop(filename, None)
+        return
+    refresh_article_registry_from_row(fallback_row)

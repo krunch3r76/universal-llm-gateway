@@ -20,7 +20,11 @@ from services.rag.article_registry import (
 from services.rag.chunk_filters import chunk_is_junk
 from services.rag.chunkers import Chunk, chunk_file
 from services.rag.contextualize import contextualize_chunks
-from services.rag.embeddings import embed_chunks
+from services.rag.embeddings import embed_chunks, require_healthy
+from services.rag.events.articles import (
+    rag_article_auto_created,
+    rag_article_path_moved,
+)
 from services.rag.events.extraction import rag_extraction_model_mismatch
 from services.rag.events.indexing import (
     rag_article_content_hash_mismatch,
@@ -47,10 +51,27 @@ from services.rag.indexing_helpers import (
 from services.rag.models import DeleteResult, IndexResult
 
 from . import state
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.rag.config import RagConfig
 
 logger = logging.getLogger(__name__)
 
-_CHARS_PER_TOKEN = 4  # Approximate characters per token for chunk sizing.
+_CHARS_PER_TOKEN = 4  # Approximate characters per token for chunk sizing, used for chunk sizing heuristics.
+
+
+def _derive_subdirectory(source: str, config: RagConfig) -> str:
+    """Return the parent path of source relative to its configured watch root."""
+    source_path = Path(source).expanduser().resolve()
+    for watch_directory in config.watch_directories:
+        watch_root = Path(watch_directory.path).expanduser().resolve()
+        try:
+            relative = source_path.relative_to(watch_root)
+        except ValueError:
+            continue
+        return str(relative.parent) if relative.parent != Path(".") else ""
+    return ""
 
 
 async def _index_file(
@@ -59,6 +80,7 @@ async def _index_file(
     *,
     chunk_tokens: int | None = None,
     force: bool = False,
+    emit_skip_event: bool = True,
 ) -> IndexResult:
     """Index a file under a per-source lock to avoid watcher/API races."""
     source = str(file_path)
@@ -66,11 +88,18 @@ async def _index_file(
     try:
         async with lock:
             return await _index_file_impl(
-                file_path, metadata_overrides, chunk_tokens, source, force=force
+                file_path,
+                metadata_overrides,
+                chunk_tokens,
+                source,
+                force=force,
+                emit_skip_event=emit_skip_event,
             )
     finally:
         if state._file_index_locks.get(source) is lock:
             state._file_index_locks.pop(source, None)
+        # Consider if a separate cleanup for prop_index.clear_pending is needed here
+        # if _index_file_impl fails before its own finally block can execute it.
 
 
 async def _delete_file(file_path: Path) -> DeleteResult:
@@ -101,7 +130,9 @@ async def _delete_file_impl(source: str) -> DeleteResult:
 
     if state._property_index is not None:
         await state._property_index.remove_source_metadata(
-            source, existing_ids if existing_ids else None
+            source,
+            existing_ids if existing_ids else None,
+            remove_article=False,
         )
 
     deleted = len(existing_ids)
@@ -120,22 +151,82 @@ async def _index_file_impl(
     source: str,
     *,
     force: bool = False,
+    emit_skip_event: bool = True,
 ) -> IndexResult:
     """Inner implementation of indexing called with source lock held.
 
     Pending journal invariants:
-    - mark_pending executes before any early return.
+    - stat-only unchanged skips do not mark pending.
+    - mark_pending executes before recovery or any mutating index path.
     - clear_pending executes for every marked file in ``finally``.
     """
     start = time.monotonic()
     is_html_file = file_path.suffix.lower() in {".html", ".htm"}
-    raw = file_path.read_bytes()
     if state._config is None:
         raise RuntimeError("RAG service configuration not loaded.")
+
+    prop_index = state._property_index
     schema_version = state._config.knowledge_extraction.schema_version
+    extraction_model = state._config.knowledge_extraction.extraction_model
+    source_stat = await asyncio.to_thread(file_path.stat)
+
+    if not force and prop_index is not None:
+        cached_source = prop_index.get_indexed_source(source)
+        if (
+            cached_source is not None
+            and cached_source.mtime_ns == source_stat.st_mtime_ns
+            and cached_source.size_bytes == source_stat.st_size
+            and cached_source.extraction_schema_version == schema_version
+            and cached_source.extraction_model == extraction_model
+            and not prop_index.has_retriable_failures(source)
+        ):
+            await prop_index.clear_pending(source)
+            if emit_skip_event and state._event_bus is not None:
+                await state._event_bus.publish_async_nowait(
+                    rag_file_skipped(file=source, reason="unchanged")
+                )
+            return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
+
+    await require_healthy()
+    raw = await asyncio.to_thread(file_path.read_bytes)
+    # Decide if source_hash should also incorporate schema_version
+    # If so:
+    # source_hash = file_hash(raw, schema_version=schema_version)
+    # If not, ensure content_hash and source_hash are clearly distinct concepts.
+    # For now, assuming content_hash is the primary content identifier.
     content_hash = file_hash(raw, schema_version=schema_version)
     prefix = content_hash[:16]
-    source_hash = hashlib.sha256(raw).hexdigest()
+    source_hash = hashlib.sha256(
+        raw
+    ).hexdigest()  # This hash is independent of schema_version
+
+    if prop_index is not None:
+        orphan = prop_index.find_orphaned_article_by_hash(
+            content_hash=source_hash,
+            new_source_path=source,
+        )
+        if orphan is not None:
+            new_scope = state._config.get_scope_for_path(source)
+            new_subdirectory = _derive_subdirectory(source, state._config)
+            moved = await prop_index.move_article_source_path(
+                old_source_path=orphan["source_path"],
+                new_source_path=source,
+                new_filename=file_path.name,
+                new_scope=new_scope,
+                new_subdirectory=new_subdirectory,
+            )
+            if moved:
+                state.refresh_article_registry_from_row(
+                    prop_index.get_article_row(source),
+                )
+                if state._event_bus is not None:
+                    await state._event_bus.publish_async_nowait(
+                        rag_article_path_moved(
+                            old_path=orphan["source_path"],
+                            new_path=source,
+                            content_hash=source_hash,
+                        )
+                    )
 
     if state._registry is not None:
         entry = get_article_entry(state._registry, source)
@@ -176,22 +267,18 @@ async def _index_file_impl(
     existing = collection.get(where={"source": source}, include=["metadatas"])
     existing_ids: list[str] = existing.get("ids", [])
 
-    prop_index = state._property_index
     pending_marked = False
     if prop_index is None and state._event_bus is not None:
         await state._event_bus.publish_async_nowait(
             rag_property_index_unavailable(file=source)
         )
-    if prop_index is not None:
-        await prop_index.mark_pending(source)
-        pending_marked = True
 
     try:
         if not force and existing_ids and all_ids_match_prefix(existing_ids, prefix):
             existing_metadatas = [
                 m for m in (existing.get("metadatas") or []) if isinstance(m, dict)
             ]
-            if state._config is not None and prop_index is not None:
+            if prop_index is not None:
                 expected_model = state._config.knowledge_extraction.extraction_model
                 has_model_mismatch = bool(expected_model) and any(
                     m.get("extraction_model") != expected_model
@@ -205,7 +292,10 @@ async def _index_file_impl(
                             chunk_count=len(existing_ids),
                         )
                     )
+
                 scope = state._config.get_scope_for_path(source)
+                await prop_index.mark_pending(source)
+                pending_marked = True
                 ext_result = await recover_missing_extraction(
                     collection=collection,
                     source=source,
@@ -217,6 +307,13 @@ async def _index_file_impl(
                     scope=scope,
                 )
                 if ext_result is not None and ext_result.success:
+                    await prop_index.upsert_indexed_source(
+                        source=source,
+                        mtime_ns=source_stat.st_mtime_ns,
+                        size_bytes=source_stat.st_size,
+                        extraction_schema_version=schema_version,
+                        extraction_model=extraction_model,
+                    )
                     await state._maybe_update_corpus_hints()
                     if state._event_bus is not None:
                         await state._event_bus.publish_async_nowait(
@@ -249,19 +346,46 @@ async def _index_file_impl(
                         extraction_entities=ext_result.entities,
                         extraction_topics=ext_result.topics,
                     )
-            if state._event_bus is not None:
+
+            if prop_index is not None:
+                await prop_index.upsert_indexed_source(
+                    source=source,
+                    mtime_ns=source_stat.st_mtime_ns,
+                    size_bytes=source_stat.st_size,
+                    extraction_schema_version=schema_version,
+                    extraction_model=extraction_model,
+                )
+                if not prop_index.article_exists(source):
+                    scope = state._config.get_scope_for_path(source)
+                    subdirectory = _derive_subdirectory(source, state._config)
+                    created = await prop_index.sync_article_structural_fields(
+                        source_path=source,
+                        filename=file_path.name,
+                        content_hash=source_hash,
+                        scope=scope,
+                        subdirectory=subdirectory,
+                    )
+                    if created and state._event_bus is not None:
+                        await state._event_bus.publish_async_nowait(
+                            rag_article_auto_created(
+                                source_path=source,
+                                content_hash=source_hash,
+                                scope=scope,
+                            )
+                        )
+            if emit_skip_event and state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
                     rag_file_skipped(file=source, reason="unchanged")
                 )
             return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
 
-        existing_timestamps: dict[str, str] = {}
-        for meta in existing.get("metadatas") or []:
-            if isinstance(meta, dict):
-                chunk_hash = meta.get("chunk_hash")
-                indexed_at = meta.get("indexed_at")
-                if isinstance(chunk_hash, str) and isinstance(indexed_at, str):
-                    existing_timestamps[chunk_hash] = indexed_at
+        existing_timestamps: dict[str, str] = {
+            meta["chunk_hash"]: meta["indexed_at"]
+            for meta in existing.get("metadatas", [])
+            if isinstance(meta, dict)
+            and isinstance(meta.get("chunk_hash"), str)
+            and isinstance(meta.get("indexed_at"), str)
+        }
 
         target_chars = chunk_tokens * _CHARS_PER_TOKEN if chunk_tokens else None
         if is_html_file and state._event_bus is not None:
@@ -288,6 +412,14 @@ async def _index_file_impl(
                         await prop_index.remove_chunk(old_id)
                     await prop_index.fts.remove_batch(existing_ids)
                 collection.delete(ids=existing_ids)
+            if prop_index is not None:
+                await prop_index.upsert_indexed_source(
+                    source=source,
+                    mtime_ns=source_stat.st_mtime_ns,
+                    size_bytes=source_stat.st_size,
+                    extraction_schema_version=schema_version,
+                    extraction_model=extraction_model,
+                )
             logger.info(
                 "Index complete: file=%s deleted=%d indexed=0",
                 source,
@@ -321,8 +453,8 @@ async def _index_file_impl(
         for metadata, chunk in zip(metadatas, chunks, strict=True):
             metadata["is_bibliography"] = chunk_is_junk(chunk.text)
 
-        extraction_entities = 0
-        extraction_topics = 0
+        extraction_entities: int | None = None
+        extraction_topics: int | None = None
         extraction_property_entries: list[tuple[str, str, str, str]] = []
         file_batch_start_ts: str | None = None
         ext_result: ExtractionResult | None = None
@@ -360,6 +492,14 @@ async def _index_file_impl(
                 ]
 
             if not ext_result.success:
+                if prop_index is not None:
+                    await prop_index.upsert_indexed_source(
+                        source=source,
+                        mtime_ns=source_stat.st_mtime_ns,
+                        size_bytes=source_stat.st_size,
+                        extraction_schema_version=schema_version,
+                        extraction_model=extraction_model,
+                    )
                 if state._event_bus is not None:
                     await state._event_bus.publish_async_nowait(
                         rag_file_indexing_failed(
@@ -435,12 +575,41 @@ async def _index_file_impl(
             )
         raise
     finally:
-        if pending_marked and prop_index is not None:
-            await prop_index.clear_pending(source)
-        elif pending_marked and prop_index is None:
-            logger.error(
-                "Property index unavailable while clearing pending for source=%s",
-                source,
+        if pending_marked:
+            if prop_index is not None:
+                await prop_index.clear_pending(source)
+            else:
+                # This case should ideally not happen if mark_pending was called
+                # only when prop_index was available.
+                logger.error(
+                    "Property index became unavailable after marking pending for source=%s",
+                    source,
+                )
+
+    if prop_index is not None:
+        await prop_index.upsert_indexed_source(
+            source=source,
+            mtime_ns=source_stat.st_mtime_ns,
+            size_bytes=source_stat.st_size,
+            extraction_schema_version=schema_version,
+            extraction_model=extraction_model,
+        )
+        scope = state._config.get_scope_for_path(source)
+        subdirectory = _derive_subdirectory(source, state._config)
+        created = await prop_index.sync_article_structural_fields(
+            source_path=source,
+            filename=file_path.name,
+            content_hash=source_hash,
+            scope=scope,
+            subdirectory=subdirectory,
+        )
+        if created and state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_article_auto_created(
+                    source_path=source,
+                    content_hash=source_hash,
+                    scope=scope,
+                )
             )
 
     await state._maybe_update_corpus_hints()

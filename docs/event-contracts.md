@@ -435,6 +435,7 @@ Payload semantics:
 | `rag.extraction.circuit.opened` | `consecutive_failures`, `cooldown_s` | Circuit breaker tripped — consecutive capacity errors from Stargate exceeded threshold. All workers skip extraction until cooldown elapses and probe succeeds. |
 | `rag.extraction.circuit.closed` | _(empty)_ | Circuit breaker closed after successful probe — capacity recovered. |
 | `rag.extraction.circuit.skipped` | `file`, `chunk_count` | Extraction batch skipped because circuit breaker is OPEN. Chunks remain indexed; extraction deferred to next reconcile sweep after circuit closes. |
+| `rag.extraction.unavailable` | `pipeline`, `error` | Extraction pipeline not routable via Stargate at watcher start. Watcher is not started; RAG serves queries but does not index until restart. |
 
 Between these, per-chunk signals fire: N × `rag.extraction.completed` + M × `rag.extraction.failed`
 where N + M ≤ `chunk_count`. `file` is the correlation key — matches `rag.watch.reindex.complete.file`.
@@ -1147,6 +1148,7 @@ provider HTTP failures.
 | `model.load.completed` | `request_id`, `model_id`, `duration_ms` | `correlation_id` |
 | `model.loading.stuck` | `url`, `model_id`, `elapsed_s`, `ttl_s` | - |
 | `model.load.context.mismatch` | `model_id`, `requested_context`, `actual_context`, `reason` | - |
+| `model.state.changed` | `model_id`, `from`, `to`, `error` | `role=observation`, `scope=node` — every `ModelStatus` transition in ResourceTracker via `set_model_status` (loading, loaded, busy, unloading, error, not_loaded) |
 
 **Note**: Execution-capacity signals (`model.execution.*` and
 `model.capacity.freed`) are documented under **Capacity & Slot Lifecycle**.
@@ -1230,6 +1232,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.extraction.circuit.opened` | `consecutive_failures`, `cooldown_s` | circuit breaker tripped on capacity errors |
 | `rag.extraction.circuit.closed` | _(empty)_ | circuit breaker closed after successful probe |
 | `rag.extraction.circuit.skipped` | `file`, `chunk_count` | batch skipped due to open circuit breaker |
+| `rag.extraction.unavailable` | `pipeline`, `error` | extraction pipeline not routable at watcher start; watcher not started |
 | `rag.extraction.completed` | `chunk_id`, `entities`, `topics` | - |
 | `rag.extraction.failed` | `chunk_id`, `error` | - |
 | `rag.property.index.rebuilt` | `collection`, `count` | - |
@@ -1240,6 +1243,8 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
 | `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |
 | `rag.article.upserted` | `source_path`, `created`, `title`, `content_hash` | article metadata upsert completed; `created=true` for insert and `created=false` for update |
+| `rag.article.auto.created` | `source_path`, `content_hash`, `scope` | emitted when indexing creates a minimal article row for a source that had no row before |
+| `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | indexing migrated an article row to a new source path (content-hash move detection) |
 | `rag.source.deleted` | `source`, `chunks_deleted`, `article_deleted` | source-level delete completed across vector index and article metadata |
 | `rag.directory.sources.deleted` | `path`, `sources_deleted`, `chunks_deleted`, `articles_deleted` | directory-level delete completed across vector index and article metadata |
 | `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `bibliography_chunks` (int — count of chunks tagged `is_bibliography` for this file) |
@@ -1261,6 +1266,9 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.scope.rejected` | `scope`, `reason`, `available` | scope validation failed |
 | `rag.scopes.listed` | `count` | scope registry listing completed |
 | `rag.post.index.stale` | `stale_steps` | startup: post-index enrichment steps stale after last reindex; operator should run runbook |
+| `rag.hints.gaps.repaired` | `scopes`, `trigger` | automatic corpus-hints refresh for scopes whose indexed file-set hash drifted; `trigger` ∈ {`startup`, `reconcile`, `watcher`} |
+| `rag.vocabulary.gaps.detected` | `scopes`, `reason` | vocabulary auto-fill skipped (e.g. `reason` = `no_model_available` — no gateway-owned Stargate model) |
+| `rag.vocabulary.gaps.repaired` | `scopes`, `model` | scope vocabulary rows written after LLM classification during automatic gap repair |
 | `rag.search.embedding.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | search embedding retries exhausted; request degraded/fails before vector search |
 | `rag.embedding.query.success` | `model_id`, `query_len`, `scope` | query embedding completed successfully |
 | `rag.embedding.query.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | query embedding retries exhausted before search |
@@ -1272,6 +1280,13 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.scope.vocabulary.load.failed` | `path`, `error` | scope_vocabulary.yaml could not be loaded |
 | `rag.corpus.hints.filter.failed` | `error` | co-occurrence hint filtering failed |
 | `rag.corpus.hints.skipped` | `reason` | corpus-hints generation skipped intentionally |
+
+### RAG Article Metadata Lifecycle
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `rag.article.auto.created` | `source_path`, `content_hash`, `scope` | Indexing created a skeletal article row for a source that had no article record |
+| `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | Indexing detected a file move by content hash and migrated the article row |
 
 ### Doc Generate Events
 
@@ -1545,6 +1560,28 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.manage.service.called` | `action`, `service` | manage_service tool invoked |
 | `mcp.manage.service.completed` | `action`, `service`, `duration_s` | manage_service completed successfully |
 | `mcp.manage.service.failed` | `action`, `service`, `error`, `duration_s` | manage_service returned error |
+
+### Agent-Bus Signals
+
+The consolidated `agent_bus(tool=...)` tool emits operation-level signals.
+With atomic server-side endpoints, partial-failure and stage signals are
+unnecessary — each operation succeeds or fails atomically.
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `mcp.agentbus.thread.created` | `thread`, `slug`, `to`, `turn_number` | Atomic thread+turn creation succeeded |
+| `mcp.agentbus.post.failed` | `slug`, `to`, `error` | Atomic thread+turn creation failed |
+| `mcp.agentbus.turn.posted` | `thread`, `to`, `turn_number` | Reply turn posted to existing thread |
+| `mcp.agentbus.thread.closed` | `thread` | Atomic close completed (marks all turns read + status=closed) |
+| `mcp.agentbus.turns.fetched` | `to`, `thread`, `count`, `mark_read` | Turns fetched (inbox or thread) |
+| `mcp.agentbus.turn.detail.fetched` | `thread`, `turn_number` | Single turn fetched by number |
+| `mcp.agentbus.threads.listed` | `status`, `count` | Thread listing retrieved |
+| `mcp.agentbus.thread.updated` | `thread`, `status` | Thread status/summary updated (non-close) |
+| `mcp.agentbus.turn.updated` | `thread`, `turn_number`, `has_append` | Turn body/subject updated |
+| `mcp.agentbus.thread.deleted` | `thread`, `force`, `deleted_turns` | Thread and all turns deleted |
+| `mcp.agentbus.turn.deleted` | `thread`, `turn_number`, `force` | Single turn deleted |
+
+All signals: `role="observation"`, `scope="global"`.
 
 ## MCP Stdio Proxy Signals
 

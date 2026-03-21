@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""Download a research paper and register it with the RAG article database.
+
+Runs on the host (not inside a container) because it needs outbound internet
+access for arXiv downloads. After downloading, it calls the RAG service's
+POST /article endpoint (via Stargate passthrough) to register the metadata.
+
+The file watcher will index the PDF automatically on the next RAG restart
+or watch cycle. Pass --index to trigger immediate indexing via POST /index.
+
+Usage:
+    # Minimal — auto-derives filename from arXiv ID
+    scripts/ingest-article --arxiv 2402.16667 --subdir documentation \\
+        --title "RepoAgent: Repository-level Code Documentation Generation"
+
+    # Full metadata
+    scripts/ingest-article --arxiv 2402.16667 --subdir documentation \\
+        --title "RepoAgent: ..." --authors "Qinyu Luo, ..." \\
+        --date 2024-02-26 --scope code_documentation --index
+
+    # Custom filename
+    scripts/ingest-article --arxiv 2402.16667 --subdir documentation \\
+        --filename repoagent.pdf --title "RepoAgent: ..."
+
+    # Non-arXiv URL
+    scripts/ingest-article --url https://example.com/paper.pdf \\
+        --subdir rag-systems --filename custom-paper.pdf --title "..."
+
+    # Dry run
+    scripts/ingest-article --arxiv 2402.16667 --subdir documentation \\
+        --title "..." --dry-run
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import sys
+from pathlib import Path
+
+import httpx
+
+RESEARCH_ROOT = Path("/mnt/torus/projects/universal-llm-gateway/docs/research")
+DEFAULT_STARGATE = "http://localhost:9999"
+ARTICLE_PATH = "/api/v1/rag/article"
+INDEX_PATH = "/api/v1/rag/index"
+
+SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
+    "rag-systems": "rag_systems",
+    "prompting": "small_llm_prompting",
+    "workflows": "workflows",
+    "belief-consistency": "belief_consistency",
+    "graph-modeling": "graph_modeling",
+    "temporal-provenance": "temporal_provenance",
+    "code-retrieval": "code_retrieval",
+    "knowledge-management": "knowledge_systems",
+    "llm/prompting": "llm_prompting",
+    "documentation": "code_documentation",
+    "software-agents": "software_agents",
+    "information-extraction": "information_extraction",
+    "trading/strategies": "trading_strategies",
+    "trading/microstructure": "trading_microstructure",
+    "trading/risk": "trading_risk",
+    "trading/options": "trading_options",
+    "trading/ml-trading": "trading_ml",
+    "trading/crypto": "trading_crypto",
+    "trading/order-flow": "trading_order_flow",
+    "trading/stat-arb": "trading_stat_arb",
+    "trading/execution": "trading_execution",
+    "trading/intraday": "trading_intraday",
+}
+
+
+def download_pdf(url: str, dest: Path, *, timeout: float = 60.0) -> int:
+    """Download a PDF to dest. Returns byte count."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        dest.write_bytes(resp.content)
+        return len(resp.content)
+
+
+def compute_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def register_article(
+    *,
+    stargate_url: str,
+    source_path: str,
+    filename: str,
+    title: str,
+    authors: str,
+    published_date: str,
+    content_hash: str,
+    subdirectory: str,
+    scope: str,
+    venue: str = "",
+) -> dict:
+    """Call POST /article on RAG via Stargate passthrough."""
+    body = {
+        "source_path": source_path,
+        "filename": filename,
+        "title": title,
+        "authors": authors,
+        "venue": venue,
+        "published_date": published_date,
+        "content_hash": content_hash,
+        "subdirectory": subdirectory,
+        "scope": scope,
+    }
+    url = f"{stargate_url}{ARTICLE_PATH}"
+    with httpx.Client(timeout=15.0) as client:
+        resp = client.post(url, json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def trigger_index(*, stargate_url: str, source_path: str) -> dict:
+    """Call POST /index on RAG via Stargate passthrough to index immediately."""
+    url = f"{stargate_url}{INDEX_PATH}"
+    body = {"path": source_path}
+    with httpx.Client(timeout=120.0) as client:
+        resp = client.post(url, json=body)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Download a research paper and register it with RAG"
+    )
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--arxiv", help="arXiv paper ID (e.g. 2402.16667)")
+    source.add_argument("--url", help="Direct PDF URL (non-arXiv)")
+
+    parser.add_argument(
+        "--subdir",
+        required=True,
+        help="Subdirectory under docs/research/ (e.g. documentation, rag-systems)",
+    )
+    parser.add_argument(
+        "--filename",
+        help="Output filename (default: auto-derived from arXiv ID or URL)",
+    )
+    parser.add_argument("--title", default="", help="Paper title")
+    parser.add_argument("--authors", default="", help="Comma-separated author names")
+    parser.add_argument("--date", default="", help="Published date (ISO format)")
+    parser.add_argument("--venue", default="", help="Publication venue")
+    parser.add_argument(
+        "--scope",
+        help="RAG scope override (default: auto from subdirectory)",
+    )
+    parser.add_argument(
+        "--index",
+        action="store_true",
+        help="Trigger immediate indexing via POST /index (requires RAG running)",
+    )
+    parser.add_argument(
+        "--stargate-url",
+        default=DEFAULT_STARGATE,
+        help=f"Stargate URL (default: {DEFAULT_STARGATE})",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would happen without downloading or registering",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-download even if file already exists",
+    )
+
+    args = parser.parse_args()
+
+    if args.arxiv:
+        pdf_url = f"https://arxiv.org/pdf/{args.arxiv}"
+        default_filename = f"arxiv-{args.arxiv.replace('/', '-')}.pdf"
+    else:
+        pdf_url = args.url
+        default_filename = args.url.rsplit("/", 1)[-1] or "paper.pdf"
+
+    filename = args.filename or default_filename
+    dest = RESEARCH_ROOT / args.subdir / filename
+    source_path = str(dest)
+    scope = args.scope or SUBDIRECTORY_TO_SCOPE.get(args.subdir, "all")
+
+    print(f"Source:     {pdf_url}")
+    print(f"Dest:       {dest}")
+    print(f"Scope:      {scope}")
+    print(f"Subdir:     {args.subdir}")
+    if args.title:
+        print(f"Title:      {args.title[:80]}")
+
+    if args.dry_run:
+        print("\n[dry-run] Would download, register, and optionally index.")
+        return 0
+
+    # Step 1: Download
+    if dest.exists() and not args.force:
+        print(f"\nFile exists, skipping download. Use --force to re-download.")
+        byte_count = dest.stat().st_size
+    else:
+        print(f"\nDownloading...", end=" ", flush=True)
+        try:
+            byte_count = download_pdf(pdf_url, dest)
+            print(f"OK ({byte_count:,} bytes)")
+        except httpx.HTTPStatusError as exc:
+            print(f"FAILED (HTTP {exc.response.status_code})")
+            return 1
+        except httpx.RequestError as exc:
+            print(f"FAILED ({exc})")
+            return 1
+
+    # Step 2: Compute hash
+    content_hash = compute_hash(dest)
+    print(f"Hash:       {content_hash[:16]}...")
+
+    # Step 3: Register metadata
+    print("Registering metadata...", end=" ", flush=True)
+    try:
+        result = register_article(
+            stargate_url=args.stargate_url,
+            source_path=source_path,
+            filename=filename,
+            title=args.title,
+            authors=args.authors,
+            published_date=args.date,
+            content_hash=content_hash,
+            subdirectory=args.subdir,
+            scope=scope,
+            venue=args.venue,
+        )
+        action = "created" if result.get("created") else "updated"
+        print(f"OK ({action})")
+    except httpx.ConnectError:
+        print("SKIPPED (Stargate/RAG not reachable)")
+        print("  Metadata not registered. Run again when services are up,")
+        print("  or use scripts/backfill_article_metadata.py after adding")
+        print("  the entry to ~/.rag/article_registry.yaml.")
+    except httpx.HTTPStatusError as exc:
+        print(f"FAILED (HTTP {exc.response.status_code}: {exc.response.text})")
+        return 1
+
+    # Step 4: Optional immediate indexing
+    if args.index:
+        print("Indexing...", end=" ", flush=True)
+        try:
+            idx_result = trigger_index(
+                stargate_url=args.stargate_url,
+                source_path=source_path,
+            )
+            status = idx_result.get("status", "unknown")
+            chunks = idx_result.get("chunks_indexed", "?")
+            print(f"OK (status={status}, chunks={chunks})")
+        except httpx.ConnectError:
+            print("SKIPPED (RAG not reachable)")
+            print("  File will be indexed by the watcher on next RAG restart.")
+        except httpx.HTTPStatusError as exc:
+            print(f"FAILED (HTTP {exc.response.status_code})")
+
+    print("\nDone.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -38,16 +38,19 @@ import json
 import logging
 import random
 from dataclasses import dataclass, field
+from typing import Any, TYPE_CHECKING
 
 import httpx
-from universal_event_bus import Event, EventBus
 
-from services.rag.config import KnowledgeExtractionConfig
 from services.rag.events.extraction import (
     rag_extraction_circuit_closed,
     rag_extraction_circuit_opened,
 )
 from services.rag.extraction_circuit import ExtractionCircuit
+
+if TYPE_CHECKING:
+    from universal_event_bus import Event, EventBus
+    from services.rag.config import KnowledgeExtractionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +85,58 @@ class BatchTimeoutError(Exception):
     def __init__(self, timeout_seconds: float) -> None:
         super().__init__(f"Extraction batch timed out after {timeout_seconds:.0f}s")
         self.timeout_seconds = timeout_seconds
+
+
+_EXTRACTION_PROBE_TIMEOUT_S = 300.0
+_EXTRACTION_PROBE_INTERVAL_S = 5.0
+
+
+async def wait_until_extraction_ready(
+    pipeline: str,
+    timeout_s: float = _EXTRACTION_PROBE_TIMEOUT_S,
+    interval_s: float = _EXTRACTION_PROBE_INTERVAL_S,
+) -> None:
+    """Block until the extraction pipeline is registered in Stargate's model list.
+
+    Polls GET /v1/models at interval_s. Raises TimeoutError if not found
+    within timeout_s.  Gates watcher start on extraction readiness so
+    indexing doesn't burn retry budgets against an unreachable model.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            resp = await _client.get(f"{STARGATE_URL}/v1/models", timeout=5.0)
+            resp.raise_for_status()
+            models = {m["id"] for m in resp.json().get("data", [])}
+            if pipeline in models:
+                logger.info(
+                    "Extraction pipeline '%s' ready after %d probe(s)",
+                    pipeline,
+                    attempt,
+                )
+                return
+        except Exception as exc:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Extraction pipeline '{pipeline}' not available after {timeout_s}s"
+                ) from exc
+            logger.debug(
+                "Extraction probe %d: %s; retrying in %.0fs (%.0fs left)",
+                attempt,
+                exc,
+                interval_s,
+                remaining,
+            )
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"Extraction pipeline '{pipeline}' not registered after {timeout_s}s"
+            )
+        await asyncio.sleep(min(interval_s, remaining))
 
 
 def configure_timeouts(config: KnowledgeExtractionConfig) -> None:
@@ -202,7 +257,7 @@ def _parse_stargate_error(exc: httpx.HTTPStatusError) -> StargateError | None:
 
 @dataclass(slots=True, kw_only=True)
 class Facet:
-    """Key-value facet for an entity (e.g. port: 9999, role: master)."""
+    """Represents a key-value attribute or property of an Entity, providing additional detail. For example, a 'port' facet with value '9999' for a 'Service' entity."""
 
     name: str
     value: str
@@ -210,7 +265,7 @@ class Facet:
 
 @dataclass(slots=True, kw_only=True)
 class Relation:
-    """Directed edge between entities (subject → predicate → target)."""
+    """Represents a directed relationship or interaction between two entities, where the current entity is the subject, and 'target' is the object of the 'predicate'."""
 
     predicate: str
     target: str
@@ -218,7 +273,7 @@ class Relation:
 
 @dataclass(slots=True, kw_only=True)
 class Entity:
-    """Named concept with types, facets, and relations for one chunk."""
+    """Represents a named concept extracted from a document chunk, characterized by its type(s), descriptive facets, and relationships to other entities."""
 
     name: str
     type: list[str]
@@ -447,6 +502,8 @@ async def _await_pipeline_registration(
                 exc,
                 exc_info=True,
             )
+            # Consider re-raising if this is truly unexpected and should halt registration
+            # For now, returning None to indicate failure to register.
             return [None] * len(chunk_ids), {}
 
 
@@ -538,7 +595,7 @@ async def extract_knowledge_batch(
                 last_exc = exc
                 if attempt < _MAX_RETRIES - 1:
                     delay = min(
-                        60.0, _BACKOFF_BASE_S ** (attempt + 2)
+                        60.0, _BACKOFF_BASE_S ** (attempt + 1)
                     ) + random.uniform(0.0, 3.0)
                     logger.info(
                         "Stargate retryable extraction error (attempt %d/%d, code=%s); "
@@ -564,8 +621,10 @@ async def extract_knowledge_batch(
             exc_info=True,
         )
     else:
+        # This case should ideally not be reached if all attempts failed without an exception.
+        # If it is, it indicates a logic error where an exception was not captured.
         logger.error(
-            "Batch extraction finished without success and without captured exception"
+            "Batch extraction finished without success and without captured exception. This indicates an unhandled error path."
         )
     if _circuit is not None and capacity_retries > 0:
         if await _circuit.record_failure(capacity_error=True):
@@ -575,7 +634,5 @@ async def extract_knowledge_batch(
                     cooldown_s=_circuit.current_cooldown_s,
                 )
             )
-    timing: dict[str, object] = {}
-    if capacity_retries > 0:
-        timing["capacity_retries"] = capacity_retries
+    timing: dict[str, Any] = {}  # Or a more specific TypedDict if structure is fixed
     return [None] * len(chunk_ids), timing

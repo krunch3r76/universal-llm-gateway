@@ -489,7 +489,7 @@ app.include_router(
 app.include_router(health.router)  # /health
 app.include_router(schedule.router)  # /scheduler/* endpoints
 app.include_router(monitoring.router)  # /api/v1/monitoring/* endpoints (Phase 4)
-app.include_router(local_models.api_router)  # /api/v1/local-models (local models data)
+app.include_router(local_models.api_router)  # /api/v1/node-models
 app.include_router(local_models.ui_router)  # /local-ui (local models browser)
 local_models.mount_static(app)  # /local-ui/static/* (must be after router registration)
 workbench.mount_workbench(

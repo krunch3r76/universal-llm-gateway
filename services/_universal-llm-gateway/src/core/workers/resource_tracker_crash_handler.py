@@ -22,7 +22,7 @@ class ResourceTrackerCrashHandler:
 
     Edge cases handled:
     - Multiple concurrent crashes: Handler is async-safe
-    - Crashes during loading: set_model_status handles any state
+    - Crashes during loading: ResourceTracker domain verbs sync SM and derived status
     - Missing model_id: Logged and skipped
     - Resource tracker errors: Caught and logged, don't block other handlers
     """

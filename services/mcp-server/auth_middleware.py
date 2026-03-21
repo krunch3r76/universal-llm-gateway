@@ -11,18 +11,11 @@ from __future__ import annotations
 
 import json
 import logging
-import mimetypes
 import os
 import re
 import time
 from pathlib import Path
 
-from artifact_proxy import (
-    _ALLOWED_ORIGINS as ARTIFACT_ALLOWED_ORIGINS,
-)
-from artifact_proxy import (
-    _cors_headers as artifact_cors_headers,
-)
 from artifact_proxy import (
     handle_artifact_preflight,
     handle_artifact_proxy,
@@ -42,10 +35,8 @@ from llm_proxy import (
     handle_llm_proxy,
 )
 from mcp_events import record
-from oauth_service import OAuthService
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.responses import JSONResponse
 from workbench_relay import (
     _CORS_HEADERS as RELAY_CORS_HEADERS,
 )
@@ -55,6 +46,11 @@ from workbench_relay import (
 )
 
 from tools.clip import normalize_clip_content
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from starlette.types import ASGIApp, Receive, Scope, Send
+    from oauth_service import OAuthService
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +64,6 @@ PUBLIC_PATHS = frozenset(
 )
 
 
-_THUMBNAILS_PREFIX = "/thumbnails/"
-_THUMBNAILS_DIR = Path("/data/files/.thumbnails")
-
-
 class AuthMiddleware:
     """Admit HTTP requests via static bearer or OAuth without owning MCP telemetry.
 
@@ -82,7 +74,7 @@ class AuthMiddleware:
 
     _CLIPS_DIR = Path("/data/files/clips")
     _MAX_BODY_BYTES = 5 * 1024 * 1024
-    _CORS_HEADERS: dict[str, str] = {
+    _CLIP_CORS_HEADERS: dict[str, str] = {
         "access-control-allow-origin": "*",
         "access-control-allow-methods": "POST, OPTIONS",
         "access-control-allow-headers": "Authorization, Content-Type",
@@ -117,7 +109,7 @@ class AuthMiddleware:
         return token.strip()
 
     def _build_www_authenticate_header(self) -> str | None:
-        """Return OAuth resource metadata hint for 401 responses when OAuth is enabled."""
+        """Return the 'WWW-Authenticate' header value for 401 responses, including OAuth resource metadata hint if OAuth is enabled. The format is 'Bearer realm="mcp", resource_metadata="<URL>"'."""
         if self._oauth_service is None:
             return None
         return (
@@ -132,19 +124,15 @@ class AuthMiddleware:
         ``default``. When a Cursor token is configured and matched, requests map
         to ``cursor_safe``. All other static tokens map to ``default``.
         """
-        if not self._cursor_token:
-            return "default"
-        if auth_header == f"Bearer {self._cursor_token}":
+        if self._cursor_token and auth_header == f"Bearer {self._cursor_token}":
             return "cursor_safe"
         return "default"
 
     def _is_static_token_authorized(self, auth_header: str) -> bool:
         """Return True when auth header matches configured static token(s)."""
-        if auth_header == f"Bearer {self._token}":
-            return True
-        if self._cursor_token and auth_header == f"Bearer {self._cursor_token}":
-            return True
-        return False
+        return auth_header == f"Bearer {self._token}" or (
+            self._cursor_token and auth_header == f"Bearer {self._cursor_token}"
+        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -269,27 +257,6 @@ class AuthMiddleware:
             await response(scope, receive, send)
             return
 
-        if path.startswith(_THUMBNAILS_PREFIX) and request.method == "GET":
-            auth = request.headers.get("authorization", "")
-            if not self._is_static_token_authorized(auth):
-                response = JSONResponse({"error": "Unauthorized"}, status_code=401)
-                await response(scope, receive, send)
-                return
-            filename = path[len(_THUMBNAILS_PREFIX) :]
-            if not filename or "/" in filename or filename.startswith("."):
-                response = JSONResponse({"error": "Invalid filename"}, status_code=400)
-                await response(scope, receive, send)
-                return
-            thumb_path = _THUMBNAILS_DIR / filename
-            if not thumb_path.is_file():
-                response = JSONResponse({"error": "Not found"}, status_code=404)
-                await response(scope, receive, send)
-                return
-            media_type = mimetypes.guess_type(filename)[0] or "image/jpeg"
-            response = FileResponse(str(thumb_path), media_type=media_type)
-            await response(scope, receive, send)
-            return
-
         auth_header = request.headers.get("authorization", "")
         if self._is_static_token_authorized(auth_header):
             scope["auth_mode"] = "static"
@@ -325,6 +292,9 @@ class AuthMiddleware:
                 reason="unauthorized_token",
             )
 
+        record(
+            "mcp.request.unauthorized", path=path, reason="no_valid_token"
+        )  # Example event
         headers: dict[str, str] = {}
         if www_authenticate := self._build_www_authenticate_header():
             headers["WWW-Authenticate"] = www_authenticate
@@ -339,8 +309,9 @@ class AuthMiddleware:
         async for chunk in request.stream():
             body.extend(chunk)
             if len(body) > self._MAX_BODY_BYTES:
-                logger.warning(
-                    "clip: rejected oversized payload (%d bytes)", len(body)
+                logger.warning("clip: rejected oversized payload (%d bytes)", len(body))
+                record(
+                    "mcp.clip.upload_failed", reason="payload_too_large", size=len(body)
                 )
                 return JSONResponse(
                     {"error": "Payload too large (5MB limit)"},
@@ -384,16 +355,17 @@ class AuthMiddleware:
         url_sanitized = url.replace("\r", "").replace("\n", " ")
         safe_title = title_sanitized.replace("\\", "\\\\").replace('"', '\\"')
         safe_url = url_sanitized.replace("\\", "\\\\").replace('"', '\\"')
-        frontmatter = (
-            f"---\n"
-            f'url: "{safe_url}"\n'
-            f'title: "{safe_title}"\n'
-            f"clipped_at: {ts}\n"
-            f"selected: {str(selected).lower()}\n"
-            f"extracted: {str(extracted).lower()}\n"
-            f"chars: {len(content)}\n"
-            f"---\n\n"
-        )
+        frontmatter = f"""
+---
+url: "{safe_url}"
+title: "{safe_title}"
+clipped_at: {ts}
+selected: {str(selected).lower()}
+extracted: {str(extracted).lower()}
+chars: {len(content)}
+---
+
+"""
 
         for attempt in range(5):
             candidate = self._CLIPS_DIR / (
@@ -405,6 +377,7 @@ class AuthMiddleware:
                 filename = candidate.name
                 break
             except FileExistsError:
+                logger.debug("clip: filename '%s' already exists, retrying", candidate)
                 continue
             except OSError as exc:
                 logger.error("clip: failed writing %s: %s", candidate, exc)
@@ -414,9 +387,7 @@ class AuthMiddleware:
                     headers=self._CORS_HEADERS,
                 )
         else:
-            logger.error(
-                "clip: unable to allocate unique filename for slug '%s'", slug
-            )
+            logger.error("clip: unable to allocate unique filename for slug '%s'", slug)
             return JSONResponse(
                 {"error": f"Unable to allocate unique clip filename for slug '{slug}'"},
                 status_code=409,

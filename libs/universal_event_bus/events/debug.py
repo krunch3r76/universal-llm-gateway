@@ -27,23 +27,27 @@ async def emit_debug_event(
     signal: str,
     payload: dict[str, Any],
     source: str = "pipeline",
+    *,
+    role: str = "debug",
+    scope: str = "node",
 ) -> None:
-    """Publish a debug event to the event service.
+    """Publish an event to the event service UDS ingest socket.
 
-    Writes directly to the event service UDS ingest socket using NDJSON.
-    No-op if the socket is unreachable — never raises.
+    Writes directly using NDJSON. No-op if the socket is unreachable — never raises.
 
     Args:
         signal: Dot-notation signal name (e.g. 'pipeline.debug.validate')
         payload: Event payload dict
         source: Originating service identifier
+        role: Event role; default ``debug`` (session-pruned diagnostics).
+        scope: ``node`` or ``global``.
     """
     now = datetime.now(UTC)
     event: dict[str, Any] = {
         "signal": signal,
         "source": source,
-        "role": "debug",
-        "scope": "node",
+        "role": role,
+        "scope": scope,
         "timestamp": now.isoformat(),
         "ts_unix_ms": int(now.timestamp() * 1000),
         "payload": payload,

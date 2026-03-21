@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol
 
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from .core.schemas import PipelineSpec
 
 logger = get_logger(__name__)
@@ -62,7 +62,7 @@ def get_pipeline_required_models(
         if step.model_ref:
             # optionsNs.<key> — resolve via pipeline options before registry lookup
             if step.model_ref.startswith("optionsNs."):
-                option_key = step.model_ref[len("optionsNs."):]
+                option_key = step.model_ref[len("optionsNs.") :]
                 resolved_ref = pipeline.options.get(option_key)
                 if resolved_ref and isinstance(resolved_ref, str):
                     _add_model_from_ref(
@@ -171,77 +171,22 @@ def _add_model_from_ref(
 def are_models_available(
     required_models: set[str],
     *,
-    gateway_catalogs: list[set[str]],
+    is_available: Callable[[str], bool],
 ) -> bool:
-    """
-    Check if all required models are available across gateways.
+    """Return True iff every required model ID passes *is_available*.
 
-    Let G = ⋃ gateway_catalogs. Returns True iff required_models ⊆ G.
-
-    Inputs:
-        required_models: Set of model IDs needed (empty = always available)
-        gateway_catalogs: List of model sets from each connected gateway
-
-    Outputs:
-        True if required_models ⊆ ⋃gateway_catalogs, False otherwise
-
-    Edge cases:
-        - Empty required_models → True (no requirements)
-        - Empty gateway_catalogs → False (no gateways = no models available)
-        - Partial match → False (all must be available)
-
-    Args:
-        required_models: Set of model IDs needed
-        gateway_catalogs: List of model sets from each gateway
-
-    Returns:
-        True if all required models available, False otherwise
+    *is_available* is injected by Stargate (e.g. ModelId-aware catalog match
+    plus registered pipeline virtual IDs). Empty *required_models* → True.
     """
     if not required_models:
-        return True  # No requirements = always available
+        return True
+    return all(is_available(mid) for mid in required_models)
 
-    # Handle empty gateway_catalogs (no gateways connected)
-    if not gateway_catalogs:
-        logger.debug("are_models_available: No gateways connected - returning False")
-        return False  # No gateways = no models available
 
-    available: set[str] = set().union(*gateway_catalogs)
-
-    # DETAILED DEBUG: Log exact required models for debugging
-    logger.debug(
-        f"are_models_available: DETAILED required_models={sorted(required_models)}"
-    )
-
-    # Check each required model individually for detailed diagnostics
-    missing: set[str] = set()
-    for req_model in required_models:
-        if req_model not in available:
-            missing.add(req_model)
-            # Find similar models for debugging
-            similar = [m for m in available if req_model.rsplit("-", 1)[0] in m][:3]
-            logger.debug(
-                f"are_models_available: Model '{req_model}' NOT FOUND. "
-                f"Similar in catalog: {similar}"
-            )
-        else:
-            logger.debug(f"are_models_available: Model '{req_model}' FOUND in catalog")
-
-    result = len(missing) == 0
-
-    if not result:
-        logger.debug(
-            f"are_models_available: FALSE - required={len(required_models)}, "
-            f"available={len(available)}, missing={len(missing)}: {sorted(missing)}"
-        )
-        # Debug: show some available models for comparison
-        sample_available = sorted(available)[:10]
-        logger.debug(
-            f"are_models_available: Available models sample (first 10): "
-            f"{sample_available}"
-        )
-    else:
-        logger.debug(
-            f"are_models_available: TRUE - all {len(required_models)} models available"
-        )
-
-    return result
+def missing_models(
+    required_models: set[str],
+    *,
+    is_available: Callable[[str], bool],
+) -> set[str]:
+    """Subset of *required_models* for which *is_available* is False."""
+    return {mid for mid in required_models if not is_available(mid)}

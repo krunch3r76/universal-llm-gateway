@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ logger = logging.getLogger("cortex-api.db")
 
 _CORTEX_DB = Path(os.environ.get("CORTEX_DB_PATH", "/data/cortex/cortex.db"))
 _TODOS_DB = Path(os.environ.get("TODOS_DB_PATH", "/data/cortex/todos.db"))
+_MIGRATIONS_DIR = Path(__file__).parent.parent / "migrations"
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -18,6 +20,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    # emit_signal("db.connection.established", db_path=db_path)
     return conn
 
 
@@ -72,7 +75,8 @@ def json_decode(value: str | None, *, fallback: Any = None) -> Any:
         return json.loads(value)
     except (json.JSONDecodeError, TypeError):
         logger.warning(
-            "json_decode: unparseable value %r, returning fallback", value[:80]
+            "json_decode: unparseable value %r (truncated), returning fallback",
+            value[:80],
         )
         return fallback
 
@@ -86,3 +90,98 @@ def decode_row(
         if field in decoded:
             decoded[field] = json_decode(decoded[field])
     return decoded
+
+
+# ---------------------------------------------------------------------------
+# Migration runner
+# ---------------------------------------------------------------------------
+
+_STMT_SPLIT = re.compile(r";\s*$", re.MULTILINE)
+_COMMENT_LINE = re.compile(r"^\s*--.*$", re.MULTILINE)
+
+
+def _parse_sql_statements(sql: str) -> list[str]:
+    """Split a SQL file into individual statements, preserving multi-line ones."""
+    stmts: list[str] = []
+    for raw in _STMT_SPLIT.split(sql):
+        cleaned = _COMMENT_LINE.sub("", raw).strip()
+        if cleaned:
+            stmts.append(cleaned)
+    return stmts
+
+
+def _get_applied_versions(conn: sqlite3.Connection) -> set[int]:
+    try:
+        rows = conn.execute("SELECT version FROM schema_version").fetchall()
+        return {row[0] for row in rows}
+    except sqlite3.OperationalError:
+        return set()
+
+
+def run_migrations(conn: sqlite3.Connection) -> list[int]:
+    """Apply pending migrations from the migrations/ directory.
+
+    Each migration file is named ``NNN_description.sql``. Statements are
+    executed individually so that idempotent ALTERs (which may hit
+    "duplicate column name") don't block the rest of the migration.
+
+    Returns the list of newly applied version numbers.
+    """
+    if not _MIGRATIONS_DIR.is_dir():
+        logger.info("No migrations directory at %s — skipping", _MIGRATIONS_DIR)
+        return []
+
+    applied = _get_applied_versions(conn)
+    migration_files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
+    newly_applied: list[int] = []
+
+    for path in migration_files:
+        match = re.match(r"^(\d+)", path.name)
+        if not match:
+            logger.warning("Skipping non-numbered migration file: %s", path.name)
+            continue
+
+        version = int(match.group(1))
+        if version in applied:
+            # emit_signal("db.migration.skipped_already_applied", version=version, path=path.name)
+            continue
+
+        logger.info("Applying migration %03d: %s", version, path.name)
+        sql = path.read_text()
+        statements = _parse_sql_statements(sql)
+        skipped = 0
+
+        for stmt in statements:
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" in str(exc):
+                    skipped += 1
+                    continue
+                logger.error("Migration %03d failed on statement: %s", version, stmt)
+                raise
+
+        # Option 1: Keep NNN_description
+        conn.execute(
+            "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+            (version, path.stem),
+        )
+        # Option 2: Extract only description (requires careful handling of file names like '001.sql')
+        # description_part = path.stem.split('_', 1)[1] if '_' in path.stem else path.stem
+        # conn.execute(
+        #     "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+        #     (version, description_part),
+        # )
+        conn.commit()
+
+        if skipped:
+            logger.info(
+                "Migration %03d applied (%d statements skipped — columns already exist)",
+                version,
+                skipped,
+            )
+        else:
+            logger.info("Migration %03d applied successfully", version)
+        newly_applied.append(version)
+
+    return newly_applied

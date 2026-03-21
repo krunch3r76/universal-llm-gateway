@@ -18,13 +18,13 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from fastapi import HTTPException
-from model_id import ModelId
 from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope, get_http_status
 
 from .config import DEFAULT_ORCHESTRATION_CONFIG, OrchestrationConfig
 
 if TYPE_CHECKING:
+    from model_id import ModelId
     from ...common.types import FederatedGateway
     from ..routing.orchestrator import MasterRequestTracker
     from .manager.federated_gateway_manager import FederatedGatewayManager
@@ -212,7 +212,8 @@ class FederatedLoadOrchestrator:
         Ensure model is loaded on Remote gateway before forwarding requests.
 
         SINGLE-FLIGHT: Only one load request per (gateway, model) at a time.
-        Concurrent callers await the same future.
+        Concurrent callers await the same future, and completed futures remain
+        cached briefly to absorb bursty follow-up callers.
 
         EVICTION PROTECTION: Tracks routing_key for ALL callers (primary and
         coalesced) to prevent eviction during loading + pre-generation phases.
@@ -276,17 +277,18 @@ class FederatedLoadOrchestrator:
             # PHASE 4: Check telemetry hint BEFORE acquiring lock
             #
             # NOTE:
-            # Telemetry is a HINT, not an authority. In particular, there is a TOCTOU
-            # window where a model may be unloading on the Remote/Gateway while the
-            # Master still believes it is loaded (unload event not yet applied).
-            #
-            # To avoid federated token counting failures (Gateway auto-load disabled),
-            # we treat this as a signal only and still issue an idempotent load command.
+            # Telemetry is still a HINT, not an authority. A TOCTOU window remains
+            # where a model may be unloading on the Remote/Gateway while the Master
+            # still believes it is loaded (unload event not yet applied). We accept
+            # that bounded risk here to suppress redundant load storms when fresh
+            # telemetry already confirms the model is resident.
             if await self._should_skip_load_per_telemetry(gateway, model_id):
                 logger.info(
-                    f"📊 Telemetry hints {model_id} loaded on {gateway.gateway_id} - "
-                    "issuing idempotent load command for confirmation"
+                    f"📊 Telemetry confirms {model_id} loaded on "
+                    f"{gateway.gateway_id} - skipping"
                 )
+                load_succeeded = True
+                return True
 
             # Single-flight: check-and-insert is atomic (no await between them).
             if load_key in self._pending_loads:
@@ -409,9 +411,18 @@ class FederatedLoadOrchestrator:
                             gateway.gateway_id, model_id
                         )
 
-                # Cleanup pending future (atomic — no await between check and pop)
+                # TTL eviction: keep completed future for stampede protection
                 if self._pending_loads.get(load_key) is future:
-                    self._pending_loads.pop(load_key, None)
+                    loop = asyncio.get_running_loop()
+                    _f = future
+                    loop.call_later(
+                        10.0,
+                        lambda k=load_key, f=_f: (
+                            self._pending_loads.pop(k, None)
+                            if self._pending_loads.get(k) is f
+                            else None
+                        ),
+                    )
 
                 # If future wasn't resolved (e.g., task cancelled via
                 # CancelledError), resolve it now

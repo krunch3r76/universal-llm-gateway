@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from ....events.map import MapTimeoutWarning
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from ....schemas import StepConfig
     from .events import MapEventPublisher
 
@@ -36,63 +36,81 @@ class MapConcurrencyManager:
         tasks: dict[asyncio.Task[Any], int],
         start_time: float,
     ) -> None:
-        """Emit warnings at 75% and 90% of timeout."""
+        """Emit warnings when stall timeout approaches without progress.
+
+        Tracks time since last iteration completion. Warns at 75% and 90% of
+        the stall timeout window. Resets when new completions are detected.
+        """
         pipeline_id, execution_id = self._event_publisher.get_event_context()
         warned_75 = False
         warned_90 = False
+        last_completed_count = 0
+        last_progress_time = start_time
 
         while True:
             await asyncio.sleep(5.0)
-            elapsed = time.monotonic() - start_time
-            percent = elapsed / timeout_seconds
+            now = time.monotonic()
 
             pending_indices = [idx for task, idx in tasks.items() if not task.done()]
             completed = len(tasks) - len(pending_indices)
 
-            if percent >= 0.75 and not warned_75:
+            if not pending_indices:
+                break
+
+            if completed > last_completed_count:
+                last_completed_count = completed
+                last_progress_time = now
+                warned_75 = False
+                warned_90 = False
+
+            stall_elapsed = now - last_progress_time
+            stall_pct = stall_elapsed / timeout_seconds
+
+            if stall_pct >= 0.75 and not warned_75:
                 warned_75 = True
                 self._event_publisher.publish_event(
                     MapTimeoutWarning(
                         pipeline_id=pipeline_id,
                         execution_id=execution_id,
                         step_name=self._step.name,
-                        elapsed_seconds=elapsed,
+                        elapsed_seconds=stall_elapsed,
                         timeout_seconds=timeout_seconds,
                         pending_iterations=pending_indices,
                         completed_iterations=completed,
                     )
                 )
                 logger.warning(
-                    "[%s] Timeout warning: %.0f%% elapsed (%d/%d pending)",
+                    "[%s] Stall warning: %.0fs without progress "
+                    "(%.0f%% of stall timeout, %d/%d pending)",
                     self._step.name,
-                    percent * 100,
+                    stall_elapsed,
+                    stall_pct * 100,
                     len(pending_indices),
                     len(tasks),
                 )
 
-            if percent >= 0.90 and not warned_90:
+            if stall_pct >= 0.90 and not warned_90:
                 warned_90 = True
                 self._event_publisher.publish_event(
                     MapTimeoutWarning(
                         pipeline_id=pipeline_id,
                         execution_id=execution_id,
                         step_name=self._step.name,
-                        elapsed_seconds=elapsed,
+                        elapsed_seconds=stall_elapsed,
                         timeout_seconds=timeout_seconds,
                         pending_iterations=pending_indices,
                         completed_iterations=completed,
                     )
                 )
                 logger.warning(
-                    "[%s] Timeout warning: %.0f%% elapsed (%d/%d pending)",
+                    "[%s] Stall warning: %.0fs without progress "
+                    "(%.0f%% of stall timeout, %d/%d pending)",
                     self._step.name,
-                    percent * 100,
+                    stall_elapsed,
+                    stall_pct * 100,
                     len(pending_indices),
                     len(tasks),
                 )
-
-            if percent >= 1.0 or not pending_indices:
-                break
 
     async def cancel_pending_iterations(
         self,

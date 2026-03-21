@@ -329,7 +329,7 @@ steps:
       facet_result: "refine_facets.json.facets"
     generation_parameters:
       temperature: 0.2
-      max_tokens: 2048   # Bounds ranking JSON size; 2048 accommodates reason fields for all candidates.
+      max_tokens: 8192   # Generous ceiling — local model stops at JSON end; prevents truncation.
       response_format:
         type: json_object
         schema:

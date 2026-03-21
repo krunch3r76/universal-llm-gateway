@@ -8,6 +8,7 @@ for custom context building.
 Model resolution: primary model from model_ref (models.yaml), with automatic
 fallback to model_requirements-resolved alternatives on ProxyClientError.
 """
+# ruff: noqa: E501
 
 from __future__ import annotations
 
@@ -31,23 +32,38 @@ logger = get_logger(__name__)
 
 
 def _strip_markdown_fence(text: str) -> str:
-    """Strip markdown code fences wrapping JSON content.
+    """Extract JSON content from model responses.
 
     Cloud providers (notably Anthropic) may return JSON wrapped in
-    ```json ... ``` even when response_format: json_object was requested,
-    because the adapter silently drops that parameter. This strips the
-    fence so json.loads succeeds.
+    markdown fences and/or preceded by preamble text ("Let me analyze...")
+    even when response_format: json_object was requested. This extracts
+    the JSON object so json.loads succeeds.
+
+    Extraction order:
+    1. If text starts with ```, strip the fence
+    2. If a fenced JSON block appears anywhere, extract it
+    3. If a bare JSON object ({...}) appears after preamble, extract it
+    4. Return stripped text as-is (let json.loads report the error)
     """
+    import re
+
     stripped = text.strip()
+
     if stripped.startswith("```"):
-        first_newline = stripped.find("\n")
-        if first_newline == -1:
-            return stripped
-        body = stripped[first_newline + 1 :]
-        last_fence = body.rfind("```")
-        if last_fence != -1:
-            body = body[:last_fence]
-        return body.strip()
+        match = re.match(r"```(?:json|\w*)\s*\n(.*)```", stripped, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+
+    fence_match = re.search(
+        r"```(?:json|\w*)\s*\n(.*?)```", stripped, re.DOTALL
+    )
+    if fence_match:
+        return fence_match.group(1).strip()
+
+    brace_match = re.search(r"(\{.*\})", stripped, re.DOTALL)
+    if brace_match:
+        return brace_match.group(1).strip()
+
     return stripped
 
 
@@ -79,12 +95,12 @@ def _resolve_avoid_models(
             binding_repr=binding_path,
             resolver=resolver,
         )
-    except Exception:
-        logger.error(
-            "[%s] Failed resolving avoid_models_from=%s",
+    except (KeyError, AttributeError, ValueError) as exc:
+        logger.warning(
+            "[%s] Failed resolving avoid_models_from=%s: %s",
             step_name,
             binding_path,
-            exc_info=True,
+            exc,
         )
         return []
 
@@ -133,16 +149,16 @@ class GenericGenerateHandler(BaseHandler):
         source_provenance = self._extract_source_provenance(step, context)
 
         executor_override = context._step_model_override.get(step.name)
-        model_ref_overrides: dict[str, str] | None = context.options.get(
-            "model_ref_overrides"
+        model_ref_overrides: dict[str, str] = context.options.get(
+            "model_ref_overrides", {}
         )
         runtime_override = (
             model_ref_overrides.get(step.name)
             or model_ref_overrides.get(step.model_ref)
-            if model_ref_overrides and step.model_ref
+            if step.model_ref
             else None
         )
-        if isinstance(runtime_override, str) and runtime_override.strip():
+        if runtime_override:
             runtime_override = runtime_override.strip()
         elif model_ref_overrides and step.model_ref:
             override_keys = (
@@ -193,10 +209,10 @@ class GenericGenerateHandler(BaseHandler):
                             merged = []
                         deduped = list(dict.fromkeys(merged + avoided))
                         requirements["avoid_models"] = deduped
-                except Exception as exc:
+                except (KeyError, AttributeError, ValueError) as exc:
                     logger.warning(
-                        "[%s] avoid_models_from resolution failed (%s): %s"
-                        " - proceeding without exclusion",
+                        "[%s] avoid_models_from resolution failed for '%s': %s. "
+                        "Proceeding without model exclusion.",
                         step.name,
                         step.avoid_models_from,
                         exc,
@@ -230,14 +246,24 @@ class GenericGenerateHandler(BaseHandler):
                 model_id,
             )
         else:
-            model_config = registry.get_model_config(
-                step.model_ref,
-                domain=context.pipeline.domain,
-                search_path=context.pipeline.source_search_path,
-            )
-            model_id = model_config.model
-            model_system_prompt = model_config.system_prompt
-            model_profile = model_config.profile
+            try:
+                model_config = registry.get_model_config(
+                    step.model_ref,
+                    domain=context.pipeline.domain,
+                    search_path=context.pipeline.source_search_path,
+                )
+                model_id = model_config.model
+                model_system_prompt = model_config.system_prompt
+                model_profile = model_config.profile
+            except KeyError:
+                model_id = step.model_ref
+                model_system_prompt = None
+                model_profile = None
+                logger.info(
+                    "[%s] Using raw model ID (not in models.yaml): %s",
+                    step.name,
+                    model_id,
+                )
 
         try:
             return await self._invoke_model(
@@ -404,8 +430,11 @@ class GenericGenerateHandler(BaseHandler):
             prompt_config.template
         )
 
-        # Validate all required placeholders are in context
-        missing_placeholders = required_placeholders - set(prompt_context.keys())
+        # Validate all required placeholders resolve in context
+        # Uses _resolve_path (supports dotted paths like {retrieval.chunks})
+        missing_placeholders = self._prompt_builder.validate_context(
+            prompt_config.template, prompt_context
+        )
         if missing_placeholders:
             available_keys = list(prompt_context.keys())
             raise ValueError(
@@ -416,13 +445,12 @@ class GenericGenerateHandler(BaseHandler):
                 f"dependency steps have completed."
             )
 
-        # Check for empty values in critical placeholders
         for placeholder in required_placeholders:
-            value = prompt_context.get(placeholder)
+            value = self._prompt_builder._resolve_path(placeholder, prompt_context)
             if value is None or (isinstance(value, str) and not value.strip()):
-                logger.warning(
-                    f"Step '{step.id}': Placeholder '{placeholder}' is empty or None. "
-                    f"Value: {repr(value)}"
+                raise ValueError(
+                    f"Step '{step.id}': Required placeholder '{placeholder}' is empty or None. "
+                    f"Value: {repr(value)}. Check handler_inputs and dependency steps."
                 )
 
         rendered = self._prompt_builder.render_safe(
@@ -474,9 +502,7 @@ class GenericGenerateHandler(BaseHandler):
             **context.options,
         }
         # scope_options may be a list in pipeline YAML; prompt template expects string
-        if "scope_options" in prompt_context and isinstance(
-            prompt_context["scope_options"], list
-        ):
+        if isinstance(prompt_context.get("scope_options"), list):
             prompt_context["scope_options"] = "\n".join(
                 f'    "{x}"' for x in prompt_context["scope_options"]
             )
@@ -513,28 +539,33 @@ class GenericGenerateHandler(BaseHandler):
                         f"Step '{step.id}': Added '{field_name}' to prompt context "
                         f"({len(str(formatted_value))} chars)"
                     )
-                except Exception as e:
+                except (KeyError, AttributeError, ValueError) as e:
                     logger.error(
                         "Step '%s': Failed to resolve handler_input '%s' "
-                        "(binding=%s): %s. Input absent from prompt context.",
+                        "(binding=%s): %s. Input will be absent from prompt context.",
                         step.id,
                         field_name,
                         binding,
                         e,
                         exc_info=True,
                     )
-                    # Continue with other inputs rather than failing
         else:
             logger.debug(f"Step '{step.id}': No handler_inputs to resolve")
 
         # Merge pre-resolved map_inputs (from MapExecutor for iteration-specific values)
+        # Dicts are kept as-is so dotted template paths (e.g. {retrieval.chunks})
+        # resolve correctly through PromptBuilder._resolve_path.
         if step.resolved_map_inputs:
             for field_name, value in step.resolved_map_inputs.items():
-                formatted_value = self._format_for_prompt(value, field_name)
-                prompt_context[field_name] = formatted_value
+                if isinstance(value, dict):
+                    prompt_context[field_name] = value
+                else:
+                    prompt_context[field_name] = self._format_for_prompt(
+                        value, field_name
+                    )
                 logger.debug(
                     f"Step '{step.id}': Added resolved map_input '{field_name}' "
-                    f"({len(str(formatted_value))} chars)"
+                    f"({len(str(value))} chars)"
                 )
 
         return prompt_context
@@ -550,23 +581,18 @@ class GenericGenerateHandler(BaseHandler):
             if not value:
                 return "(empty array)"
 
-            # Simple string lists (like theme_words) - format as comma-separated
             if all(isinstance(item, str) and len(item) < 50 for item in value):
                 return ", ".join(value)
 
-            # Complex arrays - format as numbered list (0-based indices)
             lines = []
             for i, item in enumerate(value):
                 if isinstance(item, dict):
-                    # Format dict items as key: value pairs
                     parts = [f"{k}: {v}" for k, v in item.items()]
                     lines.append(f"{i}: {', '.join(parts)}")
                 elif isinstance(item, str):
-                    # Empty strings represent paragraph breaks
-                    if not item.strip():
-                        lines.append(f"{i}: (paragraph break)")
-                    else:
-                        lines.append(f"{i}: {item}")
+                    lines.append(
+                        f"{i}: {item if item.strip() else '(paragraph break)'}"
+                    )
                 else:
                     lines.append(f"{i}: {item}")
             return "\n".join(lines)
@@ -593,7 +619,7 @@ class GenericGenerateHandler(BaseHandler):
         Returns None if no source provenance found.
         """
         # Check if this is a map step with iteration context
-        if not hasattr(context, "_map_state") or not context._map_state:
+        if not getattr(context, "_map_state", None):
             return None
 
         map_state = context._map_state
@@ -686,7 +712,7 @@ class GenericGenerateHandler(BaseHandler):
 
         json_data: dict[str, Any] | None = None
         json_parse_error: str | None = None
-        if resolved_config["json_schema"] or resolved_config.get("wants_json"):
+        if resolved_config.get("wants_json"):
             try:
                 content_for_parse = _strip_markdown_fence(call_result.content)
                 json_data = json.loads(content_for_parse)

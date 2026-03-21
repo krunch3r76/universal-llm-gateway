@@ -14,7 +14,7 @@ import datetime
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
 import yaml
@@ -84,16 +84,17 @@ def _todo_list(
     priority: str | None,
     limit: int,
 ) -> dict[str, Any]:
-    params: dict[str, str | int] = {}
-    if status != "all":
-        params["status"] = status
-    if domain:
-        params["domain"] = domain
-    if context:
-        params["context"] = context
-    if priority:
-        params["priority"] = priority
-    params["limit"] = limit
+    params: dict[str, str | int] = {
+        k: v
+        for k, v in {
+            "status": status if status != "all" else None,
+            "domain": domain,
+            "context": context,
+            "priority": priority,
+            "limit": limit,
+        }.items()
+        if v is not None
+    }
 
     qs = urlencode(params)
     result = _relay("cortex-api", "GET", f"/todos?{qs}")
@@ -103,7 +104,7 @@ def _todo_list(
 
     items: list[dict[str, Any]] = (
         result if isinstance(result, list) else result.get("items", [])
-    )
+    )  # Type hint for result from _relay should be refined to dict[str, Any] | list[dict[str, Any]]
     logger.info(
         "todo list: status=%s domain=%s context=%s → %d items",
         status,
@@ -259,6 +260,7 @@ def register_context_tools(mcp: FastMCP) -> None:
             if not id:
                 return {"error": "defer requires id"}
             return _todo_set_status(id=id, new_status="deferred")
+        # Consider extracting the read-only check into a helper function or decorator.
 
         return {"error": f"unknown method: {method}. Use list, add, done, defer"}
 
@@ -296,7 +298,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         raw_entries = data.get("entries", [])
         filtered = []
         for entry in raw_entries:
-            if domain and domain not in (entry.get("domain") or ""):
+            if domain and entry.get("domain") != domain:
                 continue
             filtered.append(
                 {
@@ -349,7 +351,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         summary: str,
         domain: str,
         status: str = "open",
-        files: list[str] | None = None,
+        files: list[str] = [],  # noqa: B006 — Pydantic handles mutable default
         content: str = "",
     ) -> dict[str, str]:
         """Create a new journal entry with proper format and index it.
@@ -368,6 +370,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         Returns:
             {"status": "created", "path": "<journal entry path>"}
         """
+        # Consider refactoring the read-only check into a decorator or helper.
         if _TASKS_READ_ONLY:
             _record_read_only_violation(tool="write_journal_entry")
             return _read_only_error()
@@ -381,13 +384,17 @@ def register_context_tools(mcp: FastMCP) -> None:
 
         file_list = ", ".join(files) if files else ""
 
-        md_content = f"# {title}\n\n"
-        md_content += f"- **Opened**: {today} (unix: {ts})\n"
-        md_content += f"- **Status**: {status}\n"
-        md_content += f"- **Domain**: {domain}\n"
+        md_lines = [
+            f"# {title}",
+            "",
+            f"- **Opened**: {today} (unix: {ts})",
+            f"- **Status**: {status}",
+            f"- **Domain**: {domain}",
+        ]
         if file_list:
-            md_content += f"- **Files**: {file_list}\n"
-        md_content += f"\n{content}\n"
+            md_lines.append(f"- **Files**: {file_list}")
+        md_lines.extend(["", content, ""])
+        md_content = "\n".join(md_lines)
 
         entry_path.parent.mkdir(parents=True, exist_ok=True)
         entry_path.write_text(md_content, encoding="utf-8")
@@ -409,13 +416,11 @@ def register_context_tools(mcp: FastMCP) -> None:
                 raw_content = index_path.read_text(encoding="utf-8")
                 index_data = yaml.safe_load(raw_content) or {}
             except OSError as e:
-                logger.warning(
-                    "Failed to read journal index file %s: %s", index_path, e
-                )
-                index_data = {}
+                logger.error("Failed to read journal index file %s: %s", index_path, e)
+                return {"error": f"Failed to read journal index: {e}"}
             except yaml.YAMLError as e:
-                logger.warning("Failed to parse journal index %s: %s", index_path, e)
-                index_data = {}
+                logger.error("Failed to parse journal index %s: %s", index_path, e)
+                return {"error": f"Failed to parse journal index: {e}"}
         else:
             index_data = {}
 
@@ -569,7 +574,11 @@ def register_context_tools(mcp: FastMCP) -> None:
             _record_read_only_violation(
                 tool="edit_context_file", path=path, operation=operation
             )
-            return cast(dict[str, str | int], _read_only_error())
+            # The cast here indicates a potential type mismatch or overly broad type.
+            # _read_only_error() returns dict[str, str], which is compatible with
+            # dict[str, str | int], so the cast might be unnecessary or indicate
+            # a deeper type issue if 'int' is truly not expected in error returns.
+            return _read_only_error()  # Type checker should handle this implicitly.
 
         try:
             target_path = _safe_tasks_path(path)
@@ -655,6 +664,11 @@ def register_context_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Unified file operations for the tasks/ workspace context directory.
 
+        Use `context` for workspace scratchpads and durable task context:
+        discoveries, lessons, specs, prompts, and similar notes under tasks/.
+        Prefer `project` for repository files and `files` for persistent user
+        documents in /data/files.
+
         Ops:
           read    — read file contents (path required)
           write   — create/overwrite file (path, content required)
@@ -681,50 +695,47 @@ def register_context_tools(mcp: FastMCP) -> None:
         """
         if not op:
             raise ValueError("'op' is required")
-        if op == "read":
-            if not path:
-                raise ValueError("'path' is required for read")
-            return read_context_file(path)
-        if op == "write":
-            if not path:
-                raise ValueError("'path' is required for write")
-            if not content:
-                raise ValueError("'content' is required for write")
-            return write_context_file(path, content)
-        if op == "list":
-            return list_context_directory(path)
-        if op in ("append", "prepend"):
-            if not path:
-                raise ValueError(f"'path' is required for {op}")
-            if not content:
-                raise ValueError(f"'content' is required for {op}")
-            return edit_context_file(path, op, content)
-        if op == "replace":
-            if not path:
-                raise ValueError("'path' is required for replace")
-            if not target:
-                raise ValueError("'target' is required for replace")
-            return edit_context_file(
-                path,
-                "replace",
-                content,
-                target=target,
-                all_occurrences=all_occurrences,
+        handlers = {
+            "read": lambda: read_context_file(path)
+            if path
+            else _raise_value_error("'path' is required for read"),
+            "write": lambda: write_context_file(path, content)
+            if path and content
+            else _raise_value_error("'path' and 'content' are required for write"),
+            "list": lambda: list_context_directory(path),
+            "append": lambda: edit_context_file(path, op, content)
+            if path and content
+            else _raise_value_error(f"'path' and 'content' are required for {op}"),
+            "prepend": lambda: edit_context_file(path, op, content)
+            if path and content
+            else _raise_value_error(f"'path' and 'content' are required for {op}"),
+            "replace": lambda: edit_context_file(
+                path, "replace", content, target=target, all_occurrences=all_occurrences
             )
-        if op == "insert_at_line":
-            if not path:
-                raise ValueError("'path' is required for insert_at_line")
-            if not line:
-                raise ValueError("'line' is required for insert_at_line")
-            return edit_context_file(path, "insert_at_line", content, line=line)
-        if op == "delete":
-            if not path:
-                raise ValueError("'path' is required for delete")
-            return delete_context_file(path)
-        raise ValueError(
-            f"Unknown op: {op!r}. "
-            "Use: read, write, append, prepend, replace, insert_at_line, delete, list"
-        )
+            if path and target
+            else _raise_value_error("'path' and 'target' are required for replace"),
+            "insert_at_line": lambda: edit_context_file(
+                path, "insert_at_line", content, line=line
+            )
+            if path and line
+            else _raise_value_error(
+                "'path' and 'line' are required for insert_at_line"
+            ),
+            "delete": lambda: delete_context_file(path)
+            if path
+            else _raise_value_error("'path' is required for delete"),
+        }
+
+        if op in handlers:
+            return handlers[op]()
+        else:
+            raise ValueError(
+                f"Unknown op: {op!r}. "
+                "Use: read, write, append, prepend, replace, insert_at_line, delete, list"
+            )
+
+    def _raise_value_error(msg: str) -> Any:
+        raise ValueError(msg)
 
     @mcp.tool()
     def delete_context_file(path: str) -> dict[str, str]:

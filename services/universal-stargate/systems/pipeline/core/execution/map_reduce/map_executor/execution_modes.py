@@ -92,7 +92,24 @@ class MapExecutionModes:
             completion_time = ctx.get("completed_at", time.monotonic())
             duration = (completion_time - started_at) if started_at else None
 
-            if task.exception() is not None:
+            if task.cancelled():
+                # Inference timeout monitor cancelled this task mid-flight
+                iteration_results.append(
+                    IterationResult(
+                        index=idx,
+                        status=timeout_status,
+                        model_id=ctx.get("model_id"),
+                        gateway_id=ctx.get("gateway_id"),
+                        duration_seconds=duration,
+                        started_at=started_at,
+                    )
+                )
+                logger.warning(
+                    "[%s] Iteration %d cancelled by inference timeout monitor",
+                    self._step.name,
+                    idx,
+                )
+            elif task.exception() is not None:
                 exc = task.exception()
                 from ....dag import ResponseTruncatedError
 
@@ -209,10 +226,13 @@ class MapExecutionModes:
         inference_timeout_seconds: float | None = None,
     ) -> tuple[list[StepOutput], list[str | None], list[int]]:
         """
-        Execute with timeout and optional partial success.
+        Execute with stall-aware timeout and optional partial success.
 
         Two timeout layers:
-        - timeout_seconds: outer wall-clock guard for the entire map step
+        - timeout_seconds: stall timeout — resets on each iteration completion.
+          The batch is only cancelled when no iteration completes within this
+          window, preventing false timeouts on large batches where individual
+          iterations complete at different rates.
         - inference_timeout_seconds: per-iteration guard from inference start
 
         On CancelledError (client disconnect), cancels all pending federation
@@ -237,11 +257,22 @@ class MapExecutionModes:
             )
 
         try:
-            done, pending = await asyncio.wait(
-                tasks.keys(),
-                timeout=timeout_seconds,
-                return_when=asyncio.ALL_COMPLETED,
-            )
+            deadline = time.monotonic() + timeout_seconds
+            done: set[asyncio.Task[Any]] = set()
+            pending = set(tasks.keys())
+
+            while pending:
+                remaining = max(0.0, deadline - time.monotonic())
+                newly_done, pending = await asyncio.wait(
+                    pending,
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if newly_done:
+                    done.update(newly_done)
+                    deadline = time.monotonic() + timeout_seconds
+                else:
+                    break  # stalled — no completion within timeout window
         except asyncio.CancelledError:
             logger.info(
                 "[%s] Cancelled during execution, cancelling %d federation requests",
@@ -274,14 +305,13 @@ class MapExecutionModes:
             pending, tasks, iteration_context
         )
 
-        # Distinguish inference timeout from outer wall-clock timeout
-        inference_timed_out: set[int] = set()
-        if inference_timeout_seconds is not None:
-            for task in pending:
-                idx = tasks[task]
-                ctx = iteration_context.get(idx, {})
-                if ctx.get("inference_started_at") is not None:
-                    inference_timed_out.add(idx)
+        if pending:
+            logger.warning(
+                "[%s] Batch stalled: %d pending after %.1fs without progress",
+                self._step.name,
+                len(pending),
+                timeout_seconds,
+            )
 
         iteration_results, results_by_index = self.collect_iteration_results(
             done=done,
@@ -293,14 +323,10 @@ class MapExecutionModes:
         )
         for task in pending:
             idx = tasks[task]
-            failure_type = (
-                "inference_timeout" if idx in inference_timed_out else "timeout"
-            )
             logger.warning(
-                "[%s] Iteration %d timed out (%s)",
+                "[%s] Iteration %d timed out (stall_timeout)",
                 self._step.name,
                 idx,
-                failure_type,
             )
         iteration_results.sort(key=lambda r: r.index)
 

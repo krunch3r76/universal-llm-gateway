@@ -163,11 +163,9 @@ class EngineLifecycle:
         )
         logger.info(f"🔧 [worker] Loader config: {format_json_for_log(loader_config)}")
 
-        # Fail-fast GPU validation: Prevent silent CPU fallback
         _validate_gpu_requirement(engine_type, loader_config, self.model_id)
 
         try:
-            # Use factory to create and load engine with proper timeout handling
             self.engine = await EngineFactory.create_and_load(
                 engine_type=engine_type,
                 model_path=model_path,
@@ -176,20 +174,16 @@ class EngineLifecycle:
                 loading_timeout=300.0,
             )
             self.model_loaded = True
-
             logger.info("✅ [worker] Model engine loaded successfully")
 
         except (EngineTimeoutError, EngineInitializationError) as e:
-            # Ensure model_loaded is False on any error
             self.model_loaded = False
             self.engine = None
 
-            # Log detailed error context
             logger.error(f"❌ [worker] Model loading failed: {e}")
             logger.error(f"❌ [worker] Model path: {model_path}")
             logger.error(f"❌ [worker] Loader config: {loader_config}")
 
-            # Check for common issues
             error_str = str(e).lower()
             if "cuda" in error_str or "gpu" in error_str:
                 logger.error(
@@ -210,7 +204,6 @@ class EngineLifecycle:
             raise
 
         except Exception as e:
-            # Handle unexpected errors
             self.model_loaded = False
             self.engine = None
             logger.error(f"❌ [worker] Unexpected error during model loading: {e}")

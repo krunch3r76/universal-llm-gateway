@@ -1,0 +1,11 @@
+# Model aliases for vocab_classify domain (search-path scoped).
+#
+# Override frontier_classify at runtime via pipeline_options:
+#   model_ref_overrides: {"classify": "native/anthropic/claude-opus-4"}
+models:
+  domain_discovery:
+    model: qwen3-5-27b-q8-0-32768
+    profile: qwen3-instruct
+
+  frontier_classify:
+    model: native/anthropic/claude-sonnet-4-20250514

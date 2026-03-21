@@ -88,7 +88,7 @@ def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
 
 
 def _cmd_post(args: argparse.Namespace, token: str) -> None:
-    """Create a new thread (auto-assigned ID) and post the first turn."""
+    """Atomically create a new thread and first turn via POST /threads/with-turn."""
     if args.body_file:
         body_text = Path(args.body_file).read_text(encoding="utf-8")
     elif args.body:
@@ -96,13 +96,8 @@ def _cmd_post(args: argparse.Namespace, token: str) -> None:
     else:
         print("post requires --body or --body-file", file=sys.stderr)
         sys.exit(1)
-    thread_body: dict[str, Any] = {"slug": args.slug}
-    if args.summary:
-        thread_body["summary"] = args.summary
-    thread_result = _request("POST", "/threads", token, body=thread_body)
-    thread_id = thread_result["id"]
-    turn_payload = {
-        "thread": thread_id,
+    payload: dict[str, Any] = {
+        "slug": args.slug,
         "from": args.from_agent,
         "to": args.to,
         "subject": args.subject,
@@ -110,12 +105,10 @@ def _cmd_post(args: argparse.Namespace, token: str) -> None:
         "status": "open",
         "after_turn": 0,
     }
-    turn_result = _request("POST", "/turns", token, body=turn_payload)
-    print(
-        json.dumps(
-            {"thread": thread_result, "turn": turn_result}, indent=2, default=str
-        )
-    )
+    if args.summary:
+        payload["summary"] = args.summary
+    result = _request("POST", "/threads/with-turn", token, body=payload)
+    print(json.dumps(result, indent=2, default=str))
 
 
 def _cmd_reply(args: argparse.Namespace, token: str) -> None:
@@ -152,20 +145,9 @@ def _cmd_append(args: argparse.Namespace, token: str) -> None:
         print("append requires --body or --body-file", file=sys.stderr)
         sys.exit(1)
 
-    turns_resp = _request(
-        "GET",
-        f"/turns?{urlencode({'thread': args.thread, 'last': 50, 'compact': 'true'})}",
-        token,
-    )
-    turns = turns_resp.get("turns", turns_resp) if isinstance(turns_resp, dict) else turns_resp
-    turn_id = None
-    for t in turns:
-        if isinstance(t, dict) and t.get("turn_number") == args.turn:
-            turn_id = t["id"]
-            break
-    if turn_id is None:
-        print(f"Turn {args.turn} not found in thread {args.thread}", file=sys.stderr)
-        sys.exit(1)
+    qs = urlencode({"thread": args.thread, "turn_number": args.turn})
+    turn = _request("GET", f"/turns/by-number?{qs}", token)
+    turn_id = turn["id"]
 
     result = _request("PATCH", f"/turns/{turn_id}", token, body={"append": content})
     print(json.dumps(result, indent=2, default=str))
@@ -212,24 +194,25 @@ def _cmd_mark_closed_read(args: argparse.Namespace, token: str) -> None:
 
 
 def _cmd_update_thread(args: argparse.Namespace, token: str) -> None:
-    payload: dict[str, str] = {}
-    if args.status:
-        payload["status"] = args.status
-    if args.summary:
-        payload["summary"] = args.summary
-    if not payload:
+    if not args.status and not args.summary:
         print("update-thread requires --status and/or --summary", file=sys.stderr)
         sys.exit(1)
-    should_mark = args.mark_read if args.mark_read is not None else (args.status == "closed")
-    if should_mark:
-        qs = urlencode({
-            "thread": args.thread,
-            "last": 50000,
-            "mark_read": "true",
-            "include_superseded": "true",
-        })
-        _request("GET", f"/turns?{qs}", token)
-    result = _request("PATCH", f"/threads/{args.thread}", token, body=payload)
+
+    if args.status == "closed":
+        payload: dict[str, Any] = {}
+        if args.summary:
+            payload["summary"] = args.summary
+        mark = args.mark_read if args.mark_read is not None else True
+        payload["mark_all_read"] = mark
+        result = _request("PATCH", f"/threads/{args.thread}/close", token, body=payload)
+    else:
+        payload = {}
+        if args.status:
+            payload["status"] = args.status
+        if args.summary:
+            payload["summary"] = args.summary
+        result = _request("PATCH", f"/threads/{args.thread}", token, body=payload)
+
     print(json.dumps(result, indent=2, default=str))
 
 
@@ -255,20 +238,9 @@ def _cmd_delete_thread(args: argparse.Namespace, token: str) -> None:
 def _cmd_delete_turn(args: argparse.Namespace, token: str) -> None:
     import httpx
 
-    turns_resp = _request(
-        "GET",
-        f"/turns?{urlencode({'thread': args.thread, 'last': 50, 'compact': 'true'})}",
-        token,
-    )
-    turns = turns_resp.get("turns", turns_resp) if isinstance(turns_resp, dict) else turns_resp
-    turn_id = None
-    for t in turns:
-        if isinstance(t, dict) and t.get("turn_number") == args.turn:
-            turn_id = t["id"]
-            break
-    if turn_id is None:
-        print(f"Turn {args.turn} not found in thread {args.thread}", file=sys.stderr)
-        sys.exit(1)
+    qs = urlencode({"thread": args.thread, "turn_number": args.turn})
+    turn = _request("GET", f"/turns/by-number?{qs}", token)
+    turn_id = turn["id"]
 
     force_params = urlencode({"force": "true"}) if args.force else ""
     path = f"/turns/{turn_id}?{force_params}" if force_params else f"/turns/{turn_id}"

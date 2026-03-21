@@ -2,6 +2,7 @@
 let currentExecution = null;
 let selectedStepIdx = null;
 let pollTimer = null;
+let pollInFlight = false;
 let pinnedExecId = null;  // set on first manual selection; blocks auto-select
 let questionStateLocked = false; // true after user manually toggles question
 
@@ -58,6 +59,191 @@ function setQuestion(text) {
   }
 }
 
+function formatUtc(iso) {
+  if (!iso) return 'unknown time';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toISOString().replace('.000Z', 'Z').replace('T', ' ');
+}
+
+function formatLegacyTimestamp(timestamp) {
+  if (!timestamp || !/^\d{8}_\d{6}$/.test(timestamp)) return timestamp || 'unknown time';
+  const year = timestamp.slice(0, 4);
+  const month = timestamp.slice(4, 6);
+  const day = timestamp.slice(6, 8);
+  const hour = timestamp.slice(9, 11);
+  const minute = timestamp.slice(11, 13);
+  const second = timestamp.slice(13, 15);
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}Z`;
+}
+
+function formatExecutionStart(execution) {
+  return execution?.started_at_utc
+    ? formatUtc(execution.started_at_utc)
+    : formatLegacyTimestamp(execution?.timestamp);
+}
+
+function currentModelForStep(step) {
+  const activeCallModel = step?.active_model_call?.model || '';
+  if (activeCallModel) return activeCallModel;
+  const latestCall = step?.model_calls?.length
+    ? step.model_calls[step.model_calls.length - 1]?.model
+    : '';
+  return latestCall || step?.model_ref || step?.model || '';
+}
+
+function extractActiveCallsFromSteps(steps) {
+  return (steps || [])
+    .filter(step => step.status === 'running')
+    .map(step => ({
+      step_id: step.step_id || '',
+      model: step.active_model_call?.model || currentModelForStep(step) || '',
+    }))
+    .filter(call => call.step_id);
+}
+
+function extractFailedCallsFromSteps(steps) {
+  const failed = [];
+  const seen = new Set();
+  for (const step of (steps || [])) {
+    let stepHadFailedCall = false;
+    for (const call of (step.model_calls || [])) {
+      if (call.success !== false) continue;
+      const model = call.model || step.model_ref || step.model || '';
+      if (!model) continue;
+      const key = `${step.step_id}::${model}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      failed.push({ step_id: step.step_id || '', model });
+      stepHadFailedCall = true;
+    }
+    if (step.status === 'failed' && !stepHadFailedCall) {
+      const model = step.model_ref || step.model || '';
+      if (!model) continue;
+      const key = `${step.step_id}::${model}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      failed.push({ step_id: step.step_id || '', model });
+    }
+  }
+  return failed;
+}
+
+function formatActiveCalls(activeCalls) {
+  return (activeCalls || []).map((call) => {
+    const stepName = displayStepName(call.step_id || '');
+    const parent = parentStepLabel(call.step_id || '');
+    const label = parent ? `${parent}/${stepName}` : stepName;
+    const model = shortModel(call.model || '') || 'resolving...';
+    return `${label}: ${model}`;
+  });
+}
+
+function formatFailedCalls(failedCalls) {
+  return (failedCalls || []).map((call) => {
+    const stepName = displayStepName(call.step_id || '');
+    const parent = parentStepLabel(call.step_id || '');
+    const label = parent ? `${parent}/${stepName}` : stepName;
+    const model = shortModel(call.model || '') || 'unknown';
+    return `${label}: ${model}`;
+  });
+}
+
+function activeCallsForExecution(execution) {
+  return execution?.active_calls || extractActiveCallsFromSteps(execution?.steps);
+}
+
+function failedCallsForExecution(execution) {
+  return execution?.failed_calls || extractFailedCallsFromSteps(execution?.steps);
+}
+
+function buildExecStatusHtml(execution) {
+  const activeCalls = formatActiveCalls(activeCallsForExecution(execution));
+  const failedCalls = formatFailedCalls(failedCallsForExecution(execution));
+  const lines = [];
+
+  if (activeCalls.length) {
+    lines.push(`<div class="exec-live-model">${escHtml(activeCalls.join(' · '))}</div>`);
+  } else if (execution?.is_live) {
+    lines.push('<div class="exec-live-model pending">waiting for first step/model event</div>');
+  }
+
+  if (failedCalls.length) {
+    lines.push(`<div class="exec-failed-model">${escHtml(failedCalls.join(' · '))}</div>`);
+  }
+
+  return lines.join('');
+}
+
+function renderExecCard(execution) {
+  const liveTag = execution.is_live ? '<span class="live-badge">LIVE</span>' : '';
+  const pipelineLabel = escHtml(execution.pipeline_id);
+  const startedAt = escHtml(formatExecutionStart(execution));
+  const expandToggle = execution.question.length > 150
+    ? `<a href="#" class="expand-toggle" onclick="toggleQuestion(event)">Show more</a>`
+    : '';
+  const statusHtml = buildExecStatusHtml(execution);
+  const statusBlock = `<div class="exec-status-lines">${statusHtml}</div>`;
+
+  return `
+      <div class="exec-card ${execution.is_live ? 'live' : ''}"
+           data-pipeline="${execution.pipeline_id}" data-exec="${execution.execution_id}"
+           data-live="${execution.is_live}" onclick="loadExecution(this)">
+        <div class="question">${liveTag}${escHtml(execution.question)}</div>
+        ${expandToggle}
+        ${statusBlock}
+        <div class="meta">${execution.step_count} steps &middot; ${startedAt} &middot; <span class="pipeline-label">${pipelineLabel}</span></div>
+      </div>
+    `;
+}
+
+function updateExecutionCard(execution) {
+  const card = document.querySelector(`.exec-card[data-exec="${execution?.execution_id}"]`);
+  if (!card) return;
+  const statusLines = card.querySelector('.exec-status-lines');
+  const meta = card.querySelector('.meta');
+  const stepCount = execution?.step_count ?? execution?.steps?.length ?? 0;
+
+  if (statusLines) statusLines.innerHTML = buildExecStatusHtml(execution);
+  if (meta) {
+    meta.innerHTML = `${stepCount} steps &middot; ${escHtml(formatExecutionStart(execution))} &middot; <span class="pipeline-label">${escHtml(execution.pipeline_id || '')}</span>`;
+  }
+  card.dataset.live = execution?.is_live ? 'true' : 'false';
+}
+
+function runningStepModels(steps) {
+  return extractActiveCallsFromSteps(steps)
+    .map(call => ({
+      stepId: displayStepName(call.step_id),
+      model: shortModel(call.model) || 'resolving...',
+      parent: parentStepLabel(call.step_id),
+    }));
+}
+
+function renderExecutionMeta(execution) {
+  const el = document.getElementById('execution-meta');
+  if (!el || !execution) return;
+
+  const startedAt = formatExecutionStart(execution);
+  const running = runningStepModels(execution.steps);
+  const chips = [
+    `<div class="execution-chip"><span class="chip-label">Called</span><span class="chip-value">${escHtml(startedAt)}</span></div>`,
+  ];
+
+  if (running.length) {
+    const runningText = running.map(({ stepId, model, parent }) => {
+      const stepName = parent ? `${parent}/${stepId}` : stepId;
+      return `${stepName}: ${model}`;
+    }).join(' · ');
+    chips.push(
+      `<div class="execution-chip live"><span class="chip-label">Running</span><span class="chip-value">${escHtml(runningText)}</span></div>`
+    );
+  }
+
+  el.innerHTML = chips.join('');
+  el.classList.add('visible');
+}
+
 // -- Execution List -------------------------------------------------------
 function renderExecList(executions) {
   const container = document.getElementById('exec-list');
@@ -65,22 +251,7 @@ function renderExecList(executions) {
     container.innerHTML = '<div class="loading">No executions found.</div>';
     return;
   }
-  container.innerHTML = executions.map((ex) => {
-    const liveTag = ex.is_live ? '<span class="live-badge">LIVE</span>' : '';
-    const pipelineLabel = escHtml(ex.pipeline_id);
-    const expandToggle = ex.question.length > 150
-      ? `<a href="#" class="expand-toggle" onclick="toggleQuestion(event)">Show more</a>`
-      : '';
-    return `
-      <div class="exec-card ${ex.is_live ? 'live' : ''}"
-           data-pipeline="${ex.pipeline_id}" data-exec="${ex.execution_id}"
-           data-live="${ex.is_live}" onclick="loadExecution(this)">
-        <div class="question">${liveTag}${escHtml(ex.question)}</div>
-        ${expandToggle}
-        <div class="meta">${ex.step_count} steps &middot; ${ex.timestamp} &middot; <span class="pipeline-label">${pipelineLabel}</span></div>
-      </div>
-    `;
-  }).join('');
+  container.innerHTML = executions.map(renderExecCard).join('');
 
   if (pinnedExecId) {
     document.querySelector(`.exec-card[data-exec="${pinnedExecId}"]`)?.classList.add('active');
@@ -110,17 +281,30 @@ async function loadExecution(el) {
 
   if (isLive) {
     connectStream(pid, eid);
+    scrollToExecutionDetails();
   } else {
     currentExecution = await fetchJSON(`/api/executions/${pid}/${eid}`);
+    currentExecution.is_live = false;
+    currentExecution.step_count = currentExecution.steps?.length || 0;
     selectedStepIdx = null;
     renderFullExecution();
+    updateExecutionCard(currentExecution);
+    scrollToExecutionDetails();
   }
+}
+
+function scrollToExecutionDetails() {
+  const metaEl = document.getElementById('execution-meta');
+  const questionEl = document.getElementById('question-display');
+  const target = metaEl?.classList.contains('visible') ? metaEl : questionEl;
+  target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // -- Static rendering (completed executions) ------------------------------
 function renderFullExecution() {
   setLiveIndicator(false);
   setQuestion(currentExecution.question);
+  renderExecutionMeta(currentExecution);
   renderSummaryBanner(currentExecution.summary);
   renderPipelineFlow(currentExecution.steps);
   renderFinalOutput(currentExecution.steps);
@@ -140,6 +324,10 @@ function renderSummaryBanner(summary) {
   const wallDur = summary.wall_clock_ms != null ? (summary.wall_clock_ms / 1000).toFixed(1) : null;
   const sumDur = summary.summed_latency_ms > 0 ? (summary.summed_latency_ms / 1000).toFixed(1) : null;
   const tokK = (summary.total_tokens / 1000).toFixed(0);
+  const promptKB = (summary.prompt_text_bytes || 0) / 1024;
+  const promptKBStr = promptKB >= 100
+    ? `${promptKB.toFixed(0)}KB`
+    : `${promptKB.toFixed(1)}KB`;
 
   const showSummed = sumDur !== null && wallDur !== null && sumDur !== wallDur;
   const timeStat = wallDur !== null
@@ -164,6 +352,8 @@ function renderSummaryBanner(summary) {
     <div class="stat"><span class="stat-value red">${summary.total_rejected}</span><span class="stat-label">Rejected</span></div>
     <div class="stat-divider"></div>
     <div class="stat"><span class="stat-value">${tokK}K</span><span class="stat-label">Tokens</span></div>
+    <div class="stat-divider"></div>
+    <div class="stat"><span class="stat-value">${promptKBStr}</span><span class="stat-label">Prompt Text</span></div>
     <div class="stat-divider"></div>
     ${timeStat}
   `;
@@ -226,8 +416,12 @@ function renderStepCard(step, allSteps, showArrow, vertical, showParent) {
     : null;
   const tokens = step.tokens.total || 0;
   const hasFailed = !!step.error;
-  const tokStr = hasFailed ? 'ERROR' : (tokens > 1000 ? `${(tokens/1000).toFixed(0)}K tok` : `${tokens} tok`);
-  const model = shortModel(step.model_ref || step.model || '');
+  const tokStr = hasFailed
+    ? 'ERROR'
+    : (step.status === 'running'
+        ? 'RUNNING'
+        : (tokens > 1000 ? `${(tokens/1000).toFixed(0)}K tok` : `${tokens} tok`));
+  const model = shortModel(currentModelForStep(step));
   const badge = getBadge(step);
   const statusCls = step.status === 'running' ? 'running' : (hasFailed || step.status === 'failed' ? 'failed' : '');
   const parentLabel = parentStepLabel(step.step_id);
@@ -376,12 +570,16 @@ function renderFinalOutput(steps) {
 function startExecListPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
+    if (pollInFlight) return;
+    pollInFlight = true;
     try {
       const executions = await fetchJSON('/api/executions');
       renderExecList(executions);
       autoSelectLive(executions);
     } catch (e) {
       // network blip
+    } finally {
+      pollInFlight = false;
     }
   }, 3000);
 }

@@ -62,21 +62,17 @@ async def handle_resource_state_update(event: Event) -> None:
         event: Resource state update request event
     """
     try:
-        from ....resources import ModelStatus, resource_tracker
+        from ....resources import resource_tracker
 
         model_id = event.payload["model_id"]
         state = event.payload["state"]
         error = event.payload.get("error")
 
         if state == "failed" and error:
-            # Mark as failed in resource tracker
-            state_machine = resource_tracker.get_state_machine(model_id)
-            if state_machine and hasattr(state_machine, "set_error"):
-                state_machine.set_error(error)
-                logger.info(f"📊 Marked {model_id} as failed in resource tracker")
+            resource_tracker.set_model_error(model_id, error)
+            logger.info(f"📊 Marked {model_id} as failed in resource tracker")
         elif state == "unloaded":
-            # Mark as unloaded
-            resource_tracker.set_model_status(model_id, ModelStatus.NOT_LOADED)
+            resource_tracker.set_model_not_loaded(model_id, "process_exited")
             logger.info(f"📊 Marked {model_id} as unloaded in resource tracker")
     except Exception as e:
         model_id = event.payload.get("model_id", "unknown")

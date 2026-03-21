@@ -12,12 +12,16 @@ from .types import ModelCallResult, RenderedPrompt
 
 register_handler(SelectWinnerHandler)
 
-# Import sibling handler modules to trigger their @register_handler decorators.
-# These live at the handlers/ level (one package up), not inside builtin/.
+# Import sibling handler modules to trigger their @register_handler
+# decorators. These live at the handlers/ level (one package up).
 from .. import assess_loop as _assess_loop  # noqa: E402, F401
-from .. import generate as _generate  # noqa: E402, F401
+from .. import data_sink as _data_sink  # noqa: E402, F401
+from .. import data_source as _data_source  # noqa: E402, F401
 from .. import pipeline_call as _pipeline_call  # noqa: E402, F401
+from .. import rag_search as _rag_search  # noqa: E402, F401
 from .. import select_output as _select_output  # noqa: E402, F401
+
+# generate: imported via GenericGenerateHandler below
 from ..generate import GenericGenerateHandler  # noqa: E402, F401
 
 __all__ = [

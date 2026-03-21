@@ -467,7 +467,10 @@ export LLAMA_SERVER_VERSION
 
 cd "${PROJECT_ROOT}"
 
-BUILD_LOG="/tmp/gateway-build-$(date +%Y%m%d-%H%M%S).log"
+# Single rolling build log for both local and remote builds.
+BUILD_LOG="${BUILD_LOG_PATH:-/tmp/gateway-build.log}"
+rm -f /tmp/gateway-build-[0-9]*.log
+: > "${BUILD_LOG}"
 
 # Always build base image (tagged for potential obfuscation consumption)
 echo "🔨 Building base image..."
@@ -492,7 +495,7 @@ docker build \
     ${SOURCE_VERSION:+--build-arg SOURCE_VERSION="${SOURCE_VERSION}"} \
     -f docker/dockerfiles/Dockerfile.gpu \
     -t gateway-base:runtime \
-    . > "${BUILD_LOG}" 2>&1
+    . >> "${BUILD_LOG}" 2>&1
 
 if [[ "${OBFUSCATE}" == "true" ]]; then
     echo ""
@@ -620,4 +623,12 @@ echo "  - Single GPU arch: docker/build-gpu.sh --gpu-arch=120  (RTX 5090)"
 echo "  - Native GPU build: docker/build-gpu.sh --gpu-native"
 echo "  - Full native: docker/build-gpu.sh --cpu-native --gpu-native"
 echo "  - Obfuscated native: docker/build-gpu.sh --obfuscate --cpu-native --gpu-native"
+
+# Prune build cache older than 24h. The current build's layers are minutes old
+# and will be preserved for the next --refresh-source cached rebuild.
+# Size-based pruning (--reserved-space) is unreliable — a single vLLM source
+# build produces ~30GB of cache, routinely exceeding any reasonable budget.
+echo ""
+echo "🧹 Pruning build cache older than 24h..."
+docker builder prune -af --filter "until=24h" 2>/dev/null || true
 

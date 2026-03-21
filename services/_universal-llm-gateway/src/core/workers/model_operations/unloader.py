@@ -154,7 +154,6 @@ class ModelUnloader:
             )
 
             resource_tracker.set_model_unloading(model_id)
-            self._clear_error_state(model_id)
 
             structured_logger.info(
                 f"{model_id}:worker_shutting_down: {model_id} - SUCCESS"
@@ -326,24 +325,11 @@ class ModelUnloader:
         self._controller._process_state.remove_supervisor(model_id)
         self._controller._process_state.remove_socket_path(model_id)
 
-    def _clear_error_state(self, model_id: str):
-        """Clear any error state before unloading."""
-        try:
-            resource_tracker = _get_resource_tracker()
-            state_machine = resource_tracker.get_state_machine(model_id)
-            if state_machine and state_machine.is_error:
-                logger.info(f"🧹 Clearing error state for {model_id} before unloading")
-                state_machine.clear_error("Unloading model")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not clear error state for {model_id}: {e}")
-
-    def _mark_unloaded(self, model_id: str):
+    def _mark_unloaded(self, model_id: str) -> None:
         """Mark model as unloaded in resource tracker."""
         resource_tracker = _get_resource_tracker()
         resource_tracker.update_model_resources(model_id, 0, 0)
-        from src.core.resources import ModelStatus
-
-        resource_tracker.set_model_status(model_id, ModelStatus.NOT_LOADED)
+        resource_tracker.set_model_not_loaded(model_id, "unload_complete")
 
     async def _publish_resource_update(self):
         """Publish SYSTEM_RESOURCES_UPDATED event with current VRAM/RAM info."""

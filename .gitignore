@@ -119,3 +119,6 @@ docker/docs/
 tasks/
 terminals/
 snapshots/
+
+# SQL files (may contain private/sensitive data — never commit)
+**/*.sql
