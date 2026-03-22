@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
     import chromadb
     from universal_event_bus import EventBus
 
@@ -43,6 +44,8 @@ from services.rag.events.indexing import (
     rag_directory_index_started,
 )
 from services.rag.models import (
+    ArticleListingItem,
+    ArticleListingResponse,
     ArticleUpsertRequest,
     ArticleUpsertResponse,
     ClearDirectoryRequest,
@@ -844,6 +847,84 @@ def register_admin_routes(
     class OrphanedArticlesResponse(TypedDict):
         orphans: list[OrphanedArticle]
         count: int
+
+    def _parse_scope_filter(scope: str | None) -> list[str]:
+        """Parse and normalize comma-separated scope query values."""
+        if scope is None:
+            return []
+        normalized = [token.strip() for token in scope.split(",") if token.strip()]
+        return list(dict.fromkeys(normalized))
+
+    @router.get(
+        "/articles",
+        response_model=ArticleListingResponse,
+        response_model_exclude_none=True,
+    )
+    def list_articles(
+        scope: str | None = Query(default=None),
+        include_abstract: bool = Query(default=False),
+    ) -> ArticleListingResponse:
+        """List structured article metadata with optional scope and abstract filters."""
+        prop_idx = get_property_index_fn()
+        if prop_idx is None:
+            raise HTTPException(status_code=503, detail="Property index not available")
+
+        scopes = _parse_scope_filter(scope)
+        select_cols = [
+            "source_path",
+            "filename",
+            "title",
+            "authors",
+            "venue",
+            "published_date",
+            "doi",
+            "scope",
+            "comments",
+            "updated_at",
+        ]
+        if include_abstract:
+            select_cols.append("abstract")
+
+        query = f"SELECT {', '.join(select_cols)} FROM articles"
+        params: tuple[str, ...] = ()
+        if scopes:
+            placeholders = ", ".join("?" for _ in scopes)
+            query += f" WHERE scope IN ({placeholders})"
+            params = tuple(scopes)
+        query += (
+            " ORDER BY scope ASC, published_date DESC, filename ASC, source_path ASC"
+        )
+
+        conn = prop_idx._ensure_conn()
+        try:
+            rows = conn.execute(query, params).fetchall()
+        except sqlite3.Error as exc:
+            logger.error("Article listing query failed: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=500, detail="Failed to query article metadata"
+            ) from exc
+
+        articles = [
+            ArticleListingItem(
+                source_path=row["source_path"] or "",
+                filename=row["filename"] or "",
+                title=row["title"] or "",
+                authors=row["authors"] or "",
+                venue=row["venue"] or "",
+                published_date=row["published_date"] or "",
+                doi=row["doi"] or "",
+                scope=row["scope"] or "",
+                comments=row["comments"] or "",
+                updated_at=row["updated_at"] or "",
+                abstract=(row["abstract"] or "") if include_abstract else None,
+            )
+            for row in rows
+        ]
+        return ArticleListingResponse(
+            articles=articles,
+            count=len(articles),
+            scopes_queried=scopes,
+        )
 
     @router.get(
         "/orphaned_articles",

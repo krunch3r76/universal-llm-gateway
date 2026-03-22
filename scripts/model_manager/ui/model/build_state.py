@@ -1,5 +1,6 @@
 """Build state - tracks Docker GPU image build status and config."""
 
+import asyncio
 import json
 import logging
 import shutil
@@ -124,6 +125,47 @@ class BuildState:
         ) as e:
             logger.warning("Failed to read image labels: %s", e)
             return ImageConfig()
+
+    @staticmethod
+    def check_build_cache() -> str:
+        """Return human-readable build cache size, or empty string on failure."""
+        try:
+            result = subprocess.run(
+                ["docker", "builder", "du", "--verbose"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return ""
+            for line in result.stdout.splitlines():
+                if line.startswith("Total:"):
+                    return line.split(":", 1)[1].strip()
+            return ""
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.warning("Failed to check build cache: %s", e)
+            return ""
+
+    @staticmethod
+    async def prune_build_cache() -> str:
+        """Prune dangling build cache (preserves referenced layers for cached rebuilds).
+
+        Uses `docker builder prune -f` WITHOUT -a so layers referenced by
+        existing images are kept — this is what enables fast cached rebuilds.
+        """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "builder", "prune", "-f",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout, _ = await proc.communicate()
+            output = stdout.decode(errors="replace").strip() if stdout else ""
+            if proc.returncode == 0:
+                return f"Prune complete.\n{output}"
+            return f"Prune failed (exit {proc.returncode}).\n{output}"
+        except FileNotFoundError:
+            return "docker not found."
 
     @staticmethod
     def _format_size(size_str: str) -> str:

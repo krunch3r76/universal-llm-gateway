@@ -192,6 +192,8 @@ def format_pipeline_review_output(
 ) -> str:
     """Format code-review pipeline batch outputs as markdown."""
     lines: list[str] = []
+    succeeded = sum(1 for batch in batches if "error" not in batch)
+    failed = len(batches) - succeeded
     lines.append("# Consultation: reviewer (pipeline)")
     lines.append(f"**Date**: {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}")
     lines.append(f"**Question**: {question}")
@@ -204,6 +206,7 @@ def format_pipeline_review_output(
             lines.append(line_content)
     lines.append(f"**Context files**: {', '.join(file_paths)}")
     lines.append("**Mode**: estimator-driven parallel batches")
+    lines.append(f"**Batch summary**: {succeeded} succeeded, {failed} failed")
     result_models: list[str] = []
     if selected_models:
         result_models.extend(selected_models)
@@ -226,6 +229,11 @@ def format_pipeline_review_output(
             f"## Batch {idx} ({len(files)} files, estimate={tokens} tokens, actual={total_tokens} tokens)"
         )
         lines.append(f"**Files**: {', '.join(files)}")
+        if "error" in batch_result:
+            lines.append("**Status**: failed")
+            lines.append(f"**Error**: {batch_result['error']}")
+            lines.append("")
+            continue
         lines.append("```json")
         lines.append(json.dumps(batch_result.get("result", {}), indent=2))
         lines.append("```")

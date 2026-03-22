@@ -28,7 +28,7 @@ def rag_file_indexed(
     duration_seconds: float = 0.0,
     batch_start_ts: str | None = None,
     document_metadata: dict[str, Any] | None = None,
-    bibliography_chunks: int | None = None,
+    noise_chunks: int | None = None,
     processing_seconds: float | None = None,
     queue_wait_seconds: float | None = None,
 ) -> Event:
@@ -37,7 +37,7 @@ def rag_file_indexed(
     batch_start_ts: optional ISO-8601 when extraction started (enables per-file wall-clock duration).
     document_metadata: optional dict for document-specific fields (e.g. article_title, article_authors,
         article_venue, published_date, article_doi when file is in article registry).
-    bibliography_chunks: optional count of chunks tagged is_bibliography for this file.
+    noise_chunks: optional count of chunks tagged ``is_noise`` (or legacy ``is_bibliography``) for this file.
     processing_seconds: optional Stargate-derived work time (post-queue).
     queue_wait_seconds: optional time from pipeline step start to first inference started.
     """
@@ -53,7 +53,7 @@ def rag_file_indexed(
                 for key, value in {
                     "batch_start_ts": batch_start_ts,
                     "document_metadata": document_metadata,
-                    "bibliography_chunks": bibliography_chunks,
+                    "noise_chunks": noise_chunks,
                     "processing_seconds": processing_seconds,
                     "queue_wait_seconds": queue_wait_seconds,
                 }.items()
@@ -107,6 +107,25 @@ def rag_file_indexing_failed(
 
 
 @event_factory
+def rag_file_retry_deferred(
+    *,
+    file: str,
+    reason: str,
+) -> Event:
+    """Emitted when a file's indexing is deferred for retry on the next watcher sweep.
+
+    Unlike rag.file.indexing.failed (terminal), this signal indicates that extraction
+    did not complete but the file was NOT marked as indexed — the watcher will
+    re-attempt it automatically. Common reasons: extraction_incomplete (below quality
+    threshold), infrastructure_unavailable (circuit breaker, model capacity).
+    """
+    return Event(
+        signal="rag.file.retry.deferred",
+        payload={"file": file, "reason": reason},
+    )
+
+
+@event_factory
 def rag_file_deletion_failed(
     *,
     file: str,
@@ -133,6 +152,28 @@ def rag_article_content_hash_mismatch(
             "file": file,
             "expected_hash": expected_hash,
             "actual_hash": actual_hash,
+        },
+    )
+
+
+@event_factory
+def rag_chunk_noise_tagged(
+    *,
+    chunk_id: str,
+    source: str,
+    noise_reason: str,
+) -> Event:
+    """Emitted for each chunk tagged ``is_noise`` at index time.
+
+    Provides per-chunk visibility into heuristic noise classification so operators
+    can audit false positives without querying ChromaDB directly.
+    """
+    return Event(
+        signal="rag.chunk.noise.tagged",
+        payload={
+            "chunk_id": chunk_id,
+            "source": source,
+            "noise_reason": noise_reason,
         },
     )
 

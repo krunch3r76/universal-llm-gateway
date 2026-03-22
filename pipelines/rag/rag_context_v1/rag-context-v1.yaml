@@ -53,8 +53,11 @@ options:
   rag_scope_chunk_caps: {}  # Optional per-scope cap for multi-scope retrieval unions.
                             # Limits chunks per scope, preventing a single scope from saturating results.
                             # Example: {"graph_modeling": 8, "knowledge_systems": 4}
-  bibliography_filter_threshold: 0.35  # 0 = disable junk filter; >0 = fraction of lines to treat as boilerplate/citations
-  bibliography_filter_disable: false   # Explicit hard-disable flag; if true, overrides threshold
+  # Post-RRF noise/junk filter (metadata is_noise / legacy is_bibliography + line-shape heuristic).
+  noise_filter_threshold: 0.35  # 0 = disable; >0 = line fraction for chunk_is_noise fallback
+  noise_filter_disable: false
+  bibliography_filter_threshold: 0.35  # Deprecated alias of noise_filter_threshold (if noise_* omitted elsewhere)
+  bibliography_filter_disable: false   # Deprecated alias of noise_filter_disable
   synthetic_scope: ""                   # Caller-provided broad scope queried alongside predicted
                                        # leaf scopes but with demotion. Distinct from scope_override
                                        # (which replaces prediction). E.g. "knowledge_systems".

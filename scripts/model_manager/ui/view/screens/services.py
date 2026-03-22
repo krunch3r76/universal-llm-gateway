@@ -13,7 +13,13 @@ from textual.timer import Timer
 from textual.widgets import Button, Footer, Header, Select, Static
 
 from ...controller.operation_log import tee_with_summary
-from ...controller.service_config import is_mcp_configured
+from ...controller.service_config import (
+    is_agent_bus_configured,
+    is_cloud_proxy_configured,
+    is_cortex_configured,
+    is_mcp_configured,
+    is_rag_configured,
+)
 from ..widgets.log_stream import LogStream
 
 _SCOPE_FLAGS: dict[str, list[str]] = {
@@ -86,6 +92,7 @@ class ServicesScreen(Screen):
         with Vertical(id="svc-status"):
             yield Static("[b]Docker Image[/b]", markup=True)
             yield Static("  Checking...", id="img-detail")
+            yield Static("  Build cache: —", id="img-cache")
             yield Static("")
             yield Static("[b]Services[/b]", markup=True)
             yield Static("  Gateway:  checking...", id="svc-gw")
@@ -95,6 +102,8 @@ class ServicesScreen(Screen):
             yield Static("  Cloud Px: checking...", id="svc-cp")
             yield Static("  Sidecar:  checking...", id="svc-sidecar")
             yield Static("  MCP:      —", id="svc-mcp")
+            yield Static("  Cortex:   —", id="svc-cortex")
+            yield Static("  AgentBus: —", id="svc-agentbus")
             yield Static("  Events:   checking...", id="svc-events")
 
         with Vertical(id="build-options"):
@@ -108,6 +117,7 @@ class ServicesScreen(Screen):
         with Vertical(id="svc-buttons"):
             with Horizontal(classes="svc-button-row"):
                 yield Button("Build Image", id="btn-build", variant="primary")
+                yield Button("Prune Cache", id="btn-prune-cache")
                 yield Button("Start Gateway", id="btn-start-gw", variant="success")
                 yield Button(
                     "Stop Gateway", id="btn-stop-gw", variant="error", disabled=True
@@ -140,6 +150,27 @@ class ServicesScreen(Screen):
                 yield Button("Start MCP", id="btn-start-mcp", variant="success")
                 yield Button(
                     "Stop MCP", id="btn-stop-mcp", variant="error", disabled=True
+                )
+                yield Button(
+                    "Start Cortex",
+                    id="btn-start-cortex",
+                    variant="success",
+                    disabled=True,
+                )
+                yield Button(
+                    "Stop Cortex", id="btn-stop-cortex", variant="error", disabled=True
+                )
+                yield Button(
+                    "Start AgentBus",
+                    id="btn-start-agentbus",
+                    variant="success",
+                    disabled=True,
+                )
+                yield Button(
+                    "Stop AgentBus",
+                    id="btn-stop-agentbus",
+                    variant="error",
+                    disabled=True,
                 )
                 yield Button("Restart Local", id="btn-restart-local", variant="warning")
 
@@ -182,6 +213,9 @@ class ServicesScreen(Screen):
                         self._build(self._selected_scope()),
                         exclusive=True,
                     )
+            case "btn-prune-cache":
+                event.button.disabled = True
+                self.run_worker(self._prune_cache(), exclusive=True)
             case "btn-start-gw" | "btn-stop-gw":
                 self.query_one("#btn-start-gw", Button).disabled = True
                 self.query_one("#btn-stop-gw", Button).disabled = True
@@ -231,6 +265,20 @@ class ServicesScreen(Screen):
                     self.run_worker(self._start_mcp(), exclusive=True)
                 else:
                     self.run_worker(self._stop_mcp(), exclusive=True)
+            case "btn-start-cortex" | "btn-stop-cortex":
+                self.query_one("#btn-start-cortex", Button).disabled = True
+                self.query_one("#btn-stop-cortex", Button).disabled = True
+                if event.button.id == "btn-start-cortex":
+                    self.run_worker(self._start_cortex_api(), exclusive=True)
+                else:
+                    self.run_worker(self._stop_cortex_api(), exclusive=True)
+            case "btn-start-agentbus" | "btn-stop-agentbus":
+                self.query_one("#btn-start-agentbus", Button).disabled = True
+                self.query_one("#btn-stop-agentbus", Button).disabled = True
+                if event.button.id == "btn-start-agentbus":
+                    self.run_worker(self._start_agent_bus(), exclusive=True)
+                else:
+                    self.run_worker(self._stop_agent_bus(), exclusive=True)
             case "btn-restart-local":
                 self.run_worker(self._restart_local(), exclusive=True)
             case "btn-refresh":
@@ -275,6 +323,16 @@ class ServicesScreen(Screen):
                 self.log(f"Error polling RAG service: {e}")
             await asyncio.sleep(self._POLL_INTERVAL)
 
+    def _refresh_cache_size(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        cache_size = svc.check_build_cache()
+        if cache_size:
+            self.query_one("#img-cache", Static).update(
+                f"  Build cache: {cache_size}"
+            )
+        else:
+            self.query_one("#img-cache", Static).update("  Build cache: —")
+
     def _refresh_status(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
         build = svc.check_image()
@@ -289,25 +347,43 @@ class ServicesScreen(Screen):
             + (f"  ID: {build.image_id}" if build.image_id else "")
             + config_text
         )
+        self._refresh_cache_size()
         self.query_one("#svc-gw", Static).update(
             f"  Gateway:  {gw.detail or gw.status}"
         )
         self.query_one("#svc-sg", Static).update(
             f"  Stargate: {sg.detail or sg.status}"
         )
-        self.query_one("#svc-rag", Static).update(
-            f"  RAG:      {rag.detail or rag.status}"
-        )
-        self.query_one("#svc-cp", Static).update(
-            f"  Cloud Px: {cp.detail or cp.status}"
-        )
         self.query_one("#svc-sidecar", Static).update(
             f"  Sidecar:  {sidecar.detail or sidecar.status}"
         )
 
         workspace_root = svc._root  # type: ignore[attr-defined]
-        if is_mcp_configured(workspace_root):
-            mcp = svc.service_state.check_mcp()
+        rag_cfg = is_rag_configured()
+        cp_cfg = is_cloud_proxy_configured()
+        mcp_cfg = is_mcp_configured(workspace_root)
+        cortex_cfg = is_cortex_configured()
+        bus_cfg = is_agent_bus_configured()
+
+        if rag_cfg:
+            self.query_one("#svc-rag", Static).update(
+                f"  RAG:      {rag.detail or rag.status}"
+            )
+        else:
+            self.query_one("#svc-rag", Static).update("  RAG:      (not configured)")
+
+        if cp_cfg:
+            self.query_one("#svc-cp", Static).update(
+                f"  Cloud Px: {cp.detail or cp.status}"
+            )
+        else:
+            self.query_one("#svc-cp", Static).update("  Cloud Px: (not configured)")
+
+        mcp = svc.service_state.check_mcp() if mcp_cfg else None
+        cortex = svc.service_state.check_cortex_api() if cortex_cfg else None
+        agent_bus = svc.service_state.check_agent_bus() if bus_cfg else None
+
+        if mcp is not None:
             self.query_one("#svc-mcp", Static).update(
                 f"  MCP:      {mcp.detail or mcp.status}"
             )
@@ -319,6 +395,32 @@ class ServicesScreen(Screen):
             self.query_one("#btn-start-mcp", Button).disabled = True
             self.query_one("#btn-stop-mcp", Button).disabled = True
 
+        if cortex is not None:
+            self.query_one("#svc-cortex", Static).update(
+                f"  Cortex:   {cortex.detail or cortex.status}"
+            )
+            cortex_up = cortex.status.value == "running"
+            self.query_one("#btn-start-cortex", Button).disabled = cortex_up
+            self.query_one("#btn-stop-cortex", Button).disabled = not cortex_up
+        else:
+            self.query_one("#svc-cortex", Static).update("  Cortex:   (not configured)")
+            self.query_one("#btn-start-cortex", Button).disabled = True
+            self.query_one("#btn-stop-cortex", Button).disabled = True
+
+        if agent_bus is not None:
+            self.query_one("#svc-agentbus", Static).update(
+                f"  AgentBus: {agent_bus.detail or agent_bus.status}"
+            )
+            bus_up = agent_bus.status.value == "running"
+            self.query_one("#btn-start-agentbus", Button).disabled = bus_up
+            self.query_one("#btn-stop-agentbus", Button).disabled = not bus_up
+        else:
+            self.query_one("#svc-agentbus", Static).update(
+                "  AgentBus: (not configured)"
+            )
+            self.query_one("#btn-start-agentbus", Button).disabled = True
+            self.query_one("#btn-stop-agentbus", Button).disabled = True
+
         events = svc.service_state.check_event_service()
         self.query_one("#svc-events", Static).update(
             f"  Events:   {events.detail or events.status}"
@@ -327,8 +429,8 @@ class ServicesScreen(Screen):
         gw_exists = gw.status.value != "stopped"
         sg_up = sg.status.value == "running"
         # If service is unhealthy but not stopped (e.g., stale PID/socket), show Stop.
-        rag_up = rag.status.value != "stopped"
-        cp_up = cp.status.value != "stopped"
+        rag_up = rag_cfg and rag.status.value != "stopped"
+        cp_up = cp_cfg and cp.status.value != "stopped"
         sidecar_up = sidecar.status.value == "running"
         events_up = events.status.value == "running"
         self.query_one("#btn-start-gw", Button).disabled = gw_exists
@@ -501,3 +603,41 @@ class ServicesScreen(Screen):
         self.query_one("#svc-log", LogStream).write_line(result)
         await asyncio.sleep(2)
         self._refresh_status()
+
+    async def _start_cortex_api(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.start_cortex_api()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _stop_cortex_api(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.stop_cortex_api()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _start_agent_bus(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.start_agent_bus()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _stop_agent_bus(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.stop_agent_bus()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _prune_cache(self) -> None:
+        log = self.query_one("#svc-log", LogStream)
+        log.clear()
+        log.write_line("Pruning dangling build cache (keeping referenced layers)...")
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.prune_build_cache()
+        log.write_line(result)
+        self.query_one("#btn-prune-cache", Button).disabled = False
+        self._refresh_cache_size()

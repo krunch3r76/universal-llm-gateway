@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import signal
 import sys
 import traceback
 from datetime import UTC, datetime
@@ -123,6 +124,14 @@ class ModelManagerApp(App):
             self._api_server = None
 
     async def on_unmount(self) -> None:
+        # Kill build process group directly — the worker's finally block may
+        # have already cleared _build_process, so we can't rely on cancel_build().
+        proc = self._service_controller._build_process
+        if proc is not None and proc.returncode is None:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
         if self._api_server is not None:
             try:
                 await self._api_server.stop()

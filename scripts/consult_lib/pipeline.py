@@ -276,18 +276,45 @@ def run_code_review_pipeline(
 
     results: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=len(batches)) as pool:
-        futures = [
-            pool.submit(
+        future_to_batch: dict[Any, tuple[int, dict[str, Any]]] = {}
+        for idx, batch in enumerate(batches):
+            future = pool.submit(
                 query_code_review_batch,
                 stargate_url=stargate_url,
                 batch=batch,
                 timeout=timeout,
                 pipeline_options=pipeline_options,
             )
-            for batch in batches
-        ]
-        for future in as_completed(futures):
-            results.append(future.result())
+            future_to_batch[future] = (idx, batch)
+        for future in as_completed(future_to_batch):
+            batch_index, batch = future_to_batch[future]
+            try:
+                result = future.result()
+            except Exception as exc:
+                error_text = f"{type(exc).__name__}: {exc}"
+                print(
+                    f"Code-review batch {batch_index + 1} failed: {error_text}",
+                    file=sys.stderr,
+                )
+                results.append(
+                    {
+                        "batch_index": batch_index,
+                        "batch": batch,
+                        "error": error_text,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "execution_id": getattr(exc, "execution_id", None),
+                    }
+                )
+                continue
+            result["batch_index"] = batch_index
+            results.append(result)
+    results.sort(key=lambda item: int(item.get("batch_index", 0)))
+    if not any("error" not in result for result in results):
+        error_summary = "; ".join(
+            str(result.get("error", "unknown batch failure")) for result in results
+        )
+        raise RuntimeError(f"All review batches failed: {error_summary}")
     return results
 
 

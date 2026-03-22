@@ -178,8 +178,9 @@ async def _emit_orchestrator_decision(
 
     decision_type = "route" if selected_gateway else "reject"
     target = selected_gateway.name if selected_gateway else None
+    tier_name = trace.selection_tier.name if trace.selection_tier else "unknown"
     reason = (
-        f"Selected {selected_gateway.name} (tier={trace.selection_tier.name})"
+        f"Selected {selected_gateway.name} (tier={tier_name})"
         if selected_gateway
         else "No feasible gateway available"
     )

@@ -12,6 +12,7 @@ import os
 import signal
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ...model.build_state import BuildState, BuildStatus, ImageInfo
 from ...model.service_state import ServiceState
@@ -30,7 +31,6 @@ from ..service_config import (
 )
 from ..sidecar_ctl import SidecarController
 from . import cloud_proxy_service, rag_service
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -115,6 +115,12 @@ class ServiceController:
         if self.build_running:
             info.status = BuildStatus.BUILDING
         return info
+
+    def check_build_cache(self) -> str:
+        return self._build_state.check_build_cache()
+
+    async def prune_build_cache(self) -> str:
+        return await self._build_state.prune_build_cache()
 
     async def cancel_build(self) -> str:
         """Kill the running build process group."""
@@ -222,6 +228,11 @@ class ServiceController:
                 msg = f"Build FAILED (exit code {exit_code})."
             yield msg
         finally:
+            if process.returncode is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
             self._build_process = None
 
     async def start_gateway(self, *, node_id: str = "localhost") -> str:
@@ -455,7 +466,7 @@ class ServiceController:
         """Stop and remove MCP server container."""
         base = self._mcp_compose_args()
         if base is None:
-            return "Compose file not found: docker/compose/mcp-server.yml"
+            return "MCP server is not running (compose file missing)."
         args, _ = base
 
         result = await asyncio.create_subprocess_exec(
@@ -518,6 +529,218 @@ class ServiceController:
         if refresh_text:
             return f"{start_text}\n{refresh_text}"
         return start_text
+
+    def _cortex_compose_path(self) -> Path | None:
+        """Return compose file path for cortex-api, or None if missing."""
+        compose_path = self._root / "docker" / "compose" / "cortex-api.yml"
+        return compose_path if compose_path.exists() else None
+
+    def _cortex_compose_args(self) -> tuple[list[str], dict[str, str]] | None:
+        """Return compose args/env for cortex-api when compose file and dirs are ready."""
+        compose_path = self._cortex_compose_path()
+        if compose_path is None:
+            return None
+        socket_err = ensure_socket_dir()
+        if socket_err:
+            logger.error("Cannot start cortex-api: %s", socket_err)
+            return None
+        cortex_dir = Path.home() / ".cortex"
+        cortex_dir.mkdir(parents=True, exist_ok=True)
+        env = build_service_env(self._root)
+        env["CORTEX_DATA_DIR"] = str(cortex_dir)
+        return ["docker", "compose", "-f", str(compose_path)], env
+
+    async def start_cortex_api(self) -> str:
+        """Start the cortex-api container using docker compose with deterministic env paths."""
+        base = self._cortex_compose_args()
+        if base is None:
+            return "Compose file not found or prerequisites failed: docker/compose/cortex-api.yml"
+        args, env = base
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            "up",
+            "-d",
+            "--force-recreate",
+            env=env,
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out = await proc.communicate()
+        text = out[0].decode(errors="replace") if out[0] else ""
+        if proc.returncode != 0:
+            return f"Failed to start Cortex API (exit {proc.returncode}).\n{text}"
+        health_error = await self._wait_container_healthy("cortex-api", timeout=30.0)
+        if health_error is not None:
+            return f"Failed to start Cortex API.\n{text}\n{health_error}"
+        return f"Cortex API started.\n{text}"
+
+    async def stop_cortex_api(self) -> str:
+        """Stop and remove the cortex-api container managed by docker compose."""
+        compose_path = self._cortex_compose_path()
+        if compose_path is None:
+            return "Cortex API is not running (compose file missing)."
+        args = ["docker", "compose", "-f", str(compose_path)]
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            "down",
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out = await proc.communicate()
+        text = out[0].decode(errors="replace") if out[0] else ""
+        return (
+            f"Cortex API stopped.\n{text}"
+            if proc.returncode == 0
+            else f"Failed to stop Cortex API (exit {proc.returncode}).\n{text}"
+        )
+
+    async def rebuild_cortex_api(self, *, no_cache: bool = False) -> str:
+        """Rebuild cortex-api image then start container, returning build/start combined output."""
+        base = self._cortex_compose_args()
+        if base is None:
+            return "Compose file not found or prerequisites failed: docker/compose/cortex-api.yml"
+        args, env = base
+        build_args = ["build"] + (["--no-cache"] if no_cache else [])
+        build = await asyncio.create_subprocess_exec(
+            *args,
+            *build_args,
+            env=env,
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        bout = await build.communicate()
+        btxt = bout[0].decode(errors="replace") if bout[0] else ""
+        start_txt = await self.start_cortex_api()
+        if build.returncode != 0:
+            return f"Cortex API build failed (exit {build.returncode}).\n{btxt}\n{start_txt}"
+        return start_txt
+
+    async def wait_healthy_cortex_api(self, *, timeout: float = 30.0) -> bool:
+        """Wait for cortex-api container health status to become healthy within timeout."""
+        return await self._wait_container_healthy("cortex-api", timeout=timeout) is None
+
+    def _agent_bus_compose_path(self) -> Path | None:
+        """Return compose file path for agent-bus, or None if missing."""
+        compose_path = self._root / "docker" / "compose" / "agent-bus.yml"
+        return compose_path if compose_path.exists() else None
+
+    def _agent_bus_data_dir_error(self) -> str | None:
+        """Return a human-readable data-dir permission error, or None when writable."""
+        data_dir = Path.home() / ".agent-bus"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        if not os.access(data_dir, os.W_OK | os.X_OK):
+            return (
+                f"Agent Bus data dir is not writable: {data_dir}. "
+                f"Current uid/gid={os.getuid()}:{os.getgid()}. "
+                "Fix ownership/permissions of ~/.agent-bus before starting Agent Bus."
+            )
+        db_path = data_dir / "messages.db"
+        if db_path.exists() and not os.access(db_path, os.W_OK):
+            return (
+                f"Agent Bus database is not writable: {db_path}. "
+                f"Current uid/gid={os.getuid()}:{os.getgid()}. "
+                "Fix ownership/permissions of ~/.agent-bus/messages.db before starting Agent Bus."
+            )
+        return None
+
+    def _agent_bus_compose_args(self) -> tuple[list[str], dict[str, str]] | None:
+        """Return compose args/env for agent-bus using MCP token-derived runtime config."""
+        compose_path = self._agent_bus_compose_path()
+        if compose_path is None:
+            return None
+        socket_err = ensure_socket_dir()
+        if socket_err:
+            logger.error("Cannot start agent-bus: %s", socket_err)
+            return None
+        data_dir = Path.home() / ".agent-bus"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        env = build_service_env(self._root)
+        env["AGENT_BUS_DATA_DIR"] = str(data_dir)
+        mcp_cfg = load_mcp_config()
+        if mcp_cfg and mcp_cfg.agent_bus_token:
+            env["AGENT_BUS_TOKEN"] = mcp_cfg.agent_bus_token
+        return ["docker", "compose", "-f", str(compose_path)], env
+
+    async def start_agent_bus(self) -> str:
+        """Start the agent-bus container using docker compose and configured runtime env."""
+        data_dir_error = self._agent_bus_data_dir_error()
+        if data_dir_error is not None:
+            return data_dir_error
+        base = self._agent_bus_compose_args()
+        if base is None:
+            return "Compose file not found or prerequisites failed: docker/compose/agent-bus.yml"
+        args, env = base
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            "up",
+            "-d",
+            "--force-recreate",
+            env=env,
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out = await proc.communicate()
+        text = out[0].decode(errors="replace") if out[0] else ""
+        if proc.returncode != 0:
+            return f"Failed to start Agent Bus (exit {proc.returncode}).\n{text}"
+        health_error = await self._wait_container_healthy("agent-bus", timeout=30.0)
+        if health_error is not None:
+            data_dir_error = self._agent_bus_data_dir_error()
+            if data_dir_error is not None:
+                return f"Failed to start Agent Bus.\n{text}\n{data_dir_error}"
+            return f"Failed to start Agent Bus.\n{text}\n{health_error}"
+        return f"Agent Bus started.\n{text}"
+
+    async def stop_agent_bus(self) -> str:
+        """Stop and remove the agent-bus container managed by docker compose."""
+        compose_path = self._agent_bus_compose_path()
+        if compose_path is None:
+            return "Agent Bus is not running (compose file missing)."
+        args = ["docker", "compose", "-f", str(compose_path)]
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            "down",
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out = await proc.communicate()
+        text = out[0].decode(errors="replace") if out[0] else ""
+        return (
+            f"Agent Bus stopped.\n{text}"
+            if proc.returncode == 0
+            else f"Failed to stop Agent Bus (exit {proc.returncode}).\n{text}"
+        )
+
+    async def rebuild_agent_bus(self, *, no_cache: bool = False) -> str:
+        """Rebuild agent-bus image then start container, preserving existing runtime parity."""
+        base = self._agent_bus_compose_args()
+        if base is None:
+            return "Compose file not found or prerequisites failed: docker/compose/agent-bus.yml"
+        args, env = base
+        build_args = ["build"] + (["--no-cache"] if no_cache else [])
+        build = await asyncio.create_subprocess_exec(
+            *args,
+            *build_args,
+            env=env,
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        bout = await build.communicate()
+        btxt = bout[0].decode(errors="replace") if bout[0] else ""
+        start_txt = await self.start_agent_bus()
+        if build.returncode != 0:
+            return f"Agent Bus build failed (exit {build.returncode}).\n{btxt}\n{start_txt}"
+        return start_txt
+
+    async def wait_healthy_agent_bus(self, *, timeout: float = 30.0) -> bool:
+        """Wait for agent-bus container health status to become healthy within timeout."""
+        return await self._wait_container_healthy("agent-bus", timeout=timeout) is None
 
     async def _wait_mcp_healthy(self, *, timeout: float) -> str | None:
         """Wait until the mcp-server container reports healthy."""
@@ -607,7 +830,7 @@ class ServiceController:
         """Stop and remove event service container."""
         compose_path = self._root / "docker" / "compose" / "event-service.yml"
         if not compose_path.exists():
-            return "Compose file not found: docker/compose/event-service.yml"
+            return "Event service is not running (compose file missing)."
 
         result = await asyncio.create_subprocess_exec(
             "docker",

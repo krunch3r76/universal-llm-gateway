@@ -2,7 +2,7 @@
 
 Connects to /tmp/universal-protocol/manage.sock (JSON-RPC 2.0 over UDS).
 Exposes start, stop, rebuild, restart, status, health, and wait_healthy
-for the six gateway services. Single entry point reduces agent context overhead.
+for gateway-managed services. Single entry point reduces agent context overhead.
 """
 
 from __future__ import annotations
@@ -97,15 +97,16 @@ def register_manage_tools(mcp: FastMCP) -> None:
         to survey all services without specifying a service name.
 
         Actions:
-          status       — Return running/stopped for all six services (no service arg needed)
+          status       — Return running/stopped for core services from check_all (no service arg needed)
           health       — Return health detail for one service
           start        — Start a stopped service
           stop         — Stop a running service
           restart      — Stop then start a service
-          rebuild      — Rebuild container image and restart (valid for 'gateway' and 'mcp' services only)
+          rebuild      — Rebuild container image and restart (gateway, mcp, cortex_api, agent_bus)
           wait_healthy — Block until service is RUNNING or timeout (use after start/restart/rebuild)
 
-        Services: gateway, stargate, rag, cloud_proxy, mcp, event_service
+        Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,
+        cortex_api, agent_bus
 
         Agent workflow after code changes:
           1. quality_gate(files=[...])

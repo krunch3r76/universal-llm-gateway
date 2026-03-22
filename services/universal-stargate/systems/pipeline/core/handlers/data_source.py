@@ -18,7 +18,7 @@ import contextlib
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, ClassVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
 from model_id import ModelId
@@ -299,15 +299,11 @@ class DataSourceV1Handler:
         await idx.start()
         try:
             scopes_out: list[dict[str, Any]] = []
-            for scope_name in sorted(hints_map.keys()):
+            for scope_name in sorted(cs_map.keys()):
                 if filter_set is not None and scope_name not in filter_set:
-                    continue
-                if scope_name not in cs_map:
                     continue
                 text = hints_map.get(scope_name, "")
                 terms = [t.strip() for t in text.split(",") if t.strip()]
-                if not terms:
-                    continue
                 current_hash = compute_scope_files_hash(idx, cs_map[scope_name])
                 stored = idx.get_scope_freshness(scope_name)
                 if _should_skip_fresh_scope(
@@ -322,6 +318,7 @@ class DataSourceV1Handler:
                         "scope": scope_name,
                         "description": descriptions.get(scope_name, ""),
                         "terms": terms,
+                        "has_hints": bool(terms),
                         "files_hash": current_hash,
                     }
                 )

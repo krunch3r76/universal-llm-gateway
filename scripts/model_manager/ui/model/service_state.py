@@ -108,7 +108,9 @@ class ServiceState:
         if listener_pid is not None and listener_pid != pid:
             self._write_pid_file(self.RAG_PID_FILE, listener_pid)
             pid = listener_pid
-            pid_note = self._merge_notes(pid_note, "PID file refreshed from live socket")
+            pid_note = self._merge_notes(
+                pid_note, "PID file refreshed from live socket"
+            )
         if pid is not None:
             uptime = self._proc_uptime_str(pid)
             uptime_str = f" ({uptime})" if uptime else ""
@@ -135,7 +137,9 @@ class ServiceState:
             status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
             port=None,
             detail=self._with_note(
-                "Socket ready (PID file missing)" if healthy else "Socket ready, probe failed",
+                "Socket ready (PID file missing)"
+                if healthy
+                else "Socket ready, probe failed",
                 pid_note,
             ),
         )
@@ -165,7 +169,9 @@ class ServiceState:
         if listener_pid is not None and listener_pid != pid:
             self._write_pid_file(self.RAG_PID_FILE, listener_pid)
             pid = listener_pid
-            pid_note = self._merge_notes(pid_note, "PID file refreshed from live listener")
+            pid_note = self._merge_notes(
+                pid_note, "PID file refreshed from live listener"
+            )
         if pid is not None:
             uptime = self._proc_uptime_str(pid)
             uptime_str = f" ({uptime})" if uptime else ""
@@ -176,7 +182,8 @@ class ServiceState:
                 pid=pid,
                 health_url=f"http://{host}:{port}/stats",
                 detail=self._with_note(
-                    f"PID {pid}{uptime_str}" + ("" if healthy else ", port not responding"),
+                    f"PID {pid}{uptime_str}"
+                    + ("" if healthy else ", port not responding"),
                     pid_note,
                 ),
             )
@@ -235,7 +242,9 @@ class ServiceState:
         if listener_pid is not None and listener_pid != pid:
             self._write_pid_file(self.CLOUD_PROXY_PID_FILE, listener_pid)
             pid = listener_pid
-            pid_note = self._merge_notes(pid_note, "PID file refreshed from live socket")
+            pid_note = self._merge_notes(
+                pid_note, "PID file refreshed from live socket"
+            )
         if pid is not None:
             uptime = self._proc_uptime_str(pid)
             uptime_str = f" ({uptime})" if uptime else ""
@@ -262,7 +271,9 @@ class ServiceState:
             status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
             port=None,
             detail=self._with_note(
-                "Socket ready (PID file missing)" if healthy else "Socket ready, probe failed",
+                "Socket ready (PID file missing)"
+                if healthy
+                else "Socket ready, probe failed",
                 pid_note,
             ),
         )
@@ -288,7 +299,9 @@ class ServiceState:
         if listener_pid is not None and listener_pid != pid:
             self._write_pid_file(self.CLOUD_PROXY_PID_FILE, listener_pid)
             pid = listener_pid
-            pid_note = self._merge_notes(pid_note, "PID file refreshed from live listener")
+            pid_note = self._merge_notes(
+                pid_note, "PID file refreshed from live listener"
+            )
         if pid is not None:
             uptime = self._proc_uptime_str(pid)
             uptime_str = f" ({uptime})" if uptime else ""
@@ -299,7 +312,8 @@ class ServiceState:
                 pid=pid,
                 health_url=f"http://{host}:{port}/health",
                 detail=self._with_note(
-                    f"PID {pid}{uptime_str}" + ("" if healthy else ", port not responding"),
+                    f"PID {pid}{uptime_str}"
+                    + ("" if healthy else ", port not responding"),
                     pid_note,
                 ),
             )
@@ -330,7 +344,9 @@ class ServiceState:
         if listener_pid is not None and listener_pid != pid:
             self._write_pid_file(self.STARGATE_PID_FILE, listener_pid)
             pid = listener_pid
-            pid_note = self._merge_notes(pid_note, "PID file refreshed from live listener")
+            pid_note = self._merge_notes(
+                pid_note, "PID file refreshed from live listener"
+            )
         if pid is not None:
             uptime = self._proc_uptime_str(pid)
             uptime_str = f" ({uptime})" if uptime else ""
@@ -341,7 +357,8 @@ class ServiceState:
                 pid=pid,
                 health_url=f"http://localhost:{self.STARGATE_PORT}/health",
                 detail=self._with_note(
-                    f"PID {pid}{uptime_str}" + ("" if healthy else ", port not responding"),
+                    f"PID {pid}{uptime_str}"
+                    + ("" if healthy else ", port not responding"),
                     pid_note,
                 ),
             )
@@ -376,20 +393,28 @@ class ServiceState:
         info = self._check_named_container("mcp-server", service_name="MCP")
         if info:
             return info
-        return ServiceInfo(
-            name="MCP",
-            status=ServiceStatus.STOPPED,
-        )
+        return ServiceInfo(name="MCP", status=ServiceStatus.STOPPED)
+
+    def check_cortex_api(self) -> ServiceInfo:
+        """Check cortex-api container status using exact-name docker inspection helper."""
+        info = self._check_named_container("cortex-api", service_name="Cortex")
+        if info:
+            return info
+        return ServiceInfo(name="Cortex", status=ServiceStatus.STOPPED)
+
+    def check_agent_bus(self) -> ServiceInfo:
+        """Check agent-bus container status using exact-name docker inspection helper."""
+        info = self._check_named_container("agent-bus", service_name="Agent Bus")
+        if info:
+            return info
+        return ServiceInfo(name="Agent Bus", status=ServiceStatus.STOPPED)
 
     def check_event_service(self) -> ServiceInfo:
         """Check event service container status."""
         info = self._check_named_container("event-service", service_name="Events")
         if info:
             return info
-        return ServiceInfo(
-            name="Events",
-            status=ServiceStatus.STOPPED,
-        )
+        return ServiceInfo(name="Events", status=ServiceStatus.STOPPED)
 
     def _check_named_container(
         self, name: str, *, service_name: str = "Gateway"
@@ -669,7 +694,9 @@ class ServiceState:
                 probe.connect(str(socket_path))
             return False
         except ConnectionRefusedError:
-            logger.info("Removing stale socket %s after connection refused", socket_path)
+            logger.info(
+                "Removing stale socket %s after connection refused", socket_path
+            )
             return self._unlink_path(socket_path)
         except OSError as exc:
             logger.warning("Socket probe failed for %s: %s", socket_path, exc)

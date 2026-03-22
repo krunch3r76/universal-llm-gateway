@@ -10,7 +10,7 @@ DEFAULT_STARGATE_URL = "http://localhost:9999"
 DEFAULT_MODELS: list[str] = [
     "qwen3-32b-awq-32768",
     "ernie-4-5-21b-a3b-pt-q8-0-65536",
-    "google/gemini-2.5-flash",
+    "openai/gpt-5.3-codex",
 ]
 
 # Resolved once at import time; overridable via env for tests.

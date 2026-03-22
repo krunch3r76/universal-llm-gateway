@@ -14,6 +14,7 @@ from src.models import (
     EntityList,
     EntitySummary,
     EntityUpdate,
+    RelationshipItem,
 )
 from src.routes.assertions import _ASSERTION_COLS
 
@@ -35,7 +36,7 @@ def list_entities(
         params.append(type)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    sql = f"SELECT id, type, name, description, status, created_at FROM entities{where} ORDER BY created_at DESC LIMIT ?"
+    sql = f"SELECT id, type, name, description, status, content_hash, created_at FROM entities{where} ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
 
     conn = None
@@ -49,15 +50,28 @@ def list_entities(
     return EntityList(items=[EntitySummary(**row) for row in rows])
 
 
-# Fields in the 'entities' table that store JSON data and need decoding.
 _ENTITY_JSON_FIELDS = frozenset({"aliases", "attributes"})
-# Fields in the 'assertions' table that store JSON data and need decoding.
 _ASSERTION_JSON_FIELDS = frozenset({"evidence_uris"})
+
+_RELATIONSHIP_SELECT = """
+    r.id, r.from_entity AS source_id, r.to_entity AS target_id,
+    r.type AS type_id, rt.description AS type_name,
+    se.name AS source_name, te.name AS target_name,
+    r.role, r.strength, r.evidence, r.chunk_id,
+    r.valid_from, r.valid_until, r.source_uri, r.created_at
+"""
+
+_RELATIONSHIP_FROM = """
+    FROM relationships r
+    JOIN relationship_types rt ON rt.type = r.type
+    LEFT JOIN entities se ON se.id = r.from_entity
+    LEFT JOIN entities te ON te.id = r.to_entity
+"""
 
 
 @router.get("/{entity_id}", response_model=EntityDetail)
 def get_entity(entity_id: str) -> EntityDetail:
-    """Fetch one entity and include all linked assertions ordered by newest first."""
+    """Fetch one entity with linked assertions and relationships."""
     conn = None
     try:
         conn = cortex_conn()
@@ -75,6 +89,14 @@ def get_entity(entity_id: str) -> EntityDetail:
             "ORDER BY created_at DESC",
             (entity_id,),
         )
+
+        rel_rows = query(
+            conn,
+            f"SELECT {_RELATIONSHIP_SELECT} {_RELATIONSHIP_FROM} "
+            "WHERE r.from_entity = ? OR r.to_entity = ? "
+            "ORDER BY r.created_at DESC",
+            (entity_id, entity_id),
+        )
     finally:
         if conn:
             conn.close()
@@ -83,14 +105,24 @@ def get_entity(entity_id: str) -> EntityDetail:
         AssertionItem(**decode_row(row, _ASSERTION_JSON_FIELDS))
         for row in assertion_rows
     ]
+    relationships = [RelationshipItem(**row) for row in rel_rows]
     return EntityDetail(
-        **decode_row(entity, _ENTITY_JSON_FIELDS), assertions=assertions
+        **decode_row(entity, _ENTITY_JSON_FIELDS),
+        assertions=assertions,
+        relationships=relationships,
     )
+
+
+_JSON_COLUMNS = frozenset({"aliases", "attributes"})
 
 
 @router.patch("/{entity_id}", response_model=EntityDetail)
 def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
-    """Update mutable fields on an entity (notes, description, status)."""
+    """Update mutable fields on an entity.
+
+    Uses ``model_fields_set`` so omitted keys are untouched while explicitly
+    sending ``null`` clears the field (sets it to SQL NULL).
+    """
     conn = None
     try:
         conn = cortex_conn()
@@ -101,17 +133,14 @@ def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
                 detail=f"Entity not found: {entity_id}",
             )
 
-        update_fields = {
-            "notes": body.notes,
-            "description": body.description,
-            "status": body.status,
-        }
         sets: list[str] = []
-        params: list[str] = []
-        for field, value in update_fields.items():
-            if value is not None:
-                sets.append(f"{field} = ?")
-                params.append(value)
+        params: list[object] = []
+        for field in body.model_fields_set:
+            value = getattr(body, field)
+            if field in _JSON_COLUMNS:
+                value = json_encode(value)
+            sets.append(f"{field} = ?")
+            params.append(value)
 
         if not sets:
             raise HTTPException(
@@ -158,8 +187,8 @@ def create_entity(body: EntityCreate) -> EntityDetail:
         conn = cortex_conn()
         conn.execute(
             "INSERT INTO entities (id, type, name, description, status, aliases, "
-            "attributes, notes, source_uri, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "attributes, notes, source_uri, content_hash, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.id,
                 body.type,
@@ -170,6 +199,7 @@ def create_entity(body: EntityCreate) -> EntityDetail:
                 json_encode(body.attributes),
                 body.notes,
                 body.source_uri,
+                body.content_hash,
                 now,
                 now,
             ),

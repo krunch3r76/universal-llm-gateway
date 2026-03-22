@@ -2,6 +2,7 @@
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -13,7 +14,6 @@ from textual.widgets import Collapsible, Footer, Header, Label, Static
 from scripts.model_manager.topology import build_snapshot
 
 from ..widgets.topology_panel import TopologyPanel
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -228,6 +228,7 @@ class HomeScreen(Screen):
         # Assuming app is of type 'YourAppClass'
         svc = app.service_controller
         build = svc.check_image()
+        # check_all() intentionally returns only core tuple shape used by status flows.
         services = svc.service_state.check_all()
 
         gw = services[0]

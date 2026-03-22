@@ -56,6 +56,7 @@ class _EntityCommon(BaseModel):
     attributes: dict[str, Any] | None = None
     notes: str | None = None
     source_uri: str | None = None
+    content_hash: str | None = None
 
 
 EntityStatus = Literal["confirmed", "provisional", "merged", "deprecated"]
@@ -75,10 +76,8 @@ class EntitySummary(BaseModel):
     name: str
     description: str | None = None
     status: EntityStatus | None = None
+    content_hash: str | None = None
     created_at: str
-
-
-EntityStatus = Literal["confirmed", "provisional", "merged", "deprecated"]
 
 
 class EntityDetail(_EntityCommon):
@@ -90,18 +89,18 @@ class EntityDetail(_EntityCommon):
     created_at: str
     updated_at: str
     assertions: list[AssertionItem] = Field(default_factory=list)
-
-
-EntityStatus = Literal["confirmed", "provisional", "merged", "deprecated"]
-
-
-EntityStatus = Literal["confirmed", "provisional", "merged", "deprecated"]
+    relationships: list[RelationshipItem] = Field(default_factory=list)
 
 
 class EntityUpdate(BaseModel):
+    name: str | None = None
+    aliases: list[str] | None = None
+    attributes: dict[str, Any] | None = None
     notes: str | None = None
+    source_uri: str | None = None
     description: str | None = None
     status: EntityStatus | None = None
+    content_hash: str | None = None
 
 
 class EntityList(BaseModel):
@@ -112,8 +111,6 @@ class EntityList(BaseModel):
 
 
 DerivationType = Literal["quotation", "compression", "inference", "other"]
-ValidityPrecision = Literal["exact", "approximate", "inferred"]
-TemporalType = Literal["event", "state", "unknown"]
 
 
 class AssertionCreate(BaseModel):
@@ -130,11 +127,12 @@ class AssertionCreate(BaseModel):
     observed_at: str | None = None
     valid_from: str | None = None
     valid_until: str | None = None
-    validity_precision: ValidityPrecision | None = None
     confidence_score: float | None = None
-    temporal_type: TemporalType | None = None
     is_atomic: bool = True
     is_decontextualized: bool = True
+
+
+ReviewStatus = Literal["committed", "flagged", "staged", "rejected"]
 
 
 class AssertionItem(BaseModel):
@@ -142,27 +140,91 @@ class AssertionItem(BaseModel):
     entity_id: str | None = None
     claim: str
     confidence: AssertionConfidence
+    confidence_score: float | None = None
     evidence: str | None = None
     evidence_uris: list[str] | None = None
-    chunk_id: int | None = None
     derivation_type: DerivationType | None = None
+    chunk_id: int | None = None
     reasoning_summary: str | None = None
+    is_atomic: bool | None = None
+    is_decontextualized: bool | None = None
     observed_at: str | None = None
     valid_from: str | None = None
     valid_until: str | None = None
-    validity_precision: ValidityPrecision | None = None
-    confidence_score: float | None = None
-    temporal_type: TemporalType | None = None
-    is_atomic: bool | None = None
-    is_decontextualized: bool | None = None
-    human_reviewed: bool | None = None
     superseded_by: int | None = None
+    review_status: ReviewStatus | None = None
+    reviewer: str | None = None
+    reviewed_at: str | None = None
     review_notes: str | None = None
     created_at: str
 
 
+class AssertionUpdate(BaseModel):
+    superseded_by: int | None = None
+    valid_until: str | None = None
+    confidence: AssertionConfidence | None = None
+    confidence_score: float | None = None
+    review_status: ReviewStatus | None = None
+    reviewer: str | None = None
+    reviewed_at: str | None = None
+
+
+class SupersedeRequest(BaseModel):
+    old_assertion_id: int
+    entity_id: str
+    claim: str
+    confidence: AssertionConfidence
+    evidence: str
+    evidence_uris: list[str] | None = None
+    valid_from: str | None = None
+    derivation_type: DerivationType | None = None
+
+
+class SupersedeResponse(BaseModel):
+    old: AssertionItem
+    new: AssertionItem
+
+
 class AssertionList(BaseModel):
     items: list[AssertionItem]
+
+
+# --- Relationships ---
+
+
+class RelationshipCreate(BaseModel):
+    source_id: str
+    target_id: str
+    type_id: str
+    role: str | None = None
+    strength: float | None = None
+    evidence: str | None = None
+    chunk_id: int | None = None
+    valid_from: str | None = None
+    valid_until: str | None = None
+    source_uri: str | None = None
+
+
+class RelationshipItem(BaseModel):
+    id: int
+    source_id: str
+    target_id: str
+    type_id: str
+    type_name: str | None = None
+    source_name: str | None = None
+    target_name: str | None = None
+    role: str | None = None
+    strength: float | None = None
+    evidence: str | None = None
+    chunk_id: int | None = None
+    valid_from: str | None = None
+    valid_until: str | None = None
+    source_uri: str | None = None
+    created_at: str
+
+
+class RelationshipList(BaseModel):
+    items: list[RelationshipItem]
 
 
 # --- Deadlines ---
@@ -210,27 +272,23 @@ class SessionJournalList(BaseModel):
 
 class ChunkCreate(BaseModel):
     content: str
-    source_uri: str | None = None
-    source_hash: str | None = None
+    source_uri: str
     source_date: str | None = None
-    chunk_index: int | None = None
-    offset_start: int | None = None
-    offset_end: int | None = None
-    observer: str = "cursor"
-    model_version: str | None = None
+    observer: str = "web-claude"
+    chunk_index: int = 0
+    extraction_run: int | None = None
+    token_count: int | None = None
 
 
 class ChunkItem(BaseModel):
     id: int
     content: str
-    source_uri: str | None = None
-    source_hash: str | None = None
+    source_uri: str
     source_date: str | None = None
-    chunk_index: int | None = None
-    offset_start: int | None = None
-    offset_end: int | None = None
     observer: str | None = None
-    model_version: str | None = None
+    chunk_index: int | None = None
+    extraction_run: int | None = None
+    token_count: int | None = None
     created_at: str
 
 
@@ -242,30 +300,24 @@ class ChunkList(BaseModel):
 
 
 class SurfaceFormCreate(BaseModel):
+    mention: str
     entity_id: str
-    form: str
-    chunk_id: int
-    mention: str | None = None
-    span_start: int | None = None
-    span_end: int | None = None
-    context_hash: str | None = None
+    chunk_id: int | None = None
     resolution_confidence: float | None = None
     resolution_reasoning: str | None = None
-    entity_type_hint: str | None = None
+    context_hash: str | None = None
+    mention_type: str | None = None
 
 
 class SurfaceFormItem(BaseModel):
     id: int
+    mention: str
     entity_id: str
-    form: str
-    chunk_id: int
-    mention: str | None = None
-    span_start: int | None = None
-    span_end: int | None = None
-    context_hash: str | None = None
+    chunk_id: int | None = None
     resolution_confidence: float | None = None
     resolution_reasoning: str | None = None
-    entity_type_hint: str | None = None
+    context_hash: str | None = None
+    mention_type: str | None = None
     created_at: str
 
 
@@ -278,46 +330,3 @@ class SurfaceFormCacheResult(BaseModel):
     entity_id: str | None = None
     resolution_confidence: float | None = None
     resolution_reasoning: str | None = None
-
-
-# --- Staging ---
-
-StagingStatus = Literal["pending", "approved", "rejected", "merged"]
-ProposalType = Literal["entity", "assertion"]
-ProposalAction = Literal["add", "revise", "remove"]
-
-
-class StagingProposalCreate(BaseModel):
-    source_uri: str | None = None
-    proposal_type: ProposalType
-    proposal_action: ProposalAction = "add"
-    target_id: str | None = None
-    proposal_json: dict[str, Any]
-    chunk_id: int | None = None
-
-
-class StagingBatchCreate(BaseModel):
-    proposals: list[StagingProposalCreate]
-
-
-class StagingItem(BaseModel):
-    id: int
-    source_uri: str | None = None
-    proposal_type: ProposalType
-    proposal_action: ProposalAction
-    target_id: str | None = None
-    proposal_json: dict[str, Any] | None = None
-    chunk_id: int | None = None
-    status: StagingStatus
-    resolved_to: str | None = None
-    reviewer: str | None = None
-    reviewed_at: str | None = None
-    created_at: str
-
-
-class StagingList(BaseModel):
-    items: list[StagingItem]
-
-
-class StagingApproval(BaseModel):
-    reviewer: str = "human"

@@ -21,6 +21,23 @@ from .parser import _build_parser, _handle_admin_flags, print_role_listing
 from .reviewer_pipeline import _run_pipeline_branch
 
 
+def _normalize_role_specific_args(args: Any) -> None:
+    """Apply role-specific CLI normalization before dispatch.
+
+    Reviewer mode always runs through the ``code-review`` pipeline over explicit
+    context files. RAG flags are disabled here so shared parser defaults never
+    leak into reviewer artifacts, logs, or follow-up debugging.
+    """
+    if args.role != "reviewer":
+        return
+
+    args.pipeline = True
+    args.no_rag = True
+    args.no_rag_pipeline = True
+    args.rag_pipeline = None
+    args.rag_top_k = None
+
+
 def _read_question_from_source(
     parser: Any, question_file: str | None, question_arg: str | None
 ) -> str:
@@ -70,8 +87,7 @@ def main() -> None:
     if _handle_admin_flags(args):
         return
 
-    if args.role == "reviewer":
-        args.pipeline = True
+    _normalize_role_specific_args(args)
 
     if args.list_roles:
         print_role_listing(role_prompts)

@@ -13,11 +13,16 @@ import logging
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from services.rag.article_registry import (
     get_entry as get_article_entry,
 )
-from services.rag.chunk_filters import chunk_is_junk
+from services.rag.chunk_filters import (
+    chunk_metadata_is_noise,
+    noise_reason,
+    normalize_noise_metadata,
+)
 from services.rag.chunkers import Chunk, chunk_file
 from services.rag.contextualize import contextualize_chunks
 from services.rag.embeddings import embed_chunks, require_healthy
@@ -28,10 +33,12 @@ from services.rag.events.articles import (
 from services.rag.events.extraction import rag_extraction_model_mismatch
 from services.rag.events.indexing import (
     rag_article_content_hash_mismatch,
+    rag_chunk_noise_tagged,
     rag_contextualization_applied,
     rag_file_deleted,
     rag_file_indexed,
     rag_file_indexing_failed,
+    rag_file_retry_deferred,
     rag_file_skipped,
     rag_html_normalization_completed,
     rag_html_normalization_failed,
@@ -51,7 +58,6 @@ from services.rag.indexing_helpers import (
 from services.rag.models import DeleteResult, IndexResult
 
 from . import state
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from services.rag.config import RagConfig
@@ -307,6 +313,8 @@ async def _index_file_impl(
                     scope=scope,
                 )
                 if ext_result is not None and ext_result.success:
+                    # Invariant: upsert_indexed_source only after chunks exist
+                    # in ChromaDB. ¬write on extraction failure paths.
                     await prop_index.upsert_indexed_source(
                         source=source,
                         mtime_ns=source_stat.st_mtime_ns,
@@ -451,7 +459,24 @@ async def _index_file_impl(
             metadata["source_hash"] = source_hash
 
         for metadata, chunk in zip(metadatas, chunks, strict=True):
-            metadata["is_bibliography"] = chunk_is_junk(chunk.text)
+            nr = noise_reason(chunk.text)
+            if nr is not None:
+                metadata["is_noise"] = True
+                metadata["noise_reason"] = nr
+            else:
+                metadata["is_noise"] = False
+            normalize_noise_metadata(metadata)
+
+        if state._event_bus is not None:
+            for cid, meta in zip(ids, metadatas, strict=True):
+                if chunk_metadata_is_noise(meta):
+                    await state._event_bus.publish_async_nowait(
+                        rag_chunk_noise_tagged(
+                            chunk_id=cid,
+                            source=source,
+                            noise_reason=meta.get("noise_reason", "unspecified_noise"),
+                        )
+                    )
 
         extraction_entities: int | None = None
         extraction_topics: int | None = None
@@ -460,17 +485,26 @@ async def _index_file_impl(
         ext_result: ExtractionResult | None = None
         if state._config is not None and prop_index is not None:
             scope = state._config.get_scope_for_path(source)
-            ext_result = await run_extraction(
-                file=source,
-                ids=ids,
-                chunks=chunks,
-                metadatas=metadatas,
-                config=state._config.knowledge_extraction,
-                property_index=prop_index,
-                event_bus=state._event_bus,
-                apply_property_index=False,
-                scope=scope,
-            )
+            extract_indices = [
+                i for i, m in enumerate(metadatas) if not chunk_metadata_is_noise(m)
+            ]
+            extract_ids = [ids[i] for i in extract_indices]
+            extract_chunks = [chunks[i] for i in extract_indices]
+            extract_metadatas = [metadatas[i] for i in extract_indices]
+            if extract_ids:
+                ext_result = await run_extraction(
+                    file=source,
+                    ids=extract_ids,
+                    chunks=extract_chunks,
+                    metadatas=extract_metadatas,
+                    config=state._config.knowledge_extraction,
+                    property_index=prop_index,
+                    event_bus=state._event_bus,
+                    apply_property_index=False,
+                    scope=scope,
+                )
+            else:
+                ext_result = ExtractionResult(success=True)
             extraction_entities = ext_result.entities
             extraction_topics = ext_result.topics
             extraction_property_entries = ext_result.property_entries
@@ -479,35 +513,22 @@ async def _index_file_impl(
                 ext_batch_start if isinstance(ext_batch_start, str) else None
             )
 
-            bibliography_ids = {
+            noise_ids = {
                 ids[i]
                 for i, meta in enumerate(metadatas)
-                if meta.get("is_bibliography")
+                if chunk_metadata_is_noise(meta)
             }
-            if bibliography_ids:
+            if noise_ids:
                 extraction_property_entries = [
-                    e
-                    for e in extraction_property_entries
-                    if e[1] not in bibliography_ids
+                    e for e in extraction_property_entries if e[1] not in noise_ids
                 ]
 
             if not ext_result.success:
-                if prop_index is not None:
-                    await prop_index.upsert_indexed_source(
-                        source=source,
-                        mtime_ns=source_stat.st_mtime_ns,
-                        size_bytes=source_stat.st_size,
-                        extraction_schema_version=schema_version,
-                        extraction_model=extraction_model,
-                    )
                 if state._event_bus is not None:
                     await state._event_bus.publish_async_nowait(
-                        rag_file_indexing_failed(
+                        rag_file_retry_deferred(
                             file=source,
-                            error=(
-                                "extraction failed below threshold — "
-                                "document excluded until re-indexed"
-                            ),
+                            reason="extraction_incomplete",
                         )
                     )
                 return IndexResult(deleted=0, indexed=0, unchanged=False, file=source)
@@ -620,7 +641,7 @@ async def _index_file_impl(
         len(chunks),
     )
     if state._event_bus is not None:
-        n_bib = sum(1 for m in metadatas if m.get("is_bibliography"))
+        n_noise = sum(1 for m in metadatas if chunk_metadata_is_noise(m))
         await state._event_bus.publish_async_nowait(
             rag_file_indexed(
                 file=source,
@@ -628,7 +649,7 @@ async def _index_file_impl(
                 indexed=len(chunks),
                 duration_seconds=time.monotonic() - start,
                 batch_start_ts=file_batch_start_ts,
-                bibliography_chunks=n_bib,
+                noise_chunks=n_noise,
                 document_metadata=(
                     state._article_event_kwargs(state._registry, source)
                     if state._registry is not None

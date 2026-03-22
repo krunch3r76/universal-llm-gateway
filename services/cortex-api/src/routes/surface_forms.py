@@ -17,9 +17,8 @@ router = APIRouter(prefix="/surface-forms", tags=["surface-forms"])
 
 # Common columns used for SELECT statements to ensure consistency across queries.
 _COLS = (
-    "id, entity_id, form, chunk_id, mention, span_start, span_end, "
-    "context_hash, resolution_confidence, resolution_reasoning, "
-    "entity_type_hint, created_at"
+    "id, mention, entity_id, chunk_id, resolution_confidence, "
+    "resolution_reasoning, context_hash, mention_type, created_at"
 )
 
 
@@ -35,8 +34,8 @@ def list_surface_forms(
     params: list[str | int] = []
 
     if mention:
-        clauses.append("(mention = ? OR form = ?)")
-        params.extend([mention, mention])
+        clauses.append("mention = ?")
+        params.append(mention)
     if entity_id:
         clauses.append("entity_id = ?")
         params.append(entity_id)
@@ -71,9 +70,9 @@ def cache_lookup(
             conn,
             "SELECT entity_id, resolution_confidence, resolution_reasoning "
             "FROM surface_forms "
-            "WHERE (mention = ? OR form = ?) AND context_hash = ? "
+            "WHERE mention = ? AND context_hash = ? "
             "LIMIT 1",
-            (mention, mention, context_hash),
+            (mention, context_hash),
         )
 
     if not rows:
@@ -100,21 +99,17 @@ def create_surface_form(body: SurfaceFormCreate) -> SurfaceFormItem:
 
         cur = conn.execute(
             "INSERT INTO surface_forms "
-            "(entity_id, form, chunk_id, mention, span_start, span_end, "
-            " context_hash, resolution_confidence, resolution_reasoning, "
-            " entity_type_hint) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(mention, entity_id, chunk_id, resolution_confidence, "
+            " resolution_reasoning, context_hash, mention_type) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
+                body.mention,
                 body.entity_id,
-                body.form,
                 body.chunk_id,
-                body.mention or body.form,
-                body.span_start,
-                body.span_end,
-                body.context_hash,
                 body.resolution_confidence,
                 body.resolution_reasoning,
-                body.entity_type_hint,
+                body.context_hash,
+                body.mention_type,
             ),
         )
         conn.commit()

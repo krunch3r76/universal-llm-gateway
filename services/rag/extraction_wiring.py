@@ -24,6 +24,7 @@ from universal_event_bus import Event, EventBus
 if TYPE_CHECKING:
     import chromadb
 
+from services.rag.chunk_filters import chunk_metadata_is_noise
 from services.rag.chunkers import Chunk
 from services.rag.config import KnowledgeExtractionConfig
 from services.rag.events.extraction import (
@@ -50,6 +51,17 @@ logger = logging.getLogger(__name__)
 
 # Accept partial writes when failure ratio is within 10%.
 _FAILURE_THRESHOLD = 0.1
+
+
+def _chunk_needs_extraction_for_recovery(
+    m: dict[str, Any], *, extraction_model: str | None
+) -> bool:
+    """True when this chunk should receive extraction metadata (not noise, missing/stale)."""
+    if chunk_metadata_is_noise(m):
+        return False
+    if "extraction_schema_version" not in m:
+        return True
+    return bool(extraction_model and m.get("extraction_model") != extraction_model)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -135,6 +147,23 @@ def _publish_event_nonblocking(event_bus: EventBus, event: Event) -> None:
             )
 
     task.add_done_callback(_on_done)
+
+
+def _describe_infrastructure_failure(timing: dict[str, object]) -> str:
+    """Build a bounded error string from infrastructure failure timing metadata.
+
+    Produces descriptive but short error messages for circuit breaker trips,
+    Stargate errors, and capacity exhaustion so operators can distinguish
+    infrastructure failures from extraction-quality failures in failed_extractions.
+    """
+    if "circuit_open" in timing:
+        return "infrastructure: circuit breaker open"
+    if "stargate_error" in timing:
+        msg = str(timing["stargate_error"])[:120]
+        return f"infrastructure: stargate error — {msg}"
+    if "capacity_retries" in timing:
+        return "infrastructure: capacity retries exhausted"
+    return "infrastructure: unknown"
 
 
 async def run_extraction(
@@ -338,9 +367,11 @@ async def run_extraction(
         if is_infrastructure_failure:
             logger.info(
                 "Extraction deferred for %s due to Stargate infrastructure state"
-                " — will retry on next sweep",
+                " — will retry on next sweep (%d chunks)",
                 file,
+                len(failed_ids),
             )
+            infra_error = _describe_infrastructure_failure(timing)
         elif accept_partial:
             logger.info(
                 "Partial extraction for %s: %d/%d chunks failed (within threshold)"
@@ -359,24 +390,31 @@ async def run_extraction(
                 len(ids),
             )
         for chunk_id in failed_ids:
+            error_msg = (
+                infra_error
+                if is_infrastructure_failure
+                else "missing or invalid result after batch parsing"
+            )
             new_attempt_count = failure_counts_snapshot.get(chunk_id, 0) + 1
-            is_permanent = new_attempt_count >= config.max_extraction_attempts
-            if not is_infrastructure_failure:
-                await property_index.record_failure(
-                    chunk_id=chunk_id,
-                    source=file,
-                    error="missing or invalid result after batch parsing",
-                    permanent=is_permanent,
-                )
+            is_permanent = (
+                not is_infrastructure_failure
+                and new_attempt_count >= config.max_extraction_attempts
+            )
+            await property_index.record_failure(
+                chunk_id=chunk_id,
+                source=file,
+                error=error_msg,
+                permanent=is_permanent,
+            )
             if event_bus is not None:
                 _publish_event_nonblocking(
                     event_bus,
                     rag_extraction_failed(
                         chunk_id=chunk_id,
-                        error="missing or invalid result after batch parsing",
+                        error=error_msg,
                     ),
                 )
-                if is_permanent and not is_infrastructure_failure:
+                if is_permanent:
                     _publish_event_nonblocking(
                         event_bus,
                         rag_extraction_permanently_skipped(
@@ -458,15 +496,17 @@ async def recover_missing_extraction(
     Property index is also populated for successful chunks.
 
     Returns ExtractionResult if recovery was attempted, None if no recovery needed.
-    ∀ chunk ∈ existing_ids: extraction_schema_version present ⟹ return None.
+    ∀ chunk ∈ existing_ids: extraction_schema_version present ⟹ return None
+    (noise chunks are excluded from extraction and do not trigger recovery).
     """
-    needs_recovery = any(
-        "extraction_schema_version" not in m for m in existing_metadatas
-    ) or any(
-        config.extraction_model and m.get("extraction_model") != config.extraction_model
+    if not existing_metadatas:
+        return None
+    if not any(
+        _chunk_needs_extraction_for_recovery(
+            m, extraction_model=config.extraction_model
+        )
         for m in existing_metadatas
-    )
-    if not needs_recovery:
+    ):
         return None
 
     # Gate: if all chunks are permanently failed, skip recovery entirely.
@@ -546,16 +586,45 @@ async def recover_missing_extraction(
             )
         return None
 
+    if not any(
+        _chunk_needs_extraction_for_recovery(
+            m, extraction_model=config.extraction_model
+        )
+        for m in metadatas
+    ):
+        return None
+
+    extract_indices = [
+        i for i, m in enumerate(metadatas) if not chunk_metadata_is_noise(m)
+    ]
+    ext_ids = [ids[i] for i in extract_indices]
+    ext_docs = [docs[i] for i in extract_indices]
+    ext_metadatas = [metadatas[i] for i in extract_indices]
+
+    if not ext_ids:
+        logger.info(
+            "Recovery skipped for %s: all chunks are noise — no extraction targets",
+            source,
+        )
+        if event_bus is not None:
+            _publish_event_nonblocking(
+                event_bus,
+                rag_extraction_recovery_skipped(
+                    file=source, reason="all chunks are noise"
+                ),
+            )
+        return None
+
     # run_extraction only uses chunk.text — minimal Chunk objects are sufficient.
-    chunks = [Chunk(text=doc, metadata={}) for doc in docs]
+    chunks = [Chunk(text=doc, metadata={}) for doc in ext_docs]
 
     await property_index.mark_pending(source)
 
     ext_result = await run_extraction(
         file=source,
-        ids=ids,
+        ids=ext_ids,
         chunks=chunks,
-        metadatas=metadatas,
+        metadatas=ext_metadatas,
         config=config,
         property_index=property_index,
         event_bus=event_bus,
@@ -579,7 +648,7 @@ async def recover_missing_extraction(
         return ext_result
 
     # Patch ChromaDB metadata in-place — embeddings and documents are unchanged.
-    collection.update(ids=ids, metadatas=metadatas)
+    collection.update(ids=ext_ids, metadatas=ext_metadatas)
     if ext_result.property_entries:
         await property_index.add_batch_with_scope(ext_result.property_entries)
     await property_index.clear_pending(source)

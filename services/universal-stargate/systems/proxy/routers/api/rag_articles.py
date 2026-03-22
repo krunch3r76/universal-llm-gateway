@@ -122,6 +122,30 @@ async def get_orphaned_articles(
     )
 
 
+@router.get("/rag/articles")
+async def list_rag_articles(
+    scope: str | None = None,
+    include_abstract: bool = False,
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> dict[str, Any]:
+    """Proxy structured article-listing queries to the RAG service."""
+    rag_url = resolve_rag_base_url()
+    params: dict[str, str] = {
+        "include_abstract": "true" if include_abstract else "false",
+        **({"scope": scope} if scope else {}),
+    }
+    return await _proxy_rag_request(
+        rag_url=rag_url,
+        method="GET",
+        endpoint="/articles",
+        timeout=20.0,
+        action_name="article listing",
+        unavailable_detail="RAG articles endpoint unavailable via passthrough.",
+        invalid_payload_detail="Invalid RAG articles response payload.",
+        params=params,
+    )
+
+
 @router.post("/rag/refresh_corpus_hints")
 async def refresh_corpus_hints(
     body: dict[str, Any],

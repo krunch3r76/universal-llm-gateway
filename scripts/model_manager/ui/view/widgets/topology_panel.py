@@ -7,7 +7,7 @@ switches the LogStream to that node's output.
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
@@ -24,7 +24,13 @@ if TYPE_CHECKING:
 from scripts.model_manager.topology import TopologySnapshot, build_snapshot
 
 from ...controller.operation_log import tee_with_summary
-from ...controller.service_config import is_mcp_configured
+from ...controller.service_config import (
+    is_agent_bus_configured,
+    is_cloud_proxy_configured,
+    is_cortex_configured,
+    is_mcp_configured,
+    is_rag_configured,
+)
 from ...controller.topology import deploy_remote, list_remotes, wait_for_relay_connected
 from .log_stream import LogStream
 
@@ -372,87 +378,132 @@ class TopologyPanel(Widget):
         return False
 
     async def _restart_local_services(self) -> None:
-        """Restart local services after image build completes."""
+        """Restart local services with best-effort phased orchestration.
+
+        ∀ stop operations: best-effort, never abort the restart flow.
+        ∀ start operations: try/except wrapped, logged, never abort.
+        Critical failures (event_service/gateway/stargate/agent_bus) are surfaced
+        distinctly from optional-service failures.
+        """
         svc = cast("ModelManagerApp", self.app).service_controller
         mk = _MASTER_ROW_KEY
+        assert self._workspace_root is not None
+        ws_root = self._workspace_root
+        failures: list[str] = []
+
+        self._node_buffers[mk] = []
         self._switch_to_node(mk)
         self._set_node_status(mk, "⟳ restarting...")
+        self._append_line(mk, "Restarting services...")
 
-        self._append_line(mk, "Restarting event service (triggers retention prune)...")
-        result = await svc.restart_event_service()
-        self._append_line(mk, result)
-        if _service_operation_failed(result):
-            self._set_node_status(mk, "✗ event service failed")
-            self._append_line(mk, "⚠ event_service restart failed; aborting.")
-            return
-
-        self._append_line(mk, "Waiting for event service...")
-        healthy = await svc.wait_healthy_event_service(timeout=30)
-        if not healthy:
-            self._set_node_status(mk, "✗ event service unhealthy")
-            self._append_line(mk, "⚠ event_service did not become healthy; aborting.")
-            return
-        self._append_line(mk, "Event service healthy. Proceeding with restart.")
-
-        self._append_line(mk, "Restarting local services...")
-        stop_ops: list[tuple[str, Any]] = [
-            ("stop stargate", svc.stop_stargate),
-            ("stop rag", svc.stop_rag),
-            ("stop cloud_proxy", svc.stop_cloud_proxy),
-            ("stop gateway", svc.stop_gateway),
+        # Phase 1: Stop all (best-effort, parallel)
+        stop_ops: list[tuple[str, Callable[[], Awaitable[str]]]] = [
+            ("gateway", svc.stop_gateway),
+            ("stargate", svc.stop_stargate),
+            ("sidecar", svc.sidecar.stop),
         ]
-        for label, op in stop_ops:
-            result = await op()
-            self._append_line(mk, result)
-            if _service_operation_failed(result):
-                self._set_node_status(mk, "✗ local restart failed")
-                self._append_line(mk, f"⚠ {label} failed; aborting restart.")
-                return
+        if is_rag_configured():
+            stop_ops.append(("rag", svc.stop_rag))
+        if is_cloud_proxy_configured():
+            stop_ops.append(("cloud_proxy", svc.stop_cloud_proxy))
+        if is_mcp_configured(ws_root):
+            stop_ops.append(("mcp", svc.stop_mcp))
+        if is_cortex_configured():
+            stop_ops.append(("cortex_api", svc.stop_cortex_api))
+        if is_agent_bus_configured():
+            stop_ops.append(("agent_bus", svc.stop_agent_bus))
 
-        await asyncio.sleep(1)
-        start_ops: list[tuple[str, Any]] = [
-            ("start gateway", svc.start_gateway),
-            ("start stargate", svc.start_stargate),
-            ("start rag", svc.start_rag),
-            ("start cloud_proxy", svc.start_cloud_proxy),
+        stop_results = await self._run_ops_parallel(stop_ops)
+        for name, ok, msg in stop_results:
+            self._append_line(mk, f"  {'✓' if ok else '⚠'} stop {name}")
+            if not ok:
+                logger.warning("stop %s: %s", name, msg)
+
+        # Phase 2: Event service (observability backbone)
+        ev_ok = await self._run_single(
+            mk, "event_service", svc.restart_event_service, failures
+        )
+        if ev_ok:
+            if not await svc.wait_healthy_event_service(timeout=30):
+                self._append_line(mk, "  ⚠ event_service unhealthy (continuing)")
+
+        # Phase 3: Critical local services
+        await self._run_single(mk, "gateway", svc.start_gateway, failures)
+        if is_agent_bus_configured():
+            await self._run_single(mk, "agent_bus", svc.rebuild_agent_bus, failures)
+
+        # Phase 4: Stargate + optional services (parallel, best-effort)
+        start_ops: list[tuple[str, Callable[[], Awaitable[str]]]] = [
+            ("stargate", svc.start_stargate),
         ]
-        for idx, (label, op) in enumerate(start_ops):
-            result = await op()
-            self._append_line(mk, result)
-            # Prefer deterministic success checks over keyword heuristics.
-            # Service start_* helpers return well-known prefixes on success.
-            if label == "start stargate":
-                failed = not result.startswith("Stargate starting")
-            elif label == "start gateway":
-                failed = not result.startswith("Gateway container started")
-            elif label == "start rag":
-                failed = not (
-                    result.startswith("RAG service starting")
-                    or result.startswith("RAG service is already running")
-                )
-            elif label == "start cloud_proxy":
-                failed = not (
-                    result.startswith("Cloud Proxy starting")
-                    or result.startswith("Cloud Proxy is already running")
-                )
-            else:
-                failed = _service_operation_failed(result)
-            if failed:
-                self._set_node_status(mk, "✗ local restart failed")
-                self._append_line(mk, f"⚠ {label} failed; aborting restart.")
-                return
-            if idx == 0:
-                await asyncio.sleep(0.5)
-        self._set_node_status(mk, "● running")
+        if is_rag_configured():
+            start_ops.append(("rag", svc.start_rag))
+        if is_cloud_proxy_configured():
+            start_ops.append(("cloud_proxy", svc.start_cloud_proxy))
+        if is_mcp_configured(ws_root):
+            start_ops.append(("mcp", svc.rebuild_mcp))
+        if is_cortex_configured():
+            start_ops.append(("cortex_api", svc.rebuild_cortex_api))
 
-        assert self._workspace_root is not None
-        if is_mcp_configured(self._workspace_root):
-            self._append_line(mk, "Rebuilding MCP server...")
-            self._append_line(mk, await svc.rebuild_mcp())
+        start_results = await self._run_ops_parallel(start_ops)
+        for name, ok, msg in start_results:
+            self._append_line(mk, f"  {'✓' if ok else '✗'} {name}")
+            if not ok:
+                failures.append(name)
+
+        self._append_line(mk, "  ○ sidecar left stopped")
+
+        if not failures:
+            self._append_line(mk, "Done — required services started")
+            self._set_node_status(mk, "● running")
         else:
-            self._append_line(
-                mk, "MCP skipped (not configured in ~/.gateway/mcp.yaml)."
+            self._append_line(mk, f"Done — failed: {', '.join(failures)}")
+            core_failed = any(
+                f in ("event_service", "gateway", "stargate", "agent_bus")
+                for f in failures
             )
+            status = "✗ core start failed" if core_failed else "◌ partial"
+            self._set_node_status(mk, status)
+
+    async def _run_ops_parallel(
+        self,
+        ops: list[tuple[str, Callable[[], Awaitable[str]]]],
+    ) -> list[tuple[str, bool, str]]:
+        """Run service operations in parallel. Each op is try/except wrapped — never raises."""
+
+        async def _safe_run(
+            name: str, op: Callable[[], Awaitable[str]]
+        ) -> tuple[str, bool, str]:
+            try:
+                msg = await op()
+                return name, _classify_result(msg), msg
+            except Exception as exc:
+                logger.exception("Service op %s raised", name)
+                return name, False, str(exc)
+
+        async with asyncio.TaskGroup() as tg:
+            tasks = [tg.create_task(_safe_run(n, op)) for n, op in ops]
+        return [t.result() for t in tasks]
+
+    async def _run_single(
+        self,
+        node_key: str,
+        name: str,
+        op: Callable[[], Awaitable[str]],
+        failures: list[str],
+    ) -> bool:
+        """Run one operation, log result, append to failures if not ok."""
+        try:
+            msg = await op()
+            ok = _classify_result(msg)
+        except Exception as exc:
+            logger.exception("Service op %s raised", name)
+            ok, msg = False, str(exc)
+        self._append_line(node_key, f"  {'✓' if ok else '✗'} {name}")
+        if not ok:
+            failures.append(name)
+            logger.warning("%s: %s", name, msg)
+        return ok
 
     async def _deploy_and_build_remote(
         self,
@@ -643,15 +694,43 @@ def _status_reason_suffix(status_reason: str | None) -> str:
     return f" [{reason_text}]"
 
 
-def _service_operation_failed(result: str) -> bool:
-    """Classify service-controller operation output as success/failure."""
-    text = result.strip().lower()
-    return (
-        text.startswith("failed")
-        or text.startswith("error")
-        or " failed " in text
-        or " not found" in text
-    )
+def _classify_result(msg: str) -> bool:
+    """Return True if service operation succeeded or was a no-op."""
+    lower = msg.strip().lower()
+    if any(
+        lower.startswith(p)
+        for p in (
+            "gateway container started",
+            "gateway stopped",
+            "gateway is not running",
+            "stargate starting",
+            "stargate stopped",
+            "stargate is not running",
+            "stargate already exited",
+            "event service started",
+            "event service stopped",
+            "mcp server started",
+            "mcp server stopped",
+            "cortex api started",
+            "cortex api stopped",
+            "agent bus started",
+            "agent bus stopped",
+            "sidecar",
+        )
+    ):
+        return True
+    if any(
+        k in lower
+        for k in (
+            "starting (pid",
+            "is not running",
+            "is already running",
+            "stopped (pid",
+            "already exited",
+        )
+    ):
+        return True
+    return False
 
 
 def _build_summary_failed(line: str) -> bool:

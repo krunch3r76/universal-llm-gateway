@@ -624,11 +624,7 @@ echo "  - Native GPU build: docker/build-gpu.sh --gpu-native"
 echo "  - Full native: docker/build-gpu.sh --cpu-native --gpu-native"
 echo "  - Obfuscated native: docker/build-gpu.sh --obfuscate --cpu-native --gpu-native"
 
-# Prune build cache older than 24h. The current build's layers are minutes old
-# and will be preserved for the next --refresh-source cached rebuild.
-# Size-based pruning (--reserved-space) is unreliable — a single vLLM source
-# build produces ~30GB of cache, routinely exceeding any reasonable budget.
-echo ""
-echo "🧹 Pruning build cache older than 24h..."
-docker builder prune -af --filter "until=24h" 2>/dev/null || true
+# Cache pruning is managed via ./manage (Services → Prune Cache).
+# Uses `docker builder prune -f` (dangling only, no -a) to preserve
+# referenced layers needed for cached rebuilds.
 

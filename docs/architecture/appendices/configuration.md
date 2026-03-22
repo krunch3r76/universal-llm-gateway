@@ -95,7 +95,7 @@ requests from RAG; defaults to `bge-m3-q8-0-8192-cpu`).
 
 Corpus hints and scope vocabulary are stored in `~/.rag/store/rag_metadata.db` (tables `corpus_hints`, `scope_vocabulary`). Populated by post-index enrichment (`python -m services.rag.corpus_hints`, `scripts/rag/classify_vocabulary.py`). No YAML paths; read path is DB-only.
 
-`post_index_enforcement` (default `strict`): controls behavior when post-index enrichment watermarks are stale relative to the last reindex. `strict` returns 503 on search until watermarks are current; `warn` logs ERROR at startup but continues serving. Post-index steps tracked: `corpus_hints`, `vocabulary`, `bibliography`.
+`post_index_enforcement` (default `strict`): controls behavior when post-index enrichment watermarks are stale relative to the last reindex. `strict` returns 503 on search until watermarks are current; `warn` logs ERROR at startup but continues serving. Post-index steps tracked: `corpus_hints`, `vocabulary`, `noise`.
 
 `contextualize_model`: model ID for per-chunk LLM-generated context prefixes prepended before embedding. Omit or set to a model ID to enable (default: `qwen3-embedding-8b`). Set to `""` to disable.
 

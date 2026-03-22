@@ -1,20 +1,30 @@
 """Cortex dispatch tool — cortex(tool=..., arguments=...) surface for the Cortex knowledge system.
 
-Routes entity, assertion, deadline, journal, staging, and review operations
-through cortex-api via the local_api relay. Uses the same dispatch calling
-convention as the primary dispatch() tool. Lower-frequency tools (chunks,
-surface forms) remain in cortex_v2.py as dispatch-only.
+Routes all Cortex CRUD operations through cortex-api via the local_api relay.
+Core handlers live here; v2.1 handlers (assertion lifecycle, relationships,
+stats, surface forms) live in cortex_v21.py and are imported into _OPS.
+Only cortex_boot remains as a standalone tool (in cortex_v2.py).
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
 from mcp_events import record
 
-from .local_api import _relay
+from ._cortex_relay import _cx
+from .cortex_v21 import (
+    _op_assertion_update,
+    _op_relationship_create,
+    _op_relationships,
+    _op_stats,
+    _op_supersede,
+    _op_surface_forms,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -22,12 +32,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _cx(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Relay to cortex-api, normalizing error shape."""
-    result = _relay("cortex-api", method, path, body=body)
-    if "error" in result:
-        return {"error": f"cortex-api error: {result['error']}"}
-    return result
+_FILES_ROOT = Path("/data/files")
+_ENTITY_MUTABLE = frozenset(
+    {
+        "name",
+        "aliases",
+        "attributes",
+        "notes",
+        "source_uri",
+        "description",
+        "status",
+        "content_hash",
+    }
+)
+
+
+def _compute_content_hash(source_uri: str) -> str | None:
+    """SHA-256 of a local file under /data/files. None if not local or missing."""
+    local_path = _FILES_ROOT / source_uri
+    if not local_path.is_file():
+        return None
+    h = hashlib.sha256()
+    with open(local_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return f"sha256:{h.hexdigest()}"
 
 
 # ── op handlers ──────────────────────────────────────────────────────────
@@ -61,6 +90,7 @@ def _op_entity_create(
     aliases: list[str] | None = None,
     attributes: dict[str, Any] | None = None,
     source_uri: str | None = None,
+    content_hash: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     required_fields = {"id": id, "type": type, "name": name}
@@ -72,6 +102,8 @@ def _op_entity_create(
             "error": f"Invalid status {status!r}. "
             f"Must be one of: {sorted(_VALID_STATUS)}"
         }
+    if source_uri is not None and content_hash is None:
+        content_hash = _compute_content_hash(source_uri)
     body: dict[str, Any] = {
         "id": id,
         "type": type,
@@ -82,6 +114,7 @@ def _op_entity_create(
         **({} if aliases is None else {"aliases": aliases}),
         **({} if attributes is None else {"attributes": attributes}),
         **({} if source_uri is None else {"source_uri": source_uri}),
+        **({} if content_hash is None else {"content_hash": content_hash}),
     }
     result = _cx("POST", "/entities", body)
     if "error" not in result:
@@ -92,18 +125,19 @@ def _op_entity_create(
 
 def _op_entity_update(
     entity_id: str | None = None,
-    description: str | None = None,
-    status: str | None = None,
-    notes: str | None = None,
-    **_: object,
+    **kwargs: object,
 ) -> dict[str, Any]:
     if not entity_id:
         return {"error": "entity_id is required"}
-    body: dict[str, Any] = {
-        **({} if description is None else {"description": description}),
-        **({} if status is None else {"status": status}),
-        **({} if notes is None else {"notes": notes}),
-    }
+    body: dict[str, Any] = {k: v for k, v in kwargs.items() if k in _ENTITY_MUTABLE}
+    if (
+        "source_uri" in body
+        and body["source_uri"] is not None
+        and "content_hash" not in body
+    ):
+        computed = _compute_content_hash(body["source_uri"])
+        if computed:
+            body["content_hash"] = computed
     if not body:
         return {"error": "No fields to update"}
     result = _cx("PATCH", f"/entities/{entity_id}", body)
@@ -115,6 +149,8 @@ def _op_entity_update(
 def _op_assertions(
     entity_id: str | None = None,
     confidence: str | None = None,
+    review_status: str | None = None,
+    superseded: bool | None = None,
     limit: int | None = None,
     **_: object,
 ) -> dict[str, Any]:
@@ -123,6 +159,10 @@ def _op_assertions(
         params["entity_id"] = entity_id
     if confidence is not None:
         params["confidence"] = confidence
+    if review_status is not None:
+        params["review_status"] = review_status
+    if superseded is not None:
+        params["superseded"] = str(superseded).lower()
     return _cx("GET", f"/assertions?{urlencode(params)}")
 
 
@@ -135,6 +175,11 @@ def _op_assert(
     confidence: str | None = None,
     evidence: str | None = None,
     evidence_uris: list[str] | str | None = None,
+    derivation_type: str | None = None,
+    confidence_score: float | None = None,
+    observed_at: str | None = None,
+    valid_from: str | None = None,
+    chunk_id: int | None = None,
     **_: object,
 ) -> dict[str, Any]:
     required_fields = {
@@ -162,6 +207,22 @@ def _op_assert(
         if isinstance(evidence_uris, str):
             evidence_uris = [evidence_uris]
         body["evidence_uris"] = [str(u) for u in evidence_uris]
+    for key, val in [
+        ("derivation_type", derivation_type),
+        ("confidence_score", confidence_score),
+        ("observed_at", observed_at),
+        ("valid_from", valid_from),
+        ("chunk_id", chunk_id),
+    ]:
+        if val is not None:
+            body[key] = val
+    if derivation_type is None or confidence_score is None:
+        logger.warning(
+            "cortex assert: missing derivation_type=%s or confidence_score=%s — "
+            "these will become mandatory in a future version",
+            derivation_type,
+            confidence_score,
+        )
     result = _cx("POST", "/assertions", body)
     if "error" not in result:
         logger.info("cortex assert: %s — %s (%s)", entity_id, claim[:60], confidence)
@@ -210,56 +271,47 @@ def _op_journal_write(
 
 def _op_review_queue(limit: int | None = None, **_: object) -> dict[str, Any]:
     lim = limit or 30
-    staging = _cx("GET", f"/staging?status=pending&limit={lim}")
-    assertions = _cx("GET", f"/assertions?superseded=false&limit={lim}")
+    flagged_resp = _cx(
+        "GET", f"/assertions?review_status=flagged&superseded=false&limit={lim}"
+    )
+    low_conf_resp = _cx("GET", f"/assertions?superseded=false&limit={lim}")
+    entities = _cx("GET", f"/entities?limit={lim}")
 
-    staging_items = staging.get("items", []) if not staging.get("error") else []
-    assertion_items = (
+    flagged = (
         [
-            a
-            for a in assertions.get("items", [])
-            if a.get("confidence") in ("suspected", "hypothesized")
-            and not a.get("human_reviewed")
+            {**a, "priority": 2, "reason": "flagged"}
+            for a in flagged_resp.get("items", [])
         ]
-        if not assertions.get("error")
+        if not flagged_resp.get("error")
         else []
     )
+
+    low_conf = []
+    if not low_conf_resp.get("error"):
+        for a in low_conf_resp.get("items", []):
+            if a.get("confidence") in ("suspected", "hypothesized"):
+                low_conf.append({**a, "priority": 3, "reason": "low_confidence"})
+
+    provisional = []
+    thin_descriptions = []
+    if not entities.get("error"):
+        for e in entities.get("items", []):
+            if e.get("status") == "provisional":
+                provisional.append({**e, "priority": 1, "reason": "provisional"})
+            desc = e.get("description") or ""
+            if len(desc) < 50:
+                thin_descriptions.append(
+                    {**e, "priority": 4, "reason": "thin_description"}
+                )
+
+    total = len(flagged) + len(provisional) + len(low_conf) + len(thin_descriptions)
     return {
-        "staging": staging_items,
-        "assertions": assertion_items,
-        "total": len(staging_items) + len(assertion_items),
+        "provisional_entities": provisional,
+        "flagged_assertions": flagged,
+        "low_confidence_assertions": low_conf,
+        "thin_descriptions": thin_descriptions,
+        "total": total,
     }
-
-
-def _op_stage(
-    proposals: list[dict[str, Any]] | None = None, **_: object
-) -> dict[str, Any]:
-    if not proposals:
-        return {"error": "proposals is required"}
-    result = _cx("POST", "/staging/batch", {"proposals": proposals})
-    if "error" not in result:
-        count = len(result.get("items", []))
-        logger.info("cortex stage: %d proposals staged", count)
-        record("mcp.cortex.staging.batch", count=count)
-    return result
-
-
-def _op_staging_approve(
-    staging_id: int | None = None,
-    reviewer: str | None = None,
-    **_: object,
-) -> dict[str, Any]:
-    if staging_id is None:
-        return {"error": "staging_id is required"}
-    result = _cx(
-        "POST", f"/staging/{staging_id}/approve", {"reviewer": reviewer or "web"}
-    )
-    if "error" not in result:
-        logger.info(
-            "cortex staging_approve: %d -> %s", staging_id, result.get("resolved_to")
-        )
-        record("mcp.cortex.staging.approved", staging_id=staging_id)
-    return result
 
 
 # ── op dispatch table ────────────────────────────────────────────────────
@@ -271,12 +323,16 @@ _OPS: dict[str, Any] = {
     "entity_update": _op_entity_update,
     "assertions": _op_assertions,
     "assert": _op_assert,
+    "assertion_update": _op_assertion_update,
+    "supersede": _op_supersede,
+    "relationships": _op_relationships,
+    "relationship_create": _op_relationship_create,
+    "stats": _op_stats,
+    "surface_forms": _op_surface_forms,
     "deadlines": _op_deadlines,
     "journal_read": _op_journal_read,
     "journal_write": _op_journal_write,
     "review_queue": _op_review_queue,
-    "stage": _op_stage,
-    "staging_approve": _op_staging_approve,
 }
 
 
@@ -292,31 +348,46 @@ def register_cortex_tools(mcp: FastMCP) -> None:
 
         Available tools:
           entities(type?, limit?) — list entities
-          entity_get(entity_id) — get entity with assertions
-          entity_create(id, type, name, description?, status?, notes?, aliases?, attributes?, source_uri?)
+          entity_get(entity_id) — get entity with assertions + relationships
+          entity_create(id, type, name, description?, status?, notes?, aliases?, attributes?, source_uri?, content_hash?)
               Create a new entity. Returns 409 if the entity already exists.
               status: confirmed (default) / provisional / merged / deprecated
-          entity_update(entity_id, description?, status?, notes?) — update entity
-          assertions(entity_id?, confidence?, limit?) — list assertions
-          assert(entity_id, claim, confidence, evidence, evidence_uris?) — create assertion
+              content_hash: sha256:<hex> fingerprint. Auto-computed from source_uri
+              when it resolves to a local file under /data/files/.
+          entity_update(entity_id, name?, description?, status?, notes?, aliases?, attributes?, source_uri?, content_hash?)
+              Update mutable entity metadata. Send a field as null to clear it;
+              omit a field to leave it untouched. content_hash is auto-computed
+              when source_uri is set and resolves to a local file.
+          assertions(entity_id?, confidence?, review_status?, superseded?, limit?)
+              List assertions. review_status: committed/flagged/staged/rejected
+          assert(entity_id, claim, confidence, evidence, evidence_uris?,
+                 derivation_type?, confidence_score?, observed_at?, valid_from?, chunk_id?)
               Direct write with no review gate. Use for session observations,
-              confirmed decisions, and real-time notes made during the current
-              conversation.
+              confirmed decisions, and real-time notes.
               confidence: confirmed / believed / suspected / hypothesized
-              evidence_uris: agent-bus:034, session:web-2026-03-16, doc:notes/...
-          deadlines() — Retrieve a list of legal deadlines
-          journal_read(limit?) — read recent session journals
+              derivation_type: quotation / compression / inference / other
+              confidence_score: 0.0–1.0 numeric confidence
+          assertion_update(assertion_id, superseded_by?, valid_until?, confidence?,
+              confidence_score?, review_status?, reviewer?, reviewed_at?)
+              Update metadata. review_status: committed/flagged/staged/rejected
+          supersede(old_assertion_id, entity_id, claim, confidence, evidence,
+              evidence_uris?, valid_from?, derivation_type?)
+              Atomic: closes old + creates new in one transaction.
+          relationships(entity_id?, type_id?, limit?) — list with names, strength
+          relationship_create(source_id, target_id, type_id, role?, strength?,
+              evidence?, chunk_id?, valid_from?, valid_until?, source_uri?)
+          stats() — dashboard counts across all tables
+          surface_forms(entity_id?, mention?, mention_type?, limit?) — resolution cache
+          deadlines() — legal deadlines
+          journal_read(limit?) — recent session journals
           journal_write(timestamp, agent, summary, domains?, decisions?, open_items?, file_path?)
-          review_queue(limit?) — pending staging + low-confidence assertions
-          stage(proposals) — batch-stage proposals for review
-              Use for bulk ingestion, extraction output, or uncertain claims that
-              should land in the human review queue before becoming assertions.
-          staging_approve(staging_id, reviewer?) — approve staging proposal
+          review_queue(limit?) — provisional entities + flagged assertions +
+              low-confidence unreviewed + thin descriptions (prioritized)
 
         Example:
             cortex(tool="entities", arguments='{"type": "person", "limit": 20}')
-            cortex(tool="entity_create", arguments='{"id": "goal:foo", "type": "goal", "name": "Foo", "description": "..."}')
-            cortex(tool="assert", arguments='{"entity_id": "person:foo", "claim": "...", "confidence": "confirmed", "evidence": "..."}')
+            cortex(tool="supersede", arguments='{"old_assertion_id": 4, "entity_id": "person:foo", "claim": "...", "confidence": "confirmed", "evidence": "..."}')
+            cortex(tool="relationships", arguments='{"entity_id": "person:kaywan"}')
 
         Args:
             tool: Name of the cortex operation to invoke.

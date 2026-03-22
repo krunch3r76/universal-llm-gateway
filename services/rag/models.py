@@ -243,6 +243,30 @@ class ArticleUpsertResponse(BaseModel):
     created: bool
 
 
+class ArticleListingItem(BaseModel):
+    """Structured article metadata row returned by read-only listing APIs for corpus introspection workflows."""
+
+    source_path: str
+    filename: str
+    title: str = ""
+    authors: str = ""
+    venue: str = ""
+    published_date: str = ""
+    doi: str = ""
+    scope: str = "all"
+    comments: str = ""
+    updated_at: str = ""
+    abstract: str | None = None
+
+
+class ArticleListingResponse(BaseModel):
+    """Container for article-listing results with total row count and normalized scope filter context."""
+
+    articles: list[ArticleListingItem]
+    count: int
+    scopes_queried: list[str]
+
+
 class ScopeRegisterRequest(BaseModel):
     """Register a new retrieval scope at runtime."""
 

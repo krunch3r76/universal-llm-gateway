@@ -5,7 +5,14 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, status
 
 from src.db import cortex_conn, decode_row, json_encode, query
-from src.models import AssertionCreate, AssertionItem, AssertionList
+from src.models import (
+    AssertionCreate,
+    AssertionItem,
+    AssertionList,
+    AssertionUpdate,
+    SupersedeRequest,
+    SupersedeResponse,
+)
 
 logger = logging.getLogger("cortex-api.assertions")
 router = APIRouter(prefix="/assertions", tags=["assertions"])
@@ -15,18 +22,20 @@ _JSON_FIELDS = frozenset({"evidence_uris"})
 _VALID_CONFIDENCE = {"confirmed", "believed", "suspected", "hypothesized"}
 
 _ASSERTION_COLS = (
-    "id, entity_id, claim, confidence, evidence, evidence_uris, "
-    "chunk_id, derivation_type, reasoning_summary, observed_at, "
-    "valid_from, valid_until, validity_precision, confidence_score, "
-    "temporal_type, is_atomic, is_decontextualized, human_reviewed, "
-    "superseded_by, review_notes, created_at"
+    "id, entity_id, claim, confidence, confidence_score, evidence, evidence_uris, "
+    "derivation_type, chunk_id, reasoning_summary, is_atomic, is_decontextualized, "
+    "observed_at, valid_from, valid_until, superseded_by, "
+    "review_status, reviewer, reviewed_at, review_notes, created_at"
 )
+
+_VALID_REVIEW_STATUS = {"committed", "flagged", "staged", "rejected"}
 
 
 @router.get("", response_model=AssertionList)
 def list_assertions(
     entity_id: str | None = None,
     confidence: str | None = None,
+    review_status: str | None = None,
     superseded: bool | None = None,
     valid_at: str | None = Query(
         None, description="World-state: what was true at this date (YYYY-MM-DD)"
@@ -36,20 +45,7 @@ def list_assertions(
     ),
     limit: int = Query(50, ge=1, le=500),
 ) -> AssertionList:
-    """List assertions with temporal, entity, confidence, and superseded filters.
-
-    Args:
-        entity_id: Filter assertions by a specific entity ID.
-        confidence: Filter assertions by a specific confidence level.
-        superseded: Filter for superseded (True) or non-superseded (False) assertions.
-        valid_at: World-state: what was true at this date (YYYY-MM-DD).
-        known_at: System-state: what the DB knew at this date (YYYY-MM-DD).
-        limit: Maximum number of assertions to return.
-
-    Temporal query semantics (mutually exclusive):
-    - ``valid_at``: world-state — what was true on that date
-    - ``known_at``: system-state — what the DB had recorded by that date
-    """
+    """List assertions with entity, confidence, review_status, superseded, and temporal filters."""
     clauses: list[str] = []
     params: list[str | int] = []
 
@@ -59,6 +55,9 @@ def list_assertions(
     if confidence:
         clauses.append("confidence = ?")
         params.append(confidence)
+    if review_status:
+        clauses.append("review_status = ?")
+        params.append(review_status)
     if superseded is False:
         clauses.append("superseded_by IS NULL")
     elif superseded is True:
@@ -72,8 +71,6 @@ def list_assertions(
         clauses.append("superseded_by IS NULL")
     elif known_at:
         clauses.append("created_at <= ?")
-        params.append(known_at)
-        clauses.append("(superseded_at IS NULL OR superseded_at > ?)")
         params.append(known_at)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -110,26 +107,23 @@ def create_assertion(body: AssertionCreate) -> AssertionItem:
 
         cur = conn.execute(
             "INSERT INTO assertions ("
-            "  entity_id, claim, confidence, evidence, evidence_uris,"
+            "  entity_id, claim, confidence, confidence_score, evidence, evidence_uris,"
             "  chunk_id, derivation_type, reasoning_summary, observed_at,"
-            "  valid_from, valid_until, validity_precision, confidence_score,"
-            "  temporal_type, is_atomic, is_decontextualized"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  valid_from, valid_until, is_atomic, is_decontextualized"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.entity_id,
                 body.claim,
                 body.confidence,
+                body.confidence_score,
                 body.evidence,
                 json_encode(body.evidence_uris),
                 body.chunk_id,
-                body.derivation_type,
+                body.derivation_type or "inference",
                 body.reasoning_summary,
                 body.observed_at,
                 body.valid_from,
                 body.valid_until,
-                body.validity_precision,
-                body.confidence_score,
-                body.temporal_type,
                 body.is_atomic,
                 body.is_decontextualized,
             ),
@@ -154,3 +148,169 @@ def create_assertion(body: AssertionCreate) -> AssertionItem:
             detail="Assertion created but could not be read back",
         )
     return AssertionItem(**decode_row(rows[0], _JSON_FIELDS))
+
+
+@router.patch("/{assertion_id}", response_model=AssertionItem)
+def update_assertion(assertion_id: int, body: AssertionUpdate) -> AssertionItem:
+    """Update assertion metadata — supersession, confidence, review status."""
+    import datetime as dt
+
+    with cortex_conn() as conn:
+        existing = query(
+            conn, "SELECT id FROM assertions WHERE id = ?", (assertion_id,)
+        )
+        if not existing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Assertion not found: {assertion_id}",
+            )
+
+        if body.superseded_by is not None:
+            target = query(
+                conn, "SELECT id FROM assertions WHERE id = ?", (body.superseded_by,)
+            )
+            if not target:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Superseding assertion not found: {body.superseded_by}",
+                )
+
+        if (
+            body.review_status is not None
+            and body.review_status not in _VALID_REVIEW_STATUS
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid review_status: {body.review_status!r}. "
+                f"Must be one of {sorted(_VALID_REVIEW_STATUS)}",
+            )
+
+        if body.confidence is not None and body.confidence not in _VALID_CONFIDENCE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid confidence: {body.confidence!r}. "
+                f"Must be one of {sorted(_VALID_CONFIDENCE)}",
+            )
+
+        update_map: dict[str, object] = {
+            "superseded_by": body.superseded_by,
+            "valid_until": body.valid_until,
+            "confidence": body.confidence,
+            "confidence_score": body.confidence_score,
+            "review_status": body.review_status,
+            "reviewer": body.reviewer,
+            "reviewed_at": body.reviewed_at,
+        }
+        sets: list[str] = []
+        params: list[object] = []
+        for col, val in update_map.items():
+            if val is not None:
+                sets.append(f"{col} = ?")
+                params.append(val)
+
+        if not sets:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No updatable fields provided",
+            )
+
+        now = dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        sets.append("updated_at = ?")
+        params.append(now)
+        params.append(assertion_id)
+
+        conn.execute(
+            f"UPDATE assertions SET {', '.join(sets)} WHERE id = ?", tuple(params)
+        )
+        conn.commit()
+
+        rows = query(
+            conn,
+            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
+            (assertion_id,),
+        )
+
+    return AssertionItem(**decode_row(rows[0], _JSON_FIELDS))
+
+
+@router.post(
+    "/supersede", response_model=SupersedeResponse, status_code=status.HTTP_201_CREATED
+)
+def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
+    """Atomic supersession — close old assertion and create replacement in one transaction."""
+    import datetime as dt
+
+    if body.confidence not in _VALID_CONFIDENCE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid confidence: {body.confidence!r}. Must be one of {sorted(_VALID_CONFIDENCE)}",
+        )
+
+    now = dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    conn = cortex_conn()
+    try:
+        old_rows = query(
+            conn, "SELECT id FROM assertions WHERE id = ?", (body.old_assertion_id,)
+        )
+        if not old_rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Old assertion not found: {body.old_assertion_id}",
+            )
+
+        entities = query(
+            conn, "SELECT id FROM entities WHERE id = ?", (body.entity_id,)
+        )
+        if not entities:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Entity not found: {body.entity_id}",
+            )
+
+        cur = conn.execute(
+            "INSERT INTO assertions ("
+            "  entity_id, claim, confidence, evidence, evidence_uris,"
+            "  derivation_type, observed_at, valid_from"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                body.entity_id,
+                body.claim,
+                body.confidence,
+                body.evidence,
+                json_encode(body.evidence_uris),
+                body.derivation_type or "inference",
+                now,
+                body.valid_from,
+            ),
+        )
+        new_id = cur.lastrowid
+
+        conn.execute(
+            "UPDATE assertions SET valid_until = ?, superseded_by = ?, updated_at = ? "
+            "WHERE id = ?",
+            (now, new_id, now, body.old_assertion_id),
+        )
+        conn.commit()
+
+        old_result = query(
+            conn,
+            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
+            (body.old_assertion_id,),
+        )
+        new_result = query(
+            conn, f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?", (new_id,)
+        )
+    finally:
+        conn.close()
+
+    if not old_result or not new_result:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Supersession committed but could not read back results",
+        )
+
+    return SupersedeResponse(
+        old=AssertionItem(**decode_row(old_result[0], _JSON_FIELDS)),
+        new=AssertionItem(**decode_row(new_result[0], _JSON_FIELDS)),
+    )

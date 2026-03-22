@@ -1,0 +1,36 @@
+# agent-bus — Inter-agent message bus
+#
+# Prerequisites (host):
+#   - AGENT_BUS_TOKEN must be set (or in .env / mcp.yaml)
+#   - AGENT_BUS_DATA_DIR defaults to ~/.agent-bus
+#   - /tmp/universal-protocol/ must exist (created by Stargate or manage)
+#
+# Usage: docker compose -f docker/compose/agent-bus.yml up -d
+
+services:
+  agent-bus:
+    build:
+      context: ../..
+      dockerfile: services/agent-bus/Dockerfile
+    container_name: agent-bus
+    user: "1000:1000"
+    network_mode: none
+    volumes:
+      - ${AGENT_BUS_DATA_DIR:-~/.agent-bus}:/data
+      - /tmp/universal-protocol:/tmp/universal-protocol
+    environment:
+      - AGENT_BUS_TOKEN=${AGENT_BUS_TOKEN:?AGENT_BUS_TOKEN required}
+      - AGENT_BUS_DB_PATH=/data/messages.db
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.connect('/tmp/universal-protocol/agent-bus.sock');s.sendall(b'GET /health HTTP/1.1\\r\\nHost: l\\r\\nConnection: close\\r\\n\\r\\n');d=s.recv(4096);s.close();assert b'200 OK' in d",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped

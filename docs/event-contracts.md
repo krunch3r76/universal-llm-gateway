@@ -356,6 +356,7 @@ rag.started
           └─> rag.watch.initial.complete
       └─> rag.watch.reindex.complete*        (* zero or more)
           └─> rag.file.skipped               (* if unchanged or duplicate PDF)
+          └─> rag.chunk.noise.tagged*        (* zero or more; per-chunk when heuristic tags noise)
           └─> rag.extraction.circuit.skipped  (* if circuit breaker is OPEN — batch skipped entirely)
           └─> rag.extraction.batch.started   (* if extraction enabled and content changed)
               └─> rag.extraction.completed | rag.extraction.failed  (* N per chunk)
@@ -1265,10 +1266,12 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | indexing migrated an article row to a new source path (content-hash move detection) |
 | `rag.source.deleted` | `source`, `chunks_deleted`, `article_deleted` | source-level delete completed across vector index and article metadata |
 | `rag.directory.sources.deleted` | `path`, `sources_deleted`, `chunks_deleted`, `articles_deleted` | directory-level delete completed across vector index and article metadata |
-| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `bibliography_chunks` (int — count of chunks tagged `is_bibliography` for this file) |
+| `rag.chunk.noise.tagged` | `chunk_id`, `source`, `noise_reason` | per-chunk: heuristic tagged chunk as noise at index time. `noise_reason` ∈ {`citation_block`, `dense_table`, `garbled_extraction`, `boilerplate`, `legacy_bibliography`, `unspecified_noise`} |
+| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `noise_chunks` (int — count of chunks tagged `is_noise` / legacy `is_bibliography` for this file) |
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty) |
 | `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`} |
-| `rag.file.indexing.failed` | `file`, `error` | unhandled error aborted indexing for this file |
+| `rag.file.indexing.failed` | `file`, `error`, `model`? | terminal indexing failure from unhandled exception. ¬emitted for retriable extraction failures (see `rag.file.retry.deferred`). |
+| `rag.file.retry.deferred` | `file`, `reason` | extraction incomplete but file NOT marked indexed — watcher will re-attempt on next sweep. reasons: `extraction_incomplete`, `infrastructure_unavailable`. |
 | `rag.file.deletion.failed` | `file`, `error` | watcher-triggered delete cleanup failed; indexed rows may still exist |
 | `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
 | `rag.property.index.unavailable` | `file` | indexing proceeded without property index availability |

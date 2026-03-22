@@ -34,10 +34,19 @@ _MAX_REQUEST_BYTES = (
     65_536  # Max allowed size for an incoming JSON-RPC request in bytes
 )
 _VALID_SERVICES = frozenset(
-    {"gateway", "stargate", "rag", "cloud_proxy", "mcp", "event_service"}
+    {
+        "gateway",
+        "stargate",
+        "rag",
+        "cloud_proxy",
+        "mcp",
+        "event_service",
+        "cortex_api",
+        "agent_bus",
+    }
 )  # All recognized service names for API operations
 # Services that support the 'rebuild' operation (container services with local Dockerfiles).
-_REBUILD_SERVICES = frozenset({"gateway", "mcp"})
+_REBUILD_SERVICES = frozenset({"gateway", "mcp", "cortex_api", "agent_bus"})
 
 
 class ManageAPIServer:
@@ -301,6 +310,10 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
         return f"{last}\n{start_msg}"
     if service == "mcp":
         return await ctl.rebuild_mcp()
+    if service == "cortex_api":
+        return await ctl.rebuild_cortex_api()
+    if service == "agent_bus":
+        return await ctl.rebuild_agent_bus()
     raise ValueError(f"rebuild not supported for '{service}'")
 
 

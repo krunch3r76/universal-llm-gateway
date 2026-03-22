@@ -34,6 +34,11 @@ select = [
 ]
 ignore = ["E501"]  # line-too-long
 
+[tool.ruff.lint.per-file-ignores]
+# Verbatim copy from agent-bus repo — exception names omit *Error suffix by design.
+"services/agent-bus/src/db/turns.py" = ["N818"]
+"services/agent-bus/src/db/threads.py" = ["N818"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

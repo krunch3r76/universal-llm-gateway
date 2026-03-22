@@ -11,8 +11,8 @@ logger = logging.getLogger("cortex-api.chunks")
 router = APIRouter(prefix="/chunks", tags=["chunks"])
 
 _COLS = (
-    "id, content, source_uri, source_hash, source_date, chunk_index, "
-    "offset_start, offset_end, observer, model_version, created_at"
+    "id, content, source_uri, source_date, observer, chunk_index, "
+    "extraction_run, token_count, created_at"
 )
 
 
@@ -70,19 +70,17 @@ def create_chunk(body: ChunkCreate) -> ChunkItem:
     with cortex_conn() as conn:
         cur = conn.execute(
             "INSERT INTO chunks "
-            "(content, source_uri, source_hash, source_date, chunk_index, "
-            " offset_start, offset_end, observer, model_version) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(content, source_uri, source_date, observer, chunk_index, "
+            " extraction_run, token_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 body.content,
                 body.source_uri,
-                body.source_hash,
                 body.source_date,
-                body.chunk_index,
-                body.offset_start,
-                body.offset_end,
                 body.observer,
-                body.model_version,
+                body.chunk_index,
+                body.extraction_run,
+                body.token_count,
             ),
         )
         conn.commit()

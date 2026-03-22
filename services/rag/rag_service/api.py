@@ -12,6 +12,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from services.rag.admin_routes import register_admin_routes
+from services.rag.embeddings import get_model_id as get_embed_model_id
 from services.rag.events.query import rag_scopes_listed
 from services.rag.models import (
     ChunkByIndexItem,
@@ -37,6 +38,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get("/health")
+def health() -> dict[str, str | int | None]:
+    """Subsystem health summary for external liveness/readiness probes."""
+    collection = state._collection
+    return {
+        "status": "ok",
+        "collection": state.COLLECTION_NAME if collection is not None else None,
+        "collection_count": collection.count() if collection is not None else 0,
+        "property_index": "ready" if state._property_index is not None else "unavailable",
+        "embedding_model": get_embed_model_id() or "unconfigured",
+        "watcher": "running" if state._watcher_manager is not None else "inactive",
+    }
 
 
 @router.post("/search", response_model=SearchResponse)

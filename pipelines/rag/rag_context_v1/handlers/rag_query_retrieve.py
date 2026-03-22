@@ -57,7 +57,7 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 from transport_utils.rag_client import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
 
-from services.rag.chunk_filters import chunk_is_junk
+from services.rag.chunk_filters import chunk_is_noise, chunk_metadata_is_noise
 from services.rag.metadata_boost import apply_metadata_boost
 
 from .context_formatting import ChunkData, format_context
@@ -79,6 +79,33 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _noise_filter_disable_effective(effective: dict[str, Any]) -> bool:
+    v = effective.get("noise_filter_disable")
+    if v is not None:
+        return bool(v)
+    return bool(effective.get("bibliography_filter_disable", False))
+
+
+def _noise_filter_threshold_effective(
+    effective: dict[str, Any], *, step_id: str
+) -> float:
+    raw = effective.get("noise_filter_threshold")
+    key = "noise_filter_threshold"
+    if raw is None:
+        raw = effective.get("bibliography_filter_threshold", 0.35)
+        key = "bibliography_filter_threshold"
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Step '%s': %s=%r invalid, using 0.35",
+            step_id,
+            key,
+            raw,
+        )
+        return 0.35
+
+
 class RagMultiRetrieveHandler(BaseHandler):
     """
     Multi-query RAG retrieval with RRF merge.
@@ -93,7 +120,8 @@ class RagMultiRetrieveHandler(BaseHandler):
     Options (via pipeline_options or YAML defaults):
         rag_top_k_per_query, rag_max_chunks, rag_rrf_k, rag_recency_weight,
         scope_confidence_threshold, scope_override, rag_source_prefixes,
-        bibliography_filter_threshold, bibliography_filter_disable,
+        noise_filter_threshold, noise_filter_disable (preferred);
+        bibliography_filter_threshold, bibliography_filter_disable (aliases — same behavior),
         consumer_model (optional — triggers profile lookup from retrieval-profiles.yaml;
         can be None if no matching profile is found).
 
@@ -843,29 +871,24 @@ class RagMultiRetrieveHandler(BaseHandler):
                 capped.append(chunk)
             merged = capped
 
-        # --- Post-RRF junk filter ---
-        if effective.get("bibliography_filter_disable", False):
+        # --- Post-RRF junk / noise filter (metadata + line-shape heuristic) ---
+        if _noise_filter_disable_effective(effective):
             junk_threshold = 0.0
         else:
-            _raw_threshold = effective.get("bibliography_filter_threshold", 0.35)
-            try:
-                junk_threshold = float(_raw_threshold)
-            except (TypeError, ValueError):
-                logger.warning(
-                    "Step '%s': bibliography_filter_threshold=%r invalid, using 0.35",
-                    step.id,
-                    _raw_threshold,
-                )
-                junk_threshold = 0.35
+            junk_threshold = _noise_filter_threshold_effective(
+                effective, step_id=step.id
+            )
         pre_junk = len(merged)
         clean: list[_RetrievedChunk] = []
         if junk_threshold <= 0:
             clean = merged
         else:
             for chunk in merged:
-                if chunk.metadata.get("is_bibliography") or chunk_is_junk(
-                    chunk.content, threshold=junk_threshold
-                ):
+                md = chunk.metadata
+                meta_noise = (
+                    isinstance(md, dict) and chunk_metadata_is_noise(md)
+                ) or chunk_is_noise(chunk.content, threshold=junk_threshold)
+                if meta_noise:
                     merged_scores.pop(chunk.content_hash, None)
                 else:
                     clean.append(chunk)

@@ -11,6 +11,7 @@ import asyncio
 import logging
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import chromadb
 import httpx
@@ -60,7 +61,6 @@ from services.rag.vocabulary import configured_scopes_map, run_scope_freshness_r
 from services.rag.watcher_manager import WatcherManager
 
 from . import indexing, state
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from services.rag.models import DeleteResult, IndexResult
@@ -69,7 +69,7 @@ logger = logging.getLogger(__name__)
 
 _RECONCILE_FILE_TIMEOUT_S = 300.0
 
-_POST_INDEX_STEPS = ("corpus_hints", "vocabulary", "bibliography")
+_POST_INDEX_STEPS = ("corpus_hints", "vocabulary", "noise")
 
 
 def _maybe_clear_post_index_stale_after_repair(config: RagConfig) -> None:

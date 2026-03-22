@@ -1,5 +1,5 @@
 models:
   review_model:
-    model: google/gemini-2.5-flash
+    model: openai/gpt-5.3-codex
   validate_model:
-    model: google/gemini-2.5-flash
+    model: openai/gpt-5.3-codex

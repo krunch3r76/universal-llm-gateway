@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
+from services.rag.chunk_filters import chunk_metadata_is_noise
 from services.rag.embeddings import EmbeddingTransientError, embed_query
 from services.rag.events.query import (
     rag_scope_rejected,
@@ -117,7 +118,7 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
                 for rid, doc, meta, dist in zip(
                     result_ids, chunks, metadatas, distances, strict=True
                 )
-                if not meta.get("is_bibliography")
+                if not isinstance(meta, dict) or not chunk_metadata_is_noise(meta)
             ]
             if clean:
                 result_ids = [t[0] for t in clean]

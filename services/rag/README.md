@@ -283,11 +283,11 @@ Use `scripts/repair-rag-article-lifecycle.py` (default dry-run) to audit
 
 ## Post-Index Enrichment
 
-Indexing handles chunk extraction, embedding, knowledge extraction, and per-chunk `is_bibliography` tagging automatically. After a large corpus refresh, three manual enrichment steps rebuild derived artifacts:
+Indexing handles chunk extraction, embedding, knowledge extraction, and per-chunk `is_noise` / `noise_reason` tagging (heuristic; `normalize_noise_metadata` aligns legacy `is_bibliography` and fills missing `noise_reason` on upsert). Pipeline fixtures and snapshots may keep `is_bibliography: false` only — readers use `chunk_metadata_is_noise` which accepts both keys. After a large corpus refresh, three manual enrichment steps rebuild derived artifacts:
 
 1. **Corpus hints** (`python -m services.rag.corpus_hints`) — aggregates terms from the property index per scope into the `corpus_hints` table in `rag_metadata.db`.
 2. **Scope vocabulary** (`scripts/rag/classify_vocabulary.py`) — LLM-classifies corpus hint terms into register categories and writes to the `scope_vocabulary` table in `rag_metadata.db`. Fail-closed: aborts without writing if any scope fails classification.
-3. **Bibliography classification** (`scripts/rag/classify_bibliography.py`) — LLM-classifies chunks and writes boolean metadata keys (`is_bibliography`, `is_non_intelligible`) into ChromaDB. Resumable by metadata key.
+3. **Noise classification** (`scripts/rag/classify_noise.py`) — LLM-classifies chunks: `--target bibliography` writes `is_noise`; `non_intelligible` writes `is_non_intelligible`; `--target describe` writes `noise_description` for review. Resumable by metadata key.
 
 Each step stamps a watermark in `rag_metadata.db`. When `post_index_enforcement: strict` (default), the service returns 503 on search requests until all watermarks are current relative to the last reindex. In `warn` mode, an ERROR is logged at startup but search continues.
 
@@ -306,7 +306,7 @@ Full procedure: [Post-Index Refresh Runbook](../../tasks/runbooks/rag-post-index
 | `scripts/backfill_article_metadata.py` | Seed `articles` from YAML with subdirectory→scope mapping (Stargate; idempotent) |
 | `scripts/populate-articles.py` | Seed `articles` from YAML with scope=`all` (`--dry-run`, direct RAG URL supported) |
 | `scripts/rag/classify_vocabulary.py` | LLM-classify scope vocabulary registers from corpus hints |
-| `scripts/rag/classify_bibliography.py` | LLM-classify chunk-level bibliography/noise metadata |
+| `scripts/rag/classify_noise.py` | LLM-classify chunk noise metadata (`is_noise`, `is_non_intelligible`, `noise_description`) |
 | `scripts/rag/ingest-arxiv` | Ingest arXiv papers into the RAG corpus |
 
 ## Events

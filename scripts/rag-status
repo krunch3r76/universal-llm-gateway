@@ -925,7 +925,7 @@ def _render_watch_event(
 
         case "rag.file.indexed":
             idx = p.get("indexed", 0)
-            bib = p.get("bibliography_chunks", 0)
+            noise_n = p.get("noise_chunks", p.get("bibliography_chunks", 0))
             path = p.get("file", "")
             extract_secs = extract_secs_by_file.get(path) if path else None
             proc_secs = _as_float(p.get("processing_seconds"))
@@ -966,12 +966,12 @@ def _render_watch_event(
                 breakdown += f"; infer→index {_fmt_duration(infer_to_index_secs)}"
             if path:
                 batch_start_by_file.pop(path, None)
-            bib_note = f"  ({bib} bib)" if bib else ""
+            noise_note = f"  ({noise_n} noise)" if noise_n else ""
             emit(
                 f"{ts}  [✓ DONE  ]  "
                 f"{_basename(path)}  "
                 f"{idx} chunks stored  "
-                f"{d}{breakdown}{bib_note}"
+                f"{d}{breakdown}{noise_note}"
             )
             new_done = batch_done + (1 if batch_active else 0)
             new_effective = (

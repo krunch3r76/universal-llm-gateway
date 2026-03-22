@@ -31,7 +31,7 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
         epilog=textwrap.dedent("""\
             Roles:
               architect    Evaluate architecture, trade-offs, improvements
-              reviewer     Code review via pipeline (structured findings, validated)
+              reviewer     Code review via code-review pipeline (RAG flags ignored)
               planner      Implementation plan: files, steps, risks
               researcher   Research-grounded Q&A (default)
               modularizer  Split oversized files respecting SLOC and SRP
@@ -40,7 +40,7 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
             Examples:
               consult "How should we handle reconnection?"
               consult -r architect "Event bus: pub/sub vs direct?" -f docs/event-contracts.md
-              consult -r reviewer -f capacity/ledger.py  # structured pipeline (default for reviewer)
+              consult -r reviewer -f capacity/ledger.py  # code-review pipeline; no RAG retrieval
               consult -r planner "Add per-model timeouts" -o plan.md
               consult -r planner -Q /tmp/question.txt -o plan.md
               consult --chain -r planner --models local cloud "complex question"

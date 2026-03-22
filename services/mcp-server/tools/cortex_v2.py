@@ -14,8 +14,8 @@ from urllib.parse import quote, urlencode
 from mcp_events import record
 
 from ._boot_helpers import render_boot_narrative, safe_list
+from ._cortex_relay import _cx
 from ._file_helpers import read_files_batch
-from .cortex import _cx
 from .local_api import _relay
 
 if TYPE_CHECKING:

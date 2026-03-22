@@ -18,8 +18,9 @@ from src.routes import (
     chunks,
     deadlines,
     entities,
+    relationships,
     session_journals,
-    staging,
+    stats,
     surface_forms,
     todos,
 )
@@ -48,9 +49,10 @@ app.include_router(entities.router)
 app.include_router(assertions.router)
 app.include_router(chunks.router)
 app.include_router(surface_forms.router)
+app.include_router(relationships.router)
 app.include_router(deadlines.router)
 app.include_router(session_journals.router)
-app.include_router(staging.router)
+app.include_router(stats.router)
 
 
 @app.on_event("startup")

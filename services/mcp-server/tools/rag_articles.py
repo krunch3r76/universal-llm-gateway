@@ -1,4 +1,4 @@
-"""RAG article metadata tools — upsert citation metadata for indexed documents.
+"""RAG article metadata tools for listing and curating indexed documents.
 
 Article rows in rag_metadata.db are joined to search results at query time
 via the source_hash (plain SHA-256 of file bytes). This tool allows agents
@@ -275,6 +275,74 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
             article,
             duration,
         )
+        return result if isinstance(result, dict) else {"error": "Invalid response"}
+
+    @mcp.tool()
+    def rag_list_articles(
+        scope: str | None = None,
+        include_abstract: bool = False,
+    ) -> dict[str, Any]:
+        """List article metadata rows from the RAG corpus.
+
+        Use this when you need corpus inventory or citation-level coverage,
+        such as checking what papers already exist before deciding whether to
+        ingest more. For semantic retrieval over chunk text, use `rag_search`
+        or `rag_answer` instead of article listing.
+
+        Args:
+            scope: Comma-separated scope names to filter by. Omit to list all
+                scopes. Example: "rag_systems,small_llm_prompting"
+            include_abstract: Include the abstract field for each row. Leave
+                false for faster, more compact planning-oriented responses.
+
+        Returns:
+            {"articles": [...], "count": N, "scopes_queried": [...]}
+            On error: {"error": "<message>"}
+        """
+        t0 = monotonic_now()
+        record(
+            "mcp.rag.articles.list.called",
+            include_abstract=include_abstract,
+            has_scope=bool(scope),
+        )
+
+        params: dict[str, str] = {
+            "include_abstract": "true" if include_abstract else "false",
+            **({"scope": scope} if scope else {}),
+        }
+
+        url = f"{_STARGATE_URL}/api/v1/rag/articles"
+        try:
+            with httpx.Client(timeout=20.0) as client:
+                resp = client.get(url, params=params)
+                resp.raise_for_status()
+                result = resp.json()
+        except httpx.ConnectError as exc:
+            logger.warning("RAG article listing connection failed: %s", exc)
+            record("mcp.rag.articles.list.failed", error="connect_error")
+            return {
+                "error": "RAG service not reachable. Ensure Stargate and RAG are running."
+            }
+        except httpx.HTTPStatusError as exc:
+            logger.warning("RAG article listing HTTP error: %s", exc)
+            record("mcp.rag.articles.list.failed", error=f"{exc.response.status_code}")
+            return {
+                "error": f"Article listing failed: {exc.response.status_code} "
+                f"{exc.response.text}"
+            }
+        except httpx.RequestError as exc:
+            logger.warning("RAG article listing request error: %s", exc)
+            record("mcp.rag.articles.list.failed", error=str(exc))
+            return {"error": f"Article listing request failed: {exc}"}
+
+        duration = monotonic_now() - t0
+        count = result.get("count", 0) if isinstance(result, dict) else 0
+        record(
+            "mcp.rag.articles.list.completed",
+            duration_s=round(duration, 3),
+            count=count,
+        )
+        logger.info("rag_list_articles: count=%d in %.1fs", count, duration)
         return result if isinstance(result, dict) else {"error": "Invalid response"}
 
     @mcp.tool()

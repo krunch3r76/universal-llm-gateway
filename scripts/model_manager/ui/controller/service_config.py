@@ -375,9 +375,53 @@ def load_mcp_config() -> McpConfig | None:
     )
 
 
+_CORTEX_DB_PATH = Path.home() / ".cortex" / "cortex.db"
+_TODOS_DB_PATH = Path.home() / ".cortex" / "todos.db"
+_AGENT_BUS_DATA_DIR = Path.home() / ".agent-bus"
+_AGENT_BUS_DB_PATH = _AGENT_BUS_DATA_DIR / "messages.db"
+_RAG_CONFIG_PATH = Path.home() / ".gateway" / "rag.yaml"
+_CLOUD_PROXY_CONFIG_PATH = GATEWAY_DIR / "cloud-proxy.yaml"
+
+
 def is_mcp_configured(workspace_root: Path) -> bool:  # noqa: ARG001
-    """Return True iff ~/.gateway/mcp.yaml exists with a non-empty auth_token."""
+    """Return True iff ~/.gateway/mcp.yaml exists with a non-empty auth token value."""
     return load_mcp_config() is not None
+
+
+def is_cortex_configured() -> bool:
+    """Return True when Cortex storage exists, signaling explicit local Cortex setup."""
+    return (
+        _CORTEX_DB_PATH.parent.exists()
+        or _CORTEX_DB_PATH.exists()
+        or _TODOS_DB_PATH.exists()
+    )
+
+
+def is_agent_bus_configured() -> bool:
+    """Return True when Agent Bus data directory or sqlite DB exists locally."""
+    return _AGENT_BUS_DATA_DIR.exists() or _AGENT_BUS_DB_PATH.exists()
+
+
+def is_rag_configured() -> bool:
+    """Return True when ~/.gateway/rag.yaml exists, treating RAG as opt-in."""
+    return _RAG_CONFIG_PATH.exists()
+
+
+def is_cloud_proxy_configured() -> bool:
+    """Return True only when cloud proxy config exists and has at least one provider."""
+    if not _CLOUD_PROXY_CONFIG_PATH.exists():
+        return False
+    try:
+        from services.universal_cloud_proxy.config import load_config
+
+        return len(load_config(_CLOUD_PROXY_CONFIG_PATH).providers) > 0
+    except Exception:
+        logger.warning(
+            "is_cloud_proxy_configured: failed to load %s",
+            _CLOUD_PROXY_CONFIG_PATH,
+            exc_info=True,
+        )
+        return False
 
 
 _BROWSER_OVERRIDE_COMPOSE = "docker/compose/mcp-server-browser.override.yml"

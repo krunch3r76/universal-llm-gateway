@@ -119,7 +119,7 @@ def _run_reviewer_pipeline(
         artifact.record_partial(
             step="batch",
             model_id=batch.get("model_id", "code-review"),
-            content=str(batch.get("result", "")),
+            content=str(batch.get("result", batch.get("error", ""))),
             execution_id=batch.get("execution_id"),
         )
     output = format_pipeline_review_output(

@@ -20,12 +20,12 @@ import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from universal_event_bus.actor.sequential import SequentialExecutor
 
 from services.rag.article_registry import ArticleEntry
 from services.rag.fts_index import FtsIndex
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -477,7 +477,16 @@ class PropertyIndex:
         extraction_schema_version: int,
         extraction_model: str,
     ) -> None:
-        """Record the latest successfully evaluated source state for fast unchanged checks."""
+        """Record committed source state for stat-first unchanged skip checks.
+
+        Invariant: callers MUST only invoke this after the source's chunks have
+        been committed to ChromaDB (or verified to already exist during recovery).
+        Writing this row without committed chunks creates a permanently orphaned
+        file — the stat-first skip (get_indexed_source + has_retriable_failures)
+        will skip re-indexing on every subsequent sweep.
+
+        ¬call on extraction failure paths where ChromaDB upsert was not reached.
+        """
 
         async def _write() -> None:
             conn = self._ensure_conn()
