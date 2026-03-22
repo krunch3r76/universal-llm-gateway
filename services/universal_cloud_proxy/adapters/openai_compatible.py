@@ -4,14 +4,19 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+from universal_logging import get_logger
 
 from ..config import ProviderConfig
 
 _APP_TITLE = "Stargate"
 _APP_URL = "https://github.com/krunch3r76/universal-llm-gateway"
 
+logger = get_logger(__name__)
+
 
 class OpenAICompatibleAdapter:
+    """Forward OpenAI-compatible provider requests while preserving model-ID mapping and upstream error semantics."""
+
     def __init__(self, *, config: ProviderConfig, client: httpx.AsyncClient) -> None:
         self._config = config
         self._client = client
@@ -64,6 +69,21 @@ class OpenAICompatibleAdapter:
             "X-Title": _APP_TITLE,
         }
 
+    async def _raise_provider_http_error(self, response: httpx.Response) -> None:
+        """Raise HTTPStatusError with provider response body preserved for diagnostics."""
+        error_body = await response.aread()
+        error_preview = error_body.decode(errors="replace")[:500]
+        logger.error(
+            "OpenAI-compatible provider API %d: %s",
+            response.status_code,
+            error_preview,
+        )
+        raise httpx.HTTPStatusError(
+            f"Provider returned {response.status_code}: {error_preview}",
+            request=response.request,
+            response=response,
+        )
+
     async def fetch_catalog(self) -> list[dict[str, Any]]:
         response = await self._client.get(
             f"{self._config.base_url}/models",
@@ -75,6 +95,7 @@ class OpenAICompatibleAdapter:
         return data if isinstance(data, list) else []
 
     async def forward_chat(self, request_body: dict[str, Any]) -> dict[str, Any]:
+        """Forward a non-streaming chat request and preserve provider error payloads on HTTP failure."""
         body = {
             **request_body,
             "model": self.to_upstream_model_id(str(request_body.get("model", ""))),
@@ -84,12 +105,14 @@ class OpenAICompatibleAdapter:
             json=body,
             headers=self._headers(),
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            await self._raise_provider_http_error(response)
         return response.json()
 
     async def forward_chat_stream(
         self, request_body: dict[str, Any]
     ) -> AsyncIterator[bytes]:
+        """Forward a streaming chat request and preserve provider error payloads before iterating the stream."""
         body = {
             **request_body,
             "stream": True,
@@ -101,13 +124,15 @@ class OpenAICompatibleAdapter:
             json=body,
             headers=self._headers(),
         ) as response:
-            response.raise_for_status()
+            if response.status_code >= 400:
+                await self._raise_provider_http_error(response)
             async for line in response.aiter_lines():
                 stripped = line.strip()
                 if stripped:
                     yield (stripped + "\n").encode()
 
     async def forward_embeddings(self, request_body: dict[str, Any]) -> dict[str, Any]:
+        """Forward an embeddings request and preserve provider error payloads on upstream HTTP failure."""
         body = {
             **request_body,
             "model": self.to_upstream_model_id(str(request_body.get("model", ""))),
@@ -117,5 +142,6 @@ class OpenAICompatibleAdapter:
             json=body,
             headers=self._headers(),
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            await self._raise_provider_http_error(response)
         return response.json()

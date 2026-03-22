@@ -32,6 +32,7 @@ ALLOWED_GENERATION_PARAMS: set[str] = {
     "top_k",
     "stop",
     "response_format",
+    "tool_choice",
     "seed",
     "stream",
     "presence_penalty",

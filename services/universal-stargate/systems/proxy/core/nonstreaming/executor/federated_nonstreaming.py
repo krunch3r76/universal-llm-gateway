@@ -22,10 +22,8 @@ from ..response_helpers import (
     extract_remote_headers,
     prepare_federation_headers,
 )
-from ..upstream_error import (
-    extract_upstream_error_payload,
-    map_upstream_status_to_error_code,
-)
+from ..upstream_error import extract_upstream_error_payload
+from .federated_http_error import raise_federated_http_error
 
 if TYPE_CHECKING:
     from systems.federation.common.config.schema import EndpointCategory
@@ -234,7 +232,8 @@ async def _execute_federated_nonstreaming(
     → snapshot → lifecycle events.
 
     Error semantics:
-        - 4xx/5xx from remote → 502 Bad Gateway
+        - Cloud upstream 4xx → preserved as client-visible 4xx (request error)
+        - Local/federated upstream HTTP errors and cloud upstream 5xx → 502 Bad Gateway
         - Timeout → 504 Gateway Timeout
 
     Invariant:
@@ -335,54 +334,12 @@ async def _execute_federated_nonstreaming(
         )
 
     except httpx.HTTPStatusError as e:
-        upstream_status_code = int(e.response.status_code)
-        upstream_payload = extract_upstream_error_payload(e.response)
-        error_code, retryable = map_upstream_status_to_error_code(
-            upstream_status_code, upstream_payload
-        )
-
-        logger.error(
-            "Federated request HTTP error: %d for %s",
-            upstream_status_code,
-            fed_gateway.gateway_id,
-            extra={
-                "request_id": context.request_id,
-                "gateway_id": fed_gateway.gateway_id,
-                "upstream_error": upstream_payload,
-            },
-        )
-
-        await write_response_snapshot(
-            upstream_payload, context.request_id, stage="response-from-gateway"
-        )
-        await emit_execution_failed(
+        await raise_federated_http_error(
+            error=e,
+            context=context,
+            fed_gateway=fed_gateway,
             event_bus=event_bus,
-            url=fed_gateway.remote_stargate_url,
-            model_id=context.selected_model.routing_key,
-            request_id=context.request_id,
-            gateway_id=fed_gateway.gateway_id,
-            error=f"Upstream {upstream_status_code}",
         )
-
-        detail = error_envelope(
-            code=error_code,
-            message=(
-                f"Remote gateway error: {upstream_status_code} "
-                f"(gateway_id={fed_gateway.gateway_id})"
-            ),
-            source="master",
-            retryable=retryable,
-            data={
-                "status_code": upstream_status_code,
-                "gateway_id": fed_gateway.gateway_id,
-                "upstream_error": upstream_payload,
-            },
-        )
-
-        await write_response_snapshot(
-            detail, context.request_id, stage="response-to-client"
-        )
-        raise HTTPException(status_code=502, detail=detail)
 
     except httpx.TimeoutException:
         logger.error(f"Federated request timeout for {fed_gateway.gateway_id}")

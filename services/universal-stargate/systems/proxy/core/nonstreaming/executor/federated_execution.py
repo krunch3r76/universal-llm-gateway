@@ -245,12 +245,17 @@ async def execute_federated_request(
         return response
 
     except HTTPException as e:
-        if federation_circuit_breaker and e.status_code >= 500:
-            await federation_circuit_breaker.record_failure(
-                fed_gateway.gateway_id,
-                str(context.selected_model),
-                error=str(e.detail),
-            )
+        if federation_circuit_breaker:
+            # Cloud 4xx errors are preserved with their original status code
+            # by raise_federated_http_error(), so they fall below this >= 500
+            # threshold and don't trip the breaker. Cloud 5xx and all
+            # local/federated errors are wrapped as 502, correctly tripping.
+            if e.status_code >= 500:
+                await federation_circuit_breaker.record_failure(
+                    fed_gateway.gateway_id,
+                    str(context.selected_model),
+                    error=str(e.detail),
+                )
         raise
     except Exception as e:
         if federation_circuit_breaker:

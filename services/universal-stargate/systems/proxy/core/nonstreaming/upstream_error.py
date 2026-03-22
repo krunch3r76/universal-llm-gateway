@@ -94,3 +94,35 @@ def map_upstream_status_to_error_code(
     if 400 <= upstream_status_code < 500:
         return ErrorCode.INVALID_REQUEST, False
     return ErrorCode.UNEXPECTED_ERROR, True
+
+
+def determine_upstream_error_semantics(
+    upstream_status_code: int,
+    upstream_payload: dict[str, Any],
+    *,
+    is_cloud: bool,
+) -> tuple[ErrorCode, bool, int]:
+    """Determine ErrorCode, retryability, and proxy HTTP status for an upstream failure.
+
+    Cloud provider 4xx responses represent client/request errors and are preserved
+    as client-visible 4xx. All other upstream HTTP failures (cloud 5xx, local/federated
+    any) are surfaced as 502 Bad Gateway to signify gateway-level instability.
+
+    Args:
+        upstream_status_code: HTTP status from the upstream gateway/provider.
+        upstream_payload: Extracted error payload (from extract_upstream_error_payload).
+        is_cloud: True if the federated gateway proxies to a cloud API provider.
+
+    Returns:
+        (error_code, retryable, response_http_status) where response_http_status
+        is the HTTP status code to be used in the proxy's response.
+    """
+    error_code, retryable = map_upstream_status_to_error_code(
+        upstream_status_code, upstream_payload
+    )
+    response_http_status = (
+        upstream_status_code
+        if is_cloud and 400 <= upstream_status_code < 500
+        else 502
+    )
+    return error_code, retryable, response_http_status

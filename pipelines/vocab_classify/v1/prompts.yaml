@@ -24,13 +24,7 @@ prompts:
 
       Rules:
       1. A term may appear in only one register (choose the best fit).
-      2. DROP noise — these are never useful vocabulary:
-         - Single letters or bare symbols (a, r, x, θ)
-         - Document structure references (theorem 4.1, lemma a.1, figure 4, table 2)
-         - Author citation fragments (et al., guijarro-ordonez et al. (2021))
-         - Mathematical variable names without semantic meaning (z[q], θ[q])
-         - Overly generic words that lack domain-specific meaning in the given scope
-           (e.g., bare "model", "system", "data", "method", "approach")
+      2. Noise has already been filtered. Classify every term provided.
       3. Use the scope description and retrieval chunks to guide classification.
          The same term can belong to different registers in different domains.
       4. Boundary cases: when a term straddles registers (e.g., BERT is both an

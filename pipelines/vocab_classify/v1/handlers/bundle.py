@@ -1,19 +1,112 @@
 """Merge per-scope rows for vocab_classify pipeline (fan-in).
 
 Zips load_hints scope rows with retrieve_samples outputs into a consolidated
-array of scope bundles for per-scope classification.
+array of scope bundles for per-scope classification. Applies deterministic
+noise filtering to terms before they reach the LLM.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, ClassVar, TYPE_CHECKING
+import re
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from systems.pipeline.core.execution.map_reduce import MapOutputCollection
 from systems.pipeline.core.handlers.protocol import PipelineContext, StepOutput
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from systems.pipeline.core.schemas import StepConfig
+
+logger = get_logger(__name__)
+
+# ── Deterministic noise filters ──────────────────────────────────────────────
+# These patterns match terms that are never useful vocabulary, regardless of
+# scope or domain. Filtering here avoids wasting LLM tokens on obvious noise.
+
+# Single letters, bare symbols, Greek letters
+_SINGLE_CHAR_RE = re.compile(r"^[a-zA-Zα-ωΑ-Ω0-9θφψ∅∑∏∂∇]{1,2}$")
+
+# Document structure: "theorem 4.1", "lemma a.1", "figure 4", "table 2",
+# "section 3.2", "appendix b", "corollary 2.3", "definition 1"
+_DOC_STRUCTURE_RE = re.compile(
+    r"^(?:theorem|lemma|corollary|definition|proposition|proof|remark|"
+    r"figure|fig\.|table|tbl\.|section|appendix|chapter|example)\s+"
+    r"[a-zA-Z0-9.]+$",
+    re.IGNORECASE,
+)
+
+# Author citation fragments: "et al.", "smith et al. (2021)", "guijarro-ordonez et al. (2021)"
+_CITATION_RE = re.compile(
+    r"(?:et\s+al\.?)|"
+    r"(?:^[a-z][\w-]*(?:\s+(?:et\s+al\.?|\(\d{4}\)))+$)",
+    re.IGNORECASE,
+)
+
+# Math variables: "z[q]", "θ[q]", "x_i", "w*", bare subscripted/bracketed symbols
+_MATH_VAR_RE = re.compile(r"^[a-zA-Zα-ωΑ-Ωθφψ][_\[\(][a-zA-Z0-9,*]+[\]\)]?$")
+
+# Overly generic words with no domain signal
+_GENERIC_TERMS: frozenset[str] = frozenset(
+    {
+        "model",
+        "models",
+        "system",
+        "systems",
+        "data",
+        "method",
+        "methods",
+        "results",
+        "approach",
+        "approaches",
+        "performance",
+        "analysis",
+        "evaluation",
+        "framework",
+        "implementation",
+        "algorithm",
+        "algorithms",
+        "process",
+        "technique",
+        "techniques",
+        "solution",
+        "solutions",
+        "strategy",
+        "problem",
+        "application",
+        "applications",
+    }
+)
+
+
+def _is_noise(term: str) -> bool:
+    """Return True if a term matches any deterministic noise pattern."""
+    t = term.strip()
+    if not t:
+        return True
+    if _SINGLE_CHAR_RE.match(t):
+        return True
+    if _DOC_STRUCTURE_RE.match(t):
+        return True
+    if _CITATION_RE.search(t):
+        return True
+    if _MATH_VAR_RE.match(t):
+        return True
+    if t.lower() in _GENERIC_TERMS:
+        return True
+    return False
+
+
+def filter_noise_terms(terms: list[str]) -> list[str]:
+    """Remove deterministic noise from a term list."""
+    clean = [t for t in terms if not _is_noise(t)]
+    dropped = len(terms) - len(clean)
+    if dropped:
+        logger.debug("Filtered %d noise term(s) from %d", dropped, len(terms))
+    return clean
+
+
+# ── Handler ──────────────────────────────────────────────────────────────────
 
 
 class VocabClassifyBundleV1Handler:
@@ -39,13 +132,16 @@ class VocabClassifyBundleV1Handler:
         s_out = samples.all_outputs()
         n = len(rows)
         if len(s_out) != n:
-            raise ValueError(
-                f"bundle: length mismatch hints={n} samples={len(s_out)}"
-            )
+            raise ValueError(f"bundle: length mismatch hints={n} samples={len(s_out)}")
 
         merged: list[dict[str, Any]] = []
         for i in range(n):
             base = dict(rows[i])
+            raw_terms = base.get("terms") or []
+            if isinstance(raw_terms, list):
+                base["terms"] = filter_noise_terms(
+                    [str(t).strip() for t in raw_terms if str(t).strip()]
+                )
             base["sample_retrieval"] = s_out[i].json or {}
             merged.append(base)
 

@@ -258,6 +258,24 @@ federation.routing.delegated
   └─> [response from remote]
 ```
 
+#### Cloud Upstream Request vs Gateway Error Semantics
+
+For cloud-backed federated gateways (`backend_type == "cloud_api"`), upstream
+provider 4xx responses represent client/request errors and are preserved as
+client-visible 4xx responses. They MUST NOT be treated as gateway-health
+failures for circuit-breaker purposes.
+
+By contrast:
+
+- cloud upstream 5xx responses are surfaced as 502 (provider outage)
+- local/federated upstream HTTP failures are surfaced as 502 (gateway error)
+
+`model.execution.failed` remains a request-terminal lifecycle signal and does
+not by itself imply infrastructure failure. Consumers MUST NOT infer
+gateway-health failure from that signal alone — the `error` field payload
+distinguishes between `Upstream 4xx` (request error) and `Upstream 5xx`
+(provider/gateway error).
+
 ### Federation Capacity Seeding
 
 **INVARIANT**: ∀ `GATEWAY_SNAPSHOT` received: `_seed_capacity_pool_for_gateway`

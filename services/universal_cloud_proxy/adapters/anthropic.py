@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -23,9 +23,11 @@ from .anthropic_response import convert_response_content
 from .anthropic_stream import StreamTranslator
 
 if TYPE_CHECKING:
-    from ..config import ProviderConfig
-    from universal_event_bus import EventBus
     from collections.abc import AsyncIterator
+
+    from universal_event_bus import EventBus
+
+    from ..config import ProviderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -330,15 +332,30 @@ class AnthropicAdapter:
         data = body.get("data", [])
         return data if isinstance(data, list) else []
 
+    async def _raise_provider_http_error(self, response: httpx.Response) -> None:
+        """Raise HTTPStatusError with provider response body preserved for diagnostics."""
+        error_preview = response.text[:500]
+        logger.error(
+            "Anthropic API %d: %s",
+            response.status_code,
+            error_preview,
+        )
+        raise httpx.HTTPStatusError(
+            f"Provider returned {response.status_code}: {error_preview}",
+            request=response.request,
+            response=response,
+        )
+
     async def forward_chat(self, request_body: dict[str, Any]) -> dict[str, Any]:
-        """Forward non-streaming chat requests and normalize the response."""
+        """Forward a non-streaming Anthropic request, preserving provider error detail and normalizing the response."""
         body = self._openai_to_anthropic(request_body)
         response = await self._client.post(
             f"{self._config.base_url}/messages",
             json=body,
             headers=self._headers(),
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            await self._raise_provider_http_error(response)
         result, mcp_meta = self._anthropic_to_openai_response(
             response.json(), str(request_body.get("model", ""))
         )

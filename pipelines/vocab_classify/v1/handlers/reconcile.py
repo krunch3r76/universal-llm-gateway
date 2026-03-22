@@ -8,7 +8,7 @@ for persistence via data_sink.
 from __future__ import annotations
 
 import json
-from typing import Any, ClassVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from systems.pipeline.core.execution.map_reduce import MapOutputCollection
 from systems.pipeline.core.handlers.protocol import PipelineContext, StepOutput
@@ -33,9 +33,7 @@ class VocabClassifyReconcileV1Handler:
         if bundle_out is None or not isinstance(bundle_out.json, dict):
             raise ValueError("reconcile: missing bundle.json")
 
-        bundle_scopes: list[dict[str, Any]] = list(
-            bundle_out.json.get("scopes") or []
-        )
+        bundle_scopes: list[dict[str, Any]] = list(bundle_out.json.get("scopes") or [])
         mode = str(context.options.get("mode") or "frontier")
 
         if not bundle_scopes:
@@ -48,9 +46,9 @@ class VocabClassifyReconcileV1Handler:
 
         classify_col = context.get_output("classify")
         if not isinstance(classify_col, MapOutputCollection):
-            if isinstance(classify_col, StepOutput) and (
-                classify_col.json or {}
-            ).get("_skipped"):
+            if isinstance(classify_col, StepOutput) and (classify_col.json or {}).get(
+                "_skipped"
+            ):
                 raise ValueError(
                     "reconcile: classify was skipped but scopes need classification"
                 )
@@ -68,7 +66,9 @@ class VocabClassifyReconcileV1Handler:
             scope = str(row.get("scope") or "")
             terms = row.get("terms") or []
             if scope and isinstance(terms, list):
-                scope_terms_src[scope] = [str(t).strip() for t in terms if str(t).strip()]
+                scope_terms_src[scope] = [
+                    str(t).strip() for t in terms if str(t).strip()
+                ]
 
         vocabulary: dict[str, dict[str, list[str]]] = {}
         provenance: list[dict[str, Any]] = []
@@ -112,6 +112,4 @@ class VocabClassifyReconcileV1Handler:
             "scope_hashes": scope_hashes,
             "provenance": provenance,
         }
-        return StepOutput(
-            raw=json.dumps(payload, ensure_ascii=False), json=payload
-        )
+        return StepOutput(raw=json.dumps(payload, ensure_ascii=False), json=payload)
