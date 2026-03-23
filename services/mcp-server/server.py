@@ -356,7 +356,7 @@ def _build_server() -> FastMCP:
 
         Returns:
             Native MCP content for passthrough tool outputs, otherwise
-            {"tool": "<name>", "result": "<JSON string of tool output>"}.
+            {"tool": "<name>", "result": <tool output as dict/list>}.
         """
         import json as _json
 
@@ -370,7 +370,7 @@ def _build_server() -> FastMCP:
                 entrypoint="dispatch",
                 reason=reason,
             )
-            return {"tool": tool, "result": _json.dumps({"error": reason})}
+            return {"tool": tool, "result": {"error": reason}}
 
         fn = overflow_registry.get(tool)
         if fn is None:
@@ -388,7 +388,7 @@ def _build_server() -> FastMCP:
         record("mcp.tool.dispatch.success", tool=tool)
         if hasattr(result, "model_dump"):
             return result
-        return {"tool": tool, "result": _json.dumps(result)}
+        return {"tool": tool, "result": result}
 
     primary_count = len(_PRIMARY_TOOLS)
     logger.info(

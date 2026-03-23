@@ -154,7 +154,7 @@ def read_file_result(path: str, root: Path = FILES_ROOT) -> dict[str, str]:
     }
     read_handler = read_handlers.get(suffix, _read_plain)
     content = read_handler(src)
-    return {"content": content}  # Removed 'path' as it's not used by read_files_batch
+    return {"content": content, "path": str(src)}
 
 
 def read_files_batch(

@@ -144,6 +144,71 @@ class PipelineExecutor:
             logger.warning("Event bus unavailable - events will not be published")
             self._event_bus_warned = True
 
+    async def _acquire_with_disconnect(
+        self,
+        http_request: Any,
+        pipeline_id: str,
+        execution_id: str,
+    ) -> float:
+        """Wait for an admission token, cancelling if the client disconnects.
+
+        Races the admission queue acquire against a client-disconnect poll loop
+        (same polling pattern as ``disconnect_monitor.py``).  If the client
+        closes the connection while the pipeline is waiting for a slot, the
+        acquire is cancelled immediately so the slot is not consumed by an
+        abandoned request.
+
+        Returns the admission wait time in milliseconds.
+        Raises ``asyncio.CancelledError`` on client disconnect.
+        Raises ``TimeoutError`` if the admission timeout fires.
+        """
+        if http_request is None:
+            return await self._admission.acquire(timeout=self._admission_timeout)
+
+        async def _poll_disconnect() -> None:
+            await asyncio.sleep(1.0)
+            while True:
+                try:
+                    if await http_request.is_disconnected():
+                        return
+                except Exception:
+                    pass
+                await asyncio.sleep(2.0)
+
+        acquire_task = asyncio.create_task(
+            self._admission.acquire(timeout=self._admission_timeout),
+            name=f"admission-acquire-{execution_id[:8]}",
+        )
+        disconnect_task = asyncio.create_task(
+            _poll_disconnect(),
+            name=f"admission-disconnect-{execution_id[:8]}",
+        )
+
+        done, pending = await asyncio.wait(
+            {acquire_task, disconnect_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        if acquire_task in done:
+            return acquire_task.result()
+
+        logger.info(
+            "Client disconnected while pipeline '%s' was waiting for admission "
+            "(execution_id=%s)",
+            pipeline_id,
+            execution_id,
+        )
+        raise asyncio.CancelledError(
+            f"Client disconnected during admission wait for '{pipeline_id}'"
+        )
+
     async def execute(
         self, context: _PipelineRequestContextProtocol
     ) -> Response:
@@ -367,10 +432,26 @@ class PipelineExecutor:
                 self._admission.waiting,
             )
 
+        admission_start = time.monotonic()
         try:
-            admission_wait_ms = await self._admission.acquire(
-                timeout=self._admission_timeout,
+            admission_wait_ms = await self._acquire_with_disconnect(
+                pipeline_context.http_request,
+                pipeline.id,
+                pipeline_context.execution_id,
             )
+        except asyncio.CancelledError:
+            wait_ms = (time.monotonic() - admission_start) * 1000.0
+            self._publish_event(
+                pipeline_context,
+                PipelineAdmissionRejected(
+                    pipeline_id=pipeline.id,
+                    execution_id=pipeline_context.execution_id,
+                    queue_depth=self._admission.waiting,
+                    active_count=self._admission.active,
+                    wait_ms=wait_ms,
+                ),
+            )
+            raise
         except TimeoutError:
             self._publish_event(
                 pipeline_context,

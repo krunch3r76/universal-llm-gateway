@@ -23,6 +23,45 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_BOOT_PROFILES: dict[str, dict[str, Any]] = {
+    "cursor": {
+        "include_deadlines": False,
+        "include_review_queue": False,
+        "include_investigations": False,
+        "session_agent_filter": "cursor",
+        "entity_type_exclude": "legal_matter,person,property,organization",
+        "session_limit": 3,
+        "assertion_limit": 50,
+        "continuation_decision_limit": 5,
+        "continuation_service_limit": 3,
+        "todo_context": "universal-llm-gateway",
+    },
+    "api": {
+        "include_deadlines": False,
+        "include_review_queue": False,
+        "include_investigations": True,
+        "session_agent_filter": "api",
+        "entity_type_exclude": "legal_matter,person,property",
+        "session_limit": 3,
+        "assertion_limit": 50,
+        "continuation_decision_limit": 5,
+        "continuation_service_limit": 3,
+        "todo_context": None,
+    },
+    "web": {
+        "include_deadlines": True,
+        "include_review_queue": True,
+        "include_investigations": True,
+        "session_agent_filter": None,
+        "entity_type_exclude": None,
+        "session_limit": 3,
+        "assertion_limit": 50,
+        "continuation_decision_limit": 0,
+        "continuation_service_limit": 0,
+        "todo_context": None,
+    },
+}
+
 
 def register_cortex_v2_tools(mcp: FastMCP) -> None:
     """Register dispatch-only Cortex v2 tools on the MCP server instance, including chunk, surface form, staging, and boot operations."""
@@ -206,16 +245,18 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Unified boot briefing for session start.
 
-        Consolidates boot into one call: deadlines, recent sessions, open
-        investigations, agent-bus state, review queue, and optional reference
-        files from the sandboxed files directory.
+        Persona-scoped: each agent gets a tailored boot based on its profile.
+        Cursor gets continuation state, recent decisions, service observations,
+        and workspace todos — no legal deadlines or personal investigations.
+        Web gets everything.
 
         Always use this at session start instead of calling the individual boot
         queries separately. Returns both structured JSON and a pre-rendered
         narrative that can be shown to the user directly.
 
         Args:
-            agent: Which agent is booting — determines inbox filter (default 'web').
+            agent: Which agent is booting — determines boot profile
+                and inbox filter (default 'web'). Known agents: web, cursor, api.
             pre_files: Comma-separated file paths loaded before the API briefing,
                 e.g. "prompts/boot.md,prompts/ops.md". Typically prompts or
                 operating instructions that should be read first.
@@ -224,10 +265,12 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
                 that rounds out session context.
 
         Returns:
-            Boot briefing with deadlines, recent_sessions, open_investigations,
-            agent_bus, review_queue, boot_narrative, pre_files, and post_files.
+            Boot briefing with persona-scoped sections, continuation_state,
+            boot_narrative, pre_files, and post_files.
         """
         from concurrent.futures import ThreadPoolExecutor
+
+        profile = _BOOT_PROFILES.get(agent, _BOOT_PROFILES["web"])
 
         pre_list = (
             [p.strip() for p in pre_files.split(",") if p.strip()] if pre_files else []
@@ -241,69 +284,129 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
         inbox_qs = urlencode(
             {"to": agent, "unread": "true", "last": 10, "compact": "true"}
         )
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            futures = {
-                "deadlines": pool.submit(_cx, "GET", "/deadlines"),
-                "sessions": pool.submit(_cx, "GET", "/session-journals?limit=3"),
-                "assertions": pool.submit(
-                    _cx, "GET", "/assertions?superseded=false&limit=50"
-                ),
-                "threads": pool.submit(
-                    _relay, "agent-bus", "GET", "/threads?status=active"
-                ),
-                "inbox": pool.submit(_relay, "agent-bus", "GET", f"/turns?{inbox_qs}"),
-                "staging": pool.submit(_cx, "GET", "/staging?status=pending&limit=30"),
+
+        session_qs_parts: dict[str, str | int] = {
+            "limit": profile.get("session_limit", 3)
+        }
+        if profile.get("session_agent_filter"):
+            session_qs_parts["agent"] = profile["session_agent_filter"]
+        session_qs = urlencode(session_qs_parts)
+
+        assertion_qs_parts: dict[str, str | int] = {
+            "superseded": "false",
+            "limit": profile.get("assertion_limit", 50),
+        }
+        if profile.get("entity_type_exclude"):
+            assertion_qs_parts["entity_type_exclude"] = profile["entity_type_exclude"]
+        assertion_qs = urlencode(assertion_qs_parts)
+
+        futures_spec: dict[str, tuple[Any, ...]] = {
+            "sessions": (_cx, "GET", f"/session-journals?{session_qs}"),
+            "assertions": (_cx, "GET", f"/assertions?{assertion_qs}"),
+            "threads": (_relay, "agent-bus", "GET", "/threads?status=active"),
+            "inbox": (_relay, "agent-bus", "GET", f"/turns?{inbox_qs}"),
+        }
+        if profile.get("include_deadlines", True):
+            futures_spec["deadlines"] = (_cx, "GET", "/deadlines")
+        if profile.get("include_review_queue", True):
+            futures_spec["staging"] = (
+                _cx, "GET", "/staging?status=pending&limit=30",
+            )
+
+        decision_limit = profile.get("continuation_decision_limit", 0)
+        service_limit = profile.get("continuation_service_limit", 0)
+        if decision_limit > 0:
+            cont_decision_qs = urlencode({
+                "entity_type": "decision",
+                "superseded": "false",
+                "limit": decision_limit,
+            })
+            futures_spec["cont_decisions"] = (
+                _cx, "GET", f"/assertions?{cont_decision_qs}",
+            )
+        if service_limit > 0:
+            cont_service_qs = urlencode({
+                "entity_type": "service",
+                "superseded": "false",
+                "confidence": "believed",
+                "limit": service_limit,
+            })
+            futures_spec["cont_services"] = (
+                _cx, "GET", f"/assertions?{cont_service_qs}",
+            )
+
+        todo_ctx = profile.get("todo_context")
+        if todo_ctx:
+            todo_qs = urlencode({"status": "open", "context": todo_ctx, "limit": 15})
+            futures_spec["todos"] = (
+                _cx, "GET", f"/todos?{todo_qs}",
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            submitted = {
+                k: pool.submit(*spec) for k, spec in futures_spec.items()
             }
-            raw = {k: f.result() for k, f in futures.items()}
+            raw = {k: f.result() for k, f in submitted.items()}
         post_file_results = read_files_batch(post_list) if post_list else {}
 
-        deadlines: list[dict[str, Any]] = safe_list(raw["deadlines"])
+        deadlines: list[dict[str, Any]] = safe_list(raw.get("deadlines", []))
         sessions: list[dict[str, Any]] = safe_list(raw["sessions"])
         all_assertions: list[dict[str, Any]] = safe_list(raw["assertions"])
         threads: list[dict[str, Any]] = safe_list(raw["threads"], "threads")
         unread_turns: list[dict[str, Any]] = safe_list(raw["inbox"], "turns")
-        staging_items: list[dict[str, Any]] = safe_list(raw["staging"])
+        staging_items: list[dict[str, Any]] = safe_list(raw.get("staging", []))
+
+        cont_decisions: list[dict[str, Any]] = safe_list(
+            raw.get("cont_decisions", [])
+        )
+        cont_services: list[dict[str, Any]] = safe_list(
+            raw.get("cont_services", [])
+        )
+        todos: list[dict[str, Any]] = safe_list(raw.get("todos", []))
 
         suspected = []
         hypothesized = []
         low_conf_unreviewed = []
-        for a in all_assertions:
-            confidence = a.get("confidence")
-            if confidence == "suspected":
-                suspected.append(a)
-            elif confidence == "hypothesized":
-                hypothesized.append(a)
-            if confidence in ("suspected", "hypothesized") and not a.get(
-                "human_reviewed"
-            ):
-                low_conf_unreviewed.append(a)
-        review_total = len(staging_items) + len(low_conf_unreviewed)
+        if profile.get("include_investigations", True):
+            for a in all_assertions:
+                confidence = a.get("confidence")
+                if confidence == "suspected":
+                    suspected.append(a)
+                elif confidence == "hypothesized":
+                    hypothesized.append(a)
+                if confidence in ("suspected", "hypothesized") and not a.get(
+                    "human_reviewed"
+                ):
+                    low_conf_unreviewed.append(a)
+
+        review_total: int | None = None
+        if profile.get("include_review_queue", True):
+            review_total = len(staging_items) + len(low_conf_unreviewed)
 
         narrative = render_boot_narrative(
-            deadlines=deadlines,
+            deadlines=deadlines if profile.get("include_deadlines", True) else None,
             sessions=sessions,
-            suspected=suspected,
-            hypothesized=hypothesized,
+            suspected=suspected if profile.get("include_investigations", True) else None,
+            hypothesized=hypothesized if profile.get("include_investigations", True) else None,
             threads=threads,
             unread=unread_turns,
             review_total=review_total,
+            continuation_decisions=cont_decisions or None,
+            continuation_services=cont_services or None,
+            todos=todos or None,
         )
 
         logger.info(
-            "cortex_boot: agent=%s deadlines=%d sessions=%d",
+            "cortex_boot: agent=%s profile=%s sessions=%d assertions=%d",
             agent,
-            len(deadlines),
+            "custom" if agent not in _BOOT_PROFILES else agent,
             len(sessions),
+            len(all_assertions),
         )
         record("mcp.cortex.boot", agent=agent)
 
-        return {
-            "deadlines": deadlines,
+        result: dict[str, Any] = {
             "recent_sessions": sessions,
-            "open_investigations": {
-                "suspected": suspected,
-                "hypothesized": hypothesized,
-            },
             "agent_bus": {
                 "active_threads": [
                     {
@@ -316,12 +419,29 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
                 ],
                 "unread_turns": unread_turns,
             },
-            "review_queue": {
-                "staging_count": len(staging_items),
-                "assertion_count": len(low_conf_unreviewed),
-                "total": review_total,
-            },
             "pre_files": pre_file_results,
             "post_files": post_file_results,
             "boot_narrative": narrative,
         }
+
+        if profile.get("include_deadlines", True):
+            result["deadlines"] = deadlines
+        if profile.get("include_investigations", True):
+            result["open_investigations"] = {
+                "suspected": suspected,
+                "hypothesized": hypothesized,
+            }
+        if profile.get("include_review_queue", True):
+            result["review_queue"] = {
+                "staging_count": len(staging_items),
+                "assertion_count": len(low_conf_unreviewed),
+                "total": review_total,
+            }
+        if cont_decisions or cont_services or todos:
+            result["continuation_state"] = {
+                "decisions": cont_decisions,
+                "service_observations": cont_services,
+                "open_todos": todos,
+            }
+
+        return result

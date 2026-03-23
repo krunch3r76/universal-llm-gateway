@@ -439,8 +439,9 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 Mutually exclusive with scope.
 
         Returns:
-            On success: {"context": "<assembled context with source labels>",
-                         "pipeline": "rag-context"}
+            On success: {"status": "ok", "pipeline": "rag-context",
+                         "content_length": <int>, "duration_s": <float>,
+                         "context": "<assembled context with source labels>"}
             On error:   {"error": "<message>"}
         """
         reason = (
@@ -530,7 +531,13 @@ def register_rag_tools(mcp: FastMCP) -> None:
             scope=scope,
             prefix=prefixes,
         )
-        return {"context": content, "pipeline": "rag-context"}
+        return {
+            "status": "ok",
+            "pipeline": "rag-context",
+            "content_length": len(content),
+            "duration_s": round(duration, 3),
+            "context": content,
+        }
 
     @mcp.tool()
     def rag_answer(
@@ -569,7 +576,9 @@ def register_rag_tools(mcp: FastMCP) -> None:
             deep: Use iterative retrieval for complex questions (default False).
 
         Returns:
-            On success: {"answer": "<grounded answer>", "pipeline": "<pipeline used>"}
+            On success: {"status": "ok", "pipeline": "<pipeline used>",
+                         "content_length": <int>, "duration_s": <float>,
+                         "answer": "<grounded answer>"}
             On error:   {"error": "<message>"}
         """
         reason = (
@@ -662,7 +671,13 @@ def register_rag_tools(mcp: FastMCP) -> None:
             prefix=prefixes,
             deep=deep,
         )
-        return {"answer": content, "pipeline": pipeline}
+        return {
+            "status": "ok",
+            "pipeline": pipeline,
+            "content_length": len(content),
+            "duration_s": round(duration, 3),
+            "answer": content,
+        }
 
     @mcp.tool()
     def rag_search_preview(
@@ -714,7 +729,11 @@ def register_rag_tools(mcp: FastMCP) -> None:
             for idx, text in enumerate(chunks):
                 if not isinstance(text, str):
                     continue
-                md = metadata[idx] if isinstance(metadata, list) and idx < len(metadata) else {}
+                md = (
+                    metadata[idx]
+                    if isinstance(metadata, list) and idx < len(metadata)
+                    else {}
+                )
                 source = md.get("source") if isinstance(md, dict) else ""
                 chunk_index = md.get("chunk_index") if isinstance(md, dict) else None
                 items.append(

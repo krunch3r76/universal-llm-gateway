@@ -31,6 +31,7 @@ SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
     "llm/prompting": "llm_prompting",
     "documentation": "code_documentation",
     "software-agents": "software_agents",
+    "event-salience": "event_salience",
     "trading/strategies": "trading_strategies",
     "trading/microstructure": "trading_microstructure",
     "trading/risk": "trading_risk",

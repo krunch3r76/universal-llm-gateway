@@ -4,11 +4,11 @@ import asyncio
 import logging
 import random
 import re
+from typing import TYPE_CHECKING
 
 import httpx
 
 from services.rag.events.query import rag_embedding_query_success
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -97,60 +97,6 @@ async def close() -> None:
     await _client.aclose()
 
 
-async def _resolve_compatible_embedding_model() -> str | None:
-    """Find an activated sibling that satisfies the configured embedding model.
-
-    Queries Stargate's activated model list and finds the smallest context
-    variant from the same model family that meets or exceeds the configured
-    context length.
-
-    Returns the sibling's model ID string if a switch is needed, or None when
-    the configured model is already activated or no compatible sibling exists.
-    Raises on HTTP/connection errors so the caller can distinguish
-    "Stargate not ready" from "resolved, no change needed".
-    """
-    from model_id import ModelId
-
-    configured = ModelId.parse(_embed_model)
-    if configured.context_length is None:
-        return None
-
-    resp = await _client.get(
-        f"{GATEWAY_URL}/v1/models",
-        params={"type": "model"},
-        timeout=5.0,
-    )
-    resp.raise_for_status()
-    activated_ids: list[str] = [item["id"] for item in resp.json().get("data", [])]
-
-    for mid_str in activated_ids:
-        try:
-            if ModelId.parse(mid_str) == configured:
-                return None
-        except (ValueError, TypeError):
-            continue
-
-    candidates: list[tuple[int, str]] = []
-    for mid_str in activated_ids:
-        try:
-            mid = ModelId.parse(mid_str)
-        except (ValueError, TypeError):
-            continue
-        if (
-            mid.base_id == configured.base_id
-            and mid.is_cpu == configured.is_cpu
-            and mid.context_length is not None
-            and mid.context_length >= configured.context_length
-        ):
-            candidates.append((mid.context_length, mid_str))
-
-    if not candidates:
-        return None
-
-    candidates.sort()
-    return candidates[0][1]
-
-
 _PROBE_INTERVAL_S = 2.0
 _PROBE_TIMEOUT_S = 120.0
 
@@ -167,27 +113,6 @@ async def wait_until_healthy(
     with context >= configured context from the same model family.
     Raises TimeoutError if endpoint is still unhealthy after timeout_s seconds.
     """
-    global _embed_model, _probe_payload
-
-    resolution_done = False
-
-    # Pre-probe resolution: resolve before any probe to avoid triggering
-    # a model load for an unactivated variant that consumes VRAM.
-    try:
-        sibling = await _resolve_compatible_embedding_model()
-        resolution_done = True
-        if sibling is not None:
-            logger.info(
-                "Embedding model resolved: %s -> %s "
-                "(activated sibling with compatible context)",
-                _embed_model,
-                sibling,
-            )
-            _embed_model = sibling
-            _probe_payload = {"model": _embed_model, "input": ["probe"]}
-    except Exception:
-        logger.debug("Pre-probe sibling resolution deferred (Stargate not ready)")
-
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     attempt = 0
@@ -222,26 +147,6 @@ async def wait_until_healthy(
                 raise TimeoutError(
                     f"Embedding endpoint not healthy after {timeout_s}s"
                 ) from exc
-            if not resolution_done:
-                try:
-                    sibling = await _resolve_compatible_embedding_model()
-                    resolution_done = True
-                    if sibling is not None:
-                        logger.info(
-                            "Embedding model resolved: %s -> %s "
-                            "(activated sibling with compatible context)",
-                            _embed_model,
-                            sibling,
-                        )
-                        _embed_model = sibling
-                        _probe_payload = {
-                            "model": _embed_model,
-                            "input": ["probe"],
-                        }
-                except Exception:
-                    logger.debug(
-                        "Sibling resolution not yet possible (Stargate not ready)"
-                    )
             logger.debug(
                 "Embedding probe attempt %d failed (%s); retrying in %.1fs (%.0fs left)",
                 attempt,

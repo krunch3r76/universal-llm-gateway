@@ -15,15 +15,28 @@ _JSON_FIELDS = frozenset({"domains", "decisions", "open_items"})
 
 @router.get("", response_model=SessionJournalList)
 def list_session_journals(
+    agent: str | None = None,
     limit: int = Query(3, ge=1, le=100),
 ) -> SessionJournalList:
-    """List recent session journals in reverse insertion order."""
+    """List recent session journals in reverse insertion order.
+
+    Args:
+        agent: Filter by agent name (cursor, web, api). Omit for all agents.
+        limit: Maximum results (1-100, default 3).
+    """
+    clauses: list[str] = []
+    params: list[str | int] = []
+    if agent:
+        clauses.append("agent = ?")
+        params.append(agent)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
     conn = cortex_conn()
     try:
         rows = query(
             conn,
-            "SELECT * FROM session_journals ORDER BY id DESC LIMIT ?",
-            (limit,),
+            f"SELECT * FROM session_journals{where} ORDER BY id DESC LIMIT ?",
+            tuple(params),
         )
     finally:
         conn.close()

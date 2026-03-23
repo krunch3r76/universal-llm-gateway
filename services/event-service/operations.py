@@ -195,6 +195,18 @@ _register(
     )
 )
 
+_register(
+    OperationDef(
+        name="verify-tool-execution",
+        description="Most recent completed or failed event for a given MCP tool signal prefix",
+        params={
+            "signal_prefix": {"type": "string", "required": True},
+            "since_ts": {"type": "int"},
+        },
+        returns="most recent outcome event (completed/failed) or empty",
+    )
+)
+
 _STARTUP_SIGNALS: tuple[str, ...] = (
     "cloud.proxy.started",
     "event.service.started",
@@ -600,6 +612,48 @@ async def _realtime_snapshot(
     return {"rows": rows, "count": len(rows), "buffer_source": "memory"}
 
 
+async def _verify_tool_execution(
+    params: dict[str, Any], store: EventStore
+) -> dict[str, Any]:
+    """Return the most recent completed/failed event matching a signal prefix.
+
+    Agents use this to verify that a claimed MCP tool call actually executed.
+    The prefix is typically the tool's event namespace (e.g. "mcp.rag.pipeline").
+    """
+    signal_prefix = params.get("signal_prefix") or ""
+    if not signal_prefix:
+        return {"error": "signal_prefix is required"}
+
+    since_ts = _coerce_since_ts(params.get("since_ts"))
+    if since_ts is None:
+        since_ts = await _get_session_start_ts(store)
+
+    sql = (
+        "SELECT seq, signal, source, timestamp, execution_id, model_id, payload "
+        "FROM events "
+        "WHERE signal LIKE ? AND signal NOT LIKE '%.called' "
+        "AND role NOT IN ('debug', 'realtime')"
+    )
+    query_params: list[Any] = [f"{signal_prefix}%"]
+    if since_ts is not None:
+        sql += " AND ts_unix_ms >= ?"
+        query_params.append(since_ts)
+    sql += " ORDER BY seq DESC LIMIT 1"
+
+    rows = await store.query(sql, tuple(query_params))
+    if not rows:
+        return {"verified": False, "signal_prefix": signal_prefix, "event": None}
+
+    row_dict = dict(rows[0])
+    payload = row_dict.get("payload")
+    if isinstance(payload, str):
+        try:
+            row_dict["payload"] = json.loads(payload)
+        except json.JSONDecodeError:
+            pass
+    return {"verified": True, "signal_prefix": signal_prefix, "event": row_dict}
+
+
 async def _stack_last_started(
     params: dict[str, Any], store: EventStore
 ) -> dict[str, Any]:
@@ -652,4 +706,5 @@ _DISPATCH: dict[str, OperationCallable] = {
     "signal-events": _signal_events,
     "stack-last-started": _stack_last_started,
     "realtime-snapshot": _realtime_snapshot,
+    "verify-tool-execution": _verify_tool_execution,
 }

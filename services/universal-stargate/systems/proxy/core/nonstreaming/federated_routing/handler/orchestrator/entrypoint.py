@@ -92,7 +92,7 @@ async def _route_to_federated_gateway(
         trace=trace,
         event_bus=event_bus,
         decision_engine=decision_engine,
-        gateways_for_routing=gateways_for_routing,
+        federated_manager=federated_manager,
         placement=placement,
         context=context,
         stability_tracker=stability_tracker,

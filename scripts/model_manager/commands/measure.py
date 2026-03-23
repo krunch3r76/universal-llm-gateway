@@ -737,7 +737,7 @@ def _build_updated_catalog_entry(
     # Apply default loader params for missing keys (based on format)
     if model_format == "gguf":
         for k, v in {
-            "f16_kv": True,
+            "f16_kv": False,
             "use_mmap": True,
             "use_mlock": True,
             "verbose": False,

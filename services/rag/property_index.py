@@ -543,26 +543,46 @@ class PropertyIndex:
         await self._seq.run(_write())
 
     async def record_failure(
-        self, chunk_id: str, source: str, error: str, *, permanent: bool = False
+        self,
+        chunk_id: str,
+        source: str,
+        error: str,
+        *,
+        permanent: bool = False,
+        increment_attempt: bool = True,
     ) -> None:
-        """Record an extraction failure; increment attempt_count on repeated failure.
+        """Record an extraction failure.
 
-        ∀ chunk_id: attempt_count monotonically increases with each recorded failure.
-        permanent=True marks the chunk as permanently abandoned (attempt_count >= max_attempts).
+        When ``increment_attempt`` is True (default), ``attempt_count``
+        increases monotonically toward ``max_extraction_attempts``.
+        Infrastructure failures (queue timeout, capacity exhaustion) should
+        pass ``increment_attempt=False`` so transient Stargate unavailability
+        does not burn the retry budget meant for genuine extraction errors.
+
+        permanent=True marks the chunk as permanently abandoned.
         Once permanent=1, it is never reset to 0.
         """
+        attempt_increment = 1 if increment_attempt else 0
 
         async def _write() -> None:
             conn = self._ensure_conn()
             conn.execute(
-                "INSERT INTO failed_extractions (chunk_id, source, error, attempt_count, permanent)"
-                " VALUES (?, ?, ?, 1, ?)"
+                "INSERT INTO failed_extractions"
+                " (chunk_id, source, error, attempt_count, permanent)"
+                " VALUES (?, ?, ?, ?, ?)"
                 " ON CONFLICT(chunk_id) DO UPDATE SET"
                 "   error = excluded.error,"
-                "   attempt_count = attempt_count + 1,"
+                "   attempt_count = attempt_count + ?,"
                 "   permanent = MAX(permanent, excluded.permanent),"
                 "   recorded_at = datetime('now')",
-                (chunk_id, source, error, permanent),
+                (
+                    chunk_id,
+                    source,
+                    error,
+                    attempt_increment,
+                    permanent,
+                    attempt_increment,
+                ),
             )
             conn.commit()
 

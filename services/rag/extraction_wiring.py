@@ -260,6 +260,7 @@ async def run_extraction(
                 source=file,
                 error=timeout_error,
                 permanent=False,
+                increment_attempt=False,
             )
             if event_bus is not None:
                 _publish_event_nonblocking(
@@ -395,7 +396,9 @@ async def run_extraction(
                 if is_infrastructure_failure
                 else "missing or invalid result after batch parsing"
             )
-            new_attempt_count = failure_counts_snapshot.get(chunk_id, 0) + 1
+            new_attempt_count = failure_counts_snapshot.get(chunk_id, 0) + (
+                0 if is_infrastructure_failure else 1
+            )
             is_permanent = (
                 not is_infrastructure_failure
                 and new_attempt_count >= config.max_extraction_attempts
@@ -405,6 +408,7 @@ async def run_extraction(
                 source=file,
                 error=error_msg,
                 permanent=is_permanent,
+                increment_attempt=not is_infrastructure_failure,
             )
             if event_bus is not None:
                 _publish_event_nonblocking(

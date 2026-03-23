@@ -37,6 +37,13 @@ def list_assertions(
     confidence: str | None = None,
     review_status: str | None = None,
     superseded: bool | None = None,
+    entity_type: str | None = Query(
+        None, description="Filter to assertions on entities of this type"
+    ),
+    entity_type_exclude: str | None = Query(
+        None,
+        description="Comma-separated entity types to exclude (e.g. 'legal_matter,person')",
+    ),
     valid_at: str | None = Query(
         None, description="World-state: what was true at this date (YYYY-MM-DD)"
     ),
@@ -45,36 +52,55 @@ def list_assertions(
     ),
     limit: int = Query(50, ge=1, le=500),
 ) -> AssertionList:
-    """List assertions with entity, confidence, review_status, superseded, and temporal filters."""
+    """List assertions with entity, confidence, review_status, superseded, entity type, and temporal filters."""
     clauses: list[str] = []
     params: list[str | int] = []
+    needs_join = bool(entity_type or entity_type_exclude)
 
     if entity_id:
-        clauses.append("entity_id = ?")
+        clauses.append("a.entity_id = ?")
         params.append(entity_id)
     if confidence:
-        clauses.append("confidence = ?")
+        clauses.append("a.confidence = ?")
         params.append(confidence)
     if review_status:
-        clauses.append("review_status = ?")
+        clauses.append("a.review_status = ?")
         params.append(review_status)
     if superseded is False:
-        clauses.append("superseded_by IS NULL")
+        clauses.append("a.superseded_by IS NULL")
     elif superseded is True:
-        clauses.append("superseded_by IS NOT NULL")
+        clauses.append("a.superseded_by IS NOT NULL")
+
+    if entity_type:
+        clauses.append("e.type = ?")
+        params.append(entity_type)
+    if entity_type_exclude:
+        excluded = [t.strip() for t in entity_type_exclude.split(",") if t.strip()]
+        placeholders = ",".join("?" for _ in excluded)
+        clauses.append(f"e.type NOT IN ({placeholders})")
+        params.extend(excluded)
 
     if valid_at:
-        clauses.append("(valid_from IS NULL OR valid_from <= ?)")
+        clauses.append("(a.valid_from IS NULL OR a.valid_from <= ?)")
         params.append(valid_at)
-        clauses.append("(valid_until IS NULL OR valid_until > ?)")
+        clauses.append("(a.valid_until IS NULL OR a.valid_until > ?)")
         params.append(valid_at)
-        clauses.append("superseded_by IS NULL")
+        clauses.append("a.superseded_by IS NULL")
     elif known_at:
-        clauses.append("created_at <= ?")
+        clauses.append("a.created_at <= ?")
         params.append(known_at)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    sql = f"SELECT {_ASSERTION_COLS} FROM assertions{where} ORDER BY created_at DESC LIMIT ?"
+    if needs_join:
+        cols = ", ".join(f"a.{c.strip()}" for c in _ASSERTION_COLS.split(","))
+        sql = (
+            f"SELECT {cols} FROM assertions a "
+            f"JOIN entities e ON a.entity_id = e.id{where} "
+            f"ORDER BY a.created_at DESC LIMIT ?"
+        )
+    else:
+        cols = _ASSERTION_COLS
+        sql = f"SELECT {cols} FROM assertions{where} ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
 
     with cortex_conn() as conn:
