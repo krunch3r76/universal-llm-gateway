@@ -250,7 +250,13 @@ async def execute_federated_request(
             # by raise_federated_http_error(), so they fall below this >= 500
             # threshold and don't trip the breaker. Cloud 5xx and all
             # local/federated errors are wrapped as 502, correctly tripping.
-            if e.status_code >= 500:
+            #
+            # 504 = Gateway Timeout: the gateway is slow (under load), not broken.
+            # Opening the circuit for timeouts starves healthy-but-busy gateways —
+            # all subsequent requests pile on the remaining gateway, causing cascading
+            # saturation. Retry exclusion (context.excluded_gateway_ids) already
+            # prevents re-sending the same timed-out request to the same gateway.
+            if e.status_code >= 500 and e.status_code != 504:
                 await federation_circuit_breaker.record_failure(
                     fed_gateway.gateway_id,
                     str(context.selected_model),

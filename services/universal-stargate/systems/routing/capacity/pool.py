@@ -123,6 +123,52 @@ class CapacityPool:
 
     # ── Capacity management (called by gateway manager on telemetry) ──
 
+    async def reconcile_gateway_state(
+        self,
+        gateway_id: str,
+        idle_model_ids: set[str],
+    ) -> None:
+        """Reset stale in_flight counts for models confirmed idle by telemetry.
+
+        Called by the gateway manager on GATEWAY_SNAPSHOT when the snapshot
+        reports a model as loaded-but-not-busy.  If the capacity pool shows
+        in_flight > 0 for such a model it means capacity tokens were leaked
+        (e.g., capacity token not released on CancelledError / client disconnect).
+
+        After resetting, dispatch is called for each affected model so queued
+        waiters can immediately claim the recovered slots.
+
+        INVARIANT: ∀ (gateway, model) ∈ idle_model_ids ∧ in_flight > 0:
+            the excess in_flight counts are stale — no live request holds them.
+        Safety: GATEWAY_SNAPSHOT arrives every ~120 s.  Any request admitted in
+        the last 120 s would either have completed (token released) or still be
+        active (gateway would report it in busy_models, excluded from this set).
+        """
+        recovered_models: list[str] = []
+        for model_id in idle_model_ids:
+            slot = _Slot(gateway_id=gateway_id, model_id=model_id)
+            in_flight = self._in_flight.get(slot, 0)
+            if in_flight > 0:
+                self._in_flight[slot] = 0
+                recovered_models.append(model_id)
+                logger.warning(
+                    "Recovered %d leaked slot(s) for %s/%s "
+                    "(gateway reports idle, pool had in_flight=%d)",
+                    in_flight,
+                    gateway_id,
+                    model_id,
+                    in_flight,
+                )
+        if recovered_models:
+            total = len(recovered_models)
+            logger.warning(
+                "Capacity reconcile: gateway=%s recovered leaked slots for %d model(s)",
+                gateway_id,
+                total,
+            )
+            for model_id in recovered_models:
+                await self._dispatch(model_id)
+
     def set_capacity(
         self,
         gateway_id: str,

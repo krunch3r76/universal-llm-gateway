@@ -25,6 +25,9 @@ Signals:
     routing.eviction.wait.resolved — wait completed, selection succeeded
     routing.eviction.wait.timeout — eviction wait timed out
     routing.eviction.wait.cancelled — wait cancelled (client disconnect)
+    routing.startup.queued — request held during startup window (no gateways yet)
+    routing.startup.resolved — startup-queued request unblocked after gateway connects
+    routing.startup.timeout — startup queue window exhausted, no gateway appeared
 """
 
 # ruff: noqa: N802
@@ -836,6 +839,46 @@ Payload: {
 }
 """
 
+ROUTING_STARTUP_QUEUED = "routing.startup.queued"
+"""
+Request queued during startup window because no gateways have connected yet.
+
+Emitted when Stargate is within its startup_queue_timeout_s window and the request
+is held rather than immediately rejected with GATEWAY_DISCONNECTED.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "uptime_s": float,
+    "timeout_s": float
+}
+"""
+
+ROUTING_STARTUP_RESOLVED = "routing.startup.resolved"
+"""
+Startup-queued request unblocked after a gateway connected.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
+    "waited_ms": int,
+    "uptime_s": float
+}
+"""
+
+ROUTING_STARTUP_TIMEOUT = "routing.startup.timeout"
+"""
+Startup queue timed out with no gateway connecting before deadline.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "waited_ms": int,
+    "uptime_s": float
+}
+"""
+
 
 @event_factory
 def EvictionCooldownBlocked(
@@ -976,6 +1019,65 @@ def RoutingEvictionWaitCancelled(
             "request_id": request_id,
             "model_id": model_id,
             "waited_ms": waited_ms,
+        },
+    )
+
+
+@event_factory
+def RoutingStartupQueued(
+    request_id: str,
+    model_id: str,
+    uptime_s: float,
+    timeout_s: float,
+) -> Event:
+    """Emit when a request is held during startup window (no gateways yet)."""
+    return Event(
+        signal=ROUTING_STARTUP_QUEUED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "uptime_s": uptime_s,
+            "timeout_s": timeout_s,
+        },
+    )
+
+
+@event_factory
+def RoutingStartupResolved(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    waited_ms: int,
+    uptime_s: float,
+) -> Event:
+    """Emit when startup-queued request unblocks after a gateway connects."""
+    return Event(
+        signal=ROUTING_STARTUP_RESOLVED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "waited_ms": waited_ms,
+            "uptime_s": uptime_s,
+        },
+    )
+
+
+@event_factory
+def RoutingStartupTimeout(
+    request_id: str,
+    model_id: str,
+    waited_ms: int,
+    uptime_s: float,
+) -> Event:
+    """Emit when startup queue window exhausted with no gateway connecting."""
+    return Event(
+        signal=ROUTING_STARTUP_TIMEOUT,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "waited_ms": waited_ms,
+            "uptime_s": uptime_s,
         },
     )
 

@@ -268,6 +268,7 @@ class RequestExecutor:
         INVARIANT:
             ∀ request: forwarded via MasterRequestTracker (atomic capacity)
             ∀ routing_key tracked by load: released on ANY exit path
+            ∧ ∀ exception (including CancelledError/BaseException): capacity released
         """
         logger.debug(f"Forwarding request for model {context.selected_model}")
 
@@ -330,6 +331,12 @@ class RequestExecutor:
 
         except Exception:
             self._release_routing_key_on_error(context.request_id)
+            await self._release_capacity_token(context)
+            raise
+        except BaseException:
+            # CancelledError (client disconnect) is BaseException, not Exception.
+            # Must release here or in_flight leaks permanently — available slots
+            # drain to 0 and the gateway appears saturated while actually idle.
             await self._release_capacity_token(context)
             raise
 

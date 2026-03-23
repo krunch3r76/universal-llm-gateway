@@ -117,9 +117,17 @@ class FederatedGatewayManager(Sequential):
         self._state_generation: int = 0
         self._state_condition: asyncio.Condition = asyncio.Condition()
 
+        # Startup timestamp for startup-queue window calculation
+        self._started_at: float = time.monotonic()
+
     def get_state_version(self) -> int:
         """Return the monotonic state generation used by waiters for ordering."""
         return self._state_generation
+
+    @property
+    def uptime_s(self) -> float:
+        """Seconds since this manager was constructed (proxy for Stargate uptime)."""
+        return time.monotonic() - self._started_at
 
     def _replace_gateway(
         self,
@@ -1177,6 +1185,23 @@ class FederatedGatewayManager(Sequential):
             logger.debug(
                 f"📊 Capacity pool updated from GATEWAY_SNAPSHOT: "
                 f"{seeded_slots} models on {gw.gateway_id}"
+            )
+
+        # Reconcile stale in_flight counts.  Models loaded-but-not-busy at the
+        # gateway have no active requests; any non-zero in_flight in the pool
+        # represents leaked tokens (e.g., capacity token not released on
+        # CancelledError / client disconnect).
+        if self._capacity_pool and snapshot_loaded:
+            idle_model_ids = {
+                mid.routing_key
+                for mid in snapshot_loaded
+                if mid not in snapshot_busy
+            }
+            asyncio.create_task(
+                self._capacity_pool.reconcile_gateway_state(
+                    gw.gateway_id, idle_model_ids
+                ),
+                name=f"capacity-reconcile-{gw.gateway_id}",
             )
 
         # Activation diagnostics

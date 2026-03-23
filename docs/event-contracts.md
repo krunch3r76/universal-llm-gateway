@@ -917,6 +917,9 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `routing.eviction.wait.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms` | - |
 | `routing.eviction.wait.timeout` | `request_id`, `model_id`, `waited_ms` | - |
 | `routing.eviction.wait.cancelled` | `request_id`, `model_id`, `waited_ms` | - |
+| `routing.startup.queued` | `request_id`, `model_id`, `uptime_s`, `timeout_s` | - |
+| `routing.startup.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms`, `uptime_s` | - |
+| `routing.startup.timeout` | `request_id`, `model_id`, `waited_ms`, `uptime_s` | - |
 | `routing.inference.oom.recovery.started` | `request_id`, `model_id`, `gateway_id`, `evicting_count`, `evicting_models` | - |
 | `routing.inference.oom.recovery.succeeded` | `request_id`, `model_id`, `gateway_id`, `evicted_count` | - |
 | `routing.inference.oom.recovery.failed` | `request_id`, `model_id`, `gateway_id` | - |
@@ -1071,6 +1074,21 @@ sticky/non-sticky failure split. These signals track the wait lifecycle.
 | `routing.eviction.wait.cancelled` | Client disconnected or task cancelled during wait |
 
 `queue_depth` in `.started` is a gauge for SRE capacity planning and monitoring.
+
+### routing.startup.* (startup gateway wait)
+
+When Stargate receives a request before any gateway has connected, and Stargate
+is still within its startup window (`request_queue.startup_queue_timeout_s`,
+default 180s), the request is held rather than immediately rejected with
+`GATEWAY_DISCONNECTED`. The wait wakes immediately when the first gateway
+registers (generation-aware, event-driven — no polling). Once the window
+expires, the request fails with the normal no-gateways error.
+
+| Signal | When |
+|--------|------|
+| `routing.startup.queued` | Request held; payload includes `uptime_s` and remaining `timeout_s` |
+| `routing.startup.resolved` | A gateway connected; payload includes `gateway_id`, `waited_ms`, `uptime_s` |
+| `routing.startup.timeout` | Startup window expired with no gateway appearing; payload includes `waited_ms`, `uptime_s` |
 
 ### OOM Recovery
 

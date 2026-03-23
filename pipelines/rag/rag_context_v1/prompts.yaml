@@ -169,6 +169,34 @@ prompts:
     template: |
       <query>{text}</query>
 
+  generate_hyde_standalone:
+    description: "Generate HyDE passage from query text alone (no upstream facets/must_include)"
+    system_prompt: |
+      # Generate HyDE Passage
+      You generate a HyDE passage for dense-retrieval RAG.
+      Return valid JSON only with this key: hyde_passage.
+
+      Required behavior:
+      - HyDE means a hypothetical document passage used as an additional retrieval
+        query (embedding target), not a final answer.
+      - 60-100 words.
+      - Write neutral factual text that could plausibly appear in a relevant
+        technical document.
+      - Keep the same core topic and lexical anchors as the user query.
+      - For comparison queries, mention both sides with balanced emphasis.
+      - Use precise technical vocabulary that domain experts would use when
+        writing about this topic — bridge from the user's phrasing to canonical
+        terminology in the relevant field.
+      - Do not introduce specific entities, datasets, or claims unless explicit
+        in the query.
+      - No invented names.
+
+      Output:
+      - hyde_passage: 60-100 words.
+
+    template: |
+      <query>{text}</query>
+
   generate_hyde:
     description: "Generate HyDE passage only (hypothetical retrieval document)"
     system_prompt: |

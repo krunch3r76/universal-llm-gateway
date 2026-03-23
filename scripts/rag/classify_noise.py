@@ -148,8 +148,11 @@ async def classify_chunk(
     endpoint: str,
     max_retries: int,
     profile: ClassificationProfile,
+    max_doc_chars: int = 0,
 ) -> bool | str | None:
     """Return classification value, or None on persistent failure."""
+    if max_doc_chars > 0 and len(text) > max_doc_chars:
+        text = text[:max_doc_chars]
     payload = {
         "model": model,
         "messages": [
@@ -290,6 +293,16 @@ def parse_args() -> argparse.Namespace:
         help="Retry attempts per chunk on transient request/parse failures.",
     )
     parser.add_argument(
+        "--max-doc-chars",
+        type=int,
+        default=8000,
+        help=(
+            "Truncate document text to this many characters before classification "
+            "(0 = no limit). Default 8000 guards against context-limit 400s when "
+            "the model has parallel slots that reduce effective context per slot."
+        ),
+    )
+    parser.add_argument(
         "--force-all",
         action="store_true",
         help="Reclassify all chunks even if target metadata key already exists.",
@@ -312,6 +325,7 @@ async def classify_batch(
     endpoint: str,
     max_retries: int,
     profile: ClassificationProfile,
+    max_doc_chars: int = 0,
 ) -> list[bool | str | None]:
     """Classify one batch concurrently; order matches *records*."""
     tasks = [
@@ -324,6 +338,7 @@ async def classify_batch(
                 endpoint=endpoint,
                 max_retries=max_retries,
                 profile=profile,
+                max_doc_chars=max_doc_chars,
             )
         )
         for record in records
@@ -404,6 +419,7 @@ async def run(args: argparse.Namespace) -> bool:
                 endpoint=args.endpoint,
                 max_retries=args.max_retries,
                 profile=profile,
+                max_doc_chars=args.max_doc_chars,
             )
             for record, value in zip(batch, flags, strict=True):
                 classified += 1

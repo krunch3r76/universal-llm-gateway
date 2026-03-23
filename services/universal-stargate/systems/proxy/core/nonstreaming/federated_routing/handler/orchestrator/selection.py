@@ -19,6 +19,7 @@ from ....selection_errors import (
     raise_inference_banned_error,
     raise_no_gateways_error,
 )
+from ...wait_logic import DEFAULT_STARTUP_QUEUE_TIMEOUT_S, wait_for_startup_gateway
 from .overflow import apply_non_sticky_overflow
 
 if TYPE_CHECKING:
@@ -166,7 +167,23 @@ async def run_initial_selection(
             )
 
     if not federated_gateways:
-        raise_no_gateways_error()
+        startup_timeout_s = float(
+            (routing_config or {})
+            .get("request_queue", {})
+            .get("startup_queue_timeout_s", DEFAULT_STARTUP_QUEUE_TIMEOUT_S)
+        )
+        remaining = startup_timeout_s - federated_manager.uptime_s
+        if remaining > 0:
+            await wait_for_startup_gateway(
+                federated_manager=federated_manager,
+                context=context,
+                event_bus=event_bus,
+                timeout_s=remaining,
+            )
+            federated_gateways = federated_manager.get_healthy_gateways()
+
+        if not federated_gateways:
+            raise_no_gateways_error()
 
     gateways_for_routing = federated_gateways_to_routing_candidates(federated_gateways)
 
