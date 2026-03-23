@@ -532,6 +532,65 @@ def _is_transient_status(status_code: int) -> bool:
     return status_code in _TRANSIENT_STATUS_CODES
 
 
+def _format_query_text(text: str, scope: str | list[str] | None = None) -> str:
+    """Apply instruction prefix for instruction-aware embedding models."""
+    if isinstance(scope, list):
+        effective_scope = scope[0] if scope else None
+    else:
+        effective_scope = scope
+    if _is_instruction_aware_model(_embed_model):
+        instruction = _SCOPE_INSTRUCTIONS.get(
+            effective_scope or "", _DEFAULT_INSTRUCTION
+        )
+        return f"Instruct: {instruction}\nQuery: {text}"
+    return f"search_query: {text}"
+
+
+async def embed_queries_batch(
+    texts: list[str],
+    scope: str | list[str] | None = None,
+) -> list[list[float]]:
+    """Embed multiple search queries in a single batch forward pass.
+
+    All texts are formatted with instruction prefixes (same as embed_query)
+    and sent to the Gateway as one ``/v1/embeddings`` call. The GPU processes
+    them in a single forward pass, eliminating per-query embedding latency.
+
+    Uses the same retry and overflow recovery as ``embed_chunks`` via
+    ``_post_embeddings``.
+
+    Raises EmbeddingTransientError on total failure.
+    """
+    _require_configured()
+    if not texts:
+        return []
+    formatted = [_format_query_text(t, scope) for t in texts]
+    try:
+        embeddings = await _post_embeddings(formatted)
+    except Exception:
+        logger.error(
+            "embed_queries_batch failed for %d texts (model=%s)",
+            len(texts),
+            _embed_model,
+            exc_info=True,
+        )
+        raise EmbeddingTransientError(
+            f"Batch query embedding failed for {len(texts)} texts (model={_embed_model})",
+            model_id=_embed_model,
+            attempts=_EMBED_RETRY_ATTEMPTS,
+            last_status=None,
+        )
+    if _event_bus is not None:
+        _event_bus.publish_async_nowait(
+            rag_embedding_query_success(
+                model_id=_embed_model,
+                query_len=sum(len(t) for t in texts),
+                scope=scope,
+            )
+        )
+    return embeddings
+
+
 async def embed_query(text: str, scope: str | list[str] | None = None) -> list[float]:
     """Embed a search query with bounded jittered backoff on transient errors.
 
@@ -541,7 +600,6 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
     distinguish transient unavailability from permanent errors.
     """
     _require_configured()
-    # When scope is a list, only the first element is used for instruction formatting.
     if isinstance(scope, list):
         if scope and len(scope) > 1:
             logger.warning(
@@ -551,13 +609,7 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
         effective_scope = scope[0] if scope else None
     else:
         effective_scope = scope
-    if _is_instruction_aware_model(_embed_model):
-        instruction = _SCOPE_INSTRUCTIONS.get(
-            effective_scope or "", _DEFAULT_INSTRUCTION
-        )
-        formatted = f"Instruct: {instruction}\nQuery: {text}"
-    else:
-        formatted = f"search_query: {text}"
+    formatted = _format_query_text(text, scope=effective_scope)
 
     last_exc: Exception | None = None
     last_status: int | None = None

@@ -7,6 +7,7 @@ Docker bridge network and returns the parsed JSON response.
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import os
 from typing import TYPE_CHECKING, Any
@@ -55,6 +56,12 @@ def _relay(
     method = method.upper()
     if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
         return {"error": f"Unsupported HTTP method: {method!r}"}
+
+    if isinstance(body, str):
+        try:
+            body = _json.loads(body)
+        except (ValueError, TypeError):
+            return {"error": f"body is a string but not valid JSON: {body[:200]}"}
 
     svc_config = _SERVICES.get(service)
     if svc_config is None:

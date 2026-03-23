@@ -62,6 +62,10 @@ from services.rag.metadata_boost import apply_metadata_boost
 
 from .context_formatting import ChunkData, format_context
 from .retrieval_execution import RetrievedChunk as _RetrievedChunk
+from .retrieval_execution import build_facet_pool as _build_facet_pool
+from .retrieval_execution import (
+    compute_and_dispatch_pool_b as _compute_and_dispatch_pool_b,
+)
 from .retrieval_execution import execute_single_query as _execute_single_query
 from .retrieval_execution import expand_neighbors as _expand_neighbors
 from .retrieval_execution import rrf_merge as _rrf_merge
@@ -211,35 +215,27 @@ class RagMultiRetrieveHandler(BaseHandler):
         )
         hyde_result_valid = _is_valid_step_result(hyde_result)
 
-        # Optional: per-facet OR-term queries for sparse-only pool B.
-        # ∀ facet ∈ facet_result: terms OR-joined → FTS5 exact-match recall for
-        # named systems/standards that AND-semantics rewrites miss entirely.
+        # Pool B facets: either read from a prior step (rewrite pipeline) or
+        # computed inline concurrently with pool A (direct pipeline).
         facet_pool: list[tuple[str, str]] = []  # (facet_label, or_query)
+        _inline_facets: bool = False
+        computed_facets: list[dict[str, object]] = []
         if step.handler_inputs and "facet_result" in step.handler_inputs:
             try:
                 facet_raw = self._resolve_input(
                     resolver, step, "facet_result", step.handler_inputs
                 )
+                facet_pool = _build_facet_pool(facet_raw)
                 if isinstance(facet_raw, list):
-                    for facet in facet_raw:
-                        if not isinstance(facet, dict):
-                            continue
-                        label = str(facet.get("label", ""))
-                        terms = [
-                            t
-                            for t in facet.get("terms", [])
-                            if isinstance(t, str) and t.strip()
-                        ]
-                        if not terms:
-                            continue
-                        fts_terms = [f'"{t}"' if " " in t else t for t in terms]
-                        facet_pool.append((label, " OR ".join(fts_terms)))
+                    computed_facets = [f for f in facet_raw if isinstance(f, dict)]
             except Exception:
                 logger.warning(
                     "Step '%s': failed to resolve facet_result, skipping pool B",
                     step.id,
                     exc_info=True,
                 )
+        else:
+            _inline_facets = True
         raw_scopes = scope_data.get("scopes") or scope_data.get("scope", "all")
         if isinstance(raw_scopes, list):
             predicted_scopes = [
@@ -668,17 +664,57 @@ class RagMultiRetrieveHandler(BaseHandler):
 
         async with make_async_client(base_url, timeout=rag_timeout) as client:
             results_per_query: list[list[_RetrievedChunk] | BaseException]
-            if (
+            # ── Batch-embed all dense queries in one GPU forward pass ──
+            # Pool A queries need embeddings; pool B (sparse_only) does not.
+            _query_embeddings: dict[int, list[float]] = {}
+            if queries:
+                _embed_start = _time.monotonic()
+                try:
+                    embed_resp = await client.post(
+                        api_path.replace("/search", "/embed_batch"),
+                        json={
+                            "texts": queries,
+                            "scope": search_scope
+                            if isinstance(search_scope, (str, list))
+                            else None,
+                        },
+                    )
+                    embed_resp.raise_for_status()
+                    embed_data = embed_resp.json()
+                    for idx, emb in enumerate(embed_data.get("embeddings", [])):
+                        _query_embeddings[idx] = emb
+                    logger.info(
+                        "Step '%s': batch-embedded %d queries in %.3fs",
+                        step.id,
+                        len(queries),
+                        _time.monotonic() - _embed_start,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Step '%s': batch embedding failed, falling back to "
+                        "per-query embedding",
+                        step.id,
+                        exc_info=True,
+                    )
+
+            # ── Inline facet config (when computed concurrently with pool A) ──
+            _idf_max_phrases: int = int(effective.get("max_expansion_terms", 10))
+            _idf_max_terms: int = int(effective.get("max_idf_terms", 8))
+            _idf_max_disc: int = int(effective.get("max_discriminative", 4))
+
+            _is_multi_scope = (
                 isinstance(search_scope, list)
                 and len(search_scope) > 1
                 and source_prefixes is None
-            ):
+            )
+
+            if _is_multi_scope:
                 task_specs: list[tuple[int, str]] = []
-                tasks = []
+                pool_a_tasks: list[Any] = []
                 for q_idx, q in enumerate(queries):
                     for scoped_label in search_scope:
                         task_specs.append((q_idx, scoped_label))
-                        tasks.append(
+                        pool_a_tasks.append(
                             _execute_single_query(
                                 client,
                                 api_path,
@@ -687,36 +723,68 @@ class RagMultiRetrieveHandler(BaseHandler):
                                 recency_weight,
                                 scoped_label,
                                 None,
+                                query_embedding=_query_embeddings.get(q_idx),
                             )
                         )
-                # Pool B: per-facet OR-term sparse-only queries.
-                # Appended after pool A; results map to q_idx >= len(queries).
-                facet_q_offset = len(queries)
-                for f_idx, (facet_label, or_query) in enumerate(facet_pool):
-                    for scoped_label in search_scope:
-                        task_specs.append((facet_q_offset + f_idx, scoped_label))
-                        tasks.append(
-                            _execute_single_query(
-                                client,
-                                api_path,
-                                or_query,
-                                facet_top_k,
-                                recency_weight,
-                                scoped_label,
-                                None,
-                                sparse_only=True,
+
+                if _inline_facets:
+                    # Concurrent: pool A + IDF/phrase computation → pool B
+                    (
+                        pool_a_raw,
+                        (computed_facets, facet_pool, pool_b_raw),
+                    ) = await asyncio.gather(
+                        asyncio.gather(*pool_a_tasks, return_exceptions=True),
+                        _compute_and_dispatch_pool_b(
+                            client,
+                            api_path,
+                            context.source_text,
+                            facet_top_k,
+                            recency_weight,
+                            None,
+                            None,
+                            max_phrases=_idf_max_phrases,
+                            max_idf_terms=_idf_max_terms,
+                            max_discriminative=_idf_max_disc,
+                            multi_scope_labels=list(search_scope),
+                        ),
+                    )
+                    # Rebuild task_specs to include pool B entries
+                    facet_q_offset = len(queries)
+                    for f_idx, _ in enumerate(facet_pool):
+                        for scoped_label in search_scope:
+                            task_specs.append((facet_q_offset + f_idx, scoped_label))
+                    task_results = list(pool_a_raw) + pool_b_raw
+                else:
+                    facet_q_offset = len(queries)
+                    for f_idx, (_, or_query) in enumerate(facet_pool):
+                        for scoped_label in search_scope:
+                            task_specs.append((facet_q_offset + f_idx, scoped_label))
+                            pool_a_tasks.append(
+                                _execute_single_query(
+                                    client,
+                                    api_path,
+                                    or_query,
+                                    facet_top_k,
+                                    recency_weight,
+                                    scoped_label,
+                                    None,
+                                    sparse_only=True,
+                                )
                             )
-                        )
+                    task_results = await asyncio.gather(
+                        *pool_a_tasks, return_exceptions=True
+                    )
+
                 if facet_pool:
                     logger.info(
-                        "Step '%s': pool B — %d facet sparse queries (top_k=%d): %s",
+                        "Step '%s': pool B — %d facet sparse queries "
+                        "(top_k=%d, inline=%s): %s",
                         step.id,
                         len(facet_pool),
                         facet_top_k,
+                        _inline_facets,
                         [label for label, _ in facet_pool],
                     )
-
-                task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
                 per_query_chunks: dict[int, list[_RetrievedChunk]] = {}
                 per_query_errors: dict[int, BaseException] = {}
@@ -744,7 +812,6 @@ class RagMultiRetrieveHandler(BaseHandler):
                             if chunk.content_hash not in seen:
                                 seen.add(chunk.content_hash)
                                 deduped.append(chunk)
-                                # ∀ q_idx ≥ facet_q_offset → pool B hit
                                 if q_idx >= facet_q_offset:
                                     facet_chunk_hashes.add(chunk.content_hash)
                         results_per_query.append(deduped)
@@ -753,7 +820,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                     else:
                         results_per_query.append([])
             else:
-                tasks = [
+                pool_a_tasks_simple = [
                     _execute_single_query(
                         client,
                         api_path,
@@ -762,33 +829,71 @@ class RagMultiRetrieveHandler(BaseHandler):
                         recency_weight,
                         search_scope,
                         source_prefixes,
+                        query_embedding=_query_embeddings.get(q_idx),
                     )
-                    for q in queries
+                    for q_idx, q in enumerate(queries)
                 ]
-                # Pool B: per-facet OR-term sparse-only queries.
-                if facet_pool:
-                    logger.info(
-                        "Step '%s': pool B — %d facet sparse queries (top_k=%d): %s",
-                        step.id,
-                        len(facet_pool),
-                        facet_top_k,
-                        [label for label, _ in facet_pool],
+
+                if _inline_facets:
+                    # Concurrent: pool A + IDF/phrase computation → pool B
+                    (
+                        pool_a_raw,
+                        (computed_facets, facet_pool, pool_b_raw),
+                    ) = await asyncio.gather(
+                        asyncio.gather(
+                            *pool_a_tasks_simple,
+                            return_exceptions=True,
+                        ),
+                        _compute_and_dispatch_pool_b(
+                            client,
+                            api_path,
+                            context.source_text,
+                            facet_top_k,
+                            recency_weight,
+                            search_scope,
+                            source_prefixes,
+                            max_phrases=_idf_max_phrases,
+                            max_idf_terms=_idf_max_terms,
+                            max_discriminative=_idf_max_disc,
+                        ),
                     )
-                    for _facet_label, or_query in facet_pool:
-                        tasks.append(
-                            _execute_single_query(
-                                client,
-                                api_path,
-                                or_query,
-                                facet_top_k,
-                                recency_weight,
-                                search_scope,
-                                source_prefixes,
-                                sparse_only=True,
-                            )
+                    results_per_query = list(pool_a_raw) + pool_b_raw
+                    if facet_pool:
+                        logger.info(
+                            "Step '%s': pool B — %d facet sparse queries "
+                            "(top_k=%d, inline=True): %s",
+                            step.id,
+                            len(facet_pool),
+                            facet_top_k,
+                            [label for label, _ in facet_pool],
                         )
-                results_per_query = await asyncio.gather(*tasks, return_exceptions=True)
-                # Collect pool B hashes: last len(facet_pool) results in the list.
+                else:
+                    if facet_pool:
+                        logger.info(
+                            "Step '%s': pool B — %d facet sparse queries "
+                            "(top_k=%d): %s",
+                            step.id,
+                            len(facet_pool),
+                            facet_top_k,
+                            [label for label, _ in facet_pool],
+                        )
+                        for _, or_query in facet_pool:
+                            pool_a_tasks_simple.append(
+                                _execute_single_query(
+                                    client,
+                                    api_path,
+                                    or_query,
+                                    facet_top_k,
+                                    recency_weight,
+                                    search_scope,
+                                    source_prefixes,
+                                    sparse_only=True,
+                                )
+                            )
+                    results_per_query = await asyncio.gather(
+                        *pool_a_tasks_simple, return_exceptions=True
+                    )
+
                 pool_b_start = len(queries)
                 for i, result in enumerate(
                     results_per_query[pool_b_start:], pool_b_start
@@ -1197,6 +1302,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 "scope": scope,
                 "rewritten_queries": queries,
                 "facet_pool_queries": [q for _, q in facet_pool] or None,
+                "facets": computed_facets or None,
                 "chunks": chunk_dicts,
                 "effective_params": {
                     "top_k_per_query": top_k,

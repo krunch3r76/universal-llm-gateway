@@ -34,6 +34,7 @@ options:
   neighbor_expansion_max_chunks: 30
   neighbor_expansion_score_discount: 1.0
   rerank_enabled: true
+  rerank_mode: cross_encoder
   rerank_model: qwen3_9b
   rerank_window_size: 5
   rerank_overlap: 1
@@ -42,16 +43,15 @@ options:
   rerank_prior_weight: 0.70
   scope_options: []
   scope_aliases: {}
+  # IDF expansion config (computed inline, concurrent with pool A retrieval)
+  max_expansion_terms: 10
+  max_idf_terms: 8
+  max_discriminative: 4
 
 steps:
   - name: direct_scope
     type: rag_direct_scope_v1
     default_scope: "all"
-
-  - name: expand_terms
-    type: rag_expand_terms_v1
-    max_expansion_terms: 10
-    min_chunk_cooccurrence: 1
 
   - name: generate_hyde
     type: generate
@@ -81,7 +81,6 @@ steps:
       scope_result: "direct_scope.json"
       rewrite_result: "direct_scope.json"
       hyde_result: "generate_hyde.json"
-      facet_result: "expand_terms.json.facets"
 
   - name: rerank_assemble
     type: rag_rerank_assemble_v1
@@ -89,7 +88,7 @@ steps:
     prompt_ref: rag.rag_context_v1.rerank_chunks
     handler_inputs:
       chunks_data: "retrieve_assemble.json.chunks"
-      facet_result: "expand_terms.json.facets"
+      facet_result: "retrieve_assemble.json.facets"
     generation_parameters:
       temperature: 0.2
       max_tokens: 8192

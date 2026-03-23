@@ -1,7 +1,8 @@
-"""RAG retrieval execution and RRF merging."""
+"""RAG retrieval execution, facet computation, and RRF merging."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass, field
@@ -77,11 +78,15 @@ async def execute_single_query(
     source_prefixes: list[str] | None,
     *,
     sparse_only: bool = False,
+    query_embedding: list[float] | None = None,
 ) -> list[RetrievedChunk]:
     """Execute one RAG search and parse results into chunks.
 
+    When ``query_embedding`` is provided, the RAG service skips its internal
+    ``embed_query()`` call and uses the pre-computed vector directly. This
+    enables batch embedding (one GPU forward pass for N queries).
+
     ∀ sparse_only=True: skip dense embedding; BM25/FTS5 only.
-    Use for OR-joined named-entity queries where dense embedding adds noise.
     """
     body: dict[str, Any] = {
         "query": query,
@@ -90,6 +95,8 @@ async def execute_single_query(
     }
     if sparse_only:
         body["sparse_only"] = True
+    if query_embedding is not None:
+        body["query_embedding"] = query_embedding
     if source_prefixes:
         body["source_prefixes"] = source_prefixes
     elif scope is not None:
@@ -253,3 +260,163 @@ async def expand_neighbors(
         neighbors_fetched=len(raw_neighbors),
         sources_expanded=len(groups),
     )
+
+
+def build_facet_pool(
+    facets_raw: list[dict[str, object]] | object,
+) -> list[tuple[str, str]]:
+    """Convert facet dicts to (label, FTS5 OR-query) pairs for pool B retrieval."""
+    if not isinstance(facets_raw, list):
+        return []
+    pool: list[tuple[str, str]] = []
+    for facet in facets_raw:
+        if not isinstance(facet, dict):
+            continue
+        label = str(facet.get("label", ""))
+        terms = [t for t in facet.get("terms", []) if isinstance(t, str) and t.strip()]
+        if not terms:
+            continue
+        fts_terms = [f'"{t}"' if " " in t else t for t in terms]
+        pool.append((label, " OR ".join(fts_terms)))
+    return pool
+
+
+def compute_facets_from_text(
+    source_text: str,
+    *,
+    max_phrases: int = 10,
+    max_idf_terms: int = 8,
+    max_discriminative: int = 4,
+) -> list[dict[str, object]]:
+    """Compute phrase facets + IDF expansion from query text (sync).
+
+    Combines phrase extraction and IDF-weighted corpus expansion — the same
+    logic as ExpandTermsHandler but callable as a plain function for concurrent
+    execution alongside pool A retrieval queries.
+
+    Intended to be run via ``asyncio.to_thread`` from the retrieve handler.
+    """
+    from .term_expansion import (
+        extract_content_words,
+        extract_phrases,
+        idf_expand,
+    )
+
+    query_words = extract_content_words(source_text)
+    query_word_set = frozenset(w.lower() for w in query_words)
+
+    phrases = extract_phrases(source_text, max_phrases=max_phrases)
+
+    emitted: set[str] = set(query_word_set)
+    facets: list[dict[str, object]] = []
+    for i, phrase in enumerate(phrases):
+        terms: list[str] = [phrase]
+        emitted.add(phrase.lower())
+        for w in extract_content_words(phrase, min_len=3):
+            wl = w.lower()
+            terms.append(w)
+            emitted.add(wl)
+        facets.append({"label": f"query_facet_{i}", "terms": terms})
+
+    idf_terms: list[str] = []
+    if max_idf_terms > 0:
+        raw_idf = idf_expand(
+            query_words,
+            max_discriminative=max_discriminative,
+            max_results=max_idf_terms + len(emitted),
+        )
+        for t in raw_idf:
+            if t.lower() not in emitted:
+                emitted.add(t.lower())
+                idf_terms.append(t)
+            if len(idf_terms) >= max_idf_terms:
+                break
+        if idf_terms:
+            facets.append({"label": "corpus_expansion", "terms": idf_terms})
+
+    logger.info(
+        "Inline facet computation: %d phrase facets + %d IDF terms. "
+        "Phrases: %s. IDF: %s",
+        len(phrases),
+        len(idf_terms),
+        phrases,
+        idf_terms[:6],
+    )
+    return facets
+
+
+async def compute_and_dispatch_pool_b(
+    client: httpx.AsyncClient,
+    endpoint: str,
+    source_text: str,
+    facet_top_k: int,
+    recency_weight: float,
+    scope: str | list[str] | None,
+    source_prefixes: list[str] | None,
+    *,
+    max_phrases: int = 10,
+    max_idf_terms: int = 8,
+    max_discriminative: int = 4,
+    multi_scope_labels: list[str] | None = None,
+) -> tuple[
+    list[dict[str, object]],
+    list[tuple[str, str]],
+    list[list[RetrievedChunk] | BaseException],
+]:
+    """Compute facets inline and dispatch pool B sparse queries.
+
+    Runs IDF expansion via ``asyncio.to_thread`` (blocking SQL), then
+    dispatches pool B sparse-only queries. Designed to run concurrently
+    with pool A queries via ``asyncio.gather``.
+
+    Returns:
+        (computed_facets, facet_pool, pool_b_results)
+    """
+    facets = await asyncio.to_thread(
+        compute_facets_from_text,
+        source_text,
+        max_phrases=max_phrases,
+        max_idf_terms=max_idf_terms,
+        max_discriminative=max_discriminative,
+    )
+    pool = build_facet_pool(facets)
+    if not pool:
+        return facets, pool, []
+
+    tasks: list[asyncio.Task[list[RetrievedChunk]]] = []
+    if multi_scope_labels:
+        for _, or_query in pool:
+            for scoped_label in multi_scope_labels:
+                tasks.append(
+                    asyncio.ensure_future(
+                        execute_single_query(
+                            client,
+                            endpoint,
+                            or_query,
+                            facet_top_k,
+                            recency_weight,
+                            scoped_label,
+                            None,
+                            sparse_only=True,
+                        )
+                    )
+                )
+    else:
+        for _, or_query in pool:
+            tasks.append(
+                asyncio.ensure_future(
+                    execute_single_query(
+                        client,
+                        endpoint,
+                        or_query,
+                        facet_top_k,
+                        recency_weight,
+                        scope,
+                        source_prefixes,
+                        sparse_only=True,
+                    )
+                )
+            )
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    return facets, pool, list(results)

@@ -8,6 +8,7 @@ the central ``state`` module.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException
 
@@ -18,8 +19,12 @@ from services.rag.models import (
     ChunkByIndexItem,
     ChunksByIndexRequest,
     ChunksByIndexResponse,
+    EmbedBatchRequest,
+    EmbedBatchResponse,
     FailedChunkItem,
     FailedExtractionResponse,
+    RerankRequest,
+    RerankResponse,
     ScopeInfo,
     ScopeRegisterRequest,
     ScopeRegisterResponse,
@@ -30,7 +35,6 @@ from services.rag.models import (
 from services.rag.search_scope import require_loaded_config
 
 from . import indexing, search, state
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import chromadb
@@ -48,7 +52,9 @@ def health() -> dict[str, str | int | None]:
         "status": "ok",
         "collection": state.COLLECTION_NAME if collection is not None else None,
         "collection_count": collection.count() if collection is not None else 0,
-        "property_index": "ready" if state._property_index is not None else "unavailable",
+        "property_index": "ready"
+        if state._property_index is not None
+        else "unavailable",
         "embedding_model": get_embed_model_id() or "unconfigured",
         "watcher": "running" if state._watcher_manager is not None else "inactive",
     }
@@ -62,6 +68,49 @@ async def search_endpoint(request: SearchRequest) -> SearchResponse:
     remains a thin transport boundary over core retrieval logic.
     """
     return await search.execute_search(request)
+
+
+@router.post("/embed_batch", response_model=EmbedBatchResponse)
+async def embed_batch(request: EmbedBatchRequest) -> EmbedBatchResponse:
+    """Batch-embed multiple query texts in a single GPU forward pass.
+
+    Pipeline handlers call this once before dispatching individual /search
+    calls with pre-computed embeddings, eliminating per-query embedding
+    latency (N sequential forward passes → 1 batch forward pass).
+    """
+    from services.rag.embeddings import EmbeddingTransientError, embed_queries_batch
+
+    try:
+        embeddings = await embed_queries_batch(request.texts, scope=request.scope)
+    except EmbeddingTransientError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Batch embedding failed: {exc}",
+        )
+    return EmbedBatchResponse(embeddings=embeddings)
+
+
+@router.post("/rerank", response_model=RerankResponse)
+async def rerank_endpoint(request: RerankRequest) -> RerankResponse:
+    """Score (query, passage) pairs via cross-encoder model.
+
+    Returns relevance scores for each passage. The cross-encoder sees
+    query + passage concatenated — higher quality ranking than bi-encoder
+    similarity, at the cost of not being pre-computable.
+    """
+    import asyncio
+
+    from services.rag.cross_encoder import is_available, rerank
+
+    if not is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Cross-encoder model not available. Install sentence-transformers.",
+        )
+    scores = await asyncio.to_thread(rerank, request.query, request.passages)
+    from services.rag.cross_encoder import DEFAULT_MODEL, _model_name
+
+    return RerankResponse(scores=scores, model=_model_name or DEFAULT_MODEL)
 
 
 @router.post("/chunks_by_index", response_model=ChunksByIndexResponse)

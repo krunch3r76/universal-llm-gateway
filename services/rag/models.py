@@ -17,9 +17,10 @@ class SearchRequest(BaseModel):
     max_distance: float | None = None  # None = return all (backward compat)
     source_prefixes: list[str] | None = None
     scope: str | list[str] | None = None
-    # ∀ sparse_only=True: skip dense embedding + collection.query(); BM25 sidecar only.
-    # Use for OR-joined named-entity queries where dense embedding adds noise.
     sparse_only: bool = False
+    # Pre-computed embedding vector; when provided, skip the embed_query() call.
+    # Used by pipeline handlers that batch-embed all queries in a single forward pass.
+    query_embedding: list[float] | None = None
 
     @model_validator(mode="after")
     def check_scope_source_prefixes_exclusive(self) -> SearchRequest:
@@ -281,6 +282,33 @@ class ScopeRegisterResponse(BaseModel):
     name: str
     created: bool
     watching: list[str]
+
+
+class EmbedBatchRequest(BaseModel):
+    """Batch-embed multiple query texts in a single forward pass."""
+
+    texts: list[str]
+    scope: str | list[str] | None = None
+
+
+class EmbedBatchResponse(BaseModel):
+    """Batch embedding results — one embedding vector per input text."""
+
+    embeddings: list[list[float]]
+
+
+class RerankRequest(BaseModel):
+    """Cross-encoder reranking: score (query, passage) pairs."""
+
+    query: str
+    passages: list[str]
+
+
+class RerankResponse(BaseModel):
+    """Cross-encoder scores — one per passage, same order as input."""
+
+    scores: list[float]
+    model: str
 
 
 class RefreshCorpusHintsRequest(BaseModel):

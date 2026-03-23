@@ -74,31 +74,29 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
     distances: list[float]
 
     if request.sparse_only:
-        # Skip dense embedding + vector search entirely.
-        # BM25 sidecar below starts from an empty dense set and promotes all
-        # FTS5 hits into the result (they land in bm25_only_ids and are fetched
-        # from ChromaDB by ID). OR-joined term queries work correctly here
-        # because FTS5 sees individual token matches, not an AND phrase.
         result_ids, chunks, metadatas, distances = [], [], [], []
     else:
-        try:
-            query_embedding = await embed_query(request.query, scope=request.scope)
-        except EmbeddingTransientError as exc:
-            if state._event_bus is not None:
-                state._event_bus.publish_async_nowait(
-                    rag_search_embedding_failed(
-                        model_id=exc.model_id,
-                        attempts=exc.attempts,
-                        last_status=exc.last_status,
-                        query_len=len(request.query),
-                        scope=request.scope,
+        if request.query_embedding is not None:
+            query_embedding = request.query_embedding
+        else:
+            try:
+                query_embedding = await embed_query(request.query, scope=request.scope)
+            except EmbeddingTransientError as exc:
+                if state._event_bus is not None:
+                    state._event_bus.publish_async_nowait(
+                        rag_search_embedding_failed(
+                            model_id=exc.model_id,
+                            attempts=exc.attempts,
+                            last_status=exc.last_status,
+                            query_len=len(request.query),
+                            scope=request.scope,
+                        )
                     )
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Embedding model temporarily unavailable after {exc.attempts} "
+                    f"attempts (model={exc.model_id}, last_status={exc.last_status})",
                 )
-            raise HTTPException(
-                status_code=503,
-                detail=f"Embedding model temporarily unavailable after {exc.attempts} "
-                f"attempts (model={exc.model_id}, last_status={exc.last_status})",
-            )
 
         fetch_k = request.top_k * (5 if request.source_prefixes else 3)
         results = collection.query(
