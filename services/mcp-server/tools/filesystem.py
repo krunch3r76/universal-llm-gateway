@@ -547,9 +547,13 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Unified file operations for the sandboxed /data/files directory.
 
-        Use `files` for persistent user documents, notes, uploads, and exports
-        under /data/files. For repository source code use `project`; for
-        workspace scratchpads, discoveries, and specs under tasks/ use `context`.
+        Use `files` for persistent user documents, notes, uploads, exports,
+        and any files shared with the agent (dropbox). For repository source
+        code use `project`; for workspace scratchpads under tasks/ use `context`.
+
+        For large markdown documents (>5k chars), prefer the `markdown` tool
+        (with sandbox="files") which provides section-level read/write/delete
+        without ingesting the entire file.
 
         Ops:
           read   — read file contents (path required)

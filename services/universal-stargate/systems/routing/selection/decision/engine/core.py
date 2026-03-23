@@ -116,8 +116,9 @@ class DecisionEngine:
             )
 
             score_components = None
+            weighted_total = 0.0
             if tier != FeasibilityTier.T0_INFEASIBLE:
-                score_components, _ = calculate_utility(
+                score_components, weighted_total = calculate_utility(
                     gateway=gateway,
                     placement=placement,
                     policy=self._policy,
@@ -139,6 +140,7 @@ class DecisionEngine:
                     if affinity_rule and affinity_rule.node == gateway.node_id
                     else None
                 ),
+                _cached_score=weighted_total,
             )
             candidates.append(candidate)
 

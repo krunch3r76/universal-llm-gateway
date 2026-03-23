@@ -37,6 +37,7 @@ from pathlib import Path
 import tree_sitter as _ts
 import tree_sitter_python as _tspython
 from bs4 import BeautifulSoup
+from markdown_sections import parse_sections
 from markdownify import markdownify as md
 
 from services.rag.chunker_ast_metadata import (
@@ -70,8 +71,6 @@ _BOILERPLATE_SELECTORS = (
 _PY_LANG = _ts.Language(_tspython.language())
 _PY_PARSER = _ts.Parser(_PY_LANG)
 _AST_CHUNK_NWS_CHARS = _CHUNK_CHARS_CODE
-
-_HEADER_RE: re.Pattern[str] = re.compile(r"^#{1,3} .+", re.MULTILINE)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -253,18 +252,33 @@ def chunk_markdown(
                     metadata={
                         "source": source,
                         "heading": heading_prefix.strip(),
+                        "section_path": heading_prefix.strip(),
                         "overlap_prefix_len": overlap_len,
                     },
                 )
             )
 
-    chunks = []
+    chunks: list[Chunk] = []
     source = path
-    sections = _HEADER_RE.split(content)
-    headers = _HEADER_RE.findall(content)
-    heading_prefixes = [""] + [h.lstrip("#").strip() for h in headers]
-    for heading_prefix, section_text in zip(heading_prefixes, sections, strict=True):
-        _add_chunks_from_section(section_text, heading_prefix)
+    for sec in parse_sections(content):
+        body = content[sec.start : sec.end]
+        if not body.strip():
+            continue
+        if len(body) <= target_chars:
+            full_text = f"## {sec.path}\n\n{body.strip()}" if sec.path else body.strip()
+            chunks.append(
+                Chunk(
+                    text=full_text,
+                    metadata={
+                        "source": source,
+                        "heading": sec.path,
+                        "section_path": sec.path,
+                        "overlap_prefix_len": 0,
+                    },
+                )
+            )
+        else:
+            _add_chunks_from_section(body, sec.path or sec.heading)
 
     return _annotate_chunk_indices(chunks)
 

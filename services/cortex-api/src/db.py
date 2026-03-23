@@ -118,12 +118,44 @@ def _get_applied_versions(conn: sqlite3.Connection) -> set[int]:
         return set()
 
 
+def _apply_sql_migration(conn: sqlite3.Connection, path: Path, version: int) -> int:
+    """Execute a .sql migration file, tolerating duplicate-column ALTERs."""
+    sql = path.read_text()
+    statements = _parse_sql_statements(sql)
+    skipped = 0
+    for stmt in statements:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" in str(exc):
+                skipped += 1
+                continue
+            logger.error("Migration %03d failed on statement: %s", version, stmt)
+            raise
+    return skipped
+
+
+def _apply_py_migration(conn: sqlite3.Connection, path: Path, version: int) -> None:
+    """Execute a .py migration file by calling its ``migrate(conn)`` function."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(f"migration_{version:03d}", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load migration module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    if not hasattr(module, "migrate"):
+        raise AttributeError(f"Migration {path.name} missing required migrate(conn) function")
+    module.migrate(conn)
+
+
 def run_migrations(conn: sqlite3.Connection) -> list[int]:
     """Apply pending migrations from the migrations/ directory.
 
-    Each migration file is named ``NNN_description.sql``. Statements are
-    executed individually so that idempotent ALTERs (which may hit
-    "duplicate column name") don't block the rest of the migration.
+    Supports ``.sql`` and ``.py`` migration files, both named ``NNN_description.ext``.
+    SQL statements are executed individually so that idempotent ALTERs (which may
+    hit "duplicate column name") don't block the rest of the migration.
+    Python migrations must expose a ``migrate(conn)`` function.
 
     Returns the list of newly applied version numbers.
     """
@@ -132,7 +164,9 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
         return []
 
     applied = _get_applied_versions(conn)
-    migration_files = sorted(_MIGRATIONS_DIR.glob("*.sql"))
+    sql_files = list(_MIGRATIONS_DIR.glob("*.sql"))
+    py_files = list(_MIGRATIONS_DIR.glob("*.py"))
+    migration_files = sorted(sql_files + py_files, key=lambda p: p.name)
     newly_applied: list[int] = []
 
     for path in migration_files:
@@ -143,35 +177,20 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
 
         version = int(match.group(1))
         if version in applied:
-            # emit_signal("db.migration.skipped_already_applied", version=version, path=path.name)
             continue
 
         logger.info("Applying migration %03d: %s", version, path.name)
-        sql = path.read_text()
-        statements = _parse_sql_statements(sql)
+
         skipped = 0
+        if path.suffix == ".sql":
+            skipped = _apply_sql_migration(conn, path, version)
+        elif path.suffix == ".py":
+            _apply_py_migration(conn, path, version)
 
-        for stmt in statements:
-            try:
-                conn.execute(stmt)
-            except sqlite3.OperationalError as exc:
-                if "duplicate column name" in str(exc):
-                    skipped += 1
-                    continue
-                logger.error("Migration %03d failed on statement: %s", version, stmt)
-                raise
-
-        # Option 1: Keep NNN_description
         conn.execute(
             "INSERT INTO schema_version (version, description) VALUES (?, ?)",
             (version, path.stem),
         )
-        # Option 2: Extract only description (requires careful handling of file names like '001.sql')
-        # description_part = path.stem.split('_', 1)[1] if '_' in path.stem else path.stem
-        # conn.execute(
-        #     "INSERT INTO schema_version (version, description) VALUES (?, ?)",
-        #     (version, description_part),
-        # )
         conn.commit()
 
         if skipped:

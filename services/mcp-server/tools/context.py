@@ -666,8 +666,13 @@ def register_context_tools(mcp: FastMCP) -> None:
 
         Use `context` for workspace scratchpads and durable task context:
         discoveries, lessons, specs, prompts, and similar notes under tasks/.
-        Prefer `project` for repository files and `files` for persistent user
-        documents in /data/files.
+        ¬user uploads, dropbox files, or materials shared with the agent —
+        those live in /data/files (use `files` tool).
+        Prefer `project` for repository source code.
+
+        For large markdown documents (specs, runbooks >5k chars), prefer
+        the `markdown` tool which provides section-level read/write/delete
+        without ingesting the entire file.
 
         Ops:
           read    — read file contents (path required)

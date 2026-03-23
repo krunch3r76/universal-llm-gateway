@@ -35,6 +35,9 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "continuation_decision_limit": 5,
         "continuation_service_limit": 3,
         "todo_context": "universal-llm-gateway",
+        "boot_section_max_full": 3,
+        "boot_section_max_oneline": 10,
+        "boot_section_type_exclude": "legal_matter,person,property,organization",
     },
     "api": {
         "include_deadlines": False,
@@ -47,6 +50,9 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "continuation_decision_limit": 5,
         "continuation_service_limit": 3,
         "todo_context": None,
+        "boot_section_max_full": 5,
+        "boot_section_max_oneline": 15,
+        "boot_section_type_exclude": "legal_matter,person,property",
     },
     "web": {
         "include_deadlines": True,
@@ -59,6 +65,9 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "continuation_decision_limit": 0,
         "continuation_service_limit": 0,
         "todo_context": None,
+        "boot_section_max_full": 5,
+        "boot_section_max_oneline": 15,
+        "boot_section_type_exclude": None,
     },
 }
 
@@ -310,42 +319,67 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
             futures_spec["deadlines"] = (_cx, "GET", "/deadlines")
         if profile.get("include_review_queue", True):
             futures_spec["staging"] = (
-                _cx, "GET", "/staging?status=pending&limit=30",
+                _cx,
+                "GET",
+                "/staging?status=pending&limit=30",
             )
 
         decision_limit = profile.get("continuation_decision_limit", 0)
         service_limit = profile.get("continuation_service_limit", 0)
         if decision_limit > 0:
-            cont_decision_qs = urlencode({
-                "entity_type": "decision",
-                "superseded": "false",
-                "limit": decision_limit,
-            })
+            cont_decision_qs = urlencode(
+                {
+                    "entity_type": "decision",
+                    "superseded": "false",
+                    "limit": decision_limit,
+                }
+            )
             futures_spec["cont_decisions"] = (
-                _cx, "GET", f"/assertions?{cont_decision_qs}",
+                _cx,
+                "GET",
+                f"/assertions?{cont_decision_qs}",
             )
         if service_limit > 0:
-            cont_service_qs = urlencode({
-                "entity_type": "service",
-                "superseded": "false",
-                "confidence": "believed",
-                "limit": service_limit,
-            })
+            cont_service_qs = urlencode(
+                {
+                    "entity_type": "service",
+                    "superseded": "false",
+                    "confidence": "believed",
+                    "limit": service_limit,
+                }
+            )
             futures_spec["cont_services"] = (
-                _cx, "GET", f"/assertions?{cont_service_qs}",
+                _cx,
+                "GET",
+                f"/assertions?{cont_service_qs}",
             )
 
         todo_ctx = profile.get("todo_context")
         if todo_ctx:
             todo_qs = urlencode({"status": "open", "context": todo_ctx, "limit": 15})
             futures_spec["todos"] = (
-                _cx, "GET", f"/todos?{todo_qs}",
+                _cx,
+                "GET",
+                f"/todos?{todo_qs}",
             )
 
+        boot_section_qs_parts: dict[str, Any] = {
+            "persona": agent,
+            "agent": agent,
+            "max_full": profile.get("boot_section_max_full", 5),
+            "max_oneline": profile.get("boot_section_max_oneline", 15),
+        }
+        bs_type_exclude = profile.get("boot_section_type_exclude")
+        if bs_type_exclude:
+            boot_section_qs_parts["type_exclude"] = bs_type_exclude
+        futures_spec["boot_sections"] = (
+            _cx,
+            "GET",
+            f"/boot-sections?{urlencode(boot_section_qs_parts)}",
+        )
+
         with ThreadPoolExecutor(max_workers=8) as pool:
-            submitted = {
-                k: pool.submit(*spec) for k, spec in futures_spec.items()
-            }
+            submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
             raw = {k: f.result() for k, f in submitted.items()}
         post_file_results = read_files_batch(post_list) if post_list else {}
 
@@ -356,13 +390,14 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
         unread_turns: list[dict[str, Any]] = safe_list(raw["inbox"], "turns")
         staging_items: list[dict[str, Any]] = safe_list(raw.get("staging", []))
 
-        cont_decisions: list[dict[str, Any]] = safe_list(
-            raw.get("cont_decisions", [])
-        )
-        cont_services: list[dict[str, Any]] = safe_list(
-            raw.get("cont_services", [])
-        )
+        cont_decisions: list[dict[str, Any]] = safe_list(raw.get("cont_decisions", []))
+        cont_services: list[dict[str, Any]] = safe_list(raw.get("cont_services", []))
         todos: list[dict[str, Any]] = safe_list(raw.get("todos", []))
+
+        boot_sections_raw = raw.get("boot_sections")
+        boot_sections: dict[str, Any] | None = None
+        if isinstance(boot_sections_raw, dict) and "sections" in boot_sections_raw:
+            boot_sections = boot_sections_raw["sections"]
 
         suspected = []
         hypothesized = []
@@ -384,10 +419,15 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
             review_total = len(staging_items) + len(low_conf_unreviewed)
 
         narrative = render_boot_narrative(
+            boot_sections=boot_sections,
             deadlines=deadlines if profile.get("include_deadlines", True) else None,
             sessions=sessions,
-            suspected=suspected if profile.get("include_investigations", True) else None,
-            hypothesized=hypothesized if profile.get("include_investigations", True) else None,
+            suspected=suspected
+            if profile.get("include_investigations", True)
+            else None,
+            hypothesized=hypothesized
+            if profile.get("include_investigations", True)
+            else None,
             threads=threads,
             unread=unread_turns,
             review_total=review_total,

@@ -16,7 +16,7 @@ import os
 import socket
 import sys
 import time
-from typing import Any, override, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, override
 
 import uvicorn
 from auth_middleware import AuthMiddleware
@@ -40,6 +40,7 @@ from tools.filesystem import register_filesystem_tools
 from tools.llm import register_llm_tools
 from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
+from tools.markdown_tool import register_markdown_tools
 from tools.model_status import register_model_status_tools
 from tools.pipeline import register_pipeline_tools
 from tools.pipeline_consult import register_pipeline_consult_tools
@@ -51,9 +52,10 @@ from tools.sqlite import register_sqlite_tools
 from tools.web import register_web_tools
 
 if TYPE_CHECKING:
-    from starlette.types import Send
-    from collections.abc import Callable
     from asyncio.transports import BaseTransport
+    from collections.abc import Callable
+
+    from starlette.types import Send
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +208,7 @@ _PRIMARY_TOOLS: set[str] = {
     # Consolidated file surfaces
     "files",
     "context",
+    "markdown",
     "project",
     # SQLite
     "sqlite_query",
@@ -229,6 +232,7 @@ def _build_server() -> FastMCP:
     """
     mcp: FastMCP = FastMCP("gateway-tools")
     register_filesystem_tools(mcp)
+    register_markdown_tools(mcp)
     register_manage_tools(mcp)
     register_model_status_tools(mcp)
     register_project_tools(mcp)

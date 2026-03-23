@@ -1578,6 +1578,13 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.tool.file.edited` | `sandbox`, `path`, `operation`, `content_chars` | `edit_file` completed |
 | `mcp.tool.file.edit_failed` | `sandbox`, `path`, `operation`, `reason`, `error_message` | `edit_file` failed |
 | `mcp.tool.file.deleted` | `sandbox`, `path` | `delete_file` completed |
+| `mcp.tool.markdown.sections.listed` | `path`, `sandbox`, `count` | `markdown` list_sections completed |
+| `mcp.tool.markdown.section.read` | `path`, `sandbox`, `section`, `chars` | `markdown` read_section completed |
+| `mcp.tool.markdown.section.replaced` | `path`, `sandbox`, `section` | `markdown` replace_section completed |
+| `mcp.tool.markdown.section.appended` | `path`, `sandbox`, `section` | `markdown` append_section completed |
+| `mcp.tool.markdown.section.deleted` | `path`, `sandbox`, `section` | `markdown` delete_section completed |
+| `mcp.tool.markdown.converted.to.dict` | `path`, `sandbox`, `keys` | `markdown` to_dict completed |
+| `mcp.tool.markdown.converted.from.dict` | `path`, `sandbox`, `keys` | `markdown` from_dict completed |
 | `mcp.manage.service.called` | `action`, `service` | manage_service tool invoked |
 | `mcp.manage.service.completed` | `action`, `service`, `duration_s` | manage_service completed successfully |
 | `mcp.manage.service.failed` | `action`, `service`, `error`, `duration_s` | manage_service returned error |

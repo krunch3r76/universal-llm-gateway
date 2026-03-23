@@ -19,6 +19,7 @@ def safe_list(raw: dict[str, Any] | list[Any], key: str = "items") -> list[Any]:
 
 def render_boot_narrative(
     *,
+    boot_sections: dict[str, Any] | None = None,
     deadlines: list[dict[str, Any]] | None = None,
     sessions: list[dict[str, Any]],
     suspected: list[dict[str, Any]] | None = None,
@@ -90,6 +91,18 @@ def render_boot_narrative(
                     f"- **{dl_date}**{remaining} — "
                     f"{d.get('deadline_name', '')} ({d.get('matter_name', '')})"
                 )
+
+    if boot_sections is not None:
+        full = boot_sections.get("full", [])
+        oneline = boot_sections.get("oneline", [])
+        if full or oneline:
+            parts.append("\n## Key Entities")
+            for entity in full:
+                parts.append(f"\n{entity.get('section_markdown', '')}")
+            if oneline:
+                parts.append("\n---\n\n### One-Line Summaries")
+                for entity in oneline:
+                    parts.append(f"- {entity.get('summary', '')}")
 
     parts.append("\n## Recent Sessions")
     if not sessions:

@@ -4,7 +4,7 @@ import datetime
 import logging
 import sqlite3
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from src.db import cortex_conn, decode_row, execute, json_encode, query
 from src.models import (
@@ -70,8 +70,12 @@ _RELATIONSHIP_FROM = """
 
 
 @router.get("/{entity_id}", response_model=EntityDetail)
-def get_entity(entity_id: str) -> EntityDetail:
+def get_entity(entity_id: str, request: Request) -> EntityDetail:
     """Fetch one entity with linked assertions and relationships."""
+    source = request.headers.get("x-cortex-source", "agent")
+    agent = request.headers.get("x-cortex-agent", "web")
+    session_id = request.headers.get("x-cortex-session")
+
     conn = None
     try:
         conn = cortex_conn()
@@ -97,6 +101,18 @@ def get_entity(entity_id: str) -> EntityDetail:
             "ORDER BY r.created_at DESC",
             (entity_id, entity_id),
         )
+
+        if source != "boot":
+            try:
+                conn.execute(
+                    "INSERT INTO entity_access_log "
+                    "(entity_id, agent, operation, source, session_id) "
+                    "VALUES (?, ?, 'entity_get', ?, ?)",
+                    (entity_id, agent, source, session_id),
+                )
+                conn.commit()
+            except Exception:
+                logger.debug("Access log insert failed for %s", entity_id)
     finally:
         if conn:
             conn.close()
