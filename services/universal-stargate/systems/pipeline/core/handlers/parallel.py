@@ -2,7 +2,7 @@
 Parallel model call utilities for pipeline handlers.
 
 Provides reusable patterns for concurrent LLM requests with:
-- Optional concurrency limiting (semaphore)
+- Optional FIFO-fair concurrency gating (FifoCapacityGate)
 - Consistent error handling
 - Result ordering preservation
 - Structured logging
@@ -17,6 +17,8 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
+
+from universal_concurrency import FifoCapacityGate
 
 logger = logging.getLogger(__name__)
 
@@ -56,20 +58,27 @@ async def parallel_model_calls(
     if not items:
         return []
 
-    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
+    gate = (
+        FifoCapacityGate(max_concurrency, gate_id=description)
+        if max_concurrency
+        else None
+    )
 
-    async def bounded_call(item: T) -> R | None:
+    async def bounded_call(idx: int, item: T) -> R | None:
         try:
-            if semaphore:
-                async with semaphore:
+            if gate:
+                await gate.acquire(str(idx))
+                try:
                     return await call_fn(item)
+                finally:
+                    await gate.release()
             return await call_fn(item)
         except Exception as e:
             logger.warning(f"{description}: call failed: {e}")
             return None
 
     async with asyncio.TaskGroup() as tg:
-        tasks = [tg.create_task(bounded_call(item)) for item in items]
+        tasks = [tg.create_task(bounded_call(i, item)) for i, item in enumerate(items)]
 
     results: list[R] = []
     for task in tasks:
@@ -106,13 +115,20 @@ async def parallel_model_calls_with_index(
     if not items:
         return []
 
-    semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency else None
+    gate = (
+        FifoCapacityGate(max_concurrency, gate_id=description)
+        if max_concurrency
+        else None
+    )
 
     async def bounded_call(idx: int, item: T) -> tuple[int, R] | None:
         try:
-            if semaphore:
-                async with semaphore:
+            if gate:
+                await gate.acquire(str(idx))
+                try:
                     result = await call_fn(idx, item)
+                finally:
+                    await gate.release()
             else:
                 result = await call_fn(idx, item)
             return (idx, result) if result is not None else None

@@ -32,7 +32,6 @@ from services.rag.events.extraction import (
     rag_extraction_batch_skipped,
     rag_extraction_batch_started,
     rag_extraction_batch_timed_out,
-    rag_extraction_circuit_skipped,
     rag_extraction_completed,
     rag_extraction_failed,
     rag_extraction_permanently_skipped,
@@ -152,12 +151,12 @@ def _publish_event_nonblocking(event_bus: EventBus, event: Event) -> None:
 def _describe_infrastructure_failure(timing: dict[str, object]) -> str:
     """Build a bounded error string from infrastructure failure timing metadata.
 
-    Produces descriptive but short error messages for circuit breaker trips,
+    Produces descriptive but short error messages for model availability,
     Stargate errors, and capacity exhaustion so operators can distinguish
     infrastructure failures from extraction-quality failures in failed_extractions.
     """
-    if "circuit_open" in timing:
-        return "infrastructure: circuit breaker open"
+    if "model_unavailable" in timing:
+        return "infrastructure: extraction model not loaded"
     if "stargate_error" in timing:
         msg = str(timing["stargate_error"])[:120]
         return f"infrastructure: stargate error — {msg}"
@@ -347,15 +346,9 @@ async def run_extraction(
 
     failed_ids = [cid for cid in ids if cid not in staged]
     successful = len(staged)
-    is_circuit_open = isinstance(timing, dict) and "circuit_open" in timing
-    if is_circuit_open and event_bus is not None:
-        _publish_event_nonblocking(
-            event_bus,
-            rag_extraction_circuit_skipped(file=file, chunk_count=len(ids)),
-        )
     is_infrastructure_failure = isinstance(timing, dict) and (
         "stargate_error" in timing
-        or "circuit_open" in timing
+        or "model_unavailable" in timing
         or ("capacity_retries" in timing and successful == 0)
     )
     # Threshold applied to the active (non-permanently-failed) chunk set.

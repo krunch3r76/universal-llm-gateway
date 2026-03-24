@@ -9,3 +9,4 @@ watchfiles
 tree-sitter
 tree-sitter-python
 # fastapi, uvicorn, httpx already in ~/.venvs/universal
+aiohttp>=3.9

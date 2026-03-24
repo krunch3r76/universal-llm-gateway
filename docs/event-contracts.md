@@ -357,12 +357,9 @@ rag.started
       └─> rag.watch.reindex.complete*        (* zero or more)
           └─> rag.file.skipped               (* if unchanged or duplicate PDF)
           └─> rag.chunk.noise.tagged*        (* zero or more; per-chunk when heuristic tags noise)
-          └─> rag.extraction.circuit.skipped  (* if circuit breaker is OPEN — batch skipped entirely)
           └─> rag.extraction.batch.started   (* if extraction enabled and content changed)
               └─> rag.extraction.completed | rag.extraction.failed  (* N per chunk)
               └─> rag.extraction.permanently.skipped  (* ≤ M; when chunk crosses max_attempts)
-              └─> rag.extraction.circuit.opened  (* when consecutive capacity failures trip the circuit)
-              └─> rag.extraction.circuit.closed  (* when a probe succeeds and capacity recovers)
               └─> rag.extraction.batch.completed | rag.extraction.batch.timed.out
           └─> rag.extraction.batch.skipped    (* if all chunks permanently failed)
           └─> rag.embedding.chunk.fallback*   (* zero or more; chunk kept as zero vector on persistent embedding fault)
@@ -451,9 +448,6 @@ Payload semantics:
 | `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | All chunks permanently failed — no pipeline call made |
 | `rag.extraction.failed` | `chunk_id`, `error` | Per-chunk extraction failure (expected iteration result missing or invalid after batch parsing) |
 | `rag.extraction.permanently.skipped` | `chunk_id`, `source`, `attempt_count` | Chunk crossed `max_extraction_attempts`; permanently abandoned. Persisted as `permanent=1` in `failed_extractions`. Emitted exactly once per chunk. |
-| `rag.extraction.circuit.opened` | `consecutive_failures`, `cooldown_s` | Circuit breaker tripped — consecutive capacity errors from Stargate exceeded threshold. All workers skip extraction until cooldown elapses and probe succeeds. |
-| `rag.extraction.circuit.closed` | _(empty)_ | Circuit breaker closed after successful probe — capacity recovered. |
-| `rag.extraction.circuit.skipped` | `file`, `chunk_count` | Extraction batch skipped because circuit breaker is OPEN. Chunks remain indexed; extraction deferred to next reconcile sweep after circuit closes. |
 | `rag.extraction.unavailable` | `pipeline`, `error` | Extraction pipeline not routable via Stargate at watcher start. Watcher is not started; RAG serves queries but does not index until restart. |
 
 Between these, per-chunk signals fire: N × `rag.extraction.completed` + M × `rag.extraction.failed`
@@ -464,6 +458,8 @@ where N + M ≤ `chunk_count`. `file` is the correlation key — matches `rag.wa
 due to the all-or-nothing write invariant; equals `successful` when all chunks succeed).
 
 **INVARIANT**: `rag.extraction.permanently.skipped` is emitted at most once per `chunk_id` — on the attempt that causes `attempt_count >= max_extraction_attempts`.
+
+**Note**: When the extraction backend model is not loaded, RAG holds workers using existing `model.loaded` / `model.unloaded` events from the Event Service (no `rag.extraction.circuit.*` signals).
 
 ### RAG scope resolution
 
@@ -1266,9 +1262,6 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.extraction.recovery.completed` | `file`, `entities`, `topics` | recovery pass for missing extraction metadata completed successfully |
 | `rag.extraction.recovery.skipped` | `file`, `reason` | recovery skipped (e.g. no documents in ChromaDB, all chunks permanently failed) |
 | `rag.extraction.recovery.failed` | `file`, `reason` | recovery attempted but extraction metadata could not be committed |
-| `rag.extraction.circuit.opened` | `consecutive_failures`, `cooldown_s` | circuit breaker tripped on capacity errors |
-| `rag.extraction.circuit.closed` | _(empty)_ | circuit breaker closed after successful probe |
-| `rag.extraction.circuit.skipped` | `file`, `chunk_count` | batch skipped due to open circuit breaker |
 | `rag.extraction.unavailable` | `pipeline`, `error` | extraction pipeline not routable at watcher start; watcher not started |
 | `rag.extraction.completed` | `chunk_id`, `entities`, `topics` | - |
 | `rag.extraction.failed` | `chunk_id`, `error` | - |

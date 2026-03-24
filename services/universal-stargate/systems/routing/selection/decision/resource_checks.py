@@ -93,6 +93,7 @@ def resolve_gateway_requirements(
                 "gateway": gateway.name,
                 "model_id": str(model_id),
                 "model_details_keys": len(gateway.model_details),
+                "retryable": True,
             },
         )
 

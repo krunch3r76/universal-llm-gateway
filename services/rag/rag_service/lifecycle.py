@@ -52,8 +52,8 @@ from services.rag.events.lifecycle import (
     rag_started,
 )
 from services.rag.knowledge_extractor import (
-    configure_circuit,
     configure_timeouts,
+    configure_tracker,
     wait_until_extraction_ready,
 )
 from services.rag.property_index import PropertyIndex
@@ -522,7 +522,9 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
         else DEFAULT_INDEX_WORKERS
     )
     configure_timeouts(config.knowledge_extraction)
-    configure_circuit(config.knowledge_extraction, state._event_bus)
+    tracker = configure_tracker(config.knowledge_extraction)
+    await tracker.start()
+    state._extraction_tracker = tracker
     state._watcher_manager = WatcherManager(
         index_fn=_watcher_index_fn,
         delete_fn=_watcher_delete_fn,
@@ -614,3 +616,6 @@ async def _shutdown() -> None:
     if state._watcher_manager is not None:
         await state._watcher_manager.stop()
         state._watcher_manager = None
+    if state._extraction_tracker is not None:
+        await state._extraction_tracker.stop()
+        state._extraction_tracker = None

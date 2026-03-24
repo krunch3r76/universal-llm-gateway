@@ -257,3 +257,65 @@ def get_boot_sections(
             "slow_state_advanced": advanced,
         },
     }
+
+
+_BOOT_TODOS_SQL = """
+    SELECT e.id, e.name,
+           json_extract(e.attributes, '$.priority') as priority,
+           json_extract(e.attributes, '$.domain') as domain,
+           json_extract(e.attributes, '$.context') as context,
+           e.description, e.source_uri
+    FROM entities e
+    WHERE e.type = 'todo'
+    AND json_extract(e.attributes, '$.status') = 'open'
+    {context_filter}
+    ORDER BY
+        CASE json_extract(e.attributes, '$.priority')
+            WHEN 'high' THEN 1
+            WHEN 'medium' THEN 2
+            ELSE 3
+        END,
+        e.updated_at DESC
+    LIMIT ?
+"""
+
+
+@router.get("/boot-todos")
+def get_boot_todos(
+    limit: int = Query(15, ge=1, le=50, description="Max open todos"),
+    context: str | None = Query(
+        None, description="Filter by context (e.g. 'code'). None = all."
+    ),
+) -> dict[str, Any]:
+    """Open todo entities for boot briefings, priority-ordered.
+
+    Cursor boot passes context=code to exclude personal/financial/legal todos.
+    Web boot passes no context to see everything.
+    """
+    params: list[str | int] = []
+    if context:
+        context_filter = "AND json_extract(e.attributes, '$.context') = ?"
+        params.append(context)
+    else:
+        context_filter = ""
+    params.append(limit)
+
+    sql = _BOOT_TODOS_SQL.format(context_filter=context_filter)
+    conn = cortex_conn()
+    try:
+        rows = db_query(conn, sql, tuple(params))
+    finally:
+        conn.close()
+    items = [
+        {
+            "id": r["id"],
+            "title": r["name"],
+            "priority": r["priority"],
+            "domain": r["domain"],
+            "context": r["context"],
+            "description": r["description"],
+            "source_uri": r["source_uri"],
+        }
+        for r in rows
+    ]
+    return {"items": items}

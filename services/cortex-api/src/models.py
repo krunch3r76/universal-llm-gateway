@@ -10,42 +10,7 @@ from pydantic import BaseModel, Field
 # debt. API contract is string-passthrough at the boundary; callers parse. Do not
 # "fix" to strict types without a product decision — see thread 045.
 
-# --- Todos ---
-
-TodoStatus = Literal["done", "deferred", "open"]
 AssertionConfidence = Literal["confirmed", "believed", "suspected", "hypothesized"]
-
-
-class TodoCreate(BaseModel):
-    id: str
-    title: str
-    domain: str
-    context: str = "universal-llm-gateway"
-    priority: str = "short_term"
-    description: str = ""
-    refs: dict[str, Any] = Field(default_factory=dict)
-
-
-class TodoStatusUpdate(BaseModel):
-    status: TodoStatus = Field(description="One of: done, deferred, open")
-
-
-class TodoItem(BaseModel):
-    id: str
-    title: str
-    status: TodoStatus
-    priority: str
-    domain: str
-    context: str
-    description: str = ""
-    refs: dict[str, Any] = Field(default_factory=dict)
-    notes: str = ""
-    created_at: str | None = None
-    updated_at: str | None = None
-
-
-class TodoList(BaseModel):
-    items: list[TodoItem]
 
 
 # --- Entities ---

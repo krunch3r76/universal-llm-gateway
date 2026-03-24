@@ -37,6 +37,8 @@ _JUNK_LINE_RE: re.Pattern[str] = re.compile(
     r"|\.\s+\.\s+\."
     r")"
 )
+_ORDERED_LIST_LINE_RE: re.Pattern[str] = re.compile(r"^\s*\d+\.\s+")
+_MIN_ORDERED_LIST_PROSE_WORDS: int = 4
 
 _CITATION_LINE_RE: re.Pattern[str] = re.compile(
     r".*,\s*(?:19|20)\d{2}\b.*|.*\bet\s+al\.?\s*[,\.].*",
@@ -65,6 +67,16 @@ def _is_link_only_line(line: str) -> bool:
     if m:
         return len(m.group(1)) < 20
     return False
+
+
+def _is_junk_line(line: str) -> bool:
+    """True when a line matches a junk marker without looking like prose."""
+    stripped = line.strip()
+    if _ORDERED_LIST_LINE_RE.match(stripped):
+        list_body = _ORDERED_LIST_LINE_RE.sub("", stripped, count=1)
+        if len(list_body.split()) >= _MIN_ORDERED_LIST_PROSE_WORDS:
+            return False
+    return _JUNK_LINE_RE.search(line) is not None
 
 
 def is_citation_heavy(content: str, threshold: float = 0.25) -> bool:
@@ -125,7 +137,7 @@ def noise_reason(content: str, threshold: float = 0.35) -> str | None:
         return "dense_table"
     if is_citation_heavy(content, 0.25):
         return "citation_block"
-    junk_count = sum(1 for line in lines if _JUNK_LINE_RE.search(line))
+    junk_count = sum(1 for line in lines if _is_junk_line(line))
     if (junk_count / len(lines)) >= threshold:
         return "garbled_extraction"
     url_dense = sum(1 for ln in lines if _is_link_only_line(ln)) / len(lines)

@@ -10,21 +10,23 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-
+from typing import TYPE_CHECKING
 
 from services.rag.article_registry import ArticleEntry
 from services.rag.article_registry import get_entry as get_article_entry
 from services.rag.corpus_hints import update_corpus_hints
 from services.rag.events.query import rag_corpus_hints_update_failed
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from services.rag.watcher_manager import WatcherManager
-    from services.rag.property_index import PropertyIndex
-    from services.rag.config import RagConfig
-    from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
-    import chromadb
     import asyncio
+
+    import chromadb
+    from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
+
+    from services.rag.config import RagConfig
+    from services.rag.extraction_model_tracker import ExtractionModelTracker
+    from services.rag.property_index import PropertyIndex
+    from services.rag.watcher_manager import WatcherManager
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ COLLECTION_NAME = "knowledge"
 _chroma: chromadb.PersistentClient | None = None
 _collection: chromadb.Collection | None = None
 _watcher_manager: WatcherManager | None = None
+_extraction_tracker: ExtractionModelTracker | None = None
 _event_bus: EventBus | None = None
 _broadcaster: MinimalEventDebugBroadcaster | None = None
 _config: RagConfig | None = None

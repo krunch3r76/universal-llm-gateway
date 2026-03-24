@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
+from universal_concurrency import FifoCapacityGate
 from universal_logging import get_logger
 
 from .chunk_types import Chunk, ChunkedResult, ChunkResult, ProcessResult
@@ -204,13 +205,15 @@ class ChunkedModelExecutor:
                 request_id=request_id,
             )
 
-        # Execute with optional concurrency limit
         if self._max_concurrent:
-            semaphore = asyncio.Semaphore(self._max_concurrent)
+            gate = FifoCapacityGate(self._max_concurrent, gate_id="chunked-model")
 
             async def limited_process(chunk: Chunk) -> ChunkResult:
-                async with semaphore:
+                await gate.acquire(str(chunk.index))
+                try:
                     return await process_chunk(chunk)
+                finally:
+                    await gate.release()
 
             async with asyncio.TaskGroup() as tg:
                 tasks = [tg.create_task(limited_process(c)) for c in chunks]

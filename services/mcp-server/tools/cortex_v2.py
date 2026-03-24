@@ -34,7 +34,6 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "assertion_limit": 50,
         "continuation_decision_limit": 5,
         "continuation_service_limit": 3,
-        "todo_context": "universal-llm-gateway",
         "boot_section_max_full": 3,
         "boot_section_max_oneline": 10,
         "boot_section_type_exclude": "legal_matter,person,property,organization",
@@ -49,7 +48,6 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "assertion_limit": 50,
         "continuation_decision_limit": 5,
         "continuation_service_limit": 3,
-        "todo_context": None,
         "boot_section_max_full": 5,
         "boot_section_max_oneline": 15,
         "boot_section_type_exclude": "legal_matter,person,property",
@@ -64,7 +62,6 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "assertion_limit": 50,
         "continuation_decision_limit": 0,
         "continuation_service_limit": 0,
-        "todo_context": None,
         "boot_section_max_full": 5,
         "boot_section_max_oneline": 15,
         "boot_section_type_exclude": None,
@@ -354,14 +351,15 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
                 f"/assertions?{cont_service_qs}",
             )
 
-        todo_ctx = profile.get("todo_context")
-        if todo_ctx:
-            todo_qs = urlencode({"status": "open", "context": todo_ctx, "limit": 15})
-            futures_spec["todos"] = (
-                _cx,
-                "GET",
-                f"/todos?{todo_qs}",
-            )
+        todo_limit = 15
+        todo_qs_parts: dict[str, Any] = {"limit": todo_limit}
+        if agent == "cursor":
+            todo_qs_parts["context"] = "code"
+        futures_spec["todos"] = (
+            _cx,
+            "GET",
+            f"/boot-todos?{urlencode(todo_qs_parts)}",
+        )
 
         boot_section_qs_parts: dict[str, Any] = {
             "persona": agent,

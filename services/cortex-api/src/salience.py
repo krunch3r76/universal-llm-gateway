@@ -183,7 +183,14 @@ def compute_all_salience(
             (entity_id_filter,),
         )
     else:
-        entities = query(conn, "SELECT id, type, name, attributes FROM entities")
+        entities = query(
+            conn,
+            "SELECT id, type, name, attributes FROM entities "
+            "WHERE NOT ("
+            "  type = 'todo' "
+            "  AND json_extract(attributes, '$.status') != 'open'"
+            ")",
+        )
 
     if not entities:
         return [], 0, 0

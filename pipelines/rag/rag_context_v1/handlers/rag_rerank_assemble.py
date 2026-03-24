@@ -1,15 +1,28 @@
-"""Reranking with cross-encoder (fast) or LLM sliding-window (generative).
+"""Reranking with cross-encoder (default/fast) or LLM sliding-window (generative).
 
-Receives post-RRF chunks from ``retrieve_assemble``, optionally reranks them,
-fuses scores with prior (RRF + metadata boost), and formats the final context.
+Receives post-RRF chunks from the retrieve step, optionally reranks them,
+fuses reranker scores with the prior retrieval signal, and formats the final context.
+
+Reranking is a final adjustment, not a replacement for retrieval order.  The prior
+(RRF + metadata-boost score) stays dominant so retrieval evidence is not overturned
+by a marginally higher reranker score on a weak chunk.
 
 Modes (``rerank_mode`` pipeline option):
-    ``cross_encoder`` — Score (query, chunk) pairs via cross-encoder model in
-        a single forward pass. ~100-200ms for 14 pairs. No text generation.
-    ``generative`` — LLM sliding-window reranking with JSON output containing
-        rank + confidence + reason per chunk. ~4-7s for 14 chunks.
+    ``cross_encoder`` (default) — Score each (query, chunk) pair via a cross-encoder
+        model in a single forward pass.  ~80-175 ms for 14 passages on GPU.  No text
+        generation.  Fusion formula::
 
-When ``rerank_enabled`` is false, passes chunks straight to formatting.
+            final = prior_weight * (prior / max_prior)
+                  + (1 - prior_weight) * (ce_score / max_ce)
+
+        Default ``prior_weight`` = 0.70, keeping retrieval signal dominant.
+        Movement is then bounded to ±``max_movement`` positions (default 3).
+
+    ``generative`` — LLM sliding-window reranking; JSON output with rank +
+        confidence + reason per chunk.  ~4-7 s for 14 chunks.  Same weighted
+        fusion and bounded-movement cap applied after score aggregation.
+
+When ``rerank_enabled`` is false, chunks pass straight to formatting.
 """
 
 from __future__ import annotations
@@ -42,11 +55,17 @@ logger = get_logger(__name__)
 
 
 class RagRerankAssembleHandler(BaseHandler):
-    """Sliding-window LLM reranking with bounded movement and context formatting.
+    """Reranking (cross-encoder or generative) with bounded movement and context formatting.
+
+    Default mode is ``cross_encoder``: a single forward pass that scores each
+    (query, chunk) pair without text generation.  ``generative`` mode uses a
+    sliding-window LLM for richer but slower reranking.
+
+    Both modes apply the same weighted fusion and bounded-movement cap:
+    the retrieval prior remains the dominant signal; the reranker can shift a
+    chunk at most ``max_movement`` positions from its pre-rerank rank.
 
     When reranking is disabled, passes chunks directly to formatting.
-    When enabled, compresses chunks, builds sliding windows, calls the LLM
-    per window, fuses scores with prior, applies bounded movement, then formats.
     """
 
     step_type: str = "rag_rerank_assemble_v1"
@@ -282,7 +301,18 @@ class RagRerankAssembleHandler(BaseHandler):
         max_movement: int,
         prior_weight: float,
     ) -> StepOutput:
-        """Rerank via cross-encoder model — single forward pass, no generation."""
+        """Rerank via cross-encoder — single forward pass, no text generation.
+
+        Score fusion (per candidate)::
+
+            prior_norm = chunk["score"] / max(prior scores)
+            ce_norm    = ce_score / max(|ce scores|)
+            final      = prior_weight * prior_norm + (1 - prior_weight) * ce_norm
+
+        Default ``prior_weight`` = 0.70, so retrieval order stays dominant.
+        After fusion, ``apply_bounded_movement`` caps each chunk's rank shift to
+        ±``max_movement`` positions (default 3) relative to its pre-rerank position.
+        """
         _start = _time.monotonic()
 
         candidates = chunks_data[:max_candidates]

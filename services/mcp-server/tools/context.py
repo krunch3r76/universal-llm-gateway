@@ -1,8 +1,8 @@
 """Context bridge tools — structured access to tasks/ directory.
 
-Provides read/write access to todo items, journal entries, discoveries,
-lessons, and other workspace context files. The tasks/ directory is
-mounted read-write at _TASKS_ROOT.
+Provides read/write access to journal entries, discoveries, lessons,
+and other workspace context files. The tasks/ directory is mounted
+read-write at _TASKS_ROOT.
 
 Traversal protection via _safe_tasks_path() is independent of other
 tool modules' path validation.
@@ -15,13 +15,11 @@ import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlencode
 
 import yaml
 from mcp_events import record
 
 from .file_editor import perform_edit
-from .local_api import _relay
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -76,193 +74,8 @@ def _safe_tasks_path(relative: str) -> Path:
     return candidate
 
 
-def _todo_list(
-    *,
-    status: str,
-    domain: str | None,
-    context: str | None,
-    priority: str | None,
-    limit: int,
-) -> dict[str, Any]:
-    params: dict[str, str | int] = {
-        k: v
-        for k, v in {
-            "status": status if status != "all" else None,
-            "domain": domain,
-            "context": context,
-            "priority": priority,
-            "limit": limit,
-        }.items()
-        if v is not None
-    }
-
-    qs = urlencode(params)
-    result = _relay("cortex-api", "GET", f"/todos?{qs}")
-
-    if "error" in result:
-        return {"error": f"cortex-api error: {result['error']}"}
-
-    items: list[dict[str, Any]] = (
-        result if isinstance(result, list) else result.get("items", [])
-    )  # Type hint for result from _relay should be refined to dict[str, Any] | list[dict[str, Any]]
-    logger.info(
-        "todo list: status=%s domain=%s context=%s → %d items",
-        status,
-        domain,
-        context,
-        len(items),
-    )
-    record(
-        "mcp.tool.todo.listed",
-        status=status,
-        domain=domain or "",
-        context=context or "",
-        priority=priority or "",
-        limit=limit,
-        count=len(items),
-    )
-    return {"items": items}
-
-
-def _todo_add(
-    *,
-    id: str,
-    title: str,
-    domain: str,
-    context: str,
-    priority: str,
-    description: str,
-    notes: str,
-) -> dict[str, str]:
-    body = {
-        "id": id,
-        "title": title,
-        "domain": domain,
-        "context": context,
-        "priority": priority,
-        "description": description,
-        "notes": notes,
-    }
-    result = _relay("cortex-api", "POST", "/todos", body=body)
-
-    if "error" in result:
-        status_code = result.get("status_code")
-        if status_code == 409:
-            return {"error": f"todo already exists: {id}"}
-        return {"error": f"cortex-api error: {result['error']}"}
-
-    logger.info("todo add: %s (domain=%s)", id, domain)
-    record(
-        "mcp.tool.todo.added", id=id, domain=domain, context=context, priority=priority
-    )
-    return {"status": "created", "id": id}
-
-
-def _todo_set_status(
-    *,
-    id: str,
-    new_status: str,
-) -> dict[str, str]:
-    result = _relay("cortex-api", "PATCH", f"/todos/{id}", body={"status": new_status})
-
-    if "error" in result:
-        status_code = result.get("status_code")
-        if status_code == 404:
-            return {"error": f"todo not found: {id}"}
-        return {"error": f"cortex-api error: {result['error']}"}
-
-    signal = "mcp.tool.todo.done" if new_status == "done" else "mcp.tool.todo.deferred"
-    logger.info("todo %s: %s", new_status, id)
-    record(signal, id=id)
-    return {"status": new_status, "id": id}
-
-
 def register_context_tools(mcp: FastMCP) -> None:
     """Register context bridge tools on *mcp*."""
-
-    @mcp.tool()
-    def todo(
-        method: str,
-        status: str = "open",
-        domain: str | None = None,
-        context: str | None = None,
-        priority: str | None = None,
-        limit: int = 30,
-        id: str | None = None,
-        title: str | None = None,
-        description: str = "",
-        notes: str = "",
-    ) -> dict[str, Any]:
-        """List, add, complete, or defer todo items.
-
-        Methods:
-            list  — query todos by status/domain/context/priority
-            add   — create a new todo (requires id, title, domain)
-            done  — mark a todo as done (requires id)
-            defer — mark a todo as deferred (requires id)
-
-        Args:
-            method: One of "list", "add", "done", "defer".
-            status: Filter by status for list (default "open"). Use "all" for everything.
-            domain: Domain filter (list) or domain tag (add).
-            context: Context filter (list) or context tag (add, default "universal-llm-gateway").
-            priority: Priority filter (list) or priority tag (add, default "short_term").
-            limit: Maximum items for list (default 30).
-            id: Todo identifier — required for add/done/defer. Must match [a-z0-9-]+.
-            title: Human-readable title — required for add.
-            description: Optional longer description (add only).
-            notes: Optional notes (add only).
-
-        Returns:
-            list:  {"items": [...]}
-            add:   {"status": "created", "id": "..."}
-            done:  {"status": "done", "id": "..."}
-            defer: {"status": "deferred", "id": "..."}
-        """
-        import re
-
-        if method == "list":
-            return _todo_list(
-                status=status,
-                domain=domain,
-                context=context,
-                priority=priority,
-                limit=limit,
-            )
-        if method == "add":
-            if _TASKS_READ_ONLY:
-                _record_read_only_violation(tool="todo", operation="add")
-                return _read_only_error()
-            if not id or not title or not domain:
-                return {"error": "add requires id, title, and domain"}
-            if not re.fullmatch(r"[a-z0-9-]+", id):
-                return {"error": f"id must match [a-z0-9-]+, got: {id!r}"}
-            return _todo_add(
-                id=id,
-                title=title,
-                domain=domain,
-                context=context or "universal-llm-gateway",
-                priority=priority or "short_term",
-                description=description,
-                notes=notes,
-            )
-        if method == "done":
-            if _TASKS_READ_ONLY:
-                _record_read_only_violation(tool="todo", operation="done")
-                return _read_only_error()
-            if not id:
-                return {"error": "done requires id"}
-            return _todo_set_status(id=id, new_status="done")
-        if method == "defer":
-            if _TASKS_READ_ONLY:
-                _record_read_only_violation(tool="todo", operation="defer")
-                return _read_only_error()
-            if not id:
-                return {"error": "defer requires id"}
-            return _todo_set_status(id=id, new_status="deferred")
-        # Consider extracting the read-only check into a helper function or decorator.
-
-        return {"error": f"unknown method: {method}. Use list, add, done, defer"}
 
     @mcp.tool()
     def list_journal_entries(

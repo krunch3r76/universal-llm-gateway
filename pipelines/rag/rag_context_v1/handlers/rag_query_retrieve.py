@@ -1,9 +1,47 @@
 """
-Multi-query RAG retrieval with reciprocal rank fusion (RRF).
+Two-pool RAG retrieval with RRF, source habituation, Pool B source swap, and metadata boost.
 
-Reads structured output from split scope-analysis, rewrite, and HyDE steps, executes
-parallel RAG searches, and merges results via RRF into a single ranked context
-block.
+Zero LLM calls on the default path (~1.6 s end-to-end including cross-encoder reranking).
+
+Architecture
+------------
+Pool A — broad semantic retrieval
+    Dense embeddings + BM25 sidecar, merged via mini-RRF inside the RAG service for
+    each query.  Finds text related to the *idea* even when query vocabulary differs
+    from indexed text.  Multiple Pool A queries (original + rewritten variants) are
+    merged by a second RRF pass in ``retrieval_execution.rrf_merge``.
+
+Pool B — exact-match sparse retrieval (``sparse_only=True``)
+    FTS5 full-text search with BM25 ranking; no embedding model.  The query is
+    factored into sub-phrases (phrase extraction) and augmented with corpus-derived
+    co-occurrence terms (IDF expansion) — see ``term_expansion.py``.  Each facet is
+    dispatched as its own keyword query, catching identifiers and technical terms that
+    dense search blurs.  Pool A and Pool B results are merged by the same RRF pass.
+
+Post-merge scoring (applied in this order after the combined RRF merge)
+-----------------------------------------------------------------------
+1. **Metadata boost** — entity/topic/relation overlap between query and chunk
+   metadata adjusts scores before the context window is trimmed.  Weight default
+   0.20; formula in ``metadata_boost.py``.
+
+2. **Lateral source habituation (Pool B)** — within each source's Pool B hits, the
+   top-ranked chunk receives a score boost (×``facet_pool_score_boost``, default
+   ×1.5); subsequent hits from the same source are penalised (×1/boost).  Prevents
+   any single source from monopolising boosted Pool B slots.
+
+3. **Global source habituation** — after sorting, each additional chunk from an
+   already-represented source is penalised exponentially
+   (``score /= source_habituation_factor ** n``, n ≥ 1, 0-indexed).  Pushes
+   ranking toward new sources; applies to Pool A and Pool B alike.
+
+4. **Pool B source swap** — when a source has Pool B (exact-match) hits, Pool A
+   (semantic) chunks from that source are candidates for eviction.  Binary mode
+   (``facet_pool_swap_distance_threshold=0.0``, default): evict all Pool A
+   chunks.  Graduated mode (threshold > 0): retain up to
+   ``facet_pool_swap_max_retain`` Pool A chunks whose cosine distance from
+   every Pool B hit exceeds the threshold — they cover genuinely different
+   content.  Context budget saved by eviction is redirected to sources not yet
+   represented.
 
 Tunable resolution (per-request):
     runtime pipeline_options  >  profile[consumer_model]  >  scope_defaults[scope]  >  YAML defaults
@@ -68,6 +106,9 @@ from .retrieval_execution import (
 )
 from .retrieval_execution import execute_single_query as _execute_single_query
 from .retrieval_execution import expand_neighbors as _expand_neighbors
+from .retrieval_execution import (
+    graduated_pool_b_swap as _graduated_pool_b_swap,
+)
 from .retrieval_execution import rrf_merge as _rrf_merge
 from .retrieval_profiles import load_retrieval_profiles, resolve_retrieval_params
 from .scope_catalog import (
@@ -1172,29 +1213,67 @@ class RagMultiRetrieveHandler(BaseHandler):
                 key=lambda c: merged_scores.get(c.content_hash, 0.0), reverse=True
             )
 
-        # Pool B swap: for any source that has a pool B hit, drop all pool A chunks
-        # from that source. The named-entity chunk already implies the semantics;
-        # the dense duplicate adds noise and wastes context budget.
-        # ∀ pool_a_chunk ∈ merged: source ∈ facet_sources → remove
+        # Pool B swap: for sources with pool B hits, evict redundant pool A chunks.
+        # Graduated mode (threshold > 0): retain up to max_retain pool A chunks
+        # whose cosine distance from all pool B hits exceeds the threshold —
+        # they cover genuinely different content.
+        # Binary mode (threshold = 0, default): evict all pool A chunks from
+        # sources with any pool B hit (original behavior).
         facet_pool_swap_enabled = bool(effective.get("facet_pool_swap_enabled", True))
         if facet_pool_swap_enabled and facet_chunk_hashes:
-            facet_sources: set[str] = {
-                c.source for c in merged if c.content_hash in facet_chunk_hashes
-            }
-            swapped_out: set[str] = {
-                c.content_hash
-                for c in merged
-                if c.content_hash not in facet_chunk_hashes
-                and c.source in facet_sources
-            }
-            if swapped_out:
-                merged = [c for c in merged if c.content_hash not in swapped_out]
-                logger.info(
-                    "Step '%s': pool B swap — evicted %d pool A chunks from %d sources",
-                    step.id,
-                    len(swapped_out),
-                    len(facet_sources),
-                )
+            swap_distance_threshold = float(
+                effective.get("facet_pool_swap_distance_threshold", 0.0)
+            )
+            swap_max_retain = int(effective.get("facet_pool_swap_max_retain", 2))
+
+            if swap_distance_threshold > 0.0:
+                async with make_async_client(
+                    base_url, timeout=rag_timeout
+                ) as swap_client:
+                    swap_result = await _graduated_pool_b_swap(
+                        swap_client,
+                        api_path.replace("/search", "/embed_batch"),
+                        merged,
+                        facet_chunk_hashes,
+                        swap_distance_threshold,
+                        swap_max_retain,
+                        scope=(
+                            search_scope
+                            if isinstance(search_scope, str | list)
+                            else None
+                        ),
+                    )
+                merged = swap_result.chunks
+                if swap_result.evicted or swap_result.retained:
+                    logger.info(
+                        "Step '%s': graduated pool B swap — evicted %d, "
+                        "retained %d pool A chunks "
+                        "(threshold=%.2f, max_retain=%d)",
+                        step.id,
+                        swap_result.evicted,
+                        swap_result.retained,
+                        swap_distance_threshold,
+                        swap_max_retain,
+                    )
+            else:
+                facet_sources: set[str] = {
+                    c.source for c in merged if c.content_hash in facet_chunk_hashes
+                }
+                swapped_out: set[str] = {
+                    c.content_hash
+                    for c in merged
+                    if c.content_hash not in facet_chunk_hashes
+                    and c.source in facet_sources
+                }
+                if swapped_out:
+                    merged = [c for c in merged if c.content_hash not in swapped_out]
+                    logger.info(
+                        "Step '%s': pool B swap — evicted %d pool A chunks "
+                        "from %d sources",
+                        step.id,
+                        len(swapped_out),
+                        len(facet_sources),
+                    )
 
         if coverage_enabled:
             self._publish_bus_event(
@@ -1324,6 +1403,12 @@ class RagMultiRetrieveHandler(BaseHandler):
                         consumer_model and params.exact_model_profile
                     ),
                     "tier_applied": bool(consumer_tier and params.tier_profile),
+                    "facet_pool_swap_distance_threshold": float(
+                        effective.get("facet_pool_swap_distance_threshold", 0.0)
+                    ),
+                    "facet_pool_swap_max_retain": int(
+                        effective.get("facet_pool_swap_max_retain", 2)
+                    ),
                 },
             },
         )

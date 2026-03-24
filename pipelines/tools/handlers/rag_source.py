@@ -44,8 +44,7 @@ class RagSourceHandler(AbstractStepHandler):
     """Fetch all chunks for a file from the RAG /source endpoint.
 
     Domain fields (from pipeline YAML step config):
-        endpoint: str   — RAG base + path (e.g. http://localhost:8100/source); path
-                         extracted at runtime; transport resolved from config.
+        endpoint: str   — API path (e.g. /source); transport resolved via UDS at runtime.
         path: str       — file path to retrieve (required)
         socket_path: str — optional override for UDS path
     """

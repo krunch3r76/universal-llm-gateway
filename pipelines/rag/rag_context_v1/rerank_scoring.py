@@ -1,7 +1,18 @@
-"""Scoring, windowing, and bounded movement for LLM reranking.
+"""Scoring, windowing, and bounded movement for reranking.
 
-Pure functions with no pipeline dependencies — used by
-``rag_rerank_assemble_v1`` handler.
+Pure functions with no pipeline dependencies — used by the
+``rag_rerank_assemble_v1`` handler for both cross-encoder and generative paths.
+
+Key function: ``apply_bounded_movement``
+    Enforces the rank-movement cap that keeps reranking a *final adjustment*
+    rather than a full reorder.  A chunk can shift at most ``max_movement``
+    positions (default 3) from its pre-rerank position, regardless of how high
+    its reranker score is.  This prevents a marginally relevant chunk from
+    leapfrogging a stronger retrieval result.
+
+``aggregate_window_scores`` and ``build_windows`` are used only by the
+    generative (sliding-window LLM) path.  The cross-encoder path skips windowing
+    and goes directly to ``apply_bounded_movement``.
 """
 
 from __future__ import annotations

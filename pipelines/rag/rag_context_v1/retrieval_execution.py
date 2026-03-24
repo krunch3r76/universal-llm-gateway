@@ -1,10 +1,29 @@
-"""RAG retrieval execution, facet computation, and RRF merging."""
+"""Pool B facet dispatch, Pool A single-query execution, and RRF merging.
+
+Roles in the two-pool architecture
+-----------------------------------
+Pool A — ``execute_single_query`` sends one ``/search`` request to the RAG service.
+    Dense embedding + BM25 sidecar are handled inside the RAG service per query.
+    Pre-computed ``query_embedding`` vectors are forwarded to avoid a redundant GPU
+    round-trip when multiple queries share a batch embedding pass.
+
+Pool B — ``compute_facets_from_text`` extracts phrase sub-queries (phrase
+    extraction) and IDF-expanded corpus co-occurrence terms from the raw query text.
+    ``build_facet_pool`` converts each facet to an FTS5 OR-string.
+    ``compute_and_dispatch_pool_b`` fires each facet as a concurrent
+    ``sparse_only=True`` search — FTS5 BM25 only, no embedding model.
+
+RRF merge — ``rrf_merge`` combines all result lists (Pool A queries + Pool B facet
+    queries) into a single ranked list.  Rank position is the only signal used;
+    cosine distances from different queries are not comparable.  Deduplication is by
+    content hash so the same chunk surfaced by multiple queries counts once."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -420,3 +439,150 @@ async def compute_and_dispatch_pool_b(
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
     return facets, pool, list(results)
+
+
+# ---------------------------------------------------------------------------
+# Graduated Pool B source swap
+# ---------------------------------------------------------------------------
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+@dataclass(slots=True)
+class GraduatedSwapResult:
+    """Result of graduated Pool B source swap."""
+
+    chunks: list[RetrievedChunk]
+    evicted: int
+    retained: int
+
+
+async def graduated_pool_b_swap(
+    client: httpx.AsyncClient,
+    embed_endpoint: str,
+    merged: list[RetrievedChunk],
+    facet_chunk_hashes: set[str],
+    threshold: float,
+    max_retain: int,
+    *,
+    scope: str | list[str] | None = None,
+) -> GraduatedSwapResult:
+    """Graduated Pool B source swap: retain semantically distinct Pool A chunks.
+
+    For each source with Pool B hits, embeds involved chunks via one
+    ``/embed_batch`` round-trip, then computes pairwise cosine similarity.
+    Pool A chunks whose maximum similarity to *any* Pool B chunk from the
+    same source is below ``threshold`` are kept (up to ``max_retain`` per
+    source).  The rest are evicted (current binary behavior).
+
+    Falls back to binary eviction if embedding fetch fails.
+    """
+    facet_sources = {c.source for c in merged if c.content_hash in facet_chunk_hashes}
+    if not facet_sources:
+        return GraduatedSwapResult(chunks=merged, evicted=0, retained=0)
+
+    pool_a_per_source: dict[str, list[RetrievedChunk]] = {}
+    pool_b_per_source: dict[str, list[RetrievedChunk]] = {}
+    for c in merged:
+        if c.source not in facet_sources:
+            continue
+        if c.content_hash in facet_chunk_hashes:
+            pool_b_per_source.setdefault(c.source, []).append(c)
+        else:
+            pool_a_per_source.setdefault(c.source, []).append(c)
+
+    if not pool_a_per_source:
+        return GraduatedSwapResult(chunks=merged, evicted=0, retained=0)
+
+    texts: list[str] = []
+    hash_to_idx: dict[str, int] = {}
+    for source in facet_sources:
+        for group in (
+            pool_b_per_source.get(source, []),
+            pool_a_per_source.get(source, []),
+        ):
+            for c in group:
+                if c.content_hash not in hash_to_idx:
+                    hash_to_idx[c.content_hash] = len(texts)
+                    texts.append(c.content)
+
+    if not texts:
+        return GraduatedSwapResult(chunks=merged, evicted=0, retained=0)
+
+    try:
+        body: dict[str, Any] = {"texts": texts}
+        if scope is not None:
+            body["scope"] = scope
+        resp = await client.post(embed_endpoint, json=body)
+        resp.raise_for_status()
+        all_embeddings: list[list[float]] = resp.json().get("embeddings", [])
+    except Exception:
+        logger.warning(
+            "graduated_pool_b_swap: embed_batch failed, "
+            "falling back to binary eviction",
+            exc_info=True,
+        )
+        swapped_out = {
+            c.content_hash
+            for c in merged
+            if c.content_hash not in facet_chunk_hashes and c.source in facet_sources
+        }
+        return GraduatedSwapResult(
+            chunks=[c for c in merged if c.content_hash not in swapped_out],
+            evicted=len(swapped_out),
+            retained=0,
+        )
+
+    embedding_by_hash: dict[str, list[float]] = {}
+    for ch, idx in hash_to_idx.items():
+        if idx < len(all_embeddings):
+            embedding_by_hash[ch] = all_embeddings[idx]
+
+    retained_hashes: set[str] = set()
+    total_evicted = 0
+
+    for source in facet_sources:
+        pb_chunks = pool_b_per_source.get(source, [])
+        pa_chunks = pool_a_per_source.get(source, [])
+        pb_embeddings = [
+            embedding_by_hash[c.content_hash]
+            for c in pb_chunks
+            if c.content_hash in embedding_by_hash
+        ]
+        if not pb_embeddings:
+            total_evicted += len(pa_chunks)
+            continue
+        retained_for_source = 0
+        for c in pa_chunks:
+            pa_emb = embedding_by_hash.get(c.content_hash)
+            if pa_emb is None:
+                total_evicted += 1
+                continue
+            max_sim = max(
+                _cosine_similarity(pa_emb, pb_emb) for pb_emb in pb_embeddings
+            )
+            if max_sim < threshold and retained_for_source < max_retain:
+                retained_hashes.add(c.content_hash)
+                retained_for_source += 1
+            else:
+                total_evicted += 1
+
+    swapped_out = {
+        c.content_hash
+        for c in merged
+        if c.source in facet_sources
+        and c.content_hash not in facet_chunk_hashes
+        and c.content_hash not in retained_hashes
+    }
+    return GraduatedSwapResult(
+        chunks=[c for c in merged if c.content_hash not in swapped_out],
+        evicted=len(swapped_out),
+        retained=len(retained_hashes),
+    )

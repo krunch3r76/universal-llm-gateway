@@ -123,6 +123,8 @@ class StepConfig(BaseModel):
                 )
             if "fail_fast" in values:
                 map_config["fail_fast"] = values.pop("fail_fast")
+            if "max_concurrency" in values:
+                map_config["max_concurrency"] = values.pop("max_concurrency")
             if "model_pool" in values:
                 map_config["model_pool"] = values.pop("model_pool")
             if "selection" in values:
@@ -532,12 +534,16 @@ class StepConfig(BaseModel):
 
         inference_timeout = raw.get("inference_timeout_seconds")
         kwargs: dict[str, Any] = {
+            "max_concurrency": int(raw["max_concurrency"])
+            if raw.get("max_concurrency") is not None
+            else None,
             "inference_timeout_seconds": float(inference_timeout)
             if inference_timeout is not None
-            else None
+            else None,
         }
-        if kwargs["inference_timeout_seconds"] is None:
-            del kwargs["inference_timeout_seconds"]
+        for key in ("max_concurrency", "inference_timeout_seconds"):
+            if kwargs[key] is None:
+                del kwargs[key]
 
         return MapConfig(
             map_over=map_over,

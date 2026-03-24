@@ -11,7 +11,6 @@ from typing import Any
 logger = logging.getLogger("cortex-api.db")
 
 _CORTEX_DB = Path(os.environ.get("CORTEX_DB_PATH", "/data/cortex/cortex.db"))
-_TODOS_DB = Path(os.environ.get("TODOS_DB_PATH", "/data/cortex/todos.db"))
 _MIGRATIONS_DIR = Path(__file__).parent.parent / "migrations"
 
 
@@ -20,16 +19,11 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    # emit_signal("db.connection.established", db_path=db_path)
     return conn
 
 
 def cortex_conn() -> sqlite3.Connection:
     return _connect(_CORTEX_DB)
-
-
-def todos_conn() -> sqlite3.Connection:
-    return _connect(_TODOS_DB)
 
 
 def query(
@@ -47,10 +41,6 @@ def execute(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...] = ()) ->
 
 def check_cortex_db() -> bool:
     return _CORTEX_DB.exists()
-
-
-def check_todos_db() -> bool:
-    return _TODOS_DB.exists()
 
 
 def json_encode(value: Any) -> str | None:
@@ -145,7 +135,9 @@ def _apply_py_migration(conn: sqlite3.Connection, path: Path, version: int) -> N
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)  # type: ignore[union-attr]
     if not hasattr(module, "migrate"):
-        raise AttributeError(f"Migration {path.name} missing required migrate(conn) function")
+        raise AttributeError(
+            f"Migration {path.name} missing required migrate(conn) function"
+        )
     module.migrate(conn)
 
 

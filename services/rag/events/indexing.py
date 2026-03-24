@@ -117,7 +117,7 @@ def rag_file_retry_deferred(
     Unlike rag.file.indexing.failed (terminal), this signal indicates that extraction
     did not complete but the file was NOT marked as indexed — the watcher will
     re-attempt it automatically. Common reasons: extraction_incomplete (below quality
-    threshold), infrastructure_unavailable (circuit breaker, model capacity).
+    threshold), infrastructure_unavailable (extraction model not loaded, model capacity).
     """
     return Event(
         signal="rag.file.retry.deferred",

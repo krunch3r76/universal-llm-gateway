@@ -30,6 +30,7 @@ from oauth_store import OAuthStore
 from request_profile import current_profile
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
+
 from tools.agent_bus import register_agent_bus_tools
 from tools.browser import register_browser_tools
 from tools.context import register_context_tools
@@ -339,8 +340,7 @@ def _build_server() -> FastMCP:
             cortex_surface_form_lookup(mention, context_hash) — resolution cache lookup
             cortex_staging_list(status?, source_uri?, limit?) — list staging proposals
             cortex_staging_reject(staging_id, reviewer?) — reject staging proposal
-          Todos & journal:
-            todo(method, ...) — list/add/done/defer todos
+          Journal:
             list_journal_entries() — list recent entries
             read_journal_entry(id) — read entry
             write_journal_entry(title, content, tags?)

@@ -21,6 +21,7 @@ from ..schemas import ModelRef
 
 if TYPE_CHECKING:
     from pathlib import Path
+
     from .core import PipelineRegistry
 
 logger = get_logger(__name__)

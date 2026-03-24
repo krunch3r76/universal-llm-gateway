@@ -8,6 +8,8 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any, Protocol, Self
 
+from universal_concurrency import FifoCapacityGate
+
 from ..map_output_collection import MapOutputCollection
 from .concurrency_manager import MapConcurrencyManager
 from .events import MapEventPublisher
@@ -16,6 +18,7 @@ from .iteration_preparer import MapIterationPreparer
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+
     from universal_event_bus import Subscription
 
     from ....schemas import StepConfig, StepOutput
@@ -142,12 +145,14 @@ class MapExecutor:
         )
 
         logger.info(
-            "[%s] Map step: %d iterations (timeout=%s, threshold=%s, fail_fast=%s)",
+            "[%s] Map step: %d iterations "
+            "(timeout=%s, threshold=%s, fail_fast=%s, max_concurrency=%s)",
             self._step.name,
             total,
             self._map_config.timeout_seconds,
             self._map_config.min_success_threshold,
             self._map_config.fail_fast,
+            self._map_config.max_concurrency,
         )
 
         pool_assignments = await self._iteration_preparer.build_pool_assignments(
@@ -193,8 +198,30 @@ class MapExecutor:
             )
             return result
 
+        gate = (
+            FifoCapacityGate(
+                self._map_config.max_concurrency,
+                gate_id=f"map:{self._step.name}",
+            )
+            if self._map_config.max_concurrency is not None
+            else None
+        )
+
+        async def _scheduled_iteration(
+            idx: int, value: object, key: str | None
+        ) -> StepOutput:
+            if gate is None:
+                return await _tracked_iteration(idx, value, key)
+            ctx = iteration_context.get(idx, {})
+            request_id = ctx.get("request_id", str(idx))
+            await gate.acquire(request_id)
+            try:
+                return await _tracked_iteration(idx, value, key)
+            finally:
+                await gate.release()
+
         tasks = {
-            asyncio.create_task(_tracked_iteration(idx, value, key)): idx
+            asyncio.create_task(_scheduled_iteration(idx, value, key)): idx
             for idx, value, key in iteration_items
         }
 
@@ -205,29 +232,33 @@ class MapExecutor:
                 or self._map_config.inference_timeout_seconds is not None
             )
             if self._map_config.fail_fast:
-                outputs, output_keys, output_positions = (
-                    await self._execution_modes.execute_with_fail_fast(
-                        tasks,
-                        total,
-                        self._map_config.min_success_threshold,
-                        iteration_metadata,
-                        iteration_context,
-                    )
+                (
+                    outputs,
+                    output_keys,
+                    output_positions,
+                ) = await self._execution_modes.execute_with_fail_fast(
+                    tasks,
+                    total,
+                    self._map_config.min_success_threshold,
+                    iteration_metadata,
+                    iteration_context,
                 )
             elif has_timeout_constraints:
                 outer_timeout = self._map_config.timeout_seconds or 3600.0
-                outputs, output_keys, output_positions = (
-                    await self._execution_modes.execute_with_timeout(
-                        tasks,
-                        total,
-                        outer_timeout,
-                        self._map_config.min_success_threshold,
-                        iteration_metadata,
-                        iteration_context,
-                        inference_timeout_seconds=(
-                            self._map_config.inference_timeout_seconds
-                        ),
-                    )
+                (
+                    outputs,
+                    output_keys,
+                    output_positions,
+                ) = await self._execution_modes.execute_with_timeout(
+                    tasks,
+                    total,
+                    outer_timeout,
+                    self._map_config.min_success_threshold,
+                    iteration_metadata,
+                    iteration_context,
+                    inference_timeout_seconds=(
+                        self._map_config.inference_timeout_seconds
+                    ),
                 )
             else:
                 # Strict mode is intentionally fail-fast.
@@ -354,9 +385,7 @@ class MapExecutor:
             )
         )
         subscriptions.append(
-            event_bus.subscribe_async(
-                "request.processing", _on_request_processing
-            )
+            event_bus.subscribe_async("request.processing", _on_request_processing)
         )
         return subscriptions
 

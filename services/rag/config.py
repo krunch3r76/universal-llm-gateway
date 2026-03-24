@@ -56,9 +56,9 @@ class KnowledgeExtractionConfig:
     )
     per_chunk_timeout_s: float = 60.0
     batch_timeout_overhead_s: float = 30.0
-    circuit_failure_threshold: int = 3
-    circuit_base_cooldown_s: float = 30.0
-    circuit_max_cooldown_s: float = 300.0
+    # How long extraction workers wait for model.loaded before giving up.
+    # Must exceed cold model load time (14B model: ~2-5 min). Default: 10 min.
+    model_load_wait_s: float = 600.0
 
 
 DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-4096"
@@ -312,11 +312,7 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
     batch_timeout_overhead_s = max(
         0.0, float(raw.get("batch_timeout_overhead_s", 30.0))
     )
-    circuit_failure_threshold = max(1, int(raw.get("circuit_failure_threshold", 3)))
-    circuit_base_cooldown_s = max(1.0, float(raw.get("circuit_base_cooldown_s", 30.0)))
-    circuit_max_cooldown_s = max(
-        circuit_base_cooldown_s, float(raw.get("circuit_max_cooldown_s", 300.0))
-    )
+    model_load_wait_s = max(30.0, float(raw.get("model_load_wait_s", 600.0)))
     return KnowledgeExtractionConfig(
         pipeline=str(pipeline),
         schema_version=int(schema_version),
@@ -325,9 +321,7 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
         extraction_model=extraction_model,
         per_chunk_timeout_s=per_chunk_timeout_s,
         batch_timeout_overhead_s=batch_timeout_overhead_s,
-        circuit_failure_threshold=circuit_failure_threshold,
-        circuit_base_cooldown_s=circuit_base_cooldown_s,
-        circuit_max_cooldown_s=circuit_max_cooldown_s,
+        model_load_wait_s=model_load_wait_s,
     )
 
 

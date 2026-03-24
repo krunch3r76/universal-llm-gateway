@@ -179,48 +179,6 @@ def rag_extraction_batch_skipped(
 
 
 @event_factory
-def rag_extraction_circuit_opened(
-    *,
-    consecutive_failures: int,
-    cooldown_s: float,
-) -> Event:
-    """Emitted when the extraction circuit breaker transitions to OPEN.
-
-    Consecutive capacity errors from Stargate exceeded the failure threshold.
-    All workers will skip extraction until the cooldown elapses and a probe succeeds.
-    """
-    return Event(
-        signal="rag.extraction.circuit.opened",
-        payload={
-            "consecutive_failures": consecutive_failures,
-            "cooldown_s": cooldown_s,
-        },
-    )
-
-
-@event_factory
-def rag_extraction_circuit_closed() -> Event:
-    """Emitted when the extraction circuit breaker transitions back to CLOSED. This typically occurs after a successful probe request indicates the upstream service (e.g., Stargate) has recovered, allowing extraction workers to resume processing."""
-    return Event(
-        signal="rag.extraction.circuit.closed",
-        payload={},
-    )
-
-
-@event_factory
-def rag_extraction_circuit_skipped(
-    *,
-    file: str,
-    chunk_count: int,
-) -> Event:
-    """Emitted when a batch is skipped because the circuit breaker is OPEN."""
-    return Event(
-        signal="rag.extraction.circuit.skipped",
-        payload={"file": file, "chunk_count": chunk_count},
-    )
-
-
-@event_factory
 def rag_extraction_batch_timed_out(
     *,
     file: str,

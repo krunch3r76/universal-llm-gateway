@@ -142,6 +142,7 @@ async def process_chat_completion(
             error_dict = exc.to_dict()
             if execution_id:
                 error_dict["execution_id"] = execution_id
+            error_dict["pipeline_id"] = context.selected_model
             logger.error(
                 "Pipeline execution failed: %s - %s",
                 error_dict.get("error_type"),
@@ -150,10 +151,7 @@ async def process_chat_completion(
             )
             raise HTTPException(
                 status_code=500,
-                detail={
-                    "error": error_dict,
-                    "pipeline_id": context.selected_model,
-                },
+                detail=error_dict,
                 headers=exec_header,
             ) from exc
         except PipelineExecutionError as exc:
@@ -162,10 +160,11 @@ async def process_chat_completion(
                 {"X-Pipeline-Execution-Id": execution_id} if execution_id else {}
             )
             error_detail: dict[str, object] = {
+                "error_type": "PipelineExecutionError",
+                "retryable": True,
                 "message": f"Internal server error: {exc}",
-                "type": "internal_error",
                 "code": "internal_server_error",
-                "operation": "chat_completions",
+                "pipeline_id": context.selected_model,
             }
             if execution_id:
                 error_detail["execution_id"] = execution_id
@@ -177,7 +176,7 @@ async def process_chat_completion(
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": error_detail},
+                detail=error_detail,
                 headers=exec_header,
             ) from exc
 

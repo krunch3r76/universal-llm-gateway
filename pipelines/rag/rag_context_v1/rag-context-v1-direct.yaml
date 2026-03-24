@@ -76,7 +76,7 @@ steps:
 
   - name: retrieve_assemble
     type: rag_multi_retrieve_v1
-    endpoint: "http://localhost:8100/search"
+    endpoint: "/search"
     handler_inputs:
       scope_result: "direct_scope.json"
       rewrite_result: "direct_scope.json"

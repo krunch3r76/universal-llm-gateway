@@ -27,53 +27,71 @@ The pipeline layer (`rag-context`, `rag-answer`, `rag-answer-deep`) handles quer
 
 ## Pipeline Layer (`rag-context`)
 
-The `rag-context` pipeline runs on top of the RAG service and implements corpus-grounded multi-stage retrieval. It is exposed as a virtual model ID (`rag-context`, `rag-answer`, `rag-answer-deep`) through Stargate.
+The `rag-context` pipeline (v2.0) runs on top of the RAG service and implements fast, zero-LLM-call retrieval with cross-encoder reranking. Exposed as a virtual model ID (`rag-context`, `rag-answer`, `rag-answer-deep`) through Stargate. Average end-to-end latency: **~1.6s**.
 
-### Pre-Retrieval: Corpus-Grounded Query Rewriting
+### Pipeline Steps
 
-Most RAG systems either search the raw query (misses lexical variants) or rely on unconstrained LLM rewriting (hallucinates terms not in the corpus). This pipeline does **corpus-grounded rewriting**:
+| Step | Handler | LLM? | Description |
+|------|---------|-------|-------------|
+| `direct_scope` | `rag_direct_scope_v1` | No | Fixed scope resolution (default `"all"`, overridable via `scope_override`) |
+| `generate_hyde` | `generate` | Yes (conditional) | Hypothetical document embedding — only runs when `hyde_enabled: true` (default: off) |
+| `retrieve_assemble` | `rag_multi_retrieve_v1` | No | Batched embedding + concurrent IDF expansion + two-pool retrieval + RRF merge |
+| `rerank_assemble` | `rag_rerank_assemble_v1` | Depends on mode | Cross-encoder (default, ~100ms) or generative sliding-window reranker |
 
-1. **`suggest_terms`** — extracts candidate vocabulary from the raw query
-2. **`filter_corpus_hints`** — validates candidates against *actually indexed vocabulary* via the property index. Terms that don't appear in the corpus are discarded before reaching any LLM.
-3. **`analyze_scope`** — classifies the query into retrieval scopes using validated terms; applies scope anchors only for single-scope predictions (multi-scope implies broader intent)
-4. **`predict_facets`** — decomposes the query into named retrieval sub-topics with corpus-grounded vocabulary
-5. **`refine_facets`** — second-pass prediction: given first-pass facets, surfaces deeper or more specific terms from parametric knowledge (e.g. discovers `Zettelkasten`, `NEPOMUK` from `personal_knowledge_management` facet)
-6. **`generate_rewrites`** — produces embedding-optimized sub-queries that *must* include validated terms
-7. **`generate_hyde`** — generates a hypothetical answer passage with `must_include` constraints to stay grounded
+### Pre-Retrieval: Inline Term Expansion
 
-The **co-occurrence filter** (`filter_hints_by_cooccurrence`) is the key grounding mechanism — it checks whether a candidate hint term actually appears in chunks alongside the query terms, preventing vocabulary hallucination.
+Query factoring and IDF expansion run concurrently with dense retrieval (zero added latency). Pure functions in `term_expansion.py`:
 
-Scope vocabulary (the `scope_vocabulary` table in `rag_metadata.db`) separates terms into `academic`, `practitioner`, and `specification` registers so rewrites target the correct register for each query type (e.g. `PKG` → academic, `Obsidian` → practitioner).
+1. **Phrase extraction** — decomposes the query into sub-phrases for independent sparse-only BM25 queries (pool B)
+2. **IDF-weighted corpus expansion** — queries the property index for terms that co-occur with the query's most discriminative words, surfacing vocabulary the user didn't use but the corpus contains
 
-### Retrieval: Two-Pool Hybrid
+These run via `asyncio.to_thread` alongside the pool A embedding calls, eliminating the ~300ms serial bottleneck of the old `expand_terms` pipeline step.
 
-Retrieval runs two parallel pools:
+### Retrieval: Two-Pool Hybrid with Batched Embedding
 
-**Pool A — Dense + Sparse hybrid**: standard hybrid search (ChromaDB cosine similarity + BM25 sidecar), one query per rewrite/HyDE variant, merged via RRF.
+All query embeddings are computed in a **single batched GPU pass** via the `/embed_batch` endpoint before dispatch, then passed as pre-computed vectors to individual `/search` calls. This eliminates sequential per-query GPU embedding passes.
 
-**Pool B — Named-entity sparse-only**: for each facet from `refine_facets`, constructs an OR-joined FTS5 query from all terms in that facet and dispatches with `sparse_only=True` (bypasses dense embedding entirely). This surfaces exact-match named-entity hits (e.g. `NEPOMUK OR PIMO OR Zettelkasten`) that dense embedding dilutes or misses.
+**Pool A — Dense + Sparse hybrid**: ChromaDB cosine similarity + BM25 sidecar, one query per original + HyDE variant, merged via RRF. Uses pre-computed embeddings.
+
+**Pool B — Named-entity sparse-only**: for each facet from inline IDF expansion, constructs an OR-joined FTS5 query and dispatches with `sparse_only=True` (bypasses embedding). Surfaces exact-match hits that dense embedding dilutes.
 
 Post-RRF scoring adjustments:
-- Pool B chunks receive a `facet_pool_score_boost` multiplier (default 1.5×) with **lateral source habituation**: the highest-scoring chunk from a given source gets the full boost; subsequent chunks from the same source are inhibited (÷boost), preventing any single source from monopolizing boosted slots
-- **Global source habituation**: applied across all merged chunks — subsequent chunks from any already-represented source receive exponentially decayed scores, ensuring coverage breadth
-- **Pool B source swap**: if a source has any Pool B hit, all Pool A chunks from that same source are evicted (the sparse named-entity hit subsumes the semantic hit from the same document)
+- Pool B chunks receive a `facet_pool_score_boost` multiplier (default 1.5×) with **lateral source habituation**: the highest-scoring chunk from a given source gets the full boost; subsequent chunks from the same source are inhibited (÷boost)
+- **Global source habituation**: subsequent chunks from any already-represented source receive exponentially decayed scores, ensuring coverage breadth
+- **Pool B source swap**: if a source has any Pool B hit, all Pool A chunks from that same source are evicted
 
 ### Reranking
 
-A sliding-window LLM reranker (`rerank_assemble`) takes the assembled Pool A + Pool B chunks and re-orders them. The reranker receives the `refine_facets` output as explicit context in its prompt, guiding it to prefer chunks covering multiple facets simultaneously and to penalize generic survey content that mentions a domain without engaging with the named entities.
+Default mode: **cross-encoder** (`rerank_mode: cross_encoder`). A `BAAI/bge-reranker-v2-m3` cross-encoder scores (query, passage) pairs in a single forward pass — ~80-175ms for 14 passages on GPU. Scores are fused with RRF prior: `final = prior_weight × rrf_score + (1 − prior_weight) × cross_encoder_score`, bounded by `rerank_max_movement`.
 
-Score fusion: `final = prior_weight × rrf_score + (1 − prior_weight) × llm_score` with bounded movement (`rerank_max_movement`) to prevent large rank inversions from a single window judgment.
+Alternative mode: **generative** (`rerank_mode: generative`). Sliding-window LLM reranker with facet-aware prompting. Higher quality ceiling but 4-7s latency.
+
+The cross-encoder model loads lazily on first call and stays resident (~550MB GPU memory). See `services/rag/cross_encoder.py`.
+
+### Key Pipeline Options
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `rerank_mode` | `cross_encoder` | `generative` for LLM sliding-window reranker |
+| `rerank_enabled` | `true` | `false` skips reranking entirely |
+| `hyde_enabled` | `false` | `true` adds one LLM call for hypothetical document embedding |
+| `max_idf_terms` | `8` | `0` skips IDF expansion |
+| `max_discriminative` | `4` | Number of query words used as IDF seeds |
+| `rerank_max_candidates` | `14` | Passages sent to cross-encoder |
+| `rerank_prior_weight` | `0.70` | Weight of RRF score vs reranker score |
+| `rerank_max_movement` | `3` | Max rank positions a chunk can shift during reranking |
 
 ### Pipeline IDs
 
 | Model ID | Description |
 |----------|-------------|
-| `rag-context` | Returns assembled context chunks (no answer generation) |
+| `rag-context` | Returns assembled context chunks (no answer generation). Default for MCP `rag_search`. |
+| `rag-context-rewrite` | Legacy: 10-step LLM rewriting chain. Not routed by default — preserved for comparison. |
 | `rag-answer` | Context retrieval + grounded answer generation |
 | `rag-answer-deep` | Context retrieval + iterative refinement + answer generation |
 | `consult-*` | Domain-specialized consultation pipelines (researcher, architect, prompt-engineer) |
 
-Pipeline configuration: `pipelines/rag/rag_context_v1/rag-context-v1.yaml`
+Pipeline configuration: `pipelines/rag/rag_context_v1/rag-context-v1-direct.yaml`
 
 ---
 
@@ -94,7 +112,9 @@ Pipeline configuration: `pipelines/rag/rag_context_v1/rag-context-v1.yaml`
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `POST /search` | POST | Semantic search — accepts `query`, `top_k`, `scope`, `source_prefixes`, `recency_weight`, `max_distance` |
+| `POST /search` | POST | Semantic search — accepts `query`, `top_k`, `scope`, `source_prefixes`, `recency_weight`, `max_distance`, optional `query_embedding` (pre-computed) |
+| `POST /embed_batch` | POST | Batch-embed multiple query texts in a single GPU forward pass. Returns list of embedding vectors. |
+| `POST /rerank` | POST | Score (query, passage) pairs via cross-encoder model. Returns relevance scores per passage. |
 | `POST /chunks_by_index` | POST | Fetch chunks by source path and chunk index (neighbor expansion) |
 
 ### Indexing
@@ -327,8 +347,10 @@ For subsystem-specific investigation, reference these paths directly:
 
 | Area | Path | What it covers |
 |------|------|---------------|
-| Pipeline structure | `pipelines/rag/rag_context_v1/rag-context-v1.yaml` | Step sequence, model refs, generation params |
-| Pipeline handlers | `pipelines/rag/rag_context_v1/handlers/` | Corpus-grounded rewriting, retrieval, reranking |
+| Pipeline structure | `pipelines/rag/rag_context_v1/rag-context-v1-direct.yaml` | Step sequence, model refs, generation params |
+| Pipeline handlers | `pipelines/rag/rag_context_v1/handlers/` | Retrieval, reranking, scope resolution |
+| Term expansion | `pipelines/rag/rag_context_v1/term_expansion.py` | IDF expansion, phrase extraction (shared pure functions) |
+| Cross-encoder | `services/rag/cross_encoder.py` | Cross-encoder model loading and inference |
 | Metadata DB schema | `services/rag/property_index.py` | Schema versioning, migration, all metadata tables |
 | Corpus hints flow | `services/rag/corpus_hints.py` | Hint generation, DB read/write, co-occurrence filtering |
 | Vocabulary classification | `scripts/rag/classify_vocabulary.py` | LLM-based register classification |
@@ -357,5 +379,6 @@ For subsystem-specific investigation, reference these paths directly:
 | `corpus_hints.py` | Scope-specific vocabulary hints |
 | `metadata_boost.py` | Score boosting from extracted metadata |
 | `watcher_manager.py` | Inotify file watching; reconciliation sweeps (worker pool, adaptive interval) |
-| `embeddings.py` | Embedding model client (via Gateway) |
+| `embeddings.py` | Embedding model client (via Gateway); batch embedding support |
+| `cross_encoder.py` | Cross-encoder reranking model (BAAI/bge-reranker-v2-m3) |
 | `admin_routes.py` | Administrative API endpoints |

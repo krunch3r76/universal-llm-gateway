@@ -8,6 +8,9 @@ disconnection detection.  Extracted from chat.py so the dispatch hub
 Error classification helpers:
 - ``_is_capacity_error``: 503/504 with retryable envelope or retryable ErrorCode
 - ``_is_retryable_upstream_error``: 502 from federated gateway, retryable
+- ``_is_all_gateways_excluded``: 503 RESOURCE_UNAVAILABLE with excluded_gateways
+  data — all gateways tried and failed; clears exclusion set and retries with
+  longer backoff (model may be loading), bounded by upstream_retry_timeout
 - Non-retryable: immediate re-raise (permanent resource failures where
   ``can_fit_with_eviction`` is NOT in the failed constraint set)
 
@@ -89,6 +92,26 @@ def _is_retryable_upstream_error(exc: HTTPException) -> bool:
 
     code = detail.get("code", "")
     return is_retryable(code)
+
+
+def _is_all_gateways_excluded(exc: HTTPException) -> bool:
+    """Return True iff HTTPException indicates all gateways were excluded.
+
+    Raised by ``raise_all_gateways_excluded_error`` when every gateway with the
+    model returned upstream errors during a single request.  The error is marked
+    ``retryable=False`` because re-routing with the *same* exclusion set is
+    pointless — but clearing exclusions and retrying after a backoff is correct:
+    the model may not be loaded yet and will become available shortly.
+    """
+    if exc.status_code != get_http_status(ErrorCode.RESOURCE_UNAVAILABLE):
+        return False
+    detail = exc.detail
+    if not isinstance(detail, dict):
+        return False
+    data = detail.get("data")
+    if not isinstance(data, dict):
+        return False
+    return "excluded_gateways" in data
 
 
 def _extract_failed_gateway_id(exc: HTTPException) -> str | None:
@@ -361,16 +384,21 @@ async def execute_with_retry(
             except HTTPException as exc:
                 is_capacity = _is_capacity_error(exc)
                 is_upstream = not is_capacity and _is_retryable_upstream_error(exc)
+                is_all_excluded = (
+                    not is_capacity
+                    and not is_upstream
+                    and _is_all_gateways_excluded(exc)
+                )
 
-                if not (is_capacity or is_upstream):
+                if not (is_capacity or is_upstream or is_all_excluded):
                     raise
 
                 retry_count += 1
 
-                # Upstream failure: exclude the failed gateway so the
-                # DecisionEngine routes to a different one on retry.
-                # Also clear the stability binding (removes bias).
                 if is_upstream:
+                    # Upstream failure: exclude the failed gateway so the
+                    # DecisionEngine routes to a different one on retry.
+                    # Also clear the stability binding (removes bias).
                     failed_gw = _extract_failed_gateway_id(exc)
                     if failed_gw:
                         context.excluded_gateway_ids.add(failed_gw)
@@ -384,6 +412,23 @@ async def execute_with_retry(
                             failed_gw,
                             len(context.excluded_gateway_ids),
                         )
+                    tracker = getattr(proxy, "stability_tracker", None)
+                    if tracker is not None:
+                        tracker.clear_binding(context.selected_model)
+                elif is_all_excluded:
+                    # All gateways failed — model may not be loaded yet.
+                    # Clear exclusions so routing can try all gateways again
+                    # after a backoff.  Bounded by upstream_retry_timeout.
+                    logger.info(
+                        "🔄 [REQ:%s] All gateways excluded for %s; "
+                        "clearing %d exclusions for re-queue (retry #%d)",
+                        request_short_id,
+                        model_id,
+                        len(context.excluded_gateway_ids),
+                        retry_count,
+                    )
+                    context.excluded_gateway_ids.clear()
+                    context.excluded_gateway_errors.clear()
                     tracker = getattr(proxy, "stability_tracker", None)
                     if tracker is not None:
                         tracker.clear_binding(context.selected_model)
@@ -441,10 +486,21 @@ async def execute_with_retry(
                 if await request.is_disconnected():
                     raise asyncio.CancelledError("Client disconnected")
 
-                base_delay = min(2.0, 0.05 * (2 ** min(retry_count - 1, 6)))
+                # All-excluded uses longer backoff: model may need time to
+                # load (~10-30s).  2s → 4s → 8s → 10s(cap).
+                if is_all_excluded:
+                    base_delay = min(10.0, 2.0 * (2 ** min(retry_count - 1, 3)))
+                else:
+                    base_delay = min(2.0, 0.05 * (2 ** min(retry_count - 1, 6)))
                 delay_s = min(base_delay * random.uniform(0.5, 1.5), remaining)
 
-                error_kind = "Capacity" if is_capacity else "Upstream"
+                error_kind = (
+                    "Capacity"
+                    if is_capacity
+                    else "All-excluded"
+                    if is_all_excluded
+                    else "Upstream"
+                )
                 log_level = logger.info if retry_count <= 3 else logger.debug
                 log_level(
                     "🔄 [REQ:%s] %s retry for %s "

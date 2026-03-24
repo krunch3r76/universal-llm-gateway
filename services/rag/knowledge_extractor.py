@@ -38,18 +38,13 @@ import json
 import logging
 import random
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from services.rag.events.extraction import (
-    rag_extraction_circuit_closed,
-    rag_extraction_circuit_opened,
-)
-from services.rag.extraction_circuit import ExtractionCircuit
+from services.rag.extraction_model_tracker import ExtractionModelTracker
 
 if TYPE_CHECKING:
-    from universal_event_bus import Event, EventBus
     from services.rag.config import KnowledgeExtractionConfig
 
 logger = logging.getLogger(__name__)
@@ -63,7 +58,6 @@ _client = httpx.AsyncClient(timeout=_PIPELINE_CEILING_S + 30.0)
 
 _MAX_RETRIES = 3
 _BACKOFF_BASE_S = 2.0
-_per_chunk_budget_s: float = 60.0
 _batch_overhead_s: float = 30.0
 
 # Pipeline registration window: pipelines register 5–10s after Stargate starts
@@ -71,8 +65,7 @@ _batch_overhead_s: float = 30.0
 _PIPELINE_REGISTRATION_TIMEOUT_S = 60.0
 _PIPELINE_REGISTRATION_POLL_S = 3.0
 
-_circuit: ExtractionCircuit | None = None
-_event_bus: EventBus | None = None
+_tracker: ExtractionModelTracker | None = None
 
 
 class BatchTimeoutError(Exception):
@@ -140,60 +133,48 @@ async def wait_until_extraction_ready(
 
 
 def configure_timeouts(config: KnowledgeExtractionConfig) -> None:
-    """Set per-batch timeout budgets from config at RAG startup.
+    """Set batch timeout overhead from config at RAG startup.
 
-    Called once during ``_deferred_watcher_start``.  Per-batch HTTP timeouts
-    scale with chunk count (per_chunk * n + overhead, capped at pipeline ceiling)
-    so small batches fail fast under model saturation without penalising large ones.
+    Per-iteration inference timeout is enforced server-side by Stargate via
+    X-Request-Timeout (handler_timeout_seconds in pipeline YAML). The RAG
+    client timeout is pipeline ceiling + overhead only — no per-chunk scaling.
     """
-    global _per_chunk_budget_s, _batch_overhead_s
-    _per_chunk_budget_s = config.per_chunk_timeout_s
+    global _batch_overhead_s
     _batch_overhead_s = config.batch_timeout_overhead_s
     logger.info(
-        "Extraction timeouts configured: per_chunk=%.0fs, overhead=%.0fs",
-        _per_chunk_budget_s,
+        "Extraction timeouts configured: overhead=%.0fs"
+        " (per-chunk enforcement via Stargate X-Request-Timeout)",
         _batch_overhead_s,
     )
 
 
-def configure_circuit(
+def configure_tracker(
     config: KnowledgeExtractionConfig,
-    event_bus: EventBus | None = None,
-) -> None:
-    """Create the shared extraction circuit breaker from config at RAG startup."""
-    global _circuit, _event_bus
-    _circuit = ExtractionCircuit(
-        failure_threshold=config.circuit_failure_threshold,
-        base_cooldown_s=config.circuit_base_cooldown_s,
-        max_cooldown_s=config.circuit_max_cooldown_s,
+) -> ExtractionModelTracker:
+    """Create the extraction model tracker from config at RAG startup.
+
+    Returns the tracker so the caller can start() it as a background task.
+    The tracker subscribes to Event Service model.loaded / model.unloaded
+    events and gates extraction workers on model availability.
+    """
+    global _tracker
+    _tracker = ExtractionModelTracker(
+        extraction_model=config.extraction_model,
+        pipeline_id=config.pipeline,
+        wait_timeout_s=config.model_load_wait_s,
     )
-    _event_bus = event_bus
     logger.info(
-        "Extraction circuit breaker configured: threshold=%d, cooldown=%.0f-%.0fs",
-        config.circuit_failure_threshold,
-        config.circuit_base_cooldown_s,
-        config.circuit_max_cooldown_s,
+        "Extraction model tracker configured for '%s' (pipeline='%s', wait=%.0fs)",
+        config.extraction_model,
+        config.pipeline,
+        config.model_load_wait_s,
     )
+    return _tracker
 
 
-def get_circuit() -> ExtractionCircuit | None:
-    """Expose circuit for external observability."""
-    return _circuit
-
-
-def _emit_circuit_event(event: Event) -> None:
-    """Fire-and-forget circuit state change event."""
-    if _event_bus is None:
-        return
-    task: asyncio.Task[None] = asyncio.create_task(
-        _event_bus.publish_async_nowait(event)
-    )
-
-    def _on_done(t: asyncio.Task[None]) -> None:
-        if not t.cancelled() and (exc := t.exception()):
-            logger.warning("Circuit event publish failed: %s", exc)
-
-    task.add_done_callback(_on_done)
+def get_tracker() -> ExtractionModelTracker | None:
+    """Expose tracker for external observability."""
+    return _tracker
 
 
 def _is_pipeline_not_registered(exc: Exception, pipeline_model: str) -> bool:
@@ -416,15 +397,15 @@ async def _call_extraction(
     chunk_ids: list[str],
     config: KnowledgeExtractionConfig,
 ) -> tuple[list[ExtractedKnowledge | None], dict[str, object]]:
-    """Execute one extraction HTTP call with a dynamic per-batch timeout.
+    """Execute one extraction HTTP call.
 
-    Timeout is computed as ``per_chunk_budget * chunk_count + overhead``, then
-    capped by the pipeline ceiling. Raises on non-2xx HTTP responses.
+    Per-iteration inference timeout is enforced server-side by Stargate via
+    X-Request-Timeout (handler_timeout_seconds in pipeline YAML). This client
+    timeout is a pipeline-ceiling safety net only — not scaled per chunk so
+    queue-wait time does not consume the inference budget.
+    Raises on non-2xx HTTP responses.
     """
-    batch_timeout = min(
-        _PIPELINE_CEILING_S + _batch_overhead_s,
-        _per_chunk_budget_s * len(chunks) + _batch_overhead_s,
-    )
+    batch_timeout = _PIPELINE_CEILING_S + _batch_overhead_s
     response = await _client.post(
         f"{STARGATE_URL}/v1/chat/completions",
         json={
@@ -521,20 +502,18 @@ async def extract_knowledge_batch(
     if not chunk_ids:
         return [], {}
 
-    if _circuit is not None and not await _circuit.should_attempt():
+    if _tracker is not None and not await _tracker.wait_for_model():
         logger.info(
-            "Extraction circuit open — skipping batch (%d chunks)", len(chunk_ids)
+            "Extraction model not available — skipping batch (%d chunks)",
+            len(chunk_ids),
         )
-        return [None] * len(chunk_ids), {"circuit_open": True}
+        return [None] * len(chunk_ids), {"model_unavailable": True}
 
     chunks = [
         {"id": cid, "text": text}
         for cid, text in zip(chunk_ids, chunk_texts, strict=True)
     ]
-    batch_timeout = min(
-        _PIPELINE_CEILING_S + _batch_overhead_s,
-        _per_chunk_budget_s * len(chunks) + _batch_overhead_s,
-    )
+    batch_timeout = _PIPELINE_CEILING_S + _batch_overhead_s
 
     last_exc: Exception | None = None
     capacity_retries = 0
@@ -557,8 +536,6 @@ async def extract_knowledge_batch(
     for attempt in range(_MAX_RETRIES):
         try:
             parsed, timing = await _call_extraction(chunks, chunk_ids, config)
-            if _circuit is not None and await _circuit.record_success():
-                _emit_circuit_event(rag_extraction_circuit_closed())
             if capacity_retries > 0:
                 timing = {**timing, "capacity_retries": capacity_retries}
             return parsed, timing
@@ -583,15 +560,6 @@ async def extract_knowledge_batch(
                     return [None] * len(chunk_ids), {"stargate_error": parsed.code}
 
                 capacity_retries += 1
-                if _circuit is not None and await _circuit.record_failure(
-                    capacity_error=True
-                ):
-                    _emit_circuit_event(
-                        rag_extraction_circuit_opened(
-                            consecutive_failures=_circuit.consecutive_failures,
-                            cooldown_s=_circuit.current_cooldown_s,
-                        )
-                    )
                 last_exc = exc
                 if attempt < _MAX_RETRIES - 1:
                     delay = min(
@@ -626,13 +594,5 @@ async def extract_knowledge_batch(
         logger.error(
             "Batch extraction finished without success and without captured exception. This indicates an unhandled error path."
         )
-    if _circuit is not None and capacity_retries > 0:
-        if await _circuit.record_failure(capacity_error=True):
-            _emit_circuit_event(
-                rag_extraction_circuit_opened(
-                    consecutive_failures=_circuit.consecutive_failures,
-                    cooldown_s=_circuit.current_cooldown_s,
-                )
-            )
     timing: dict[str, Any] = {}  # Or a more specific TypedDict if structure is fixed
     return [None] * len(chunk_ids), timing

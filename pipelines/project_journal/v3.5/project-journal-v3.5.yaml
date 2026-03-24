@@ -16,7 +16,7 @@ steps:
 
   - name: journal_index
     type: rag_source_v1
-    endpoint: "http://localhost:8100/source"
+    endpoint: "/source"
     path: "/mnt/torus/projects/universal-llm-gateway/tasks/journal/index.yaml"
 
   - name: git_recent

@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 class PipelineError(RuntimeError, ABC):
     """Base class for pipeline validation/runtime errors."""
 
+    @property
+    def retryable(self) -> bool:
+        """Whether this error represents a transient condition worth retrying."""
+        return False
+
     @abstractmethod
     def to_dict(self) -> dict:
         """Serialize to JSON-compatible dict."""
@@ -40,6 +45,7 @@ class BindingResolutionError(PipelineError):
     def to_dict(self) -> dict:
         return {
             "error_type": "BindingResolutionError",
+            "retryable": self.retryable,
             "step_name": self.step_name,
             "field_name": self.field_name,
             "binding": self.binding_repr,
@@ -67,6 +73,7 @@ class OutputValidationError(PipelineError):
     def to_dict(self) -> dict:
         return {
             "error_type": "OutputValidationError",
+            "retryable": self.retryable,
             "step_name": self.step_name,
             "declared_outputs": self.declared_outputs,
             "actual_keys": self.actual_keys,
@@ -100,6 +107,7 @@ class InputTypeMismatchError(PipelineError):
     def to_dict(self) -> dict:
         return {
             "error_type": "InputTypeMismatchError",
+            "retryable": self.retryable,
             "step_name": self.step_name,
             "field_name": self.field_name,
             "expected_type": self.expected_type,
@@ -125,6 +133,7 @@ class InvalidNamespaceError(PipelineError):
     def to_dict(self) -> dict:
         return {
             "error_type": "InvalidNamespaceError",
+            "retryable": self.retryable,
             "namespace": self.namespace,
             "context": self.context,
             "hint": self.hint,
@@ -142,6 +151,10 @@ class StepTimeoutError(PipelineError):
     model_call_count: int = 0
     items_total: int | None = None
     items_completed: int | None = None
+
+    @property
+    def retryable(self) -> bool:
+        return True
 
     def __str__(self) -> str:
         message = (
@@ -175,6 +188,7 @@ class StepTimeoutError(PipelineError):
     def to_dict(self) -> dict:
         return {
             "error_type": "StepTimeoutError",
+            "retryable": self.retryable,
             "step_name": self.step_name,
             "timeout_seconds": self.timeout_seconds,
             "prompt_tokens": self.prompt_tokens,
@@ -193,6 +207,10 @@ class HandlerTimeoutError(PipelineError):
     timeout_seconds: float
     attempt: int = 1
 
+    @property
+    def retryable(self) -> bool:
+        return True
+
     def __str__(self) -> str:
         return (
             f"[Step '{self.step_name}'] Handler execution exceeded timeout of "
@@ -202,6 +220,7 @@ class HandlerTimeoutError(PipelineError):
     def to_dict(self) -> dict:
         return {
             "error_type": "HandlerTimeoutError",
+            "retryable": self.retryable,
             "step_name": self.step_name,
             "timeout_seconds": self.timeout_seconds,
             "attempt": self.attempt,
@@ -219,6 +238,10 @@ class MapPartialFailureError(PipelineError):
     - Duration for completed iterations
     - Error messages for failed iterations
     """
+
+    @property
+    def retryable(self) -> bool:
+        return True
 
     step_name: str
     completed_count: int
@@ -270,6 +293,7 @@ class MapPartialFailureError(PipelineError):
     def to_dict(self) -> dict:
         return {
             "error_type": "MapPartialFailureError",
+            "retryable": self.retryable,
             "step_name": self.step_name,
             "completed_count": self.completed_count,
             "failed_count": self.failed_count,

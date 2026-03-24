@@ -14,10 +14,11 @@ import asyncio
 import json
 import logging
 import os
-import queue
 import time
 from pathlib import Path
 from typing import Any
+
+from universal_concurrency import QUEUE_EMPTY_ERRORS, drain_queue_batch
 
 from .store import EventStore
 
@@ -154,16 +155,12 @@ class IngestServer:
                 if not self._running and self._db_queue.empty():
                     break
                 raise
-            except queue.Empty:
+            except QUEUE_EMPTY_ERRORS:
                 if not self._running and self._db_queue.empty():
                     break
                 continue
 
-            while len(batch) < _BATCH_SIZE:
-                try:
-                    batch.append(self._db_queue.get_nowait())
-                except queue.Empty:
-                    break
+            batch.extend(drain_queue_batch(self._db_queue, _BATCH_SIZE - len(batch)))
 
             if not batch:
                 continue
@@ -220,7 +217,7 @@ class IngestServer:
                         "payload": {"count": 1},
                     }
                     sq.put_nowait(drop_notice)
-                except queue.Empty:
+                except QUEUE_EMPTY_ERRORS:
                     dead.append(sq)
                 except asyncio.QueueFull:
                     dead.append(sq)

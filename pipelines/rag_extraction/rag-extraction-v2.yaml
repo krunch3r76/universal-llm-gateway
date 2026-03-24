@@ -19,10 +19,12 @@ steps:
     model_ref: extraction
     prompt_ref: rag_extraction.extract_batch
     # Stall timeout: resets whenever any map iteration completes (liveness under queue pressure).
-    timeout_seconds: 120
+    # Must exceed cold model load time + first inference time (~120s load + ~30s inference = 150s).
+    timeout_seconds: 300
     # Per-iteration ceiling; flows as X-Request-Timeout to Stargate (min with upstream_retry_timeout).
     handler_timeout_seconds: 300
-    skip_token_counting: false
+    skip_token_counting: true
+    max_concurrency: 32
     map_over:
       chunk: optionsNs.chunks
     map_inputs:

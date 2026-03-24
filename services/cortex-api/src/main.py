@@ -12,7 +12,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.db import check_cortex_db, check_todos_db, cortex_conn, run_migrations
+from src.db import check_cortex_db, cortex_conn, run_migrations
 from src.routes import (
     assertions,
     boot,
@@ -24,7 +24,6 @@ from src.routes import (
     session_journals,
     stats,
     surface_forms,
-    todos,
 )
 from src.scoring import compact_access_log
 
@@ -36,7 +35,7 @@ logger = logging.getLogger("cortex-api")
 app = FastAPI(
     title="cortex-api",
     version="2.0.0",
-    description="REST API for the Cortex knowledge graph. Sole access path to cortex.db and todos.db.",
+    description="REST API for the Cortex knowledge graph. Sole access path to cortex.db.",
 )
 
 app.add_middleware(
@@ -47,7 +46,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(todos.router)
 app.include_router(entities.router)
 app.include_router(assertions.router)
 app.include_router(chunks.router)
@@ -102,5 +100,4 @@ def health() -> dict[str, str]:
     return {
         "status": "ok",
         "cortex_db": "found" if check_cortex_db() else "missing",
-        "todos_db": "found" if check_todos_db() else "missing",
     }

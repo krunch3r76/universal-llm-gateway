@@ -244,6 +244,7 @@ class MapConfig:
     timeout_seconds: float | None = None
     min_success_threshold: int | float | None = None
     fail_fast: bool = False
+    max_concurrency: int | None = None
     inference_timeout_seconds: float | None = 300.0
     model_pool: InputBinding | None = None
     model_requirements: dict[str, Any] | None = None
@@ -261,6 +262,9 @@ class MapConfig:
             elif isinstance(self.min_success_threshold, int):
                 if self.min_success_threshold < 0:
                     raise ValueError("Count threshold must be non-negative")
+
+        if self.max_concurrency is not None and self.max_concurrency <= 0:
+            raise ValueError("max_concurrency must be > 0")
 
         if self.selection not in ("random", "rotate", "first"):
             raise ValueError(
