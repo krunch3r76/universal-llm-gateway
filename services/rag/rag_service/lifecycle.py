@@ -38,6 +38,8 @@ from services.rag.directory_ops import (
 from services.rag.embeddings import close as close_embeddings
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import set_event_bus as set_embeddings_event_bus
+from services.rag.embeddings import start_tracker as start_embedding_tracker
+from services.rag.embeddings import stop_tracker as stop_embedding_tracker
 from services.rag.embeddings import wait_until_healthy
 from services.rag.events.extraction import rag_extraction_unavailable
 from services.rag.events.lifecycle import (
@@ -51,6 +53,7 @@ from services.rag.events.lifecycle import (
     rag_shutdown,
     rag_started,
 )
+from services.rag.extraction_model_tracker import ModelState
 from services.rag.knowledge_extractor import (
     configure_timeouts,
     configure_tracker,
@@ -187,6 +190,7 @@ async def _startup() -> None:
     state._config = load_config()
     configure_embeddings(state._config.embedding_model)
     set_embeddings_event_bus(state._event_bus)
+    await start_embedding_tracker()
     state._property_index = PropertyIndex()
     await state._property_index.start()
     db_path = state._property_index.db_path
@@ -525,6 +529,16 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
     tracker = configure_tracker(config.knowledge_extraction)
     await tracker.start()
     state._extraction_tracker = tracker
+
+    # If Stargate just restarted, the tracker will be in UNKNOWN state because
+    # the model's post-restart load status hasn't been observed yet. Wait for
+    # a confirmed model.loaded event before releasing the startup burst — without
+    # this gate the watcher fires a full-corpus extraction batch while the model
+    # is still loading, burning the entire extraction timeout (300s × N docs).
+    startup_model_wait_s = 120.0
+    if tracker.state != ModelState.LOADED:
+        await tracker.wait_until_loaded(timeout_s=startup_model_wait_s)
+
     state._watcher_manager = WatcherManager(
         index_fn=_watcher_index_fn,
         delete_fn=_watcher_delete_fn,
@@ -612,6 +626,7 @@ async def _shutdown() -> None:
     if state._property_index is not None:
         await state._property_index.stop()
         state._property_index = None
+    await stop_embedding_tracker()
     await close_embeddings()
     if state._watcher_manager is not None:
         await state._watcher_manager.stop()

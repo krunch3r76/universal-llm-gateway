@@ -34,6 +34,7 @@ class ScopeDefinition:
 
     prefixes: list[str]
     description: str = ""
+    vocab_mode: str = ""  # "local" | "frontier" | "" (inherit global vocabulary_mode)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -278,10 +279,19 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
         description = scope_data.get("description", "")
         description = description if isinstance(description, str) else ""
 
+        raw_vocab_mode = scope_data.get("vocab_mode", "")
+        vocab_mode = (
+            raw_vocab_mode.strip().lower()
+            if isinstance(raw_vocab_mode, str)
+            and raw_vocab_mode.strip().lower() in ("local", "frontier", "")
+            else ""
+        )
+
         if scope_data.get("union") is True:
             scopes[scope_name] = ScopeDefinition(
                 prefixes=sorted(all_explicit_prefixes),
                 description=description,
+                vocab_mode=vocab_mode,
             )
         else:
             prefixes = _normalize_scope_prefixes(scope_name, scope_data.get("prefixes"))
@@ -290,6 +300,7 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
             scopes[scope_name] = ScopeDefinition(
                 prefixes=prefixes,
                 description=description,
+                vocab_mode=vocab_mode,
             )
     return scopes
 

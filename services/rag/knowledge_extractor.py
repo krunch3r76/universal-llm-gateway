@@ -159,7 +159,7 @@ def configure_tracker(
     """
     global _tracker
     _tracker = ExtractionModelTracker(
-        extraction_model=config.extraction_model,
+        model_id=config.extraction_model,
         pipeline_id=config.pipeline,
         wait_timeout_s=config.model_load_wait_s,
     )

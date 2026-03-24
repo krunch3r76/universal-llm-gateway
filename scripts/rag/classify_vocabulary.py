@@ -29,6 +29,7 @@ from services.rag.config import load_config
 from services.rag.corpus_hints import load_corpus_hints
 from services.rag.vocabulary import (
     DEFAULT_STARGATE_CHAT_URL,
+    _resolve_scope_vocab_mode,
     classify_scope_async,
     pick_loaded_stargate_model,
 )
@@ -170,26 +171,46 @@ async def _main_async(args: argparse.Namespace) -> int:
         s for s in hints_map if s not in exclude and hints_map.get(s, "").strip()
     )
 
-    mode = (args.mode or config.vocabulary_mode or "local").strip().lower()
-    if mode not in ("local", "frontier"):
-        print(f"Invalid mode {mode!r} (use local or frontier)", file=sys.stderr)
-        return 2
+    if not scope_names:
+        print("No scopes to classify.", file=sys.stderr)
+        return 1
 
-    print(f"Vocabulary classification — {len(scope_names)} scope(s), mode={mode}")
+    # --mode overrides per-scope vocab_mode; without it, each scope uses its own setting.
+    if args.mode:
+        mode_override = args.mode.strip().lower()
+        local_scopes = scope_names if mode_override == "local" else []
+        frontier_scopes = scope_names if mode_override == "frontier" else []
+        print(
+            f"Vocabulary classification — {len(scope_names)} scope(s),"
+            f" mode={mode_override} (--mode override)"
+        )
+    else:
+        local_scopes = sorted(
+            s for s in scope_names if _resolve_scope_vocab_mode(s, config) == "local"
+        )
+        frontier_scopes = sorted(
+            s for s in scope_names if _resolve_scope_vocab_mode(s, config) == "frontier"
+        )
+        print(
+            f"Vocabulary classification — {len(scope_names)} scope(s)"
+            f" ({len(local_scopes)} local, {len(frontier_scopes)} frontier)"
+        )
+
     for s in scope_names:
+        effective = args.mode or _resolve_scope_vocab_mode(s, config)
         desc = getattr(config.scopes.get(s, None), "description", "") or ""
-        print(f"  {s}: {desc[:60]}")
+        print(f"  [{effective}] {s}: {desc[:60]}")
 
     if args.dry_run:
-        if mode == "local":
-            print("\n--dry-run: would classify per-scope via local model")
+        if local_scopes:
+            print("\n--dry-run: would classify via local model")
             print(f"  model: {args.model or '(auto-detect loaded model)'}")
-            print(f"  scopes: {scope_names}")
-        else:
+            print(f"  scopes: {local_scopes}")
+        if frontier_scopes:
             opts: dict = {
                 "model": "vocab-classify-v1",
-                "mode": mode,
-                "scopes": scope_names,
+                "mode": "frontier",
+                "scopes": frontier_scopes,
                 "skip_fresh": not args.force,
             }
             if args.model:
@@ -198,13 +219,12 @@ async def _main_async(args: argparse.Namespace) -> int:
             print(json.dumps(opts, indent=2))
         return 0
 
-    if not scope_names:
-        print("No scopes to classify.", file=sys.stderr)
-        return 1
-
-    if mode == "local":
-        return await _run_local(hints_map, scope_names, config, args.model, args.force)
-    return await _run_frontier(scope_names, args.model, args.force)
+    rc = 0
+    if local_scopes:
+        rc |= await _run_local(hints_map, local_scopes, config, args.model, args.force)
+    if frontier_scopes:
+        rc |= await _run_frontier(frontier_scopes, args.model, args.force)
+    return rc
 
 
 def _report_partial_success(
@@ -248,7 +268,7 @@ def main() -> None:
         "--mode",
         choices=("local", "frontier"),
         default=None,
-        help="Override rag.yaml vocabulary_mode (default: config vocabulary_mode)",
+        help="Force all scopes to this mode, overriding per-scope vocab_mode settings",
     )
     parser.add_argument(
         "--model",

@@ -1,12 +1,12 @@
-"""Event-driven extraction model state tracker.
+"""Event-driven model state tracker.
 
 Subscribes to model lifecycle events from Event Service WebSocket.
-Maintains a gate (asyncio.Event) that extraction workers await before
-sending requests to Stargate.
+Maintains a gate (asyncio.Event) that workers await before sending
+requests to Stargate.
 
-∀ extraction attempt: wait_for_model() → True (proceed) ∨ False (timeout).
-Prevents startup-surge failures by holding workers until the extraction
-model is confirmed loaded.
+∀ guarded attempt: wait_for_model() → True (proceed) ∨ False (timeout).
+Prevents startup-surge failures by holding workers until the model is
+confirmed loaded.
 
 Two subscription paths run concurrently:
 - ``model.*`` — lifecycle events from the local (edge-localhost) gateway
@@ -16,6 +16,9 @@ Two subscription paths run concurrently:
 At start() time the probe queries the Event Service for the most recent
 load/unload event from either path, covering the case where the model was
 already loaded before RAG started.
+
+``ExtractionModelTracker`` is a backward-compatible alias for
+``ModelStateTracker``.
 """
 
 from __future__ import annotations
@@ -42,23 +45,23 @@ class ModelState(Enum):
     UNLOADED = "unloaded"
 
 
-class ExtractionModelTracker:
-    """Track extraction model loaded state via Event Service WebSocket.
+class ModelStateTracker:
+    """Track model loaded state via Event Service WebSocket.
 
-    Workers call wait_for_model() before extraction. Gate opens on
+    Workers call wait_for_model() before sending requests. Gate opens on
     model.loaded, closes on model.unloaded. UNKNOWN state allows one
     request through (to trigger the load via Stargate routing).
     """
 
     def __init__(
         self,
-        extraction_model: str,
-        pipeline_id: str,
+        model_id: str,
+        pipeline_id: str = "",
         *,
         event_socket: str = _EVENT_QUERY_SOCK,
         wait_timeout_s: float = _DEFAULT_WAIT_TIMEOUT_S,
     ) -> None:
-        self._extraction_model = extraction_model
+        self._model_id = model_id
         self._pipeline_id = pipeline_id
         self._event_socket = event_socket
         self._wait_timeout_s = wait_timeout_s
@@ -133,7 +136,7 @@ class ExtractionModelTracker:
             "ORDER BY seq DESC LIMIT 1"
         )
         system_sql = "SELECT seq FROM events WHERE signal='system.started' ORDER BY seq DESC LIMIT 1"
-        params = [f"{self._extraction_model}%", f"{self._extraction_model}%"]
+        params = [f"{self._model_id}%", f"{self._model_id}%"]
         try:
             connector = aiohttp.UnixConnector(path=self._event_socket)
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -163,7 +166,7 @@ class ExtractionModelTracker:
                 logger.debug(
                     "No prior model lifecycle events for '%s'"
                     " — starting in UNKNOWN state",
-                    self._extraction_model,
+                    self._model_id,
                 )
                 return
 
@@ -176,7 +179,7 @@ class ExtractionModelTracker:
                     " lifecycle event for '%s' (seq=%d)"
                     " — model state unknown post-restart, starting UNKNOWN",
                     system_seq,
-                    self._extraction_model,
+                    self._model_id,
                     lifecycle_seq,
                 )
                 return
@@ -191,7 +194,7 @@ class ExtractionModelTracker:
                 logger.info(
                     "Most recent lifecycle event for '%s' indicates LOADED"
                     " (signal=%s msg_type=%s seq=%d) — initialising tracker as LOADED",
-                    self._extraction_model,
+                    self._model_id,
                     signal,
                     msg_type or "n/a",
                     lifecycle_seq,
@@ -201,7 +204,7 @@ class ExtractionModelTracker:
                     "Most recent lifecycle event for '%s' indicates UNLOADED"
                     " (signal=%s msg_type=%s)"
                     " — starting in UNKNOWN state, first request will trigger load",
-                    self._extraction_model,
+                    self._model_id,
                     signal,
                     msg_type or "n/a",
                 )
@@ -222,6 +225,36 @@ class ExtractionModelTracker:
                     pass
                 setattr(self, attr, None)
 
+    async def wait_until_loaded(self, timeout_s: float) -> bool:
+        """Block until the extraction model is confirmed LOADED.
+
+        Used for startup gating — does NOT consume the first-request token.
+        Returns True if the model reaches LOADED within timeout_s, False
+        otherwise. Callers should proceed with on-demand load on False.
+        """
+        if self._state == ModelState.LOADED:
+            return True
+        logger.info(
+            "Model '%s' state=%s at startup — waiting up to %.0fs"
+            " for model.loaded before releasing watcher",
+            self._model_id,
+            self._state.value,
+            timeout_s,
+        )
+        try:
+            await asyncio.wait_for(
+                self._model_ready.wait(), timeout=timeout_s
+            )
+            return True
+        except TimeoutError:
+            logger.warning(
+                "Model '%s' not confirmed loaded after %.0fs —"
+                " proceeding; on-demand load will activate on first request",
+                self._model_id,
+                timeout_s,
+            )
+            return False
+
     async def wait_for_model(self, timeout_s: float | None = None) -> bool:
         """Wait until extraction model is loaded.
 
@@ -235,16 +268,15 @@ class ExtractionModelTracker:
         if self._state == ModelState.UNKNOWN and not self._first_request_sent:
             self._first_request_sent = True
             logger.info(
-                "Extraction model '%s' state unknown — allowing first request"
-                " to trigger load",
-                self._extraction_model,
+                "Model '%s' state unknown — allowing first request to trigger load",
+                self._model_id,
             )
             return True
 
         effective_timeout = timeout_s if timeout_s is not None else self._wait_timeout_s
         logger.info(
-            "Extraction model '%s' not loaded (state=%s) — waiting up to %.0fs",
-            self._extraction_model,
+            "Model '%s' not loaded (state=%s) — waiting up to %.0fs",
+            self._model_id,
             self._state.value,
             effective_timeout,
         )
@@ -255,23 +287,23 @@ class ExtractionModelTracker:
             return True
         except TimeoutError:
             logger.warning(
-                "Extraction model '%s' not loaded after %.0fs wait",
-                self._extraction_model,
+                "Model '%s' not loaded after %.0fs wait",
+                self._model_id,
                 effective_timeout,
             )
             return False
 
-    def _matches_extraction_model(self, event_model_id: str) -> bool:
-        """Check if event model_id matches the configured extraction model.
+    def _matches_model(self, event_model_id: str) -> bool:
+        """Check if event model_id matches the configured model.
 
-        Handles context-suffixed variants: if extraction_model is
+        Handles context-suffixed variants: if model_id is
         'qwen3-14b-q4-k-m-40960', matches 'qwen3-14b-q4-k-m-40960-8192'.
         """
-        if not event_model_id or not self._extraction_model:
+        if not event_model_id or not self._model_id:
             return False
         return (
-            event_model_id == self._extraction_model
-            or event_model_id.startswith(self._extraction_model + "-")
+            event_model_id == self._model_id
+            or event_model_id.startswith(self._model_id + "-")
         )
 
     def _handle_event(self, event: dict[str, Any]) -> None:
@@ -280,22 +312,18 @@ class ExtractionModelTracker:
         payload = event.get("payload", {})
         model_id = payload.get("model_id", "")
 
-        if not self._matches_extraction_model(model_id):
+        if not self._matches_model(model_id):
             return
 
         if signal == "model.loaded":
             prev = self._state
             self._state = ModelState.LOADED
             self._model_ready.set()
-            logger.info(
-                "Extraction model '%s' loaded (was %s)",
-                model_id,
-                prev.value,
-            )
+            logger.info("Model '%s' loaded (was %s)", model_id, prev.value)
         elif signal == "model.unloaded":
             self._state = ModelState.UNLOADED
             self._model_ready.clear()
-            logger.info("Extraction model '%s' unloaded", model_id)
+            logger.info("Model '%s' unloaded", model_id)
         elif signal == "federation.model.lifecycle":
             msg_type = payload.get("msg_type", "")
             gateway_id = payload.get("gateway_id", "?")
@@ -304,7 +332,7 @@ class ExtractionModelTracker:
                 self._state = ModelState.LOADED
                 self._model_ready.set()
                 logger.info(
-                    "Extraction model '%s' loaded on remote gateway %s (was %s)",
+                    "Model '%s' loaded on remote gateway %s (was %s)",
                     model_id,
                     gateway_id,
                     prev.value,
@@ -313,7 +341,7 @@ class ExtractionModelTracker:
                 self._state = ModelState.UNLOADED
                 self._model_ready.clear()
                 logger.info(
-                    "Extraction model '%s' unloaded from remote gateway %s",
+                    "Model '%s' unloaded from remote gateway %s",
                     model_id,
                     gateway_id,
                 )
@@ -330,8 +358,9 @@ class ExtractionModelTracker:
             return
         if self._state != ModelState.UNKNOWN:
             logger.info(
-                "Stargate restarted (system.started) — resetting extraction"
-                " model tracker to UNKNOWN (was %s)",
+                "Stargate restarted (system.started) — resetting model tracker"
+                " for '%s' to UNKNOWN (was %s)",
+                self._model_id,
                 self._state.value,
             )
             self._state = ModelState.UNKNOWN
@@ -384,3 +413,7 @@ class ExtractionModelTracker:
                         aiohttp.WSMsgType.CLOSED,
                     ):
                         break
+
+
+# Backward-compatible alias — callers using ExtractionModelTracker continue to work.
+ExtractionModelTracker = ModelStateTracker

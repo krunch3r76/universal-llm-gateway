@@ -209,6 +209,49 @@ async def classify_scope_async(
             await hc.aclose()
 
 
+def _resolve_scope_vocab_mode(scope_name: str, config: RagConfig) -> str:
+    """Return effective vocab mode for a scope: per-scope override or global default."""
+    sdef = config.scopes.get(scope_name)
+    if sdef is not None and sdef.vocab_mode:
+        return sdef.vocab_mode
+    return config.vocabulary_mode or "local"
+
+
+async def _classify_frontier_scopes(
+    scope_names: list[str],
+    chat_url: str,
+) -> set[str]:
+    """Classify scopes via vocab-classify-v1 pipeline (frontier/cloud models).
+
+    The pipeline writes vocabulary to the property index itself; the caller is
+    responsible for stamping watermarks. Returns the set of scopes written.
+    """
+    payload: dict = {
+        "model": "vocab-classify-v1",
+        "messages": [{"role": "user", "content": "vocabulary classification"}],
+        "pipeline_options": {
+            "mode": "frontier",
+            "scopes": scope_names,
+            "skip_fresh": False,
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(3600.0)) as client:
+            resp = await client.post(chat_url, json=payload)
+            resp.raise_for_status()
+        choices = resp.json().get("choices", [])
+        content = choices[0]["message"]["content"] if choices else "{}"
+        vocab = json.loads(content).get("vocabulary", {})
+        return set(vocab.keys())
+    except Exception as exc:
+        logger.error(
+            "Frontier vocab classification failed for %d scope(s): %s",
+            len(scope_names),
+            exc,
+        )
+        return set()
+
+
 async def run_scope_freshness_repair(
     *,
     property_index: PropertyIndex,
@@ -221,9 +264,9 @@ async def run_scope_freshness_repair(
 ) -> None:
     """Refresh corpus hints and vocabulary for scopes whose file-set hash drifted.
 
-    Always uses per-scope classification (lightweight, local model). The full
-    pipeline (vocab-classify-v1) is reserved for explicit ``--mode frontier``
-    invocations via ``scripts/rag/classify_vocabulary.py``.
+    Per-scope vocab_mode (set in rag.yaml under each scope) overrides the global
+    vocabulary_mode. Scopes with vocab_mode=frontier use vocab-classify-v1;
+    all others use the lightweight local-model path.
     """
     if not stale_scopes:
         return
@@ -256,17 +299,25 @@ async def run_scope_freshness_repair(
             hints_updated.append(scope_name)
 
         classify_scopes = list(set(stale_scopes) & set(cs_map.keys()))
-        if not classify_scopes:
-            pass
-        elif model is None:
-            for scope_name in classify_scopes:
+
+        local_scopes = [
+            s for s in classify_scopes
+            if _resolve_scope_vocab_mode(s, config) == "local"
+        ]
+        frontier_scopes = [
+            s for s in classify_scopes
+            if _resolve_scope_vocab_mode(s, config) == "frontier"
+        ]
+
+        if model is None and local_scopes:
+            for scope_name in local_scopes:
                 no_model_scopes.append(scope_name)
                 logger.warning(
                     "Scope %s: hints refreshed but no Stargate model — "
                     "vocabulary skipped (stale until model available)",
                     scope_name,
                 )
-        else:
+        elif local_scopes:
             from services.rag.corpus_hints import (
                 compute_scope_files_hash,
                 load_corpus_hints,
@@ -278,7 +329,7 @@ async def run_scope_freshness_repair(
                 for n, sdef in config.scopes.items()
             }
 
-            for scope_name in sorted(classify_scopes):
+            for scope_name in sorted(local_scopes):
                 text = hints_map.get(scope_name, "")
                 terms = [t.strip() for t in text.split(",") if t.strip()]
                 if not terms:
@@ -295,11 +346,7 @@ async def run_scope_freshness_repair(
                         client=client,
                     )
                 except Exception as e:
-                    logger.warning(
-                        "Per-scope classify failed for %s: %s",
-                        scope_name,
-                        e,
-                    )
+                    logger.warning("Per-scope classify failed for %s: %s", scope_name, e)
                     result = None
 
                 if result is None:
@@ -315,20 +362,40 @@ async def run_scope_freshness_repair(
                 )
                 vocab_ok.append(scope_name)
 
-            if vocab_ok:
-                await property_index.stamp_watermark("vocabulary")
-
-            if vocab_failed:
-                logger.warning(
-                    "Per-scope classify failed for %d scope(s): %s",
-                    len(vocab_failed),
-                    ", ".join(vocab_failed),
-                )
-            if vocab_ok:
+        if frontier_scopes:
+            written = await _classify_frontier_scopes(
+                sorted(frontier_scopes), chat_url=chat_url
+            )
+            vocab_ok.extend(s for s in frontier_scopes if s in written)
+            vocab_failed.extend(s for s in frontier_scopes if s not in written)
+            if written:
                 logger.info(
-                    "Per-scope classify completed for %d scope(s)",
-                    len(vocab_ok),
+                    "Frontier vocab classification completed for %d scope(s): %s",
+                    len(written),
+                    sorted(written),
                 )
+            failed = sorted(set(frontier_scopes) - written)
+            if failed:
+                logger.warning(
+                    "Frontier vocab classification failed for %d scope(s): %s",
+                    len(failed),
+                    failed,
+                )
+
+        if vocab_ok:
+            await property_index.stamp_watermark("vocabulary")
+
+        if vocab_failed:
+            logger.warning(
+                "Per-scope classify failed for %d scope(s): %s",
+                len(vocab_failed),
+                ", ".join(vocab_failed),
+            )
+        if vocab_ok:
+            logger.info(
+                "Per-scope classify completed for %d scope(s)",
+                len(vocab_ok),
+            )
 
     if hints_updated and event_bus is not None:
         await event_bus.publish_async_nowait(
