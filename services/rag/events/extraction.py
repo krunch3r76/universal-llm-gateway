@@ -112,7 +112,7 @@ def rag_extraction_model_mismatch(
     expected_model: str,
     chunk_count: int,
 ) -> Event:
-    """Emitted when re-extraction is triggered because existing chunks have different or missing extraction_model."""
+    """Emitted when non-noise chunks need re-extraction due to missing or stale extraction_model."""
     return Event(
         signal="rag.extraction.model.mismatch",
         payload={
@@ -254,4 +254,26 @@ def rag_extraction_infrastructure_recovered(*, model_id: str) -> Event:
     return Event(
         signal="rag.extraction.infrastructure.recovered",
         payload={"model_id": model_id},
+    )
+
+
+@event_factory
+def rag_extraction_structurally_unavailable(
+    *,
+    model_id: str,
+    reason: str,
+    detail: str,
+) -> Event:
+    """Emitted when extraction model has no catalog entry — structural, not transient.
+
+    ∀ structural unavailability: emitted once per batch. The retry loop must
+    not spin on this condition — callers mark the failure permanent.
+    """
+    return Event(
+        signal="rag.extraction.structurally.unavailable",
+        payload={
+            "model_id": model_id,
+            "reason": reason,
+            "detail": detail,
+        },
     )

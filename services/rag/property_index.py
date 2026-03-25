@@ -934,6 +934,15 @@ class PropertyIndex:
 
         await self._seq.run(_write())
 
+    def has_scope_vocabulary(self, scope: str) -> bool:
+        """Return True when at least one vocabulary row exists for *scope*."""
+        conn = self._ensure_conn()
+        row = conn.execute(
+            "SELECT 1 FROM scope_vocabulary WHERE scope = ? LIMIT 1",
+            (scope,),
+        ).fetchone()
+        return row is not None
+
     def get_scope_freshness(self, scope: str) -> tuple[str, str, str] | None:
         """Return (files_hash, classified_at, classified_tier) if a row exists."""
         conn = self._ensure_conn()

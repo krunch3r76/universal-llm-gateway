@@ -7,8 +7,46 @@ from universal_event_bus import Event, event_factory
 
 @event_factory
 def rag_started() -> Event:
-    """Emit startup completion for the RAG service process."""
+    """Emit completion of core RAG boot after local runtime resources are ready."""
     return Event(signal="rag.started", payload={})
+
+
+@event_factory
+def rag_start_degraded(*, waiting_on: str, error: str) -> Event:
+    """Emit the first degraded startup transition when external dependency activation stalls."""
+    return Event(
+        signal="rag.start.degraded",
+        payload={"waiting_on": waiting_on, "error": error},
+    )
+
+
+@event_factory
+def rag_dependency_retry_scheduled(
+    *,
+    waiting_on: str,
+    attempt: int,
+    delay_seconds: float,
+    error: str,
+) -> Event:
+    """Emit each scheduled retry while RAG waits for Stargate-backed dependencies."""
+    return Event(
+        signal="rag.dependency.retry.scheduled",
+        payload={
+            "waiting_on": waiting_on,
+            "attempt": attempt,
+            "delay_seconds": delay_seconds,
+            "error": error,
+        },
+    )
+
+
+@event_factory
+def rag_dependencies_activated(*, dependencies: list[str]) -> Event:
+    """Emit successful completion of dependency activation before watcher startup begins."""
+    return Event(
+        signal="rag.dependencies.activated",
+        payload={"dependencies": dependencies},
+    )
 
 
 @event_factory

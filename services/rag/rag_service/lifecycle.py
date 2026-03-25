@@ -35,20 +35,26 @@ from services.rag.directory_ops import (
     find_sources_under_prefixes,
     purge_orphaned_sources,
 )
+from services.rag.embeddings import (
+    EmbeddingDependencyUnavailableError,
+    wait_until_healthy,
+)
 from services.rag.embeddings import close as close_embeddings
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import set_event_bus as set_embeddings_event_bus
-from services.rag.embeddings import wait_until_healthy
 from services.rag.events.extraction import rag_extraction_unavailable
 from services.rag.events.lifecycle import (
     rag_article_registry_failed,
     rag_article_registry_loaded,
+    rag_dependencies_activated,
+    rag_dependency_retry_scheduled,
     rag_embeddings_unavailable,
     rag_exclusion_purged,
     rag_orphan_purged,
     rag_pending_reconciled,
     rag_post_index_stale,
     rag_shutdown,
+    rag_start_degraded,
     rag_started,
 )
 from services.rag.knowledge_extractor import (
@@ -56,6 +62,7 @@ from services.rag.knowledge_extractor import (
     wait_until_extraction_ready,
 )
 from services.rag.model_availability_tracker import (
+    ModelAvailabilityStartError,
     ModelAvailabilityTracker,
     close_model_availability_client,
     get_model_availability_tracker,
@@ -72,9 +79,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_DEPENDENCY_RETRY_BASE_S = 2.0
+_DEPENDENCY_RETRY_MAX_S = 30.0
+
 _RECONCILE_FILE_TIMEOUT_S = 300.0
 
 _POST_INDEX_STEPS = ("corpus_hints", "vocabulary", "noise")
+
+
+def _track_background_task(task: asyncio.Task[None]) -> None:
+    """Register a lifecycle-owned background task in shared state for shutdown cleanup."""
+    state._background_tasks.add(task)
+    task.add_done_callback(state._background_tasks.discard)
 
 
 def _maybe_clear_post_index_stale_after_repair(config: RagConfig) -> None:
@@ -174,9 +190,14 @@ async def _watcher_debounced_scope_freshness(scopes: set[str]) -> None:
 
 
 async def _startup() -> None:
-    """Initialize runtime resources required by request handlers and watchers."""
+    """Initialize local runtime state, then activate Stargate-backed dependencies asynchronously."""
     store_path = Path.home() / ".rag" / "store"
     store_path.mkdir(parents=True, exist_ok=True)
+    state._dependency_activation.phase = "booting"
+    state._dependency_activation.attempts = 0
+    state._dependency_activation.waiting_on = None
+    state._dependency_activation.last_error = None
+
     state._chroma = chromadb.PersistentClient(path=str(store_path))
     state._collection = state._chroma.get_or_create_collection(
         name=state.COLLECTION_NAME,
@@ -188,19 +209,21 @@ async def _startup() -> None:
     )
     state._event_bus.set_debug_broadcaster(state._broadcaster)
     await state._broadcaster.start_debug_server()
-    await state._event_bus.publish_async(rag_started())
+
     state._config = load_config()
     configure_embeddings(state._config.embedding_model)
     set_embeddings_event_bus(state._event_bus)
-    _ke = state._config.knowledge_extraction
-    _watch_ids = [
+
+    ke = state._config.knowledge_extraction
+    watch_ids = [
         state._config.embedding_model,
-        _ke.extraction_model,
-        _ke.pipeline,
+        ke.extraction_model,
+        ke.pipeline,
     ]
-    _mat = ModelAvailabilityTracker()
-    set_model_availability_tracker(_mat)
-    await _mat.start(state._event_bus, _watch_ids)
+    tracker = ModelAvailabilityTracker()
+    set_model_availability_tracker(tracker)
+    await tracker.configure(watch_ids)
+
     state._property_index = PropertyIndex()
     await state._property_index.start()
     db_path = state._property_index.db_path
@@ -245,14 +268,25 @@ async def _startup() -> None:
                 )
             )
         state._registry = None
+
+    await state._event_bus.publish_async(rag_started())
+
     if state._config.automatic_indexing_enabled and state._config.watch_directories:
+        state._dependency_activation.phase = "activating"
+        state._dependency_activation.waiting_on = "stargate"
         state._init_task = asyncio.create_task(
-            _deferred_watcher_start(state._config), name="rag-watcher-init"
+            _activate_dependencies_when_ready(state._config),
+            name="rag-dependency-activation",
         )
-    elif not state._config.automatic_indexing_enabled:
-        logger.info(
-            "Automatic indexing disabled (automatic_indexing_enabled: false) — watcher not started"
-        )
+        _track_background_task(state._init_task)
+    else:
+        state._dependency_activation.phase = "ready"
+        state._dependency_activation.waiting_on = None
+        state._dependency_activation.last_error = None
+        if not state._config.automatic_indexing_enabled:
+            logger.info(
+                "Automatic indexing disabled (automatic_indexing_enabled: false) — watcher not started"
+            )
 
 
 async def _reconcile_pending(config: RagConfig) -> None:
@@ -483,37 +517,94 @@ async def _purge_excluded_sources(config: RagConfig) -> None:
         )
 
 
-async def _deferred_watcher_start(config: RagConfig) -> None:
-    """Start watcher only after embeddings and extraction are healthy."""
-
-    try:
-        await wait_until_healthy()
-    except TimeoutError as exc:
-        logger.error(
-            "Embedding endpoint not healthy after timeout — watcher not started. %s",
-            exc,
+async def _activate_dependencies_when_ready(config: RagConfig) -> None:
+    """Retry Stargate-backed dependency activation until watcher runtime can start."""
+    tracker = get_model_availability_tracker()
+    if tracker is None or state._event_bus is None:
+        raise RuntimeError(
+            "Dependency activation requires initialized tracker and event bus"
         )
-        if state._event_bus is not None:
-            await state._event_bus.publish_async(
-                rag_embeddings_unavailable(error=str(exc))
-            )
-        return
 
-    try:
-        await wait_until_extraction_ready(config.knowledge_extraction.pipeline)
-    except TimeoutError as exc:
-        logger.error(
-            "Extraction pipeline not available after timeout — watcher not started. %s",
-            exc,
-        )
-        if state._event_bus is not None:
+    attempt = 0
+    degraded_emitted = False
+    while True:
+        attempt += 1
+        state._dependency_activation.phase = "activating"
+        state._dependency_activation.attempts = attempt
+        state._dependency_activation.last_error = None
+        waiting_on = "dependencies"
+        error = ""
+        try:
+            state._dependency_activation.waiting_on = "stargate"
+            await tracker.refresh_snapshot()
+            tracker.start_subscription()
+
+            state._dependency_activation.waiting_on = "embeddings"
+            await wait_until_healthy()
+
+            state._dependency_activation.waiting_on = "extraction"
+            await wait_until_extraction_ready(config.knowledge_extraction.pipeline)
+
+            await _start_watcher_runtime(config)
+            state._dependency_activation.phase = "ready"
+            state._dependency_activation.waiting_on = None
             await state._event_bus.publish_async(
-                rag_extraction_unavailable(
-                    pipeline=config.knowledge_extraction.pipeline,
-                    error=str(exc),
+                rag_dependencies_activated(
+                    dependencies=["stargate", "embeddings", "extraction"]
                 )
             )
-        return
+            return
+        except asyncio.CancelledError:
+            raise
+        except ModelAvailabilityStartError as exc:
+            waiting_on = "stargate"
+            error = str(exc)
+        except EmbeddingDependencyUnavailableError as exc:
+            waiting_on = "embeddings"
+            error = str(exc)
+            await state._event_bus.publish_async(
+                rag_embeddings_unavailable(error=error)
+            )
+        except TimeoutError as exc:
+            waiting_on = state._dependency_activation.waiting_on or "dependencies"
+            error = str(exc)
+            if waiting_on == "embeddings":
+                await state._event_bus.publish_async(
+                    rag_embeddings_unavailable(error=error)
+                )
+            elif waiting_on == "extraction":
+                await state._event_bus.publish_async(
+                    rag_extraction_unavailable(
+                        pipeline=config.knowledge_extraction.pipeline,
+                        error=error,
+                    )
+                )
+
+        delay = min(
+            _DEPENDENCY_RETRY_MAX_S,
+            _DEPENDENCY_RETRY_BASE_S ** min(attempt, 4),
+        )
+        state._dependency_activation.phase = "degraded"
+        state._dependency_activation.waiting_on = waiting_on
+        state._dependency_activation.last_error = error
+        if not degraded_emitted:
+            await state._event_bus.publish_async(
+                rag_start_degraded(waiting_on=waiting_on, error=error)
+            )
+            degraded_emitted = True
+        await state._event_bus.publish_async(
+            rag_dependency_retry_scheduled(
+                waiting_on=waiting_on,
+                attempt=attempt,
+                delay_seconds=delay,
+                error=error,
+            )
+        )
+        await asyncio.sleep(delay)
+
+
+async def _start_watcher_runtime(config: RagConfig) -> None:
+    """Start watcher runtime after all external activation gates have succeeded."""
 
     async def _watcher_index_fn(
         path: Path,
@@ -540,8 +631,22 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
     mat = get_model_availability_tracker()
     startup_model_wait_s = 120.0
     ext_id = config.knowledge_extraction.extraction_model
-    if mat is not None and not mat.is_available(ext_id):
-        await mat.wait_until_available(ext_id, startup_model_wait_s)
+    if mat is not None and ext_id in mat._model_ids and not mat.is_available(ext_id):
+        result = await mat.wait_until_available(ext_id, startup_model_wait_s)
+        if not result.available and result.reason.is_structural:
+            logger.error(
+                "Extraction model %s not in catalog: %s"
+                " — indexing will proceed without extraction",
+                ext_id,
+                result.detail,
+            )
+            if state._event_bus is not None:
+                await state._event_bus.publish_async(
+                    rag_extraction_unavailable(
+                        pipeline=config.knowledge_extraction.pipeline,
+                        error=f"structural: {result.reason.value} — {result.detail}",
+                    )
+                )
 
     reconcile_worker_count = (
         config.reconcile_workers if isinstance(config.reconcile_workers, int) else 3
@@ -554,7 +659,6 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
         reconcile_workers=reconcile_worker_count,
         reconcile_interval_s=config.reconcile_interval_s,
         post_reconcile_repair=_post_reconcile_scope_freshness,
-        scope_repair_runner=_watcher_debounced_scope_freshness,
     )
 
     post_index_steps = list(_POST_INDEX_STEPS)
@@ -623,23 +727,32 @@ def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | 
 
 
 async def _shutdown() -> None:
-    """Shutdown RAG resources and stop background services."""
+    """Shutdown RAG resources, cancel lifecycle tasks, and stop background services."""
+    state._dependency_activation.phase = "shutting_down"
+
+    tasks = [task for task in state._background_tasks if not task.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    state._background_tasks.clear()
+    state._init_task = None
+
     if state._event_bus is not None:
         await state._event_bus.publish_async(rag_shutdown())
-        if state._broadcaster is not None:
-            await state._broadcaster.stop_debug_server()
-            state._broadcaster = None
-        state._event_bus = None
-    if state._property_index is not None:
-        await state._property_index.stop()
-        state._property_index = None
-    _mat = get_model_availability_tracker()
-    if _mat is not None:
-        await _mat.stop()
-        set_model_availability_tracker(None)
-    await close_model_availability_client()
-    await close_embeddings()
     if state._watcher_manager is not None:
         await state._watcher_manager.stop()
         state._watcher_manager = None
-    # Extraction gating uses ModelAvailabilityTracker; stopped in Phase 4 shutdown.
+    if state._property_index is not None:
+        await state._property_index.stop()
+        state._property_index = None
+    mat = get_model_availability_tracker()
+    if mat is not None:
+        await mat.stop()
+        set_model_availability_tracker(None)
+    await close_model_availability_client()
+    await close_embeddings()
+    if state._broadcaster is not None:
+        await state._broadcaster.stop_debug_server()
+        state._broadcaster = None
+    state._event_bus = None

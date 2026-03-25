@@ -39,6 +39,8 @@ from tools.cortex import register_cortex_tools
 from tools.cortex_v2 import register_cortex_v2_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
+from tools.finance import register_finance_tools
+from tools.finance_ingest import register_finance_ingest_tools
 from tools.llm import register_llm_tools
 from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
@@ -253,6 +255,8 @@ def _build_server() -> FastMCP:
             logger.info(f"{tool_name} disabled ({env_var}=false)")
     register_sqlite_tools(mcp)
     register_event_tools(mcp)
+    register_finance_tools(mcp)
+    register_finance_ingest_tools(mcp)
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)
     register_quality_tools(mcp)
@@ -325,6 +329,23 @@ def _build_server() -> FastMCP:
           LLM generation:
             llm_generate(messages, system?, model?, max_tokens?) — generate text
                 via Anthropic API with server-side credentials
+          Finance:
+            finance_extract_pdf(path) — extract tables + text from a PDF via pdfplumber.
+                Returns per-page tables (column-aligned) and full text. Best for bank/CC statements.
+            finance_extract_directory(directory) — batch extract all PDFs in a directory.
+                Runs finance_extract_pdf on each .pdf found; returns array of results.
+            finance_parse_statement(path, statement_type) — parse a financial PDF into
+                structured JSON via Claude API. statement_type: checking, credit_card,
+                utility, phone, ploc. Returns schema-conformant JSON with all transactions.
+            finance_parse_directory(directory, type_map) — batch-parse all PDFs in a
+                directory. type_map maps filename patterns to statement types, e.g.
+                {"wf_cc": "credit_card", "pge": "utility"}. Unmatched PDFs are skipped.
+            finance_ingest_statement(parsed_json?, path?, statement_type?) — ingest a
+                parsed financial statement into Cortex. End-to-end mode (path + type)
+                runs Phase 2 parser then ingests. Direct mode (parsed_json) skips parsing.
+                Creates account, org, statement entities + temporally scoped assertions.
+            finance_ingest_directory(directory, type_map) — batch ingest all PDFs via
+                end-to-end pipeline. One-command monthly ingestion into Cortex.
           Quality & infra:
             quality_gate(files) — run ruff + compileall
             pipeline_consult(execution_id, step_name, problem)

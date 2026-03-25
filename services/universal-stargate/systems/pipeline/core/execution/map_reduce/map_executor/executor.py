@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING, Any, Protocol, Self
 from universal_concurrency import FifoCapacityGate
 
 from ..map_output_collection import MapOutputCollection
+from ...request_inference_boundary import (
+    RequestInferenceBoundaryState,
+    RequestInferenceBoundaryTracker,
+)
 from .concurrency_manager import MapConcurrencyManager
 from .events import MapEventPublisher
 from .execution_modes import MapExecutionModes
@@ -18,8 +22,6 @@ from .iteration_preparer import MapIterationPreparer
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
-
-    from universal_event_bus import Subscription
 
     from ....schemas import StepConfig, StepOutput
     from ...checkpoint import CheckpointManager
@@ -47,12 +49,6 @@ class MapIterationHandlerProtocol(Protocol):
     """Handler contract needed by map executor."""
 
     async def execute(self, step: StepConfig, context: Any) -> Any: ...
-
-
-class _EventPayloadProtocol(Protocol):
-    """Minimal event shape required for request boundary correlation."""
-
-    payload: dict[str, Any]
 
 
 class MapExecutor:
@@ -166,9 +162,7 @@ class MapExecutor:
         )
 
         # Subscribe to both boundaries with primary-preferred stamping semantics.
-        inference_start_subscriptions = self._subscribe_inference_start(
-            iteration_context
-        )
+        inference_boundary_tracker = self._subscribe_inference_start(iteration_context)
 
         iteration_metadata = [(idx, key) for idx, _, key in iteration_items]
 
@@ -270,8 +264,7 @@ class MapExecutor:
             # Yield once so in-flight event callbacks can stamp context before we
             # tear down subscriptions at execution boundary.
             await asyncio.sleep(0)
-            for subscription in inference_start_subscriptions:
-                subscription.unsubscribe()
+            inference_boundary_tracker.close()
 
         self._emit_deferred_inference_signals(iteration_context)
 
@@ -313,7 +306,7 @@ class MapExecutor:
 
     def _subscribe_inference_start(
         self, iteration_context: dict[int, dict[str, Any]]
-    ) -> list[Subscription]:
+    ) -> RequestInferenceBoundaryTracker:
         """
         Subscribe to inference-start boundary signals for this execute() scope.
 
@@ -328,30 +321,30 @@ class MapExecutor:
             - only fallback arrived: deferred inference.started + fallback.used
             - neither arrived: signal.lost
 
-        Returns Subscription handles (or empty list if event bus unavailable).
-        Caller must unsubscribe after execution completes.
+        Returns a reusable request-boundary tracker. Caller must close it after
+        execution completes.
         """
         proxy = getattr(self._runtime, "_proxy", None)
         event_bus = getattr(proxy, "event_bus", None) if proxy else None
-        if not event_bus:
-            return []
-
         request_id_to_idx: dict[str, int] = {
             ctx["request_id"]: idx
             for idx, ctx in iteration_context.items()
             if "request_id" in ctx
         }
-        subscriptions: list[Subscription] = []
 
-        def _on_primary(rid: str) -> None:
+        def _on_primary(rid: str, tracker_state: RequestInferenceBoundaryState) -> None:
             idx = request_id_to_idx.get(rid)
             if idx is None:
                 return
             ctx = iteration_context.get(idx)
             if ctx is None or "inference_started_at" in ctx:
                 return
-            ctx["inference_started_at"] = time.monotonic()
-            ctx["inference_start_source"] = "request.inference.started"
+            observation = tracker_state.inference_started
+            if observation is None:
+                return
+            ctx["inference_started_at"] = observation.observed_at_monotonic
+            ctx["inference_start_source"] = observation.signal
+            ctx["inference_started_event"] = observation.payload
             queue_wait = ctx["inference_started_at"] - ctx["started_at"]
             self._event_publisher.emit_iteration_inference_started(
                 index=idx,
@@ -360,34 +353,28 @@ class MapExecutor:
                 queue_wait_seconds=round(queue_wait, 3),
             )
 
-        def _on_fallback(rid: str) -> None:
+        def _on_fallback(
+            rid: str, tracker_state: RequestInferenceBoundaryState
+        ) -> None:
             idx = request_id_to_idx.get(rid)
             if idx is None:
                 return
             ctx = iteration_context.get(idx)
             if ctx is None or "fallback_boundary_at" in ctx:
                 return
-            ctx["fallback_boundary_at"] = time.monotonic()
+            observation = tracker_state.fallback_processing
+            if observation is None:
+                return
+            ctx["fallback_boundary_at"] = observation.observed_at_monotonic
+            ctx["fallback_boundary_signal"] = observation.signal
+            ctx["fallback_boundary_event"] = observation.payload
 
-        async def _on_request_inference_started(event: _EventPayloadProtocol) -> None:
-            rid = event.payload.get("request_id")
-            if rid in request_id_to_idx:
-                _on_primary(rid)
-
-        async def _on_request_processing(event: _EventPayloadProtocol) -> None:
-            rid = event.payload.get("request_id")
-            if rid in request_id_to_idx:
-                _on_fallback(rid)
-
-        subscriptions.append(
-            event_bus.subscribe_async(
-                "request.inference.started", _on_request_inference_started
-            )
+        return RequestInferenceBoundaryTracker.subscribe(
+            event_bus=event_bus,
+            request_ids=request_id_to_idx.keys(),
+            on_inference_started=_on_primary,
+            on_processing=_on_fallback,
         )
-        subscriptions.append(
-            event_bus.subscribe_async("request.processing", _on_request_processing)
-        )
-        return subscriptions
 
     def _emit_deferred_inference_signals(
         self, iteration_context: dict[int, dict[str, Any]]
@@ -420,6 +407,14 @@ class MapExecutor:
                         self._step.name,
                     )
                     fallback_warning_emitted = True
+                ctx["inference_start_source"] = ctx.get(
+                    "fallback_boundary_signal", "request.processing"
+                )
+                if (
+                    "inference_started_event" not in ctx
+                    and "fallback_boundary_event" in ctx
+                ):
+                    ctx["inference_started_event"] = ctx["fallback_boundary_event"]
                 queue_wait = fallback_boundary_at - ctx["started_at"]
                 self._event_publisher.emit_iteration_inference_started(
                     index=idx,

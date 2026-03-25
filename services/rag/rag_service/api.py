@@ -45,11 +45,16 @@ router = APIRouter()
 
 
 @router.get("/health")
-def health() -> dict[str, str | int | None]:
-    """Subsystem health summary for external liveness/readiness probes."""
+def health() -> dict[str, object]:
+    """Return liveness plus dependency-activation state for startup-order tolerant probes."""
     collection = state._collection
+    activation = state._dependency_activation
     return {
-        "status": "ok",
+        "status": "ok" if activation.phase == "ready" else "degraded",
+        "phase": activation.phase,
+        "waiting_on": activation.waiting_on,
+        "activation_attempts": activation.attempts,
+        "last_error": activation.last_error,
         "collection": state.COLLECTION_NAME if collection is not None else None,
         "collection_count": collection.count() if collection is not None else 0,
         "property_index": "ready"

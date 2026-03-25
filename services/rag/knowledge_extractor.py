@@ -489,16 +489,37 @@ async def extract_knowledge_batch(
 
     mat = get_model_availability_tracker()
     if mat is not None:
-        ok = await mat.wait_until_available(
+        result = await mat.wait_until_available(
             config.extraction_model,
             config.model_load_wait_s,
         )
-        if not ok:
+        if not result.available:
+            if result.reason.is_structural:
+                logger.error(
+                    "Extraction model not in catalog — failing batch"
+                    " (%d chunks, %s: %s)",
+                    len(chunk_ids),
+                    result.reason.value,
+                    result.detail,
+                )
+                return [None] * len(chunk_ids), {
+                    "model_unavailable": True,
+                    "structural": True,
+                    "unavailability_reason": result.reason.value,
+                    "unavailability_detail": result.detail,
+                }
             logger.info(
-                "Extraction model not aggregate-available — skipping batch (%d chunks)",
+                "Extraction model transiently unavailable — skipping batch"
+                " (%d chunks, %s: %s)",
                 len(chunk_ids),
+                result.reason.value,
+                result.detail,
             )
-            return [None] * len(chunk_ids), {"model_unavailable": True}
+            return [None] * len(chunk_ids), {
+                "model_unavailable": True,
+                "structural": False,
+                "unavailability_reason": result.reason.value,
+            }
 
     chunks = [
         {"id": cid, "text": text}

@@ -276,14 +276,29 @@ class ResourceTracker:
     def set_model_loaded(
         self, model_id: str | ModelId, process_pid: int | None = None
     ) -> None:
-        """Mark a model as loaded. SM callback handles load_time and event."""
+        """Mark model loaded; records hardware VRAM when pid is available.
+
+        SM callback sets load_time and emits state event. When process_pid is
+        provided, measures per-process GPU memory via pynvml and stores it as
+        measured_vram_mb for accurate VRAM accounting in the reconciler.
+        """
         key = _normalize_key(model_id)
         if key in self._state_machines:
             self._state_machines[key].transition(
                 WorkerState.LOADED, reason="model_loaded_successfully"
             )
-        if process_pid and key in self._models:
-            self._models[key].process_pid = process_pid
+        if key in self._models:
+            if process_pid:
+                self._models[key].process_pid = process_pid
+                measured = get_process_gpu_memory(process_pid)
+                if measured is not None and measured > 0:
+                    self._models[key].measured_vram_mb = measured
+                    self.logger.info(
+                        "Measured VRAM for %s: %dMB (catalog estimate: %dMB)",
+                        model_id,
+                        measured,
+                        self._models[key].vram_usage_mb,
+                    )
 
     async def set_model_busy(
         self, model_id: str | ModelId, request_id: str = ""
@@ -423,6 +438,7 @@ class ResourceTracker:
             self._models[key].process_pid = None
             self._models[key].current_inference_start = None
             self._models[key].error_message = None
+            self._models[key].measured_vram_mb = None
 
     async def force_model_idle(self, model_id: str | ModelId, reason: str) -> bool:
         """Force a model to idle state (for cancellation).

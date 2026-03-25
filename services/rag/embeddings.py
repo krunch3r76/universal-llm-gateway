@@ -115,35 +115,37 @@ _PROBE_INTERVAL_S = 2.0
 _PROBE_TIMEOUT_S = 120.0
 
 
+class EmbeddingDependencyUnavailableError(RuntimeError):
+    """Embedding unavailable: not in catalog (structural) or dim seed failed after admission."""
+
+
 async def wait_until_healthy(
     timeout_s: float = _PROBE_TIMEOUT_S,
     interval_s: float = _PROBE_INTERVAL_S,
 ) -> None:
-    """Block until aggregate routing admits the embedding model, then seed dim cache.
-
-    Uses ``ModelAvailabilityTracker`` (Stargate watch + ``model.available``) for
-    admission, not repeated embedding probes. After admission, performs a single
-    POST to ``/v1/embeddings`` to populate ``_embed_dim`` for zero-vector paths.
-
-    Args:
-        timeout_s: Max seconds to wait for aggregate availability.
-        interval_s: Unused; kept for call-site compatibility.
+    """Wait for aggregate embedding admission, then seed the cached embedding dimension.
 
     Raises:
-        RuntimeError: Tracker not started or POST failed after availability.
-        TimeoutError: Model not aggregate-available within ``timeout_s``.
+        RuntimeError: Lifecycle error such as an unconfigured tracker.
+        TimeoutError: The embedding model never became aggregate-available.
+        EmbeddingDependencyUnavailableError: Stargate admitted the model but the seed POST failed.
     """
     del interval_s  # retained for API compatibility
     _require_configured()
     tracker = get_model_availability_tracker()
     if tracker is None:
         raise RuntimeError(
-            "ModelAvailabilityTracker not initialized — lifecycle must start it before wait_until_healthy()"
+            "ModelAvailabilityTracker not initialized — lifecycle must configure it before wait_until_healthy()"
         )
-    ok = await tracker.wait_until_available(_embed_model, timeout_s)
-    if not ok:
+    result = await tracker.wait_until_available(_embed_model, timeout_s)
+    if not result.available:
+        if result.reason.is_structural:
+            raise EmbeddingDependencyUnavailableError(
+                f"Embedding model {_embed_model!r} not in catalog: {result.detail}"
+            )
         raise TimeoutError(
             f"Embedding model {_embed_model!r} not aggregate-available after {timeout_s}s"
+            f" ({result.reason.value})"
         )
     try:
         response = await _client.post(
@@ -153,12 +155,12 @@ async def wait_until_healthy(
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        raise RuntimeError(
+        raise EmbeddingDependencyUnavailableError(
             "Embedding dim seed failed after aggregate availability: "
             f"HTTP {exc.response.status_code} {exc.response.text!r}"
         ) from exc
     except httpx.RequestError as exc:
-        raise RuntimeError(
+        raise EmbeddingDependencyUnavailableError(
             f"Embedding dim seed failed after aggregate availability: {exc!r}"
         ) from exc
     data = response.json().get("data", [])
@@ -197,11 +199,11 @@ async def require_healthy(timeout_s: float = 120.0) -> None:
         _embed_model,
         timeout_s,
     )
-    ok = await tracker.wait_until_available(_embed_model, timeout_s)
-    if not ok:
+    result = await tracker.wait_until_available(_embed_model, timeout_s)
+    if not result.available:
         raise RuntimeError(
-            f"Embedding model '{_embed_model}' did not become aggregate-available "
-            f"within {timeout_s:.0f}s."
+            f"Embedding model '{_embed_model}' unavailable within {timeout_s:.0f}s"
+            f" ({result.reason.value}: {result.detail})."
         )
 
 

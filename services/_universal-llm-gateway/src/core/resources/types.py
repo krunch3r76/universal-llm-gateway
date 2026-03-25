@@ -55,11 +55,17 @@ class ModelResourceInfo:
     Tracks resource usage (VRAM/RAM) and operational state (inference timing,
     process info, errors). The status property is derived from the co-located
     WorkerStateMachine — all status changes happen through SM transitions.
+
+    VRAM accounting:
+    - vram_usage_mb: catalog estimate at load decision time (pre-load)
+    - measured_vram_mb: hardware delta from pynvml (post-load); None if not yet measured
+    - effective_vram_mb: measured when available, else catalog estimate
     """
 
     model_id: str
     inference_state: str | None = None
     vram_usage_mb: int = 0
+    measured_vram_mb: int | None = None
     ram_usage_mb: int = 0
     current_inference_start: float | None = None
     last_inference_end: float | None = None
@@ -79,6 +85,15 @@ class ModelResourceInfo:
         if self._sm is None:
             return ModelStatus.NOT_LOADED
         return WORKER_TO_MODEL_STATUS[self._sm.current_state]
+
+    @property
+    def effective_vram_mb(self) -> int:
+        """Hardware-measured VRAM when available, else catalog estimate.
+
+        Falls back only when measured_vram_mb is None (not yet measured).
+        A measured value of 0 is preserved as a valid measurement.
+        """
+        return self.measured_vram_mb if self.measured_vram_mb is not None else self.vram_usage_mb
 
 
 @dataclass

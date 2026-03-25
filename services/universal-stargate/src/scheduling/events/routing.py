@@ -120,9 +120,22 @@ Payload: {
 }
 """
 
-GATEWAY_VRAM_PHANTOM_DETECTED = "gateway.vram.phantom.detected"
+GATEWAY_VRAM_ORPHAN_DETECTED = "gateway.vram.orphan.detected"
 """
-Forwarded from Gateway when hardware VRAM usage exceeds tracked model VRAM.
+Forwarded from Gateway when hardware VRAM exceeds tracked VRAM (unmanaged GPU use).
+
+Payload: {
+    "gateway_id": str,
+    "hardware_used_mb": int,
+    "catalog_used_mb": int,
+    "discrepancy_mb": int,
+    "tracked_models": list[str],
+}
+"""
+
+GATEWAY_VRAM_STALENESS_DETECTED = "gateway.vram.staleness.detected"
+"""
+Forwarded from Gateway when tracked VRAM exceeds hardware (stale catalog profiles).
 
 Payload: {
     "gateway_id": str,

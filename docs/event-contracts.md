@@ -351,30 +351,41 @@ request.processing
 
 ```
 rag.started
-  └─> rag.pending.reconciled?               (* emitted once if pending files found at startup)
-  └─> rag.orphan.purged                     (* always emitted; files=0 when nothing to purge)
-  └─> rag.exclusion.purged                  (* always emitted; files=0 when nothing to purge)
-  └─> rag.watch.directory.missing | rag.watch.started
-      └─> rag.watch.initial.started
-          └─> rag.watch.initial.progress*   (* zero or more, monotonic processed count *)
-          └─> rag.watch.initial.complete
-      └─> rag.watch.reindex.complete*        (* zero or more)
-          └─> rag.file.skipped               (* if unchanged or duplicate PDF)
-          └─> rag.chunk.noise.tagged*        (* zero or more; per-chunk when heuristic tags noise)
-          └─> rag.extraction.batch.started   (* if extraction enabled and content changed)
-              └─> rag.extraction.completed | rag.extraction.failed  (* N per chunk)
-              └─> rag.extraction.permanently.skipped  (* ≤ M; when chunk crosses max_attempts)
-              └─> rag.extraction.batch.completed | rag.extraction.batch.timed.out
-          └─> rag.extraction.batch.skipped    (* if all chunks permanently failed)
-          └─> rag.embedding.chunk.fallback*   (* zero or more; chunk kept as zero vector on persistent embedding fault)
-          └─> rag.file.indexed | rag.file.deleted | rag.file.indexing.failed
-      └─> rag.watch.reconcile.complete*      (* zero or more)
+  └─> rag.start.degraded?                  (* emitted when Stargate-backed activation is blocked after core boot *)
+      └─> rag.dependency.retry.scheduled*  (* zero or more retries with bounded backoff *)
+  └─> rag.dependencies.activated           (* always emitted after successful activation; may follow rag.start.degraded? *)
+      └─> rag.pending.reconciled?          (* emitted once if pending files found at startup *)
+      └─> rag.orphan.purged               (* always emitted; files=0 when nothing to purge)
+      └─> rag.exclusion.purged            (* always emitted; files=0 when nothing to purge)
+      └─> rag.watch.directory.missing | rag.watch.started
+          └─> rag.watch.initial.started
+              └─> rag.watch.initial.progress*   (* zero or more, monotonic processed count *)
+              └─> rag.watch.initial.complete
+          └─> rag.watch.reindex.complete*        (* zero or more)
+              └─> rag.file.skipped               (* if unchanged or duplicate PDF)
+              └─> rag.chunk.noise.tagged*        (* zero or more; per-chunk when heuristic tags noise)
+              └─> rag.extraction.batch.started   (* if extraction enabled and content changed)
+                  └─> rag.extraction.completed | rag.extraction.failed  (* N per chunk)
+                  └─> rag.extraction.permanently.skipped  (* ≤ M; when chunk crosses max_attempts)
+                  └─> rag.extraction.batch.completed | rag.extraction.batch.timed.out
+              └─> rag.extraction.batch.skipped    (* if all chunks permanently failed)
+              └─> rag.embedding.chunk.fallback*   (* zero or more; chunk kept as zero vector on persistent embedding fault)
+              └─> rag.file.indexed | rag.file.deleted | rag.file.indexing.failed
+          └─> rag.watch.reconcile.complete*      (* zero or more)
   └─> rag.property.index.rebuilt             (* after rebuild from metadata)
   └─> rag.shutdown
       └─> rag.watch.stopped
 ```
 
 Note: `rag.watch.initial.complete.files` remains a legacy success count that excludes errored files. `total_files` in `rag.watch.initial.started` and `rag.watch.initial.progress` counts all scheduled candidates.
+
+**INVARIANT**: `rag.started` means local core boot completed; it does not imply Stargate-backed dependencies are active.
+
+**INVARIANT**: ∀ startup where automatic indexing is enabled: `rag.dependencies.activated` is always emitted exactly once, whether activation succeeded immediately or after retries.
+
+**INVARIANT**: `rag.start.degraded` ⟹ `rag.dependency.retry.scheduled*` ⟹ `rag.dependencies.activated` — the degraded path always terminates in activation, not in silence.
+
+**INVARIANT**: `rag.watch.started` only occurs after `rag.dependencies.activated` when automatic indexing is enabled.
 
 **INVARIANT**: ∀ file indexing attempt: exactly one of `rag.file.indexed`, `rag.file.deleted`,
 `rag.file.skipped`, or `rag.file.indexing.failed` is emitted — these are mutually exclusive.
@@ -453,6 +464,7 @@ Payload semantics:
 | `rag.extraction.failed` | `chunk_id`, `error` | Per-chunk extraction failure (expected iteration result missing or invalid after batch parsing) |
 | `rag.extraction.permanently.skipped` | `chunk_id`, `source`, `attempt_count` | Chunk crossed `max_extraction_attempts`; permanently abandoned. Persisted as `permanent=1` in `failed_extractions`. Emitted exactly once per chunk. |
 | `rag.extraction.unavailable` | `pipeline`, `error` | Extraction pipeline not routable via Stargate at watcher start. Watcher is not started; RAG serves queries but does not index until restart. |
+| `rag.extraction.structurally.unavailable` | `model_id`, `reason`, `detail` | Extraction model ID has no Stargate catalog entry; failures are marked permanent (no retry loop). |
 
 Between these, per-chunk signals fire: N × `rag.extraction.completed` + M × `rag.extraction.failed`
 where N + M ≤ `chunk_count`. `file` is the correlation key — matches `rag.watch.reindex.complete.file`.
@@ -1292,7 +1304,8 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `gateway.state.changed` | `url`, `connectivity`, `health` | `previous_connectivity`, `previous_health` |
 | `gateway.resource.updated` | `gateway_name`, `resources` | - | `loaded_models` derived from discrete MODEL_LOADED/MODEL_UNLOADED events, NOT from RESOURCE_UPDATE wire payload |
 | `gateway.snapshot.resource.gap` | `all_models_count`, `resource_models_count`, `gap_count`, `gap_cause` | `sample_missing` |
-| `gateway.vram.phantom.detected` | `hardware_used_mb`, `catalog_used_mb`, `discrepancy_mb`, `tracked_models` | - |
+| `gateway.vram.orphan.detected` | `hardware_used_mb`, `catalog_used_mb`, `discrepancy_mb`, `tracked_models` | positive discrepancy (hardware > tracked) |
+| `gateway.vram.staleness.detected` | `hardware_used_mb`, `catalog_used_mb`, `discrepancy_mb`, `tracked_models` | negative discrepancy (tracked > hardware) |
 | `gateway.model.phantom.detected` | `model_id`, `process_status` | `tracker_status` |
 | `gateway.model.phantom.cleaned` | `model_id`, `success` | `vram_freed_mb` |
 | `gateway.model.ghost.cleaned` | `model_id`, `success` | `vram_freed_mb` |
@@ -1301,7 +1314,10 @@ this means all models are hidden from `/v1/models` for that gateway.
 
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
-| `rag.started` | - | - |
+| `rag.started` | - | emitted after core boot (event bus, config, property index, registry load attempt) completes |
+| `rag.start.degraded` | `waiting_on`, `error` | first transition from core boot into dependency-waiting mode |
+| `rag.dependency.retry.scheduled` | `waiting_on`, `attempt`, `delay_seconds`, `error` | emitted once per retry while Stargate-backed activation is still blocked |
+| `rag.dependencies.activated` | `dependencies` | emitted when Stargate watch registration, embedding readiness, and extraction readiness have all succeeded |
 | `rag.shutdown` | - | - |
 | `rag.watch.directory.missing` | `path` | - |
 | `rag.watch.started` | `path`, `extensions`, `recursive` | - |
@@ -1321,6 +1337,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.extraction.recovery.skipped` | `file`, `reason` | recovery skipped (e.g. no documents in ChromaDB, all chunks permanently failed) |
 | `rag.extraction.recovery.failed` | `file`, `reason` | recovery attempted but extraction metadata could not be committed |
 | `rag.extraction.unavailable` | `pipeline`, `error` | extraction pipeline not routable at watcher start; watcher not started |
+| `rag.extraction.structurally.unavailable` | `model_id`, `reason`, `detail` | extraction model not in catalog; permanent failure path |
 | `rag.extraction.completed` | `chunk_id`, `entities`, `topics` | - |
 | `rag.extraction.failed` | `chunk_id`, `error` | - |
 | `rag.property.index.rebuilt` | `collection`, `count` | - |

@@ -25,7 +25,8 @@ from ..events.types import (
     PHANTOM_MODEL_DETECTED,
     REQUEST_INFERENCE_STARTED,
     SYSTEM_RESOURCES_UPDATED,
-    VRAM_PHANTOM_DETECTED,
+    VRAM_ORPHAN_DETECTED,
+    VRAM_STALENESS_DETECTED,
 )
 from .connection_manager import StargateConnectionManager
 from .messages import (
@@ -45,7 +46,8 @@ from .messages import (
     create_phantom_model_detected_message,
     create_request_inference_started_message,
     create_resource_update_message,
-    create_vram_phantom_detected_message,
+    create_vram_orphan_detected_message,
+    create_vram_staleness_detected_message,
 )
 
 if TYPE_CHECKING:
@@ -82,7 +84,8 @@ class WebSocketEventForwarder:
         # Compute capacity telemetry (orchestration observability)
         COMPUTE_CAPACITY_QUEUE_WAIT,
         COMPUTE_CAPACITY_QUEUE_ACQUIRED,
-        VRAM_PHANTOM_DETECTED,
+        VRAM_ORPHAN_DETECTED,
+        VRAM_STALENESS_DETECTED,
         PHANTOM_MODEL_DETECTED,
         PHANTOM_MODEL_CLEANED,
     ]
@@ -294,7 +297,8 @@ class WebSocketEventForwarder:
                     timestamp_ms=p["timestamp_ms"],
                 )
             ),
-            VRAM_PHANTOM_DETECTED: self._build_vram_phantom_detected_message,
+            VRAM_ORPHAN_DETECTED: self._build_vram_orphan_detected_message,
+            VRAM_STALENESS_DETECTED: self._build_vram_staleness_detected_message,
             PHANTOM_MODEL_DETECTED: self._build_phantom_model_detected_message,
             PHANTOM_MODEL_CLEANED: self._build_phantom_model_cleaned_message,
         }
@@ -374,10 +378,20 @@ class WebSocketEventForwarder:
             catalog=catalog,
         )
 
-    def _build_vram_phantom_detected_message(
+    def _build_vram_orphan_detected_message(
         self, payload: dict[str, Any]
     ) -> WebSocketMessage:
-        return create_vram_phantom_detected_message(
+        return create_vram_orphan_detected_message(
+            hardware_used_mb=payload.get("hardware_used_mb", 0),
+            catalog_used_mb=payload.get("catalog_used_mb", 0),
+            discrepancy_mb=payload.get("discrepancy_mb", 0),
+            tracked_models=payload.get("tracked_models", []),
+        )
+
+    def _build_vram_staleness_detected_message(
+        self, payload: dict[str, Any]
+    ) -> WebSocketMessage:
+        return create_vram_staleness_detected_message(
             hardware_used_mb=payload.get("hardware_used_mb", 0),
             catalog_used_mb=payload.get("catalog_used_mb", 0),
             discrepancy_mb=payload.get("discrepancy_mb", 0),

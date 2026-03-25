@@ -353,7 +353,14 @@ async def run_scope_freshness_repair(
             )
             hints_updated.append(scope_name)
 
-        classify_scopes = list(set(stale_scopes) & set(cs_map.keys()))
+        # Only classify scopes that have no existing vocabulary candidates.
+        # Corpus hints are always refreshed above; classification is expensive
+        # and runs once per scope — until vocabulary is explicitly cleared.
+        classify_scopes = [
+            s
+            for s in set(stale_scopes) & set(cs_map.keys())
+            if not property_index.has_scope_vocabulary(s)
+        ]
 
         local_scopes = [
             s

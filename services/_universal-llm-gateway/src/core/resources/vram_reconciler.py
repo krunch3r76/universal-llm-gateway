@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-from typing import Any, Final, Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from universal_logging import get_logger
 
@@ -242,6 +242,7 @@ class VramReconciler:
             info = self._resource_tracker._models.get(model_id)
             if info is not None:
                 info.vram_usage_mb = 0
+                info.measured_vram_mb = None
                 info.ram_usage_mb = 0
             logger.info("Resource tracker cleared for ghost model %s", model_id)
         except Exception:
@@ -265,7 +266,9 @@ class VramReconciler:
 
     def _get_tracked_vram(self, model_id: str) -> int:
         info = self._resource_tracker._models.get(model_id)
-        return info.vram_usage_mb if info else 0
+        if info is None:
+            return 0
+        return info.effective_vram_mb
 
     # ------------------------------------------------------------------
     # Helpers shared by phantom and ghost paths
@@ -341,76 +344,95 @@ class VramReconciler:
         hw = get_vram_info()
         hardware_used = hw["total_vram_mb"] - hw["available_vram_mb"]
 
-        catalog_used = 0
+        tracked_used = 0
         for model_id in tracked_models:
             info = self._resource_tracker._models.get(model_id)
             if info is not None:
-                catalog_used += info.vram_usage_mb
+                tracked_used += (
+                    info.measured_vram_mb
+                    if info.measured_vram_mb is not None
+                    else info.vram_usage_mb
+                )
 
-        discrepancy = hardware_used - catalog_used
+        discrepancy = hardware_used - tracked_used
 
-        # Positive discrepancy: hardware uses more than catalog tracks (unmanaged GPU procs)
         if discrepancy > VRAM_DISCREPANCY_THRESHOLD_MB:
             logger.warning(
-                "VRAM over-use detected: hardware=%sMB catalog=%sMB delta=+%sMB "
+                "VRAM orphan detected: hardware=%sMB tracked=%sMB delta=+%sMB "
                 "(unmanaged GPU processes likely)",
                 hardware_used,
-                catalog_used,
+                tracked_used,
                 discrepancy,
             )
-            await self._emit_vram_discrepancy(
+            await self._emit_vram_orphan(
                 hardware_used=hardware_used,
-                catalog_used=catalog_used,
+                tracked_used=tracked_used,
                 discrepancy=discrepancy,
                 tracked_models=sorted(tracked_models),
             )
             unmanaged = await self._scan_gpu_processes()
             if unmanaged:
                 logger.error("Unmanaged GPU processes detected: %s", unmanaged)
-
-        # Negative discrepancy: catalog claims more than hardware uses (ghost VRAM)
-        # Only alert if substantial — ghost sweep handles the actual cleanup
         elif discrepancy < -VRAM_DISCREPANCY_THRESHOLD_MB:
             logger.warning(
-                "VRAM ghost detected: catalog=%sMB but hardware only=%sMB "
-                "(delta=%sMB — tracked models not on GPU)",
-                catalog_used,
+                "VRAM staleness detected: tracked=%sMB but hardware only=%sMB "
+                "(delta=%sMB — catalog profiles stale)",
+                tracked_used,
                 hardware_used,
                 discrepancy,
             )
-            await self._emit_vram_discrepancy(
+            await self._emit_vram_staleness(
                 hardware_used=hardware_used,
-                catalog_used=catalog_used,
+                tracked_used=tracked_used,
                 discrepancy=discrepancy,
                 tracked_models=sorted(tracked_models),
             )
 
-    async def _emit_vram_discrepancy(
+    async def _emit_vram_orphan(
         self,
         hardware_used: int,
-        catalog_used: int,
+        tracked_used: int,
         discrepancy: int,
         tracked_models: list[str],
     ) -> None:
         if self._event_bus is None:
-            logger.warning(
-                "event_bus unavailable - VRAM discrepancy event not published (delta=%sMB)",
-                discrepancy,
-            )
             return
         try:
-            from ..events.types import VramPhantomDetected
+            from ..events.types import VramOrphanDetected
 
             await self._event_bus.publish_async_nowait(
-                VramPhantomDetected(
+                VramOrphanDetected(
                     hardware_used_mb=hardware_used,
-                    catalog_used_mb=catalog_used,
+                    catalog_used_mb=tracked_used,
                     discrepancy_mb=discrepancy,
                     tracked_models=tracked_models,
                 )
             )
         except Exception:
-            logger.error("Failed to publish VRAM discrepancy event", exc_info=True)
+            logger.error("Failed to publish VRAM orphan event", exc_info=True)
+
+    async def _emit_vram_staleness(
+        self,
+        hardware_used: int,
+        tracked_used: int,
+        discrepancy: int,
+        tracked_models: list[str],
+    ) -> None:
+        if self._event_bus is None:
+            return
+        try:
+            from ..events.types import VramStalenessDetected
+
+            await self._event_bus.publish_async_nowait(
+                VramStalenessDetected(
+                    hardware_used_mb=hardware_used,
+                    catalog_used_mb=tracked_used,
+                    discrepancy_mb=discrepancy,
+                    tracked_models=tracked_models,
+                )
+            )
+        except Exception:
+            logger.error("Failed to publish VRAM staleness event", exc_info=True)
 
     # ------------------------------------------------------------------
     # Force cleanup (phantom models — orphaned processes)

@@ -299,6 +299,7 @@ class DataSourceV1Handler:
         await idx.start()
         try:
             scopes_out: list[dict[str, Any]] = []
+            skipped_empty_hint_scopes = 0
             for scope_name in sorted(cs_map.keys()):
                 if filter_set is not None and scope_name not in filter_set:
                     continue
@@ -313,6 +314,9 @@ class DataSourceV1Handler:
                     stored=stored,
                 ):
                     continue
+                if not terms:
+                    skipped_empty_hint_scopes += 1
+                    continue
                 scopes_out.append(
                     {
                         "scope": scope_name,
@@ -324,6 +328,13 @@ class DataSourceV1Handler:
                 )
         finally:
             await idx.stop()
+
+        if skipped_empty_hint_scopes:
+            logger.info(
+                "[%s] rag_corpus_hints: skipped %d scope(s) with no corpus hints",
+                step.id,
+                skipped_empty_hint_scopes,
+            )
 
         return {
             "scopes": scopes_out,

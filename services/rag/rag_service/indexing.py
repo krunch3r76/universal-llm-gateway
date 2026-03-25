@@ -286,16 +286,19 @@ async def _index_file_impl(
             ]
             if prop_index is not None:
                 expected_model = state._config.knowledge_extraction.extraction_model
-                has_model_mismatch = bool(expected_model) and any(
-                    m.get("extraction_model") != expected_model
+                mismatch_chunks = [
+                    m
                     for m in existing_metadatas
-                )
-                if has_model_mismatch and state._event_bus is not None:
+                    if not chunk_metadata_is_noise(m)
+                    and bool(expected_model)
+                    and m.get("extraction_model") != expected_model
+                ]
+                if mismatch_chunks and state._event_bus is not None:
                     await state._event_bus.publish_async_nowait(
                         rag_extraction_model_mismatch(
                             file=source,
                             expected_model=expected_model,
-                            chunk_count=len(existing_ids),
+                            chunk_count=len(mismatch_chunks),
                         )
                     )
 

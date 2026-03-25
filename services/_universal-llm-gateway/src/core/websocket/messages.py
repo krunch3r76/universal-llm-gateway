@@ -28,7 +28,8 @@ class MessageType(str, Enum):
     COMPUTE_QUEUE_WAIT = "telemetry.compute.queue.wait"
     COMPUTE_QUEUE_ACQUIRED = "telemetry.compute.queue.acquired"
     REQUEST_INFERENCE_STARTED = "telemetry.request.inference.started"
-    VRAM_PHANTOM_DETECTED = "telemetry.vram.phantom.detected"
+    VRAM_ORPHAN_DETECTED = "telemetry.vram.orphan.detected"
+    VRAM_STALENESS_DETECTED = "telemetry.vram.staleness.detected"
     PHANTOM_MODEL_DETECTED = "telemetry.model.phantom.detected"
     PHANTOM_MODEL_CLEANED = "telemetry.model.phantom.cleaned"
 
@@ -305,15 +306,33 @@ def create_request_inference_started_message(
     )
 
 
-def create_vram_phantom_detected_message(
+def create_vram_orphan_detected_message(
     hardware_used_mb: int,
     catalog_used_mb: int,
     discrepancy_mb: int,
     tracked_models: list[str],
 ) -> WebSocketMessage:
-    """Create VRAM phantom discrepancy telemetry message."""
+    """Create VRAM orphan telemetry (hardware > tracked)."""
     return WebSocketMessage(
-        type=MessageType.VRAM_PHANTOM_DETECTED,
+        type=MessageType.VRAM_ORPHAN_DETECTED,
+        data={
+            "hardware_used_mb": hardware_used_mb,
+            "catalog_used_mb": catalog_used_mb,
+            "discrepancy_mb": discrepancy_mb,
+            "tracked_models": tracked_models,
+        },
+    )
+
+
+def create_vram_staleness_detected_message(
+    hardware_used_mb: int,
+    catalog_used_mb: int,
+    discrepancy_mb: int,
+    tracked_models: list[str],
+) -> WebSocketMessage:
+    """Create VRAM staleness telemetry (tracked > hardware)."""
+    return WebSocketMessage(
+        type=MessageType.VRAM_STALENESS_DETECTED,
         data={
             "hardware_used_mb": hardware_used_mb,
             "catalog_used_mb": catalog_used_mb,

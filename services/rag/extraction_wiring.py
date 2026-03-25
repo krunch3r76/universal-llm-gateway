@@ -38,6 +38,7 @@ from services.rag.events.extraction import (
     rag_extraction_recovery_completed,
     rag_extraction_recovery_failed,
     rag_extraction_recovery_skipped,
+    rag_extraction_structurally_unavailable,
 )
 from services.rag.knowledge_extractor import (
     BatchTimeoutError,
@@ -148,6 +149,11 @@ def _publish_event_nonblocking(event_bus: EventBus, event: Event) -> None:
     task.add_done_callback(_on_done)
 
 
+def _is_structural_infrastructure_failure(timing: dict[str, object]) -> bool:
+    """True when the infrastructure failure is structural (no catalog entry)."""
+    return bool(timing.get("structural"))
+
+
 def _describe_infrastructure_failure(timing: dict[str, object]) -> str:
     """Build a bounded error string from infrastructure failure timing metadata.
 
@@ -156,7 +162,11 @@ def _describe_infrastructure_failure(timing: dict[str, object]) -> str:
     infrastructure failures from extraction-quality failures in failed_extractions.
     """
     if "model_unavailable" in timing:
-        return "infrastructure: extraction model not loaded"
+        reason = timing.get("unavailability_reason", "unknown")
+        detail = str(timing.get("unavailability_detail", ""))[:120]
+        structural = "STRUCTURAL" if timing.get("structural") else "transient"
+        base = f"infrastructure: extraction model {structural} — {reason}"
+        return f"{base}: {detail}" if detail else base
     if "stargate_error" in timing:
         msg = str(timing["stargate_error"])[:120]
         return f"infrastructure: stargate error — {msg}"
@@ -352,6 +362,9 @@ async def run_extraction(
         or "model_unavailable" in timing
         or ("capacity_retries" in timing and successful == 0)
     )
+    is_structural = isinstance(timing, dict) and _is_structural_infrastructure_failure(
+        timing
+    )
     # Threshold applied to the active (non-permanently-failed) chunk set.
     failure_ratio = len(failed_ids) / len(ids) if ids else 0.0
     accept_partial = bool(failed_ids) and failure_ratio <= _FAILURE_THRESHOLD
@@ -360,12 +373,30 @@ async def run_extraction(
 
     if failed_ids:
         if is_infrastructure_failure:
-            logger.info(
-                "Extraction deferred for %s due to Stargate infrastructure state"
-                " — will retry on next sweep (%d chunks)",
-                file,
-                len(failed_ids),
-            )
+            if is_structural:
+                logger.error(
+                    "Extraction permanently failed for %s: not in catalog"
+                    " (%d chunks) — %s",
+                    file,
+                    len(failed_ids),
+                    _describe_infrastructure_failure(timing),
+                )
+                if event_bus is not None:
+                    _publish_event_nonblocking(
+                        event_bus,
+                        rag_extraction_structurally_unavailable(
+                            model_id=config.extraction_model,
+                            reason=str(timing.get("unavailability_reason", "unknown")),
+                            detail=str(timing.get("unavailability_detail", "")),
+                        ),
+                    )
+            else:
+                logger.info(
+                    "Extraction deferred for %s due to Stargate infrastructure state"
+                    " — will retry on next sweep (%d chunks)",
+                    file,
+                    len(failed_ids),
+                )
             infra_error = _describe_infrastructure_failure(timing)
         elif accept_partial:
             logger.info(
@@ -395,9 +426,9 @@ async def run_extraction(
             else:
                 error_msg = "missing or invalid result after batch parsing"
             new_attempt_count = failure_counts_snapshot.get(chunk_id, 0) + (
-                0 if is_infrastructure_failure else 1
+                0 if is_infrastructure_failure and not is_structural else 1
             )
-            is_permanent = (
+            is_permanent = is_structural or (
                 not is_infrastructure_failure
                 and new_attempt_count >= config.max_extraction_attempts
             )
@@ -406,7 +437,7 @@ async def run_extraction(
                 source=file,
                 error=error_msg,
                 permanent=is_permanent,
-                increment_attempt=not is_infrastructure_failure,
+                increment_attempt=not is_infrastructure_failure or is_structural,
             )
             if event_bus is not None:
                 _publish_event_nonblocking(

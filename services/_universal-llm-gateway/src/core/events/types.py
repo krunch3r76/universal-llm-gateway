@@ -283,15 +283,28 @@ Payload:
     timestamp: float - Unix timestamp of drain initiation
 """
 
-VRAM_PHANTOM_DETECTED = "gateway.vram.phantom.detected"
+VRAM_ORPHAN_DETECTED = "gateway.vram.orphan.detected"
 """
-Emitted when hardware VRAM usage significantly exceeds tracked model VRAM.
+Emitted when hardware VRAM exceeds tracked model VRAM by > threshold.
+Indicates unmanaged GPU processes outside the model lifecycle.
 
 Payload:
-    hardware_used_mb: int - VRAM currently used according to hardware
-    catalog_used_mb: int - VRAM accounted by loaded/busy tracker models
-    discrepancy_mb: int - hardware_used_mb - catalog_used_mb
-    tracked_models: list[str] - Tracked loaded/busy models used for accounting
+    hardware_used_mb: int - VRAM used per pynvml
+    catalog_used_mb: int - VRAM tracked by resource tracker (measured when available)
+    discrepancy_mb: int - positive delta (hardware - catalog)
+    tracked_models: list[str] - currently tracked model IDs
+"""
+
+VRAM_STALENESS_DETECTED = "gateway.vram.staleness.detected"
+"""
+Emitted when tracked model VRAM exceeds hardware VRAM by > threshold.
+Indicates catalog values are stale — tracked models not using claimed VRAM.
+
+Payload:
+    hardware_used_mb: int - VRAM used per pynvml
+    catalog_used_mb: int - VRAM tracked by resource tracker (measured when available)
+    discrepancy_mb: int - negative delta (hardware - catalog)
+    tracked_models: list[str] - currently tracked model IDs
 """
 
 PHANTOM_MODEL_DETECTED = "gateway.model.phantom.detected"
@@ -984,15 +997,34 @@ def GatewayDraining(
 
 
 @event_factory
-def VramPhantomDetected(
+def VramOrphanDetected(
     hardware_used_mb: int,
     catalog_used_mb: int,
     discrepancy_mb: int,
     tracked_models: list[str],
 ) -> Event:
-    """Create VRAM_PHANTOM_DETECTED event."""
+    """Emitted when hardware VRAM exceeds catalog — unmanaged GPU processes suspected."""
     return Event(
-        signal=VRAM_PHANTOM_DETECTED,
+        signal=VRAM_ORPHAN_DETECTED,
+        payload={
+            "hardware_used_mb": hardware_used_mb,
+            "catalog_used_mb": catalog_used_mb,
+            "discrepancy_mb": discrepancy_mb,
+            "tracked_models": tracked_models,
+        },
+    )
+
+
+@event_factory
+def VramStalenessDetected(
+    hardware_used_mb: int,
+    catalog_used_mb: int,
+    discrepancy_mb: int,
+    tracked_models: list[str],
+) -> Event:
+    """Emitted when catalog VRAM exceeds hardware — catalog profiles stale."""
+    return Event(
+        signal=VRAM_STALENESS_DETECTED,
         payload={
             "hardware_used_mb": hardware_used_mb,
             "catalog_used_mb": catalog_used_mb,

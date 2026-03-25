@@ -9,6 +9,7 @@ and API routes.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass(slots=True)
+class DependencyActivationState:
+    """Track whether Stargate-backed dependencies are still activating after core boot."""
+
+    phase: str = "booting"
+    attempts: int = 0
+    waiting_on: str | None = None
+    last_error: str | None = None
+
+
 # ChromaDB collection name for knowledge chunks.
 COLLECTION_NAME = "knowledge"
 
@@ -43,6 +55,7 @@ _init_task: asyncio.Task[None] | None = None
 _property_index: PropertyIndex | None = None
 _registry: dict[str, ArticleEntry] | None = None
 _background_tasks: set[asyncio.Task[None]] = set()
+_dependency_activation = DependencyActivationState()
 
 # Serialize concurrent indexing of the same file path (watcher + API can race).
 _file_index_locks: dict[str, asyncio.Lock] = {}
