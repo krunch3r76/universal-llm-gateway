@@ -118,6 +118,16 @@ class RagConfig:
     reconcile_workers: int = 3
     # Default for scripts/rag/classify_vocabulary.py when calling vocab-classify-v1 pipeline.
     vocabulary_mode: str = "local"
+    # Ordered list of vocabulary categories for classification. Order defines retrieval
+    # anchor priority (index 0 = highest). The default order reflects IDF selectivity:
+    # specification terms (named standards/protocols) are rare in a research corpus →
+    # high IDF → precise anchors. Academic terms (theoretical concepts, named models)
+    # appear in most papers → low IDF → anchoring on them filters almost nothing.
+    # Extend this list when adding corpus domains with distinct vocabulary — no code
+    # changes needed, re-classify the affected scope(s) to take effect.
+    vocabulary_taxonomy: list[str] = field(
+        default_factory=lambda: ["specification", "practitioner", "academic"]
+    )
     # Per-file timeout for watcher workers (initial reindex + reconcile). 0 = no timeout.
     # Prevents a single hung extraction from blocking an entire watcher worker indefinitely.
     file_timeout_s: float = 600.0
@@ -441,6 +451,14 @@ def load_config() -> RagConfig:
         vocabulary_mode = raw_vocab_mode.strip().lower()
     else:
         vocabulary_mode = "local"
+    raw_taxonomy = parsed_root.get("vocabulary_taxonomy")
+    _default_taxonomy = ["specification", "practitioner", "academic"]
+    if isinstance(raw_taxonomy, list) and all(
+        isinstance(c, str) and c.strip() for c in raw_taxonomy
+    ):
+        vocabulary_taxonomy = [c.strip() for c in raw_taxonomy]
+    else:
+        vocabulary_taxonomy = _default_taxonomy
     return RagConfig(
         watch_directories=watch_directories,
         scopes=scopes,
@@ -456,4 +474,5 @@ def load_config() -> RagConfig:
         reconcile_workers=reconcile_workers,
         file_timeout_s=file_timeout_s,
         vocabulary_mode=vocabulary_mode,
+        vocabulary_taxonomy=vocabulary_taxonomy,
     )

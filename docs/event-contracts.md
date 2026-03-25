@@ -99,6 +99,10 @@ Signals that MUST carry `role="coordination"`. Suppressing these breaks system c
 | `model.loaded` | SequentialLoader | Load completion |
 | `model.unloaded` | SequentialLoader | Unload completion |
 | `model.loading.failed` | SequentialLoader | Load failure |
+| `model.available` | RAG, admission tooling | Aggregate catalog: at least one connected path can serve `model_id` (union of Stargate-visible catalogs). Not resident load state. |
+| `model.unavailable` | RAG, admission tooling | Aggregate catalog: no path can serve `model_id`. Emitted only when the last serving path disappears. |
+
+**Disambiguation**: `model.loaded` / `model.unloaded` describe **resident** lifecycle on a gateway URL. `model.available` / `model.unavailable` describe **aggregate routability** at the Stargate view (federation + local). Downstream services that gate work on “can this ID be routed?” MUST use `model.available` / `model.unavailable` (or the equivalent HTTP catalog), not `model.loaded` alone.
 
 All signals not listed above default to `role="observation"` and are safe to suppress,
 deduplicate, or scope to the originating node.

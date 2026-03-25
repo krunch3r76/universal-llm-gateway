@@ -13,6 +13,7 @@ from systems.pipeline.execution_summary import get_summary_writer
 
 from .component_factory import (
     configure_token_and_parameter_managers,
+    initialize_aggregate_model_availability,
     initialize_hot_reload,
     initialize_intelligence_profiles,
     initialize_pipeline_system,
@@ -304,6 +305,8 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
 
     # Initialize intelligence profile store (depends on federation/cloud proxy)
     await initialize_intelligence_profiles(proxy)
+
+    await initialize_aggregate_model_availability(proxy)
 
     # Initialize pipeline system (depends on request_executor)
     await initialize_pipeline_system(proxy)

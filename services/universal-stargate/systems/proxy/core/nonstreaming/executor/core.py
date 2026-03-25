@@ -144,29 +144,6 @@ class RequestExecutor:
                 request_id=request_id,
             )
 
-        def _oom_ban(*, gateway_id, model_id, request_id):
-            from src.scheduling.events.routing import (
-                OomInferenceBanned,
-                OomRecoveryFailed,
-            )
-
-            if self._federated_manager is not None:
-                self._federated_manager.mark_inference_banned(gateway_id, model_id)
-            if self.event_bus:
-                self.event_bus.publish_async_nowait(
-                    OomRecoveryFailed(
-                        request_id=request_id,
-                        model_id=model_id.routing_key,
-                        gateway_id=gateway_id,
-                    )
-                )
-                self.event_bus.publish_async_nowait(
-                    OomInferenceBanned(
-                        model_id=model_id.routing_key,
-                        gateway_id=gateway_id,
-                    )
-                )
-
         return await _exec(
             model_id,
             request_body,
@@ -177,7 +154,6 @@ class RequestExecutor:
             forward_embedding_fn=_forward,
             event_bus=self.event_bus,
             oom_recovery_fn=_oom_recovery if self._federated_manager else None,
-            oom_ban_fn=_oom_ban if self._federated_manager else None,
         )
 
     # ------------------------------------------------------------------

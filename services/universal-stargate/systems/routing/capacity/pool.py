@@ -487,6 +487,8 @@ class CapacityPool:
                 self._cancel_waiter(request_id)
             raise
         except asyncio.CancelledError:
+            wait_ms = (time.monotonic() - wait_start) * 1000
+            self._emit_queue_cancelled(request_id, model_id, wait_ms)
             if future.done() and not future.cancelled():
                 self._recover_leaked_slot(request_id, future.result(), model_id)
             else:
@@ -646,6 +648,29 @@ class CapacityPool:
             )
         except Exception as exc:
             logger.warning("Failed to emit capacity.pool.timeout: %s", exc)
+
+    def _emit_queue_cancelled(
+        self,
+        request_id: str,
+        model_id: str,
+        wait_ms: float,
+    ) -> None:
+        if not self._event_bus:
+            return
+        try:
+            from src.scheduling.events import CapacityPoolCancelled
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    CapacityPoolCancelled(
+                        request_id=request_id,
+                        model_id=model_id,
+                        wait_ms=wait_ms,
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit capacity.pool.cancelled: %s", exc)
 
     def _emit_slot_leak_recovered(
         self, request_id: str, gateway_id: str, model_id: str

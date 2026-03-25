@@ -11,6 +11,7 @@ Security boundaries:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import socket
@@ -269,7 +270,7 @@ def _build_server() -> FastMCP:
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
 
     @mcp.tool()
-    def dispatch(tool: str, arguments: str = "{}") -> Any:
+    async def dispatch(tool: str, arguments: str = "{}") -> Any:
         """Call any server tool by name — gateway to tools beyond the primary set.
 
         Some MCP clients enumerate only a limited number of tools. Use dispatch
@@ -389,6 +390,8 @@ def _build_server() -> FastMCP:
             tool=tool,
         )
         result = fn(**parsed)
+        if asyncio.iscoroutine(result):
+            result = await result
         record("mcp.tool.dispatch.success", tool=tool)
         if hasattr(result, "model_dump"):
             return result

@@ -1,15 +1,17 @@
 """LLM scope vocabulary classification and automatic gap repair.
 
 Part of the post-index enrichment pipeline. Classifies terms from corpus hints
-into register categories (technical, domain-specific, general) per scope. Combined
-with IDF weighting, this steers Pool B's corpus expansion toward the most
-discriminative vocabulary — terms that distinguish one scope's content from another.
+into configurable taxonomy categories per scope. The taxonomy is defined in
+``RagConfig.vocabulary_taxonomy`` (rag.yaml ``vocabulary_taxonomy`` key); category
+order determines retrieval anchor priority. Combined with IDF weighting, this
+steers Pool B's corpus expansion toward the most discriminative vocabulary —
+terms that distinguish one scope's content from another.
 
-The classifier determines which terms are worth expanding into during search:
-high-register domain terms are strong expansion candidates, while general terms
-are suppressed. This is a key mechanism in the index-smart-search-cheap design:
-the classification cost is paid once, and every subsequent query benefits from
-vocabulary-aware expansion without LLM calls.
+Classification serves two purposes: result categories are injected into generation
+prompts so the LLM understands the vocabulary landscape of the corpus, and category
+order determines which terms get anchored into retrieval queries first. The
+classification cost is paid once at index time; every subsequent query benefits
+from vocabulary-aware expansion without LLM calls.
 
 Shared between the CLI script and RAG lifecycle (startup / reconcile / watcher).
 """
@@ -18,91 +20,123 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 
 from services.rag.corpus_hints import update_corpus_hints
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from services.rag.property_index import PropertyIndex
-    from services.rag.config import RagConfig
     from universal_event_bus import EventBus
+
+    from services.rag.config import RagConfig
+    from services.rag.property_index import PropertyIndex
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_STARGATE_MODELS_URL = "http://localhost:9999/v1/models"
 DEFAULT_STARGATE_CHAT_URL = "http://localhost:9999/v1/chat/completions"
 
-CLASSIFICATION_PROMPT = """\
-You are classifying vocabulary terms for a multi-domain RAG retrieval system.
-Given a scope name, its description, and a list of IDF-scored terms extracted
-from that scope's corpus, classify each term into one of these registers:
-
-- **practitioner**: tools, platforms, libraries, implementation patterns,
-  products, file formats, CLI commands, industry workflow terminology —
-  things a working professional in the domain uses day-to-day.
-  Examples by domain:
-  · Knowledge systems: Obsidian, Neo4j, Cypher, vault, backlinks, Zettelkasten
-  · Extraction & NLP: staging queue, surface form cache, structured extraction,
-    HITL review, claim-evidence pairs, coreference pipeline
-  · Trading/finance: Bloomberg, TradingView, backtesting, order book, Greeks,
-    delta hedging, pairs trading, TWAP, VWAP
-  · ML/AI: PyTorch, wandb, LoRA, fine-tuning, prompt engineering
-  · Code & docs: AST chunking, docstring extraction, doc-code alignment,
-    multi-agent workflow, tool registry
-  · RAG & retrieval: vector store, reranker, hybrid search, chunk scoring,
-    scope vocabulary, corpus hints
-
-- **academic**: formal concepts, theoretical frameworks, named models/theorems,
-  algorithmic families, research methodology terms — things you'd find defined
-  in a textbook or seminal paper.
-  Examples by domain:
-  · Knowledge systems: ontology, reification, knowledge graph completion,
-    entity alignment, bitemporal modeling
-  · Extraction & NLP: entity resolution, coreference resolution, claim
-    decomposition, multi-observer consensus, provenance tracing, belief revision
-  · Trading/finance: Almgren-Chriss, Kelly criterion, Ornstein-Uhlenbeck,
-    cointegration, VPIN, stochastic control, mean reversion
-  · ML/AI: attention mechanism, chain-of-thought, in-context learning, RLHF
-  · Code & docs: repository-level summarization, code-comment inconsistency,
-    hierarchical code representation
-  · RAG & retrieval: dense retrieval, iterative grounding, query decomposition,
-    cascading model orchestration
-
-- **specification**: named standards, protocol names, regulatory frameworks,
-  specification documents, formal schema identifiers — things with an issuing
-  body or version number.
-  Examples by domain:
-  · Knowledge systems: RDF, OWL, SHACL, JSON-LD, SPARQL, SQL/PGQ
-  · Extraction & NLP: W3C PROV, PROV-O, PROV-DM, CoNLL format
-  · Trading/finance: FIX protocol, FpML, Reg NMS, MiFID II, ISDA, ISO 10962
-  · ML/AI: ONNX, OpenAI API, GGUF, safetensors
-  · Code & docs: OpenAPI, JSDoc, Sphinx, MCP protocol
-  · RAG & retrieval: ChromaDB, MTEB benchmark, BEIR
-
-Rules:
-1. A term may appear in only one register (choose the best fit).
-2. DROP noise — these are never useful vocabulary:
-   - Single letters or bare symbols (a, r, x, θ)
-   - Document structure references (theorem 4.1, lemma a.1, figure 4, table 2)
-   - Author citation fragments (et al., guijarro-ordonez et al. (2021))
-   - Mathematical variable names without semantic meaning (z[q], θ[q])
-   - Overly generic words (model, system, data, method, results, approach)
-3. Use the scope description to guide domain-appropriate classification.
-   The same term can belong to different registers in different domains.
-4. You may add 2-4 additional high-value terms per register that are
-   obviously missing but central to the scope. Mark these with a trailing
-   asterisk (*) so the caller knows they were inferred.
-5. Return valid JSON only.
-
-Output format:
-{
-  "practitioner": ["term1", "term2", ...],
-  "academic": ["term1", "term2", ...],
-  "specification": ["term1", "term2", ...]
+# Per-category descriptions for the classification prompt. Keys are category names;
+# values are the descriptive text inserted into the prompt bullet for that category.
+# Unknown categories (not in this dict) get a generic "terms characteristic of
+# {category} discourse in the domain" description.
+_CATEGORY_DESCRIPTIONS: dict[str, str] = {
+    "practitioner": (
+        "tools, platforms, libraries, implementation patterns,\n"
+        "  products, file formats, CLI commands, industry workflow terminology —\n"
+        "  things a working professional in the domain uses day-to-day.\n"
+        "  Examples by domain:\n"
+        "  · Knowledge systems: Obsidian, Neo4j, Cypher, vault, backlinks, Zettelkasten\n"
+        "  · Extraction & NLP: staging queue, surface form cache, structured extraction,\n"
+        "    HITL review, claim-evidence pairs, coreference pipeline\n"
+        "  · Trading/finance: Bloomberg, TradingView, backtesting, order book, Greeks,\n"
+        "    delta hedging, pairs trading, TWAP, VWAP\n"
+        "  · ML/AI: PyTorch, wandb, LoRA, fine-tuning, prompt engineering\n"
+        "  · Code & docs: AST chunking, docstring extraction, doc-code alignment,\n"
+        "    multi-agent workflow, tool registry\n"
+        "  · RAG & retrieval: vector store, reranker, hybrid search, chunk scoring,\n"
+        "    scope vocabulary, corpus hints"
+    ),
+    "academic": (
+        "formal concepts, theoretical frameworks, named models/theorems,\n"
+        "  algorithmic families, research methodology terms — things you'd find defined\n"
+        "  in a textbook or seminal paper.\n"
+        "  Examples by domain:\n"
+        "  · Knowledge systems: ontology, reification, knowledge graph completion,\n"
+        "    entity alignment, bitemporal modeling\n"
+        "  · Extraction & NLP: entity resolution, coreference resolution, claim\n"
+        "    decomposition, multi-observer consensus, provenance tracing, belief revision\n"
+        "  · Trading/finance: Almgren-Chriss, Kelly criterion, Ornstein-Uhlenbeck,\n"
+        "    cointegration, VPIN, stochastic control, mean reversion\n"
+        "  · ML/AI: attention mechanism, chain-of-thought, in-context learning, RLHF\n"
+        "  · Code & docs: repository-level summarization, code-comment inconsistency,\n"
+        "    hierarchical code representation\n"
+        "  · RAG & retrieval: dense retrieval, iterative grounding, query decomposition,\n"
+        "    cascading model orchestration"
+    ),
+    "specification": (
+        "named standards, protocol names, regulatory frameworks,\n"
+        "  specification documents, formal schema identifiers — things with an issuing\n"
+        "  body or version number.\n"
+        "  Examples by domain:\n"
+        "  · Knowledge systems: RDF, OWL, SHACL, JSON-LD, SPARQL, SQL/PGQ\n"
+        "  · Extraction & NLP: W3C PROV, PROV-O, PROV-DM, CoNLL format\n"
+        "  · Trading/finance: FIX protocol, FpML, Reg NMS, MiFID II, ISDA, ISO 10962\n"
+        "  · ML/AI: ONNX, OpenAI API, GGUF, safetensors\n"
+        "  · Code & docs: OpenAPI, JSDoc, Sphinx, MCP protocol\n"
+        "  · RAG & retrieval: ChromaDB, MTEB benchmark, BEIR"
+    ),
 }
-"""
+
+# Default taxonomy used when no config is available. Order = retrieval anchor priority
+# (index 0 = highest). Matches the default in RagConfig.vocabulary_taxonomy.
+DEFAULT_TAXONOMY: list[str] = ["specification", "practitioner", "academic"]
+
+
+def build_classification_prompt(taxonomy: list[str]) -> str:
+    """Build the system prompt for vocabulary classification from a taxonomy list.
+
+    Known categories use their curated descriptions from _CATEGORY_DESCRIPTIONS.
+    Unknown categories get a generic description — add to _CATEGORY_DESCRIPTIONS
+    when a new category is introduced to give the LLM better guidance.
+    """
+    bullets: list[str] = []
+    for cat in taxonomy:
+        desc = _CATEGORY_DESCRIPTIONS.get(
+            cat,
+            f"terms characteristic of {cat} discourse in the domain.",
+        )
+        bullets.append(f"- **{cat}**: {desc}")
+    bullets_text = "\n\n".join(bullets)
+    keys_json = ", ".join(f'"{c}"' for c in taxonomy)
+    output_example = (
+        "{\n"
+        + "\n".join(f'  "{c}": ["term1", "term2", ...],' for c in taxonomy)
+        + "\n}"
+    )
+    return (
+        "You are classifying vocabulary terms for a multi-domain RAG retrieval system.\n"
+        "Given a scope name, its description, and a list of IDF-scored terms extracted\n"
+        f"from that scope's corpus, classify each term into one of these categories:\n\n"
+        f"{bullets_text}\n\n"
+        "Rules:\n"
+        "1. A term may appear in only one category (choose the best fit).\n"
+        "2. DROP noise — these are never useful vocabulary:\n"
+        "   - Single letters or bare symbols (a, r, x, θ)\n"
+        "   - Document structure references (theorem 4.1, lemma a.1, figure 4, table 2)\n"
+        "   - Author citation fragments (et al., guijarro-ordonez et al. (2021))\n"
+        "   - Mathematical variable names without semantic meaning (z[q], θ[q])\n"
+        "   - Overly generic words (model, system, data, method, results, approach)\n"
+        "3. Use the scope description to guide domain-appropriate classification.\n"
+        "   The same term can belong to different categories in different domains.\n"
+        "4. You may add 2-4 additional high-value terms per category that are\n"
+        "   obviously missing but central to the scope. Mark these with a trailing\n"
+        "   asterisk (*) so the caller knows they were inferred.\n"
+        "5. Return valid JSON only.\n\n"
+        f"Output format (keys: {keys_json}):\n"
+        f"{output_example}\n"
+    )
 
 
 def configured_scopes_map(config: RagConfig) -> dict[str, list[str]]:
@@ -164,20 +198,30 @@ async def classify_scope_async(
     description: str,
     terms: list[str],
     model: str,
+    taxonomy: list[str] | None = None,
     chat_url: str = DEFAULT_STARGATE_CHAT_URL,
     client: httpx.AsyncClient | None = None,
 ) -> dict[str, list[str]] | None:
-    """Classify terms via Stargate chat completions (async)."""
+    """Classify terms via Stargate chat completions (async).
+
+    taxonomy: ordered list of category names to classify into. Defaults to
+    DEFAULT_TAXONOMY when omitted. Pass config.vocabulary_taxonomy so that
+    custom categories (e.g. 'quantitative') are included in the prompt and
+    parsed from the response.
+    """
+    effective_taxonomy = taxonomy if taxonomy is not None else DEFAULT_TAXONOMY
+    keys_str = ", ".join(effective_taxonomy)
     user_msg = (
         f"Scope: {scope}\n"
         f"Description: {description}\n"
         f"Terms to classify:\n{json.dumps(terms)}\n\n"
-        "Return JSON with keys: practitioner, academic, specification."
+        f"Return JSON with keys: {keys_str}."
     )
+    prompt = build_classification_prompt(effective_taxonomy)
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": CLASSIFICATION_PROMPT},
+            {"role": "system", "content": prompt},
             {"role": "user", "content": user_msg},
         ],
         "temperature": 0.2,
@@ -192,10 +236,10 @@ async def classify_scope_async(
         content = resp.json()["choices"][0]["message"]["content"]
         parsed = json.loads(content)
         clean: dict[str, list[str]] = {
-            reg: [
-                str(t) for t in parsed.get(reg, []) if isinstance(t, str) and t.strip()
+            cat: [
+                str(t) for t in parsed.get(cat, []) if isinstance(t, str) and t.strip()
             ]
-            for reg in ("practitioner", "academic", "specification")
+            for cat in effective_taxonomy
         }
         return clean
     except (httpx.RequestError, httpx.HTTPStatusError) as e:
@@ -312,11 +356,13 @@ async def run_scope_freshness_repair(
         classify_scopes = list(set(stale_scopes) & set(cs_map.keys()))
 
         local_scopes = [
-            s for s in classify_scopes
+            s
+            for s in classify_scopes
             if _resolve_scope_vocab_mode(s, config) == "local"
         ]
         frontier_scopes = [
-            s for s in classify_scopes
+            s
+            for s in classify_scopes
             if _resolve_scope_vocab_mode(s, config) == "frontier"
         ]
 
@@ -353,11 +399,14 @@ async def run_scope_freshness_repair(
                         description=desc,
                         terms=terms,
                         model=model,
+                        taxonomy=config.vocabulary_taxonomy,
                         chat_url=chat_url,
                         client=client,
                     )
                 except Exception as e:
-                    logger.warning("Per-scope classify failed for %s: %s", scope_name, e)
+                    logger.warning(
+                        "Per-scope classify failed for %s: %s", scope_name, e
+                    )
                     result = None
 
                 if result is None:
@@ -440,9 +489,10 @@ async def run_scope_freshness_repair(
 
 
 __all__ = [
-    "CLASSIFICATION_PROMPT",
     "DEFAULT_STARGATE_CHAT_URL",
     "DEFAULT_STARGATE_MODELS_URL",
+    "DEFAULT_TAXONOMY",
+    "build_classification_prompt",
     "classify_scope_async",
     "configured_scopes_map",
     "pick_loaded_stargate_model",

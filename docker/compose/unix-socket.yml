@@ -106,8 +106,7 @@ services:
 
       # Stargate configuration
       - STARGATE_CONFIG=/app/services/universal-stargate/config/stargate_config.docker.yaml
-      - CORTEX_API_URL=http://cortex-api:8300
-      
+
       # Debug event socket (enable with DEBUG_EVENT_SOCKET=/sockets/events.sock)
       - DEBUG_EVENT_SOCKET=${DEBUG_EVENT_SOCKET:-}
 

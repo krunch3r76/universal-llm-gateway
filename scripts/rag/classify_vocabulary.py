@@ -77,6 +77,7 @@ async def _run_local(
                     description=desc,
                     terms=terms,
                     model=model,
+                    taxonomy=config.vocabulary_taxonomy,
                     client=client,
                 )
                 if result is None:

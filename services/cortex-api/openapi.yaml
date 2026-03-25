@@ -11,7 +11,12 @@ info:
     sqlite_query(db="cortex") from agents.
 
 servers:
-  - url: http://cortex-api:8300
+  - url: http://localhost
+    description: >
+      HTTP target for request paths below. The live service binds a Unix domain
+      socket only at /tmp/universal-protocol/cortex-api.sock (see
+      docker/compose/cortex-api.yml). Example:
+      curl --unix-socket /tmp/universal-protocol/cortex-api.sock http://localhost/health
 
 components:
   schemas:

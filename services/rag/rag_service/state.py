@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
     from services.rag.config import RagConfig
-    from services.rag.extraction_model_tracker import ExtractionModelTracker
     from services.rag.property_index import PropertyIndex
     from services.rag.watcher_manager import WatcherManager
 
@@ -36,7 +35,7 @@ COLLECTION_NAME = "knowledge"
 _chroma: chromadb.PersistentClient | None = None
 _collection: chromadb.Collection | None = None
 _watcher_manager: WatcherManager | None = None
-_extraction_tracker: ExtractionModelTracker | None = None
+# Legacy extraction tracker removed — use model_availability_tracker singleton.
 _event_bus: EventBus | None = None
 _broadcaster: MinimalEventDebugBroadcaster | None = None
 _config: RagConfig | None = None

@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from services.rag.extraction_model_tracker import ExtractionModelTracker
+from services.rag.model_availability_tracker import get_model_availability_tracker
 
 if TYPE_CHECKING:
     from services.rag.config import KnowledgeExtractionConfig
@@ -70,8 +70,6 @@ _batch_overhead_s: float = 30.0
 # accepting requests. MODEL_NOT_FOUND 404s during this window are transient.
 _PIPELINE_REGISTRATION_TIMEOUT_S = 60.0
 _PIPELINE_REGISTRATION_POLL_S = 3.0
-
-_tracker: ExtractionModelTracker | None = None
 
 
 class BatchTimeoutError(Exception):
@@ -152,35 +150,6 @@ def configure_timeouts(config: KnowledgeExtractionConfig) -> None:
         " (per-chunk enforcement via Stargate X-Request-Timeout)",
         _batch_overhead_s,
     )
-
-
-def configure_tracker(
-    config: KnowledgeExtractionConfig,
-) -> ExtractionModelTracker:
-    """Create the extraction model tracker from config at RAG startup.
-
-    Returns the tracker so the caller can start() it as a background task.
-    The tracker subscribes to Event Service model.loaded / model.unloaded
-    events and gates extraction workers on model availability.
-    """
-    global _tracker
-    _tracker = ExtractionModelTracker(
-        model_id=config.extraction_model,
-        pipeline_id=config.pipeline,
-        wait_timeout_s=config.model_load_wait_s,
-    )
-    logger.info(
-        "Extraction model tracker configured for '%s' (pipeline='%s', wait=%.0fs)",
-        config.extraction_model,
-        config.pipeline,
-        config.model_load_wait_s,
-    )
-    return _tracker
-
-
-def get_tracker() -> ExtractionModelTracker | None:
-    """Expose tracker for external observability."""
-    return _tracker
 
 
 def _is_pipeline_not_registered(exc: Exception, pipeline_model: str) -> bool:
@@ -518,12 +487,18 @@ async def extract_knowledge_batch(
     if not chunk_ids:
         return [], {}
 
-    if _tracker is not None and not await _tracker.wait_for_model():
-        logger.info(
-            "Extraction model not available — skipping batch (%d chunks)",
-            len(chunk_ids),
+    mat = get_model_availability_tracker()
+    if mat is not None:
+        ok = await mat.wait_until_available(
+            config.extraction_model,
+            config.model_load_wait_s,
         )
-        return [None] * len(chunk_ids), {"model_unavailable": True}
+        if not ok:
+            logger.info(
+                "Extraction model not aggregate-available — skipping batch (%d chunks)",
+                len(chunk_ids),
+            )
+            return [None] * len(chunk_ids), {"model_unavailable": True}
 
     chunks = [
         {"id": cid, "text": text}

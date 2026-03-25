@@ -308,3 +308,23 @@ def CapacityPoolTimeout(
             "timeout_s": timeout_s,
         },
     )
+
+
+CAPACITY_POOL_CANCELLED = "capacity.pool.cancelled"
+
+
+@event_factory
+def CapacityPoolCancelled(
+    request_id: str,
+    model_id: str,
+    wait_ms: float,
+) -> Event:
+    """Queued request removed — client disconnected before a slot was assigned."""
+    return Event(
+        signal=CAPACITY_POOL_CANCELLED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "wait_ms": wait_ms,
+        },
+    )

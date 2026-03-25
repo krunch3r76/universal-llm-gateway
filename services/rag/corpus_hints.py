@@ -23,7 +23,7 @@ import sqlite3
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-
+from typing import TYPE_CHECKING
 
 from services.rag.events.query import (
     rag_corpus_hints_filter_failed,
@@ -33,11 +33,11 @@ from services.rag.events.query import (
     rag_scope_vocabulary_load_failed,
 )
 from services.rag.property_index import PropertyIndex
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from services.rag.config import RagConfig
     from universal_event_bus import EventBus
+
+    from services.rag.config import RagConfig
 
 logger = logging.getLogger(__name__)
 

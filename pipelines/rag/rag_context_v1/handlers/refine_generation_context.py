@@ -21,6 +21,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
+from services.rag.config import load_config
 from services.rag.corpus_hints import (
     filter_hints_by_cooccurrence,
     format_register_hints,
@@ -28,12 +29,30 @@ from services.rag.corpus_hints import (
     load_corpus_hints,
     load_scope_vocabulary,
 )
+from services.rag.vocabulary import DEFAULT_TAXONOMY
 
 if TYPE_CHECKING:
     from systems.pipeline.core.handlers.protocol import PipelineContext
     from systems.pipeline.core.schemas import StepConfig
 
 logger = get_logger(__name__)
+
+_taxonomy_cache: list[str] | None = None
+
+
+def _get_vocabulary_taxonomy() -> list[str]:
+    """Return vocabulary_taxonomy from rag.yaml, cached after first load."""
+    global _taxonomy_cache
+    if _taxonomy_cache is None:
+        try:
+            _taxonomy_cache = load_config().vocabulary_taxonomy
+        except Exception:
+            logger.warning(
+                "Failed to load rag.yaml for vocabulary taxonomy; using default",
+                exc_info=True,
+            )
+            _taxonomy_cache = DEFAULT_TAXONOMY
+    return _taxonomy_cache
 
 
 class RefineGenerationContextHandler(BaseHandler):
@@ -87,6 +106,7 @@ class RefineGenerationContextHandler(BaseHandler):
             must_include,
             suggested_terms,
             max_anchors=max_anchors,
+            taxonomy=_get_vocabulary_taxonomy(),
         )
         enriched = list(must_include) + scope_anchors
 
@@ -165,14 +185,6 @@ class RefineGenerationContextHandler(BaseHandler):
         return errors
 
 
-# Priority order for scope registers when selecting anchors; lower value = higher priority.
-_REGISTER_PRIORITY: dict[str, int] = {
-    "specification": 0,
-    "practitioner": 1,
-    "academic": 2,
-}
-
-
 def _select_scope_anchors(
     vocabulary: dict[str, dict[str, list[str]]],
     scopes: list[str],
@@ -180,13 +192,14 @@ def _select_scope_anchors(
     suggested_terms: list[str],
     *,
     max_anchors: int = 2,
+    taxonomy: list[str] | None = None,
 ) -> list[str]:
     """Select discriminative scope-specific anchor terms for must_include.
 
-    Gathers terms from predicted scopes' vocabulary in register-priority
-    order (specification → practitioner → academic), filters out terms
-    already in must_include or query, validates via co-occurrence with
-    suggested_terms, and returns the top candidates.
+    Gathers terms from predicted scopes' vocabulary in taxonomy priority order
+    (index 0 = highest priority, as configured by vocabulary_taxonomy in rag.yaml).
+    Filters out terms already in must_include or query, validates via co-occurrence
+    with suggested_terms, and returns the top candidates.
 
     ∀ scopes with len > 1: skip anchor injection — multi-scope predictions
     cover broader query intent where vocabulary spec-terms are less
@@ -200,13 +213,25 @@ def _select_scope_anchors(
     if len(scopes) > 1:
         return []
 
+    effective_taxonomy = (
+        taxonomy if taxonomy is not None else _get_vocabulary_taxonomy()
+    )
+    # Priority = taxonomy index (0 = highest). The default order reflects expected IDF
+    # selectivity in a research corpus: specification terms (named standards, protocols)
+    # appear in very few documents → high IDF → precise anchors. Academic terms
+    # (theoretical concepts, algorithmic families) appear in most papers → low IDF →
+    # filtering on them returns nearly everything, so they're anchored last.
+    priority: dict[str, int] = {cat: i for i, cat in enumerate(effective_taxonomy)}
+
     existing_lower = {t.lower() for t in must_include}
     query_lower = {t.lower() for t in suggested_terms}
 
     candidates: list[str] = []
     for scope in scopes:
         scope_regs = vocabulary.get(scope, {})
-        for register in sorted(scope_regs, key=lambda r: _REGISTER_PRIORITY.get(r, 99)):
+        for register in sorted(
+            scope_regs, key=lambda r: priority.get(r, len(effective_taxonomy))
+        ):
             for term in scope_regs[register]:
                 clean = term.rstrip("*").strip()
                 if not clean:

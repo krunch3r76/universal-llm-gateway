@@ -64,7 +64,8 @@ services:
       STARGATE_UNIX_SOCKET: /tmp/universal-protocol/edge-${NODE_ID}.sock
       REMOTE_ID: edge-${NODE_ID}
       STARGATE_SOCKET_PATH: /tmp/universal-protocol/edge-${NODE_ID}.sock
-      CORTEX_API_URL: http://cortex-api:8300
+      # cortex-api is UDS-only; socket must exist on host under SOCKET_DIR
+      CORTEX_API_URL: unix:///tmp/universal-protocol/cortex-api.sock
 
       GATEWAY_HOST: 127.0.0.1
       GATEWAY_PORT: 9998

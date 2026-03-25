@@ -16,6 +16,7 @@ from ...core.streaming import StreamHandler
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
     from ..proxy import StargateProxy
 
 logger = get_logger(__name__)
@@ -462,6 +463,43 @@ def _subscribe_pipeline_reload_on_catalog_change(proxy: StargateProxy) -> None:
         FEDERATION_GATEWAY_CATALOG_CHANGED, on_catalog_changed
     )
     logger.info("📦 Subscribed to federation catalog changes for pipeline reload")
+
+
+def _subscribe_aggregate_model_availability(proxy: StargateProxy) -> None:
+    """Subscribe catalog-related signals to reconcile aggregate model availability."""
+    emitter = getattr(proxy, "aggregate_availability_emitter", None)
+    if proxy.event_bus is None or emitter is None:
+        return
+
+    from src.scheduling.events import (
+        FEDERATION_GATEWAY_CATALOG_CHANGED,
+        GATEWAY_RESOURCE_UPDATE,
+        GATEWAY_STATE_CHANGED,
+    )
+
+    async def _on_catalog_signal(_event: object) -> None:
+        await emitter.reconcile_from_proxy(proxy)
+
+    proxy.event_bus.subscribe_async(GATEWAY_STATE_CHANGED, _on_catalog_signal)
+    proxy.event_bus.subscribe_async(
+        FEDERATION_GATEWAY_CATALOG_CHANGED, _on_catalog_signal
+    )
+    proxy.event_bus.subscribe_async(GATEWAY_RESOURCE_UPDATE, _on_catalog_signal)
+    logger.info("Subscribed aggregate model availability reconcile handlers")
+
+
+async def initialize_aggregate_model_availability(proxy: StargateProxy) -> None:
+    """Create emitter, subscribe reconciles, and run an initial reconcile."""
+    from systems.routing.aggregate_model_availability import (
+        AggregateModelAvailabilityEmitter,
+    )
+
+    proxy.aggregate_availability_emitter = AggregateModelAvailabilityEmitter(
+        proxy.event_bus
+    )
+    _subscribe_aggregate_model_availability(proxy)
+    await proxy.aggregate_availability_emitter.reconcile_from_proxy(proxy)
+    logger.info("Aggregate model availability emitter initialized")
 
 
 async def initialize_intelligence_profiles(proxy: StargateProxy) -> None:

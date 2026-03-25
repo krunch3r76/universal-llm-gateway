@@ -144,6 +144,24 @@ Payload: {
 }
 """
 
+MODEL_AVAILABLE = "model.available"
+"""
+Aggregate routing: at least one Stargate-visible path can serve model_id.
+
+Payload: {
+    "model_id": str,
+}
+"""
+
+MODEL_UNAVAILABLE = "model.unavailable"
+"""
+Aggregate routing: no remaining path can serve model_id.
+
+Payload: {
+    "model_id": str,
+}
+"""
+
 
 # ========================================
 # Factory Functions
@@ -206,6 +224,49 @@ def ModelUnloaded(
     }
     payload = {k: v for k, v in payload.items() if v is not None}
     return Event(signal=MODEL_UNLOADED, payload=payload, role="coordination")
+
+
+@event_factory
+def ModelAvailable(model_id: str) -> Event:
+    """Publish aggregate routing availability for a model ID at Stargate scope.
+
+    Indicates that the union of local and federated catalogs now contains at
+    least one path that can serve inference for this model_id. This is not
+    equivalent to model.loaded on a specific gateway.
+
+    Args:
+        model_id: OpenAI-style model identifier as routed by Stargate.
+
+    Returns:
+        Coordination event with signal model.available and payload model_id.
+    """
+    return Event(
+        signal=MODEL_AVAILABLE,
+        payload={"model_id": model_id},
+        role="coordination",
+        scope="global",
+    )
+
+
+@event_factory
+def ModelUnavailable(model_id: str) -> Event:
+    """Publish aggregate routing loss for a model ID at Stargate scope.
+
+    Emitted when the last Stargate-visible path that could serve this model_id
+    disappears (local disconnect, federation loss, or catalog shrink).
+
+    Args:
+        model_id: OpenAI-style model identifier as routed by Stargate.
+
+    Returns:
+        Coordination event with signal model.unavailable and payload model_id.
+    """
+    return Event(
+        signal=MODEL_UNAVAILABLE,
+        payload={"model_id": model_id},
+        role="coordination",
+        scope="global",
+    )
 
 
 @event_factory

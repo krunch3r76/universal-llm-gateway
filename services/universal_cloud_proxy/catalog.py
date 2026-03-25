@@ -21,6 +21,9 @@ from .config import ProviderConfig
 
 logger = logging.getLogger(__name__)
 
+_STARTUP_FETCH_ATTEMPTS = 3
+_STARTUP_FETCH_BASE_DELAY_S = 1.0
+
 
 def _per_million(pricing: dict[str, Any], key: str) -> float:
     """Convert per-token string price to per-million-token float."""
@@ -101,7 +104,7 @@ class CatalogManager:
     async def startup(self) -> None:
         """Fetch initial catalogs from all providers."""
         for provider_config in self._providers:
-            await self._fetch_provider(provider_config)
+            await self._fetch_provider_with_startup_retries(provider_config)
 
         if self._providers:
             self._refresh_task = asyncio.create_task(
@@ -147,7 +150,7 @@ class CatalogManager:
                     return catalog
         return None
 
-    async def _fetch_provider(self, config: ProviderConfig) -> None:
+    async def _fetch_provider(self, config: ProviderConfig) -> bool:
         """Fetch model list from a single provider and cache it."""
         adapter = self._adapters.get(config.provider)
         if adapter is None:
@@ -156,7 +159,7 @@ class CatalogManager:
                 await self._on_provider_catalog_refresh_failed(
                     config.provider, "No adapter configured"
                 )
-            return
+            return False
 
         try:
             raw_models = await adapter.fetch_catalog()
@@ -164,7 +167,7 @@ class CatalogManager:
             logger.error("Failed to fetch models from %s: %s", config.provider, exc)
             if self._on_provider_catalog_refresh_failed is not None:
                 await self._on_provider_catalog_refresh_failed(config.provider, str(exc))
-            return
+            return False
 
         models: list[CatalogModel] = []
         for entry in raw_models:
@@ -209,6 +212,27 @@ class CatalogManager:
             config.provider,
             len(models),
         )
+        return True
+
+    async def _fetch_provider_with_startup_retries(self, config: ProviderConfig) -> None:
+        """Retry transient startup fetch failures before leaving a provider empty."""
+        for attempt in range(1, _STARTUP_FETCH_ATTEMPTS + 1):
+            if await self._fetch_provider(config):
+                return
+
+            if attempt == _STARTUP_FETCH_ATTEMPTS:
+                return
+
+            delay_s = _STARTUP_FETCH_BASE_DELAY_S * (2 ** (attempt - 1))
+            logger.warning(
+                "Catalog fetch for provider '%s' failed at startup "
+                "(attempt %d/%d); retrying in %.1fs",
+                config.provider,
+                attempt,
+                _STARTUP_FETCH_ATTEMPTS,
+                delay_s,
+            )
+            await asyncio.sleep(delay_s)
 
     async def _refresh_loop(self) -> None:
         """Periodically re-fetch model lists from all providers."""

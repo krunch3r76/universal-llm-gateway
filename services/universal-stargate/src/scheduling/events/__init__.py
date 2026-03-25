@@ -101,6 +101,7 @@ from .gateway import (
     ResourceReserved,
 )
 from .model_lifecycle import (
+    MODEL_AVAILABLE,
     MODEL_CAPACITY_FREED,
     MODEL_EXECUTION_COMPLETED,
     MODEL_EXECUTION_FAILED,
@@ -109,7 +110,9 @@ from .model_lifecycle import (
     MODEL_LOADING_FAILED,
     MODEL_LOADING_STARTED,
     MODEL_LOADING_STUCK,
+    MODEL_UNAVAILABLE,
     MODEL_UNLOADED,
+    ModelAvailable,
     ModelCapacityFreed,
     ModelExecutionCompleted,
     ModelExecutionFailed,
@@ -118,6 +121,7 @@ from .model_lifecycle import (
     ModelLoadingFailed,
     ModelLoadingStarted,
     ModelLoadingStuck,
+    ModelUnavailable,
     ModelUnloaded,
 )
 from .pipeline import (
@@ -162,6 +166,7 @@ from .proxy import (
 )
 from .queue import (
     CAPACITY_POOL_ADMITTED,
+    CAPACITY_POOL_CANCELLED,
     CAPACITY_POOL_FULL,
     CAPACITY_POOL_QUEUED,
     CAPACITY_POOL_TIMEOUT,
@@ -170,6 +175,7 @@ from .queue import (
     QUEUE_MASTER_TOCTOU,
     QUEUE_MASTER_WOKEN,
     CapacityPoolAdmitted,
+    CapacityPoolCancelled,
     CapacityPoolFull,
     CapacityPoolQueued,
     CapacityPoolTimeout,
@@ -337,8 +343,10 @@ __all__ = [
     "ResourceReserved",
     "ResourceReleased",
     # ── model_lifecycle ──────────────────────────────────────────────────────
+    "MODEL_AVAILABLE",
     "MODEL_LOADED",
     "MODEL_UNLOADED",
+    "MODEL_UNAVAILABLE",
     "MODEL_LOADING_STARTED",
     "MODEL_LOADING_FAILED",
     "MODEL_LOADING_STUCK",
@@ -346,8 +354,10 @@ __all__ = [
     "MODEL_EXECUTION_COMPLETED",
     "MODEL_EXECUTION_FAILED",
     "MODEL_CAPACITY_FREED",
+    "ModelAvailable",
     "ModelLoaded",
     "ModelUnloaded",
+    "ModelUnavailable",
     "ModelLoadingStarted",
     "ModelLoadingFailed",
     "ModelLoadingStuck",
@@ -401,10 +411,12 @@ __all__ = [
     "CAPACITY_POOL_ADMITTED",
     "CAPACITY_POOL_FULL",
     "CAPACITY_POOL_TIMEOUT",
+    "CAPACITY_POOL_CANCELLED",
     "CapacityPoolQueued",
     "CapacityPoolAdmitted",
     "CapacityPoolFull",
     "CapacityPoolTimeout",
+    "CapacityPoolCancelled",
     # ── federation_signaling ─────────────────────────────────────────────────
     "FEDERATION_CONNECTION_ESTABLISHED",
     "FEDERATION_CONNECTION_LOST",

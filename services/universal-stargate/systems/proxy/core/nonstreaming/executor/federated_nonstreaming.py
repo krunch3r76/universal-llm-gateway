@@ -147,26 +147,26 @@ async def _forward_or_recover(
         return content, headers, status
 
     # Retry after eviction
+    # ¬ban on retry failure — OOM during co-loading is transient (VRAM may not
+    # be reclaimed immediately). Routing's T2 tier handles next attempt.
     try:
         content, headers, status = await forward_fn()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 500:
-            _ban_and_emit(
-                federated_manager=federated_manager,
-                model_id=model_id,
-                gateway_id=fed_gateway.gateway_id,
-                event_bus=event_bus,
-                request_id=request_id,
+            logger.warning(
+                "OOM retry failed after eviction on %s (model=%s); "
+                "skipping ban — routing will evict on next attempt",
+                fed_gateway.gateway_id,
+                model_id,
             )
         raise
 
     if status == 500:
-        _ban_and_emit(
-            federated_manager=federated_manager,
-            model_id=model_id,
-            gateway_id=fed_gateway.gateway_id,
-            event_bus=event_bus,
-            request_id=request_id,
+        logger.warning(
+            "OOM retry returned 500 after eviction on %s (model=%s); "
+            "skipping ban — routing will evict on next attempt",
+            fed_gateway.gateway_id,
+            model_id,
         )
     elif event_bus:
         from src.scheduling.events.routing import OomRecoverySucceeded
@@ -182,33 +182,6 @@ async def _forward_or_recover(
 
     return content, headers, status
 
-
-def _ban_and_emit(
-    *,
-    federated_manager: Any,
-    model_id: Any,
-    gateway_id: str,
-    event_bus: Any,
-    request_id: str,
-) -> None:
-    """Ban model on gateway and emit failure + ban events."""
-    from src.scheduling.events.routing import OomInferenceBanned, OomRecoveryFailed
-
-    federated_manager.mark_inference_banned(gateway_id, model_id)
-    if event_bus:
-        event_bus.publish_async_nowait(
-            OomRecoveryFailed(
-                request_id=request_id,
-                model_id=model_id.routing_key,
-                gateway_id=gateway_id,
-            )
-        )
-        event_bus.publish_async_nowait(
-            OomInferenceBanned(
-                model_id=model_id.routing_key,
-                gateway_id=gateway_id,
-            )
-        )
 
 
 async def _execute_federated_nonstreaming(

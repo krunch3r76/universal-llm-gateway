@@ -65,7 +65,6 @@ async def _forward_with_retry(
     request_id: str,
     parsed_model_id: Any,
     oom_recovery_fn: Callable[..., Awaitable[bool]] | None,
-    oom_ban_fn: Callable[..., None] | None,
 ) -> dict[str, Any]:
     """Forward embedding request with retry on transient downstream errors.
 
@@ -73,7 +72,9 @@ async def _forward_with_retry(
     Gateway/llama-server returns 503 when parallel slots are full — this is
     transient and must not propagate to callers.
 
-    OOM recovery (500) is attempted once per the existing contract.
+    OOM recovery (500): evict idle co-loaded models and retry once.
+    ¬ban on retry failure — OOM during co-loading is transient; routing's
+    T2 eviction prevents recurrence on the next request.
     """
     last_exc: HTTPException | None = None
 
@@ -99,11 +100,15 @@ async def _forward_with_retry(
                             request_id=request_id,
                         )
                     except HTTPException as retry_exc:
-                        if retry_exc.status_code == 500 and oom_ban_fn is not None:
-                            oom_ban_fn(
-                                gateway_id=fed_gateway.gateway_id,
-                                model_id=parsed_model_id,
-                                request_id=request_id,
+                        if retry_exc.status_code == 500:
+                            # Eviction happened but retry still OOM'd — transient
+                            # timing issue (VRAM not yet reclaimed). Don't ban;
+                            # routing's T2 tier handles next attempt via eviction.
+                            logger.warning(
+                                "OOM retry failed after eviction on %s (model=%s); "
+                                "skipping ban — routing will evict on next attempt",
+                                fed_gateway.gateway_id,
+                                parsed_model_id,
                             )
                         raise
                 raise
@@ -151,7 +156,6 @@ async def execute_embedding_request(
     forward_embedding_fn: Callable[..., Awaitable[dict[str, Any]]],
     event_bus: EventBus,
     oom_recovery_fn: Callable[..., Awaitable[bool]] | None = None,
-    oom_ban_fn: Callable[..., None] | None = None,
 ) -> dict[str, Any]:
     """
     Execute an embedding request via federation.
@@ -230,7 +234,6 @@ async def execute_embedding_request(
             request_id=resolved_request_id,
             parsed_model_id=parsed_model_id,
             oom_recovery_fn=oom_recovery_fn,
-            oom_ban_fn=oom_ban_fn,
         )
 
         await emit_execution_completed(

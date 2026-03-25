@@ -76,8 +76,7 @@ services:
       
       # Edge Stargate over TCP (connects to local Gateway)
       STARGATE_CONFIG: /golem/work/app/config/stargate_config.golem-edge-tcp.yaml
-      CORTEX_API_URL: http://cortex-api:8300
-      
+
       # Logging
       LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
       ENVIRONMENT: golem-federated-test
@@ -160,8 +159,7 @@ services:
       
       # Edge Stargate over TCP (connects to local Gateway)
       STARGATE_CONFIG: /golem/work/app/config/stargate_config.golem-edge-tcp.yaml
-      CORTEX_API_URL: http://cortex-api:8300
-      
+
       # Logging
       LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
       ENVIRONMENT: golem-federated-test

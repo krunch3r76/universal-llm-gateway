@@ -57,11 +57,13 @@ async def try_step_model_fallback(
     )
     from ...events.step import StepModelFallback
 
+    _mro = context.options.get("model_ref_overrides")
+    mro_dict = _mro if isinstance(_mro, dict) else None
     primary_model = await step.get_target_model_id_async(
         registry=context._registry,
         domain=context.pipeline.domain,
         search_path=context.pipeline.source_search_path,
-        model_ref_overrides=context.options.get("model_ref_overrides"),
+        model_ref_overrides=mro_dict,
         context=context,
     )
     if not primary_model:

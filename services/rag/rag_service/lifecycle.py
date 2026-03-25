@@ -38,8 +38,6 @@ from services.rag.directory_ops import (
 from services.rag.embeddings import close as close_embeddings
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import set_event_bus as set_embeddings_event_bus
-from services.rag.embeddings import start_tracker as start_embedding_tracker
-from services.rag.embeddings import stop_tracker as stop_embedding_tracker
 from services.rag.embeddings import wait_until_healthy
 from services.rag.events.extraction import rag_extraction_unavailable
 from services.rag.events.lifecycle import (
@@ -53,11 +51,15 @@ from services.rag.events.lifecycle import (
     rag_shutdown,
     rag_started,
 )
-from services.rag.extraction_model_tracker import ModelState
 from services.rag.knowledge_extractor import (
     configure_timeouts,
-    configure_tracker,
     wait_until_extraction_ready,
+)
+from services.rag.model_availability_tracker import (
+    ModelAvailabilityTracker,
+    close_model_availability_client,
+    get_model_availability_tracker,
+    set_model_availability_tracker,
 )
 from services.rag.property_index import PropertyIndex
 from services.rag.vocabulary import configured_scopes_map, run_scope_freshness_repair
@@ -190,7 +192,15 @@ async def _startup() -> None:
     state._config = load_config()
     configure_embeddings(state._config.embedding_model)
     set_embeddings_event_bus(state._event_bus)
-    await start_embedding_tracker()
+    _ke = state._config.knowledge_extraction
+    _watch_ids = [
+        state._config.embedding_model,
+        _ke.extraction_model,
+        _ke.pipeline,
+    ]
+    _mat = ModelAvailabilityTracker()
+    set_model_availability_tracker(_mat)
+    await _mat.start(state._event_bus, _watch_ids)
     state._property_index = PropertyIndex()
     await state._property_index.start()
     db_path = state._property_index.db_path
@@ -526,18 +536,12 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
         else DEFAULT_INDEX_WORKERS
     )
     configure_timeouts(config.knowledge_extraction)
-    tracker = configure_tracker(config.knowledge_extraction)
-    await tracker.start()
-    state._extraction_tracker = tracker
 
-    # If Stargate just restarted, the tracker will be in UNKNOWN state because
-    # the model's post-restart load status hasn't been observed yet. Wait for
-    # a confirmed model.loaded event before releasing the startup burst — without
-    # this gate the watcher fires a full-corpus extraction batch while the model
-    # is still loading, burning the entire extraction timeout (300s × N docs).
+    mat = get_model_availability_tracker()
     startup_model_wait_s = 120.0
-    if tracker.state != ModelState.LOADED:
-        await tracker.wait_until_loaded(timeout_s=startup_model_wait_s)
+    ext_id = config.knowledge_extraction.extraction_model
+    if mat is not None and not mat.is_available(ext_id):
+        await mat.wait_until_available(ext_id, startup_model_wait_s)
 
     reconcile_worker_count = (
         config.reconcile_workers if isinstance(config.reconcile_workers, int) else 3
@@ -629,11 +633,13 @@ async def _shutdown() -> None:
     if state._property_index is not None:
         await state._property_index.stop()
         state._property_index = None
-    await stop_embedding_tracker()
+    _mat = get_model_availability_tracker()
+    if _mat is not None:
+        await _mat.stop()
+        set_model_availability_tracker(None)
+    await close_model_availability_client()
     await close_embeddings()
     if state._watcher_manager is not None:
         await state._watcher_manager.stop()
         state._watcher_manager = None
-    if state._extraction_tracker is not None:
-        await state._extraction_tracker.stop()
-        state._extraction_tracker = None
+    # Extraction gating uses ModelAvailabilityTracker; stopped in Phase 4 shutdown.

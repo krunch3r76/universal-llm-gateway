@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from services.rag.events.query import rag_embedding_query_success
-from services.rag.extraction_model_tracker import ModelState, ModelStateTracker
+from services.rag.model_availability_tracker import get_model_availability_tracker
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 _embed_model: str = ""
 _probe_payload: dict[str, str | list[str]] = {}
 _event_bus: EventBus | None = None
-_tracker: ModelStateTracker | None = None
+# Aggregate availability: services.rag.model_availability_tracker (lifecycle-owned).
 
 _CONTEXT_SUFFIX_RE = re.compile(r"-(\d+)(?:-(?:cpu|hybrid))?$")
 
@@ -75,32 +75,6 @@ def configure(model_id: str) -> None:
         )
     else:
         logger.info("Embedding model configured: %s", _embed_model)
-
-
-async def start_tracker() -> None:
-    """Start an event-driven model state tracker for the configured embedding model.
-
-    Must be called after configure(). Subscribes to model.loaded / model.unloaded
-    events from the Event Service so require_healthy() can gate on model state
-    without polling. Safe to call multiple times; re-start stops the old tracker.
-    """
-    global _tracker
-    if not _embed_model:
-        logger.warning("start_tracker() called before configure() — skipping")
-        return
-    if _tracker is not None:
-        await _tracker.stop()
-    _tracker = ModelStateTracker(model_id=_embed_model)
-    await _tracker.start()
-    logger.info("Embedding model tracker started for '%s'", _embed_model)
-
-
-async def stop_tracker() -> None:
-    """Stop the embedding model tracker. Called during RAG shutdown."""
-    global _tracker
-    if _tracker is not None:
-        await _tracker.stop()
-        _tracker = None
 
 
 def set_event_bus(bus: EventBus) -> None:
@@ -145,123 +119,90 @@ async def wait_until_healthy(
     timeout_s: float = _PROBE_TIMEOUT_S,
     interval_s: float = _PROBE_INTERVAL_S,
 ) -> None:
-    """Block until the embedding endpoint accepts requests, and cache the
-    embedding dimension from the probe response for zero-vector fallbacks.
+    """Block until aggregate routing admits the embedding model, then seed dim cache.
 
-    ∀ t < timeout_s: retries on connection/HTTP errors (Stargate not yet ready).
-    If the configured model is not activated, resolves a compatible sibling
-    with context >= configured context from the same model family.
-    Raises TimeoutError if endpoint is still unhealthy after timeout_s seconds.
+    Uses ``ModelAvailabilityTracker`` (Stargate watch + ``model.available``) for
+    admission, not repeated embedding probes. After admission, performs a single
+    POST to ``/v1/embeddings`` to populate ``_embed_dim`` for zero-vector paths.
+
+    Args:
+        timeout_s: Max seconds to wait for aggregate availability.
+        interval_s: Unused; kept for call-site compatibility.
+
+    Raises:
+        RuntimeError: Tracker not started or POST failed after availability.
+        TimeoutError: Model not aggregate-available within ``timeout_s``.
     """
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_s
-    attempt = 0
-    while True:
-        attempt += 1
-        try:
-            response = await _client.post(
-                f"{GATEWAY_URL}/v1/embeddings",
-                json=_probe_payload,
-                timeout=5.0,
-            )
-            response.raise_for_status()
-            data = response.json().get("data", [])
-            if data:
-                _cache_embed_dim([item["embedding"] for item in data])
-                logger.info(
-                    "Embedding endpoint healthy after %d attempt(s) (dim=%s, model=%s)",
-                    attempt,
-                    _embed_dim,
-                    _embed_model,
-                )
-            else:
-                logger.info(
-                    "Embedding endpoint healthy after %d attempt(s) (model=%s)",
-                    attempt,
-                    _embed_model,
-                )
-            return
-        except Exception as exc:
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                raise TimeoutError(
-                    f"Embedding endpoint not healthy after {timeout_s}s"
-                ) from exc
-            logger.debug(
-                "Embedding probe attempt %d failed (%s); retrying in %.1fs (%.0fs left)",
-                attempt,
-                exc,
-                interval_s,
-                remaining,
-            )
-            await asyncio.sleep(min(interval_s, remaining))
+    del interval_s  # retained for API compatibility
+    _require_configured()
+    tracker = get_model_availability_tracker()
+    if tracker is None:
+        raise RuntimeError(
+            "ModelAvailabilityTracker not initialized — lifecycle must start it before wait_until_healthy()"
+        )
+    ok = await tracker.wait_until_available(_embed_model, timeout_s)
+    if not ok:
+        raise TimeoutError(
+            f"Embedding model {_embed_model!r} not aggregate-available after {timeout_s}s"
+        )
+    try:
+        response = await _client.post(
+            f"{GATEWAY_URL}/v1/embeddings",
+            json=_probe_payload,
+            timeout=15.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(
+            "Embedding dim seed failed after aggregate availability: "
+            f"HTTP {exc.response.status_code} {exc.response.text!r}"
+        ) from exc
+    except httpx.RequestError as exc:
+        raise RuntimeError(
+            f"Embedding dim seed failed after aggregate availability: {exc!r}"
+        ) from exc
+    data = response.json().get("data", [])
+    if data:
+        _cache_embed_dim([item["embedding"] for item in data])
+        logger.info(
+            "Embedding dim seeded after availability (dim=%s, model=%s)",
+            _embed_dim,
+            _embed_model,
+        )
+    else:
+        logger.info("Embedding POST ok after availability (model=%s)", _embed_model)
 
 
 async def require_healthy(timeout_s: float = 120.0) -> None:
-    """Gate indexing on the embedding model being loaded.
+    """Gate indexing until aggregate routing admits the embedding model again.
 
-    Event-driven: checks the ModelStateTracker gate (asyncio.Event) set by
-    model.loaded / model.unloaded events from the Event Service. No HTTP probe
-    is issued, so a busy model queue never causes false "unreachable" failures.
+    After startup, ``wait_until_healthy`` already seeded the dim cache; this path
+    waits on ``model.available``-driven state when the model becomes unavailable
+    (e.g. last gateway path dropped) and available again.
 
-    State semantics:
-    - LOADED: pass through immediately
-    - UNKNOWN: pass through (startup wait_until_healthy already confirmed health)
-    - UNLOADED: wait for model.loaded event up to timeout_s
+    Args:
+        timeout_s: Seconds to wait for aggregate availability.
 
-    Falls back to a brief HTTP probe if the tracker has not been started yet
-    (e.g. during tests or early startup before start_tracker() runs).
+    Raises:
+        RuntimeError: Tracker missing or model did not become available in time.
     """
-    if _tracker is not None:
-        if _tracker.state != ModelState.UNLOADED:
-            return
-        # Model was explicitly unloaded — wait for reload
-        logger.info(
-            "Embedding model '%s' is UNLOADED — waiting up to %.0fs for reload",
-            _embed_model,
-            timeout_s,
-        )
-        ok = await _tracker.wait_until_loaded(timeout_s)
-        if not ok:
-            raise RuntimeError(
-                f"Embedding model '{_embed_model}' did not reload within {timeout_s:.0f}s. "
-                "Indexing disabled until embeddings are available."
-            )
+    _require_configured()
+    tracker = get_model_availability_tracker()
+    if tracker is None:
+        raise RuntimeError("ModelAvailabilityTracker not initialized")
+    if tracker.is_available(_embed_model):
         return
-
-    # Fallback: tracker not started — probe with retry (startup path or tests)
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_s
-    attempt = 0
-    last_exc: Exception | None = None
-    while loop.time() < deadline:
-        attempt += 1
-        try:
-            response = await _client.post(
-                f"{GATEWAY_URL}/v1/embeddings",
-                json=_probe_payload,
-                timeout=15.0,
-            )
-            response.raise_for_status()
-            data = response.json().get("data", [])
-            if data:
-                _cache_embed_dim([item["embedding"] for item in data])
-            return
-        except httpx.HTTPStatusError as exc:
-            raise RuntimeError(
-                f"Embedding endpoint returned {exc.response.status_code}: "
-                f"{exc.response.text!r}. Indexing disabled until embeddings are available."
-            ) from exc
-        except httpx.RequestError as exc:
-            last_exc = exc
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                break
-            await asyncio.sleep(min(2.0, remaining))
-    raise RuntimeError(
-        f"Embedding endpoint unreachable after {attempt} attempt(s): {last_exc}. "
-        "Indexing disabled until embeddings are available."
-    ) from last_exc
+    logger.info(
+        "Embedding model '%s' aggregate-unavailable — waiting up to %.0fs",
+        _embed_model,
+        timeout_s,
+    )
+    ok = await tracker.wait_until_available(_embed_model, timeout_s)
+    if not ok:
+        raise RuntimeError(
+            f"Embedding model '{_embed_model}' did not become aggregate-available "
+            f"within {timeout_s:.0f}s."
+        )
 
 
 _SCOPE_INSTRUCTIONS: dict[str, str] = {

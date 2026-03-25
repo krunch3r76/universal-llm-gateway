@@ -328,6 +328,8 @@ def build_reviewer_pipeline_model_overrides(models: list[str]) -> dict[str, str]
     if not models:
         return overrides
     overrides["review_model"] = models[0]
+    overrides["review"] = models[0]
     if len(models) > 1:
         overrides["validate_model"] = models[1]
+        overrides["validate"] = models[1]
     return overrides

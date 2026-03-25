@@ -268,31 +268,47 @@ class PipelineExecutor:
         # Extract runtime pipeline_options from HTTP request
         runtime_options: dict[str, Any] = {}
         if context.original_request:
-            # Diagnostic: confirm pipeline_options present for model override investigation
             orig_keys = list(context.original_request.keys())
-            raw_options = context.original_request.get("pipeline_options", {})
-            if raw_options is not None and not isinstance(raw_options, dict):
+            raw_po = context.original_request.get("pipeline_options")
+            if raw_po is None:
+                po_flat: dict[str, Any] = {}
+            elif not isinstance(raw_po, dict):
                 raise ValueError(
                     f"Invalid pipeline_options type: expected dict, "
-                    f"got {type(raw_options).__name__}"
+                    f"got {type(raw_po).__name__}"
                 )
-            runtime_options = raw_options if raw_options else {}
+            else:
+                po_flat = dict(raw_po)
+
+            runtime_options = po_flat
+
+            # Merge top-level model_ref_overrides with nested pipeline_options;
+            # nested keys win on collision.
+            top_mro = context.original_request.get("model_ref_overrides")
+            top_d = top_mro if isinstance(top_mro, dict) else {}
+            inner_mro = runtime_options.get("model_ref_overrides")
+            inner_d = inner_mro if isinstance(inner_mro, dict) else {}
+            if top_d or inner_d:
+                runtime_options["model_ref_overrides"] = {**top_d, **inner_d}
+
             if runtime_options:
                 option_keys = list(runtime_options.keys())
                 logger.info(
                     f"Pipeline '{pipeline.id}': Received runtime options: {option_keys}"
                 )
-                model_ref_overrides = runtime_options.get("model_ref_overrides")
-                if model_ref_overrides is not None:
+                merged_mro = runtime_options.get("model_ref_overrides")
+                if isinstance(merged_mro, dict) and merged_mro:
                     logger.info(
                         "Pipeline '%s': model_ref_overrides from request: %s",
                         pipeline.id,
-                        dict(model_ref_overrides) if isinstance(model_ref_overrides, dict) else model_ref_overrides,
+                        dict(merged_mro),
                     )
             elif "pipeline_options" not in context.original_request:
                 logger.warning(
-                    "Pipeline '%s': original_request has no 'pipeline_options' (keys: %s). "
-                    "model_ref_overrides will be empty.",
+                    (
+                        "Pipeline '%s': original_request has no 'pipeline_options' "
+                        "(keys: %s). model_ref_overrides empty unless set at top level."
+                    ),
                     pipeline.id,
                     orig_keys,
                 )
@@ -322,13 +338,18 @@ class PipelineExecutor:
             _messages=messages,
         )
 
-        # Diagnostic: confirm merged options contain model_ref_overrides for override investigation
+        # Diagnostic: merged model_ref_overrides after YAML + runtime merge
         if runtime_options:
             merged_overrides = pipeline_context.options.get("model_ref_overrides")
+            mo_repr = (
+                dict(merged_overrides)
+                if isinstance(merged_overrides, dict)
+                else merged_overrides
+            )
             logger.info(
                 "Pipeline '%s': context.options.model_ref_overrides = %s",
                 pipeline.id,
-                dict(merged_overrides) if isinstance(merged_overrides, dict) else merged_overrides,
+                mo_repr,
             )
 
         # Log pipeline execution start with full original request (no truncation)

@@ -1098,18 +1098,6 @@ OOM recovery succeeded: retry after eviction returned a non-500 response.
 Payload: request_id, model_id, gateway_id, evicted_count
 """
 
-ROUTING_INFERENCE_OOM_RECOVERY_FAILED = "routing.inference.oom.recovery.failed"
-"""
-OOM recovery failed: retry after eviction still returned 500.
-Model will be banned on this gateway for the session.
-Payload: request_id, model_id, gateway_id
-"""
-
-ROUTING_INFERENCE_OOM_BANNED = "routing.inference.oom.banned"
-"""
-Model banned on gateway for session after OOM recovery failure.
-Payload: model_id, gateway_id
-"""
 
 
 @event_factory
@@ -1152,33 +1140,3 @@ def OomRecoverySucceeded(
     )
 
 
-@event_factory
-def OomRecoveryFailed(
-    request_id: str,
-    model_id: str,
-    gateway_id: str,
-) -> Event:
-    """Emit when retry after OOM recovery still returns 500."""
-    return Event(
-        signal=ROUTING_INFERENCE_OOM_RECOVERY_FAILED,
-        payload={
-            "request_id": request_id,
-            "model_id": model_id,
-            "gateway_id": gateway_id,
-        },
-    )
-
-
-@event_factory
-def OomInferenceBanned(
-    model_id: str,
-    gateway_id: str,
-) -> Event:
-    """Emit when a model is banned on a gateway after OOM recovery failure."""
-    return Event(
-        signal=ROUTING_INFERENCE_OOM_BANNED,
-        payload={
-            "model_id": model_id,
-            "gateway_id": gateway_id,
-        },
-    )

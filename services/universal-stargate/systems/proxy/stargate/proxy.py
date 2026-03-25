@@ -235,6 +235,7 @@ class StargateProxy:
         self.pipeline_registry = None
         self.pipeline_executor = None
         self.pipeline_hot_reload = None
+        self.aggregate_availability_emitter = None
         self.profile_watcher = None
         self.intelligence_profile_store: IntelligenceProfileStore | None = None
         self.federation_integration: FederationIntegration | None = None
@@ -487,7 +488,10 @@ class StargateProxy:
                 detail="Request executor unavailable for embedding requests",
             )
         if self.request_executor is None:
-            raise HTTPException(status_code=500, detail="Request executor unavailable for embedding requests")
+            raise HTTPException(
+                status_code=500,
+                detail="Request executor unavailable for embedding requests",
+            )
 
         # Use pre-initialized RequestExecutor (from component_factory)
         result = await self.request_executor.execute_embedding_request(

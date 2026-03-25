@@ -101,6 +101,14 @@ Corpus hints and scope vocabulary are stored in `~/.rag/store/rag_metadata.db` (
 
 `reconcile_interval_s` (default 300): base seconds between watcher reconcile sweeps that recover files missed by inotify. Reconcile runs with the same worker-pool concurrency as the initial reindex. When a sweep recovers at least one file, the next sweep runs after 30 s (busy interval); when idle (no recoveries), the full interval is used. Set to 0 to disable.
 
+`reconcile_workers` (default 3): separate worker limit for reconcile sweeps, independent of `index_workers`. Prevents reconcile retries from saturating the model queue and crowding out fresh indexing work.
+
+`file_timeout_s` (default 600): per-file timeout for watcher workers (initial reindex and reconcile). 0 = no timeout. Prevents a single hung extraction from blocking an entire watcher worker indefinitely.
+
+`vocabulary_mode` (default `local`): default classification mode for `scripts/rag/classify_vocabulary.py`. `local` uses a loaded gateway model; `frontier` routes to the `vocab-classify-v1` cloud pipeline. Can be overridden per scope via the `vocab_mode` field under each scope definition. CLI `--mode` flag overrides the config.
+
+`vocabulary_taxonomy` (default `["specification", "practitioner", "academic"]`): ordered list of vocabulary categories for LLM classification. Order = retrieval anchor priority (index 0 = highest). Extend this list when adding a corpus domain with distinct vocabulary — no code changes required; re-classify the affected scope(s) to take effect. Known categories have curated prompt descriptions; unknown categories get a generic description.
+
 ```yaml
 watch_directories:
   - path: /mnt/torus/projects/universal-llm-gateway/docs/architecture
@@ -140,7 +148,7 @@ Optional. Controls the internet-facing MCP server container. If absent or `auth_
 
 Fields: `auth_token` (bearer token for client auth), `data_dir` (host path mounted as `/data/files`, default `~/mcp-data`), `project_dir` (host path mounted read-only as `/data/project`, defaults to workspace root), `tls_cert_dir` (host path containing `fullchain.pem`/`privkey.pem`, default `/etc/letsencrypt/live/mcp.k-1.me`).
 
-Project list/search MCP tools default to git-tracked files only; **`include_untracked=True`** lists or searches the real tree (e.g. gitignored `tmp/`). See `docs/mcp-integration.md`.
+Project list/search MCP tools default to the real on-disk tree, including gitignored paths such as `tmp/`; set **`include_untracked=False`** for git-tracked-only results. See `docs/mcp-integration.md`.
 
 ## Log Paths
 

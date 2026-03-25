@@ -149,8 +149,9 @@ class GenericGenerateHandler(BaseHandler):
         source_provenance = self._extract_source_provenance(step, context)
 
         executor_override = context._step_model_override.get(step.name)
-        model_ref_overrides: dict[str, str] = context.options.get(
-            "model_ref_overrides", {}
+        _raw_overrides = context.options.get("model_ref_overrides")
+        model_ref_overrides: dict[str, Any] = (
+            _raw_overrides if isinstance(_raw_overrides, dict) else {}
         )
         runtime_override = (
             model_ref_overrides.get(step.name)

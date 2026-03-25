@@ -115,7 +115,7 @@ The **Gateway (inference engine)** is never exposed. It listens on `localhost:99
 | **RAG Service** (host, UDS default) | Semantic search, file indexing, knowledge extraction, ChromaDB vector store |
 | **Cloud Proxy** (host, UDS default) | Optional cloud API relay (OpenRouter, Anthropic, OpenAI, Google); UDS at `/tmp/universal-protocol/cloud-proxy.sock` |
 | **MCP Server** (container, port 443) | Internet-facing tool server for cloud model APIs (Anthropic MCP); TLS + bearer auth |
-| **Cortex API** (container, port 8300) | REST gateway to cortex.db (knowledge graph) and todos.db; sole access path for agents |
+| **Cortex API** (container, UDS) | REST gateway to cortex.db (knowledge graph) and todos.db; sole access path for agents; Unix socket `/tmp/universal-protocol/cortex-api.sock` (`network_mode: none`) |
 
 ### Key Design Decisions
 
@@ -311,7 +311,7 @@ It runs as a containerized FastAPI service on `:443` with TLS and bearer token a
 | Tool Category | Tools | Security Policy |
 |---|---|---|
 | **Filesystem** | `read_file`, `write_file`, `edit_file`, etc. | Sandboxed to `/data/files` volume; path traversal prohibited |
-| **Project** | `list_project_files`, `read_project_file`, `search_project_files`, `project(...)` | Mount under `PROJECT_ROOT`; list/search default to git-tracked only — `include_untracked=True` for `tmp/` and other gitignored trees |
+| **Project** | `list_project_files`, `read_project_file`, `search_project_files`, `project(...)` | Mount under `PROJECT_ROOT`; list/search default to on-disk files, including `tmp/` and other gitignored trees; set `include_untracked=False` for git-tracked-only results |
 | **RAG** | `rag_search`, `rag_answer`, etc. | Routes through Stargate pipelines via `host.docker.internal` |
 | **Web** | `web_search`, `web_fetch` | Brave Search API; SSRF guard blocks private/loopback URLs |
 | **Browser** | `browser_navigate`, `browser_click`, etc. | **Requires seccomp override** to allow Firefox's internal sandboxing syscalls; no new capabilities are added |
@@ -374,7 +374,7 @@ universal-llm-gateway/
 │   ├── rag/                          # RAG service (UDS default)
 │   ├── universal_cloud_proxy/        # Cloud proxy service (UDS default)
 │   ├── mcp-server/                   # MCP tool server (port 443, TLS)
-│   └── cortex-api/                   # Cortex knowledge system API (port 8300, mcp-network)
+│   └── cortex-api/                   # Cortex knowledge system API (UDS; see docker/compose/cortex-api.yml)
 ├── libs/                             # Shared libraries
 ├── scripts/
 │   └── model_manager/                # TUI application (Textual, MVC)

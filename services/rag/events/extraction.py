@@ -218,3 +218,40 @@ def rag_extraction_unavailable(*, pipeline: str, error: str) -> Event:
         signal="rag.extraction.unavailable",
         payload={"pipeline": pipeline, "error": error},
     )
+
+
+@event_factory
+def rag_extraction_infrastructure_degraded(
+    *,
+    model_id: str,
+    consecutive_timeouts: int,
+) -> Event:
+    """Emitted when the extraction model tracker enters DEGRADED state.
+
+    DEGRADED means the model failed to load after consecutive_timeouts
+    trigger attempts (each waited model_load_wait_s). All extraction workers
+    fast-fail immediately until model.loaded fires (automatic recovery).
+
+    ∀ degraded transition: emitted exactly once.
+    Paired with rag.extraction.infrastructure.recovered on recovery.
+    """
+    return Event(
+        signal="rag.extraction.infrastructure.degraded",
+        payload={
+            "model_id": model_id,
+            "consecutive_timeouts": consecutive_timeouts,
+        },
+    )
+
+
+@event_factory
+def rag_extraction_infrastructure_recovered(*, model_id: str) -> Event:
+    """Emitted when the extraction model tracker exits DEGRADED state.
+
+    Fired when model.loaded arrives after a DEGRADED period — extraction
+    workers resume normal operation.
+    """
+    return Event(
+        signal="rag.extraction.infrastructure.recovered",
+        payload={"model_id": model_id},
+    )

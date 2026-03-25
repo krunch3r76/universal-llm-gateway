@@ -338,8 +338,9 @@ class DAGExecutor:
         """Execute step and update state."""
         import time
 
-        model_ref_overrides: dict[str, str] | None = self.context.options.get(
-            "model_ref_overrides"
+        _mro = self.context.options.get("model_ref_overrides")
+        model_ref_overrides: dict[str, str] | None = (
+            _mro if isinstance(_mro, dict) else None
         )
         target_model = (
             await self._model_coordination.resolve_target_model_for_execution(

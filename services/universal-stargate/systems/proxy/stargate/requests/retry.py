@@ -46,6 +46,7 @@ from src.scheduling.events import (
 
 from ...core.nonstreaming.context import RequestContext
 from ...core.streaming.wrappers import wrap_streaming_response_for_tracking
+from .disconnect import execute_with_disconnect_guard
 
 if TYPE_CHECKING:
     from ..proxy import StargateProxy
@@ -312,7 +313,11 @@ async def execute_with_retry(
     try:
         while True:
             try:
-                response = await proxy.request_executor.execute_request(context)
+                response = await execute_with_disconnect_guard(
+                    proxy.request_executor.execute_request(context),
+                    request,
+                    request_id=context.request_id,
+                )
 
                 if isinstance(response, StreamingResponse):
                     response_gateway_id = context.target_gateway_id
