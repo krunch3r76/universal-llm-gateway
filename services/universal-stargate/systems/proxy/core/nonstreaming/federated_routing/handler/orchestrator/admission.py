@@ -6,6 +6,7 @@ selection logic remains focused on feasibility and scoring.
 """
 
 import asyncio
+import time
 from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
@@ -135,11 +136,17 @@ async def acquire_admission_token(
             g.name for g in gateways_for_routing if model_id in g.loaded_models
         )
 
-    timeout_s = (
-        routing_config.get("admission", {}).get("timeout_s", None)
-        if routing_config
-        else None
-    )
+    # Use the full remaining capacity budget so the FIFO queue does the
+    # waiting instead of short timeouts that trigger retry-loop cycling.
+    deadline = getattr(context, "_capacity_deadline_mono", None)
+    if deadline is not None:
+        timeout_s: float | None = max(0.0, deadline - time.monotonic())
+    else:
+        timeout_s = (
+            routing_config.get("admission", {}).get("timeout_s", None)
+            if routing_config
+            else None
+        )
 
     try:
         token = await capacity_pool.acquire_token(
@@ -185,6 +192,18 @@ async def acquire_admission_token(
         )
         raise_gateway_capacity_error(selected_gateway.name)
     except Exception as exc:
+        from systems.routing.capacity.pool import QueueFullError
+
+        if isinstance(exc, QueueFullError):
+            logger.warning(
+                "Admission queue full: model=%s depth=%d max=%d — "
+                "rejecting request %s immediately",
+                model_id.routing_key,
+                exc.current_depth,
+                exc.max_depth,
+                context.request_id,
+            )
+            raise_gateway_capacity_error(selected_gateway.name)
         logger.error(
             "Admission queue acquire failed for model=%s gateway=%s request_id=%s: %s",
             model_id.routing_key,

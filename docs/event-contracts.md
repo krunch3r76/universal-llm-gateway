@@ -442,7 +442,7 @@ Payload semantics:
 | Signal | Required Payload | Description |
 |--------|-----------------|-------------|
 | `rag.extraction.batch.started` | `file`, `chunk_count` | Batch extraction initiated for a file |
-| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | Batch extraction finished (successful ≤ chunk_count; written = 0 on partial failure). Optional payload: `extraction_model`. |
+| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | Batch extraction finished (successful ≤ chunk_count; written = 0 on partial failure). Optional payload: `extraction_model`, `finish_reason` (present when pipeline stop reason ≠ "stop", e.g. `"length"` = max_tokens truncation). |
 | `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | Re-extraction triggered because existing chunks have different or missing extraction_model. |
 | `rag.extraction.batch.timed.out` | `file`, `chunk_count`, `timeout_seconds`, `duration_seconds` | Extraction batch exceeded dynamic timeout budget; all chunks recorded as transient failures |
 | `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | All chunks permanently failed — no pipeline call made |
@@ -923,6 +923,10 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | - |
 | `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | - |
 | `capacity.slot.leak.recovered` | `request_id`, `gateway_id`, `model_id`, `snapshot` | - |
+| `capacity.pool.queued` | `request_id`, `model_id`, `queue_position`, `allowed_gateways`, `timeout_s` | - |
+| `capacity.pool.admitted` | `request_id`, `model_id`, `gateway_id`, `wait_ms` | - |
+| `capacity.pool.full` | `request_id`, `model_id`, `current_depth`, `max_depth` | - |
+| `capacity.pool.timeout` | `request_id`, `model_id`, `wait_ms`, `timeout_s` | - |
 | `routing.overflow.triggered` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `reason` | - |
 | `routing.overflow.failed` | `request_id`, `model_id`, `tried_gateways`, `reason` | - |
 | `model.load.overflow.started` | `request_id`, `model_id`, `gateway_id`, `reason` | - |
@@ -1025,6 +1029,56 @@ sustained high rate warrants timeout tuning investigation.
 | `gateway_id` | string | Gateway where the slot was allocated |
 | `model_id` | string | Model the slot was reserved for |
 | `snapshot` | dict | `CapacityPool.get_snapshot()` at recovery time |
+
+### capacity.pool.queued
+
+Request entered the per-model FIFO admission queue in `CapacityPool`. Emitted
+when no immediate slot is available and the request will wait for a slot to open.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request entering the queue |
+| `model_id` | string | Model being requested |
+| `queue_position` | int | 1-indexed position in the FIFO queue |
+| `allowed_gateways` | int | Number of gateways the request can be served by |
+| `timeout_s` | float \| null | Capacity budget timeout (null = indefinite) |
+
+### capacity.pool.admitted
+
+Queued request was assigned a slot after waiting in the FIFO queue. The `wait_ms`
+field indicates how long the request was queued before a slot opened.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request that was admitted |
+| `model_id` | string | Model the slot is for |
+| `gateway_id` | string | Gateway where the slot was assigned |
+| `wait_ms` | float | Time spent waiting in the queue (ms) |
+
+### capacity.pool.full
+
+Queue at max depth — request rejected immediately (overload protection). The
+`max_queue_depth` setting on `CapacityPool` bounds the number of waiters per model
+to prevent unbounded queue growth under sustained overload.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request that was rejected |
+| `model_id` | string | Model whose queue is full |
+| `current_depth` | int | Queue depth at rejection time |
+| `max_depth` | int | Configured maximum queue depth |
+
+### capacity.pool.timeout
+
+Queue wait exceeded the capacity budget. The request waited in the FIFO queue for
+the full `timeout_s` duration without a slot opening. Terminal — no further retry.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request that timed out |
+| `model_id` | string | Model the request was waiting for |
+| `wait_ms` | float | Total time spent waiting (ms) |
+| `timeout_s` | float \| null | Budget that was exhausted |
 
 ### routing.eviction.blocked.busy
 
@@ -1248,14 +1302,14 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.watch.directory.missing` | `path` | - |
 | `rag.watch.started` | `path`, `extensions`, `recursive` | - |
 | `rag.watch.initial.started` | `path`, `total_files` | emitted once per watch path when startup sweep candidate list is finalized |
-| `rag.watch.initial.progress` | `path`, `total_files`, `processed`, `reindexed`, `unchanged`, `errors` | emitted on each terminal startup-file outcome; `processed` is monotonic |
+| `rag.watch.initial.progress` | `path`, `total_files`, `processed`, `reindexed`, `unchanged`, `errors` | emitted approximately every 10% of total_files during startup sweep; `processed` is monotonic; invariant: `processed = reindexed + unchanged + errors` |
 | `rag.watch.initial.complete` | `path`, `files`, `reindexed`, `unchanged`, `errors` | emitted once per watch path at end of startup sweep; invariant: total_files == reindexed + unchanged + errors; `files` includes errored files |
 | `rag.watch.reindex.complete` | `file`, `deleted`, `indexed`, `unchanged` | - |
 | `rag.watch.file.deleted` | `file`, `deleted` | watcher deleted all chunks for a source file removed from disk |
 | `rag.watch.reconcile.complete` | `path`, `recovered`, `unchanged` | - |
 | `rag.watch.stopped` | `watchers` | - |
 | `rag.extraction.batch.started` | `file`, `chunk_count` | - |
-| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | `extraction_model` (optional) |
+| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | `extraction_model`, `finish_reason` (both optional; `finish_reason` present when stop ≠ "stop", e.g. `"length"`) |
 | `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | re-extraction due to model mismatch |
 | `rag.extraction.batch.timed.out` | `file`, `chunk_count`, `timeout_seconds`, `duration_seconds` | dynamic per-batch timeout exceeded |
 | `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | all chunks exceeded max_attempts; no pipeline call |

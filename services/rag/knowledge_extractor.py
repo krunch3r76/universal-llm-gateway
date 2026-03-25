@@ -1,8 +1,11 @@
 """LLM-based structured knowledge extraction via the rag-extraction pipeline.
 
 At index time, this module calls the ``rag-extraction`` pipeline (via Stargate)
-to extract structured knowledge from each document chunk.  The extraction schema
-captures:
+to extract structured knowledge from each document chunk. This is a RAG-specific
+extraction — independent of Cortex — that treats extracted names and topics as
+retrieval vocabulary rather than knowledge graph nodes.
+
+The extraction schema captures:
 
   Entities:    named concepts with typed categories (component, protocol, config key, …)
                and key-value facets (e.g. port: 9999, role: master).
@@ -17,11 +20,14 @@ Results are returned as a list of ``ExtractedKnowledge`` objects, one per chunk.
 Parsed results flow to two destinations:
   1. ``extraction_wiring.py`` writes property index entries (``prop.name@@``,
      ``prop.type@@``, ``prop.facet@@``, ``prop.rel@@``, ``prop.topic@@``) to the
-     SQLite property inverted index for hybrid search at query time.
+     SQLite property inverted index. Entity names and topics become seed terms for
+     IDF-weighted corpus expansion in Pool B (``term_expansion.idf_expand``) and
+     for metadata score adjustment (``metadata_boost.apply_metadata_boost``).
   2. The ``extraction`` and ``extraction_schema_version`` fields are stored in
-     ChromaDB chunk metadata for cross-chunk merging at query time
-     (``entity_merging.py``).
+     ChromaDB chunk metadata for cross-chunk entity merging at answer generation
+     time (``entity_merging.py``).
 
+∀ file: one extraction call covers all chunks (MapExecutor fan-out).
 Invariant: ∀ file: (∀ chunk extracted in one call) ∨ (∀ chunk unextracted).
 Partial writes were implemented twice and reverted twice — see lessons.
 
@@ -417,9 +423,19 @@ async def _call_extraction(
     )
     response.raise_for_status()
     body = response.json()
-    content = body["choices"][0]["message"]["content"]
+    choice = body["choices"][0]
+    content = choice["message"]["content"]
+    finish_reason = choice.get("finish_reason")
+    if finish_reason == "length":
+        logger.warning(
+            "Extraction batch hit max_tokens (finish_reason=length) for %d chunks"
+            " — map output truncated; trailing chunks will be missing",
+            len(chunk_ids),
+        )
     parsed = _parse_map_response(content, chunk_ids)
-    timing = body.get("pipeline_timing") or {}
+    timing: dict[str, object] = dict(body.get("pipeline_timing") or {})
+    if finish_reason and finish_reason != "stop":
+        timing["finish_reason"] = finish_reason
     return parsed, timing
 
 

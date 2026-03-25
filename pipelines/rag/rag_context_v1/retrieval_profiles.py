@@ -1,11 +1,16 @@
 """Retrieval profiles: loading, caching, and multi-layer parameter resolution.
 
-Resolution precedence (highest to lowest):
-    runtime pipeline_options > exact profile[consumer_model] > model_class[consumer_model]
-    > tier[consumer_tier] > yaml_defaults
+``resolve_retrieval_params`` merge (highest to lowest):
 
-The ``resolve_retrieval_params`` function implements this merge and is called by
-the ``rag_multi_retrieve_v1`` handler.
+    runtime pipeline_options > exact profile[consumer_model] >
+    model_class[consumer_model] > tier[consumer_tier] > yaml_defaults
+
+Per-scope defaults from ``retrieval-profiles.yaml`` (``scope_defaults``) are
+applied in ``rag_query_retrieve`` *after* retrieval scope is resolved. A key from
+``scope_defaults`` is applied only if that key was not set by ``runtime`` or by
+any of tier / model_class / exact_model profile entries (so scope defaults
+override pipeline YAML defaults but never clobber explicit caller or consumer
+profile tunables).
 """
 
 from __future__ import annotations
@@ -77,6 +82,7 @@ class ResolvedParams:
     model_class_profile: dict[str, Any]
     exact_model_profile: dict[str, Any]
     effective: dict[str, Any]
+    scope_profile: dict[str, Any]
     top_k: int
     max_chunks: int
     rrf_k: int
@@ -158,6 +164,7 @@ def resolve_retrieval_params(
         model_class_profile=model_class_profile,
         exact_model_profile=exact_model_profile,
         effective=effective,
+        scope_profile={},
         top_k=max(1, int(effective.get("rag_top_k_per_query", 10))),
         max_chunks=max(1, int(effective.get("rag_max_chunks", 20))),
         rrf_k=max(1, int(effective.get("rag_rrf_k", 35))),

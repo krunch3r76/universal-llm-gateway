@@ -299,6 +299,16 @@ async def execute_with_retry(
     retry_started = time.monotonic()
     retry_count = 0
 
+    # Publish a monotonic deadline so inner mechanisms (CapacityPool,
+    # pre-route queue, eviction wait) use the full budget instead of
+    # short per-attempt timeouts that destroy FIFO queue ordering.
+    effective_capacity_budget = capacity_timeout_s
+    if context.request_timeout_hint:
+        effective_capacity_budget = min(
+            context.request_timeout_hint, capacity_timeout_s
+        )
+    context._capacity_deadline_mono = retry_started + effective_capacity_budget
+
     try:
         while True:
             try:
@@ -393,12 +403,52 @@ async def execute_with_retry(
                 if not (is_capacity or is_upstream or is_all_excluded):
                     raise
 
+                # ── Capacity errors are terminal ──
+                # Inner mechanisms (CapacityPool FIFO queue, pre-route queue,
+                # eviction wait) already consumed the full capacity budget.
+                # Retrying here would re-enter the pool at the back of the
+                # queue, destroying FIFO ordering and wasting time.
+                if is_capacity:
+                    elapsed = time.monotonic() - retry_started
+                    logger.warning(
+                        "🛑 [REQ:%s] Capacity exhausted for %s "
+                        "(budget=%.0fs, elapsed=%.1fs)",
+                        request_short_id,
+                        model_id,
+                        effective_capacity_budget,
+                        elapsed,
+                    )
+                    if proxy.event_bus:
+                        try:
+                            await proxy.event_bus.publish_async_nowait(
+                                RequestCapacityTimeout(
+                                    request_id=context.request_id,
+                                    model_id=model_id,
+                                    timeout_seconds=effective_capacity_budget,
+                                    retry_count=0,
+                                    elapsed_s=round(elapsed, 2),
+                                    pipeline_step_id=context.pipeline_step_id,
+                                )
+                            )
+                        except Exception as emit_exc:
+                            logger.warning(
+                                "Failed to emit RequestCapacityTimeout for %s: %s",
+                                context.request_id,
+                                emit_exc,
+                            )
+                    raise _retry_timeout_exception(
+                        is_capacity=True,
+                        model_id=model_id,
+                        effective_timeout=effective_capacity_budget,
+                        retry_count=0,
+                        elapsed_s=elapsed,
+                        last_exc=exc,
+                    ) from exc
+
+                # ── Upstream / all-excluded retry ──
                 retry_count += 1
 
                 if is_upstream:
-                    # Upstream failure: exclude the failed gateway so the
-                    # DecisionEngine routes to a different one on retry.
-                    # Also clear the stability binding (removes bias).
                     failed_gw = _extract_failed_gateway_id(exc)
                     if failed_gw:
                         context.excluded_gateway_ids.add(failed_gw)
@@ -416,9 +466,6 @@ async def execute_with_retry(
                     if tracker is not None:
                         tracker.clear_binding(context.selected_model)
                 elif is_all_excluded:
-                    # All gateways failed — model may not be loaded yet.
-                    # Clear exclusions so routing can try all gateways again
-                    # after a backoff.  Bounded by upstream_retry_timeout.
                     logger.info(
                         "🔄 [REQ:%s] All gateways excluded for %s; "
                         "clearing %d exclusions for re-queue (retry #%d)",
@@ -433,49 +480,18 @@ async def execute_with_retry(
                     if tracker is not None:
                         tracker.clear_binding(context.selected_model)
 
-                # Per-request hint is authoritative when present (set by
-                # pipeline step timeout or explicit X-Request-Timeout header).
-                # For capacity errors, cap at queue_timeout to avoid spinning
-                # past the gateway's own queue budget.  For upstream errors
-                # the hint is used directly — the caller owns the deadline.
-                # Blanket defaults apply only for ad-hoc requests without a hint.
                 if context.request_timeout_hint:
-                    if is_capacity:
-                        effective_timeout = min(
-                            context.request_timeout_hint, capacity_timeout_s
-                        )
-                    else:
-                        effective_timeout = min(
-                            context.request_timeout_hint, upstream_timeout_s
-                        )
-                elif is_capacity:
-                    effective_timeout = capacity_timeout_s
+                    effective_timeout = min(
+                        context.request_timeout_hint, upstream_timeout_s
+                    )
                 else:
                     effective_timeout = upstream_timeout_s
 
                 elapsed = time.monotonic() - retry_started
                 remaining = effective_timeout - elapsed
                 if remaining <= 0:
-                    if is_capacity and proxy.event_bus:
-                        try:
-                            await proxy.event_bus.publish_async_nowait(
-                                RequestCapacityTimeout(
-                                    request_id=context.request_id,
-                                    model_id=model_id,
-                                    timeout_seconds=effective_timeout,
-                                    retry_count=retry_count,
-                                    elapsed_s=round(elapsed, 2),
-                                    pipeline_step_id=context.pipeline_step_id,
-                                )
-                            )
-                        except Exception as exc:
-                            logger.warning(
-                                "Failed to emit RequestCapacityTimeout for %s: %s",
-                                context.request_id,
-                                exc,
-                            )
                     raise _retry_timeout_exception(
-                        is_capacity=is_capacity,
+                        is_capacity=False,
                         model_id=model_id,
                         effective_timeout=effective_timeout,
                         retry_count=retry_count,
@@ -486,21 +502,13 @@ async def execute_with_retry(
                 if await request.is_disconnected():
                     raise asyncio.CancelledError("Client disconnected")
 
-                # All-excluded uses longer backoff: model may need time to
-                # load (~10-30s).  2s → 4s → 8s → 10s(cap).
                 if is_all_excluded:
                     base_delay = min(10.0, 2.0 * (2 ** min(retry_count - 1, 3)))
                 else:
                     base_delay = min(2.0, 0.05 * (2 ** min(retry_count - 1, 6)))
                 delay_s = min(base_delay * random.uniform(0.5, 1.5), remaining)
 
-                error_kind = (
-                    "Capacity"
-                    if is_capacity
-                    else "All-excluded"
-                    if is_all_excluded
-                    else "Upstream"
-                )
+                error_kind = "All-excluded" if is_all_excluded else "Upstream"
                 log_level = logger.info if retry_count <= 3 else logger.debug
                 log_level(
                     "🔄 [REQ:%s] %s retry for %s "

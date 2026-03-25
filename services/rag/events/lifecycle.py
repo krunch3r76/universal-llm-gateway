@@ -47,6 +47,36 @@ def rag_watch_initial_started(*, path: str, total_files: int) -> Event:
 
 
 @event_factory
+def rag_watch_initial_progress(
+    *,
+    path: str,
+    total_files: int,
+    processed: int,
+    reindexed: int,
+    unchanged: int,
+    errors: int,
+) -> Event:
+    """Emitted periodically during a startup sweep as files are processed.
+
+    Invariant: processed == reindexed + unchanged + errors.
+    Invariant: processed <= total_files.
+    Emitted approximately every 10% of total_files. Consumed by rag-status --watch
+    to show a live progress bar for the sweep.
+    """
+    return Event(
+        signal="rag.watch.initial.progress",
+        payload={
+            "path": path,
+            "total_files": total_files,
+            "processed": processed,
+            "reindexed": reindexed,
+            "unchanged": unchanged,
+            "errors": errors,
+        },
+    )
+
+
+@event_factory
 def rag_watch_initial_complete(
     *,
     path: str,

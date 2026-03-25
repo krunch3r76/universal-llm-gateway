@@ -6,7 +6,8 @@
 #
 # Resolution precedence (highest to lowest):
 #   runtime pipeline_options > exact profile[consumer_model] > model_class[consumer_model]
-#   > tier[consumer_tier] > scope_defaults[scope] > YAML defaults
+#   > tier[consumer_tier] > YAML defaults
+# After scope resolution, scope_defaults[scope] fills keys not set by the above layers.
 #
 # rag_top_k_per_query: candidate generation breadth (vector search)
 # rag_max_chunks: final context budget for downstream consumer (token cost)
@@ -52,16 +53,35 @@ profiles:
   gpt-oss-20b-mxfp4-65536:
     rag_max_chunks: 30
     rag_rrf_k: 35
+# Per-scope defaults — only values that genuinely vary per scope belong here.
+# Diversity behavior (source_diversity_max, habituation, swap) is controlled by
+# the retrieval_path pipeline option ("research" or "general"), not per-scope.
 scope_defaults:
   research:
+    rag_recency_weight: 0.2
+  research_small_llm:
     rag_recency_weight: 0.2
   research_rag_design:
     rag_recency_weight: 0.1
   research_rag_code:
     rag_recency_weight: 0.15
+  all_research:
+    rag_recency_weight: 0.2
   llm_foundations:
     rag_recency_weight: 0.05
+  rag_systems:
+    rag_recency_weight: 0.15
+  knowledge_systems:
+    rag_recency_weight: 0.1
+  prompting:
+    rag_recency_weight: 0.15
+  small_llm_prompting:
+    rag_recency_weight: 0.15
+  llm_prompting:
+    rag_recency_weight: 0.15
   project:
+    rag_recency_weight: 0.0
+  architecture:
     rag_recency_weight: 0.0
   both:
     rag_recency_weight: 0.1

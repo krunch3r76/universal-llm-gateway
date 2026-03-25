@@ -94,6 +94,11 @@ class RequestContext:
         # Capacity token acquired during routing, released after execution
         self.capacity_token: Any | None = None
 
+        # Monotonic deadline for capacity waiting (set by retry loop).
+        # Inner mechanisms (admission, pre-route queue, eviction wait) use
+        # this to compute their remaining timeout instead of static defaults.
+        self._capacity_deadline_mono: float | None = None
+
     @property
     def is_federated(self) -> bool:
         """

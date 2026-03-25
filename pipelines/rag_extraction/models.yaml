@@ -4,3 +4,9 @@ models:
     # Structured extraction: instruct (non-thinking) is appropriate.
     # Available profiles: qwen3-instruct, qwen3-thinking
     profile: qwen3-instruct
+    # NOTE: extraction quality directly determines Pool B expansion effectiveness.
+    # The property index records this model produces are the seeds for idf_expand —
+    # richer entities/topics → more co-occurrence paths → better vocabulary coverage.
+    # A weaker model producing sparser/noisier records would degrade Pool B expansion
+    # and increase Pool A's relative contribution. This tradeoff is untested — all
+    # current retrieval observations are against this model's extraction quality.

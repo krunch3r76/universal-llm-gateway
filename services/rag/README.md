@@ -4,30 +4,76 @@
 
 A semantic search and knowledge management service backed by ChromaDB. Runs as a FastAPI application communicating over Unix domain socket (default: `/tmp/universal-protocol/rag.sock`) or TCP.
 
+## Design Philosophy: Index Smart, Search Cheap
+
+The standard RAG playbook is _index cheap, search smart_ — chunk, embed, and
+compensate for shallow indexing with expensive query-time mechanisms (MMR for
+diversity, LLM rewriting for vocabulary gaps, heavier rerankers for precision).
+
+This architecture inverts that: **index smart, search cheap**. Heavy analytical
+work happens once per document at index time and is amortized across every
+query. At search time, diversity is a score multiplier (counter lookup), exact
+matches come from vocabulary-aware full-text search, and expansion uses
+precomputed corpus statistics — no per-query LLM calls, no pairwise embedding
+comparisons for diversity, no MMR.
+
+The open question being tested: once vocabulary expansion and corpus hints are
+steering sparse retrieval effectively, how much does the dense embedding signal
+actually add? Early evidence suggests the index-time investment has narrowed
+that gap enough to ask seriously.
+
+There is a known limitation: IDF expansion (Inverse Document Frequency — a score that ranks terms by how selectively they appear across documents: rare terms score high, common terms score low) is bounded by the property index
+vocabulary. If the query uses a synonym never extracted as an entity or topic
+in any chunk, expansion returns nothing and Pool A's dense signal is the only
+bridge.
+
+The practical frequency of this gap depends on extraction model quality and corpus vocabulary coverage. Two extraction-pipeline steps determine that quality:
+
+- **Knowledge extraction** — `qwen3-14b` (local, see `pipelines/rag_extraction/models.yaml`). Pulls entities, topics, and relations per chunk into the property index.
+- **Vocabulary classification** — post-processes the property index via `classify_vocabulary.py`. Default mode uses whatever gateway model is loaded; `--mode frontier` routes to cloud/frontier models. A frontier model running over `qwen3-14b`'s output can compensate for gaps — surfacing discriminative register terms the local model underweighted and enriching the vocabulary the expansion can draw from.
+
+All current retrieval observations are against `qwen3-14b` extraction + local vocabulary classification. The weaker-model degradation path and the frontier-classification compensation effect are both untested.
+
 ## Architecture
 
-Index time:
+### Index Time — the Front-Loaded Investment
 
 1. **Chunking** — files are split into semantically coherent chunks using target+pad sizing with paragraph overlap and heading injection. Code files use tree-sitter AST-based chunking.
 2. **Source hashing** — plain SHA-256 of file bytes is stored as `source_hash` on every chunk (PDF, Markdown, HTML, etc.). This hash serves as the universal join key to the `articles` table for query-time metadata enrichment.
-3. **Knowledge extraction** — the `rag-extraction` LLM pipeline extracts entities, types, facets, topics, and relations from each chunk. Results are stored in both ChromaDB metadata and a SQLite-backed property inverted index.
-4. **Contextualization** — on by default (omit `contextualize_model` or set it to a model ID). Per-chunk LLM-generated context prefixes are prepended only for embedding; stored document text stays unchanged. Set `contextualize_model: ""` to disable. Improves retrieval when chunks share overlapping vocabulary.
-5. **Embedding** — chunks (with context prefix when contextualization ran) are embedded via the configured local embedding model (default: `qwen3-embedding-8b`) through the Gateway and stored in ChromaDB with cosine similarity.
-6. **Pending journal** — tracks in-flight indexing operations. On restart, interrupted files are re-indexed before the watcher starts, eliminating dangling pointers.
+3. **Knowledge extraction** — the `rag-extraction` LLM pipeline extracts entities, types, facets, topics, and relations from each chunk. Results are stored in both ChromaDB metadata and a SQLite-backed property inverted index. This is the most expensive index-time step, but it enables deterministic metadata boost and IDF expansion at search time.
+4. **Full-text indexing (FTS5)** — every chunk's text is indexed in a SQLite FTS5 full-text index alongside the vector store. This powers Pool B sparse retrieval with BM25 scoring — no embedding model involved. Lives in the same `rag_metadata.db` as the property index.
+5. **Contextualization** — on by default (omit `contextualize_model` or set it to a model ID). Per-chunk LLM-generated context prefixes are prepended only for embedding; stored document text stays unchanged. Set `contextualize_model: ""` to disable. Improves retrieval when chunks share overlapping vocabulary.
+6. **Embedding** — chunks (with context prefix when contextualization ran) are embedded via the configured local embedding model (default: `qwen3-embedding-8b`) through the Gateway and stored in ChromaDB with cosine similarity.
+7. **Pending journal** — tracks in-flight indexing operations. On restart, interrupted files are re-indexed before the watcher starts, eliminating dangling pointers.
 
-Search time:
+### Post-Index Enrichment — Corpus-Level Analysis
 
-7. **Vector search** — ChromaDB cosine similarity retrieves top-k candidate chunks.
-8. **Property boost** — entity/topic/relation matches from the property index apply a configurable score boost to matching chunks (hybrid structured+vector search).
-9. **Article enrichment** — unique `source_hash` values from the result set are batch-looked up in the `articles` table. Matching article metadata (`article_title`, `article_authors`, `article_venue`, `article_published_date`, `article_doi`) is merged into each chunk's metadata dict.
-10. **Recency scoring** — additive recency weight based on `published_date` (preferred for research papers) or `indexed_at` timestamps. Naive ISO timestamps are normalized to UTC before scoring to avoid timezone subtraction errors.
-11. **BM25 sidecar merge** — sparse BM25 candidates are merged with dense vector results via mini-RRF. Chroma fetch payloads are length-normalized (pad/trim) and invalid metadata rows are skipped to avoid strict zip failures.
+After bulk indexing, three derived artifacts are built from the property index:
 
-The pipeline layer (`rag-context`, `rag-answer`, `rag-answer-deep`) handles query rewriting, facet-driven retrieval, RRF multi-query merge, reranking, and answer generation on top of this service. See [Pipeline Layer](#pipeline-layer-rag-context) below.
+- **Corpus hints** (`corpus_hints.py`) — aggregates terms from the property index per scope, computing co-occurrence statistics. At search time, these power IDF-weighted corpus expansion: for any query term, the system knows which other terms frequently appear alongside it in the corpus. This replaces LLM-based query expansion with deterministic corpus statistics.
+- **Scope vocabulary** (`scripts/rag/classify_vocabulary.py`) — LLM-classifies corpus hint terms into register categories (technical, domain-specific, general). Combined with IDF weighting, this steers Pool B expansion toward the most discriminative vocabulary.
+- **Noise classification** (`scripts/rag/classify_noise.py`) — LLM-classifies chunks to tag bibliographies, boilerplate, and non-intelligible content for filtering.
+
+### Search Time — Two-Pool Retrieval
+
+The RAG service exposes low-level search primitives (`/search`, `/embed_batch`, `/rerank`). The pipeline layer orchestrates these into a two-pool architecture:
+
+8. **Pool A — broad semantic retrieval** — ChromaDB cosine similarity + BM25 sidecar, merged via mini-RRF. Finds text related to the _idea_ even when query vocabulary differs from corpus text. Standard dense+sparse hybrid.
+9. **Pool B — vocabulary-aware sparse retrieval** — FTS5 full-text search with BM25 ranking, no embedding model. Queries are factored into sub-phrases (phrase extraction) and augmented with corpus-derived co-occurrence terms (IDF expansion from corpus hints). Each facet is dispatched as its own keyword query, catching identifiers and technical terms that dense search blurs. Pool B searches the full corpus independently — it doesn't re-score Pool A's results.
+10. **RRF merge** — Pool A and Pool B results are merged via reciprocal rank fusion. Rank position is the only signal; cosine distances from different queries are not comparable.
+11. **Metadata boost** — entity/topic/relation overlap between query and chunk metadata adjusts scores post-RRF. Deterministic — no LLM calls.
+12. **Source habituation** — graduated diversity scoring that tracks _where_ results come from, not content similarity:
+    - _Lateral_ (Pool B): first hit per source gets a boost; subsequent hits from the same source are penalized.
+    - _Global_ (all pools): each additional chunk from an already-represented source is penalized exponentially. A counter lookup, not a pairwise comparison.
+13. **Pool B source swap** — when a source has Pool B hits, redundant Pool A chunks from the same source are candidates for eviction. Binary mode (default): evict all. Graduated mode: retain Pool A chunks whose embedding distance from Pool B hits exceeds a threshold.
+14. **Article enrichment** — unique `source_hash` values from the result set are batch-looked up in the `articles` table. Matching article metadata (`article_title`, `article_authors`, `article_venue`, `article_published_date`, `article_doi`) is merged into each chunk's metadata dict.
+15. **Recency scoring** — additive recency weight based on `published_date` (preferred for research papers) or `indexed_at` timestamps. Naive ISO timestamps are normalized to UTC before scoring to avoid timezone subtraction errors.
+
+The pipeline layer (`rag-context`, `rag-answer`, `rag-answer-deep`) orchestrates retrieval, reranking, and answer generation. See [Pipeline Layer](#pipeline-layer-rag-context) below.
 
 ## Pipeline Layer (`rag-context`)
 
-The `rag-context` pipeline (v2.0) runs on top of the RAG service and implements fast, zero-LLM-call retrieval with cross-encoder reranking. Exposed as a virtual model ID (`rag-context`, `rag-answer`, `rag-answer-deep`) through Stargate. Average end-to-end latency: **~1.6s**.
+The `rag-context` pipeline (v2.0) runs on top of the RAG service and implements the two-pool retrieval architecture with cross-encoder reranking. Zero LLM calls on the default path. Exposed as a virtual model ID (`rag-context`, `rag-answer`, `rag-answer-deep`) through Stargate. Average end-to-end latency: **~1.6s**.
 
 ### Pipeline Steps
 
@@ -35,34 +81,60 @@ The `rag-context` pipeline (v2.0) runs on top of the RAG service and implements 
 |------|---------|-------|-------------|
 | `direct_scope` | `rag_direct_scope_v1` | No | Fixed scope resolution (default `"all"`, overridable via `scope_override`) |
 | `generate_hyde` | `generate` | Yes (conditional) | Hypothetical document embedding — only runs when `hyde_enabled: true` (default: off) |
-| `retrieve_assemble` | `rag_multi_retrieve_v1` | No | Batched embedding + concurrent IDF expansion + two-pool retrieval + RRF merge |
+| `retrieve_assemble` | `rag_multi_retrieve_v1` | No | Batched embedding + concurrent IDF expansion + two-pool retrieval + RRF merge + source habituation |
 | `rerank_assemble` | `rag_rerank_assemble_v1` | Depends on mode | Cross-encoder (default, ~100ms) or generative sliding-window reranker |
 
 ### Pre-Retrieval: Inline Term Expansion
 
 Query factoring and IDF expansion run concurrently with dense retrieval (zero added latency). Pure functions in `term_expansion.py`:
 
-1. **Phrase extraction** — decomposes the query into sub-phrases for independent sparse-only BM25 queries (pool B)
-2. **IDF-weighted corpus expansion** — queries the property index for terms that co-occur with the query's most discriminative words, surfacing vocabulary the user didn't use but the corpus contains
+1. **Phrase extraction** — decomposes the query into sub-phrases for independent sparse-only BM25 queries (Pool B)
+2. **IDF-weighted corpus expansion** — queries the property index for terms that co-occur with the query's most discriminative words, surfacing vocabulary the user didn't use but the corpus contains. Uses corpus hints built at index time — deterministic corpus statistics, not LLM guessing.
 
 These run via `asyncio.to_thread` alongside the pool A embedding calls, eliminating the ~300ms serial bottleneck of the old `expand_terms` pipeline step.
 
-### Retrieval: Two-Pool Hybrid with Batched Embedding
+### Retrieval: Two-Pool Architecture with Batched Embedding
 
 All query embeddings are computed in a **single batched GPU pass** via the `/embed_batch` endpoint before dispatch, then passed as pre-computed vectors to individual `/search` calls. This eliminates sequential per-query GPU embedding passes.
 
-**Pool A — Dense + Sparse hybrid**: ChromaDB cosine similarity + BM25 sidecar, one query per original + HyDE variant, merged via RRF. Uses pre-computed embeddings.
+**Pool A — Dense + Sparse hybrid**: ChromaDB cosine similarity + BM25 sidecar, one query per original + HyDE variant, merged via RRF. Uses pre-computed embeddings. Standard retrieval — finds text related to the _idea_ even when the query uses different words.
 
-**Pool B — Named-entity sparse-only**: for each facet from inline IDF expansion, constructs an OR-joined FTS5 query and dispatches with `sparse_only=True` (bypasses embedding). Surfaces exact-match hits that dense embedding dilutes.
+**Pool B — Vocabulary-aware sparse retrieval**: For each facet from inline IDF expansion, constructs an OR-joined FTS5 query and dispatches with `sparse_only=True` (bypasses embedding entirely). Pool B searches the full corpus independently — it doesn't re-score Pool A's results. Exact-match chunks enter the merged list with scores reflecting their match strength, evaluated on their own terms rather than competing against twenty fuzzy results in a single ranked list.
 
-Post-RRF scoring adjustments:
-- Pool B chunks receive a `facet_pool_score_boost` multiplier (default 1.5×) with **lateral source habituation**: the highest-scoring chunk from a given source gets the full boost; subsequent chunks from the same source are inhibited (÷boost)
-- **Global source habituation**: subsequent chunks from any already-represented source receive exponentially decayed scores, ensuring coverage breadth
-- **Pool B source swap**: if a source has any Pool B hit, all Pool A chunks from that same source are evicted
+### Post-Merge Scoring: Source Habituation
 
-### Reranking
+Source habituation is the diversity mechanism. It targets _where_ results come from (source identity), not what they contain (content similarity). This is a fundamentally different axis from MMR:
+
+- **Lateral source habituation (Pool B)**: the highest-scoring chunk from a given source gets the full `facet_pool_score_boost` (default 1.5×); subsequent chunks from the same source are penalized (÷boost). Prevents any single source from monopolizing boosted Pool B slots. **Tradeoff**: a second chunk from the same source may be richer than the first — the system accepts this risk in exchange for source breadth. Callers that need depth from a single authoritative source should set `facet_pool_score_boost: 1.0` or use `retrieval_path: "general"`.
+- **Global source habituation**: after sorting, each additional chunk from an already-represented source is penalized exponentially (`score /= factor^n`, n ≥ 1). Applies to both pools. A counter lookup — no embedding comparisons, no dot products.
+- **Pool B source swap**: when a source has Pool B hits, Pool A chunks from that source are candidates for eviction. Binary mode (default, `facet_pool_swap_distance_threshold=0.0`): evict all. Graduated mode (threshold > 0): retain up to `facet_pool_swap_max_retain` Pool A chunks whose cosine distance from every Pool B hit exceeds the threshold.
+
+The Pool B source swap and corpus expansion are in productive tension: expansion reliably surfaces the same prominent sources Pool A finds via dense similarity — overlap is the expected steady state, not an edge case. Eviction is the routine consequence: Pool A's representation of those sources is replaced by Pool B's, which arrived via more precise vocabulary. The value of expansion is what it produces beyond the overlap — sources Pool A never found at all fill the freed slots.
+
+For research papers (focused, single-topic documents), binary eviction is safe: when both pools converge on the same paper, they land on the same core content. Graduated mode rarely changes the outcome. For long multi-topic documents (design specs, architecture files), both pools converge on the same file but via different sections — graduated mode retains Pool A chunks covering sections Pool B didn't reach. For project and architecture documentation — where queries often have a single authoritative source and depth matters more than breadth — the swap is disabled entirely via `retrieval_path: "general"`. Tuning the swap threshold is not the right lever for those corpora; disabling the whole diversity layer is.
+
+> **Observation status**: The above characterization of overlap frequency, binary vs graduated outcomes, and expansion as the primary diversity mechanism is from pipeline trace analysis, not formal evaluation. See thread 156 (agent-bus) for the planned post-reindex quality comparison.
+
+### Two Retrieval Paths: Research and General
+
+Not every query benefits from source diversity. Research queries want breadth — evidence from multiple independent papers. Project and documentation queries want depth — the single best document may contain the entire answer, and penalizing it to surface a tangentially related file is counterproductive.
+
+The `retrieval_path` pipeline option selects a named diversity preset. The caller chooses the path; the pipeline applies it before any other tunable resolution.
+
+| `retrieval_path` | `source_diversity_max` | `source_habituation_factor` | `facet_pool_swap_enabled` | Behavior |
+|-------------------|------------------------|-----------------------------|---------------------------|----------|
+| `research` (default) | 3 | 1.5 | true | Aggressive diversity — caps per-source chunks, penalizes repetition, swaps redundant Pool A hits |
+| `general` | 0 (disabled) | 1.0 (disabled) | false | Pure relevance — no per-source cap, no habituation penalty, no swap eviction |
+
+The two-pool architecture, vocabulary expansion, and metadata boost apply identically on both paths. Only the post-merge diversity layer changes. Individual diversity keys (`source_diversity_max`, `source_habituation_factor`, `facet_pool_swap_enabled`) can still be overridden per request via `pipeline_options` — the path is a named preset, not a lock.
+
+Example: `project-assistant` forwards `retrieval_path: "general"` to `rag-context` so project documentation queries get depth-first ranking.
+
+### Reranking: Refine, Don't Bulldoze
 
 Default mode: **cross-encoder** (`rerank_mode: cross_encoder`). A `BAAI/bge-reranker-v2-m3` cross-encoder scores (query, passage) pairs in a single forward pass — ~80-175ms for 14 passages on GPU. Scores are fused with RRF prior: `final = prior_weight × rrf_score + (1 − prior_weight) × cross_encoder_score`, bounded by `rerank_max_movement`.
+
+The 0.70/0.30 default fusion keeps the retrieval signal dominant. A **movement cap** (default 3 positions) prevents a marginally relevant chunk from leapfrogging a stronger retrieval result regardless of reranker score.
 
 Alternative mode: **generative** (`rerank_mode: generative`). Sliding-window LLM reranker with facet-aware prompting. Higher quality ceiling but 4-7s latency.
 
@@ -72,6 +144,7 @@ The cross-encoder model loads lazily on first call and stays resident (~550MB GP
 
 | Option | Default | Effect |
 |--------|---------|--------|
+| `retrieval_path` | `research` | `general` for depth-first ranking (no diversity penalties). Named preset — sets `source_diversity_max`, `source_habituation_factor`, `facet_pool_swap_enabled`. |
 | `rerank_mode` | `cross_encoder` | `generative` for LLM sliding-window reranker |
 | `rerank_enabled` | `true` | `false` skips reranking entirely |
 | `hyde_enabled` | `false` | `true` adds one LLM call for hypothetical document embedding |
@@ -80,6 +153,9 @@ The cross-encoder model loads lazily on first call and stays resident (~550MB GP
 | `rerank_max_candidates` | `14` | Passages sent to cross-encoder |
 | `rerank_prior_weight` | `0.70` | Weight of RRF score vs reranker score |
 | `rerank_max_movement` | `3` | Max rank positions a chunk can shift during reranking |
+| `source_diversity_max` | `3` | Max chunks per source post-RRF; `0` disables. Overrides `retrieval_path` preset. Set `0` when a single authoritative source should contribute as many chunks as relevance warrants. |
+| `source_habituation_factor` | `1.5` | Exponential penalty per additional same-source chunk; `1.0` disables. Overrides preset. Set `1.0` when depth from one source matters more than breadth across sources. |
+| `facet_pool_swap_enabled` | `true` | Pool B source swap; `false` disables eviction. Overrides preset. |
 
 ### Pipeline IDs
 
@@ -357,6 +433,16 @@ For subsystem-specific investigation, reference these paths directly:
 | Enrichment runbook | `tasks/runbooks/rag-post-index-refresh.md` | Operator post-index workflow |
 | RAG config | `services/rag/config.py` | `RagConfig` dataclass, YAML parsing |
 | MCP RAG tools | `services/mcp-server/tools/rag.py` | `rag_search`, `rag_list_scopes`, prefix passthrough |
+
+## Known Gaps
+
+### Source-depth retrieval — "give me more from this source"
+
+Context blocks are attributed with source title, authors, and date, so an agent reading the injected context can identify which sources contributed. What it cannot do is request additional chunks from a specific source — there is no retrieval operation that accepts a source path or title and returns more from it.
+
+The current workaround is a follow-up query, which relies on the same source surfacing again through normal retrieval. For an agent that has already identified a relevant source and needs depth (not breadth), this is wasteful.
+
+The intended design: breadth-first retrieval across the corpus surfaces which sources are relevant; the agent then requests depth from the ones that matter. The attribution metadata already makes the first half possible. The retrieval interface needs to expose the second half — a source-scoped fetch that bypasses diversity mechanisms and returns as many chunks from the target source as relevance warrants. Tracked as `todo:rag-source-depth-retrieval`.
 
 ## Key Files
 

@@ -1,3 +1,11 @@
+"""RAG service configuration: YAML parsing and dataclass definitions.
+
+Loads ``~/.gateway/rag.yaml`` into typed dataclasses (``RagConfig``,
+``WatchDirectory``, ``KnowledgeExtractionConfig``). Configuration controls
+watch directories, scopes, embedding model, knowledge extraction settings,
+contextualization, and post-index enforcement watermarks.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -104,6 +112,10 @@ class RagConfig:
     # Seconds between watcher reconcile sweeps (recover files missed by inotify). 0 = disabled.
     # Higher values reduce idle CPU; default 300 (5 min).
     reconcile_interval_s: float = 300.0
+    # Separate worker limit for reconcile sweeps. Prevents reconcile retries
+    # from saturating the model queue and crowding out fresh indexing work.
+    # Defaults to 3 (independent of index_workers).
+    reconcile_workers: int = 3
     # Default for scripts/rag/classify_vocabulary.py when calling vocab-classify-v1 pipeline.
     vocabulary_mode: str = "local"
     # Per-file timeout for watcher workers (initial reindex + reconcile). 0 = no timeout.
@@ -411,6 +423,11 @@ def load_config() -> RagConfig:
         reconcile_interval_s = float(raw_reconcile)
     else:
         reconcile_interval_s = 300.0
+    raw_reconcile_workers = parsed_root.get("reconcile_workers", 3)
+    if isinstance(raw_reconcile_workers, int) and raw_reconcile_workers >= 1:
+        reconcile_workers = raw_reconcile_workers
+    else:
+        reconcile_workers = 3
     raw_file_timeout = parsed_root.get("file_timeout_s", 600.0)
     if isinstance(raw_file_timeout, int | float) and raw_file_timeout >= 0:
         file_timeout_s = float(raw_file_timeout)
@@ -436,6 +453,7 @@ def load_config() -> RagConfig:
         post_index_enforcement=post_index_enforcement,
         contextualize_model=contextualize_model,
         reconcile_interval_s=reconcile_interval_s,
+        reconcile_workers=reconcile_workers,
         file_timeout_s=file_timeout_s,
         vocabulary_mode=vocabulary_mode,
     )

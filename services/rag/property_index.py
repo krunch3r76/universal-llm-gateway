@@ -1334,6 +1334,17 @@ class PropertyIndex:
         ).fetchone()
         return row is not None
 
+    def get_indexed_source_count(self) -> int:
+        """Return the number of sources committed to ChromaDB (embed complete).
+
+        ∀ source ∈ indexed_sources: ChromaDB upsert completed for that source.
+        This count includes sources with extraction failures (they are embedded
+        but pending re-extraction) and excludes sources where the process was
+        interrupted before upsert_indexed_source was called.
+        """
+        conn = self._ensure_conn()
+        return conn.execute("SELECT COUNT(*) FROM indexed_sources").fetchone()[0]
+
     def get_failure_snapshot(self) -> FailureSnapshot:
         """Return failed extraction counts used by operational status endpoints."""
         return FailureSnapshot(

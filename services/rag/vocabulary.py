@@ -1,5 +1,16 @@
 """LLM scope vocabulary classification and automatic gap repair.
 
+Part of the post-index enrichment pipeline. Classifies terms from corpus hints
+into register categories (technical, domain-specific, general) per scope. Combined
+with IDF weighting, this steers Pool B's corpus expansion toward the most
+discriminative vocabulary — terms that distinguish one scope's content from another.
+
+The classifier determines which terms are worth expanding into during search:
+high-register domain terms are strong expansion candidates, while general terms
+are suppressed. This is a key mechanism in the index-smart-search-cheap design:
+the classification cost is paid once, and every subsequent query benefits from
+vocabulary-aware expansion without LLM calls.
+
 Shared between the CLI script and RAG lifecycle (startup / reconcile / watcher).
 """
 

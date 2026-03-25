@@ -25,6 +25,14 @@ options:
   noise_filter_disable: false
   synthetic_scope: ""
   synthetic_scope_demotion: 0.6
+  # "research" (default): enables source habituation, per-source cap, and Pool B swap.
+  #   Observed behavior: expansion reliably surfaces sources Pool A finds too, so
+  #   pool overlap is routine and binary eviction fires regularly. Expansion earns
+  #   its keep by also reaching sources Pool A missed — freed eviction slots go there.
+  # "general": disables all three — pure relevance, no diversity penalties.
+  #   For project docs, architecture specs, any corpus where a single authoritative
+  #   source is expected. Individual keys override the preset.
+  retrieval_path: research
   source_diversity_max: 3
   metadata_boost_enabled: true
   metadata_boost_weight: 0.20

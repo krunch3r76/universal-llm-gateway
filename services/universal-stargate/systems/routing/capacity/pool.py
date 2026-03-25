@@ -86,6 +86,24 @@ class _Waiter:
     future: asyncio.Future[str]
 
 
+class QueueFullError(Exception):
+    """Raised when the FIFO queue for a model is at max depth.
+
+    Callers should convert this to a non-retryable 503 immediately —
+    the queue is overloaded and adding more waiters degrades latency
+    for requests already in the queue.
+    """
+
+    def __init__(self, model_id: str, current_depth: int, max_depth: int) -> None:
+        self.model_id = model_id
+        self.current_depth = current_depth
+        self.max_depth = max_depth
+        super().__init__(
+            f"Capacity queue full for {model_id} "
+            f"(depth={current_depth}, max={max_depth})"
+        )
+
+
 class CapacityPool:
     """Per-(gateway, model) capacity pool with FIFO admission queues.
 
@@ -100,8 +118,13 @@ class CapacityPool:
     only observable as latency degradation under load).
     """
 
-    def __init__(self, event_bus: _EventBusLike | None = None) -> None:
+    def __init__(
+        self,
+        event_bus: _EventBusLike | None = None,
+        max_queue_depth: int = 0,
+    ) -> None:
         self._event_bus = event_bus
+        self._max_queue_depth = max_queue_depth
         self._capacity: dict[_Slot, int] = {}
         self._in_flight: dict[_Slot, int] = {}
         self._queues: dict[str, deque[_Waiter]] = {}
@@ -315,21 +338,44 @@ class CapacityPool:
         queued = False
 
         if gateway_id is None:
+            current_depth = len(self._queues.get(model_id, deque()))
+            if self._max_queue_depth > 0 and current_depth >= self._max_queue_depth:
+                logger.warning(
+                    "Queue full for %s: depth=%d, max=%d — rejecting %s",
+                    model_id,
+                    current_depth,
+                    self._max_queue_depth,
+                    request_id,
+                )
+                self._emit_queue_full(request_id, model_id, current_depth)
+                raise QueueFullError(model_id, current_depth, self._max_queue_depth)
+
             queued = True
+            queue_position = current_depth + 1
             logger.info(
                 "🔍 acquire_token: no immediate slot for %s/%s "
-                "(allowed_gws=%s) — queueing. Snapshot: %s",
+                "(allowed_gws=%s, position=%d) — queueing",
                 request_id,
                 model_id,
                 list(allowed_gateway_ids),
-                self.get_snapshot(),
+                queue_position,
             )
+            self._emit_queue_entered(
+                request_id,
+                model_id,
+                queue_position,
+                len(allowed_gateway_ids),
+                timeout_s,
+            )
+            queue_start = time.monotonic()
             gateway_id = await self._wait_for_slot(
                 request_id,
                 model_id,
                 allowed_gateway_ids,
                 timeout_s,
             )
+            wait_ms = (time.monotonic() - queue_start) * 1000
+            self._emit_queue_admitted(request_id, model_id, gateway_id, wait_ms)
 
         return CapacityToken(
             gateway_id=gateway_id,
@@ -424,6 +470,7 @@ class CapacityPool:
             f"(position {pos}, allowed: {len(allowed_gateway_ids)} gw)"
         )
 
+        wait_start = time.monotonic()
         try:
             if timeout_s is not None:
                 gateway_id = await asyncio.wait_for(future, timeout=timeout_s)
@@ -431,12 +478,15 @@ class CapacityPool:
                 gateway_id = await future
             logger.info(f"Admitted: {request_id} → {gateway_id}/{model_id}")
             return gateway_id
-        except (TimeoutError, asyncio.CancelledError):
-            # Race condition guard: _dispatch may have already admitted us
-            # (popped from queue, incremented in_flight, set future result)
-            # before our task was cancelled.  Without this, in_flight leaks
-            # permanently — the slot is never released and all subsequent
-            # requests to this model/gateway are blocked forever.
+        except TimeoutError:
+            wait_ms = (time.monotonic() - wait_start) * 1000
+            self._emit_queue_timeout(request_id, model_id, wait_ms, timeout_s)
+            if future.done() and not future.cancelled():
+                self._recover_leaked_slot(request_id, future.result(), model_id)
+            else:
+                self._cancel_waiter(request_id)
+            raise
+        except asyncio.CancelledError:
             if future.done() and not future.cancelled():
                 self._recover_leaked_slot(request_id, future.result(), model_id)
             else:
@@ -498,6 +548,104 @@ class CapacityPool:
                 model_id,
                 exc,
             )
+
+    def _emit_queue_entered(
+        self,
+        request_id: str,
+        model_id: str,
+        queue_position: int,
+        allowed_gateways: int,
+        timeout_s: float | None,
+    ) -> None:
+        if not self._event_bus:
+            return
+        try:
+            from src.scheduling.events import CapacityPoolQueued
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    CapacityPoolQueued(
+                        request_id=request_id,
+                        model_id=model_id,
+                        queue_position=queue_position,
+                        allowed_gateways=allowed_gateways,
+                        timeout_s=timeout_s,
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit capacity.pool.queued: %s", exc)
+
+    def _emit_queue_admitted(
+        self,
+        request_id: str,
+        model_id: str,
+        gateway_id: str,
+        wait_ms: float,
+    ) -> None:
+        if not self._event_bus:
+            return
+        try:
+            from src.scheduling.events import CapacityPoolAdmitted
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    CapacityPoolAdmitted(
+                        request_id=request_id,
+                        model_id=model_id,
+                        gateway_id=gateway_id,
+                        wait_ms=wait_ms,
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit capacity.pool.admitted: %s", exc)
+
+    def _emit_queue_full(
+        self, request_id: str, model_id: str, current_depth: int
+    ) -> None:
+        if not self._event_bus:
+            return
+        try:
+            from src.scheduling.events import CapacityPoolFull
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    CapacityPoolFull(
+                        request_id=request_id,
+                        model_id=model_id,
+                        current_depth=current_depth,
+                        max_depth=self._max_queue_depth,
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit capacity.pool.full: %s", exc)
+
+    def _emit_queue_timeout(
+        self,
+        request_id: str,
+        model_id: str,
+        wait_ms: float,
+        timeout_s: float | None,
+    ) -> None:
+        if not self._event_bus:
+            return
+        try:
+            from src.scheduling.events import CapacityPoolTimeout
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    CapacityPoolTimeout(
+                        request_id=request_id,
+                        model_id=model_id,
+                        wait_ms=wait_ms,
+                        timeout_s=timeout_s,
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit capacity.pool.timeout: %s", exc)
 
     def _emit_slot_leak_recovered(
         self, request_id: str, gateway_id: str, model_id: str

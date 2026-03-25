@@ -238,11 +238,20 @@ def _report_partial_success(
         result = json.loads(content)
         vocab = result.get("vocabulary", {})
         written = set(vocab.keys())
+        # Scopes skipped by the pipeline because they were already fresh at the
+        # requested tier. These are NOT failures — freshness should not be invalidated.
+        skipped_fresh: set[str] = set(result.get("skipped_fresh") or [])
     except (KeyError, json.JSONDecodeError, IndexError):
         print("vocab-classify-v1 completed (response not parseable).")
         return set()
 
-    dropped = sorted(set(requested_scopes) - written)
+    handled = written | skipped_fresh
+    dropped = sorted(set(requested_scopes) - handled)
+    if skipped_fresh:
+        print(
+            f"Skipped {len(skipped_fresh)} scope(s) already fresh at frontier tier: "
+            + ", ".join(sorted(skipped_fresh))
+        )
     if dropped:
         print(
             f"WARNING: {len(dropped)} scope(s) failed "
@@ -254,7 +263,10 @@ def _report_partial_success(
     else:
         print(
             f"vocab-classify-v1 completed: "
-            f"all {len(requested_scopes)} scopes classified."
+            f"all {len(requested_scopes)} scopes classified "
+            f"({len(written)} classified, {len(skipped_fresh)} already fresh)."
+            if skipped_fresh
+            else f"vocab-classify-v1 completed: all {len(requested_scopes)} scopes classified."
         )
     return written
 

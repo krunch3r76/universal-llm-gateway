@@ -1,11 +1,14 @@
 """Post-RRF metadata boost for RAG retrieval.
 
 Re-scores RRF-merged chunks using overlap between query-derived terms and
-extracted entity/relation/topic metadata.  Deterministic — no LLM calls.
+extracted entity/relation/topic metadata. Deterministic — no LLM calls. The
+metadata used here was extracted at index time by the knowledge extraction
+pipeline and stored in the property index; this module leverages that
+index-time investment at search time without re-analysis.
 
-Called from rag_query_retrieve.py between _rrf_merge() and _format_context().
-Complements the per-query property_boost in search_scope.py which operates
-pre-RRF on individual query results.
+Called from the ``rag_multi_retrieve_v1`` pipeline handler between RRF merge
+and source habituation. Complements the per-query property_boost in
+``search_scope.py`` which operates pre-RRF on individual query results.
 
 Scoring:
     meta_score(chunk) = Σ entity_name_overlap * 2.0

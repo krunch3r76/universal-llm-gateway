@@ -261,11 +261,23 @@ def idf_expand(
 ) -> list[str]:
     """IDF-weighted corpus expansion via property index.
 
+    IDF = Inverse Document Frequency: terms that appear in few documents score
+    high (discriminative); terms that appear in nearly all documents score low
+    (noise). The rarest query words are used as seeds for co-occurrence lookup.
+
     Single DB connection, two queries:
     1. Batch DF computation for all query words (one temp table + GROUP BY)
     2. Co-occurrence join for top-K discriminative words (one tagged temp table)
 
     Returns terms sorted by discriminative co-occurrence score.
+
+    Known limitation: expansion is bounded by the property index vocabulary.
+    If the query uses a synonym that was never extracted as an entity or topic
+    in any chunk (e.g. "neural network" when the corpus only contains "deep
+    learning"), the discriminative terms have zero DF and no co-occurrence
+    paths exist — expansion returns nothing. Dense retrieval (Pool A) handles
+    this case via embedding-space proximity. The practical frequency of this
+    gap depends on extraction model quality and corpus vocabulary coverage.
     """
     resolved = db_path or DEFAULT_METADATA_DB
     if not resolved.exists() or not query_words:

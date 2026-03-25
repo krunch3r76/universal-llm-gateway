@@ -1,3 +1,11 @@
+"""Request/response models for the RAG service API.
+
+Defines Pydantic models for search, indexing, reranking, batch embedding,
+article metadata, and scope management endpoints. These models are the
+contract between the RAG service and its callers (pipeline handlers, MCP
+tools, admin scripts).
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -103,6 +111,7 @@ class IndexingStatusResponse(BaseModel):
     watchers: list[WatcherStatusItem] = Field(default_factory=list)
     failed_extractions_count: int = 0
     failed_extractions_permanent_count: int = 0
+    indexed_sources_count: int = 0
     property_index_available: bool = True
 
 

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _MAX_ITERATIONS = 60
+_DEFAULT_PRE_ROUTE_TIMEOUT_S: float = 120.0
 
 
 async def wait_for_retryable_capacity(
@@ -57,7 +58,6 @@ async def wait_for_retryable_capacity(
     )
 
     from ....routing_wait import (
-        QUEUE_TIMEOUT_S,
         extract_retryable_constraint,
         register_demand,
         unregister_demand,
@@ -69,6 +69,13 @@ async def wait_for_retryable_capacity(
 
     queue_start = time.monotonic()
     routing_key = context.selected_model.routing_key
+
+    # Use the capacity deadline when available; fall back to static default.
+    deadline = getattr(context, "_capacity_deadline_mono", None)
+    if deadline is not None:
+        queue_timeout = max(0.0, deadline - queue_start)
+    else:
+        queue_timeout = _DEFAULT_PRE_ROUTE_TIMEOUT_S
 
     register_demand(routing_key, context.request_id)
 
@@ -86,13 +93,13 @@ async def wait_for_retryable_capacity(
         "Pre-routing queue: %s waiting for capacity (constraint=%s, budget=%.1fs)",
         context.selected_model,
         retryable_constraint,
-        QUEUE_TIMEOUT_S,
+        queue_timeout,
     )
 
     try:
         for _ in range(_MAX_ITERATIONS):
             elapsed = time.monotonic() - queue_start
-            if elapsed >= QUEUE_TIMEOUT_S:
+            if elapsed >= queue_timeout:
                 break
 
             state_version = federated_manager.get_state_version()
@@ -135,7 +142,7 @@ async def wait_for_retryable_capacity(
             if not still_retryable:
                 break
 
-            remaining = max(0.1, QUEUE_TIMEOUT_S - (time.monotonic() - queue_start))
+            remaining = max(0.1, queue_timeout - (time.monotonic() - queue_start))
             await federated_manager.wait_for_state_change(state_version, remaining)
     finally:
         unregister_demand(routing_key, context.request_id)

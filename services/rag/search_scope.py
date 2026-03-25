@@ -1,7 +1,9 @@
-"""Search scope resolution, property boost, and recency sort for structured RAG.
+"""Search scope resolution, property boost, BM25 sidecar, and recency sort.
 
-This module implements the query-time enhancements applied to ChromaDB vector
-search results before they are returned to the retrieval pipeline:
+Implements per-query enhancements within the RAG service's ``/search`` endpoint.
+These operate _inside_ Pool A (the dense+sparse hybrid path) before results
+are returned to the pipeline handler for cross-pool RRF merge, source
+habituation, and Pool B swap.
 
   Property boost (hybrid search):
     Queries the SQLite property inverted index for entity names, types, facets,
@@ -9,6 +11,12 @@ search results before they are returned to the retrieval pipeline:
     vector results and the property index receive a configurable distance discount
     (``property_boost_factor``), surfacing structurally relevant chunks that rank
     below top-k on cosine alone.  Applied by ``apply_property_boost()``.
+
+  BM25 sidecar:
+    Sparse BM25 candidates from the FTS5 index are merged with dense vector
+    results via mini-RRF within each ``/search`` call. This is Pool A's internal
+    keyword component — distinct from Pool B, which runs independently at the
+    pipeline layer with vocabulary-aware expansion.
 
   Recency sort:
     Adds an additive bonus to chunks based on ``indexed_at`` timestamp using

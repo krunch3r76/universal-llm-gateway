@@ -259,6 +259,75 @@ def get_boot_sections(
     }
 
 
+_TEMPORAL_ACTIVE_SQL = """
+    SELECT a.id, a.entity_id, e.name AS entity_name, a.claim,
+           a.valid_from, a.valid_until, a.confidence
+    FROM assertions a
+    JOIN entities e ON a.entity_id = e.id
+    WHERE a.valid_until IS NOT NULL
+      AND a.valid_until >= datetime('now')
+      AND (a.valid_from IS NULL OR a.valid_from <= datetime('now'))
+      AND a.review_status = 'committed'
+      AND a.superseded_by IS NULL
+    ORDER BY a.valid_until ASC
+    LIMIT ?
+"""
+
+_TEMPORAL_UPCOMING_SQL = """
+    SELECT a.id, a.entity_id, e.name AS entity_name, a.claim,
+           a.valid_from, a.valid_until, a.confidence
+    FROM assertions a
+    JOIN entities e ON a.entity_id = e.id
+    WHERE a.valid_from IS NOT NULL
+      AND a.valid_from > datetime('now')
+      AND a.valid_from <= datetime('now', '+7 days')
+      AND a.review_status = 'committed'
+      AND a.superseded_by IS NULL
+    ORDER BY a.valid_from ASC
+    LIMIT ?
+"""
+
+
+@router.get("/boot-temporal")
+def get_boot_temporal(
+    active_limit: int = Query(10, ge=1, le=50, description="Max active assertions"),
+    upcoming_limit: int = Query(10, ge=1, le=50, description="Max upcoming assertions"),
+) -> dict[str, Any]:
+    """Temporally active and upcoming assertions for boot briefings.
+
+    Active: assertions whose validity window includes now (valid_until in
+    the future, valid_from in the past or null). Ordered by soonest expiry.
+
+    Upcoming: assertions with valid_from in the next 7 days that haven't
+    started yet. Ordered by soonest start.
+
+    Only surfaces assertions with explicit temporal bounds — unbounded
+    (valid_until IS NULL) assertions are excluded since they don't expire.
+    """
+    conn = cortex_conn()
+    try:
+        active_rows = db_query(conn, _TEMPORAL_ACTIVE_SQL, (active_limit,))
+        upcoming_rows = db_query(conn, _TEMPORAL_UPCOMING_SQL, (upcoming_limit,))
+    finally:
+        conn.close()
+
+    def _format_row(r: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": r["id"],
+            "entity_id": r["entity_id"],
+            "entity_name": r["entity_name"],
+            "claim": r["claim"],
+            "valid_from": r["valid_from"],
+            "valid_until": r["valid_until"],
+            "confidence": r["confidence"],
+        }
+
+    return {
+        "active": [_format_row(r) for r in active_rows],
+        "upcoming": [_format_row(r) for r in upcoming_rows],
+    }
+
+
 _BOOT_TODOS_SQL = """
     SELECT e.id, e.name,
            json_extract(e.attributes, '$.priority') as priority,

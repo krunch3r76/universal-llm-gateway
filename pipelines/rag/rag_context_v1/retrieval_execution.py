@@ -483,6 +483,15 @@ async def graduated_pool_b_swap(
     source).  The rest are evicted (current binary behavior).
 
     Falls back to binary eviction if embedding fetch fails.
+
+    Corpus-type observations (from pipeline traces, not formally benchmarked):
+    - Research papers (focused, single-topic): both pools converge on the same
+      core content. Graduated mode rarely retains anything binary wouldn't —
+      the Pool A chunks are genuinely redundant.
+    - Multi-topic documents (design specs, architecture files): both pools hit
+      the same file but on different sections. Graduated mode retains Pool A
+      chunks covering content Pool B didn't reach. This is where the embedding
+      round-trip cost pays for itself.
     """
     facet_sources = {c.source for c in merged if c.content_hash in facet_chunk_hashes}
     if not facet_sources:

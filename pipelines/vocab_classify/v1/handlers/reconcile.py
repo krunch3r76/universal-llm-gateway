@@ -107,9 +107,17 @@ class VocabClassifyReconcileV1Handler:
                         }
                     )
 
+        # Scopes that were requested but absent from bundle were skipped as fresh
+        # by the load_hints data source (skip_fresh=true). Communicate them back
+        # so callers can distinguish "skipped as already fresh" from "failed".
+        requested = list(context.options.get("scopes") or [])
+        processed = {str(row.get("scope") or "") for row in bundle_scopes}
+        skipped_fresh = sorted(s for s in requested if s and s not in processed)
+
         payload = {
             "vocabulary": vocabulary,
             "scope_hashes": scope_hashes,
             "provenance": provenance,
+            **({"skipped_fresh": skipped_fresh} if skipped_fresh else {}),
         }
         return StepOutput(raw=json.dumps(payload, ensure_ascii=False), json=payload)

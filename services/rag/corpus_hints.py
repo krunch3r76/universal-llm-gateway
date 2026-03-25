@@ -1,4 +1,12 @@
-"""Load and format corpus hints for RAG prompt injection.
+"""Corpus hints: term co-occurrence statistics for vocabulary-aware retrieval.
+
+A key component of the index-time investment. After bulk indexing, corpus hints
+are aggregated from the property index per scope — computing which terms
+frequently co-occur with which other terms across the indexed corpus. At search
+time, these statistics power IDF-weighted corpus expansion in Pool B: for any
+query term, the system knows which related terms the user didn't type but the
+corpus contains. This replaces LLM-based query expansion with deterministic
+corpus statistics, eliminating per-query LLM calls.
 
 Runtime readers and writers use normalized rows in the metadata database so
 retrieval hot paths avoid YAML parsing and file-level artifact drift.

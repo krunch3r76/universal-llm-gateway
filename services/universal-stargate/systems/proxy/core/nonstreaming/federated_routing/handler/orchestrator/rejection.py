@@ -5,6 +5,7 @@ This module classifies transient capacity versus permanent infeasibility and
 raises structured errors that preserve retry semantics for callers.
 """
 
+import time
 from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
@@ -90,14 +91,21 @@ async def handle_selection_rejection(
                     classification="busy_blocked",
                     failure_reason="No idle models to evict; entering wait queue",
                 )
-            timeout_s = (routing_config or {}).get("eviction_wait_timeout_s", 300.0)
+            config_timeout = float(
+                (routing_config or {}).get("eviction_wait_timeout_s", 300.0)
+            )
+            deadline = getattr(context, "_capacity_deadline_mono", None)
+            if deadline is not None:
+                timeout_s = min(config_timeout, max(0.0, deadline - time.monotonic()))
+            else:
+                timeout_s = config_timeout
             selected_gateway, trace, waited_ms = await _wait_and_retry_selection(
                 federated_manager=federated_manager,
                 decision_engine=decision_engine,
                 placement=placement,
                 context=context,
                 event_bus=event_bus,
-                timeout_s=float(timeout_s) if timeout_s is not None else 300.0,
+                timeout_s=timeout_s,
                 stability_tracker=stability_tracker,
             )
             if selected_gateway is None:

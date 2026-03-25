@@ -41,10 +41,36 @@ Post-merge scoring (applied in this order after the combined RRF merge)
    ``facet_pool_swap_max_retain`` Pool A chunks whose cosine distance from
    every Pool B hit exceeds the threshold — they cover genuinely different
    content.  Context budget saved by eviction is redirected to sources not yet
-   represented.
+   represented.  Disabled entirely on the ``general`` retrieval path.
+
+All three diversity mechanisms (habituation, source cap, swap) are controlled by
+the ``retrieval_path`` option.  ``research`` (default) enables all three with
+aggressive settings.  ``general`` disables all three — pure relevance ranking.
+For project documentation, architecture specs, and any corpus where a single
+authoritative source is expected, callers set ``retrieval_path: general`` rather
+than tuning individual diversity parameters.
+
+Observed dynamics (not formally measured — from pipeline trace analysis):
+- Pool overlap is routine: IDF expansion reliably surfaces the same prominent
+  sources Pool A finds via dense similarity. Overlap is the expected steady
+  state, not an edge case.
+- For research papers (focused, single-topic documents), binary eviction is
+  safe — when both pools converge on the same paper, they land on the same
+  core content. Graduated mode rarely changes the outcome.
+- For long multi-topic documents (design specs, architecture files), both pools
+  converge on the same file but via different sections. Graduated mode retains
+  Pool A chunks covering sections Pool B didn't reach.
+- Corpus expansion is the primary source-diversity mechanism. The swap is a
+  low-activity safety net when expansion is effective — it earns its keep by
+  freeing slots for sources Pool B reached that Pool A never found.
 
 Tunable resolution (per-request):
-    runtime pipeline_options  >  profile[consumer_model]  >  scope_defaults[scope]  >  YAML defaults
+    ``retrieval_path`` preset (lowest priority among explicit settings) →
+    ``runtime`` ∪ ``exact_model_profile`` ∪ ``model_class_profile`` ∪ ``tier_profile``
+    ∪ ``yaml_defaults`` (standard merge order in ``resolve_retrieval_params``), then —
+    after retrieval scope is resolved — ``scope_defaults[scope_key]`` fills any key
+    not set by those four profile layers or ``runtime``.  Explicit per-request keys
+    always override the path preset.
 
 Profiles loaded from ``pipelines/rag/retrieval-profiles.yaml`` (cached after first load).
 
@@ -65,6 +91,7 @@ from __future__ import annotations
 
 import asyncio
 import time as _time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, override
 from urllib.parse import urlparse
 
@@ -123,6 +150,19 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_RETRIEVAL_PATH_PRESETS: dict[str, dict[str, Any]] = {
+    "research": {
+        "source_diversity_max": 3,
+        "source_habituation_factor": 1.5,
+        "facet_pool_swap_enabled": True,
+    },
+    "general": {
+        "source_diversity_max": 0,
+        "source_habituation_factor": 1.0,
+        "facet_pool_swap_enabled": False,
+    },
+}
+
 
 def _noise_filter_disable_effective(effective: dict[str, Any]) -> bool:
     v = effective.get("noise_filter_disable")
@@ -160,7 +200,8 @@ class RagMultiRetrieveHandler(BaseHandler):
     merges via reciprocal rank fusion, and returns formatted context.
 
     Tunable resolution per request:
-        runtime pipeline_options  >  profile[consumer_model]  >  scope_defaults[scope]  >  YAML defaults
+        resolve_retrieval_params merge (runtime, exact/model_class/tier, yaml), then
+        scope_defaults[scope_key] fills keys not set by runtime or any profile layer.
 
     Options (via pipeline_options or YAML defaults):
         rag_top_k_per_query, rag_max_chunks, rag_rrf_k, rag_recency_weight,
@@ -629,15 +670,48 @@ class RagMultiRetrieveHandler(BaseHandler):
 
         scope_key: str | None = scope if isinstance(scope, str) else None
 
-        # Tier 3: scope-conditional recency (unless caller explicitly overrode it)
-        if "rag_recency_weight" not in runtime and scope_key is not None:
-            scope_recency = (
-                profiles_data.get("scope_defaults", {})
-                .get(scope_key, {})
-                .get("rag_recency_weight")
+        retrieval_path = str(effective.get("retrieval_path", "research")).strip()
+        path_preset = _RETRIEVAL_PATH_PRESETS.get(retrieval_path, {})
+        if retrieval_path and retrieval_path not in _RETRIEVAL_PATH_PRESETS:
+            logger.warning(
+                "Step '%s': unknown retrieval_path '%s', ignoring",
+                step.id,
+                retrieval_path,
             )
-            if scope_recency is not None:
-                recency_weight = float(scope_recency)
+        for k, v in path_preset.items():
+            if k not in runtime:
+                effective[k] = v
+
+        scope_profile_applied: dict[str, Any] = {}
+        if scope_key is not None:
+            raw_sd = profiles_data.get("scope_defaults", {})
+            if isinstance(raw_sd, dict):
+                scope_block = raw_sd.get(scope_key)
+                if isinstance(scope_block, dict):
+                    _profile_keys = (
+                        set(runtime)
+                        | set(params.tier_profile)
+                        | set(params.model_class_profile)
+                        | set(params.exact_model_profile)
+                    )
+                    for k, v in scope_block.items():
+                        if k not in _profile_keys:
+                            effective[k] = v
+                            scope_profile_applied[k] = v
+
+        params = replace(
+            params,
+            effective=effective,
+            scope_profile=scope_profile_applied,
+            top_k=max(1, int(effective.get("rag_top_k_per_query", 10))),
+            max_chunks=max(1, int(effective.get("rag_max_chunks", 20))),
+            rrf_k=max(1, int(effective.get("rag_rrf_k", 35))),
+            recency_weight=float(effective.get("rag_recency_weight", 0.2)),
+        )
+        top_k = params.top_k
+        max_chunks = params.max_chunks
+        rrf_k = params.rrf_k
+        recency_weight = params.recency_weight
 
         # Optional fixed-scope diagnostic mode: bypass rewrite expansion and
         # retrieve from source text only (keeps scope resolution unchanged).
@@ -716,7 +790,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                         json={
                             "texts": queries,
                             "scope": search_scope
-                            if isinstance(search_scope, (str, list))
+                            if isinstance(search_scope, str | list)
                             else None,
                         },
                     )
@@ -1164,11 +1238,14 @@ class RagMultiRetrieveHandler(BaseHandler):
         merged = boost_result.chunks
         merged_scores = boost_result.scores
 
-        # Pool B score boost with source habituation:
-        # - First pool B hit per source: full boost (signal detected)
-        # - Subsequent hits from same source: inhibited by 1/boost (lateral inhibition)
+        # Pool B score boost with lateral source habituation:
+        # - Highest-scoring Pool B chunk per source: full boost (signal detected)
+        # - Subsequent chunks from same source: inhibited by 1/boost (lateral inhibition)
         # ∀ source: chunks ranked by current score; first *= boost, rest *= 1/boost
-        # Prevents any single source from monopolising boosted slots via repeated hits.
+        # Tradeoff: a second chunk from the same source may be richer than the first,
+        # but the system accepts that risk in exchange for making room for other sources.
+        # Callers that need depth over breadth (e.g. single authoritative document)
+        # should set facet_pool_score_boost=1.0 or use retrieval_path="general".
         facet_pool_score_boost = float(effective.get("facet_pool_score_boost", 1.5))
         if facet_chunk_hashes and facet_pool_score_boost != 1.0:
             # Group pool B chunks by source, sorted descending by current score.
@@ -1388,6 +1465,9 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "max_chunks": max_chunks,
                     "rrf_k": rrf_k,
                     "recency_weight": recency_weight,
+                    "retrieval_path": retrieval_path,
+                    "scope_key": scope_key,
+                    "scope_defaults_applied": params.scope_profile or None,
                     "scope_confidence_threshold": confidence_threshold,
                     "rag_scope_chunk_caps": scope_chunk_caps,
                     "source_diversity_max": source_diversity_max or None,

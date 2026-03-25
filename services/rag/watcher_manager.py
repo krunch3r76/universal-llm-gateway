@@ -1,3 +1,14 @@
+"""Inotify file watcher and reconciliation sweep manager for RAG indexing.
+
+Watches configured directories for file changes (create, modify, delete) and
+triggers re-indexing. Reconciliation sweeps run periodically to catch changes
+missed by inotify (e.g. during downtime, NFS mounts, bulk copies).
+
+The watcher uses a shared worker pool for both initial reindex and reconcile
+sweeps, with adaptive intervals: 30s between sweeps when files are recovered,
+full ``reconcile_interval_s`` otherwise.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -5,7 +16,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Protocol, TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from universal_hot_reload.watcher import HotReloadWatcher
 
@@ -18,6 +29,7 @@ from services.rag.events.lifecycle import (
     rag_watch_directory_missing,
     rag_watch_file_deleted,
     rag_watch_initial_complete,
+    rag_watch_initial_progress,
     rag_watch_initial_started,
     rag_watch_reconcile_complete,
     rag_watch_reindex_complete,
@@ -108,7 +120,7 @@ class WatcherManager:
         reconcile_interval_s: float = _RECONCILE_INTERVAL_S,
         delete_fn: DeleteFn | None = None,
         index_workers: int = 8,
-        file_timeout_s: float = 600.0,
+        reconcile_workers: int = 3,
         post_reconcile_repair: PostReconcileRepairFn | None = None,
         scope_repair_runner: ScopeRepairRunnerFn | None = None,
         scope_repair_debounce_s: float = 30.0,
@@ -120,7 +132,7 @@ class WatcherManager:
         self._event_bus: EventBus | None = event_bus
         self._reconcile_interval_s = reconcile_interval_s
         self._index_workers = max(1, index_workers)
-        self._file_timeout_s = file_timeout_s
+        self._reconcile_workers = max(1, reconcile_workers)
         self._post_reconcile_repair: PostReconcileRepairFn | None = (
             post_reconcile_repair
         )
@@ -354,15 +366,10 @@ class WatcherManager:
                     queue.task_done()
                     return worker_recovered, worker_unchanged
                 try:
-                    coro = self._index_fn(
+                    result = await self._index_fn(
                         fp,
                         chunk_tokens,
                         emit_skip_event=False,
-                    )
-                    result = (
-                        await asyncio.wait_for(coro, timeout=self._file_timeout_s)
-                        if self._file_timeout_s > 0
-                        else await coro
                     )
                     self._note_index_mutation(fp, result)
                     if result.unchanged:
@@ -374,18 +381,6 @@ class WatcherManager:
                             result.file,
                             result.indexed,
                         )
-                except TimeoutError:
-                    logger.error(
-                        "Reconcile timed out after %.0fs for %s",
-                        self._file_timeout_s,
-                        fp,
-                    )
-                    await self._emit(
-                        rag_file_indexing_failed(
-                            file=str(fp),
-                            error=f"Timed out after {self._file_timeout_s:.0f}s",
-                        )
-                    )
                 except Exception as exc:
                     logger.warning("Reconcile skipped %s: %s", fp, exc, exc_info=True)
                     await self._emit(
@@ -394,7 +389,7 @@ class WatcherManager:
                 finally:
                     queue.task_done()
 
-        n_workers = min(self._index_workers, len(file_paths))
+        n_workers = min(self._reconcile_workers, len(file_paths))
         workers = [
             asyncio.create_task(_worker(), name=f"reconcile-worker-{i}")
             for i in range(n_workers)
@@ -457,6 +452,28 @@ class WatcherManager:
         unchanged_total = 0
         error_total = 0
         progress_lock = asyncio.Lock()
+        # Emit a progress event approximately every 10% of total_files so
+        # rag-status --watch can show a live sweep counter.
+        _progress_every = max(1, total_files // 10)
+
+        async def _maybe_emit_progress(
+            processed: int,
+            reindexed: int,
+            unchanged: int,
+            errors: int,
+        ) -> None:
+            """Emit rag.watch.initial.progress at ~10% checkpoints."""
+            if processed % _progress_every == 0:
+                await self._emit(
+                    rag_watch_initial_progress(
+                        path=str(watch_path),
+                        total_files=total_files,
+                        processed=processed,
+                        reindexed=reindexed,
+                        unchanged=unchanged,
+                        errors=errors,
+                    )
+                )
 
         queue: asyncio.Queue[Path | None] = asyncio.Queue()
         for fp in file_paths:
@@ -470,37 +487,24 @@ class WatcherManager:
                     queue.task_done()
                     return
                 try:
-                    coro = self._index_fn(
+                    result = await self._index_fn(
                         fp,
                         chunk_tokens,
                         emit_skip_event=False,
                     )
-                    if self._file_timeout_s > 0:
-                        result = await asyncio.wait_for(
-                            coro, timeout=self._file_timeout_s
-                        )
-                    else:
-                        result = await coro
                     self._note_index_mutation(fp, result)
                     async with progress_lock:
                         if result.unchanged:
                             unchanged_total += 1
                         else:
                             reindexed_total += 1
-                except TimeoutError:
-                    logger.error(
-                        "Initial reindex timed out after %.0fs for %s",
-                        self._file_timeout_s,
-                        fp,
-                    )
-                    await self._emit(
-                        rag_file_indexing_failed(
-                            file=str(fp),
-                            error=f"Timed out after {self._file_timeout_s:.0f}s",
+                        snap = (
+                            reindexed_total + unchanged_total + error_total,
+                            reindexed_total,
+                            unchanged_total,
+                            error_total,
                         )
-                    )
-                    async with progress_lock:
-                        error_total += 1
+                    await _maybe_emit_progress(*snap)
                 except Exception as exc:
                     logger.warning(
                         "Initial reindex skipped for %s: %s", fp, exc, exc_info=True
@@ -510,6 +514,13 @@ class WatcherManager:
                     )
                     async with progress_lock:
                         error_total += 1
+                        snap = (
+                            reindexed_total + unchanged_total + error_total,
+                            reindexed_total,
+                            unchanged_total,
+                            error_total,
+                        )
+                    await _maybe_emit_progress(*snap)
                 finally:
                     queue.task_done()
 

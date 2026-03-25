@@ -375,6 +375,7 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
             "GET",
             f"/boot-sections?{urlencode(boot_section_qs_parts)}",
         )
+        futures_spec["temporal"] = (_cx, "GET", "/boot-temporal")
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
@@ -396,6 +397,14 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
         boot_sections: dict[str, Any] | None = None
         if isinstance(boot_sections_raw, dict) and "sections" in boot_sections_raw:
             boot_sections = boot_sections_raw["sections"]
+
+        temporal_raw = raw.get("temporal", {})
+        temporal_active: list[dict[str, Any]] = safe_list(
+            temporal_raw.get("active", []) if isinstance(temporal_raw, dict) else []
+        )
+        temporal_upcoming: list[dict[str, Any]] = safe_list(
+            temporal_raw.get("upcoming", []) if isinstance(temporal_raw, dict) else []
+        )
 
         suspected = []
         hypothesized = []
@@ -419,6 +428,8 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
         narrative = render_boot_narrative(
             boot_sections=boot_sections,
             deadlines=deadlines if profile.get("include_deadlines", True) else None,
+            temporal_active=temporal_active or None,
+            temporal_upcoming=temporal_upcoming or None,
             sessions=sessions,
             suspected=suspected
             if profile.get("include_investigations", True)
@@ -474,6 +485,11 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
                 "staging_count": len(staging_items),
                 "assertion_count": len(low_conf_unreviewed),
                 "total": review_total,
+            }
+        if temporal_active or temporal_upcoming:
+            result["temporal"] = {
+                "active": temporal_active,
+                "upcoming": temporal_upcoming,
             }
         if cont_decisions or cont_services or todos:
             result["continuation_state"] = {

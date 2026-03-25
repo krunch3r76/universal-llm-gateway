@@ -539,13 +539,16 @@ async def _deferred_watcher_start(config: RagConfig) -> None:
     if tracker.state != ModelState.LOADED:
         await tracker.wait_until_loaded(timeout_s=startup_model_wait_s)
 
+    reconcile_worker_count = (
+        config.reconcile_workers if isinstance(config.reconcile_workers, int) else 3
+    )
     state._watcher_manager = WatcherManager(
         index_fn=_watcher_index_fn,
         delete_fn=_watcher_delete_fn,
         event_bus=state._event_bus,
         index_workers=worker_count,
+        reconcile_workers=reconcile_worker_count,
         reconcile_interval_s=config.reconcile_interval_s,
-        file_timeout_s=config.file_timeout_s,
         post_reconcile_repair=_post_reconcile_scope_freshness,
         scope_repair_runner=_watcher_debounced_scope_freshness,
     )

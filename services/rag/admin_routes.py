@@ -508,6 +508,7 @@ def register_admin_routes(
         pending_sample_truncated = False
         failed_extractions_count = 0
         failed_extractions_permanent_count = 0
+        indexed_sources_count = 0
         property_index_available = True
         watchers: list[WatcherStatusItem] = []
         chunks: int | None = None
@@ -531,6 +532,7 @@ def register_admin_routes(
                 failed_extractions_permanent_count = (
                     failure_snapshot.failed_extractions_permanent_count
                 )
+                indexed_sources_count = prop_idx.get_indexed_source_count()
             except sqlite3.Error as exc:
                 logger.warning(
                     "Indexing status degraded while reading property index: %s",
@@ -584,6 +586,7 @@ def register_admin_routes(
             watchers=watchers,
             failed_extractions_count=failed_extractions_count,
             failed_extractions_permanent_count=failed_extractions_permanent_count,
+            indexed_sources_count=indexed_sources_count,
             property_index_available=property_index_available,
         )
 

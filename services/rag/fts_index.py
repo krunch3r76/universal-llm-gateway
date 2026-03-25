@@ -1,15 +1,23 @@
-"""SQLite FTS5 full-text index for BM25 sparse retrieval.
+"""SQLite FTS5 full-text index for BM25 sparse retrieval (Pool B backend).
 
-Complements the dense (ChromaDB cosine) retrieval with lexical matching.
-Lives in the same SQLite database as the property inverted index so both
-stores share one file and one connection.
+The storage layer for Pool B's vocabulary-aware sparse retrieval. At index time,
+every chunk's full text is added to this FTS5 index. At search time, Pool B's
+phrase-extracted and IDF-expanded queries are dispatched directly against this
+index with ``sparse_only=True`` — bypassing the embedding model entirely.
+
+Within Pool A (the standard dense+sparse hybrid path), this index also provides
+the BM25 sidecar: lexical matches merged with dense vector results via mini-RRF
+inside the RAG service's ``/search`` endpoint.
 
 BM25 excels at surfacing exact vocabulary matches (PROV-O, Zettelkasten,
-SHACL) that dense embeddings may compress away. Results are merged with
-dense candidates via rank-based RRF inside the search endpoint.
+SHACL, specific model identifiers like "Q4_K_M") that dense embeddings may
+compress away. Pool B's independence from Pool A means these matches don't
+have to outcompete twenty fuzzy semantic results in a single ranked list.
 
-Concurrency model matches PropertyIndex: writes serialized via
-SequentialExecutor, reads go directly to SQLite.
+Lives in the same SQLite database as the property inverted index so both
+stores share one file and one connection. Concurrency model matches
+PropertyIndex: writes serialized via SequentialExecutor, reads go directly
+to SQLite.
 """
 
 from __future__ import annotations

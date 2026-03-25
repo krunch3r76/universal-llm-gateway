@@ -498,7 +498,8 @@ def register_context_tools(mcp: FastMCP) -> None:
           list    — list directory entries (path optional, defaults to root)
 
         For journal entries, use dispatch(tool="write_journal_entry").
-        For todos, use dispatch(tool="todo").
+        For todos, use cortex(tool="entities", arguments='{"type": "todo"}') to list,
+        cortex(tool="entity_create", ...) to create, cortex(tool="entity_update", ...) to update.
 
         Args:
             op: Operation name (see above).

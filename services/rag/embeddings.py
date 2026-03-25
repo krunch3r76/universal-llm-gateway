@@ -1,3 +1,15 @@
+"""Embedding model client for RAG indexing and search.
+
+Handles query and document embedding via the Gateway's local embedding model
+(default: qwen3-embedding-8b). Supports single-query and batch embedding with
+retry/backoff, health probing, and scope-aware model selection.
+
+At index time, chunks (optionally with context prefixes from contextualization)
+are embedded and stored in ChromaDB. At search time, query embeddings are
+computed here or via the ``/embed_batch`` endpoint for batched GPU passes.
+Pool B (sparse retrieval) bypasses this module entirely.
+"""
+
 from __future__ import annotations
 
 import asyncio

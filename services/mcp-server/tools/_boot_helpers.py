@@ -21,6 +21,8 @@ def render_boot_narrative(
     *,
     boot_sections: dict[str, Any] | None = None,
     deadlines: list[dict[str, Any]] | None = None,
+    temporal_active: list[dict[str, Any]] | None = None,
+    temporal_upcoming: list[dict[str, Any]] | None = None,
     sessions: list[dict[str, Any]],
     suspected: list[dict[str, Any]] | None = None,
     hypothesized: list[dict[str, Any]] | None = None,
@@ -91,6 +93,45 @@ def render_boot_narrative(
                     f"- **{dl_date}**{remaining} — "
                     f"{d.get('deadline_name', '')} ({d.get('matter_name', '')})"
                 )
+
+    if temporal_active or temporal_upcoming:
+        if temporal_active:
+            parts.append("\n## Temporally Active")
+            for a in temporal_active:
+                name = a.get("entity_name", a.get("entity_id", "?"))
+                until = a.get("valid_until", "")
+                remaining = ""
+                if until:
+                    try:
+                        exp = datetime.fromisoformat(
+                            until.replace("Z", "+00:00")
+                        ).date()
+                        delta = (exp - today).days
+                        if delta == 0:
+                            remaining = " (expires today)"
+                        elif delta > 0:
+                            remaining = f" (expires in {delta}d)"
+                        else:
+                            remaining = f" (**expired {abs(delta)}d ago**)"
+                    except (ValueError, TypeError):
+                        pass
+                parts.append(f"- **{name}**{remaining} — {a.get('claim', '')}")
+        if temporal_upcoming:
+            parts.append("\n## Upcoming (next 7 days)")
+            for a in temporal_upcoming:
+                name = a.get("entity_name", a.get("entity_id", "?"))
+                from_date = a.get("valid_from", "")
+                starts = ""
+                if from_date:
+                    try:
+                        start = datetime.fromisoformat(
+                            from_date.replace("Z", "+00:00")
+                        ).date()
+                        delta = (start - today).days
+                        starts = f" (in {delta}d)" if delta > 0 else " (today)"
+                    except (ValueError, TypeError):
+                        pass
+                parts.append(f"- **{name}**{starts} — {a.get('claim', '')}")
 
     if boot_sections is not None:
         full = boot_sections.get("full", [])

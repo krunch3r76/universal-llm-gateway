@@ -20,6 +20,7 @@ steps:
     timeout_seconds: 70
     pipeline_options:
       scope: "project"
+      retrieval_path: "general"
 
   - name: relevance_check
     type: generate

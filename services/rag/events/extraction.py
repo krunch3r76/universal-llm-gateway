@@ -73,6 +73,7 @@ def rag_extraction_batch_completed(
     written: int,
     duration_seconds: float,
     extraction_model: str | None = None,
+    finish_reason: str | None = None,
 ) -> Event:
     """Emitted after an extraction batch finishes.
 
@@ -82,6 +83,9 @@ def rag_extraction_batch_completed(
         all-or-nothing rule fires due to partial failure; equals successful
         when all chunks succeed).
     extraction_model: model id used for extraction when configured.
+    finish_reason: non-stop finish reason from the pipeline response (e.g.
+        "length" means max_tokens was hit and the map output was truncated).
+        Absent when the response completed normally.
     """
     return Event(
         signal="rag.extraction.batch.completed",
@@ -96,6 +100,7 @@ def rag_extraction_batch_completed(
                 if extraction_model is not None
                 else {}
             ),
+            **({"finish_reason": finish_reason} if finish_reason is not None else {}),
         },
     )
 

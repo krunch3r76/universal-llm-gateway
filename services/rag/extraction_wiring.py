@@ -346,6 +346,7 @@ async def run_extraction(
 
     failed_ids = [cid for cid in ids if cid not in staged]
     successful = len(staged)
+    finish_reason = timing.get("finish_reason") if isinstance(timing, dict) else None
     is_infrastructure_failure = isinstance(timing, dict) and (
         "stargate_error" in timing
         or "model_unavailable" in timing
@@ -384,11 +385,15 @@ async def run_extraction(
                 len(ids),
             )
         for chunk_id in failed_ids:
-            error_msg = (
-                infra_error
-                if is_infrastructure_failure
-                else "missing or invalid result after batch parsing"
-            )
+            if is_infrastructure_failure:
+                error_msg = infra_error
+            elif finish_reason and finish_reason != "stop":
+                error_msg = (
+                    f"missing or invalid result after batch parsing"
+                    f" (finish_reason={finish_reason})"
+                )
+            else:
+                error_msg = "missing or invalid result after batch parsing"
             new_attempt_count = failure_counts_snapshot.get(chunk_id, 0) + (
                 0 if is_infrastructure_failure else 1
             )
@@ -466,6 +471,9 @@ async def run_extraction(
                 written=written,
                 duration_seconds=duration,
                 extraction_model=config.extraction_model,
+                finish_reason=finish_reason
+                if finish_reason and finish_reason != "stop"
+                else None,
             ),
         )
 

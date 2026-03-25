@@ -355,6 +355,60 @@ def _clamp_sample_limit(value: int) -> int:
     return max(0, min(value, _MAX_SAMPLE_LIMIT))
 
 
+_DEFAULT_INDEX_WORKERS = 8  # matches DEFAULT_INDEX_WORKERS in services/rag/config.py
+
+
+def _query_extraction_chunks_per_sec() -> float | None:
+    """Return observed extraction throughput in chunks/sec per worker.
+
+    Queries rag.extraction.batch.completed events in the current session and
+    computes total_successful_chunks / total_extraction_seconds.  Multiply by
+    min(failing_files, workers) to get effective parallel wall-clock rate.
+    Returns None when the Event Service is unavailable or no data exists.
+    """
+    if not EVENT_QUERY_SOCKET.exists():
+        return None
+    sql = (
+        "SELECT CAST(SUM(CAST(json_extract(payload, '$.successful') AS REAL)) AS REAL)"
+        " / NULLIF(SUM(CAST(json_extract(payload, '$.duration_seconds') AS REAL)), 0)"
+        " FROM events"
+        " WHERE signal = 'rag.extraction.batch.completed'"
+        " AND seq > COALESCE("
+        "   (SELECT MAX(seq) FROM events WHERE signal = 'rag.started'), 0"
+        " )"
+        " AND CAST(json_extract(payload, '$.duration_seconds') AS REAL) > 0"
+        " AND CAST(json_extract(payload, '$.successful') AS REAL) > 0"
+    )
+    try:
+        result = _query_event_service({"type": "sql", "sql": sql, "limit": 1})
+        rows = result.get("rows", [])
+        if rows and isinstance(rows[0], dict):
+            val = next(iter(rows[0].values()), None)
+            return float(val) if val is not None else None
+    except Exception:
+        pass
+    return None
+
+
+
+def _fetch_failed_chunks(url: str) -> list[dict[str, Any]]:
+    """Fetch per-chunk extraction failure records from /extraction/failed.
+
+    Returns an empty list on any transport or parse error so the caller can
+    degrade gracefully rather than aborting the snapshot display.
+    """
+    if make_sync_client is None:
+        return []
+    try:
+        with make_sync_client(url=url, timeout=10.0) as client:
+            resp = client.get("/extraction/failed")
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("chunks", []) if isinstance(data, dict) else []
+    except Exception:
+        return []
+
+
 def _fetch_indexing_status(url: str, sample_limit: int) -> dict[str, Any]:
     """Fetch unified indexing status from the live RAG admin endpoint.
 
@@ -453,18 +507,40 @@ def _default_rag_url() -> str:
     return f"http://{host}:{port}"
 
 
-def _print_status_snapshot(status: dict[str, Any]) -> None:
+def _print_status_snapshot(status: dict[str, Any], url: str = "") -> None:
     """Render human-readable status snapshot from `/indexing/status` payload."""
     print("RAG Operational Status")
     print("======================")
     print("Pending count includes in-flight indexing; after idle it should be zero.")
     print()
     print(f"Pending work      : {int(status.get('pending_count', 0))}")
-    print(f"Failed chunks     : {int(status.get('failed_extractions_count', 0))}")
-    print(
-        "Permanent failures: "
-        f"{int(status.get('failed_extractions_permanent_count', 0))}"
-    )
+
+    failed_count = int(status.get("failed_extractions_count", 0))
+    perm_count = int(status.get("failed_extractions_permanent_count", 0))
+    print(f"Failed chunks     : {failed_count}")
+    by_file: dict[str, int] = {}
+    if failed_count > 0 and url:
+        chunks = _fetch_failed_chunks(url)
+        for chunk in chunks:
+            src = chunk.get("source", "")
+            by_file[src] = by_file.get(src, 0) + 1
+        if by_file:
+            for src, n in sorted(by_file.items(), key=lambda kv: -kv[1]):
+                print(f"  {n:4d}  {_basename(src)}")
+    print(f"Permanent failures: {perm_count}")
+    if by_file:
+        rate = _query_extraction_chunks_per_sec()
+        if rate is not None and rate > 0:
+            n_files = len(by_file)
+            parallelism = min(n_files, _DEFAULT_INDEX_WORKERS)
+            est_s = failed_count / (rate * parallelism)
+            rate_per_min = rate * 60
+            print(
+                f"Est. retry time   : ~{_fmt_duration(est_s)}"
+                f"  ({failed_count} chunks ÷ {rate_per_min:.1f} chunks/min"
+                f" × {parallelism} workers)"
+            )
+
     if bool(status.get("chroma_available", True)):
         print(
             "Chroma chunks     : "
@@ -472,6 +548,19 @@ def _print_status_snapshot(status: dict[str, Any]) -> None:
         )
     else:
         print(f"Chroma chunks     : degraded ({status.get('chroma_error', 'unknown')})")
+
+    source_count = int(status.get("indexed_sources_count", 0))
+    if source_count > 0:
+        partial = len(by_file)
+        complete = source_count - partial
+        if partial:
+            print(
+                f"Indexed files     : {source_count}"
+                f"  ({complete} fully extracted, {partial} extraction incomplete)"
+            )
+        else:
+            print(f"Indexed files     : {source_count}  (all fully extracted)")
+
     print(
         "Property index    : "
         f"{'available' if bool(status.get('property_index_available', False)) else 'degraded'}"
@@ -1636,7 +1725,7 @@ def main() -> None:
     if args.json:
         print(json.dumps(status, indent=2, sort_keys=True))
         return
-    _print_status_snapshot(status)
+    _print_status_snapshot(status, args.url)
 
 
 if __name__ == "__main__":
