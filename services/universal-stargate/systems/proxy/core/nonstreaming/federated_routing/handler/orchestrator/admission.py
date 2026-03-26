@@ -49,17 +49,27 @@ async def acquire_admission_token(
 
     if is_cold_load and capacity_pool:
         details = selected_gateway.model_details.get(model_id, {})
-        expected_capacity = int(details.get("max_concurrent_requests", 1))
+        catalog_capacity = int(details.get("max_concurrent_requests", 1))
+        capacity_pool_config = (
+            routing_config.get("capacity_pool", {})
+            if isinstance(routing_config, dict)
+            else {}
+        )
+        loading_phase_cap = int(capacity_pool_config.get("loading_phase_cap", 1))
+        placeholder_capacity = min(catalog_capacity, loading_phase_cap)
+
         capacity_pool.set_capacity(
             selected_gateway.name,
             model_id.routing_key,
-            expected_capacity,
+            placeholder_capacity,
         )
         logger.info(
-            "Cold-load capacity pre-seed: %s/%s -> %s slots",
+            "Cold-load placeholder capacity: %s/%s -> %s slot(s) while loading "
+            "(catalog=%s)",
             selected_gateway.name,
             model_id.routing_key,
-            expected_capacity,
+            placeholder_capacity,
+            catalog_capacity,
         )
         if event_bus:
             from src.scheduling.events import RoutingCapacityPreseeded
@@ -70,7 +80,8 @@ async def acquire_admission_token(
                         request_id=context.request_id,
                         model_id=str(model_id),
                         gateway_id=selected_gateway.name,
-                        expected_capacity=expected_capacity,
+                        placeholder_capacity=placeholder_capacity,
+                        catalog_capacity=catalog_capacity,
                     )
                 )
             )

@@ -228,6 +228,12 @@ class CapacityPool:
         if old != max_concurrent:
             logger.info(f"Capacity: {gateway_id}/{model_id}: {old} → {max_concurrent}")
 
+        if max_concurrent > old and model_id in self._queues:
+            asyncio.create_task(
+                self._dispatch(model_id),
+                name=f"capacity-set-dispatch-{gateway_id}-{model_id}",
+            )
+
     def remove_gateway(self, gateway_id: str) -> None:
         """Remove all capacity slots for a disconnected gateway.
 

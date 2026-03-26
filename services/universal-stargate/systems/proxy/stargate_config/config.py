@@ -214,12 +214,10 @@ class StargateConfig:
         )
 
     def get_capacity_pool_config(self) -> dict[str, Any]:
-        """Return CapacityPool overload-control settings."""
+        """Return CapacityPool queue depth and loading-placeholder settings."""
         raw_section = self.config.get("capacity_pool", {})
         if not isinstance(raw_section, dict):
-            msg = (
-                f"capacity_pool must be a mapping, got {type(raw_section).__name__}"
-            )
+            msg = f"capacity_pool must be a mapping, got {type(raw_section).__name__}"
             raise TypeError(msg)
         raw_depth = raw_section.get("max_queue_depth", 0)
         if isinstance(raw_depth, bool) or not isinstance(raw_depth, int):
@@ -230,7 +228,23 @@ class StargateConfig:
             raise TypeError(msg)
         if raw_depth < 0:
             raise ValueError("capacity_pool.max_queue_depth must be >= 0")
-        return {"max_queue_depth": raw_depth}
+
+        raw_loading_phase_cap = raw_section.get("loading_phase_cap", 1)
+        if isinstance(raw_loading_phase_cap, bool) or not isinstance(
+            raw_loading_phase_cap, int
+        ):
+            msg = (
+                "capacity_pool.loading_phase_cap must be int "
+                f"(got {type(raw_loading_phase_cap).__name__})"
+            )
+            raise TypeError(msg)
+        if raw_loading_phase_cap < 1:
+            raise ValueError("capacity_pool.loading_phase_cap must be >= 1")
+
+        return {
+            "max_queue_depth": raw_depth,
+            "loading_phase_cap": raw_loading_phase_cap,
+        }
 
     def get_cloud_proxy_config(self) -> dict[str, Any] | None:
         """Return cloud proxy config when present, otherwise None for disabled mode."""

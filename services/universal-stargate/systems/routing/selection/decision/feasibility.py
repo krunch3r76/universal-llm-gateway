@@ -205,14 +205,17 @@ def evaluate_feasibility(
 
     # Check 3.5: Model is actively loading on this gateway (cold-load in progress)
     # ∀ m ∈ loading_models: Stargate initiated the load via mark_loading_optimistic.
-    # Treat as T1: CapacityPool (preseeded on cold-load) governs concurrency;
-    # ensure_model_loaded_on_remote waits for the load to complete before executing.
+    # Treat as T1: CapacityPool exposes only the loading-phase placeholder while
+    # the model is still non-runnable; ensure_model_loaded_on_remote waits for
+    # real load completion, and restore_model_capacity expands concurrency once
+    # the model is confirmed loaded.
     # Bypassing the VRAM check here is correct — VRAM is consumed by the loading
     # model itself, and routing elsewhere would violate the sticky invariant.
     if placement.model_id in gateway.loading_models:
         logger.info(
             f"✅ Model {placement.model_id} loading on {gateway.name} — T1 "
-            f"(CapacityPool guards; ensure_model_loaded_on_remote will wait)"
+            f"(CapacityPool placeholder guards; "
+            f"ensure_model_loaded_on_remote will wait)"
         )
         return FeasibilityTier.T1_FEASIBLE_NOW, (), None
 

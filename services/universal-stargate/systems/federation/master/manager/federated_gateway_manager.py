@@ -231,14 +231,18 @@ class FederatedGatewayManager(Sequential):
             )
             return 1
 
-    def _restore_model_capacity(
+    def restore_model_capacity(
         self, gateway: FederatedGateway, model_id: ModelId
     ) -> bool:
-        """Restore one model's capacity from model_resources or fallback.
+        """Restore one model's real capacity from model_resources or fallback.
 
-        If telemetry has not delivered model_resources yet, we still seed a
-        minimal capacity of 1 so admission control can see the model until the
-        next authoritative GATEWAY_SNAPSHOT refreshes the real value.
+        This overwrites any loading-phase placeholder once the model is known
+        runnable, and CapacityPool is responsible for waking queued waiters if
+        the restored capacity increases availability.
+
+        Returns:
+            True when a capacity value is written to the pool, False when no
+            capacity pool is currently wired.
         """
         if not self._capacity_pool:
             return False
@@ -304,7 +308,7 @@ class FederatedGatewayManager(Sequential):
 
         seeded = 0
         for model_id in gateway.model_resources:
-            if self._restore_model_capacity(gateway, model_id):
+            if self.restore_model_capacity(gateway, model_id):
                 seeded += 1
         return seeded
 
@@ -1168,7 +1172,7 @@ class FederatedGatewayManager(Sequential):
         )
 
         for mid in snapshot_loaded - prev_loaded:
-            if self._restore_model_capacity(gw, mid):
+            if self.restore_model_capacity(gw, mid):
                 logger.debug(
                     f"📊 Capacity pool: restored {gw.gateway_id}/{mid} from snapshot"
                 )
@@ -1193,9 +1197,7 @@ class FederatedGatewayManager(Sequential):
         # CancelledError / client disconnect).
         if self._capacity_pool and snapshot_loaded:
             idle_model_ids = {
-                mid.routing_key
-                for mid in snapshot_loaded
-                if mid not in snapshot_busy
+                mid.routing_key for mid in snapshot_loaded if mid not in snapshot_busy
             }
             asyncio.create_task(
                 self._capacity_pool.reconcile_gateway_state(
@@ -1394,7 +1396,7 @@ class FederatedGatewayManager(Sequential):
         # Restore capacity in ledger (symmetric with remove_model in unload handler).
         # model_resources persists across unload/reload cycles (populated from initial
         # snapshot only), so max_concurrent_requests is always available here.
-        if self._restore_model_capacity(gw, model_id):
+        if self.restore_model_capacity(gw, model_id):
             logger.debug(
                 f"📊 Capacity pool: restored {gw.gateway_id}/{model_id} "
                 f"max_concurrent_requests from model_resources"

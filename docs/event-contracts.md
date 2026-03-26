@@ -918,6 +918,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `routing.inference.oom.banned` | `model_id`, `gateway_id` | - |
 | `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | - |
 | `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | - |
+| `routing.capacity.preseeded` | `request_id`, `model_id`, `gateway_id`, `placeholder_capacity`, `catalog_capacity` | Cold-load loading placeholder capacity applied before `model.loaded` |
 | `capacity.slot.leak.recovered` | `request_id`, `gateway_id`, `model_id`, `snapshot` | - |
 | `capacity.pool.queued` | `request_id`, `model_id`, `queue_position`, `allowed_gateways` | - |
 | `capacity.pool.waiting` | `request_id`, `model_id`, `wait_ms`, `queue_position`, `queue_depth` | - |
@@ -1010,6 +1011,22 @@ admission.
 | `capacity_pool_available` | int | Available slots per CapacityPool |
 | `capacity_pool_in_flight` | int | Current in-flight requests |
 | `capacity_pool_max` | int | Max concurrent capacity |
+
+### routing.capacity.preseeded
+
+Emitted when cold-load admission seeds `CapacityPool` with **loading placeholder
+capacity** (bounded by `capacity_pool.loading_phase_cap` in Stargate config),
+not the model's full post-load `max_concurrent_requests`. Full catalog capacity
+is restored when the load completes (`restore_model_capacity` after successful
+remote load, and via telemetry-driven paths).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request that triggered the seed |
+| `model_id` | string | Model being cold-loaded |
+| `gateway_id` | string | Target gateway |
+| `placeholder_capacity` | int | Slots exposed while the model is still loading |
+| `catalog_capacity` | int | Full `max_concurrent_requests` from gateway `model_details` |
 
 ### capacity.slot.leak.recovered
 

@@ -25,6 +25,7 @@ from .config import DEFAULT_ORCHESTRATION_CONFIG, OrchestrationConfig
 
 if TYPE_CHECKING:
     from model_id import ModelId
+
     from ...common.types import FederatedGateway
     from ..routing.orchestrator import MasterRequestTracker
     from .manager.federated_gateway_manager import FederatedGatewayManager
@@ -343,6 +344,9 @@ class FederatedLoadOrchestrator:
                 if self._metrics:
                     self._metrics.record_load_operation_success(duration)
                 logger.info(f"✅ Model {model_id} loaded on {gateway.gateway_id}")
+
+                if self._gateway_manager:
+                    self._gateway_manager.restore_model_capacity(gateway, model_id)
 
                 # Emit load confirmed event
                 if self._event_bus:

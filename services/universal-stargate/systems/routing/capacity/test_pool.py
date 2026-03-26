@@ -314,3 +314,38 @@ async def test_waiting_event_emitted_while_request_stays_queued(
     with pytest.raises(asyncio.CancelledError):
         await task_b
     await token_a.release()
+
+
+@pytest.mark.asyncio
+async def test_set_capacity_dispatches_waiters_when_capacity_increases() -> None:
+    pool = CapacityPool(event_bus=None)
+    pool.set_capacity("edge-jupiter-gateway", "hermes3", 1)
+
+    token_a = await pool.acquire_token(
+        request_id="req-a",
+        model_id="hermes3",
+        allowed_gateway_ids=frozenset({"edge-jupiter-gateway"}),
+    )
+
+    async def acquire(rid: str) -> CapacityToken:
+        return await pool.acquire_token(
+            request_id=rid,
+            model_id="hermes3",
+            allowed_gateway_ids=frozenset({"edge-jupiter-gateway"}),
+        )
+
+    task_b = asyncio.create_task(acquire("req-b"))
+    task_c = asyncio.create_task(acquire("req-c"))
+    await asyncio.sleep(0.01)
+
+    pool.set_capacity("edge-jupiter-gateway", "hermes3", 3)
+
+    token_b = await asyncio.wait_for(task_b, timeout=1.0)
+    token_c = await asyncio.wait_for(task_c, timeout=1.0)
+
+    assert token_b.gateway_id == "edge-jupiter-gateway"
+    assert token_c.gateway_id == "edge-jupiter-gateway"
+
+    await token_c.release()
+    await token_b.release()
+    await token_a.release()

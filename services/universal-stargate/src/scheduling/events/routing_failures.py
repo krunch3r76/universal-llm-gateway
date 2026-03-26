@@ -3,7 +3,8 @@
 
 Covers specific failure modes that cause routing to return 503 or non-retryable
 errors: resource data gaps, infeasibility, eviction blocks, upstream exclusion,
-capacity divergence, cold-load pre-seeding, and capacity slot leak recovery.
+capacity divergence, cold-load loading placeholder seeding, and capacity slot
+leak recovery.
 
 Signals:
     routing.resource.data.missing — model in catalog but missing resource data
@@ -12,7 +13,7 @@ Signals:
     routing.eviction.insufficient.permanent — VRAM permanently insufficient
     routing.upstream.all.excluded — all gateways excluded by upstream failures
     routing.capacity.divergence — telemetry/CapacityPool state mismatch
-    routing.capacity.preseeded — CapacityPool pre-seeded for cold load
+    routing.capacity.preseeded — CapacityPool loading placeholder for cold load
     routing.overflow.triggered — non-sticky spillover path selected
     routing.overflow.failed — overflow attempt ended in terminal routing failure
     capacity.slot.leak.recovered — cancellation race slot recovery in CapacityPool
@@ -138,17 +139,18 @@ Payload: {
 
 ROUTING_CAPACITY_PRESEEDED = "routing.capacity.preseeded"
 """
-CapacityPool pre-seeded for a cold-load model from catalog model_details.
+CapacityPool receives a bounded loading-phase placeholder for a cold-load model.
 
 Emitted when a request triggers a cold load and CapacityPool is seeded with
-expected capacity BEFORE the model finishes loading.  This closes the
-cold-load bypass that previously let unlimited requests flood the gateway.
+placeholder capacity (not full post-load concurrency) BEFORE the model finishes
+loading. This closes the cold-load bypass while avoiding herd admission.
 
 Payload: {
     "request_id": str,
     "model_id": str,
     "gateway_id": str,
-    "expected_capacity": int,
+    "placeholder_capacity": int,
+    "catalog_capacity": int,
 }
 """
 
@@ -404,19 +406,21 @@ def RoutingCapacityPreseeded(
     request_id: str,
     model_id: str,
     gateway_id: str,
-    expected_capacity: int,
+    placeholder_capacity: int,
+    catalog_capacity: int,
 ) -> Event:
     """
     Create ROUTING_CAPACITY_PRESEEDED event.
 
-    Emitted when a cold-load request pre-seeds CapacityPool with expected
-    capacity from catalog model_details, closing the cold-load bypass.
+    Emitted when a cold-load request seeds CapacityPool with a bounded
+    loading-phase placeholder instead of the model's full post-load capacity.
 
     Args:
         request_id: Request that triggered the pre-seed
         model_id: Model being cold-loaded
         gateway_id: Target gateway
-        expected_capacity: Slots pre-seeded from max_concurrent_requests
+        placeholder_capacity: Slots exposed while the model is still loading
+        catalog_capacity: Full max_concurrent_requests from model_details
 
     Returns:
         Event with RoutingCapacityPreseeded signal
@@ -427,7 +431,8 @@ def RoutingCapacityPreseeded(
             "request_id": request_id,
             "model_id": model_id,
             "gateway_id": gateway_id,
-            "expected_capacity": expected_capacity,
+            "placeholder_capacity": placeholder_capacity,
+            "catalog_capacity": catalog_capacity,
         },
     )
 
