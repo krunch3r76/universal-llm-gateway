@@ -46,7 +46,9 @@ _VALID_SERVICES = frozenset(
     }
 )  # All recognized service names for API operations
 # Services that support the 'rebuild' operation (container services with local Dockerfiles).
-_REBUILD_SERVICES = frozenset({"gateway", "mcp", "cortex_api", "agent_bus"})
+_REBUILD_SERVICES = frozenset(
+    {"gateway", "mcp", "event_service", "cortex_api", "agent_bus"}
+)
 
 
 class ManageAPIServer:
@@ -310,6 +312,8 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
         return f"{last}\n{start_msg}"
     if service == "mcp":
         return await ctl.rebuild_mcp()
+    if service == "event_service":
+        return await ctl.rebuild_event_service()
     if service == "cortex_api":
         return await ctl.rebuild_cortex_api()
     if service == "agent_bus":

@@ -42,6 +42,11 @@ _ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
 _EDITABLE_SUFFIXES = {".md", ".txt"}
 
 
+def _normalize_files_reference(path: str) -> str:
+    """Accept either a relative sandbox path or a `files://` URI."""
+    return path.removeprefix("files://")
+
+
 def _safe_path(relative: str) -> Path:
     """Resolve *relative* inside the sandbox, rejecting traversal attempts.
 
@@ -224,7 +229,8 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         Supported formats: .jpg, .jpeg, .png, .gif, .webp, .svg
 
         Args:
-            path: Relative file path, e.g. "dropbox/photo.jpg".
+            path: Relative file path or `files://` URI, e.g. "dropbox/photo.jpg"
+                  or "files://evidence/photo.jpg".
             max_dimension: Max width or height in pixels (default 1024).
             quality: JPEG compression quality 1-95 (default 60).
             mode: "copy" writes a JPEG thumbnail to the shared host-visible
@@ -239,7 +245,8 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             FileNotFoundError: If the image file does not exist.
             ValueError: If the path is not a file, is outside the sandbox, or has an unsupported format.
         """
-        src = _safe_path(path)
+        normalized_path = _normalize_files_reference(path)
+        src = _safe_path(normalized_path)
         if not src.exists():
             raise FileNotFoundError(f"Image not found: {path!r}")
         if not src.is_file():
@@ -260,7 +267,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
 
         record(
             "mcp.tool.image.viewed",
-            path=path,
+            path=normalized_path,
             resolved=str(src),
             original=original_size,
             thumbnail_size=thumb_size,

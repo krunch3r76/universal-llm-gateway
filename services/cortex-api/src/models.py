@@ -225,6 +225,7 @@ class _SessionJournalCommon(BaseModel):
     domains: list[str] | None = None
     decisions: list[str] | None = None
     open_items: list[str] | None = None
+    entity_ids: list[str] | None = None
     file_path: str | None = None
 
 

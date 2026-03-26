@@ -330,6 +330,14 @@ class ModelAvailabilityTracker:
             )
         if self.is_available(model_id):
             return AvailabilityResult(available=True, reason=AvailabilityReason.ROUTABLE)
+        probe = await self._probe_catalog_presence(model_id)
+        if probe.available:
+            self._set_available(model_id, True)
+            logger.info(
+                "Model %s catalog probe short-circuited unavailable tracker state",
+                model_id,
+            )
+            return probe
         ev = self._ensure_slot(model_id)
         try:
             await asyncio.wait_for(ev.wait(), timeout=timeout_s)

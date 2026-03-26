@@ -11,6 +11,7 @@ services:
     build:
       context: ../..
       dockerfile: services/cortex-api/Dockerfile
+    image: universal-cortex-api:local
     container_name: cortex-api
     user: "1000:1000"
     network_mode: none

@@ -169,16 +169,19 @@ def format_context(chunks: list[ChunkData]) -> str:
 
         while i + 1 < len(filtered):
             nxt = filtered[i + 1]
-            cur_idx = filtered[i]["metadata"].get("chunk_index")
-            nxt_idx = nxt["metadata"].get("chunk_index")
+            cur_meta = filtered[i].get("metadata") or {}
+            nxt_meta = nxt.get("metadata") or {}
+            cur_idx = cur_meta.get("chunk_index")
+            nxt_idx = nxt_meta.get("chunk_index")
             if (
                 nxt["source"] != source
+                or cur_meta.get("section_path") != nxt_meta.get("section_path")
                 or cur_idx is None
                 or nxt_idx is None
                 or int(nxt_idx) != int(cur_idx) + 1
             ):
                 break
-            overlap_len = int(nxt["metadata"].get("overlap_prefix_len", 0))
+            overlap_len = int(nxt_meta.get("overlap_prefix_len", 0))
             overlap_len = min(overlap_len, len(nxt["content"]))
             continuation = nxt["content"][overlap_len:]
             if continuation:

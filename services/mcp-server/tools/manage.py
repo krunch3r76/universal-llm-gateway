@@ -102,7 +102,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
           start        — Start a stopped service
           stop         — Stop a running service
           restart      — Stop then start a service
-          rebuild      — Rebuild container image and restart (gateway, mcp, cortex_api, agent_bus)
+          rebuild      — Rebuild container image and restart (gateway, mcp, event_service, cortex_api, agent_bus)
           wait_healthy — Block until service is RUNNING or timeout (use after start/restart/rebuild)
 
         Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,

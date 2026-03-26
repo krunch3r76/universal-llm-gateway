@@ -13,7 +13,7 @@ from urllib.parse import quote, urlencode
 
 from mcp_events import record
 
-from ._boot_helpers import render_boot_narrative, safe_list
+from ._boot_helpers import build_gated_entities, render_boot_narrative, safe_list
 from ._cortex_relay import _cx
 from ._file_helpers import read_files_batch
 from .local_api import _relay
@@ -22,6 +22,18 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_entity_ids(sessions: list[dict[str, Any]]) -> list[str]:
+    """Read entity_ids from the most recent session journal."""
+    if not sessions:
+        return []
+    latest = sessions[0]
+    ids = latest.get("entity_ids")
+    if isinstance(ids, list):
+        return [str(eid) for eid in ids if eid]
+    return []
+
 
 _BOOT_PROFILES: dict[str, dict[str, Any]] = {
     "cursor": {
@@ -380,10 +392,20 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
         with ThreadPoolExecutor(max_workers=8) as pool:
             submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
             raw = {k: f.result() for k, f in submitted.items()}
+
+        sessions: list[dict[str, Any]] = safe_list(raw["sessions"])
+
+        gated_entity_ids = _extract_entity_ids(sessions)
+        gated_raw: dict[str, Any] = {}
+        if gated_entity_ids:
+            gated_qs = urlencode(
+                {"entity_ids": ",".join(gated_entity_ids), "per_entity": 5}
+            )
+            gated_raw = _cx("GET", f"/boot-gated?{gated_qs}")
+
         post_file_results = read_files_batch(post_list) if post_list else {}
 
         deadlines: list[dict[str, Any]] = safe_list(raw.get("deadlines", []))
-        sessions: list[dict[str, Any]] = safe_list(raw["sessions"])
         all_assertions: list[dict[str, Any]] = safe_list(raw["assertions"])
         threads: list[dict[str, Any]] = safe_list(raw["threads"], "threads")
         unread_turns: list[dict[str, Any]] = safe_list(raw["inbox"], "turns")
@@ -425,6 +447,11 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
         if profile.get("include_review_queue", True):
             review_total = len(staging_items) + len(low_conf_unreviewed)
 
+        gated_entities = build_gated_entities(
+            gated_raw.get("entities", []) if isinstance(gated_raw, dict) else [],
+            temporal_active,
+        )
+
         narrative = render_boot_narrative(
             boot_sections=boot_sections,
             deadlines=deadlines if profile.get("include_deadlines", True) else None,
@@ -443,6 +470,7 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
             continuation_decisions=cont_decisions or None,
             continuation_services=cont_services or None,
             todos=todos or None,
+            gated_entities=gated_entities or None,
         )
 
         logger.info(
@@ -497,5 +525,7 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
                 "service_observations": cont_services,
                 "open_todos": todos,
             }
+        if gated_entities:
+            result["gated_entities"] = gated_entities
 
         return result

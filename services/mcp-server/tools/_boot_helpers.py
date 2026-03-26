@@ -17,6 +17,29 @@ def safe_list(raw: dict[str, Any] | list[Any], key: str = "items") -> list[Any]:
     return []
 
 
+def build_gated_entities(
+    gated_raw: list[dict[str, Any]],
+    temporal_active: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build gated entity entries, tagging source as temporal/gated/both.
+
+    Entities appearing in both temporal surfacing and the journal entity gate
+    get tagged 'both' and receive enriched assertion depth in the narrative.
+    """
+    temporal_entity_ids: set[str] = set()
+    for a in temporal_active:
+        eid = a.get("entity_id")
+        if eid:
+            temporal_entity_ids.add(eid)
+
+    result: list[dict[str, Any]] = []
+    for entity in gated_raw:
+        eid = entity.get("entity_id", "")
+        source = "both" if eid in temporal_entity_ids else "gated"
+        result.append({**entity, "source": source})
+    return result
+
+
 def render_boot_narrative(
     *,
     boot_sections: dict[str, Any] | None = None,
@@ -32,6 +55,7 @@ def render_boot_narrative(
     continuation_decisions: list[dict[str, Any]] | None = None,
     continuation_services: list[dict[str, Any]] | None = None,
     todos: list[dict[str, Any]] | None = None,
+    gated_entities: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render boot briefing as Markdown narrative.
 
@@ -68,6 +92,26 @@ def render_boot_narrative(
                 parts.append(f"- [{t.get('id', '?')}] {t.get('title', '')}")
         if not has_content:
             parts.append("No continuation state available.")
+
+    if gated_entities:
+        total_assertions = sum(e.get("assertions_shown", 0) for e in gated_entities)
+        parts.append(
+            f"\n## Gated Entities ({len(gated_entities)} entities, "
+            f"{total_assertions} assertions surfaced)"
+        )
+        for entity in gated_entities:
+            eid = entity.get("entity_id", "?")
+            name = entity.get("entity_name", eid)
+            shown = entity.get("assertions_shown", 0)
+            total = entity.get("assertion_count", 0)
+            source_tag = entity.get("source", "gated")
+            enriched = " [enriched — temporal+gated]" if source_tag == "both" else ""
+            parts.append(f"\n### {name} ({shown}/{total} assertions){enriched}")
+            for a in entity.get("assertions", []):
+                conf = a.get("confidence", "?")
+                parts.append(f"- [{conf}] {a.get('claim', '')}")
+            if total > shown:
+                parts.append(f'-> entity_get("{eid}") for full context')
 
     if deadlines is not None:
         parts.append("\n## Deadlines")

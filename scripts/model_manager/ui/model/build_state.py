@@ -7,6 +7,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +56,14 @@ class ImageInfo:
 
 class BuildState:
     """
-    Check whether the Docker GPU image exists and its build configuration.
+    Check whether the Docker GPU image exists and builder-scoped cache size.
 
     Build operations are delegated to docker/scripts/build/build-gpu.sh
     by the ServiceController (not handled here).
     """
+
+    def __init__(self, workspace_root: Path) -> None:
+        self._root = workspace_root
 
     def check_image(self) -> ImageInfo:
         if not shutil.which("docker"):
@@ -126,36 +130,32 @@ class BuildState:
             logger.warning("Failed to read image labels: %s", e)
             return ImageConfig()
 
-    @staticmethod
-    def check_build_cache() -> str:
-        """Return human-readable build cache size, or empty string on failure."""
+    def check_build_cache(self, target: str = "gateway") -> str:
+        """Return human-readable build cache size for one workspace builder."""
+        script = self._root / "scripts" / "build-cache.sh"
         try:
             result = subprocess.run(
-                ["docker", "builder", "du", "--verbose"],
+                ["bash", str(script), "size", target],
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
             if result.returncode != 0:
                 return ""
-            for line in result.stdout.splitlines():
-                if line.startswith("Total:"):
-                    return line.split(":", 1)[1].strip()
-            return ""
+            return result.stdout.strip()
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
             logger.warning("Failed to check build cache: %s", e)
             return ""
 
-    @staticmethod
-    async def prune_build_cache() -> str:
-        """Prune dangling build cache (preserves referenced layers for cached rebuilds).
-
-        Uses `docker builder prune -f` WITHOUT -a so layers referenced by
-        existing images are kept — this is what enables fast cached rebuilds.
-        """
+    async def prune_build_cache(self, target: str = "gateway") -> str:
+        """Prune one dedicated buildx builder cache for this workspace."""
+        script = self._root / "scripts" / "build-cache.sh"
         try:
             proc = await asyncio.create_subprocess_exec(
-                "docker", "builder", "prune", "-f",
+                "bash",
+                str(script),
+                "prune",
+                target,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )

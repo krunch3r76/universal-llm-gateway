@@ -10,7 +10,7 @@ from src.models import SessionJournalCreate, SessionJournalItem, SessionJournalL
 logger = logging.getLogger("cortex-api.session_journals")
 router = APIRouter(prefix="/session-journals", tags=["session-journals"])
 
-_JSON_FIELDS = frozenset({"domains", "decisions", "open_items"})
+_JSON_FIELDS = frozenset({"domains", "decisions", "open_items", "entity_ids"})
 
 
 @router.get("", response_model=SessionJournalList)
@@ -53,8 +53,9 @@ def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
     try:
         cur = conn.execute(
             "INSERT INTO session_journals "
-            "(timestamp, agent, summary, domains, decisions, open_items, file_path) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(timestamp, agent, summary, domains, decisions, open_items, "
+            "entity_ids, file_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.timestamp,
                 body.agent,
@@ -62,6 +63,7 @@ def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
                 json_encode(body.domains),
                 json_encode(body.decisions),
                 json_encode(body.open_items),
+                json_encode(body.entity_ids),
                 body.file_path,
             ),
         )

@@ -421,7 +421,7 @@ class TopologyPanel(Widget):
 
         # Phase 2: Event service (observability backbone)
         ev_ok = await self._run_single(
-            mk, "event_service", svc.restart_event_service, failures
+            mk, "event_service", svc.rebuild_event_service, failures
         )
         if ev_ok:
             if not await svc.wait_healthy_event_service(timeout=30):

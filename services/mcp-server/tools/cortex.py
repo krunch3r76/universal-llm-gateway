@@ -247,6 +247,7 @@ def _op_journal_write(
     domains: list[str] | None = None,
     decisions: list[str] | None = None,
     open_items: list[str] | None = None,
+    entity_ids: list[str] | None = None,
     file_path: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
@@ -261,6 +262,7 @@ def _op_journal_write(
         **({} if domains is None else {"domains": domains}),
         **({} if decisions is None else {"decisions": decisions}),
         **({} if open_items is None else {"open_items": open_items}),
+        **({} if entity_ids is None else {"entity_ids": entity_ids}),
         **({} if file_path is None else {"file_path": file_path}),
     }
     result = _cx("POST", "/session-journals", body)
@@ -380,7 +382,9 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           surface_forms(entity_id?, mention?, mention_type?, limit?) — resolution cache
           deadlines() — legal deadlines
           journal_read(limit?) — recent session journals
-          journal_write(timestamp, agent, summary, domains?, decisions?, open_items?, file_path?)
+          journal_write(timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, file_path?)
+              entity_ids: JSON array of entity IDs referenced in this session.
+              At next boot, cortex_boot injects current state for these entities.
           review_queue(limit?) — provisional entities + flagged assertions +
               low-confidence unreviewed + thin descriptions (prioritized)
 

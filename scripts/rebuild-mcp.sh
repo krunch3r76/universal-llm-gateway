@@ -3,14 +3,14 @@
 # Reads MCP_PROJECT_DIR, MCP_AUTH_TOKEN, etc. from ~/.gateway/mcp.yaml.
 # Usage: ./scripts/rebuild-mcp.sh [--use-cache] [from repo root or any subdir]
 
-set -e
+set -euo pipefail
 
 usage() {
   cat <<'EOF'
 Usage: ./scripts/rebuild-mcp.sh [--use-cache]
 
 Options:
-  --use-cache  Rebuild with normal Docker layer cache instead of --no-cache.
+  --use-cache  Rebuild with normal Docker layer cache instead of a fresh build.
   -h, --help   Show this help text.
 EOF
 }
@@ -114,14 +114,13 @@ if [[ "$ENABLE_BROWSER_TOOLS" == "true" ]]; then
   COMPOSE_ARGS+=(-f docker/compose/mcp-server-browser.override.yml)
 fi
 
-BUILD_ARGS=(build mcp-server)
 if [[ "$USE_CACHE" == "true" ]]; then
   echo "Building MCP server (using cache)..."
+  bash docker/scripts/build/build-mcp.sh
 else
-  echo "Building MCP server (no cache)..."
-  BUILD_ARGS=(build --no-cache mcp-server)
+  echo "Building MCP server (no cache, pulling fresh base images)..."
+  bash docker/scripts/build/build-mcp.sh --no-cache
 fi
-docker compose "${COMPOSE_ARGS[@]}" "${BUILD_ARGS[@]}"
 
 echo "Starting MCP server..."
 docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server

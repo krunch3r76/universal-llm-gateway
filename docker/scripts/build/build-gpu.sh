@@ -84,6 +84,7 @@ BUILD_SCRIPT="${PROJECT_ROOT}/libs/inference_djinn/scripts/build/python_builders
 # Configuration
 IMAGE_NAME="${IMAGE_NAME:-universal-llm-gateway}"
 IMAGE_TAG="${IMAGE_TAG:-gpu}"
+BUILDER_NAME="${BUILDX_BUILDER_NAME:-ulg-gateway}"
 CUDA_VERSION="${CUDA_VERSION:-13.0.0}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 # Default: AVX2 for portable Docker images (works on ~95% of servers)
@@ -140,11 +141,11 @@ SOURCE_VERSION=""
 OBFUSCATE="false"
 
 # Parse arguments
-NO_CACHE=""
+CACHE_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --no-cache)
-            NO_CACHE="--no-cache"
+            CACHE_ARGS=(--no-cache --pull)
             shift
             ;;
         --cpu-native)
@@ -252,7 +253,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --no-cache          Force rebuild without cache"
+            echo "  --no-cache          Force rebuild without cache and refresh base images"
             echo "  --refresh-source    Bust cache for source COPY (libs/, services/, config/)"
             echo "  --obfuscate         Build obfuscated image (PyArmor, production)"
             echo ""
@@ -399,8 +400,9 @@ echo "  llama-server: ${ENABLE_LLAMA_SERVER}"
 if [[ "${ENABLE_LLAMA_SERVER}" == "true" ]]; then
     echo "  llama-server version: ${LLAMA_SERVER_VERSION}"
 fi
-if [[ -n "${NO_CACHE}" ]]; then
+if [[ ${#CACHE_ARGS[@]} -gt 0 ]]; then
     echo "  Cache: DISABLED (forced rebuild)"
+    echo "  Base images: REFRESHED (--pull)"
 fi
 if [[ -n "${SOURCE_VERSION}" ]]; then
     echo "  Source refresh: YES (SOURCE_VERSION=${SOURCE_VERSION})"
@@ -467,6 +469,16 @@ export LLAMA_SERVER_VERSION
 
 cd "${PROJECT_ROOT}"
 
+ensure_buildx_builder() {
+    if docker buildx inspect "${BUILDER_NAME}" >/dev/null 2>&1; then
+        return
+    fi
+    echo "🔧 Creating buildx builder: ${BUILDER_NAME}"
+    docker buildx create --name "${BUILDER_NAME}" --driver docker-container >/dev/null
+}
+
+ensure_buildx_builder
+
 # Single rolling build log for both local and remote builds.
 BUILD_LOG="${BUILD_LOG_PATH:-/tmp/gateway-build.log}"
 rm -f /tmp/gateway-build-[0-9]*.log
@@ -475,9 +487,11 @@ rm -f /tmp/gateway-build-[0-9]*.log
 # Always build base image (tagged for potential obfuscation consumption)
 echo "🔨 Building base image..."
 echo "📋 Build log: ${BUILD_LOG}"
-docker build \
+docker buildx build \
+    --builder "${BUILDER_NAME}" \
+    --load \
     --progress=plain \
-    ${NO_CACHE} \
+    "${CACHE_ARGS[@]}" \
     --build-arg CUDA_VERSION="${CUDA_VERSION}" \
     --build-arg PYTHON_VERSION="${PYTHON_VERSION}" \
     --build-arg CPU_OPTIMIZATION="${CPU_OPTIMIZATION}" \
@@ -518,9 +532,11 @@ if [[ "${OBFUSCATE}" == "true" ]]; then
     # Copy Dockerfiles (they may be in .dockerignore)
     cp docker/dockerfiles/Dockerfile.obfuscated "${BUILD_CONTEXT}/docker/dockerfiles/"
     
-    docker build \
+    docker buildx build \
+        --builder "${BUILDER_NAME}" \
+        --load \
         --progress=plain \
-        ${NO_CACHE} \
+        "${CACHE_ARGS[@]}" \
         --build-arg PYTHON_VERSION="${PYTHON_VERSION}" \
         --build-arg CUDA_VERSION="${CUDA_VERSION}" \
         --build-arg CPU_OPTIMIZATION="${CPU_OPTIMIZATION}" \
@@ -624,7 +640,6 @@ echo "  - Native GPU build: docker/build-gpu.sh --gpu-native"
 echo "  - Full native: docker/build-gpu.sh --cpu-native --gpu-native"
 echo "  - Obfuscated native: docker/build-gpu.sh --obfuscate --cpu-native --gpu-native"
 
-# Cache pruning is managed via ./manage (Services → Prune Cache).
-# Uses `docker builder prune -f` (dangling only, no -a) to preserve
-# referenced layers needed for cached rebuilds.
+# Cache pruning is managed via ./manage (Services → Prune Builder Cache) or
+# ./scripts/build-cache.sh prune gateway for scoped gateway cleanup.
 

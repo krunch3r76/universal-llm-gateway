@@ -38,7 +38,7 @@ All current retrieval observations are against `qwen3-14b` extraction + local vo
 
 ### Index Time — the Front-Loaded Investment
 
-1. **Chunking** — files are split into semantically coherent chunks using target+pad sizing with paragraph overlap and heading injection. Code files use tree-sitter AST-based chunking.
+1. **Chunking** — files are split into semantically coherent chunks using target+pad sizing with paragraph overlap and heading injection. Code files use tree-sitter AST-based chunking. PDF inputs are converted to markdown first; dominant `pymupdf4llm` bold-heading patterns are normalized into ATX headings before section parsing, but a small residual class of inline bold subheadings may still remain.
 2. **Source hashing** — plain SHA-256 of file bytes is stored as `source_hash` on every chunk (PDF, Markdown, HTML, etc.). This hash serves as the universal join key to the `articles` table for query-time metadata enrichment.
 3. **Knowledge extraction** — the `rag-extraction` LLM pipeline extracts entities, types, facets, topics, and relations from each chunk. Results are stored in both ChromaDB metadata and a SQLite-backed property inverted index. This is the most expensive index-time step, but it enables deterministic metadata boost and IDF expansion at search time.
 4. **Full-text indexing (FTS5)** — every chunk's text is indexed in a SQLite FTS5 full-text index alongside the vector store. This powers Pool B sparse retrieval with BM25 scoring — no embedding model involved. Lives in the same `rag_metadata.db` as the property index.
@@ -177,7 +177,7 @@ Pipeline configuration: `pipelines/rag/rag_context_v1/rag-context-v1-direct.yaml
 |--------|-------------------|
 | Markdown (`.md`) | Structure-aware: headers, paragraphs, code blocks |
 | Code (`.py`) | Tree-sitter AST-based with metadata extraction |
-| PDF (`.pdf`) | Native text extraction via `pymupdf4llm`, content-hash dedup |
+| PDF (`.pdf`) | Native text extraction via `pymupdf4llm`, then heading normalization plus section-aware markdown chunking. Dominant bold-heading patterns convert cleanly; a small residual class of inline bold subheadings may persist. |
 | EPUB / Ebook | Text extraction and structural chunking |
 | HTML (`.html`, `.htm`) | BeautifulSoup + markdownify normalization |
 | Plain text (`.txt`) | Paragraph-based chunking |

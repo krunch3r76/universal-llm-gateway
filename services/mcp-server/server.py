@@ -45,6 +45,7 @@ from tools.finance import register_finance_tools
 from tools.finance_ingest import register_finance_ingest_tools
 from tools.finance_reconcile import register_finance_reconcile_tools
 from tools.finance_smart_ingest import register_finance_smart_ingest_tools
+from tools.ingest_binary import register_ingest_binary_tools
 from tools.llm import register_llm_tools
 from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
@@ -263,6 +264,7 @@ def _build_server() -> FastMCP:
     register_finance_ingest_tools(mcp)
     register_finance_reconcile_tools(mcp)
     register_finance_smart_ingest_tools(mcp)
+    register_ingest_binary_tools(mcp)
     register_document_ocr_tools(mcp)
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)
@@ -301,6 +303,10 @@ def _build_server() -> FastMCP:
             move_file(source, destination) — move/rename any file
             copy_file(source, destination) — copy any file
             remove_directory(directory) — delete directory and contents
+            ingest_binary(path, content_base64, media_type?, entity_id?, entity_name?, entity_description?)
+                Store binary evidence under /data/files/evidence and create the
+                matching Cortex document entity. Use when an agent already has
+                binary bytes and needs a first-class evidence artifact.
           Context files (individual — prefer primary `context` tool):
             read_context_file(path) — read context file
             write_context_file(path, content) — write context file

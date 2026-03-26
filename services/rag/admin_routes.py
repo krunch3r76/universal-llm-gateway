@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 from services.rag.config import BASELINE_EXTENSIONS
 from services.rag.directory_ops import (
     IndexFileFn,
+    collect_directory_candidates,
     delete_sources,
     find_removed_directory_sources,
     find_sources_under_prefixes,
@@ -110,28 +111,6 @@ def _validate_directory(path: str) -> Path:
     if not dir_path.is_dir():
         raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
     return dir_path
-
-
-async def _bulk_premark(
-    dir_path: Path,
-    extensions: set[str],
-    get_property_index_fn: Callable[[], PropertyIndex | None],
-) -> list[Path]:
-    """Collect file paths and pre-mark all as pending before concurrent dispatch.
-
-    Ensures a pending journal entry exists for each file before indexing runs,
-    so _index_file_impl can clear_pending on any exit (success/skip/error).
-    """
-    prop_idx = get_property_index_fn()
-    seen: set[Path] = set()
-    # Assuming extensions are like '.txt', '.pdf'
-    for ext in extensions:
-        for fp in dir_path.rglob(f"**/*{ext}"):
-            if fp.is_file() and fp not in seen:
-                seen.add(fp)
-                if prop_idx:
-                    await prop_idx.mark_pending(str(fp))
-    return sorted(seen)
 
 
 async def _clear_directory_sources(
@@ -218,7 +197,11 @@ def register_admin_routes(
             # Or, if _clear_directory_sources does not emit, create a helper:
             # await _publish_directory_cleared_event(eb, dir_path, sources_cleared, chunks_cleared)
 
-        file_paths = await _bulk_premark(dir_path, extensions, get_property_index_fn)
+        file_paths, walked_sources = collect_directory_candidates(
+            dir_path=dir_path,
+            extensions=extensions,
+            collect_walked_sources=is_reindex,
+        )
         candidate_count = len(file_paths)
         logger.warning(
             "Directory %s starting: path=%s files=%d force=%s",
@@ -234,12 +217,10 @@ def register_admin_routes(
                 )
             )
 
-        totals, walked_sources = await index_directory_contents(
-            dir_path=dir_path,
-            extensions=extensions,
+        totals = await index_directory_contents(
+            file_paths=file_paths,
             index_file=index_file_fn,
             metadata_overrides=metadata_overrides,
-            collect_walked_sources=is_reindex,
             on_index_error=_on_error,
             force=force,
         )

@@ -19,6 +19,7 @@ from src.routes import (
     chunks,
     deadlines,
     entities,
+    gated,
     relationships,
     salience,
     session_journals,
@@ -56,6 +57,7 @@ app.include_router(session_journals.router)
 app.include_router(stats.router)
 app.include_router(salience.router)
 app.include_router(boot.router)
+app.include_router(gated.router)
 
 
 @app.on_event("startup")

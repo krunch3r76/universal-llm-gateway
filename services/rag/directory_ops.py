@@ -51,23 +51,21 @@ RemoveSourceMetadataFn = Callable[[str, list[str] | None], Awaitable[None]]
 ListKnownSourcesFn = Callable[[list[str]], set[str]]
 
 
-async def index_directory_contents(
+def collect_directory_candidates(
     *,
     dir_path: Path,
     extensions: set[str],
-    index_file: IndexFileFn,
-    metadata_overrides: dict[str, str | int | float | bool] | None,
     collect_walked_sources: bool,
-    on_index_error: OnIndexErrorFn,
-    force: bool = False,
-) -> tuple[DirectoryIndexTotals, set[str]]:
-    totals = DirectoryIndexTotals()
-    walked_sources: set[str] = set()
+) -> tuple[list[Path], set[str]]:
+    """Return candidate files and optionally the full walked source set.
 
-    # Collect all candidate paths before dispatch so walked_sources is complete
-    # before asyncio.gather starts and stale-source cleanup in reindex_directory
-    # sees the full walked set even if gather is interrupted.
+    The admin route needs the candidate count before dispatch so it can emit the
+    directory-started event, while stale-source cleanup needs the complete walked
+    set after dispatch. Keep both concerns on the same traversal so reindex of an
+    unchanged tree does not pay for a second recursive walk.
+    """
     file_paths: list[Path] = []
+    walked_sources: set[str] = set()
     for root, _dirs, files in dir_path.walk():
         for name in files:
             file_path = root / name
@@ -76,9 +74,21 @@ async def index_directory_contents(
             if collect_walked_sources:
                 walked_sources.add(str(file_path.resolve()))
             file_paths.append(file_path)
+    return file_paths, walked_sources
+
+
+async def index_directory_contents(
+    *,
+    file_paths: list[Path],
+    index_file: IndexFileFn,
+    metadata_overrides: dict[str, str | int | float | bool] | None,
+    on_index_error: OnIndexErrorFn,
+    force: bool = False,
+) -> DirectoryIndexTotals:
+    totals = DirectoryIndexTotals()
 
     if not file_paths:
-        return totals, walked_sources
+        return totals
 
     # Stargate's capacity gate (32 slots) provides natural back-pressure — no semaphore needed.
     # ∀ file_path: per-source asyncio.Lock in _index_file prevents double-indexing.
@@ -102,7 +112,7 @@ async def index_directory_contents(
             totals.unchanged += 1
         totals.files += 1
 
-    return totals, walked_sources
+    return totals
 
 
 def find_sources_under_prefixes(

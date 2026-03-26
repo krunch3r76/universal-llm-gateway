@@ -79,7 +79,7 @@ class ServiceController:
 
     def __init__(self, workspace_root: Path) -> None:
         self._root = workspace_root
-        self._build_state = BuildState()
+        self._build_state = BuildState(workspace_root)
         self._service_state = ServiceState(workspace_root)
         self._sidecar = SidecarController(workspace_root)
         self._build_process: asyncio.subprocess.Process | None = None
@@ -116,11 +116,11 @@ class ServiceController:
             info.status = BuildStatus.BUILDING
         return info
 
-    def check_build_cache(self) -> str:
-        return self._build_state.check_build_cache()
+    def check_build_cache(self, target: str = "gateway") -> str:
+        return self._build_state.check_build_cache(target)
 
-    async def prune_build_cache(self) -> str:
-        return await self._build_state.prune_build_cache()
+    async def prune_build_cache(self, target: str = "gateway") -> str:
+        return await self._build_state.prune_build_cache(target)
 
     async def cancel_build(self) -> str:
         """Kill the running build process group."""
@@ -234,6 +234,27 @@ class ServiceController:
                 except (ProcessLookupError, PermissionError):
                     pass
             self._build_process = None
+
+    async def _run_build_script(
+        self,
+        *,
+        script: Path,
+        env: dict[str, str],
+        no_cache: bool,
+    ) -> tuple[int, str]:
+        """Run one service image build script and return (exit_code, merged output)."""
+        args = [str(script)] + (["--no-cache"] if no_cache else [])
+        proc = await asyncio.create_subprocess_exec(
+            "bash",
+            *args,
+            env=env,
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out = await proc.communicate()
+        text = out[0].decode(errors="replace") if out[0] else ""
+        return proc.returncode, text
 
     async def start_gateway(self, *, node_id: str = "localhost") -> str:
         """Start Edge+Gateway container via parameterized compose."""
@@ -486,36 +507,24 @@ class ServiceController:
         return f"Failed to stop MCP server (exit {result.returncode}).\n{text}"
 
     async def rebuild_mcp(self, *, no_cache: bool = False) -> str:
-        """Rebuild MCP server image and restart. Uses Docker cache unless no_cache=True."""
+        """Rebuild MCP server image and restart via dedicated buildx builder."""
         base = self._mcp_compose_args()
         if base is None:
             return "Compose file not found: docker/compose/mcp-server.yml"
-        args, _ = base
         env = build_mcp_env(self._root)
-
-        build_args = ["build"]
-        if no_cache:
-            build_args.append("--no-cache")
-
-        build = await asyncio.create_subprocess_exec(
-            *args,
-            *build_args,
+        script = self._root / "docker" / "scripts" / "build" / "build-mcp.sh"
+        build_code, build_text = await self._run_build_script(
+            script=script,
             env=env,
-            cwd=str(self._root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            no_cache=no_cache,
         )
-        build_out = await build.communicate()
-        build_text = build_out[0].decode(errors="replace") if build_out[0] else ""
-        build_failed = build.returncode != 0
+        build_failed = build_code != 0
         if build_failed:
-            logger.error(
-                "MCP rebuild failed (exit %d):\n%s", build.returncode, build_text
-            )
+            logger.error("MCP rebuild failed (exit %d):\n%s", build_code, build_text)
         start_text = await self.start_mcp()
         if build_failed:
             return (
-                f"MCP build failed (exit {build.returncode}) — "
+                f"MCP build failed (exit {build_code}) — "
                 f"restarted with existing image.\n{start_text}"
             )
         if not start_text.startswith("MCP server started."):
@@ -597,25 +606,20 @@ class ServiceController:
         )
 
     async def rebuild_cortex_api(self, *, no_cache: bool = False) -> str:
-        """Rebuild cortex-api image then start container, returning build/start combined output."""
+        """Rebuild cortex-api image then start container via dedicated buildx builder."""
         base = self._cortex_compose_args()
         if base is None:
             return "Compose file not found or prerequisites failed: docker/compose/cortex-api.yml"
-        args, env = base
-        build_args = ["build"] + (["--no-cache"] if no_cache else [])
-        build = await asyncio.create_subprocess_exec(
-            *args,
-            *build_args,
+        _, env = base
+        script = self._root / "docker" / "scripts" / "build" / "build-cortex-api.sh"
+        build_code, build_text = await self._run_build_script(
+            script=script,
             env=env,
-            cwd=str(self._root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            no_cache=no_cache,
         )
-        bout = await build.communicate()
-        btxt = bout[0].decode(errors="replace") if bout[0] else ""
         start_txt = await self.start_cortex_api()
-        if build.returncode != 0:
-            return f"Cortex API build failed (exit {build.returncode}).\n{btxt}\n{start_txt}"
+        if build_code != 0:
+            return f"Cortex API build failed (exit {build_code}).\n{build_text}\n{start_txt}"
         return start_txt
 
     async def wait_healthy_cortex_api(self, *, timeout: float = 30.0) -> bool:
@@ -717,25 +721,20 @@ class ServiceController:
         )
 
     async def rebuild_agent_bus(self, *, no_cache: bool = False) -> str:
-        """Rebuild agent-bus image then start container, preserving existing runtime parity."""
+        """Rebuild agent-bus image then start container via dedicated buildx builder."""
         base = self._agent_bus_compose_args()
         if base is None:
             return "Compose file not found or prerequisites failed: docker/compose/agent-bus.yml"
-        args, env = base
-        build_args = ["build"] + (["--no-cache"] if no_cache else [])
-        build = await asyncio.create_subprocess_exec(
-            *args,
-            *build_args,
+        _, env = base
+        script = self._root / "docker" / "scripts" / "build" / "build-agent-bus.sh"
+        build_code, build_text = await self._run_build_script(
+            script=script,
             env=env,
-            cwd=str(self._root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            no_cache=no_cache,
         )
-        bout = await build.communicate()
-        btxt = bout[0].decode(errors="replace") if bout[0] else ""
         start_txt = await self.start_agent_bus()
-        if build.returncode != 0:
-            return f"Agent Bus build failed (exit {build.returncode}).\n{btxt}\n{start_txt}"
+        if build_code != 0:
+            return f"Agent Bus build failed (exit {build_code}).\n{build_text}\n{start_txt}"
         return start_txt
 
     async def wait_healthy_agent_bus(self, *, timeout: float = 30.0) -> bool:
@@ -801,42 +800,45 @@ class ServiceController:
 
     async def start_event_service(self) -> str:
         """Start event service container via docker compose."""
-        compose_path = self._root / "docker" / "compose" / "event-service.yml"
-        if not compose_path.exists():
-            return f"Compose file not found: {compose_path}"
+        base = self._event_service_compose_args()
+        if base is None:
+            return (
+                "Compose file not found or prerequisites failed: "
+                "docker/compose/event-service.yml"
+            )
+        args, env = base
 
         result = await asyncio.create_subprocess_exec(
-            "docker",
-            "compose",
-            "-f",
-            str(compose_path),
+            *args,
             "up",
             "-d",
             "--force-recreate",
+            env=env,
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
         output = await result.communicate()
         text = output[0].decode(errors="replace") if output[0] else ""
-        if result.returncode == 0:
-            return f"Event service started.\n{text}"
-        logger.error(
-            "Failed to start event service (exit %d):\n%s", result.returncode, text
-        )
-        return f"Failed to start event service (exit {result.returncode}).\n{text}"
+        if result.returncode != 0:
+            logger.error(
+                "Failed to start event service (exit %d):\n%s", result.returncode, text
+            )
+            return f"Failed to start event service (exit {result.returncode}).\n{text}"
+        health_error = await self._wait_container_healthy("event-service", timeout=30.0)
+        if health_error is not None:
+            return f"Failed to start event service.\n{text}\n{health_error}"
+        return f"Event service started.\n{text}"
 
     async def stop_event_service(self) -> str:
         """Stop and remove event service container."""
-        compose_path = self._root / "docker" / "compose" / "event-service.yml"
-        if not compose_path.exists():
+        base = self._event_service_compose_args()
+        if base is None:
             return "Event service is not running (compose file missing)."
+        args, _ = base
 
         result = await asyncio.create_subprocess_exec(
-            "docker",
-            "compose",
-            "-f",
-            str(compose_path),
+            *args,
             "down",
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
@@ -854,6 +856,48 @@ class ServiceController:
     async def restart_event_service(self) -> str:
         """Restart event service (force-recreate triggers session retention at boot)."""
         return await self.start_event_service()
+
+    def _event_service_compose_path(self) -> Path | None:
+        """Return compose file path for event-service, or None if missing."""
+        compose_path = self._root / "docker" / "compose" / "event-service.yml"
+        return compose_path if compose_path.exists() else None
+
+    def _event_service_compose_args(self) -> tuple[list[str], dict[str, str]] | None:
+        """Return compose args/env for event-service when compose file and dirs are ready."""
+        compose_path = self._event_service_compose_path()
+        if compose_path is None:
+            return None
+        socket_err = ensure_socket_dir()
+        if socket_err:
+            logger.error("Cannot start event service: %s", socket_err)
+            return None
+        env = build_service_env(self._root)
+        return ["docker", "compose", "-f", str(compose_path)], env
+
+    async def rebuild_event_service(self, *, no_cache: bool = False) -> str:
+        """Rebuild event-service image then start container via dedicated buildx builder."""
+        base = self._event_service_compose_args()
+        if base is None:
+            return (
+                "Compose file not found or prerequisites failed: "
+                "docker/compose/event-service.yml"
+            )
+        _, env = base
+        script = (
+            self._root / "docker" / "scripts" / "build" / "build-event-service.sh"
+        )
+        build_code, build_text = await self._run_build_script(
+            script=script,
+            env=env,
+            no_cache=no_cache,
+        )
+        start_txt = await self.start_event_service()
+        if build_code != 0:
+            return (
+                f"Event service build failed (exit {build_code}).\n"
+                f"{build_text}\n{start_txt}"
+            )
+        return start_txt
 
     async def wait_healthy_event_service(self, *, timeout: float = 30.0) -> bool:
         """Poll until the event-service container reports healthy."""

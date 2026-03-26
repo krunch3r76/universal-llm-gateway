@@ -27,6 +27,14 @@ _SCOPE_FLAGS: dict[str, list[str]] = {
     "llama": ["--cpu-native", "--gpu-native"],
 }
 
+_CACHE_TARGET_LABELS: dict[str, str] = {
+    "gateway": "Gateway",
+    "mcp": "MCP",
+    "cortex-api": "Cortex API",
+    "agent-bus": "Agent Bus",
+    "event-service": "Event Service",
+}
+
 
 class ServicesScreen(Screen):
     """Manage Docker builds and service lifecycle."""
@@ -92,7 +100,7 @@ class ServicesScreen(Screen):
         with Vertical(id="svc-status"):
             yield Static("[b]Docker Image[/b]", markup=True)
             yield Static("  Checking...", id="img-detail")
-            yield Static("  Build cache: —", id="img-cache")
+            yield Static("  Build cache (Gateway): —", id="img-cache")
             yield Static("")
             yield Static("[b]Services[/b]", markup=True)
             yield Static("  Gateway:  checking...", id="svc-gw")
@@ -112,12 +120,23 @@ class ServicesScreen(Screen):
                 id="build-scope",
                 value="all",
             )
+            yield Select(
+                [
+                    ("Gateway cache", "gateway"),
+                    ("MCP cache", "mcp"),
+                    ("Cortex cache", "cortex-api"),
+                    ("Agent Bus cache", "agent-bus"),
+                    ("Event Service cache", "event-service"),
+                ],
+                id="cache-target",
+                value="gateway",
+            )
             yield Static("", id="build-flags")
 
         with Vertical(id="svc-buttons"):
             with Horizontal(classes="svc-button-row"):
                 yield Button("Build Image", id="btn-build", variant="primary")
-                yield Button("Prune Cache", id="btn-prune-cache")
+                yield Button("Prune Builder Cache", id="btn-prune-cache")
                 yield Button("Start Gateway", id="btn-start-gw", variant="success")
                 yield Button(
                     "Stop Gateway", id="btn-stop-gw", variant="error", disabled=True
@@ -199,6 +218,8 @@ class ServicesScreen(Screen):
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "build-scope":
             self._update_build_flags()
+        elif event.select.id == "cache-target":
+            self._refresh_cache_size()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         match event.button.id:
@@ -325,13 +346,15 @@ class ServicesScreen(Screen):
 
     def _refresh_cache_size(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        cache_size = svc.check_build_cache()
+        target = self._selected_cache_target()
+        label = _CACHE_TARGET_LABELS.get(target, target)
+        cache_size = svc.check_build_cache(target=target)
         if cache_size:
             self.query_one("#img-cache", Static).update(
-                f"  Build cache: {cache_size}"
+                f"  Build cache ({label}): {cache_size}"
             )
         else:
-            self.query_one("#img-cache", Static).update("  Build cache: —")
+            self.query_one("#img-cache", Static).update(f"  Build cache ({label}): —")
 
     def _refresh_status(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
@@ -465,6 +488,10 @@ class ServicesScreen(Screen):
     def _selected_scope(self) -> str:
         val = self.query_one("#build-scope", Select).value
         return str(val) if val != Select.BLANK else "all"
+
+    def _selected_cache_target(self) -> str:
+        val = self.query_one("#cache-target", Select).value
+        return str(val) if val != Select.BLANK else "gateway"
 
     async def _restart_local(self) -> None:
         """Stop and restart local gateway + stargate only."""
@@ -635,9 +662,11 @@ class ServicesScreen(Screen):
     async def _prune_cache(self) -> None:
         log = self.query_one("#svc-log", LogStream)
         log.clear()
-        log.write_line("Pruning dangling build cache (keeping referenced layers)...")
+        target = self._selected_cache_target()
+        label = _CACHE_TARGET_LABELS.get(target, target)
+        log.write_line(f"Pruning builder-scoped cache for {label}...")
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.prune_build_cache()
+        result = await svc.prune_build_cache(target=target)
         log.write_line(result)
         self.query_one("#btn-prune-cache", Button).disabled = False
         self._refresh_cache_size()

@@ -17,6 +17,7 @@ services:
       dockerfile: services/mcp-server/Dockerfile
       args:
         SOURCE_VERSION: "0"
+    image: universal-mcp-server:local
     container_name: mcp-server
     user: "1000:1000"
     ports:

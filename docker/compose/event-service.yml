@@ -10,6 +10,7 @@ services:
     build:
       context: ../..
       dockerfile: services/event-service/Dockerfile
+    image: universal-event-service:local
     container_name: event-service
     user: "1000:1000"
     volumes:

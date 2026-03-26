@@ -12,6 +12,7 @@ services:
     build:
       context: ../..
       dockerfile: services/agent-bus/Dockerfile
+    image: universal-agent-bus:local
     container_name: agent-bus
     user: "1000:1000"
     network_mode: none
