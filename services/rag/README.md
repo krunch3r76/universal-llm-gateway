@@ -268,7 +268,7 @@ watch_directories:
     extensions: [.md, .txt, .pdf]
     recursive: true
     chunk_tokens: 1024        # target chunk size in tokens (~4 chars/token)
-    exclude: [".git", "node_modules"]
+    exclude: ["trading/**", "CORPUS_MANIFEST.md"]
 
 scopes:
   research:
@@ -307,7 +307,7 @@ vocabulary_taxonomy:
 
 | Option | Purpose |
 |--------|---------|
-| `watch_directories` | Directories to watch with inotify; auto-reindex on file changes |
+| `watch_directories` | Directories to watch with inotify; auto-reindex on file changes. `exclude` globs are matched against watch-root-relative paths (e.g. `trading/**`) and bare filename globs also match basenames |
 | `scopes` | Named retrieval scopes — consumers reference by name; `union: true` aggregates all |
 | `chunk_tokens` | Target chunk size per directory (default varies: 1024 for docs, 256 for code) |
 | `knowledge_extraction` | LLM extraction config — pipeline, boost factor, retry limits |

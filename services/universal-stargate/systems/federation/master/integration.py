@@ -275,10 +275,32 @@ class MasterIntegration:
     async def _on_edge_connected(self) -> None:
         """Handle Edge connection."""
         logger.info("✅ Connected to local Edge Stargate via federation")
+        event_bus = self._event_bus
+        edge_config = self._config.local_edge
+        if event_bus is not None and edge_config is not None:
+            from src.scheduling.events import FederationConnectionEstablished
+
+            await event_bus.publish_async(
+                FederationConnectionEstablished(
+                    remote_id=edge_config.stargate_id,
+                    transport="websocket",
+                )
+            )
 
     async def _on_edge_disconnected(self) -> None:
         """Handle Edge disconnection."""
         logger.warning("⚠️ Disconnected from local Edge Stargate")
+        event_bus = self._event_bus
+        edge_config = self._config.local_edge
+        if event_bus is not None and edge_config is not None:
+            from src.scheduling.events import FederationConnectionLost
+
+            await event_bus.publish_async(
+                FederationConnectionLost(
+                    remote_id=edge_config.stargate_id,
+                    reason="disconnected",
+                )
+            )
         # Optionally remove gateways from this Edge
         if self._federated_manager and self._config.local_edge:
             await self._federated_manager.remove_remote_gateways(

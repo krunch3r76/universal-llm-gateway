@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 _MANAGE_SOCK = os.environ.get("MANAGE_SOCKET", "/tmp/universal-protocol/manage.sock")
 _DEFAULT_TIMEOUT = 30.0
 _WAIT_HEALTHY_BUFFER = 30.0
+_PROGRESS_PROBE_TIMEOUT = 5.0
 
 _VALID_ACTIONS = frozenset(
     {"status", "health", "start", "stop", "restart", "rebuild", "wait_healthy"}
@@ -55,7 +56,10 @@ def _call_manage(
                 )
             }
         except TimeoutError:
-            return {"error": f"Manage API call timed out after {timeout:.0f}s"}
+            return {
+                "error": f"Manage API call timed out after {timeout:.0f}s",
+                "_timeout": True,
+            }
         except ConnectionRefusedError as exc:
             return {"error": f"Manage API not reachable: {exc}"}
         except json.JSONDecodeError as exc:
@@ -77,8 +81,80 @@ def _extract_result(raw: dict[str, Any]) -> dict[str, Any]:
     if "error" in raw:
         err = raw["error"]
         msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-        return {"error": msg}
+        result = {"error": msg}
+        if raw.get("_timeout"):
+            result["timed_out"] = True
+        return result
     return raw.get("result", raw)
+
+
+def _probe_manage(method: str, *, service: str = "") -> dict[str, Any]:
+    """Best-effort follow-up probe used after long-running rebuild timeouts."""
+    params: dict[str, Any] = {}
+    if service:
+        params["service"] = service
+    raw = _call_manage(
+        {"jsonrpc": "2.0", "method": method, "params": params, "id": 1},
+        timeout=_PROGRESS_PROBE_TIMEOUT,
+    )
+    return _extract_result(raw)
+
+
+def _rebuild_timeout_result(service: str, timeout: float) -> dict[str, Any]:
+    """Return a progress-oriented result after a rebuild call outlives its socket budget."""
+    status_result = _probe_manage("status")
+    health_result = _probe_manage("health", service=service)
+
+    build_info = (
+        status_result.get("build", {})
+        if isinstance(status_result.get("build"), dict)
+        else {}
+    )
+    service_status = ""
+    if "error" not in health_result:
+        service_status = str(health_result.get("status", "")).strip()
+    if not service_status and "error" not in status_result:
+        services = status_result.get("services", {})
+        if isinstance(services, dict):
+            service_status = str(services.get(service, "")).strip()
+
+    build_running = bool(build_info.get("running"))
+    image_status = str(build_info.get("image_status", "")).strip()
+    if build_running or image_status == "building":
+        return {
+            "status": "in_progress",
+            "service": service,
+            "timed_out": True,
+            "message": (
+                f"Rebuild is still running after {timeout:.0f}s. "
+                "The client timed out, but manage.sock reports the build is active."
+            ),
+            "build": build_info,
+            "health": health_result,
+            "next_step": (
+                f"Call manage_service(action='wait_healthy', service='{service}', timeout=120) "
+                "or poll health/status."
+            ),
+        }
+    if service_status == "running":
+        return {
+            "status": "ok",
+            "service": service,
+            "timed_out": True,
+            "message": (
+                f"Rebuild exceeded the {timeout:.0f}s client budget, "
+                f"but {service} is running now."
+            ),
+            "build": build_info,
+            "health": health_result,
+        }
+    return {
+        "error": f"Manage API call timed out after {timeout:.0f}s",
+        "timed_out": True,
+        "service": service,
+        "build": build_info,
+        "health": health_result,
+    }
 
 
 def register_manage_tools(mcp: FastMCP) -> None:
@@ -143,10 +219,10 @@ def register_manage_tools(mcp: FastMCP) -> None:
         if action == "wait_healthy":
             params["timeout"] = timeout
 
-        # wait_healthy holds the connection open until done; extend socket timeout.
+        # Long-running actions hold the connection open until done; extend socket timeout.
         sock_timeout = (
             timeout + _WAIT_HEALTHY_BUFFER
-            if action == "wait_healthy"
+            if action in {"wait_healthy", "rebuild"}
             else _DEFAULT_TIMEOUT
         )
 
@@ -154,7 +230,10 @@ def register_manage_tools(mcp: FastMCP) -> None:
             {"jsonrpc": "2.0", "method": action, "params": params, "id": 1},
             timeout=sock_timeout,
         )
+        timed_out = bool(raw.get("_timeout"))
         result = _extract_result(raw)
+        if timed_out and action == "rebuild" and service:
+            result = _rebuild_timeout_result(service, timeout)
 
         duration = monotonic_now() - t0
         if "error" in result:

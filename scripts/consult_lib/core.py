@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from transport_utils.rag_client import DEFAULT_RAG_URL
+from transport_utils import DEFAULT_RAG_URL
 
 from .constants import DEFAULT_STARGATE_URL
 from .context import read_context_files

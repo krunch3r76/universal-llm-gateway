@@ -14,6 +14,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from services.rag.article_registry import (
     get_entry as get_article_entry,
@@ -33,17 +34,27 @@ from services.rag.events.articles import (
 from services.rag.events.extraction import rag_extraction_model_mismatch
 from services.rag.events.indexing import (
     rag_article_content_hash_mismatch,
+    rag_chroma_upsert_completed,
+    rag_chroma_upsert_started,
     rag_chunk_noise_tagged,
     rag_contextualization_applied,
+    rag_embed_completed,
+    rag_embed_started,
     rag_file_deleted,
     rag_file_indexed,
     rag_file_indexing_failed,
     rag_file_retry_deferred,
     rag_file_skipped,
+    rag_hints_update_completed,
+    rag_hints_update_started,
     rag_html_normalization_completed,
     rag_html_normalization_failed,
     rag_html_normalization_started,
     rag_property_index_unavailable,
+    rag_property_write_completed,
+    rag_property_write_started,
+    rag_source_commit_completed,
+    rag_source_commit_started,
 )
 from services.rag.extraction_wiring import (
     ExtractionResult,
@@ -87,6 +98,8 @@ async def _index_file(
     chunk_tokens: int | None = None,
     force: bool = False,
     emit_skip_event: bool = True,
+    operation_id: str | None = None,
+    operation: str | None = None,
 ) -> IndexResult:
     """Index a file under a per-source lock to avoid watcher/API races."""
     source = str(file_path)
@@ -100,6 +113,8 @@ async def _index_file(
                 source,
                 force=force,
                 emit_skip_event=emit_skip_event,
+                operation_id=operation_id,
+                operation=operation,
             )
     finally:
         if state._file_index_locks.get(source) is lock:
@@ -158,6 +173,8 @@ async def _index_file_impl(
     *,
     force: bool = False,
     emit_skip_event: bool = True,
+    operation_id: str | None = None,
+    operation: str | None = None,
 ) -> IndexResult:
     """Inner implementation of indexing called with source lock held.
 
@@ -167,6 +184,7 @@ async def _index_file_impl(
     - clear_pending executes for every marked file in ``finally``.
     """
     start = time.monotonic()
+    correlation_id = operation_id or uuid4().hex
     is_html_file = file_path.suffix.lower() in {".html", ".htm"}
     if state._config is None:
         raise RuntimeError("RAG service configuration not loaded.")
@@ -189,7 +207,12 @@ async def _index_file_impl(
             await prop_index.clear_pending(source)
             if emit_skip_event and state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
-                    rag_file_skipped(file=source, reason="unchanged")
+                    rag_file_skipped(
+                        file=source,
+                        reason="unchanged",
+                        operation_id=correlation_id,
+                        operation=operation,
+                    )
                 )
             return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
 
@@ -266,7 +289,12 @@ async def _index_file_impl(
                 )
             if state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
-                    rag_file_skipped(file=source, reason="duplicate_pdf")
+                    rag_file_skipped(
+                        file=source,
+                        reason="duplicate_pdf",
+                        operation_id=correlation_id,
+                        operation=operation,
+                    )
                 )
             return dup_result
 
@@ -347,6 +375,8 @@ async def _index_file_impl(
                                 queue_wait_seconds=getattr(
                                     ext_result, "queue_wait_seconds", None
                                 ),
+                                operation_id=correlation_id,
+                                operation=operation,
                             )
                         )
                     return IndexResult(
@@ -386,7 +416,12 @@ async def _index_file_impl(
                         )
             if emit_skip_event and state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
-                    rag_file_skipped(file=source, reason="unchanged")
+                            rag_file_skipped(
+                                file=source,
+                                reason="unchanged",
+                                operation_id=correlation_id,
+                                operation=operation,
+                            )
                 )
             return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
 
@@ -438,7 +473,12 @@ async def _index_file_impl(
             )
             if state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
-                    rag_file_deleted(file=source, deleted=len(existing_ids))
+                    rag_file_deleted(
+                        file=source,
+                        deleted=len(existing_ids),
+                        operation_id=correlation_id,
+                        operation=operation,
+                    )
                 )
             return IndexResult(
                 deleted=len(existing_ids), indexed=0, unchanged=False, file=source
@@ -532,6 +572,8 @@ async def _index_file_impl(
                         rag_file_retry_deferred(
                             file=source,
                             reason="extraction_incomplete",
+                            operation_id=correlation_id,
+                            operation=operation,
                         )
                     )
                 return IndexResult(deleted=0, indexed=0, unchanged=False, file=source)
@@ -563,30 +605,81 @@ async def _index_file_impl(
                         state._config.contextualize_model
                     )
 
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_embed_started(
+                    file=source,
+                    operation_id=correlation_id,
+                    chunk_count=len(embed_texts),
+                    operation=operation,
+                )
+            )
         embeddings = await embed_chunks(embed_texts)
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_embed_completed(
+                    file=source,
+                    operation_id=correlation_id,
+                    chunk_count=len(embed_texts),
+                    operation=operation,
+                )
+            )
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_chroma_upsert_started(
+                    file=source,
+                    operation_id=correlation_id,
+                    chunk_count=len(ids),
+                    operation=operation,
+                )
+            )
         collection.upsert(
             ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
         )
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_chroma_upsert_completed(
+                    file=source,
+                    operation_id=correlation_id,
+                    chunk_count=len(ids),
+                    operation=operation,
+                )
+            )
+        property_entry_count = len(extraction_property_entries)
         if prop_index is not None:
+            if state._event_bus is not None:
+                await state._event_bus.publish_async_nowait(
+                    rag_property_write_started(
+                        file=source,
+                        operation_id=correlation_id,
+                        chunk_count=len(ids),
+                        property_entries=property_entry_count,
+                        operation=operation,
+                    )
+                )
             await prop_index.fts.insert_batch(
                 [(cid, source, text) for cid, text in zip(ids, texts, strict=True)]
             )
-        if prop_index is not None and extraction_property_entries:
-            try:
-                await prop_index.add_batch_with_scope(extraction_property_entries)
-            except Exception:
-                collection.delete(ids=ids)
-                await prop_index.fts.remove_batch(ids)
-                raise
+            if extraction_property_entries:
+                try:
+                    await prop_index.add_batch_with_scope(extraction_property_entries)
+                except Exception:
+                    collection.delete(ids=ids)
+                    await prop_index.fts.remove_batch(ids)
+                    raise
+            if state._event_bus is not None:
+                await state._event_bus.publish_async_nowait(
+                    rag_property_write_completed(
+                        file=source,
+                        operation_id=correlation_id,
+                        chunk_count=len(ids),
+                        property_entries=property_entry_count,
+                        operation=operation,
+                    )
+                )
 
         new_id_set = set(ids)
         stale_ids = list(set(existing_ids) - new_id_set)
-        if stale_ids:
-            if prop_index is not None:
-                for old_id in stale_ids:
-                    await prop_index.remove_chunk(old_id)
-                await prop_index.fts.remove_batch(stale_ids)
-            collection.delete(ids=stale_ids)
     except Exception as exc:
         if state._event_bus is not None:
             await state._event_bus.publish_async_nowait(
@@ -595,6 +688,8 @@ async def _index_file_impl(
                     error=f"{type(exc).__qualname__}: {exc}"
                     if str(exc)
                     else type(exc).__qualname__,
+                    operation_id=correlation_id,
+                    operation=operation,
                 )
             )
         raise
@@ -610,33 +705,88 @@ async def _index_file_impl(
                     source,
                 )
 
-    if prop_index is not None:
-        await prop_index.upsert_indexed_source(
-            source=source,
-            mtime_ns=source_stat.st_mtime_ns,
-            size_bytes=source_stat.st_size,
-            extraction_schema_version=schema_version,
-            extraction_model=extraction_model,
-        )
-        scope = state._config.get_scope_for_path(source)
-        subdirectory = _derive_subdirectory(source, state._config)
-        created = await prop_index.sync_article_structural_fields(
-            source_path=source,
-            filename=file_path.name,
-            content_hash=source_hash,
-            scope=scope,
-            subdirectory=subdirectory,
-        )
-        if created and state._event_bus is not None:
+    try:
+        if state._event_bus is not None:
             await state._event_bus.publish_async_nowait(
-                rag_article_auto_created(
-                    source_path=source,
-                    content_hash=source_hash,
-                    scope=scope,
+                rag_source_commit_started(
+                    file=source,
+                    operation_id=correlation_id,
+                    chunk_count=len(chunks),
+                    stale_chunks=len(stale_ids),
+                    operation=operation,
                 )
             )
+        if stale_ids:
+            if prop_index is not None:
+                for old_id in stale_ids:
+                    await prop_index.remove_chunk(old_id)
+                await prop_index.fts.remove_batch(stale_ids)
+            collection.delete(ids=stale_ids)
+        if prop_index is not None:
+            await prop_index.upsert_indexed_source(
+                source=source,
+                mtime_ns=source_stat.st_mtime_ns,
+                size_bytes=source_stat.st_size,
+                extraction_schema_version=schema_version,
+                extraction_model=extraction_model,
+            )
+            scope = state._config.get_scope_for_path(source)
+            subdirectory = _derive_subdirectory(source, state._config)
+            created = await prop_index.sync_article_structural_fields(
+                source_path=source,
+                filename=file_path.name,
+                content_hash=source_hash,
+                scope=scope,
+                subdirectory=subdirectory,
+            )
+            if created and state._event_bus is not None:
+                await state._event_bus.publish_async_nowait(
+                    rag_article_auto_created(
+                        source_path=source,
+                        content_hash=source_hash,
+                        scope=scope,
+                    )
+                )
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_source_commit_completed(
+                    file=source,
+                    operation_id=correlation_id,
+                    chunk_count=len(chunks),
+                    stale_chunks=len(stale_ids),
+                    operation=operation,
+                )
+            )
+            await state._event_bus.publish_async_nowait(
+                rag_hints_update_started(
+                    file=source,
+                    operation_id=correlation_id,
+                    operation=operation,
+                )
+            )
+        await state._maybe_update_corpus_hints()
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_hints_update_completed(
+                    file=source,
+                    operation_id=correlation_id,
+                    operation=operation,
+                )
+            )
+    except Exception as exc:
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_file_indexing_failed(
+                    file=source,
+                    error=f"{type(exc).__qualname__}: {exc}"
+                    if str(exc)
+                    else type(exc).__qualname__,
+                    operation_id=correlation_id,
+                    operation=operation,
+                )
+            )
+        raise
 
-    await state._maybe_update_corpus_hints()
     logger.info(
         "Index complete: file=%s deleted=%d indexed=%d",
         source,
@@ -660,6 +810,8 @@ async def _index_file_impl(
                 ),
                 processing_seconds=getattr(ext_result, "processing_seconds", None),
                 queue_wait_seconds=getattr(ext_result, "queue_wait_seconds", None),
+                operation_id=correlation_id,
+                operation=operation,
             )
         )
     return IndexResult(

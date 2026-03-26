@@ -21,6 +21,7 @@ services:
     environment:
       - CORTEX_DB_PATH=/data/cortex/cortex.db
       - TODOS_DB_PATH=/data/cortex/todos.db
+      - AGENT_BUS_TOKEN=${AGENT_BUS_TOKEN:-}
     healthcheck:
       test:
         [

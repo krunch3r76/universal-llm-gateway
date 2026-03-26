@@ -19,6 +19,7 @@ from src.routes import (
     chunks,
     deadlines,
     entities,
+    entity_status,
     gated,
     relationships,
     salience,
@@ -48,6 +49,7 @@ app.add_middleware(
 )
 
 app.include_router(entities.router)
+app.include_router(entity_status.router)
 app.include_router(assertions.router)
 app.include_router(chunks.router)
 app.include_router(surface_forms.router)

@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 from systems.pipeline.core.handlers.protocol import AbstractStepHandler, StepOutput
 from systems.pipeline.core.schemas import StepConfig
-from transport_utils.rag_client import make_async_client, resolve_rag_base_url
+from transport_utils import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
 
 if TYPE_CHECKING:

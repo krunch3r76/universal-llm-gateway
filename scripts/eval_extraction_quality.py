@@ -20,7 +20,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from transport_utils.rag_client import DEFAULT_RAG_URL, make_sync_client
+from transport_utils import DEFAULT_RAG_URL, make_sync_client
 
 
 @dataclass(slots=True, kw_only=True)

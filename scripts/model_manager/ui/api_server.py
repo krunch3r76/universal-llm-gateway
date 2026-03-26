@@ -186,17 +186,21 @@ async def _execute(
             return {
                 "services": {
                     i.name.lower().replace(" ", "_"): i.status.value for i in infos
-                }
+                },
+                "build": await asyncio.to_thread(_gateway_build_status, ctl),
             }
 
         case "health":
             _require_service(service)
             info = await asyncio.to_thread(_check_one, svc, service)
-            return {
+            result = {
                 "service": service,
                 "status": info.status.value,
                 "detail": info.detail,
             }
+            if service == "gateway":
+                result["build"] = await asyncio.to_thread(_gateway_build_status, ctl)
+            return result
 
         case "wait_healthy":
             _require_service(service)
@@ -253,6 +257,18 @@ def _check_one(svc: ServiceState, service: str) -> ServiceInfo:
         return getattr(svc, f"check_{service}")()
     except AttributeError:
         raise ValueError(f"Unknown service: '{service}'")
+
+
+def _gateway_build_status(ctl: ServiceController) -> dict[str, Any]:
+    """Return gateway build state for status/progress probes."""
+    info = ctl.check_image()
+    return {
+        "running": ctl.build_running,
+        "image_status": info.status.value,
+        "image_id": info.image_id,
+        "created": info.created,
+        "size": info.size,
+    }
 
 
 async def _wait_healthy(svc: ServiceState, service: str, timeout: float) -> float:

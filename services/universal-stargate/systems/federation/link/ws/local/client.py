@@ -25,6 +25,7 @@ from ....common.peer_connection import PeerConnection
 from .auth import LocalEdgeAuthClient
 from .connection import local_connection_loop
 from .message_io import local_ping_loop, local_receive_loop, local_sender_loop
+from .recovery import LocalEdgeRecoveryCoordinator
 
 if TYPE_CHECKING:
     from websockets.client import WebSocketClientProtocol
@@ -77,6 +78,11 @@ class LocalEdgeClient(PeerConnection):
             local_stargate_id=relay_stargate_id,
             api_key=config.api_key,
             auth_timeout_seconds=5.0,
+        )
+        self._recovery = LocalEdgeRecoveryCoordinator(
+            relay_stargate_id=relay_stargate_id,
+            peer_id=config.stargate_id,
+            socket_path=config.socket_path,
         )
 
         self._websocket: WebSocketClientProtocol | None = None
@@ -162,6 +168,7 @@ class LocalEdgeClient(PeerConnection):
                 is_running=lambda: self._running,
                 on_connect_success=self._on_authenticated,
                 on_disconnect=self._on_session_end,
+                recovery=self._recovery,
             ),
             name=f"local-edge-{self._config.stargate_id}",
         )
@@ -193,6 +200,7 @@ class LocalEdgeClient(PeerConnection):
             self._websocket = None
 
         self._authenticated = False
+        await self._recovery.shutdown()
 
     # Internal callbacks
 
@@ -200,6 +208,7 @@ class LocalEdgeClient(PeerConnection):
         """Called when authenticated with Edge."""
         self._websocket = ws
         self._authenticated = True
+        await self._recovery.note_connected()
 
         # Start sender task (non-blocking queue drain)
         self._sender_task = asyncio.create_task(

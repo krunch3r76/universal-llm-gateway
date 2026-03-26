@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from transport_utils.rag_client import DEFAULT_RAG_URL, make_sync_client
+from transport_utils import DEFAULT_RAG_URL, make_sync_client
 
 from .constants import DEFAULT_STARGATE_URL
 

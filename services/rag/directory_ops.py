@@ -43,6 +43,8 @@ class IndexFileFn(Protocol):
         metadata_overrides: dict[str, str | int | float | bool] | None = ...,
         *,
         force: bool = ...,
+        operation_id: str | None = ...,
+        operation: str | None = ...,
     ) -> Awaitable[IndexResult]: ...
 
 

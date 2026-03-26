@@ -119,7 +119,7 @@ from systems.pipeline.core.events.step import (
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
-from transport_utils.rag_client import make_async_client, resolve_rag_base_url
+from transport_utils import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
 
 from services.rag.chunk_filters import chunk_is_noise, chunk_metadata_is_noise

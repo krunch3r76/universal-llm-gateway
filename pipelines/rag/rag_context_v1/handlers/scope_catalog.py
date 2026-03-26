@@ -13,7 +13,7 @@ import asyncio
 import time
 from typing import cast
 
-from transport_utils.rag_client import make_async_client
+from transport_utils import make_async_client
 from universal_logging import get_logger
 
 logger = get_logger(__name__)

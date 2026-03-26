@@ -14,11 +14,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from universal_hot_reload.watcher import HotReloadWatcher
+from universal_hot_reload import HotReloadWatcher, matches_watch_exclude
 
 from services.rag.config import BASELINE_EXTENSIONS, RagConfig, WatchDirectory
 from services.rag.events.indexing import (
@@ -347,7 +346,9 @@ class WatcherManager:
             for fp in walker
             if fp.is_file()
             and fp.suffix.lower() in extensions
-            and not any(fnmatch(fp.name, pat) for pat in exclude)
+            and not matches_watch_exclude(
+                fp, watch_root=watch_path, patterns=exclude
+            )
         ]
         if not file_paths:
             return 0
@@ -427,7 +428,9 @@ class WatcherManager:
         for file_path in walker:
             if not file_path.is_file() or file_path.suffix.lower() not in extensions:
                 continue
-            if any(fnmatch(file_path.name, pat) for pat in exclude):
+            if matches_watch_exclude(
+                file_path, watch_root=watch_path, patterns=exclude
+            ):
                 continue
             file_paths.append(file_path)
 

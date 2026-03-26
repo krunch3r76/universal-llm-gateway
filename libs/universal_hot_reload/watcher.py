@@ -7,11 +7,12 @@ No threading, no locks - all operations in async context.
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from fnmatch import fnmatch
 from pathlib import Path
 
 from universal_logging import get_logger
 from watchfiles import Change, awatch
+
+from .path_filters import matches_watch_exclude
 
 logger = get_logger(__name__)
 
@@ -53,7 +54,9 @@ class HotReloadWatcher:
             recursive: Watch subdirectories (for directories only)
             patterns: File patterns to watch (e.g., [".yaml", ".yml", "yaml"])
                       Patterns are normalized to include leading dot.
-            exclude: Filename patterns to exclude (fnmatch, e.g. ["CORPUS_MANIFEST.md", "README*"])
+            exclude: fnmatch globs matched against the watch-root-relative path
+                     (e.g. ["trading/**"]) and bare filename globs matched
+                     against basenames (e.g. ["CORPUS_MANIFEST.md"]).
             on_delete: Optional async callback for file deletion events.
         """
         self.name = name
@@ -189,7 +192,9 @@ class HotReloadWatcher:
         ):
             return
 
-        if any(fnmatch(path.name, pat) for pat in self.exclude):
+        if matches_watch_exclude(
+            path, watch_root=self.watch_path, patterns=self.exclude
+        ):
             return
 
         if change_type == Change.deleted:

@@ -81,7 +81,7 @@ pipelines:
 
 Scopes and watch directories can be edited in this file by hand, or added at runtime via `POST /scopes` on the RAG service (or `POST /api/v1/rag/scopes` via Stargate). Runtime registration updates the live config and persists to this file so new scopes survive restarts.
 
-`WatchDirectory` fields: `path`, `extensions` (optional; defaults to baseline `[".md", ".txt", ".html", ".htm", ".pdf"]`), `recursive` (default `true`), `chunk_tokens` (optional int — overrides default 512-token chunk size for that directory; use 1024 for ebooks), `exclude` (optional filename globs matched with `fnmatch`; excluded files are skipped by startup, reconcile, and hot-reload indexing).
+`WatchDirectory` fields: `path`, `extensions` (optional; defaults to baseline `[".md", ".txt", ".html", ".htm", ".pdf"]`), `recursive` (default `true`), `chunk_tokens` (optional int — overrides default 512-token chunk size for that directory; use 1024 for ebooks), `exclude` (optional `fnmatch` globs matched against the watch-root-relative path, e.g. `trading/**`; bare filename globs such as `CORPUS_MANIFEST.md` also match basenames. Excluded files are skipped by startup, reconcile, purge, and hot-reload indexing).
 
 Top-level field: `embedding_model` (model ID used for all `/v1/embeddings`
 requests from RAG; defaults to `bge-m3-q8-0-8192-cpu`).

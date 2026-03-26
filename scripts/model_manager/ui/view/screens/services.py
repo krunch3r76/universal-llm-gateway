@@ -309,7 +309,7 @@ class ServicesScreen(Screen):
 
     async def _poll_rag_failed(self) -> None:
         """Poll the RAG service for failed extraction chunk count and update display."""
-        from transport_utils.rag_client import make_async_client
+        from transport_utils import make_async_client
 
         from ...controller.service_config import (
             read_rag_socket_path,

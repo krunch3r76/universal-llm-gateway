@@ -12,7 +12,7 @@ import argparse
 import sys
 import textwrap
 
-from transport_utils.rag_client import DEFAULT_RAG_URL
+from transport_utils import DEFAULT_RAG_URL
 
 from consult_lib.constants import DEFAULT_ROLE, DEFAULT_STARGATE_URL
 from consult_lib.exclusion_cli import (

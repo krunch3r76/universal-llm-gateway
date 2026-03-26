@@ -146,7 +146,7 @@ class ServiceState:
 
     def _rag_probe_uds(self, socket_path: Path) -> bool:
         """Perform readiness probe via UDS to /stats. Short timeout, fail closed."""
-        from transport_utils.rag_client import make_sync_client
+        from transport_utils import make_sync_client
 
         url = f"unix://{socket_path}"
         try:
@@ -280,7 +280,7 @@ class ServiceState:
 
     def _cloud_proxy_probe_uds(self, socket_path: Path) -> bool:
         """Probe /health via UDS. Short timeout, fail closed."""
-        from transport_utils.rag_client import make_sync_client
+        from transport_utils import make_sync_client
 
         try:
             with make_sync_client(

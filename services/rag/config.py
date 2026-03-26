@@ -27,6 +27,9 @@ class WatchDirectory:
     the chunker uses its built-in default (1024 for docs, 256 for code). Set
     to 512 or 1024 for larger chunks to improve retrieval of coherent
     paragraphs; re-index (or touch files) after changing.
+    exclude: fnmatch globs matched against the watch-root-relative path
+    (e.g. ``trading/**``) and bare filename globs matched against basenames
+    (e.g. ``CORPUS_MANIFEST.md``).
     """
 
     path: str

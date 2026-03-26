@@ -7,7 +7,7 @@ from typing import Any, override
 
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
-from transport_utils.rag_client import DEFAULT_CORTEX_URL, make_async_client
+from transport_utils import DEFAULT_CORTEX_URL, make_async_client
 
 logger = logging.getLogger(__name__)
 

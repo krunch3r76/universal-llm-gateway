@@ -31,6 +31,8 @@ def rag_file_indexed(
     noise_chunks: int | None = None,
     processing_seconds: float | None = None,
     queue_wait_seconds: float | None = None,
+    operation_id: str | None = None,
+    operation: str | None = None,
 ) -> Event:
     """Emitted after a file is fully indexed into both ChromaDB and the property index.
 
@@ -56,6 +58,8 @@ def rag_file_indexed(
                     "noise_chunks": noise_chunks,
                     "processing_seconds": processing_seconds,
                     "queue_wait_seconds": queue_wait_seconds,
+                    "operation_id": operation_id,
+                    "operation": operation,
                 }.items()
                 if value is not None
             },
@@ -68,11 +72,24 @@ def rag_file_deleted(
     *,
     file: str,
     deleted: int,
+    operation_id: str | None = None,
+    operation: str | None = None,
 ) -> Event:
     """Emitted when all chunks for a file are deleted with no replacement (empty file)."""
     return Event(
         signal="rag.file.deleted",
-        payload={"file": file, "deleted": deleted},
+        payload={
+            "file": file,
+            "deleted": deleted,
+            **{
+                key: value
+                for key, value in {
+                    "operation_id": operation_id,
+                    "operation": operation,
+                }.items()
+                if value is not None
+            },
+        },
     )
 
 
@@ -81,11 +98,24 @@ def rag_file_skipped(
     *,
     file: str,
     reason: str,
+    operation_id: str | None = None,
+    operation: str | None = None,
 ) -> Event:
     """Emitted when a file is skipped during indexing (unchanged or duplicate PDF)."""
     return Event(
         signal="rag.file.skipped",
-        payload={"file": file, "reason": reason},
+        payload={
+            "file": file,
+            "reason": reason,
+            **{
+                key: value
+                for key, value in {
+                    "operation_id": operation_id,
+                    "operation": operation,
+                }.items()
+                if value is not None
+            },
+        },
     )
 
 
@@ -95,11 +125,17 @@ def rag_file_indexing_failed(
     file: str,
     error: str,
     model: str | None = None,
+    operation_id: str | None = None,
+    operation: str | None = None,
 ) -> Event:
     """Emitted when an unhandled error aborts file indexing."""
     payload: dict[str, str] = {"file": file, "error": error}
     if model is not None:
         payload["model"] = model
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
     return Event(
         signal="rag.file.indexing.failed",
         payload=payload,
@@ -111,6 +147,8 @@ def rag_file_retry_deferred(
     *,
     file: str,
     reason: str,
+    operation_id: str | None = None,
+    operation: str | None = None,
 ) -> Event:
     """Emitted when a file's indexing is deferred for retry on the next watcher sweep.
 
@@ -121,7 +159,18 @@ def rag_file_retry_deferred(
     """
     return Event(
         signal="rag.file.retry.deferred",
-        payload={"file": file, "reason": reason},
+        payload={
+            "file": file,
+            "reason": reason,
+            **{
+                key: value
+                for key, value in {
+                    "operation_id": operation_id,
+                    "operation": operation,
+                }.items()
+                if value is not None
+            },
+        },
     )
 
 
@@ -193,6 +242,210 @@ def rag_contextualization_applied(*, file: str, chunk_count: int, model: str) ->
     return Event(
         signal="rag.contextualization.applied",
         payload={"file": file, "chunk_count": chunk_count, "model": model},
+    )
+
+
+@event_factory
+def rag_embed_started(
+    *,
+    file: str,
+    operation_id: str,
+    chunk_count: int,
+    operation: str | None = None,
+) -> Event:
+    """Emitted immediately before chunk embeddings are requested for indexing."""
+    return Event(
+        signal="rag.embed.started",
+        payload={
+            "file": file,
+            "operation_id": operation_id,
+            "chunk_count": chunk_count,
+            **({"operation": operation} if operation is not None else {}),
+        },
+    )
+
+
+@event_factory
+def rag_embed_completed(
+    *,
+    file: str,
+    operation_id: str,
+    chunk_count: int,
+    operation: str | None = None,
+) -> Event:
+    """Emitted after chunk embeddings return for indexing."""
+    return Event(
+        signal="rag.embed.completed",
+        payload={
+            "file": file,
+            "operation_id": operation_id,
+            "chunk_count": chunk_count,
+            **({"operation": operation} if operation is not None else {}),
+        },
+    )
+
+
+@event_factory
+def rag_chroma_upsert_started(
+    *,
+    file: str,
+    operation_id: str,
+    chunk_count: int,
+    operation: str | None = None,
+) -> Event:
+    """Emitted immediately before chunk rows are upserted into ChromaDB."""
+    return Event(
+        signal="rag.chroma.upsert.started",
+        payload={
+            "file": file,
+            "operation_id": operation_id,
+            "chunk_count": chunk_count,
+            **({"operation": operation} if operation is not None else {}),
+        },
+    )
+
+
+@event_factory
+def rag_chroma_upsert_completed(
+    *,
+    file: str,
+    operation_id: str,
+    chunk_count: int,
+    operation: str | None = None,
+) -> Event:
+    """Emitted after chunk rows are persisted to ChromaDB."""
+    return Event(
+        signal="rag.chroma.upsert.completed",
+        payload={
+            "file": file,
+            "operation_id": operation_id,
+            "chunk_count": chunk_count,
+            **({"operation": operation} if operation is not None else {}),
+        },
+    )
+
+
+@event_factory
+def rag_property_write_started(
+    *,
+    file: str,
+    operation_id: str,
+    chunk_count: int,
+    property_entries: int,
+    operation: str | None = None,
+) -> Event:
+    """Emitted before SQLite-backed FTS and property metadata writes begin."""
+    return Event(
+        signal="rag.property.write.started",
+        payload={
+            "file": file,
+            "operation_id": operation_id,
+            "chunk_count": chunk_count,
+            "property_entries": property_entries,
+            **({"operation": operation} if operation is not None else {}),
+        },
+    )
+
+
+@event_factory
+def rag_property_write_completed(
+    *,
+    file: str,
+    operation_id: str,
+    chunk_count: int,
+    property_entries: int,
+    operation: str | None = None,
+) -> Event:
+    """Emitted after SQLite-backed FTS and property metadata writes finish."""
+    return Event(
+        signal="rag.property.write.completed",
+        payload={
+            "file": file,
+            "operation_id": operation_id,
+            "chunk_count": chunk_count,
+            "property_entries": property_entries,
+            **({"operation": operation} if operation is not None else {}),
+        },
+    )
+
+
+@event_factory
+def rag_source_commit_started(
+    *,
+    file: str,
+    operation_id: str,
+    chunk_count: int,
+    stale_chunks: int,
+    operation: str | None = None,
+) -> Event:
+    """Emitted before final source-level metadata commit and stale cleanup begin."""
+    return Event(
+        signal="rag.source.commit.started",
+        payload={
+            "file": file,
+            "operation_id": operation_id,
+            "chunk_count": chunk_count,
+            "stale_chunks": stale_chunks,
+            **({"operation": operation} if operation is not None else {}),
+        },
+    )
+
+
+@event_factory
+def rag_source_commit_completed(
+    *,
+    file: str,
+    operation_id: str,
+    chunk_count: int,
+    stale_chunks: int,
+    operation: str | None = None,
+) -> Event:
+    """Emitted after final source-level metadata commit and stale cleanup finish."""
+    return Event(
+        signal="rag.source.commit.completed",
+        payload={
+            "file": file,
+            "operation_id": operation_id,
+            "chunk_count": chunk_count,
+            "stale_chunks": stale_chunks,
+            **({"operation": operation} if operation is not None else {}),
+        },
+    )
+
+
+@event_factory
+def rag_hints_update_started(
+    *,
+    file: str,
+    operation_id: str,
+    operation: str | None = None,
+) -> Event:
+    """Emitted before post-index corpus-hints refresh begins."""
+    return Event(
+        signal="rag.hints.update.started",
+        payload={
+            "file": file,
+            "operation_id": operation_id,
+            **({"operation": operation} if operation is not None else {}),
+        },
+    )
+
+
+@event_factory
+def rag_hints_update_completed(
+    *,
+    file: str,
+    operation_id: str,
+    operation: str | None = None,
+) -> Event:
+    """Emitted after post-index corpus-hints refresh returns."""
+    return Event(
+        signal="rag.hints.update.completed",
+        payload={
+            "file": file,
+            "operation_id": operation_id,
+            **({"operation": operation} if operation is not None else {}),
+        },
     )
 
 

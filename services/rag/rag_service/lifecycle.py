@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import chromadb
 import httpx
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
+from universal_hot_reload import matches_watch_exclude
 
 from services.rag.article_registry import (
     load_registry as load_article_registry_yaml,
@@ -462,8 +462,9 @@ async def _purge_excluded_sources(config: RagConfig) -> None:
     """Delete indexed sources that now match exclusion patterns in watch config.
 
     ∀ watch_dir with exclude patterns: find indexed sources under that prefix,
-    check filenames against fnmatch patterns, and purge matches. Covers the case
-    where a file was previously indexed but later added to the exclude list.
+    match excludes against watch-root-relative paths (and bare filename globs),
+    and purge matches. Covers the case where a file was previously indexed but
+    later added to the exclude list.
     """
     if state._collection is None or not config.watch_directories:
         return
@@ -483,7 +484,9 @@ async def _purge_excluded_sources(config: RagConfig) -> None:
             ),
         )
         for source in known:
-            if any(fnmatch(Path(source).name, pat) for pat in wd.exclude):
+            if matches_watch_exclude(
+                source, watch_root=watch_path, patterns=wd.exclude
+            ):
                 sources_to_purge.add(source)
     if not sources_to_purge:
         if state._event_bus is not None:
@@ -720,7 +723,11 @@ def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | 
         )
         if resolved_file.suffix.lower() not in effective_extensions:
             continue
-        if any(fnmatch(resolved_file.name, pat) for pat in watch_directory.exclude):
+        if matches_watch_exclude(
+            resolved_file,
+            watch_root=watch_path,
+            patterns=watch_directory.exclude,
+        ):
             continue
         return watch_directory.chunk_tokens
     return None

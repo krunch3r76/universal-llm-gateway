@@ -18,7 +18,7 @@ from typing import Any
 
 import httpx
 import yaml
-from transport_utils.rag_client import DEFAULT_RAG_URL, make_sync_client
+from transport_utils import DEFAULT_RAG_URL, make_sync_client
 
 logger = logging.getLogger(__name__)
 

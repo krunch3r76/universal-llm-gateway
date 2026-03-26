@@ -6,7 +6,7 @@ import json
 from typing import Any, TYPE_CHECKING
 
 import httpx
-from transport_utils.rag_client import make_async_client, resolve_rag_base_url
+from transport_utils import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
 
 from ..execution.resolver import NamespaceResolver, traverse_path

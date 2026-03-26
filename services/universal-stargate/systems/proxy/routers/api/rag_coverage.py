@@ -10,7 +10,7 @@ from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 from httpx import HTTPError
-from transport_utils.rag_client import make_async_client, resolve_rag_base_url
+from transport_utils import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
 
 from ...dependencies import get_auth_dependency

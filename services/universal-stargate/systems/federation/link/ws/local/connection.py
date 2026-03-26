@@ -11,6 +11,7 @@ import random
 from typing import TYPE_CHECKING
 
 import websockets
+from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
     from ....common.config import LocalEdgeConfig
     from .auth import LocalEdgeAuthClient
+    from .recovery import LocalEdgeRecoveryCoordinator
 
 logger = get_logger(__name__)
 
@@ -34,6 +36,7 @@ async def local_connection_loop(
     is_running: Callable[[], bool],
     on_connect_success: Callable[[WebSocketClientProtocol], Awaitable[None]],
     on_disconnect: Callable[[], Awaitable[None]],
+    recovery: LocalEdgeRecoveryCoordinator | None = None,
 ) -> None:
     """
     Main connection loop with bounded backoff for Unix socket.
@@ -49,10 +52,35 @@ async def local_connection_loop(
         on_disconnect: Callback when disconnected
     """
     current_delay = initial_delay
+    attempt = 0
 
     logger.info(f"🔄 Local Edge connection loop started (socket={config.socket_path})")
+    await emit_debug_event(
+        "debug.federation.reconnect",
+        {
+            "step": "loop_started",
+            "peer_id": config.stargate_id,
+            "socket_path": config.socket_path,
+            "initial_delay_s": initial_delay,
+            "max_delay_s": max_delay,
+            "jitter_factor": jitter_factor,
+        },
+        source="stargate",
+    )
 
     while is_running():
+        attempt += 1
+        await emit_debug_event(
+            "debug.federation.reconnect",
+            {
+                "step": "attempt",
+                "attempt": attempt,
+                "peer_id": config.stargate_id,
+                "socket_path": config.socket_path,
+                "current_delay_s": round(current_delay, 3),
+            },
+            source="stargate",
+        )
         try:
             await _connect_once(
                 config=config,
@@ -62,22 +90,53 @@ async def local_connection_loop(
             )
             # Reset delay on successful session
             current_delay = initial_delay
+            attempt = 0
         except asyncio.CancelledError:
             logger.info("Local Edge connection loop cancelled")
             break
         except Exception as e:
             logger.warning(f"Connection to Edge failed: {e}")
+            await emit_debug_event(
+                "debug.federation.reconnect",
+                {
+                    "step": "failed",
+                    "attempt": attempt,
+                    "peer_id": config.stargate_id,
+                    "socket_path": config.socket_path,
+                    "current_delay_s": round(current_delay, 3),
+                    "error_type": type(e).__name__,
+                    "error": str(e) or type(e).__name__,
+                },
+                source="stargate",
+            )
+            if recovery is not None:
+                await recovery.handle_connect_failure(e)
 
         if is_running():
             # Apply jitter to delay (±jitter_factor)
             jitter = current_delay * jitter_factor
             delay = current_delay + random.uniform(-jitter, jitter)
+            delay = min(max(delay, 0.0), max_delay)
+            next_delay = min(current_delay * 2, max_delay)
 
             logger.info(f"Reconnecting to Edge in {delay:.1f}s (max {max_delay}s)")
+            await emit_debug_event(
+                "debug.federation.reconnect",
+                {
+                    "step": "scheduled",
+                    "attempt": attempt,
+                    "peer_id": config.stargate_id,
+                    "socket_path": config.socket_path,
+                    "delay_s": round(delay, 3),
+                    "next_delay_s": round(next_delay, 3),
+                    "max_delay_s": max_delay,
+                },
+                source="stargate",
+            )
             await asyncio.sleep(delay)
 
             # Exponential backoff (CAPPED at max - 30s per FED-11)
-            current_delay = min(current_delay * 2, max_delay)
+            current_delay = next_delay
 
 
 async def _connect_once(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from transport_utils.rag_client import DEFAULT_RAG_URL, make_sync_client
+from transport_utils import DEFAULT_RAG_URL, make_sync_client
 from universal_logging import get_logger
 
 logger = get_logger(__name__)

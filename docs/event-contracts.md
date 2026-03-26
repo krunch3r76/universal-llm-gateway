@@ -1378,15 +1378,25 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.source.deleted` | `source`, `chunks_deleted`, `article_deleted` | source-level delete completed across vector index and article metadata |
 | `rag.directory.sources.deleted` | `path`, `sources_deleted`, `chunks_deleted`, `articles_deleted` | directory-level delete completed across vector index and article metadata |
 | `rag.chunk.noise.tagged` | `chunk_id`, `source`, `noise_reason` | per-chunk: heuristic tagged chunk as noise at index time. `noise_reason` ∈ {`citation_block`, `dense_table`, `garbled_extraction`, `boilerplate`, `legacy_bibliography`, `unspecified_noise`} |
-| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `noise_chunks` (int — count of chunks tagged `is_noise` / legacy `is_bibliography` for this file) |
-| `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty) |
-| `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`} |
-| `rag.file.indexing.failed` | `file`, `error`, `model`? | terminal indexing failure from unhandled exception. ¬emitted for retriable extraction failures (see `rag.file.retry.deferred`). |
-| `rag.file.retry.deferred` | `file`, `reason` | extraction incomplete but file NOT marked indexed — watcher will re-attempt on next sweep. reasons: `extraction_incomplete`, `infrastructure_unavailable`. |
+| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `noise_chunks` (int — count of chunks tagged `is_noise` / legacy `is_bibliography` for this file), `operation_id` (per-attempt correlation handle), `operation` (`index`/`reindex` when route-originated) |
+| `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty); optional: `operation_id`, `operation` |
+| `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`}; optional: `operation_id`, `operation` |
+| `rag.file.indexing.failed` | `file`, `error`, `model`? | terminal indexing failure from unhandled exception. ¬emitted for retriable extraction failures (see `rag.file.retry.deferred`). Optional: `operation_id`, `operation`. |
+| `rag.file.retry.deferred` | `file`, `reason` | extraction incomplete but file NOT marked indexed — watcher will re-attempt on next sweep. reasons: `extraction_incomplete`, `infrastructure_unavailable`. Optional: `operation_id`, `operation`. |
 | `rag.file.deletion.failed` | `file`, `error` | watcher-triggered delete cleanup failed; indexed rows may still exist |
 | `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
 | `rag.property.index.unavailable` | `file` | indexing proceeded without property index availability |
 | `rag.contextualization.applied` | `file`, `chunk_count`, `model` | contextual prefixes were applied before embedding |
+| `rag.embed.started` | `file`, `operation_id`, `chunk_count` | emitted immediately before chunk embeddings are requested; optional: `operation` |
+| `rag.embed.completed` | `file`, `operation_id`, `chunk_count` | emitted after chunk embeddings return; optional: `operation` |
+| `rag.chroma.upsert.started` | `file`, `operation_id`, `chunk_count` | emitted immediately before ChromaDB upsert begins; optional: `operation` |
+| `rag.chroma.upsert.completed` | `file`, `operation_id`, `chunk_count` | emitted after ChromaDB upsert returns; optional: `operation` |
+| `rag.property.write.started` | `file`, `operation_id`, `chunk_count`, `property_entries` | emitted before FTS + property-index writes begin; optional: `operation` |
+| `rag.property.write.completed` | `file`, `operation_id`, `chunk_count`, `property_entries` | emitted after FTS + property-index writes finish; optional: `operation` |
+| `rag.source.commit.started` | `file`, `operation_id`, `chunk_count`, `stale_chunks` | emitted before stale cleanup and source-level metadata commit begin; optional: `operation` |
+| `rag.source.commit.completed` | `file`, `operation_id`, `chunk_count`, `stale_chunks` | emitted after stale cleanup and source-level metadata commit finish; optional: `operation` |
+| `rag.hints.update.started` | `file`, `operation_id` | emitted before post-index corpus-hints refresh begins; optional: `operation` |
+| `rag.hints.update.completed` | `file`, `operation_id` | emitted after post-index corpus-hints refresh returns; optional: `operation` |
 | `rag.embedding.chunk.fallback` | `model`, `text_len`, `dim` | chunk embedded as zero vector after all retry attempts exhausted; indicates content-specific model fault; chunk is indexed but not semantically retrievable |
 | `rag.html.normalization.started` | `file` | HTML ingest entered normalization pipeline (before chunking) |
 | `rag.html.normalization.completed` | `file`, `output_chars` | HTML normalization succeeded; output_chars = total chunk text length |
