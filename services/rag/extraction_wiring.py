@@ -24,6 +24,8 @@ from universal_event_bus import Event, EventBus
 if TYPE_CHECKING:
     import chromadb
 
+from universal_event_bus.events.debug import emit_debug_event
+
 from services.rag.chunk_filters import chunk_metadata_is_noise
 from services.rag.chunkers import Chunk
 from services.rag.config import KnowledgeExtractionConfig
@@ -149,6 +151,20 @@ def _publish_event_nonblocking(event_bus: EventBus, event: Event) -> None:
     task.add_done_callback(_on_done)
 
 
+async def _emit_extraction_debug(
+    *,
+    file: str,
+    step: str,
+    **payload: Any,
+) -> None:
+    """Emit temporary extraction debug events for file-level branch decisions."""
+    await emit_debug_event(
+        "debug.rag.extraction.decision",
+        {"file": file, "step": step, **payload},
+        source="rag",
+    )
+
+
 def _is_structural_infrastructure_failure(timing: dict[str, object]) -> bool:
     """True when the infrastructure failure is structural (no catalog entry)."""
     return bool(timing.get("structural"))
@@ -253,10 +269,18 @@ async def run_extraction(
             chunk_ids=ids,
             chunk_texts=[c.text for c in chunks],
             config=config,
+            file=file,
         )
     except BatchTimeoutError as exc:
         duration = time.monotonic() - start
         timeout_error = f"batch extraction timeout ({exc.timeout_seconds:.0f}s)"
+        await _emit_extraction_debug(
+            file=file,
+            step="batch_timeout",
+            chunk_count=len(ids),
+            timeout_seconds=exc.timeout_seconds,
+            duration_seconds=round(duration, 3),
+        )
         logger.warning(
             "Extraction batch timed out for %s (%d chunks, %.0fs budget)",
             file,
@@ -292,6 +316,11 @@ async def run_extraction(
         return result
     duration = time.monotonic() - start
     if not isinstance(extract_return, tuple) or len(extract_return) != 2:
+        await _emit_extraction_debug(
+            file=file,
+            step="invalid_return_shape",
+            returned_type=type(extract_return).__name__,
+        )
         logger.error(
             "extract_knowledge_batch returned unexpected type %s for file %s",
             type(extract_return).__name__,
@@ -315,6 +344,11 @@ async def run_extraction(
         return result
     knowledge_list, timing = extract_return
     if not isinstance(knowledge_list, list):
+        await _emit_extraction_debug(
+            file=file,
+            step="invalid_list_payload",
+            returned_type=type(knowledge_list).__name__,
+        )
         logger.error(
             "extract_knowledge_batch returned invalid list type %s for file %s",
             type(knowledge_list).__name__,
@@ -368,12 +402,33 @@ async def run_extraction(
     # Threshold applied to the active (non-permanently-failed) chunk set.
     failure_ratio = len(failed_ids) / len(ids) if ids else 0.0
     accept_partial = bool(failed_ids) and failure_ratio <= _FAILURE_THRESHOLD
+    await _emit_extraction_debug(
+        file=file,
+        step="batch_summary",
+        chunk_count=len(ids),
+        successful=successful,
+        failed=len(failed_ids),
+        finish_reason=finish_reason,
+        infrastructure_failure=is_infrastructure_failure,
+        structural=is_structural,
+        accept_partial=accept_partial,
+        processing_seconds=result.processing_seconds,
+        queue_wait_seconds=result.queue_wait_seconds,
+    )
 
     failure_counts_snapshot = property_index.get_failure_counts(file)
 
     if failed_ids:
         if is_infrastructure_failure:
             if is_structural:
+                await _emit_extraction_debug(
+                    file=file,
+                    step="structural_unavailable",
+                    failed=len(failed_ids),
+                    model_id=config.extraction_model,
+                    reason=str(timing.get("unavailability_reason", "unknown")),
+                    detail=str(timing.get("unavailability_detail", "")),
+                )
                 logger.error(
                     "Extraction permanently failed for %s: not in catalog"
                     " (%d chunks) — %s",
@@ -391,6 +446,13 @@ async def run_extraction(
                         ),
                     )
             else:
+                await _emit_extraction_debug(
+                    file=file,
+                    step="transient_infrastructure_defer",
+                    failed=len(failed_ids),
+                    model_id=config.extraction_model,
+                    reason=str(timing.get("unavailability_reason", timing.get("stargate_error", "unknown"))),
+                )
                 logger.info(
                     "Extraction deferred for %s due to Stargate infrastructure state"
                     " — will retry on next sweep (%d chunks)",
@@ -399,6 +461,13 @@ async def run_extraction(
                 )
             infra_error = _describe_infrastructure_failure(timing)
         elif accept_partial:
+            await _emit_extraction_debug(
+                file=file,
+                step="partial_write",
+                failed=len(failed_ids),
+                successful=successful,
+                failure_ratio=round(failure_ratio, 3),
+            )
             logger.info(
                 "Partial extraction for %s: %d/%d chunks failed (within threshold)"
                 " — writing %d successful",
@@ -408,6 +477,14 @@ async def run_extraction(
                 successful,
             )
         else:
+            await _emit_extraction_debug(
+                file=file,
+                step="full_retry",
+                failed=len(failed_ids),
+                successful=successful,
+                failure_ratio=round(failure_ratio, 3),
+                finish_reason=finish_reason,
+            )
             logger.warning(
                 "Extraction skipped for %s: %d/%d chunks failed"
                 " — will retry on next sweep",

@@ -38,6 +38,7 @@ class CircuitStats:
     last_success_time: float = 0.0
     state: CircuitState = CircuitState.CLOSED
     state_changed_at: float = field(default_factory=time.time)
+    last_failure_status: int | None = None
 
 
 class FederationCircuitBreaker:
@@ -219,8 +220,7 @@ class FederationCircuitBreaker:
             stats.failure_count = 0
             self._half_open_requests.pop(pair_key, None)
             logger.info(
-                f"🟢 Circuit CLOSED for {gateway_id}/{model_id} "
-                "- recovery successful"
+                f"🟢 Circuit CLOSED for {gateway_id}/{model_id} - recovery successful"
             )
 
         self._update_gateway_wide_state(gateway_id)
@@ -231,12 +231,14 @@ class FederationCircuitBreaker:
         model_id: str,
         *,
         error: str | None = None,
+        status_code: int | None = None,
     ) -> None:
         """Record failed request to gateway/model pair."""
         pair_key = self._pair_key(gateway_id, model_id)
         stats = self._circuits.setdefault(pair_key, CircuitStats())
         stats.failure_count += 1
         stats.last_failure_time = time.time()
+        stats.last_failure_status = status_code
 
         state = self._evaluate_state(stats)
 
@@ -269,6 +271,7 @@ class FederationCircuitBreaker:
                 "success_count": stats.success_count,
                 "last_failure": stats.last_failure_time,
                 "last_success": stats.last_success_time,
+                "last_failure_status": stats.last_failure_status,
             }
 
         return {

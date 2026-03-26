@@ -111,8 +111,9 @@ def evaluate_feasibility(
     Invariant: tier == T0 ⟹ len(constraint_failures) > 0
     Invariant: tier == T2 ⟹ eviction_plan is not None
     Invariant (non-sticky): ¬sticky ⟹
-               T2_FEASIBLE_EVICT valid even when model loaded elsewhere (i.e., routing can
-               move the model, and eviction on this gateway is still a valid path).
+               T2_FEASIBLE_EVICT valid even when model loaded elsewhere (i.e.,
+               routing can move the model, and eviction on this gateway is still
+               a valid path).
 
     Tier classification:
     - T0: Unhealthy, model not in catalog, cannot fit
@@ -147,10 +148,14 @@ def evaluate_feasibility(
                 ConstraintFailure(
                     constraint="circuit_breaker",
                     reason=f"Circuit OPEN for {gateway.name}",
-                    details={"circuit_open": True, "model_id": str(placement.model_id)},
+                    details={
+                        "circuit_open": True,
+                        "model_id": str(placement.model_id),
+                        "retryable": True,
+                    },
                 )
             )
-            return FeasibilityTier.T0_INFEASIBLE, tuple(failures), None # No change for now, but consider refactoring if more return paths are added
+            return FeasibilityTier.T0_INFEASIBLE, tuple(failures), None
 
     # Check 1: Gateway health
     if gateway.health_score < 0.5:
@@ -256,9 +261,10 @@ def evaluate_feasibility(
     )
 
     if eviction_plan is None:
-        # If resource_failure exists, it's the primary reason for not fitting without eviction.
-        # We should ensure it's included, but avoid duplicating it if it's already implicitly
-        # covered by the more specific eviction-related failures.
+        # If resource_failure exists, it's the primary reason for not fitting
+        # without eviction.
+        # We should ensure it's included, but avoid duplicating it if it's
+        # already implicitly covered by the more specific eviction-related failures.
         # For now, append it if it's distinct and relevant.
         if resource_failure is not None and resource_failure not in failures:
             failures.append(resource_failure)

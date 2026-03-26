@@ -10,7 +10,19 @@ import re
 from datetime import date, timedelta
 from typing import Any
 
-VALID_TYPES = frozenset({"checking", "credit_card", "utility", "phone", "ploc"})
+VALID_TYPES = frozenset(
+    {
+        "checking",
+        "credit_card",
+        "utility",
+        "phone",
+        "ploc",
+        "student_loan",
+        "brokerage",
+        "tax_document",
+        "property_tax",
+    }
+)
 
 STATEMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     "credit_card": {
@@ -119,6 +131,98 @@ STATEMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             }
         ],
     },
+    "student_loan": {
+        "servicer": "string",
+        "account_number": "string",
+        "statement_date": "YYYY-MM-DD",
+        "loans": [
+            {
+                "loan_type": "subsidized|unsubsidized|graduate_plus|parent_plus|private|consolidated",
+                "original_principal": 0.0,
+                "current_principal": 0.0,
+                "accrued_interest": 0.0,
+                "interest_rate": 0.0,
+                "status": "repayment|deferment|forbearance|grace|default",
+                "group_name": "string",
+            }
+        ],
+        "total_balance": 0.0,
+        "monthly_payment": 0.0,
+        "next_due_date": "YYYY-MM-DD",
+        "repayment_plan": "standard|graduated|extended|income_driven|SAVE|PAYE|IBR|ICR",
+        "payments_made_ytd": 0.0,
+        "interest_paid_ytd": 0.0,
+    },
+    "brokerage": {
+        "broker": "string",
+        "account_number": "string",
+        "account_type": "individual|joint|ira_traditional|ira_roth|401k|rollover_ira|sep_ira",
+        "statement_period": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"},
+        "beginning_value": 0.0,
+        "ending_value": 0.0,
+        "net_deposits_withdrawals": 0.0,
+        "investment_return": 0.0,
+        "fees_total": 0.0,
+        "dividends_total": 0.0,
+        "interest_income": 0.0,
+        "realized_gains": 0.0,
+        "cash_balance": 0.0,
+        "margin_balance": 0.0,
+        "holdings": [
+            {
+                "symbol": "string",
+                "name": "string",
+                "quantity": 0.0,
+                "price": 0.0,
+                "market_value": 0.0,
+                "cost_basis": 0.0,
+                "unrealized_gain": 0.0,
+                "asset_class": "equity|fixed_income|options|etf|mutual_fund|cash|crypto|other",
+            }
+        ],
+        "transactions": [
+            {
+                "date": "YYYY-MM-DD",
+                "description": "string",
+                "symbol": "string",
+                "type": "buy|sell|dividend|interest|fee|transfer_in|transfer_out",
+                "quantity": 0.0,
+                "price": 0.0,
+                "amount": 0.0,
+            }
+        ],
+    },
+    "tax_document": {
+        "form_type": "1099-INT|1099-DIV|1099-B|1099-MISC|1099-NEC|W-2|1098|1095-A|other",
+        "tax_year": 2025,
+        "issuer": "string",
+        "recipient": "string",
+        "recipient_tin_last4": "string",
+        "filing_date": "YYYY-MM-DD",
+        "amounts": {"box_1": {"label": "string", "amount": 0.0}},
+        "summary_total": 0.0,
+    },
+    "property_tax": {
+        "authority": "string",
+        "parcel_number": "string",
+        "property_address": "string",
+        "tax_year": "2025-2026",
+        "assessed_value": {"land": 0.0, "improvements": 0.0, "total": 0.0},
+        "exemptions": [{"type": "string", "amount": 0.0}],
+        "installments": [
+            {
+                "number": 1,
+                "amount": 0.0,
+                "due_date": "YYYY-MM-DD",
+                "status": "paid|due|delinquent|pending",
+                "paid_date": None,
+            }
+        ],
+        "total_tax": 0.0,
+        "total_due": 0.0,
+        "special_assessments": [{"description": "string", "amount": 0.0}],
+        "tax_rate_area": "string",
+    },
 }
 
 
@@ -133,6 +237,26 @@ ISSUER_SLUGS: dict[str, str] = {
     "pg&e": "pge",
     "at&t": "att",
     "waste connections": "wci",
+    # Student loan servicers
+    "nelnet": "nelnet",
+    "mohela": "mohela",
+    "aidvantage": "aidvantage",
+    "great lakes": "great-lakes",
+    "navient": "navient",
+    "fedloan": "fedloan",
+    "sofi": "sofi",
+    "earnest": "earnest",
+    # Brokerages
+    "charles schwab": "schwab",
+    "schwab": "schwab",
+    "fidelity": "fidelity",
+    "vanguard": "vanguard",
+    "td ameritrade": "td-ameritrade",
+    "e*trade": "etrade",
+    "robinhood": "robinhood",
+    "interactive brokers": "ibkr",
+    "merrill": "merrill",
+    "coinbase": "coinbase",
 }
 
 
@@ -154,10 +278,16 @@ def resolve_issuer_slug(name: str) -> str:
 
 def extract_issuer_name(parsed: dict[str, Any], statement_type: str) -> str:
     """Get the issuer/bank/provider display name from parsed data."""
-    if statement_type in ("credit_card", "ploc"):
+    if statement_type in ("credit_card", "ploc", "tax_document"):
         return parsed.get("issuer", "")
     if statement_type == "checking":
         return parsed.get("bank", "")
+    if statement_type == "student_loan":
+        return parsed.get("servicer", "")
+    if statement_type == "brokerage":
+        return parsed.get("broker", "")
+    if statement_type == "property_tax":
+        return parsed.get("authority", "")
     return parsed.get("provider", "")
 
 
@@ -165,6 +295,10 @@ def extract_account_suffix(parsed: dict[str, Any], statement_type: str) -> str:
     """Get a short account identifier (last 4 digits or equivalent)."""
     if statement_type in ("credit_card", "checking"):
         return parsed.get("account_last4", "")
+    if statement_type == "tax_document":
+        return parsed.get("recipient_tin_last4", "")
+    if statement_type == "property_tax":
+        return parsed.get("parcel_number", "")
     num = parsed.get("account_number", "")
     return num[-4:] if len(num) >= 4 else num
 
@@ -173,9 +307,15 @@ def extract_period(parsed: dict[str, Any], statement_type: str) -> tuple[str, st
     """Get (start_date, end_date) from parsed statement data."""
     if statement_type in ("utility", "phone"):
         period = parsed.get("billing_period", {})
-    elif statement_type == "ploc":
+    elif statement_type in ("ploc", "student_loan"):
         sd = parsed.get("statement_date", "")
         return (sd, sd)
+    elif statement_type == "tax_document":
+        year = str(parsed.get("tax_year", ""))
+        return (f"{year}-01-01", f"{year}-12-31") if year else ("", "")
+    elif statement_type == "property_tax":
+        ty = parsed.get("tax_year", "")
+        return (str(ty), str(ty))
     else:
         period = parsed.get("statement_period", {})
     return (period.get("start", ""), period.get("end", ""))

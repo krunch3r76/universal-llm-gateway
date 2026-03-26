@@ -105,8 +105,10 @@ def determine_upstream_error_semantics(
     """Determine ErrorCode, retryability, and proxy HTTP status for an upstream failure.
 
     Cloud provider 4xx responses represent client/request errors and are preserved
-    as client-visible 4xx. All other upstream HTTP failures (cloud 5xx, local/federated
-    any) are surfaced as 502 Bad Gateway to signify gateway-level instability.
+    as client-visible 4xx. Federated/local 503/504 responses are also preserved so
+    transient capacity and load-pressure signals do not get misclassified as hard
+    gateway failures. All other upstream HTTP failures are surfaced as 502 Bad
+    Gateway to signify gateway-level instability.
 
     Args:
         upstream_status_code: HTTP status from the upstream gateway/provider.
@@ -120,9 +122,10 @@ def determine_upstream_error_semantics(
     error_code, retryable = map_upstream_status_to_error_code(
         upstream_status_code, upstream_payload
     )
-    response_http_status = (
-        upstream_status_code
-        if is_cloud and 400 <= upstream_status_code < 500
-        else 502
-    )
+    if is_cloud and 400 <= upstream_status_code < 500:
+        response_http_status = upstream_status_code
+    elif upstream_status_code in {503, 504}:
+        response_http_status = upstream_status_code
+    else:
+        response_http_status = 502
     return error_code, retryable, response_http_status

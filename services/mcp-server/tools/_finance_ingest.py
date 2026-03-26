@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -120,8 +121,43 @@ def _build_entity_ids(
     statement_type: str,
     acct_suffix: str,
     stmt_date: str,
+    parsed: dict[str, Any] | None = None,
 ) -> tuple[str, str, str]:
-    """Build (account_entity_id, org_entity_id, statement_entity_id)."""
+    """Build (account_entity_id, org_entity_id, statement_entity_id).
+
+    Tax-family types use different ID conventions:
+    - tax_document: tax:{form_slug}-{issuer}-{year}, org:{issuer}, statement:tax-...
+    - property_tax: tax:property-{parcel_slug}-{year}, org:{authority}, statement:tax-...
+    - brokerage: uses account_type instead of statement_type in the account ID
+    """
+    parsed = parsed or {}
+    if statement_type == "tax_document":
+        form = parsed.get("form_type", "unknown").lower()
+        year = str(parsed.get("tax_year", ""))
+        account_id = f"tax:{form}-{issuer_slug}-{year}"
+        org_id = f"org:{issuer_slug}"
+        statement_id = f"statement:{form}-{issuer_slug}-{year}-{stmt_date}"
+        return account_id, org_id, statement_id
+    if statement_type == "property_tax":
+        parcel = re.sub(r"[^a-z0-9]+", "-", (acct_suffix or "unknown").lower()).strip(
+            "-"
+        )
+        year = str(parsed.get("tax_year", ""))
+        account_id = f"tax:property-{parcel}-{year}"
+        org_id = f"org:{issuer_slug}"
+        statement_id = f"statement:property-tax-{parcel}-{year}-{stmt_date}"
+        return account_id, org_id, statement_id
+    if statement_type == "brokerage":
+        acct_type = parsed.get("account_type", "individual")
+        parts = [issuer_slug, acct_type]
+        if acct_suffix:
+            parts.append(acct_suffix)
+        account_id = f"account:{'-'.join(parts)}"
+        org_id = f"org:{issuer_slug}"
+        stmt_parts = parts + [stmt_date]
+        statement_id = f"statement:{'-'.join(stmt_parts)}"
+        return account_id, org_id, statement_id
+
     parts = [issuer_slug, statement_type]
     if acct_suffix:
         parts.append(acct_suffix)
@@ -138,6 +174,25 @@ def _display_name(issuer: str, stype: str, suffix: str) -> str:
     if suffix:
         return f"{issuer} {label} \u00b7\u00b7\u00b7{suffix}"
     return f"{issuer} {label}"
+
+
+_ENTITY_TYPE_MAP: dict[str, str] = {
+    "tax_document": "tax_document",
+    "property_tax": "property_tax",
+}
+
+_REL_TYPE_MAP: dict[str, str] = {
+    "tax_document": "filed_by",
+    "property_tax": "assessed_on",
+}
+
+
+def _entity_type_for(statement_type: str) -> str:
+    return _ENTITY_TYPE_MAP.get(statement_type, "account")
+
+
+def _relationship_type_for(statement_type: str) -> str:
+    return _REL_TYPE_MAP.get(statement_type, "issued_by")
 
 
 def ingest_statement(
@@ -169,7 +224,7 @@ def ingest_statement(
         return {"status": "error", "error": "Cannot determine statement date"}
 
     account_eid, org_eid, statement_eid = _build_entity_ids(
-        issuer_slug, statement_type, acct_suffix, stmt_date
+        issuer_slug, statement_type, acct_suffix, stmt_date, parsed=parsed
     )
 
     abs_pdf = _FILES_ROOT / pdf_path.lstrip("/")
@@ -187,6 +242,7 @@ def ingest_statement(
             }
         logger.info("Re-ingesting %s (content hash changed)", statement_eid)
 
+    entity_type = _entity_type_for(statement_type)
     acct_attrs: dict[str, Any] = {
         "issuer": issuer_name,
         "account_type": statement_type,
@@ -197,10 +253,18 @@ def ingest_statement(
         acct_attrs["credit_limit"] = parsed["credit_limit"]
     if parsed.get("interest_rates"):
         acct_attrs["interest_rates"] = parsed["interest_rates"]
+    if statement_type == "brokerage":
+        acct_attrs["account_type"] = parsed.get("account_type", "individual")
+    if statement_type == "property_tax":
+        acct_attrs["parcel_number"] = parsed.get("parcel_number", "")
+        acct_attrs["property_address"] = parsed.get("property_address", "")
+    if statement_type == "tax_document":
+        acct_attrs["form_type"] = parsed.get("form_type", "")
+        acct_attrs["tax_year"] = parsed.get("tax_year")
 
     _create_or_update_entity(
         account_eid,
-        "account",
+        entity_type,
         _display_name(issuer_name, statement_type, acct_suffix),
         attributes=acct_attrs,
         source_uri=pdf_path,
@@ -213,16 +277,26 @@ def ingest_statement(
         update_if_exists=False,
     )
 
+    rel_type = _relationship_type_for(statement_type)
     rel_result = _cx(
         "POST",
         "/relationships",
         {
             "source_id": account_eid,
             "target_id": org_eid,
-            "type_id": "issued_by",
+            "type_id": rel_type,
         },
     )
-    rels_created = 0 if "error" in rel_result else 1
+    if "error" in rel_result:
+        logger.warning(
+            "Relationship creation failed for %s → %s: %s",
+            account_eid,
+            org_eid,
+            rel_result["error"],
+        )
+        rels_created = 0
+    else:
+        rels_created = 1
 
     stmt_body: dict[str, Any] = {
         "id": statement_eid,

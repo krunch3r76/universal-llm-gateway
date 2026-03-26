@@ -126,6 +126,95 @@ async def wait_for_startup_gateway(
     return False
 
 
+DEFAULT_MODEL_GATEWAY_GRACE_TIMEOUT_S: float = 90.0
+
+
+async def wait_for_model_gateway(
+    *,
+    federated_manager: "FederatedGatewayManager",
+    context: "RequestContext",
+    event_bus: "EventBus | None",
+    model_id: str,
+    timeout_s: float,
+    unhealthy_gateway_ids: list[str],
+) -> bool:
+    """
+    Wait for a specific model to reappear on a healthy gateway.
+
+    The wait is model-scoped: only requests targeting this model pause while
+    unrelated traffic continues. Returns True on recovery and False on timeout.
+    """
+    from src.scheduling.events.routing import (
+        RoutingModelGraceQueued,
+        RoutingModelGraceResolved,
+        RoutingModelGraceTimeout,
+    )
+    wait_start = time.monotonic()
+    sel = context.selected_model
+    if event_bus:
+        await _emit_event_safe(
+            event_bus,
+            RoutingModelGraceQueued(
+                request_id=context.request_id,
+                model_id=model_id,
+                timeout_s=timeout_s,
+                unhealthy_gateway_ids=unhealthy_gateway_ids,
+            ),
+            "routing.model.grace.queued",
+        )
+    try:
+        while True:
+            if time.monotonic() - wait_start >= timeout_s:
+                break
+            state_version = federated_manager.get_state_version()
+            gateways = federated_manager.get_healthy_gateways()
+            if any(sel in g.available_models for g in gateways):
+                waited_ms = int((time.monotonic() - wait_start) * 1000)
+                recovering_gw = next(
+                    (g.gateway_id for g in gateways if sel in g.available_models),
+                    "unknown",
+                )
+                if event_bus:
+                    await _emit_event_safe(
+                        event_bus,
+                        RoutingModelGraceResolved(
+                            request_id=context.request_id,
+                            model_id=model_id,
+                            gateway_id=recovering_gw,
+                            waited_ms=waited_ms,
+                        ),
+                        "routing.model.grace.resolved",
+                    )
+                logger.info(
+                    "Model gateway grace resolved model=%s waited_ms=%s gateway=%s",
+                    model_id,
+                    waited_ms,
+                    recovering_gw,
+                )
+                return True
+            remaining = max(0.1, timeout_s - (time.monotonic() - wait_start))
+            await federated_manager.wait_for_state_change(state_version, remaining)
+    except asyncio.CancelledError:
+        raise
+    waited_ms = int((time.monotonic() - wait_start) * 1000)
+    if event_bus:
+        await _emit_event_safe(
+            event_bus,
+            RoutingModelGraceTimeout(
+                request_id=context.request_id,
+                model_id=model_id,
+                waited_ms=waited_ms,
+            ),
+            "routing.model.grace.timeout",
+        )
+    logger.warning(
+        "Model gateway grace timeout for %s after %dms: no gateway recovered",
+        model_id,
+        waited_ms,
+    )
+    return False
+
+
 # Eviction wait queue depth (for routing.eviction.wait.started payload and monitoring).
 _eviction_wait_queue_depth: int = 0
 

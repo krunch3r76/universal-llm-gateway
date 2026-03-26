@@ -11,3 +11,4 @@ python-multipart>=0.0.9
 pdfplumber>=0.11
 pymupdf4llm>=0.0.17
 html2text>=2024.2
+Pillow>=10.0

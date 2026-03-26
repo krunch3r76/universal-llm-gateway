@@ -164,6 +164,8 @@ class McpConfig:
     bridge_token: str = ""
     agent_bus_token: str = ""
     anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    xai_api_key: str = ""
     mcp_server_url: str = ""
     enable_browser_tools: bool = False
     refresh_cursor_descriptors_after_rebuild: bool = False
@@ -358,6 +360,14 @@ def load_mcp_config() -> McpConfig | None:
             _get_stripped_str("ANTHROPIC_API_KEY", "anthropic_api_key")
             or os.environ.get("ANTHROPIC_API_KEY", "").strip()
         ),
+        openai_api_key=(
+            _get_stripped_str("OPENAI_API_KEY", "openai_api_key")
+            or os.environ.get("OPENAI_API_KEY", "").strip()
+        ),
+        xai_api_key=(
+            _get_stripped_str("XAI_API_KEY", "xai_api_key")
+            or os.environ.get("XAI_API_KEY", "").strip()
+        ),
         mcp_server_url=_get_stripped_str("mcp_server_url"),
         firefox_profile_dir=_resolve_firefox_profile(
             _get_stripped_str("firefox_profile_dir")
@@ -453,6 +463,10 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
         env["AGENT_BUS_TOKEN"] = cfg.agent_bus_token
     if cfg.anthropic_api_key:
         env["ANTHROPIC_API_KEY"] = cfg.anthropic_api_key
+    if cfg.openai_api_key:
+        env["OPENAI_API_KEY"] = cfg.openai_api_key
+    if cfg.xai_api_key:
+        env["XAI_API_KEY"] = cfg.xai_api_key
     if cfg.mcp_server_url:
         env["MCP_SERVER_URL"] = cfg.mcp_server_url
     if cfg.firefox_profile_dir:

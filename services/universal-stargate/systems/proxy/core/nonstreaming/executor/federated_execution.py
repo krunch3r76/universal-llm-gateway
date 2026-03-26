@@ -248,8 +248,10 @@ async def execute_federated_request(
         if federation_circuit_breaker:
             # Cloud 4xx errors are preserved with their original status code
             # by raise_federated_http_error(), so they fall below this >= 500
-            # threshold and don't trip the breaker. Cloud 5xx and all
-            # local/federated errors are wrapped as 502, correctly tripping.
+            # threshold and don't trip the breaker. Federated/local 503/504 are
+            # also preserved so breaker decisions can distinguish transient load
+            # pressure from true gateway instability. Remaining upstream 5xx and
+            # unexpected failures are wrapped as 502, correctly tripping.
             #
             # 503 = Service Unavailable: model loading, gateway overloaded, or
             # queue full — all transient. Opening the circuit blocks routing to
@@ -267,6 +269,7 @@ async def execute_federated_request(
                     fed_gateway.gateway_id,
                     str(context.selected_model),
                     error=str(e.detail),
+                    status_code=e.status_code,
                 )
         raise
     except Exception as e:

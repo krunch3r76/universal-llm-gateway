@@ -38,7 +38,9 @@ async def raise_federated_http_error(
 
     Performs logging, response snapshots, lifecycle event emission, and error
     envelope construction before raising. Cloud provider 4xx responses are
-    preserved as client-visible 4xx; all other failures become 502.
+    preserved as client-visible 4xx, and federated/local 503/504 responses are
+    preserved to carry transient load-pressure semantics through the proxy.
+    Other failures become 502.
 
     Args:
         error: The upstream httpx.HTTPStatusError.

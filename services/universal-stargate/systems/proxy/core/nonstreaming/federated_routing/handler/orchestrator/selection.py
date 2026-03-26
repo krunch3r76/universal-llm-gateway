@@ -19,7 +19,12 @@ from ....selection_errors import (
     raise_inference_banned_error,
     raise_no_gateways_error,
 )
-from ...wait_logic import DEFAULT_STARTUP_QUEUE_TIMEOUT_S, wait_for_startup_gateway
+from ...wait_logic import (
+    DEFAULT_MODEL_GATEWAY_GRACE_TIMEOUT_S,
+    DEFAULT_STARTUP_QUEUE_TIMEOUT_S,
+    wait_for_model_gateway,
+    wait_for_startup_gateway,
+)
 from .overflow import apply_non_sticky_overflow
 
 if TYPE_CHECKING:
@@ -184,6 +189,37 @@ async def run_initial_selection(
 
         if not federated_gateways:
             raise_no_gateways_error()
+
+    model_on_any_healthy = any(
+        model_id in g.available_models for g in federated_gateways
+    )
+    if not model_on_any_healthy:
+        unhealthy_with_model = [
+            g.gateway_id
+            for g in all_gateways
+            if model_id in g.available_models
+            and g.gateway_id
+            not in {h.gateway_id for h in federated_gateways}
+        ]
+        if unhealthy_with_model:
+            grace_timeout_s = float(
+                (routing_config or {})
+                .get("request_queue", {})
+                .get(
+                    "model_gateway_grace_timeout_s",
+                    DEFAULT_MODEL_GATEWAY_GRACE_TIMEOUT_S,
+                )
+            )
+            recovered = await wait_for_model_gateway(
+                federated_manager=federated_manager,
+                context=context,
+                event_bus=event_bus,
+                model_id=str(model_id),
+                timeout_s=grace_timeout_s,
+                unhealthy_gateway_ids=unhealthy_with_model,
+            )
+            if recovered:
+                federated_gateways = federated_manager.get_healthy_gateways()
 
     gateways_for_routing = federated_gateways_to_routing_candidates(federated_gateways)
 

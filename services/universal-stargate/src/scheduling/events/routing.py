@@ -28,6 +28,9 @@ Signals:
     routing.startup.queued — request held during startup window (no gateways yet)
     routing.startup.resolved — startup-queued request unblocked after gateway connects
     routing.startup.timeout — startup queue window exhausted, no gateway appeared
+    routing.model.grace.queued — request held: model only on unhealthy gateways
+    routing.model.grace.resolved — model-scoped grace resolved after gateway recovery
+    routing.model.grace.timeout — model-scoped grace timed out
 """
 
 # ruff: noqa: N802
@@ -891,6 +894,112 @@ Payload: {
     "uptime_s": float
 }
 """
+
+ROUTING_MODEL_GRACE_QUEUED = "routing.model.grace.queued"
+"""
+Request held because the model exists only on unhealthy/circuit-broken gateways.
+
+Model-scoped grace period: only requests for this model wait; other models
+served by healthy gateways proceed immediately.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "timeout_s": float,
+    "unhealthy_gateway_ids": list[str]
+}
+"""
+
+ROUTING_MODEL_GRACE_RESOLVED = "routing.model.grace.resolved"
+"""
+Model-scoped grace resolved after the model's gateway recovered.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
+    "waited_ms": int
+}
+"""
+
+ROUTING_MODEL_GRACE_TIMEOUT = "routing.model.grace.timeout"
+"""
+Model-scoped grace timed out: gateway did not recover within the window.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "waited_ms": int
+}
+"""
+
+
+@event_factory
+def RoutingModelGraceQueued(
+    request_id: str,
+    model_id: str,
+    timeout_s: float,
+    unhealthy_gateway_ids: list[str],
+) -> Event:
+    """
+    Emit when a request enters model-scoped grace waiting.
+
+    This fires when healthy gateways are present but none currently advertise
+    the requested model while at least one unhealthy gateway still does.
+    """
+    return Event(
+        signal=ROUTING_MODEL_GRACE_QUEUED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "timeout_s": timeout_s,
+            "unhealthy_gateway_ids": unhealthy_gateway_ids,
+        },
+    )
+
+
+@event_factory
+def RoutingModelGraceResolved(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    waited_ms: int,
+) -> Event:
+    """
+    Emit when model-scoped grace unblocks after model gateway recovery.
+
+    Carries the recovering gateway ID and end-to-end grace wait duration.
+    """
+    return Event(
+        signal=ROUTING_MODEL_GRACE_RESOLVED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "waited_ms": waited_ms,
+        },
+    )
+
+
+@event_factory
+def RoutingModelGraceTimeout(
+    request_id: str,
+    model_id: str,
+    waited_ms: int,
+) -> Event:
+    """
+    Emit when model-scoped grace expires without model gateway recovery.
+
+    Downstream routing continues through existing infeasible/error paths.
+    """
+    return Event(
+        signal=ROUTING_MODEL_GRACE_TIMEOUT,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "waited_ms": waited_ms,
+        },
+    )
 
 
 @event_factory

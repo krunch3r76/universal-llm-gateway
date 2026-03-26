@@ -33,10 +33,12 @@ from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 
 from tools.agent_bus import register_agent_bus_tools
+from tools.agent_consult import register_agent_consult_tools
 from tools.browser import register_browser_tools
 from tools.context import register_context_tools
 from tools.cortex import register_cortex_tools
 from tools.cortex_v2 import register_cortex_v2_tools
+from tools.document_ocr import register_document_ocr_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
 from tools.finance import register_finance_tools
@@ -257,11 +259,13 @@ def _build_server() -> FastMCP:
     register_event_tools(mcp)
     register_finance_tools(mcp)
     register_finance_ingest_tools(mcp)
+    register_document_ocr_tools(mcp)
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)
     register_quality_tools(mcp)
     register_local_api_tools(mcp)
     register_agent_bus_tools(mcp)
+    register_agent_consult_tools(mcp)
     register_cortex_tools(mcp)
     register_cortex_v2_tools(mcp)
     register_llm_tools(mcp)
@@ -336,16 +340,23 @@ def _build_server() -> FastMCP:
                 Runs finance_extract_pdf on each .pdf found; returns array of results.
             finance_parse_statement(path, statement_type) — parse a financial PDF into
                 structured JSON via Claude API. statement_type: checking, credit_card,
-                utility, phone, ploc. Returns schema-conformant JSON with all transactions.
+                utility, phone, ploc, student_loan, brokerage, tax_document, property_tax.
             finance_parse_directory(directory, type_map) — batch-parse all PDFs in a
-                directory. type_map maps filename patterns to statement types, e.g.
-                {"wf_cc": "credit_card", "pge": "utility"}. Unmatched PDFs are skipped.
+                directory. type_map maps filename patterns to statement types.
             finance_ingest_statement(parsed_json?, path?, statement_type?) — ingest a
                 parsed financial statement into Cortex. End-to-end mode (path + type)
                 runs Phase 2 parser then ingests. Direct mode (parsed_json) skips parsing.
-                Creates account, org, statement entities + temporally scoped assertions.
+                Creates account/tax/property entities + temporally scoped assertions.
             finance_ingest_directory(directory, type_map) — batch ingest all PDFs via
                 end-to-end pipeline. One-command monthly ingestion into Cortex.
+          Document OCR:
+            document_ocr(path, prompt?, pages?, dpi?, model?) — OCR a scanned PDF or
+                image via Claude Vision. Use when pdfplumber returns empty/garbage.
+            document_ocr_structured(path, statement_type, dpi?, model?) — OCR + structured
+                extraction combo. Renders scanned pages, sends with schema prompt, returns
+                JSON compatible with finance_ingest_statement.
+            document_ocr_directory(directory, prompt?, dpi?, model?) — batch OCR all
+                PDFs and images in a directory.
           Quality & infra:
             quality_gate(files) — run ruff + compileall
             pipeline_consult(execution_id, step_name, problem)

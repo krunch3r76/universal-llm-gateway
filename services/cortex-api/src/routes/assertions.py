@@ -100,7 +100,7 @@ def list_assertions(
         )
     else:
         cols = _ASSERTION_COLS
-        sql = f"SELECT {cols} FROM assertions{where} ORDER BY created_at DESC LIMIT ?"
+        sql = f"SELECT {cols} FROM assertions a{where} ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
 
     with cortex_conn() as conn:

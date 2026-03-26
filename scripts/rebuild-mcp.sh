@@ -94,6 +94,12 @@ if agent_bus:
 anthropic = (cfg.get('ANTHROPIC_API_KEY') or cfg.get('anthropic_api_key') or os.environ.get('ANTHROPIC_API_KEY') or '').strip()
 if anthropic:
     print('export ANTHROPIC_API_KEY=' + shlex.quote(anthropic))
+openai = (cfg.get('OPENAI_API_KEY') or cfg.get('openai_api_key') or os.environ.get('OPENAI_API_KEY') or '').strip()
+if openai:
+    print('export OPENAI_API_KEY=' + shlex.quote(openai))
+xai = (cfg.get('XAI_API_KEY') or cfg.get('xai_api_key') or os.environ.get('XAI_API_KEY') or '').strip()
+if xai:
+    print('export XAI_API_KEY=' + shlex.quote(xai))
 mcp_url = (cfg.get('mcp_server_url') or '').strip()
 if mcp_url:
     print('export MCP_SERVER_URL=' + shlex.quote(mcp_url))

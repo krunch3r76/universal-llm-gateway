@@ -932,6 +932,9 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `routing.startup.queued` | `request_id`, `model_id`, `uptime_s`, `timeout_s` | - |
 | `routing.startup.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms`, `uptime_s` | - |
 | `routing.startup.timeout` | `request_id`, `model_id`, `waited_ms`, `uptime_s` | - |
+| `routing.model.grace.queued` | `request_id`, `model_id`, `timeout_s`, `unhealthy_gateway_ids` | - |
+| `routing.model.grace.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms` | - |
+| `routing.model.grace.timeout` | `request_id`, `model_id`, `waited_ms` | - |
 | `routing.inference.oom.recovery.started` | `request_id`, `model_id`, `gateway_id`, `evicting_count`, `evicting_models` | - |
 | `routing.inference.oom.recovery.succeeded` | `request_id`, `model_id`, `gateway_id`, `evicted_count` | - |
 | `routing.inference.oom.recovery.failed` | `request_id`, `model_id`, `gateway_id` | - |
@@ -1155,6 +1158,21 @@ expires, the request fails with the normal no-gateways error.
 | `routing.startup.queued` | Request held; payload includes `uptime_s` and remaining `timeout_s` |
 | `routing.startup.resolved` | A gateway connected; payload includes `gateway_id`, `waited_ms`, `uptime_s` |
 | `routing.startup.timeout` | Startup window expired with no gateway appearing; payload includes `waited_ms`, `uptime_s` |
+
+### routing.model.grace.* (model-scoped gateway recovery)
+
+When at least one gateway is healthy but none advertise the requested model,
+while an unhealthy or circuit-broken gateway still lists the model in its
+catalog, the request is held for `request_queue.model_gateway_grace_timeout_s`
+(default 90s). Other models continue to route immediately. If a healthy gateway
+advertising the model appears, the wait resolves; if the window expires, normal
+`MODEL_NOT_FOUND` / no-feasible-gateway handling applies.
+
+| Signal | When |
+|--------|------|
+| `routing.model.grace.queued` | Request held; payload includes `timeout_s` and `unhealthy_gateway_ids` |
+| `routing.model.grace.resolved` | A healthy gateway recovered with the model; payload includes `gateway_id`, `waited_ms` |
+| `routing.model.grace.timeout` | Grace window expired without recovery; payload includes `waited_ms` |
 
 ### OOM Recovery
 

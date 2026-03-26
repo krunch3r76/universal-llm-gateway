@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from universal_event_bus.events.debug import emit_debug_event
 
 from services.rag.model_availability_tracker import get_model_availability_tracker
 
@@ -70,6 +71,20 @@ _batch_overhead_s: float = 30.0
 # accepting requests. MODEL_NOT_FOUND 404s during this window are transient.
 _PIPELINE_REGISTRATION_TIMEOUT_S = 60.0
 _PIPELINE_REGISTRATION_POLL_S = 3.0
+
+
+async def _emit_extraction_debug(
+    signal: str,
+    *,
+    file: str | None,
+    payload: dict[str, Any],
+) -> None:
+    """Emit temporary extraction debug events without affecting correctness."""
+    await emit_debug_event(
+        signal,
+        {**({"file": file} if file else {}), **payload},
+        source="rag",
+    )
 
 
 class BatchTimeoutError(Exception):
@@ -477,6 +492,8 @@ async def extract_knowledge_batch(
     chunk_ids: list[str],
     chunk_texts: list[str],
     config: KnowledgeExtractionConfig,
+    *,
+    file: str | None = None,
 ) -> tuple[list[ExtractedKnowledge | None], dict[str, object]]:
     """Extract structured knowledge from all chunks in a file via one pipeline call.
 
@@ -494,6 +511,18 @@ async def extract_knowledge_batch(
             config.model_load_wait_s,
         )
         if not result.available:
+            await _emit_extraction_debug(
+                "debug.rag.extraction.availability",
+                file=file,
+                payload={
+                    "step": "model_unavailable",
+                    "chunk_count": len(chunk_ids),
+                    "model_id": config.extraction_model,
+                    "reason": result.reason.value,
+                    "detail": result.detail,
+                    "structural": result.reason.is_structural,
+                },
+            )
             if result.reason.is_structural:
                 logger.error(
                     "Extraction model not in catalog — failing batch"
@@ -526,6 +555,17 @@ async def extract_knowledge_batch(
         for cid, text in zip(chunk_ids, chunk_texts, strict=True)
     ]
     batch_timeout = _PIPELINE_CEILING_S + _batch_overhead_s
+    await _emit_extraction_debug(
+        "debug.rag.extraction.attempt",
+        file=file,
+        payload={
+            "step": "batch_started",
+            "chunk_count": len(chunk_ids),
+            "model_id": config.extraction_model,
+            "pipeline": config.pipeline,
+            "timeout_budget_seconds": batch_timeout,
+        },
+    )
 
     last_exc: Exception | None = None
     capacity_retries = 0
@@ -546,12 +586,48 @@ async def extract_knowledge_batch(
             await asyncio.sleep(delay)
 
     for attempt in range(_MAX_RETRIES):
+        await _emit_extraction_debug(
+            "debug.rag.extraction.attempt",
+            file=file,
+            payload={
+                "step": "call_started",
+                "attempt": attempt + 1,
+                "max_retries": _MAX_RETRIES,
+                "chunk_count": len(chunk_ids),
+                "model_id": config.extraction_model,
+                "pipeline": config.pipeline,
+            },
+        )
         try:
             parsed, timing = await _call_extraction(chunks, chunk_ids, config)
             if capacity_retries > 0:
                 timing = {**timing, "capacity_retries": capacity_retries}
+            await _emit_extraction_debug(
+                "debug.rag.extraction.result",
+                file=file,
+                payload={
+                    "step": "call_succeeded",
+                    "attempt": attempt + 1,
+                    "chunk_count": len(chunk_ids),
+                    "result_count": len(parsed),
+                    "capacity_retries": capacity_retries,
+                    "finish_reason": timing.get("finish_reason"),
+                    "processing_seconds": timing.get("processing_seconds"),
+                    "queue_wait_seconds": timing.get("queue_wait_seconds"),
+                },
+            )
             return parsed, timing
         except httpx.TimeoutException:
+            await _emit_extraction_debug(
+                "debug.rag.extraction.result",
+                file=file,
+                payload={
+                    "step": "client_timeout",
+                    "attempt": attempt + 1,
+                    "chunk_count": len(chunk_ids),
+                    "timeout_budget_seconds": batch_timeout,
+                },
+            )
             logger.warning(
                 "Batch extraction timed out (%d chunks, budget %.0fs); not retrying",
                 len(chunk_ids),
@@ -563,6 +639,18 @@ async def extract_knowledge_batch(
                 return await _await_pipeline_registration(chunks, chunk_ids, config)
             parsed = _parse_stargate_error(exc)
             if parsed is not None:
+                await _emit_extraction_debug(
+                    "debug.rag.extraction.stargate",
+                    file=file,
+                    payload={
+                        "step": "http_status_error",
+                        "attempt": attempt + 1,
+                        "status_code": exc.response.status_code,
+                        "code": parsed.code,
+                        "retryable": parsed.retryable,
+                        "message": parsed.message,
+                    },
+                )
                 if not parsed.retryable:
                     logger.warning(
                         "Non-retryable Stargate error for extraction: code=%s message=%s",
@@ -594,6 +682,17 @@ async def extract_knowledge_batch(
             await _retry_with_backoff(exc, attempt)
 
     if last_exc is not None:
+        await _emit_extraction_debug(
+            "debug.rag.extraction.result",
+            file=file,
+            payload={
+                "step": "attempts_exhausted",
+                "chunk_count": len(chunk_ids),
+                "capacity_retries": capacity_retries,
+                "last_error_type": type(last_exc).__name__,
+                "last_error": str(last_exc)[:240],
+            },
+        )
         logger.warning(
             "Batch extraction failed after %d attempts: %s",
             _MAX_RETRIES,
@@ -601,6 +700,15 @@ async def extract_knowledge_batch(
             exc_info=True,
         )
     else:
+        await _emit_extraction_debug(
+            "debug.rag.extraction.result",
+            file=file,
+            payload={
+                "step": "attempts_exhausted_without_exception",
+                "chunk_count": len(chunk_ids),
+                "capacity_retries": capacity_retries,
+            },
+        )
         # This case should ideally not be reached if all attempts failed without an exception.
         # If it is, it indicates a logic error where an exception was not captured.
         logger.error(

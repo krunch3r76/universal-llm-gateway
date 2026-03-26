@@ -8,6 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._finance_assertions_ext import (
+    _build_brokerage_assertions,
+    _build_property_tax_assertions,
+    _build_student_loan_assertions,
+    _build_tax_assertions,
+)
 from ._finance_schemas import _add_days, _fmt, extract_period
 
 
@@ -24,6 +30,10 @@ def build_assertions(
         "utility": _build_utility_assertions,
         "phone": _build_phone_assertions,
         "ploc": _build_ploc_assertions,
+        "student_loan": _build_student_loan_assertions,
+        "brokerage": _build_brokerage_assertions,
+        "tax_document": _build_tax_assertions,
+        "property_tax": _build_property_tax_assertions,
     }
     builder = builders.get(statement_type)
     return builder(parsed) if builder else []
@@ -53,9 +63,10 @@ def _build_cc_assertions(p: dict[str, Any]) -> list[dict[str, str | None]]:
         )
     for rate in p.get("interest_rates", []):
         if rate.get("apr") is not None:
+            label = rate.get("type", "purchase").replace("_", " ").title()
             out.append(
                 {
-                    "claim": f"Purchase APR is {rate['apr']}%",
+                    "claim": f"{label} APR is {rate['apr']}%",
                     "valid_from": start or None,
                     "valid_until": None,
                 }
