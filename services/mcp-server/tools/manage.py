@@ -100,33 +100,46 @@ def _probe_manage(method: str, *, service: str = "") -> dict[str, Any]:
     return _extract_result(raw)
 
 
-def _rebuild_timeout_result(service: str, timeout: float) -> dict[str, Any]:
-    """Return a progress-oriented result after a rebuild call outlives its socket budget."""
+def _build_info_from_status(status_result: dict[str, Any]) -> dict[str, Any]:
+    """Extract gateway build info from a status result when present."""
+    build_info = status_result.get("build", {})
+    return build_info if isinstance(build_info, dict) else {}
+
+
+def _service_status_from_probes(
+    status_result: dict[str, Any], health_result: dict[str, Any], service: str
+) -> str:
+    """Resolve a service status string from health/status probe results."""
+    if "error" not in health_result:
+        value = str(health_result.get("status", "")).strip()
+        if value:
+            return value
+    if "error" not in status_result:
+        services = status_result.get("services", {})
+        if isinstance(services, dict):
+            return str(services.get(service, "")).strip()
+    return ""
+
+
+def _lifecycle_timeout_result(action: str, service: str, timeout: float) -> dict[str, Any]:
+    """Return a progress-oriented result after a long lifecycle call outlives its socket budget."""
     status_result = _probe_manage("status")
     health_result = _probe_manage("health", service=service)
 
-    build_info = (
-        status_result.get("build", {})
-        if isinstance(status_result.get("build"), dict)
-        else {}
-    )
-    service_status = ""
-    if "error" not in health_result:
-        service_status = str(health_result.get("status", "")).strip()
-    if not service_status and "error" not in status_result:
-        services = status_result.get("services", {})
-        if isinstance(services, dict):
-            service_status = str(services.get(service, "")).strip()
+    build_info = _build_info_from_status(status_result)
+    service_status = _service_status_from_probes(status_result, health_result, service)
+    action_label = action.replace("_", " ")
+    action_title = action_label.capitalize()
 
     build_running = bool(build_info.get("running"))
     image_status = str(build_info.get("image_status", "")).strip()
-    if build_running or image_status == "building":
+    if action == "rebuild" and (build_running or image_status == "building"):
         return {
             "status": "in_progress",
             "service": service,
             "timed_out": True,
             "message": (
-                f"Rebuild is still running after {timeout:.0f}s. "
+                f"{action_title} is still running after {timeout:.0f}s. "
                 "The client timed out, but manage.sock reports the build is active."
             ),
             "build": build_info,
@@ -142,11 +155,27 @@ def _rebuild_timeout_result(service: str, timeout: float) -> dict[str, Any]:
             "service": service,
             "timed_out": True,
             "message": (
-                f"Rebuild exceeded the {timeout:.0f}s client budget, "
+                f"{action_title} exceeded the {timeout:.0f}s client budget, "
                 f"but {service} is running now."
             ),
             "build": build_info,
             "health": health_result,
+        }
+    if service_status == "unhealthy":
+        return {
+            "status": "in_progress",
+            "service": service,
+            "timed_out": True,
+            "message": (
+                f"{action_title} exceeded the {timeout:.0f}s client budget. "
+                f"manage.sock reports {service} as unhealthy/starting, so the operation may still be settling."
+            ),
+            "build": build_info,
+            "health": health_result,
+            "next_step": (
+                f"Call manage_service(action='wait_healthy', service='{service}', timeout=120) "
+                "or poll health/status."
+            ),
         }
     return {
         "error": f"Manage API call timed out after {timeout:.0f}s",
@@ -193,7 +222,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
         Args:
             action: Operation from the list above.
             service: Target service name (not needed for 'status').
-            timeout: Seconds before wait_healthy gives up (default 120).
+            timeout: Client wait budget in seconds for long-running actions
+                (`wait_healthy`, `start`, `restart`, `rebuild`). On timeout,
+                the tool returns structured progress when possible.
 
         Returns:
             On success: action-specific result dict
@@ -222,7 +253,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
         # Long-running actions hold the connection open until done; extend socket timeout.
         sock_timeout = (
             timeout + _WAIT_HEALTHY_BUFFER
-            if action in {"wait_healthy", "rebuild"}
+            if action in {"wait_healthy", "start", "restart", "rebuild"}
             else _DEFAULT_TIMEOUT
         )
 
@@ -232,8 +263,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
         )
         timed_out = bool(raw.get("_timeout"))
         result = _extract_result(raw)
-        if timed_out and action == "rebuild" and service:
-            result = _rebuild_timeout_result(service, timeout)
+        if timed_out and action in {"start", "restart", "rebuild"} and service:
+            result = _lifecycle_timeout_result(action, service, timeout)
 
         duration = monotonic_now() - t0
         if "error" in result:

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
 from .binary import find_llama_server
@@ -55,6 +56,8 @@ class LlamaServerManager:
         self.status = ServerStatus.STOPPED
         self._health_task: asyncio.Task | None = None
         self._shutdown_event = asyncio.Event()
+        self.log_path: str | None = None
+        self._log_handle: Any | None = None
 
     @property
     def base_url(self) -> str:
@@ -78,6 +81,21 @@ class LlamaServerManager:
         return httpx.AsyncClient(
             base_url=f"http://{self.config.host}:{self.config.port}",
             **kwargs,
+        )
+
+    async def _emit_debug(self, step: str, **extra: Any) -> None:
+        payload = {
+            "step": step,
+            "status": self.status.value,
+            "pid": self.process.pid if self.process else None,
+            "socket_path": self.config.socket_path,
+            "log_path": self.log_path,
+        }
+        payload.update(extra)
+        await emit_debug_event(
+            "debug.llama.server",
+            payload,
+            source="gateway-worker-llama",
         )
 
     async def start(self, startup_timeout: float = 60.0) -> None:
@@ -122,6 +140,15 @@ class LlamaServerManager:
         # Start process
         self.status = ServerStatus.STARTING
         child_env: dict[str, str] | None = None
+        log_dir = Path("/tmp/logs/llama-server")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_name = (
+            Path(self.config.socket_path).stem
+            if self.config.socket_path
+            else f"{self.config.host}-{self.config.port}"
+        )
+        self.log_path = str(log_dir / f"{log_name}.log")
+        self._log_handle = open(self.log_path, "a", encoding="utf-8")
         if self.config.n_gpu_layers == 0:
             # Enforce strict CPU-only execution for CUDA-enabled builds.
             child_env = os.environ.copy()
@@ -132,14 +159,23 @@ class LlamaServerManager:
         try:
             self.process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=self._log_handle,
+                stderr=subprocess.STDOUT,
                 text=True,
+                bufsize=1,
                 env=child_env,
             )
             logger.info(f"🚀 [llama-server] Process started (PID: {self.process.pid})")
+            await self._emit_debug(
+                "process_started",
+                command=cmd,
+                verbose=self.config.verbose,
+            )
         except Exception as e:
             self.status = ServerStatus.STOPPED
+            if self._log_handle:
+                self._log_handle.close()
+                self._log_handle = None
             raise RuntimeError(f"Failed to start llama-server: {e}") from e
 
         # Wait for server to become healthy
@@ -160,6 +196,7 @@ class LlamaServerManager:
 
         self.status = ServerStatus.RUNNING
         logger.info("✅ [llama-server] Server is running and inference-ready")
+        await self._emit_debug("server_running")
 
         # Start health monitoring
         self._health_task = asyncio.create_task(self._monitor_health())
@@ -347,6 +384,10 @@ class LlamaServerManager:
 
         self.process = None
         self.status = ServerStatus.STOPPED
+        await self._emit_debug("server_stopped")
+        if self._log_handle:
+            self._log_handle.close()
+            self._log_handle = None
 
         # Clean up Unix socket file
         if self.config.socket_path:

@@ -187,12 +187,19 @@ def _git_ls_files_in_repo(
     return [f for f in result.stdout.splitlines() if f]
 
 
-def _filesystem_files(directory: str = "", max_depth: int | None = None) -> list[str]:
+def _filesystem_files(
+    directory: str = "",
+    max_depth: int | None = None,
+    *,
+    skip_binary: bool = True,
+) -> list[str]:
     """Return files via filesystem walk, including gitignored files.
 
     Unlike ``_git_tracked_files``, this enumerates the actual filesystem
     so directories excluded by ``.gitignore`` (e.g. ``tmp/``) are visible.
-    Binary files and common build/cache directories are still skipped.
+    Common build/cache directories are always skipped. Binary files are
+    skipped by default but can be included for listing operations where
+    only file paths (not content) are returned.
     """
     resolved_root = _PROJECT_ROOT.resolve()
     base = _safe_project_path(directory) if directory else resolved_root
@@ -226,7 +233,7 @@ def _filesystem_files(directory: str = "", max_depth: int | None = None) -> list
             file_depth = len(fpath.parts) - base_depth
             if max_depth is not None and file_depth > max_depth:
                 continue
-            if _is_binary(fpath):
+            if skip_binary and _is_binary(fpath):
                 continue
             rel = str(fpath.relative_to(resolved_root))
             files.append(rel)
@@ -313,8 +320,10 @@ def register_project_tools(mcp: FastMCP) -> None:
         like tmp/, prompts/, build artifacts). Set include_untracked=False
         to restrict to git-tracked files only.
 
-        Binary files are always excluded. Use max_depth to limit recursion
-        depth (default 3).
+        All file types are listed (including PDFs and other binary files).
+        Binary files will be rejected if you try to read them — use
+        read_project_file to read text content. Use max_depth to limit
+        recursion depth (default 3).
 
         Supports multi-repo project roots: if the project root contains
         multiple git repos, files are listed across all of them with
@@ -334,7 +343,7 @@ def register_project_tools(mcp: FastMCP) -> None:
                 raise ValueError(f"Path is not a directory: {directory!r}")
 
         if include_untracked:
-            files = _filesystem_files(directory, max_depth=max_depth)
+            files = _filesystem_files(directory, max_depth=max_depth, skip_binary=False)
         else:
             # Ideally, _git_tracked_files should take max_depth
             # For now, keep post-filtering but acknowledge inefficiency

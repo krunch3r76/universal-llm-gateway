@@ -7,6 +7,7 @@ from typing import Any
 
 from process_ipc import ProcessHealthConfig, ProcessStatus
 from process_ipc.core.exceptions import ProcessError
+from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
 from src.core.model_registry import ModelRegistry
@@ -32,6 +33,24 @@ def _get_resource_tracker():
 
 logger = get_logger(__name__)
 structured_logger = get_logger("universal_llm_gateway.controller")
+
+
+async def _emit_embedding_debug(
+    step: str,
+    model_id: str,
+    correlation_id: str | None,
+    **extra: Any,
+) -> None:
+    """Emit a temporary debug event for embedding request tracing."""
+    payload: dict[str, Any] = {
+        "step": step,
+        "component": "controller",
+        "model_id": model_id,
+    }
+    if correlation_id:
+        payload["correlation_id"] = correlation_id
+    payload.update(extra)
+    await emit_debug_event("debug.embedding.gateway", payload, source="gateway")
 
 
 class WorkerController:
@@ -245,8 +264,10 @@ class WorkerController:
     async def load_model(self, model_id: str) -> bool:
         return await self._model_loader.load_model(model_id)
 
-    async def ensure_model_loaded(self, model_id: str) -> bool:
-        return await self._model_loader.ensure_model_loaded(model_id)
+    async def ensure_model_loaded(
+        self, model_id: str, correlation_id: str | None = None
+    ) -> bool:
+        return await self._model_loader.ensure_model_loaded(model_id, correlation_id)
 
     async def unload_model(self, model_id: str, force: bool = False) -> UnloadResult:
         """Unload a model. Returns UnloadResult with success/skip status.
@@ -642,17 +663,61 @@ class WorkerController:
             OpenAI-compatible embedding response
 
         Raises:
-            RuntimeError: If model not loaded or RPC fails
+            RuntimeError: If model not loaded, RPC fails, or timeout triggers quarantine
         """
         params = {
             "input": input_texts,
             "model": model_id,
+            "correlation_id": correlation_id,
         }
 
-        # Wrap with inference tracking (emits INFERENCE_STARTED/COMPLETED events)
         resource_tracker = _get_resource_tracker()
-        async with resource_tracker.track_inference(model_id):
-            return await self._call_rpc(model_id, "generate_embeddings", params)
+        try:
+            async with resource_tracker.track_inference(model_id):
+                result = await self._call_rpc(model_id, "generate_embeddings", params)
+        except TimeoutError as exc:
+            # track_inference already set model to IDLE — override to ERROR.
+            # The worker thread is likely still stuck on the llama-server call;
+            # force-recycle kills the worker (and its llama-server child) to
+            # release GPU memory and prevent capacity from being overstated.
+            resource_tracker.set_model_error(
+                model_id, f"Embedding timeout — worker recycled: {exc}"
+            )
+            await self._recycle_after_embedding_timeout(model_id, correlation_id)
+            raise RuntimeError(
+                f"Embedding timed out — worker process terminated for {model_id}"
+            ) from exc
+        return result
+
+    async def _recycle_after_embedding_timeout(
+        self, model_id: str, correlation_id: str | None = None
+    ) -> None:
+        """Force-recycle worker after embedding timeout to release GPU resources.
+
+        Kills the worker process tree (including llama-server child), removes
+        supervisor tracking, and emits a quarantine event. The model remains in
+        ERROR state; auto-load-on-request will reload it when the next request
+        arrives.
+        """
+        logger.error(f"⏰ Embedding timeout for {model_id} — killing worker process")
+        await _emit_embedding_debug(
+            "timeout_quarantine",
+            model_id,
+            correlation_id,
+            action="force_recycle",
+        )
+        sup = self._process_state.get_supervisor(model_id)
+        if sup:
+            try:
+                await sup.stop(force=True, timeout=5)
+                logger.info(f"✅ Killed timed-out embedding worker for {model_id}")
+            except Exception as e:
+                logger.error(
+                    f"Failed to kill timed-out embedding worker for {model_id}: {e}"
+                )
+        self._process_state.remove_supervisor(model_id)
+        self._process_state.remove_socket_path(model_id)
+        await self._cleanup_socket_file(model_id)
 
     def get_active_model_id(self) -> str | None:
         try:

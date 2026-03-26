@@ -8,6 +8,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope
 
@@ -25,6 +26,23 @@ from src.schemas.embedding import (
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+
+async def _emit_embedding_debug(
+    step: str,
+    correlation_id: str,
+    model_id: str,
+    **extra: object,
+) -> None:
+    """Emit a temporary debug event for end-to-end embedding tracing."""
+    payload = {
+        "step": step,
+        "component": "route",
+        "correlation_id": correlation_id,
+        "model_id": model_id,
+        **extra,
+    }
+    await emit_debug_event("debug.embedding.gateway", payload, source="gateway")
 
 
 @router.post(
@@ -71,9 +89,17 @@ async def create_embeddings(
         f"Embedding request: model={model_id}, inputs={len(input_texts)}, "
         f"correlation_id={correlation_id}"
     )
+    await _emit_embedding_debug(
+        "request_received",
+        correlation_id,
+        model_id,
+        input_count=len(input_texts),
+    )
 
     # Ensure model is loaded
-    if not await worker_controller.ensure_model_loaded(model_id):
+    if not await worker_controller.ensure_model_loaded(
+        model_id, correlation_id=correlation_id
+    ):
         raise HTTPException(
             status_code=503,
             detail=error_envelope(
@@ -86,6 +112,7 @@ async def create_embeddings(
         )
 
     # Generate embeddings with correlation ID
+    generate_started_at = time.monotonic()
     try:
         result = await worker_controller.generate_embeddings(
             model_id=model_id,
@@ -101,9 +128,19 @@ async def create_embeddings(
             if is_transient
             else ErrorCode.UNEXPECTED_ERROR
         )
+        elapsed_ms = round((time.monotonic() - generate_started_at) * 1000, 1)
         logger.error(
             f"Embedding generation failed (retryable={is_transient}): {e}",
             extra={"correlation_id": correlation_id},
+        )
+        await _emit_embedding_debug(
+            "generate_error",
+            correlation_id,
+            model_id,
+            elapsed_ms=elapsed_ms,
+            retryable=is_transient,
+            error_type=type(e).__name__,
+            error=str(e),
         )
         raise HTTPException(
             status_code=status,
@@ -116,9 +153,18 @@ async def create_embeddings(
             ),
         ) from e
     except Exception as e:
+        elapsed_ms = round((time.monotonic() - generate_started_at) * 1000, 1)
         logger.error(
             f"Unexpected embedding error: {e}",
             extra={"correlation_id": correlation_id},
+        )
+        await _emit_embedding_debug(
+            "generate_error",
+            correlation_id,
+            model_id,
+            elapsed_ms=elapsed_ms,
+            error_type=type(e).__name__,
+            error=str(e),
         )
         raise HTTPException(
             status_code=500,
@@ -176,6 +222,13 @@ async def create_embeddings(
     logger.info(
         f"Embeddings generated: {len(data)} vectors in {elapsed:.1f}ms",
         extra={"correlation_id": correlation_id},
+    )
+    await _emit_embedding_debug(
+        "response_ready",
+        correlation_id,
+        model_id,
+        elapsed_ms=round((time.monotonic() - generate_started_at) * 1000, 1),
+        output_count=len(data),
     )
 
     return response

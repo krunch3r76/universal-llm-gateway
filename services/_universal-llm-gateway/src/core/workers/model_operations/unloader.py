@@ -1,6 +1,7 @@
 """Model unloading operations for WorkerController."""
 
 import asyncio
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -212,9 +213,34 @@ class ModelUnloader:
                 success = await self._standard_unload(model_id, supervisor)
         except Exception as e:
             logger.error(f"❌ Error unloading model {model_id}: {e}")
-            success = await self._fallback_cleanup(model_id)
+            success = False
 
         return success
+
+    def _get_tracked_worker_pid(self, supervisor) -> int | None:
+        """Return the currently tracked worker PID, if any."""
+        try:
+            info = supervisor.get_worker_info()
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to get worker info during unload: {e}")
+            return None
+
+        pid = getattr(info, "pid", None)
+        return pid if isinstance(pid, int) else None
+
+    def _is_pid_gone(self, pid: int | None) -> bool:
+        """Return True iff the tracked worker PID no longer exists."""
+        if pid is None:
+            return False
+        try:
+            os.kill(pid, 0)
+            return False
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return False
+        except OSError:
+            return True
 
     async def _fast_unload(self, model_id: str, supervisor) -> bool:
         """
@@ -245,8 +271,25 @@ class ModelUnloader:
         logger.info(f"🚀 Fast model unload for {model_id}")
 
         try:
-            await supervisor.stop(force=True, timeout=5)
-            logger.info(f"✅ Process termination successful for {model_id}")
+            tracked_pid = self._get_tracked_worker_pid(supervisor)
+            stopped = await supervisor.stop(force=True, timeout=5)
+            if not stopped:
+                logger.error(
+                    f"❌ Process termination returned unsuccessful for {model_id} "
+                    f"(tracked_pid={tracked_pid})"
+                )
+                return False
+            if not self._is_pid_gone(tracked_pid):
+                logger.error(
+                    f"❌ Tracked worker PID still alive after unload for {model_id} "
+                    f"(tracked_pid={tracked_pid})"
+                )
+                return False
+
+            logger.info(
+                f"✅ Process termination confirmed for {model_id} "
+                f"(tracked_pid={tracked_pid})"
+            )
             self._remove_supervisor(model_id)
 
             _ = asyncio.create_task(_publish_socket_cleanup(model_id))
@@ -259,8 +302,7 @@ class ModelUnloader:
 
         except Exception as e:
             logger.warning(f"⚠️ Process termination failed for {model_id}: {e}")
-            self._remove_supervisor(model_id)
-            return await self._fallback_cleanup(model_id)
+            return False
 
     async def _standard_unload(self, model_id: str, supervisor) -> bool:
         """
@@ -291,8 +333,25 @@ class ModelUnloader:
         logger.info(f"🔄 Standard model unload for {model_id}")
 
         try:
-            await supervisor.stop(timeout=10)
-            logger.info(f"✅ Standard termination successful for {model_id}")
+            tracked_pid = self._get_tracked_worker_pid(supervisor)
+            stopped = await supervisor.stop(timeout=10)
+            if not stopped:
+                logger.error(
+                    f"❌ Standard termination returned unsuccessful for {model_id} "
+                    f"(tracked_pid={tracked_pid})"
+                )
+                return False
+            if not self._is_pid_gone(tracked_pid):
+                logger.error(
+                    f"❌ Tracked worker PID still alive after standard unload for "
+                    f"{model_id} (tracked_pid={tracked_pid})"
+                )
+                return False
+
+            logger.info(
+                f"✅ Standard termination confirmed for {model_id} "
+                f"(tracked_pid={tracked_pid})"
+            )
             self._remove_supervisor(model_id)
 
             _ = asyncio.create_task(_publish_socket_cleanup(model_id))
@@ -305,8 +364,7 @@ class ModelUnloader:
 
         except Exception as e:
             logger.error(f"❌ Standard termination failed for {model_id}: {e}")
-            self._remove_supervisor(model_id)
-            return await self._fallback_cleanup(model_id)
+            return False
 
     async def _fallback_cleanup(self, model_id: str) -> bool:
         """Fallback cleanup when normal unload fails."""

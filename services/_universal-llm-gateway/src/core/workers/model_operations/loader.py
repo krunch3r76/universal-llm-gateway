@@ -95,7 +95,9 @@ class ModelLoader:
 
         return is_valid, error_message
 
-    async def ensure_model_loaded(self, model_id: str) -> bool:
+    async def ensure_model_loaded(
+        self, model_id: str, correlation_id: str | None = None
+    ) -> bool:
         """Ensure a model is loaded and available for inference."""
         try:
             resource_tracker = _get_resource_tracker()
@@ -115,14 +117,11 @@ class ModelLoader:
                 logger.warning(f"⚠️ Model {model_id} not loaded and auto-load disabled")
                 return False
         except Exception as e:
-            error_message = str(e)
-            _get_resource_tracker().set_model_error(model_id, error_message)
+            _get_resource_tracker().set_model_error(model_id, str(e))
             logger.error(
-                f"Error ensuring model {model_id} is loaded: {error_message}",
+                f"Error ensuring model {model_id} is loaded: {e}",
                 exc_info=True,
             )
-            # Depending on desired behavior, could re-raise specific exceptions or wrap them.
-            # For now, just ensuring the error message is clear.
             return False
 
     async def load_model(self, model_id: str) -> bool:

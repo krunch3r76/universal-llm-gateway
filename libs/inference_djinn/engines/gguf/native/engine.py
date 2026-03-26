@@ -18,10 +18,12 @@ ARCHITECTURE NOTES (embedding mode):
 import asyncio
 import hashlib
 import os
+import time
 from collections.abc import AsyncGenerator
 from typing import Any, override
 
 import httpx
+from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
 from inference_djinn.engines.base import BaseEngine
@@ -40,6 +42,39 @@ from .validation import (
 )
 
 logger = get_logger(__name__)
+
+
+def _emit_embedding_engine_debug(
+    step: str,
+    correlation_id: str | None,
+    **extra: Any,
+) -> None:
+    """Emit sync-safe debug events from the embedding engine thread."""
+    payload: dict[str, Any] = {"step": step}
+    if correlation_id:
+        payload["correlation_id"] = correlation_id
+    payload.update(extra)
+    try:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(
+                emit_debug_event(
+                    "debug.embedding.engine",
+                    payload,
+                    source="gateway-worker-engine",
+                )
+            )
+        else:
+            loop.create_task(
+                emit_debug_event(
+                    "debug.embedding.engine",
+                    payload,
+                    source="gateway-worker-engine",
+                )
+            )
+    except Exception:
+        pass
 
 
 class NativeGGUFEngine(BaseEngine):
@@ -130,6 +165,7 @@ class NativeGGUFEngine(BaseEngine):
         # Auto-disable flash_attn for embedding models (BERT doesn't support it)
         if embedding:
             flash_attn = False
+            verbose = True
 
         # COMPAT: Accept n_ctx as alias for ctx_size (catalog config uses n_ctx)
         # Explicit ctx_size takes precedence over n_ctx from kwargs
@@ -600,12 +636,17 @@ class NativeGGUFEngine(BaseEngine):
         self,
         input_texts: list[str],
         task: str | None = None,
+        correlation_id: str | None = None,
     ) -> dict[str, Any]:
         """Generate embeddings via llama-server /v1/embeddings (sync).
 
         Sync because RPC handler calls via run_in_executor().
         No retry — readiness probe in LlamaServerManager.start() guarantees
         the server accepts inference requests before MODEL_LOADED is emitted.
+
+        On timeout: marks engine as crashed and kills the llama-server process
+        to release GPU memory immediately. The controller also force-recycles
+        the worker, so this is defense-in-depth.
         """
         if not self._embedding_mode:
             raise RuntimeError(
@@ -615,12 +656,14 @@ class NativeGGUFEngine(BaseEngine):
             raise RuntimeError("Engine not loaded — call load() first")
 
         texts = self._apply_task_prefix(input_texts, task)
+        started_at = time.monotonic()
 
-        logger.debug(
-            f"[embedding] endpoint={self.server_manager.base_url}/v1/embeddings, "
-            f"server_status={self.server_manager.status.value}, "
-            f"embedding_mode={self._embedding_mode}, "
-            f"input_count={len(texts)}"
+        _emit_embedding_engine_debug(
+            "wrapper_start",
+            correlation_id,
+            input_count=len(texts),
+            server_status=self.server_manager.status.value,
+            engine_pid=self.get_engine_pid(),
         )
 
         try:
@@ -641,24 +684,54 @@ class NativeGGUFEngine(BaseEngine):
                         json={"input": texts},
                     )
 
-            logger.debug(
-                f"[embedding] status={response.status_code}, "
-                f"content_type={response.headers.get('content-type')}"
-            )
-
             if response.status_code != 200:
                 logger.error(
                     f"[embedding] Non-200 response: status={response.status_code}, "
                     f"body={response.text[:500]}"
                 )
-
             response.raise_for_status()
-            return response.json()
 
-        except httpx.HTTPStatusError as e:
+            result = response.json()
+            elapsed_ms = round((time.monotonic() - started_at) * 1000, 1)
+            _emit_embedding_engine_debug(
+                "wrapper_done",
+                correlation_id,
+                elapsed_ms=elapsed_ms,
+                output_count=len(result.get("data", []))
+                if isinstance(result, dict)
+                else None,
+            )
+            return result
+
+        except httpx.TimeoutException as e:
+            elapsed_ms = round((time.monotonic() - started_at) * 1000, 1)
             logger.error(
-                f"[embedding] HTTP error: status={e.response.status_code}, "
-                f"url={e.request.url}, body={e.response.text[:500]}"
+                f"[embedding] Timeout after {elapsed_ms:.0f}ms — "
+                f"marking engine crashed and killing llama-server"
+            )
+            self._crashed = True
+            if self.server_manager.process:
+                try:
+                    self.server_manager.process.kill()
+                except OSError:
+                    pass
+            _emit_embedding_engine_debug(
+                "wrapper_error",
+                correlation_id,
+                elapsed_ms=elapsed_ms,
+                error_type=type(e).__name__,
+                error=str(e),
+                action="crash_and_kill",
+            )
+            raise
+
+        except Exception as e:
+            _emit_embedding_engine_debug(
+                "wrapper_error",
+                correlation_id,
+                elapsed_ms=round((time.monotonic() - started_at) * 1000, 1),
+                error_type=type(e).__name__,
+                error=str(e),
             )
             raise
 

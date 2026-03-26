@@ -26,11 +26,16 @@ class EmbeddingHandlers:
         if isinstance(input_texts, str):
             input_texts = [input_texts]
 
+        correlation_id = params.get("correlation_id")
         logger.info(f"📊 [worker] Generating embeddings for {len(input_texts)} texts")
 
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
-            None, self.engine.create_embedding, input_texts
+            None,
+            lambda: self.engine.create_embedding(
+                input_texts,
+                correlation_id=correlation_id,
+            ),
         )
 
         logger.info(f"✅ [worker] Generated {len(result.get('data', []))} embeddings")
