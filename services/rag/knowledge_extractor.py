@@ -338,23 +338,34 @@ def _parse_one(
 def _parse_map_response(
     content: str,
     chunk_ids: list[str],
-) -> list[ExtractedKnowledge | None]:
+) -> tuple[list[ExtractedKnowledge | None], dict[str, str]]:
     """Parse map output into per-chunk knowledge aligned by input order.
 
     Model-supplied chunk IDs are not trusted for alignment; caller-provided
     chunk_ids define the result ordering contract.
     """
+    failure_reasons: dict[str, str] = {}
     try:
         items = json.loads(content)
-    except json.JSONDecodeError:
-        logger.error("Map response is not valid JSON")
-        return [None] * len(chunk_ids)
+    except json.JSONDecodeError as exc:
+        logger.error(
+            "Map response is not valid JSON: %s (line=%d col=%d pos=%d)",
+            exc.msg,
+            exc.lineno,
+            exc.colno,
+            exc.pos,
+        )
+        return [None] * len(chunk_ids), {
+            chunk_id: "invalid_json" for chunk_id in chunk_ids
+        }
 
     if not isinstance(items, list):
         logger.warning(
             "Expected JSON array from map output, got %s", type(items).__name__
         )
-        return [None] * len(chunk_ids)
+        return [None] * len(chunk_ids), {
+            chunk_id: "non_array_response" for chunk_id in chunk_ids
+        }
 
     if len(items) != len(chunk_ids):
         logger.warning(
@@ -366,9 +377,19 @@ def _parse_map_response(
     parsed: list[ExtractedKnowledge | None] = []
     for idx, chunk_id in enumerate(chunk_ids):
         if idx >= len(items):
+            failure_reasons[chunk_id] = "count_mismatch"
             parsed.append(None)
             continue
         item = items[idx]
+        if item is None:
+            logger.warning(
+                "Map response item %d for chunk %s is None; iteration produced no aligned output",
+                idx,
+                chunk_id,
+            )
+            failure_reasons[chunk_id] = "missing_iteration_output"
+            parsed.append(None)
+            continue
         if not isinstance(item, dict):
             logger.warning(
                 "Map response item %d for chunk %s is %s, expected object",
@@ -376,10 +397,11 @@ def _parse_map_response(
                 chunk_id,
                 type(item).__name__,
             )
+            failure_reasons[chunk_id] = "non_object_item"
             parsed.append(None)
             continue
         parsed.append(_parse_one(item, chunk_id=chunk_id))
-    return parsed
+    return parsed, failure_reasons
 
 
 async def _call_extraction(
@@ -416,10 +438,15 @@ async def _call_extraction(
             " — map output truncated; trailing chunks will be missing",
             len(chunk_ids),
         )
-    parsed = _parse_map_response(content, chunk_ids)
+    parsed, parse_failure_reasons = _parse_map_response(content, chunk_ids)
     timing: dict[str, object] = dict(body.get("pipeline_timing") or {})
+    execution_id = response.headers.get("x-pipeline-execution-id")
+    if execution_id:
+        timing["execution_id"] = execution_id
     if finish_reason and finish_reason != "stop":
         timing["finish_reason"] = finish_reason
+    if parse_failure_reasons:
+        timing["parse_failure_reasons"] = parse_failure_reasons
     return parsed, timing
 
 

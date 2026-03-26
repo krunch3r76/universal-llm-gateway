@@ -75,7 +75,15 @@ class EntityList(BaseModel):
 # --- Assertions ---
 
 
-DerivationType = Literal["quotation", "compression", "inference", "other"]
+DerivationType = Literal[
+    "quotation",
+    "compression",
+    "inference",
+    "direct_observation",
+    "agent_observation",
+    "stated",
+    "other",
+]
 
 
 class AssertionCreate(BaseModel):

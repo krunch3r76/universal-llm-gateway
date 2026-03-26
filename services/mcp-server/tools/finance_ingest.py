@@ -47,7 +47,8 @@ def register_finance_ingest_tools(mcp: FastMCP) -> None:
         Args:
             parsed_json: Pre-parsed Phase 2 output dict (direct mode).
             path: PDF path relative to /data/files/ sandbox (end-to-end mode).
-            statement_type: One of checking, credit_card, utility, phone, ploc.
+            statement_type: One of checking, credit_card, utility, phone, ploc,
+                student_loan, brokerage, tax_document, property_tax, mortgage, escrow.
         """
         t0 = monotonic_now()
 

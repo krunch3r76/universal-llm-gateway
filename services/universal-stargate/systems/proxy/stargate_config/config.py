@@ -213,20 +213,24 @@ class StargateConfig:
             },
         )
 
-    def get_pipeline_admission_config(self) -> dict[str, Any]:
-        """Return pipeline admission control settings.
-
-        Lives under ``pipeline`` top-level key (not ``pipelines``).
-        """
-        pipeline_section = self.config.get("pipeline", {})
-        return {
-            "max_concurrent_executions": pipeline_section.get(
-                "max_concurrent_executions", 2
-            ),
-            "admission_timeout_seconds": pipeline_section.get(
-                "admission_timeout_seconds", 120.0
-            ),
-        }
+    def get_capacity_pool_config(self) -> dict[str, Any]:
+        """Return CapacityPool overload-control settings."""
+        raw_section = self.config.get("capacity_pool", {})
+        if not isinstance(raw_section, dict):
+            msg = (
+                f"capacity_pool must be a mapping, got {type(raw_section).__name__}"
+            )
+            raise TypeError(msg)
+        raw_depth = raw_section.get("max_queue_depth", 0)
+        if isinstance(raw_depth, bool) or not isinstance(raw_depth, int):
+            msg = (
+                "capacity_pool.max_queue_depth must be int "
+                f"(got {type(raw_depth).__name__})"
+            )
+            raise TypeError(msg)
+        if raw_depth < 0:
+            raise ValueError("capacity_pool.max_queue_depth must be >= 0")
+        return {"max_queue_depth": raw_depth}
 
     def get_cloud_proxy_config(self) -> dict[str, Any] | None:
         """Return cloud proxy config when present, otherwise None for disabled mode."""

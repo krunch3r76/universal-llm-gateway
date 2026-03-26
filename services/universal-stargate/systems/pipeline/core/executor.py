@@ -34,12 +34,6 @@ from .dag import DAGBuilder, StepState
 
 # New observability events (for JSONL recorder)
 from .events import EventRecorder
-from .events.admission import (
-    PipelineAdmissionAdmitted,
-    PipelineAdmissionQueued,
-    PipelineAdmissionRejected,
-    PipelineAdmissionReleased,
-)
 from .events.lifecycle import (
     PipelineCancelled,
     PipelineCompleted,
@@ -64,7 +58,6 @@ from .events.step import (
     SubPipelineExpanded as BusSubPipelineExpanded,
 )
 from .execution import DAGExecutor
-from .execution.admission import PipelineAdmissionQueue
 from .execution.disconnect_monitor import execute_with_disconnect_monitoring
 from .execution.map_reduce.map_executor.events import ProxyProtocol
 from .fragments import get_fragment_loader
@@ -107,26 +100,13 @@ class PipelineExecutor:
         registry: PipelineRegistry,
         request_executor: _RequestExecutorProtocol,
         proxy: ProxyProtocol,
-        *,
-        max_concurrent_executions: int = 2,
-        admission_timeout_seconds: float = 120.0,
     ):
         self.registry = registry
         self.request_executor = request_executor
         self.proxy = proxy
         self.prompt_builder = get_prompt_builder()
         self.fragment_loader = get_fragment_loader()
-        self._admission = PipelineAdmissionQueue(
-            max_concurrent=max_concurrent_executions,
-        )
-        self._admission_timeout = admission_timeout_seconds
         self._event_bus_warned: bool = False
-
-        logger.info(
-            "Pipeline admission control: max_concurrent=%d, timeout=%ds",
-            max_concurrent_executions,
-            admission_timeout_seconds,
-        )
 
     def _publish_event(self, context: PipelineContext, event: Event) -> None:
         """
@@ -143,71 +123,6 @@ class PipelineExecutor:
         elif not getattr(self, "_event_bus_warned", False):
             logger.warning("Event bus unavailable - events will not be published")
             self._event_bus_warned = True
-
-    async def _acquire_with_disconnect(
-        self,
-        http_request: Any,
-        pipeline_id: str,
-        execution_id: str,
-    ) -> float:
-        """Wait for an admission token, cancelling if the client disconnects.
-
-        Races the admission queue acquire against a client-disconnect poll loop
-        (same polling pattern as ``disconnect_monitor.py``).  If the client
-        closes the connection while the pipeline is waiting for a slot, the
-        acquire is cancelled immediately so the slot is not consumed by an
-        abandoned request.
-
-        Returns the admission wait time in milliseconds.
-        Raises ``asyncio.CancelledError`` on client disconnect.
-        Raises ``TimeoutError`` if the admission timeout fires.
-        """
-        if http_request is None:
-            return await self._admission.acquire(timeout=self._admission_timeout)
-
-        async def _poll_disconnect() -> None:
-            await asyncio.sleep(1.0)
-            while True:
-                try:
-                    if await http_request.is_disconnected():
-                        return
-                except Exception:
-                    pass
-                await asyncio.sleep(2.0)
-
-        acquire_task = asyncio.create_task(
-            self._admission.acquire(timeout=self._admission_timeout),
-            name=f"admission-acquire-{execution_id[:8]}",
-        )
-        disconnect_task = asyncio.create_task(
-            _poll_disconnect(),
-            name=f"admission-disconnect-{execution_id[:8]}",
-        )
-
-        done, pending = await asyncio.wait(
-            {acquire_task, disconnect_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-
-        for task in pending:
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
-
-        if acquire_task in done:
-            return acquire_task.result()
-
-        logger.info(
-            "Client disconnected while pipeline '%s' was waiting for admission "
-            "(execution_id=%s)",
-            pipeline_id,
-            execution_id,
-        )
-        raise asyncio.CancelledError(
-            f"Client disconnected during admission wait for '{pipeline_id}'"
-        )
 
     async def execute(
         self, context: _PipelineRequestContextProtocol
@@ -432,76 +347,8 @@ class PipelineExecutor:
             ),
         )
 
-        # --- Admission control ---
         dag_executor = DAGExecutor(nodes, pipeline_context)
-        admission_wait_ms = 0.0
 
-        if self._admission.active >= self._admission.max_concurrent:
-            self._publish_event(
-                pipeline_context,
-                PipelineAdmissionQueued(
-                    pipeline_id=pipeline.id,
-                    execution_id=pipeline_context.execution_id,
-                    queue_depth=self._admission.waiting,
-                    active_count=self._admission.active,
-                ),
-            )
-            logger.info(
-                "Pipeline '%s' queued for admission (active=%d, waiting=%d)",
-                pipeline.id,
-                self._admission.active,
-                self._admission.waiting,
-            )
-
-        admission_start = time.monotonic()
-        try:
-            admission_wait_ms = await self._acquire_with_disconnect(
-                pipeline_context.http_request,
-                pipeline.id,
-                pipeline_context.execution_id,
-            )
-        except asyncio.CancelledError:
-            wait_ms = (time.monotonic() - admission_start) * 1000.0
-            self._publish_event(
-                pipeline_context,
-                PipelineAdmissionRejected(
-                    pipeline_id=pipeline.id,
-                    execution_id=pipeline_context.execution_id,
-                    queue_depth=self._admission.waiting,
-                    active_count=self._admission.active,
-                    wait_ms=wait_ms,
-                ),
-            )
-            raise
-        except TimeoutError:
-            self._publish_event(
-                pipeline_context,
-                PipelineAdmissionRejected(
-                    pipeline_id=pipeline.id,
-                    execution_id=pipeline_context.execution_id,
-                    queue_depth=self._admission.waiting,
-                    active_count=self._admission.active,
-                    wait_ms=self._admission_timeout * 1000.0,
-                ),
-            )
-            raise TimeoutError(
-                f"Pipeline '{pipeline.id}' rejected: admission timeout "
-                f"after {self._admission_timeout}s "
-                f"(active={self._admission.active}, waiting={self._admission.waiting})"
-            )
-
-        self._publish_event(
-            pipeline_context,
-            PipelineAdmissionAdmitted(
-                pipeline_id=pipeline.id,
-                execution_id=pipeline_context.execution_id,
-                queue_depth=self._admission.waiting,
-                active_count=self._admission.active,
-                wait_ms=admission_wait_ms,
-            ),
-        )
-
-        # --- Execute DAG under admission token ---
         start_time = time.time()
         pipeline_timeout = float(
             pipeline_context.options.get("timeout_seconds", 60)
@@ -655,18 +502,6 @@ class PipelineExecutor:
             )
             e.execution_id = pipeline_context.execution_id  # type: ignore[union-attr]
             raise
-        finally:
-            self._admission.release()
-            self._publish_event(
-                pipeline_context,
-                PipelineAdmissionReleased(
-                    pipeline_id=pipeline.id,
-                    execution_id=pipeline_context.execution_id,
-                    queue_depth=self._admission.waiting,
-                    active_count=self._admission.active,
-                    wait_ms=admission_wait_ms,
-                ),
-            )
 
         # Extract final result, resolving sub-pipeline output aliases
         final_result = self._get_final_result(

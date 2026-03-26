@@ -9,6 +9,7 @@ is created.  Without the fix, in_flight is permanently leaked.
 import asyncio
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -17,7 +18,19 @@ _stargate_root = str(Path(__file__).resolve().parents[3])
 if _stargate_root not in sys.path:
     sys.path.insert(0, _stargate_root)
 
-from systems.routing.capacity.pool import CapacityPool, CapacityToken
+from systems.routing.capacity import pool as pool_module  # noqa: E402
+from systems.routing.capacity.pool import CapacityPool, CapacityToken  # noqa: E402
+
+
+class _FakeEventBus:
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    def subscribe_async(self, signal: str, callback: Any) -> None:
+        return None
+
+    async def publish_async_nowait(self, event: Any) -> None:
+        self.events.append(event)
 
 
 @pytest.fixture
@@ -148,9 +161,7 @@ async def test_cancel_admitted_waiter_recovers_slot(seeded_pool: CapacityPool) -
     assert task_b.cancelled()
 
     # CRITICAL: in_flight must be 0, not stuck at 1
-    avail, in_flight, cap = seeded_pool.get_slot_info(
-        "edge-jupiter-gateway", "hermes3"
-    )
+    avail, in_flight, cap = seeded_pool.get_slot_info("edge-jupiter-gateway", "hermes3")
     assert in_flight == 0, (
         f"Slot leak: in_flight={in_flight} after cancellation "
         f"(expected 0, capacity={cap})"
@@ -238,30 +249,68 @@ async def test_cancel_queued_waiter_not_admitted(seeded_pool: CapacityPool) -> N
 
 
 @pytest.mark.asyncio
-async def test_timeout_admitted_waiter_recovers_slot(seeded_pool: CapacityPool) -> None:
-    """TimeoutError after admission also recovers the slot."""
+async def test_explicit_cancel_removes_waiter_and_wakes_task(
+    seeded_pool: CapacityPool,
+) -> None:
+    """Explicit queue cancellation should remove the waiter cleanly."""
     token_a = await seeded_pool.acquire_token(
         request_id="req-a",
         model_id="hermes3",
         allowed_gateway_ids=frozenset({"edge-jupiter-gateway"}),
     )
 
-    async def acquire_b_with_timeout() -> CapacityToken:
+    async def acquire_b() -> CapacityToken:
         return await seeded_pool.acquire_token(
             request_id="req-b",
             model_id="hermes3",
             allowed_gateway_ids=frozenset({"edge-jupiter-gateway"}),
-            timeout_s=0.05,
         )
 
-    task_b = asyncio.create_task(acquire_b_with_timeout())
+    task_b = asyncio.create_task(acquire_b())
     await asyncio.sleep(0.01)
 
-    # Wait for B to timeout (0.05s)
-    with pytest.raises(TimeoutError):
+    assert seeded_pool.cancel_request("req-b", reason="explicit_cancel") is True
+
+    with pytest.raises(asyncio.CancelledError, match="explicit_cancel"):
         await task_b
 
-    # Release A — no leak from B's timeout
+    snap = seeded_pool.get_snapshot()
+    assert snap["total_queued"] == 0
+
     await token_a.release()
     _, in_flight, _ = seeded_pool.get_slot_info("edge-jupiter-gateway", "hermes3")
     assert in_flight == 0
+
+
+@pytest.mark.asyncio
+async def test_waiting_event_emitted_while_request_stays_queued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Long waits emit non-terminal capacity.pool.waiting heartbeat events."""
+    event_bus = _FakeEventBus()
+    pool = CapacityPool(event_bus=event_bus)
+    pool.set_capacity("edge-jupiter-gateway", "hermes3", 1)
+    monkeypatch.setattr(pool_module, "_WAITING_EVENT_INTERVAL_S", 0.01)
+
+    token_a = await pool.acquire_token(
+        request_id="req-a",
+        model_id="hermes3",
+        allowed_gateway_ids=frozenset({"edge-jupiter-gateway"}),
+    )
+
+    async def acquire_b() -> CapacityToken:
+        return await pool.acquire_token(
+            request_id="req-b",
+            model_id="hermes3",
+            allowed_gateway_ids=frozenset({"edge-jupiter-gateway"}),
+        )
+
+    task_b = asyncio.create_task(acquire_b())
+    await asyncio.sleep(0.05)
+
+    assert any(event.signal == "capacity.pool.waiting" for event in event_bus.events)
+
+    task_b.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task_b
+    await token_a.release()

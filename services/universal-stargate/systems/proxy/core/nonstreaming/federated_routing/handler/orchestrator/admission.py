@@ -6,7 +6,6 @@ selection logic remains focused on feasibility and scoring.
 """
 
 import asyncio
-import time
 from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
@@ -136,24 +135,11 @@ async def acquire_admission_token(
             g.name for g in gateways_for_routing if model_id in g.loaded_models
         )
 
-    # Use the full remaining capacity budget so the FIFO queue does the
-    # waiting instead of short timeouts that trigger retry-loop cycling.
-    deadline = getattr(context, "_capacity_deadline_mono", None)
-    if deadline is not None:
-        timeout_s: float | None = max(0.0, deadline - time.monotonic())
-    else:
-        timeout_s = (
-            routing_config.get("admission", {}).get("timeout_s", None)
-            if routing_config
-            else None
-        )
-
     try:
         token = await capacity_pool.acquire_token(
             request_id=context.request_id,
             model_id=model_id.routing_key,
             allowed_gateway_ids=allowed_gateway_ids,
-            timeout_s=timeout_s,
         )
         context.capacity_token = token
         if (
@@ -182,15 +168,6 @@ async def acquire_admission_token(
                 original_gateway_name,
                 token.gateway_id,
             )
-    except TimeoutError:
-        logger.warning(
-            "Admission queue timeout: model=%s gateway=%s timeout_s=%s allowed=%s",
-            model_id.routing_key,
-            selected_gateway.name,
-            timeout_s,
-            sorted(allowed_gateway_ids),
-        )
-        raise_gateway_capacity_error(selected_gateway.name)
     except Exception as exc:
         from systems.routing.capacity.pool import QueueFullError
 

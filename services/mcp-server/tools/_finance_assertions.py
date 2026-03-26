@@ -10,6 +10,8 @@ from typing import Any
 
 from ._finance_assertions_ext import (
     _build_brokerage_assertions,
+    _build_escrow_assertions,
+    _build_mortgage_assertions,
     _build_property_tax_assertions,
     _build_student_loan_assertions,
     _build_tax_assertions,
@@ -34,6 +36,8 @@ def build_assertions(
         "brokerage": _build_brokerage_assertions,
         "tax_document": _build_tax_assertions,
         "property_tax": _build_property_tax_assertions,
+        "mortgage": _build_mortgage_assertions,
+        "escrow": _build_escrow_assertions,
     }
     builder = builders.get(statement_type)
     return builder(parsed) if builder else []

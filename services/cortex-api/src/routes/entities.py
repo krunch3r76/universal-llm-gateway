@@ -117,10 +117,17 @@ def get_entity(entity_id: str, request: Request) -> EntityDetail:
         if conn:
             conn.close()
 
-    assertions = [
-        AssertionItem(**decode_row(row, _ASSERTION_JSON_FIELDS))
-        for row in assertion_rows
-    ]
+    assertions: list[AssertionItem] = []
+    for row in assertion_rows:
+        try:
+            assertions.append(AssertionItem(**decode_row(row, _ASSERTION_JSON_FIELDS)))
+        except Exception:
+            logger.error(
+                "Skipping assertion %s for entity %s — deserialization failed",
+                row.get("id"),
+                entity_id,
+                exc_info=True,
+            )
     relationships = [RelationshipItem(**row) for row in rel_rows]
     return EntityDetail(
         **decode_row(entity, _ENTITY_JSON_FIELDS),
@@ -184,10 +191,17 @@ def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
         if conn:
             conn.close()
 
-    assertions = [
-        AssertionItem(**decode_row(row, _ASSERTION_JSON_FIELDS))
-        for row in assertion_rows
-    ]
+    assertions: list[AssertionItem] = []
+    for row in assertion_rows:
+        try:
+            assertions.append(AssertionItem(**decode_row(row, _ASSERTION_JSON_FIELDS)))
+        except Exception:
+            logger.error(
+                "Skipping assertion %s for entity %s — deserialization failed",
+                row.get("id"),
+                entity_id,
+                exc_info=True,
+            )
     return EntityDetail(
         **decode_row(rows[0], _ENTITY_JSON_FIELDS), assertions=assertions
     )

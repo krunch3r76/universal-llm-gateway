@@ -12,12 +12,12 @@ Signals:
     token.count.completed — token counting finished
     token.counting.failed — federated token counting failed
     scheduler.routing.decided — routing decision made by DecisionEngine
-    scheduler.routing.failed — routing failed (permanent no-feasible-gateway)
+    scheduler.routing.failed — routing failed terminally (all retryable paths exhausted)
     scheduler.routing.queued — request entered pre-routing wait queue
     scheduler.routing.dequeued — request admitted after pre-routing wait
     scheduler.routing.timeout — pre-routing wait budget expired
     routing.overflow.triggered — overflow branch selected alternate gateway
-    routing.overflow.failed — overflow branch failed to assign feasible target
+    routing.overflow.failed — overflow attempt ended in terminal routing failure
     scheduler.eviction.cooldown.blocked — escape hatch: all candidates protected
     scheduler.eviction.cooldown.applied — cooldown filtered eviction candidates
     scheduler.eviction.demand.applied — demand protected eviction candidates
@@ -179,8 +179,9 @@ Payload: {
 
 ROUTING_DECISION = "scheduler.routing.decided"
 """
-Routing decision made by DecisionEngine.
-Emitted for every routing decision with full observability.
+Routing decision trace emitted by the DecisionEngine.
+Emitted for every selection attempt, including no-selection outcomes that may
+still recover via pre-route wait or admission wait.
 
 Payload: {
     "model_id": str,                    # Model being routed
@@ -201,9 +202,9 @@ Payload: {
 
 ROUTING_DECISION_FAILED = "scheduler.routing.failed"
 """
-Routing decision failed - PERMANENT failure.
-Emitted when no feasible gateway can be found without retryable capacity wait,
-or when pre-routing queue timeout expires.
+Routing failed terminally for the request.
+Emitted only after all retryable routing/admission wait paths are exhausted and
+the request will raise a no-capacity / no-feasible-gateway error.
 
 Payload: {
     "model_id": str,
@@ -272,7 +273,7 @@ Payload: {
 
 ROUTING_OVERFLOW_FAILED = "routing.overflow.failed"
 """
-Non-sticky overflow branch failed to find or load a feasible alternate gateway.
+Non-sticky overflow attempt contributed to a terminal routing failure.
 
 Payload: {
     "request_id": str,
@@ -541,13 +542,15 @@ def RoutingDecision(
 
     Args:
         model_id: Model being routed
-        selection_reason: Why this gateway was selected
+        selection_reason: Why this gateway was selected or why no gateway was
+            selected on this attempt
         candidate_count: Total candidates evaluated
         feasible_count: Number of feasible candidates
         evaluation_time_ms: Time spent in decision engine
         timestamp: Unix timestamp
         original_model_id: Original request model ID
-        selected_gateway: Selected gateway name
+        selected_gateway: Selected gateway name, or None when this attempt had
+            no feasible gateway
         selection_tier: T0/T1/T2 tier name
         request_id: Proxy request ID for tracing
         candidates: Full candidate details (optional, expensive)
@@ -587,11 +590,11 @@ def RoutingDecisionFailed(
     Create ROUTING_DECISION_FAILED event.
 
     Args:
-        model_id: Model that failed to route
+        model_id: Model that failed to route terminally
         candidate_count: Total candidates evaluated
         evaluation_time_ms: Time spent in decision engine
         timestamp: Unix timestamp
-        reason: Failure reason
+        reason: Terminal failure reason after retryable waits were exhausted
         original_model_id: Original request model ID
         request_id: Proxy request ID for tracing
 
@@ -703,7 +706,7 @@ def RoutingOverflowFailed(
     tried_gateways: list[str],
     reason: str,
 ) -> Event:
-    """Emit when overflow reroute cannot find a valid alternate gateway."""
+    """Emit when a failed overflow attempt is part of the terminal routing path."""
     return Event(
         signal=ROUTING_OVERFLOW_FAILED,
         payload={
@@ -1221,7 +1224,6 @@ Payload: request_id, model_id, gateway_id, evicted_count
 """
 
 
-
 @event_factory
 def OomRecoveryStarted(
     request_id: str,
@@ -1260,5 +1262,3 @@ def OomRecoverySucceeded(
             "evicted_count": evicted_count,
         },
     )
-
-

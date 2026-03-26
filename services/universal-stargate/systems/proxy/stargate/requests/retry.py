@@ -1,9 +1,9 @@
-"""Unified retry loop for chat completion requests.
+"""Unified request execution loop for chat completion requests.
 
-Implements capacity-retry and upstream-retry with independent time budgets,
-exponential backoff, gateway exclusion on upstream failures, and client
-disconnection detection.  Extracted from chat.py so the dispatch hub
-(chat.py) is pure orchestration and this module owns all retry semantics.
+Implements upstream retry plus client-wait budget propagation for capacity
+queues, along with gateway exclusion on upstream failures and client
+disconnection detection. Extracted from chat.py so the dispatch hub
+(chat.py) is pure orchestration and this module owns the retry semantics.
 
 Error classification helpers:
 - ``_is_capacity_error``: 503/504 with retryable envelope or retryable ErrorCode
@@ -16,7 +16,6 @@ Error classification helpers:
 
 Events emitted (PascalCase ``@event_factory`` signals):
 - ``RequestCompleted`` / ``RequestFailed`` — terminal lifecycle events
-- ``RequestCapacityTimeout`` — capacity retry budget exhausted
 - ``RequestSnapshotCompleted`` / ``RequestSnapshotFailed`` — response snapshots
 
 Capacity slot release is structural via ``CapacityToken.__aexit__``, not
@@ -37,7 +36,6 @@ from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope, get_http_status, is_retryable
 
 from src.scheduling.events import (
-    RequestCapacityTimeout,
     RequestCompleted,
     RequestFailed,
     RequestSnapshotCompleted,
@@ -180,9 +178,9 @@ def _read_positive_float(
     return value
 
 
-def _get_capacity_retry_timeout_s(proxy: StargateProxy) -> float:
+def _get_capacity_wait_budget_s(proxy: StargateProxy) -> float:
     """
-    Return total time budget for capacity retries (seconds).
+    Return the caller-visible wait budget for capacity paths (seconds).
 
     Source of truth: stargate config `request_queue.queue_timeout`.
     """
@@ -204,43 +202,21 @@ def _get_upstream_retry_timeout_s(proxy: StargateProxy) -> float:
     )
 
 
-def _retry_timeout_exception(
+def _upstream_retry_timeout_exception(
     *,
-    is_capacity: bool,
     model_id: str,
     effective_timeout: float,
     retry_count: int,
     elapsed_s: float,
     last_exc: HTTPException,
 ) -> HTTPException:
-    """Build the appropriate timeout HTTPException after retry budget exhaustion.
-
-    Capacity timeouts use ErrorCode.CAPACITY_TIMEOUT (non-retryable).
-    Upstream timeouts use ErrorCode.RESOURCE_UNAVAILABLE with the last
-    upstream error context preserved for client-facing diagnostics.
-    Both include retry_count, elapsed_s, and effective timeout in the envelope.
-    """
+    """Build an upstream retry-timeout HTTPException after retry budget exhaustion."""
     data: dict[str, object] = {
         "model_id": model_id,
         "timeout_seconds": effective_timeout,
         "retry_count": retry_count,
         "elapsed_s": round(elapsed_s, 2),
     }
-    if is_capacity:
-        message = (
-            f"No capacity for model {model_id} after {retry_count} retries "
-            f"over {round(elapsed_s, 1)}s (budget {effective_timeout}s)"
-        )
-        return HTTPException(
-            status_code=get_http_status(ErrorCode.CAPACITY_TIMEOUT),
-            detail=error_envelope(
-                code=ErrorCode.CAPACITY_TIMEOUT,
-                message=message,
-                source="master",
-                retryable=False,
-                data=data,
-            ),
-        )
     # Upstream: include last error context for diagnostics
     last_detail = last_exc.detail if isinstance(last_exc.detail, dict) else {}
     last_upstream_error = last_detail.get("data")
@@ -271,9 +247,9 @@ async def execute_with_retry(
     Delegates to proxy.request_executor.execute_request in a retry loop that
     handles two independent failure classes:
 
-    1. Capacity errors (503/504, classified by ``_is_capacity_error``): retried
-       up to ``queue_timeout`` with exponential backoff.  On budget exhaustion,
-       emits ``RequestCapacityTimeout``.
+    1. Capacity errors (503/504, classified by ``_is_capacity_error``): not retried
+       here. Inner routing/admission mechanisms own the wait semantics and surface
+       a terminal capacity error only when the request should truly fail.
     2. Upstream errors (502, classified by ``_is_retryable_upstream_error``):
        retried up to ``upstream_retry_timeout``, excluding the failed gateway
        (via ``_extract_failed_gateway_id``) from subsequent routing.
@@ -285,7 +261,6 @@ async def execute_with_retry(
     Terminal events emitted (exactly one set per request):
       Success: ``RequestCompleted`` + ``RequestSnapshotCompleted``
       Failure: ``RequestFailed`` + ``RequestSnapshotFailed``
-      Capacity timeout: ``RequestCapacityTimeout`` (before ``RequestFailed``)
     Streaming responses emit terminal events on stream completion via
     ``wrap_streaming_response_for_tracking``.
 
@@ -295,7 +270,7 @@ async def execute_with_retry(
     """
     request_short_id = getattr(context, "request_id", "unknown")[:8]
 
-    capacity_timeout_s = _get_capacity_retry_timeout_s(proxy)
+    capacity_timeout_s = _get_capacity_wait_budget_s(proxy)
     upstream_timeout_s = _get_upstream_retry_timeout_s(proxy)
     retry_started = time.monotonic()
     retry_count = 0
@@ -409,46 +384,16 @@ async def execute_with_retry(
                     raise
 
                 # ── Capacity errors are terminal ──
-                # Inner mechanisms (CapacityPool FIFO queue, pre-route queue,
-                # eviction wait) already consumed the full capacity budget.
-                # Retrying here would re-enter the pool at the back of the
-                # queue, destroying FIFO ordering and wasting time.
+                # Inner mechanisms own their own waiting semantics. The retry
+                # loop must not translate "still waiting for capacity" into a
+                # synthetic queue-timeout event or reorder FIFO by retrying.
                 if is_capacity:
-                    elapsed = time.monotonic() - retry_started
                     logger.warning(
-                        "🛑 [REQ:%s] Capacity exhausted for %s "
-                        "(budget=%.0fs, elapsed=%.1fs)",
+                        "🛑 [REQ:%s] Capacity blocked terminally for %s",
                         request_short_id,
                         model_id,
-                        effective_capacity_budget,
-                        elapsed,
                     )
-                    if proxy.event_bus:
-                        try:
-                            await proxy.event_bus.publish_async_nowait(
-                                RequestCapacityTimeout(
-                                    request_id=context.request_id,
-                                    model_id=model_id,
-                                    timeout_seconds=effective_capacity_budget,
-                                    retry_count=0,
-                                    elapsed_s=round(elapsed, 2),
-                                    pipeline_step_id=context.pipeline_step_id,
-                                )
-                            )
-                        except Exception as emit_exc:
-                            logger.warning(
-                                "Failed to emit RequestCapacityTimeout for %s: %s",
-                                context.request_id,
-                                emit_exc,
-                            )
-                    raise _retry_timeout_exception(
-                        is_capacity=True,
-                        model_id=model_id,
-                        effective_timeout=effective_capacity_budget,
-                        retry_count=0,
-                        elapsed_s=elapsed,
-                        last_exc=exc,
-                    ) from exc
+                    raise
 
                 # ── Upstream / all-excluded retry ──
                 retry_count += 1
@@ -495,8 +440,7 @@ async def execute_with_retry(
                 elapsed = time.monotonic() - retry_started
                 remaining = effective_timeout - elapsed
                 if remaining <= 0:
-                    raise _retry_timeout_exception(
-                        is_capacity=False,
+                    raise _upstream_retry_timeout_exception(
                         model_id=model_id,
                         effective_timeout=effective_timeout,
                         retry_count=retry_count,

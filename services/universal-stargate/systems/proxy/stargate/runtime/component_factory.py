@@ -672,13 +672,10 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
         else:
             _subscribe_pipeline_reload_on_catalog_change(proxy)
 
-        admission_config = proxy.config.get_pipeline_admission_config()
         proxy.pipeline_executor = PipelineExecutor(
             registry=proxy.pipeline_registry,
             request_executor=proxy.request_executor,
             proxy=proxy,
-            max_concurrent_executions=admission_config["max_concurrent_executions"],
-            admission_timeout_seconds=admission_config["admission_timeout_seconds"],
         )
 
         # Initialize pipeline hot-reload

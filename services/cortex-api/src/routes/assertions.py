@@ -106,9 +106,17 @@ def list_assertions(
     with cortex_conn() as conn:
         rows = query(conn, sql, tuple(params))
 
-    return AssertionList(
-        items=[AssertionItem(**decode_row(row, _JSON_FIELDS)) for row in rows]
-    )
+    items: list[AssertionItem] = []
+    for row in rows:
+        try:
+            items.append(AssertionItem(**decode_row(row, _JSON_FIELDS)))
+        except Exception:
+            logger.error(
+                "Skipping assertion %s — deserialization failed",
+                row.get("id"),
+                exc_info=True,
+            )
+    return AssertionList(items=items)
 
 
 @router.post("", response_model=AssertionItem, status_code=status.HTTP_201_CREATED)

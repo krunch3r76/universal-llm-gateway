@@ -206,8 +206,15 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
     # Initialize capacity pool BEFORE federation
     from systems.routing.capacity.pool import CapacityPool
 
-    capacity_pool = CapacityPool(event_bus=proxy.event_bus)
-    logger.info("✅ CapacityPool initialized")
+    capacity_pool_config = proxy.config.get_capacity_pool_config()
+    capacity_pool = CapacityPool(
+        event_bus=proxy.event_bus,
+        max_queue_depth=capacity_pool_config["max_queue_depth"],
+    )
+    logger.info(
+        "✅ CapacityPool initialized (max_queue_depth=%d)",
+        capacity_pool_config["max_queue_depth"],
+    )
 
     proxy.capacity_pool = capacity_pool
 

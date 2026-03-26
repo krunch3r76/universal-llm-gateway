@@ -43,6 +43,8 @@ from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
 from tools.finance import register_finance_tools
 from tools.finance_ingest import register_finance_ingest_tools
+from tools.finance_reconcile import register_finance_reconcile_tools
+from tools.finance_smart_ingest import register_finance_smart_ingest_tools
 from tools.llm import register_llm_tools
 from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
@@ -259,6 +261,8 @@ def _build_server() -> FastMCP:
     register_event_tools(mcp)
     register_finance_tools(mcp)
     register_finance_ingest_tools(mcp)
+    register_finance_reconcile_tools(mcp)
+    register_finance_smart_ingest_tools(mcp)
     register_document_ocr_tools(mcp)
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)

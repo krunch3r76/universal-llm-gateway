@@ -174,7 +174,6 @@ request.routed
       └─> request.processing
           └─> request.inference.started
           └─> request.completed | request.failed | request.timed.out
-              └─> request.capacity.timeout (precedes request.failed when cause is capacity)
 ```
 
 ### Capacity & Slot Lifecycle
@@ -321,21 +320,6 @@ scripts/query-events --sql "SELECT signal, payload FROM events WHERE signal='fed
 | `reason` (skipped) | `"no_engine"` \| `"schema_not_prompt"` |
 | `prompt_chars` (applied) | Character count of resulting `prompt` string (not token count) |
 | `error` (failed) | Exception message from transformation engine |
-
-### Capacity Timeout Contract (`CAPACITY_TIMEOUT`)
-
-**INVARIANT**: `request.capacity.timeout` ⟹ `request.failed`
-
-**INVARIANT**: if `request.failed.error` represents `CAPACITY_TIMEOUT`, then `request.capacity.timeout` is emitted first with the same `request_id`.
-
-```
-request.processing
-  └─> [capacity retry loop]
-      └─> request.capacity.timeout
-          └─> request.failed
-```
-
-`request.capacity.timeout` is the canonical structured signal for capacity starvation (retry budget exhausted). Consumers should filter by signal instead of parsing `request.failed.error`.
 
 ### RAG Watcher Lifecycle
 
@@ -536,27 +520,21 @@ logged at DEBUG level in `MasterRequestTracker`.
 - ∀ cancel_group(g): cancels ∀ r ∈ g that are still ACTIVE
 - ∀ completed request: removed from its cancel group (no stale references)
 
-### Pipeline Admission Contract
+### Pipeline Execution Contract
 
-**INVARIANT**: `pipeline.admission.admitted` ⟹ `pipeline.admission.released`
-(every admitted pipeline returns its token — the `finally` block guarantees this).
+No pipeline-wide admission layer.
 
-**INVARIANT**: `pipeline.admission.queued` is emitted only when all tokens are held
-(i.e., when the request will actually block on admission).
+Backpressure for pipeline-driven inference lives at:
+- per-step map fanout (for example `max_concurrency` in map steps)
+- request-level `capacity.pool.*` events in `CapacityPool`
 
-| Signal | Role | Payload |
-|--------|------|---------|
-| `pipeline.admission.queued` | observation | `pipeline_id`, `execution_id`, `queue_depth`, `active_count` |
-| `pipeline.admission.admitted` | observation | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` |
-| `pipeline.admission.rejected` | observation | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` |
-| `pipeline.admission.released` | observation | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` |
+Pipeline execution starts immediately once the request is accepted:
 
 ```
-pipeline.admission.queued? (only if contention)
-  └─> pipeline.admission.admitted
-      └─> pipeline.started → ... → pipeline.completed | pipeline.failed | pipeline.cancelled
-      └─> pipeline.admission.released
-  └─> pipeline.admission.rejected (admission timeout)
+pipeline.started
+  └─> pipeline.step.started / pipeline.map.started / ...
+  └─> capacity.pool.queued? / capacity.pool.admitted? (request-level contention only)
+  └─> pipeline.completed | pipeline.failed | pipeline.cancelled
 ```
 
 ### Pipeline Lifecycle Contract
@@ -915,7 +893,6 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `request.failed` | `request_id`, `error` | `correlation_id` |
 | `request.timed.out` | `request_id` | `correlation_id`, `timeout_ms` |
 | `request.profile.resolved` | `request_id`, `model_id`, `profile_name` | `correlation_id` |
-| `request.capacity.timeout` | `request_id`, `model_id`, `timeout_seconds`, `retry_count`, `elapsed_s` | `pipeline_step_id` |
 | `request.client.disconnected` | `request_id`, `model_id`, `hop` | `correlation_id` |
 | `scheduler.routing.failed` | `model_id`, `candidate_count`, `evaluation_time_ms`, `timestamp`, `reason` | `original_model_id`, `request_id` |
 | `scheduler.routing.queued` | `request_id`, `model_id`, `constraint`, `timestamp` | `gateway_id` |
@@ -942,10 +919,11 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | - |
 | `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | - |
 | `capacity.slot.leak.recovered` | `request_id`, `gateway_id`, `model_id`, `snapshot` | - |
-| `capacity.pool.queued` | `request_id`, `model_id`, `queue_position`, `allowed_gateways`, `timeout_s` | - |
+| `capacity.pool.queued` | `request_id`, `model_id`, `queue_position`, `allowed_gateways` | - |
+| `capacity.pool.waiting` | `request_id`, `model_id`, `wait_ms`, `queue_position`, `queue_depth` | - |
 | `capacity.pool.admitted` | `request_id`, `model_id`, `gateway_id`, `wait_ms` | - |
 | `capacity.pool.full` | `request_id`, `model_id`, `current_depth`, `max_depth` | - |
-| `capacity.pool.timeout` | `request_id`, `model_id`, `wait_ms`, `timeout_s` | - |
+| `capacity.pool.cancelled` | `request_id`, `model_id`, `wait_ms`, `reason` | - |
 | `routing.overflow.triggered` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `reason` | - |
 | `routing.overflow.failed` | `request_id`, `model_id`, `tried_gateways`, `reason` | - |
 | `model.load.overflow.started` | `request_id`, `model_id`, `gateway_id`, `reason` | - |
@@ -1060,7 +1038,19 @@ when no immediate slot is available and the request will wait for a slot to open
 | `model_id` | string | Model being requested |
 | `queue_position` | int | 1-indexed position in the FIFO queue |
 | `allowed_gateways` | int | Number of gateways the request can be served by |
-| `timeout_s` | float \| null | Capacity budget timeout (null = indefinite) |
+ 
+### capacity.pool.waiting
+
+Request remains queued in the per-model FIFO admission queue. Non-terminal heartbeat
+signal only; waiting is not itself an error as long as the caller still wants the work.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request still waiting |
+| `model_id` | string | Model being requested |
+| `wait_ms` | float | Total time spent waiting so far (ms) |
+| `queue_position` | int | Current 1-indexed position in the FIFO queue |
+| `queue_depth` | int | Total current queue depth for this model |
 
 ### capacity.pool.admitted
 
@@ -1087,17 +1077,17 @@ to prevent unbounded queue growth under sustained overload.
 | `current_depth` | int | Queue depth at rejection time |
 | `max_depth` | int | Configured maximum queue depth |
 
-### capacity.pool.timeout
+### capacity.pool.cancelled
 
-Queue wait exceeded the capacity budget. The request waited in the FIFO queue for
-the full `timeout_s` duration without a slot opening. Terminal — no further retry.
+Queued request removed before admission because the caller explicitly stopped waiting
+or the local execution task was cancelled.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `request_id` | string | Request that timed out |
+| `request_id` | string | Request removed from the queue |
 | `model_id` | string | Model the request was waiting for |
-| `wait_ms` | float | Total time spent waiting (ms) |
-| `timeout_s` | float \| null | Budget that was exhausted |
+| `wait_ms` | float | Total time spent waiting before cancellation (ms) |
+| `reason` | string | Cancellation source, e.g. `explicit_cancel` or `task_cancelled` |
 
 ### routing.eviction.blocked.busy
 
@@ -1430,10 +1420,6 @@ Pipeline events are persisted to the Event Service and can be queried with
 
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
-| `pipeline.admission.queued` | `pipeline_id`, `execution_id`, `queue_depth`, `active_count` | emitted only under contention |
-| `pipeline.admission.admitted` | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` | - |
-| `pipeline.admission.rejected` | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` | admission timeout |
-| `pipeline.admission.released` | `pipeline_id`, `execution_id`, `queue_depth`, `active_count`, `wait_ms` | - |
 | `pipeline.started` | `pipeline_id`, `execution_id`, `domain`, `step_count`, `timeout_seconds` | - |
 | `pipeline.completed` | `pipeline_id`, `execution_id`, `duration_seconds`, `step_count`, `output_step` | - |
 | `pipeline.failed` | `pipeline_id`, `execution_id`, `duration_seconds`, `error`, `failed_step` | - |

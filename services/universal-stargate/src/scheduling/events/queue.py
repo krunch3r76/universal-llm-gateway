@@ -1,7 +1,7 @@
 # ruff: noqa: N802
 """Capacity queue event signals.
 
-Covers request entry, wake-up, timeout, and TOCTOU race detection
+Covers request entry, wake-up, and TOCTOU race detection
 in the master capacity queue. Also covers CapacityPool FIFO queue
 lifecycle for per-model admission.
 
@@ -13,9 +13,10 @@ Master queue signals:
 
 Capacity pool signals:
     capacity.pool.queued — request entered per-model FIFO admission queue
+    capacity.pool.waiting — request remains queued; non-terminal heartbeat
     capacity.pool.admitted — queued request assigned a slot
     capacity.pool.full — queue at max depth, request rejected immediately
-    capacity.pool.timeout — queue wait exceeded capacity budget
+    capacity.pool.cancelled — queued request removed before admission
 """
 
 from universal_event_bus import Event, event_factory
@@ -227,9 +228,9 @@ def QueueMasterToctou(
 # ========================================
 
 CAPACITY_POOL_QUEUED = "capacity.pool.queued"
+CAPACITY_POOL_WAITING = "capacity.pool.waiting"
 CAPACITY_POOL_ADMITTED = "capacity.pool.admitted"
 CAPACITY_POOL_FULL = "capacity.pool.full"
-CAPACITY_POOL_TIMEOUT = "capacity.pool.timeout"
 
 
 @event_factory
@@ -238,7 +239,6 @@ def CapacityPoolQueued(
     model_id: str,
     queue_position: int,
     allowed_gateways: int,
-    timeout_s: float | None = None,
 ) -> Event:
     """Request entered per-model FIFO admission queue in CapacityPool."""
     return Event(
@@ -248,7 +248,27 @@ def CapacityPoolQueued(
             "model_id": model_id,
             "queue_position": queue_position,
             "allowed_gateways": allowed_gateways,
-            "timeout_s": timeout_s,
+        },
+    )
+
+
+@event_factory
+def CapacityPoolWaiting(
+    request_id: str,
+    model_id: str,
+    wait_ms: float,
+    queue_position: int,
+    queue_depth: int,
+) -> Event:
+    """Request is still queued in CapacityPool; waiting remains non-terminal."""
+    return Event(
+        signal=CAPACITY_POOL_WAITING,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "wait_ms": wait_ms,
+            "queue_position": queue_position,
+            "queue_depth": queue_depth,
         },
     )
 
@@ -291,25 +311,6 @@ def CapacityPoolFull(
     )
 
 
-@event_factory
-def CapacityPoolTimeout(
-    request_id: str,
-    model_id: str,
-    wait_ms: float,
-    timeout_s: float | None = None,
-) -> Event:
-    """Queue wait timed out — capacity budget exhausted."""
-    return Event(
-        signal=CAPACITY_POOL_TIMEOUT,
-        payload={
-            "request_id": request_id,
-            "model_id": model_id,
-            "wait_ms": wait_ms,
-            "timeout_s": timeout_s,
-        },
-    )
-
-
 CAPACITY_POOL_CANCELLED = "capacity.pool.cancelled"
 
 
@@ -318,13 +319,15 @@ def CapacityPoolCancelled(
     request_id: str,
     model_id: str,
     wait_ms: float,
+    reason: str,
 ) -> Event:
-    """Queued request removed — client disconnected before a slot was assigned."""
+    """Queued request removed before admission due to explicit cancellation."""
     return Event(
         signal=CAPACITY_POOL_CANCELLED,
         payload={
             "request_id": request_id,
             "model_id": model_id,
             "wait_ms": wait_ms,
+            "reason": reason,
         },
     )

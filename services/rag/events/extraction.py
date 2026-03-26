@@ -23,10 +23,23 @@ def rag_extraction_failed(
     *,
     chunk_id: str,
     error: str,
+    source: str | None = None,
+    execution_id: str | None = None,
+    finish_reason: str | None = None,
+    failure_reason: str | None = None,
 ) -> Event:
     return Event(
         signal="rag.extraction.failed",
-        payload={"chunk_id": chunk_id, "error": error},
+        payload={
+            "chunk_id": chunk_id,
+            "error": error,
+            **({"source": source} if source is not None else {}),
+            **({"execution_id": execution_id} if execution_id is not None else {}),
+            **({"finish_reason": finish_reason} if finish_reason is not None else {}),
+            **(
+                {"failure_reason": failure_reason} if failure_reason is not None else {}
+            ),
+        },
     )
 
 

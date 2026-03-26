@@ -18,6 +18,7 @@ from ....selection_errors import (
 from ...errors import _build_constraint_summary
 from ...events import (
     _emit_eviction_classification_event,
+    _emit_overflow_failed_event,
     _emit_routing_model_infeasible_event,
     _emit_routing_resource_gap_event,
 )
@@ -34,6 +35,60 @@ if TYPE_CHECKING:
     from ...context import RequestContext
 
 logger = get_logger(__name__)
+
+
+async def _emit_terminal_overflow_failure_if_needed(
+    *,
+    event_bus,
+    context: "RequestContext",
+) -> None:
+    """Emit overflow failure only if the request later dies in terminal rejection."""
+    if event_bus is None:
+        return
+
+    tried_gateways = context._overflow_failed_tried_gateways
+    reason = context._overflow_failed_reason
+    if not tried_gateways or reason is None:
+        return
+
+    await _emit_overflow_failed_event(
+        event_bus=event_bus,
+        request_id=context.request_id,
+        model_id=context.selected_model,
+        tried_gateways=tried_gateways,
+        reason=reason,
+    )
+
+
+async def _emit_terminal_routing_failure(
+    *,
+    event_bus,
+    context: "RequestContext",
+    trace: "SelectionTrace | None",
+    reason: str,
+) -> None:
+    """Emit scheduler.routing.failed only for terminal rejection outcomes."""
+    if event_bus is None:
+        return
+
+    from src.scheduling.events import RoutingDecisionFailed
+
+    candidate_count = len(trace.candidates) if trace else 0
+    evaluation_time_ms = trace.evaluation_time_ms if trace else 0.0
+    original_model_id = trace.original_model_id if trace else None
+    timestamp = time.time()
+
+    await event_bus.publish_async_nowait(
+        RoutingDecisionFailed(
+            model_id=str(context.selected_model),
+            candidate_count=candidate_count,
+            evaluation_time_ms=evaluation_time_ms,
+            timestamp=timestamp,
+            reason=reason,
+            original_model_id=original_model_id,
+            request_id=context.request_id,
+        )
+    )
 
 
 async def handle_selection_rejection(
@@ -175,6 +230,16 @@ async def handle_selection_rejection(
                     trace=trace,
                     excluded_gateway_ids=list(context.excluded_gateway_ids),
                 )
+                await _emit_terminal_overflow_failure_if_needed(
+                    event_bus=event_bus,
+                    context=context,
+                )
+                await _emit_terminal_routing_failure(
+                    event_bus=event_bus,
+                    context=context,
+                    trace=trace,
+                    reason=failure_reason,
+                )
             raise_insufficient_resources_error(
                 str(context.selected_model), failure_reason
             )
@@ -206,6 +271,16 @@ async def handle_selection_rejection(
             if queue_timeout_info:
                 capacity_details.update(queue_timeout_info)
 
+            await _emit_terminal_overflow_failure_if_needed(
+                event_bus=event_bus,
+                context=context,
+            )
+            await _emit_terminal_routing_failure(
+                event_bus=event_bus,
+                context=context,
+                trace=trace,
+                reason="capacity_exhausted",
+            )
             raise_capacity_error(str(context.selected_model), capacity_details)
 
     model_in_any_catalog = any(
@@ -235,6 +310,16 @@ async def handle_selection_rejection(
                 trace=trace,
                 excluded_gateway_ids=list(context.excluded_gateway_ids),
             )
+            await _emit_terminal_overflow_failure_if_needed(
+                event_bus=event_bus,
+                context=context,
+            )
+            await _emit_terminal_routing_failure(
+                event_bus=event_bus,
+                context=context,
+                trace=trace,
+                reason="no_feasible_gateways",
+            )
 
         # Model exists in *some* catalog but may not be in any active routing
         # candidate.  When every candidate fails has_model_available, retrying
@@ -248,4 +333,14 @@ async def handle_selection_rejection(
             retryable=model_in_any_routing_candidate,
         )
 
+    await _emit_terminal_overflow_failure_if_needed(
+        event_bus=event_bus,
+        context=context,
+    )
+    await _emit_terminal_routing_failure(
+        event_bus=event_bus,
+        context=context,
+        trace=trace,
+        reason="model_unavailable",
+    )
     raise_model_unavailable_error(str(context.selected_model))

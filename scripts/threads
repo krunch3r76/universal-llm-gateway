@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+"""Human-readable agent-bus thread browser.
+
+Usage:
+  threads                              # active + recently closed
+  threads list [-a] [-s STATUS] [-n N]
+  threads show <thread> [-l N]         # last N turns, formatted
+  threads export <thread>              # full thread as markdown
+  threads delete <thread> [-f]         # delete with safety guard
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+_SOCKET = "/tmp/universal-protocol/agent-bus.sock"
+_MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
+
+# ANSI
+_BOLD = "\033[1m"
+_DIM = "\033[2m"
+_RESET = "\033[0m"
+_CYAN = "\033[36m"
+_YELLOW = "\033[33m"
+_GREEN = "\033[32m"
+_WHITE = "\033[97m"
+_MARKER = "\u25c6"
+
+
+def _resolve_token() -> str:
+    try:
+        import yaml
+
+        with open(_MCP_YAML) as f:
+            cfg = yaml.safe_load(f)
+        token = cfg.get("AGENT_BUS_TOKEN", "")
+        if not token:
+            print("AGENT_BUS_TOKEN not found in ~/.gateway/mcp.yaml", file=sys.stderr)
+            sys.exit(1)
+        return token
+    except Exception as e:
+        print(f"Failed to read token from {_MCP_YAML}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _request(
+    method: str, path: str, token: str, body: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    import httpx
+
+    transport = httpx.HTTPTransport(uds=_SOCKET)
+    headers = {"Authorization": f"Bearer {token}"}
+    with httpx.Client(transport=transport, timeout=10.0) as client:
+        resp = client.request(
+            method, f"http://localhost{path}", json=body, headers=headers
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _relative_time(iso_str: str) -> str:
+    """Convert ISO timestamp to short relative string like '2h ago' or 'Mar 24'."""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        now = datetime.now(UTC)
+        delta = now - dt
+        secs = int(delta.total_seconds())
+        if secs < 60:
+            return "just now"
+        if secs < 3600:
+            return f"{secs // 60}m ago"
+        if secs < 86400:
+            return f"{secs // 3600}h ago"
+        if secs < 604800:
+            return f"{secs // 86400}d ago"
+        return dt.strftime("%b %d")
+    except Exception:
+        return iso_str[:10] if iso_str else ""
+
+
+def _short_date(iso_str: str) -> str:
+    """Extract MM-DD HH:MM from ISO timestamp."""
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return dt.strftime("%m-%d %H:%M")
+    except Exception:
+        return iso_str[:10] if iso_str else ""
+
+
+def _trunc(s: str, width: int) -> str:
+    return s if len(s) <= width else s[: width - 1] + "\u2026"
+
+
+def _all_threads(token: str) -> list[dict[str, Any]]:
+    return _request("GET", "/threads", token).get("threads", [])
+
+
+def _find_thread(token: str, thread_id: str) -> dict[str, Any] | None:
+    return next(
+        (t for t in _all_threads(token) if str(t["id"]) == str(thread_id)), None
+    )
+
+
+def _print_thread_table(
+    threads: list[dict[str, Any]], label: str, dim: bool = False
+) -> None:
+    if not threads:
+        return
+    style = _DIM if dim else ""
+    reset = _RESET if dim else ""
+
+    print(f"\n{style}{_BOLD}  {label}{_RESET}{reset}")
+    print(
+        f"{style}  {'#':>4}  {'Slug':<30}  {'Trn':>3}  {'Unr':>3}  "
+        f"{'Updated':<10}  {'From':<8}  {'To':<8}  {'Last Subject'}{_RESET}"
+    )
+    print(f"{style}  {'─' * 100}{_RESET}")
+
+    for t in threads:
+        tid = t["id"]
+        slug = _trunc(t.get("slug") or "", 30)
+        turns = t.get("turn_count", 0)
+        unread = t.get("unread_count", 0)
+        updated = _relative_time(t.get("updated_at") or t.get("created_at") or "")
+        last_from = _trunc(t.get("last_turn_from") or "", 8)
+        last_to = _trunc(t.get("last_turn_to") or "", 8)
+        subject = _trunc(t.get("last_subject") or "", 40)
+
+        marker = f"{_YELLOW}{_MARKER}{_RESET}" if unread > 0 else " "
+        unread_str = (
+            f"{_YELLOW}{_BOLD}{unread}{_RESET}" if unread > 0 else f"{_DIM}0{_RESET}"
+        )
+
+        print(
+            f"{style}{marker} {tid:>4}  {slug:<30}  {turns:>3}  {reset}"
+            f"{unread_str}{style}  "
+            f"{updated:<10}  {last_from:<8}  {last_to:<8}  {subject}{_RESET}"
+        )
+
+
+def _cmd_list(args: argparse.Namespace, token: str) -> None:
+    if args.all:
+        _print_thread_table(_all_threads(token), "All Threads")
+    elif args.status:
+        result = _request("GET", f"/threads?status={args.status}", token)
+        threads = result.get("threads", [])
+        _print_thread_table(threads, f"Threads ({args.status})")
+    else:
+        active = _request("GET", "/threads?status=active", token).get("threads", [])
+        closed = _request("GET", "/threads?status=closed", token).get("threads", [])
+        _print_thread_table(active, "Active Threads")
+        recent_closed = closed[: args.num]
+        if recent_closed:
+            _print_thread_table(recent_closed, "Recently Closed", dim=True)
+
+    print()
+
+
+def _render_turn(turn: dict[str, Any], show_body: bool = True) -> None:
+    tn = turn.get("turn_number", "?")
+    frm = turn.get("from", "?")
+    to = turn.get("to", "?")
+    subj = turn.get("subject", "")
+    ts = _short_date(turn.get("created_at") or "")
+    read = turn.get("read_at")
+    read_indicator = f"{_GREEN}read{_RESET}" if read else f"{_YELLOW}unread{_RESET}"
+    sup = turn.get("supersedes_turn")
+    sup_str = f" {_DIM}(supersedes turn {sup}){_RESET}" if sup else ""
+
+    print(
+        f"  {_BOLD}Turn {tn}{_RESET}  {_CYAN}{frm}{_RESET} → {_CYAN}{to}{_RESET}  "
+        f"{_DIM}{ts}{_RESET}  [{read_indicator}]{sup_str}"
+    )
+    print(f"  {_BOLD}{subj}{_RESET}")
+
+    if show_body:
+        body = turn.get("body") or ""
+        if body:
+            print(f"  {_DIM}{'─' * 72}{_RESET}")
+            for line in body.split("\n"):
+                print(f"  {line}")
+        print()
+
+
+def _cmd_show(args: argparse.Namespace, token: str) -> None:
+    from urllib.parse import urlencode
+
+    thread_id = args.thread
+    params = {"thread": thread_id, "last": args.last}
+    result = _request("GET", f"/turns?{urlencode(params)}", token)
+    turns = result.get("turns", [])
+
+    thr = _find_thread(token, thread_id)
+    if thr:
+        slug = thr.get("slug", "")
+        summary = thr.get("summary") or ""
+        print(
+            f"\n  {_BOLD}Thread {thread_id}{_RESET}: {_WHITE}{slug}{_RESET}  "
+            f"[{thr.get('status', '')}]  {_DIM}{thr.get('turn_count', 0)} turns{_RESET}"
+        )
+        if summary:
+            print(f"  {_DIM}{summary}{_RESET}")
+        print()
+
+    if not turns:
+        print(f"  {_DIM}No turns found.{_RESET}\n")
+        return
+
+    for turn in turns:
+        _render_turn(turn)
+
+
+def _cmd_export(args: argparse.Namespace, token: str) -> None:
+    from urllib.parse import urlencode
+
+    thread_id = args.thread
+    thr = _find_thread(token, thread_id)
+    slug = thr.get("slug", "") if thr else ""
+    summary = (thr.get("summary") or "") if thr else ""
+
+    lines = [
+        f"# Thread {thread_id}: {slug}",
+        "",
+        f"**Status**: {thr.get('status', '') if thr else 'unknown'}",
+    ]
+    if summary:
+        lines.append(f"**Summary**: {summary}")
+    lines.append("")
+
+    params = {"thread": thread_id, "last": 10000}
+    result = _request("GET", f"/turns?{urlencode(params)}", token)
+    turns = result.get("turns", [])
+
+    for t in turns:
+        tn, frm, to = t.get("turn_number", "?"), t.get("from", "?"), t.get("to", "?")
+        meta = f"**{frm}** → **{to}** | {t.get('created_at', '')}"
+        if t.get("supersedes_turn"):
+            meta += f" | supersedes turn {t['supersedes_turn']}"
+        lines += [f"## Turn {tn}: {t.get('subject', '')}", "", meta, ""]
+        if body := (t.get("body") or ""):
+            lines += [body, ""]
+        lines += ["---", ""]
+
+    output = "\n".join(lines)
+    if args.output:
+        Path(args.output).write_text(output, encoding="utf-8")
+        print(f"Exported to {args.output}")
+    else:
+        print(output)
+
+
+def _cmd_delete(args: argparse.Namespace, token: str) -> None:
+    from urllib.parse import urlencode
+
+    import httpx
+
+    thread_id = args.thread
+
+    if not args.force:
+        thr = _find_thread(token, thread_id)
+        if thr:
+            slug = thr.get("slug", "")
+            turns = thr.get("turn_count", 0)
+            print(f"Thread {thread_id} ({slug}): {turns} turns", file=sys.stderr)
+            confirm = input("Delete? [y/N] ").strip().lower()
+            if confirm != "y":
+                print("Cancelled.", file=sys.stderr)
+                sys.exit(0)
+
+    params = urlencode({"force": "true"}) if args.force else ""
+    path = f"/threads/{thread_id}?{params}" if params else f"/threads/{thread_id}"
+    try:
+        result = _request("DELETE", path, token)
+        print(json.dumps(result, indent=2, default=str))
+    except httpx.HTTPStatusError as e:
+        detail = ""
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            pass
+        print(
+            f"delete failed: {detail or f'HTTP {e.response.status_code}'}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Agent-bus thread browser (human-readable output).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    sub = p.add_subparsers(dest="command")
+
+    ls = sub.add_parser("list", help="List threads (default: active + recent closed)")
+    ls.add_argument("-a", "--all", action="store_true", help="Show all threads")
+    ls.add_argument("-s", "--status", help="Filter by status: active, closed")
+    ls.add_argument(
+        "-n", "--num", type=int, default=5, help="Recent closed to show (default 5)"
+    )
+
+    sh = sub.add_parser("show", help="Show turns in a thread")
+    sh.add_argument("thread", help="Thread ID")
+    sh.add_argument(
+        "-l", "--last", type=int, default=10, help="Last N turns (default 10)"
+    )
+
+    ex = sub.add_parser("export", help="Export thread as markdown")
+    ex.add_argument("thread", help="Thread ID")
+    ex.add_argument("-o", "--output", help="Output file path (stdout if omitted)")
+
+    dl = sub.add_parser("delete", help="Delete a thread")
+    dl.add_argument("thread", help="Thread ID")
+    dl.add_argument("-f", "--force", action="store_true", help="Skip confirmation")
+
+    return p
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+    token = _resolve_token()
+
+    cmd = args.command or "list"
+    if cmd == "list" and not hasattr(args, "all"):
+        args.all = False
+        args.status = None
+        args.num = 5
+    try:
+        {
+            "list": _cmd_list,
+            "show": _cmd_show,
+            "export": _cmd_export,
+            "delete": _cmd_delete,
+        }[cmd](args, token)
+    except KeyError:
+        parser.print_help()
+        sys.exit(1)
+    except FileNotFoundError:
+        print(
+            "Agent-bus socket not found. Is the agent-bus service running?",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except Exception as e:
+        print(f"threads: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

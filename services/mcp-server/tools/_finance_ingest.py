@@ -157,6 +157,18 @@ def _build_entity_ids(
         stmt_parts = parts + [stmt_date]
         statement_id = f"statement:{'-'.join(stmt_parts)}"
         return account_id, org_id, statement_id
+    if statement_type == "escrow":
+        mortgage_parts = [issuer_slug, "mortgage"]
+        if acct_suffix:
+            mortgage_parts.append(acct_suffix)
+        account_id = f"account:{'-'.join(mortgage_parts)}"
+        org_id = f"org:{issuer_slug}"
+        stmt_parts = [issuer_slug, "escrow"]
+        if acct_suffix:
+            stmt_parts.append(acct_suffix)
+        stmt_parts.append(stmt_date)
+        statement_id = f"statement:{'-'.join(stmt_parts)}"
+        return account_id, org_id, statement_id
 
     parts = [issuer_slug, statement_type]
     if acct_suffix:
@@ -184,6 +196,7 @@ _ENTITY_TYPE_MAP: dict[str, str] = {
 _REL_TYPE_MAP: dict[str, str] = {
     "tax_document": "filed_by",
     "property_tax": "assessed_on",
+    "escrow": "payment_on",
 }
 
 
@@ -261,14 +274,38 @@ def ingest_statement(
     if statement_type == "tax_document":
         acct_attrs["form_type"] = parsed.get("form_type", "")
         acct_attrs["tax_year"] = parsed.get("tax_year")
+    if statement_type == "mortgage":
+        acct_attrs["account_type"] = "mortgage"
+        acct_attrs["property_address"] = parsed.get("property_address", "")
+        if parsed.get("loan_number"):
+            acct_attrs["loan_number"] = parsed["loan_number"]
+        if parsed.get("interest_rate") is not None:
+            acct_attrs["interest_rate"] = parsed["interest_rate"]
+            acct_attrs["rate_type"] = parsed.get("rate_type", "fixed")
 
-    _create_or_update_entity(
-        account_eid,
-        entity_type,
-        _display_name(issuer_name, statement_type, acct_suffix),
-        attributes=acct_attrs,
-        source_uri=pdf_path,
-    )
+    if statement_type == "escrow":
+        existing_acct = _entity_exists(account_eid)
+        if existing_acct is None:
+            logger.warning(
+                "Escrow ingest: mortgage account %s not found — creating stub",
+                account_eid,
+            )
+            acct_attrs["account_type"] = "mortgage"
+            _create_or_update_entity(
+                account_eid,
+                "account",
+                _display_name(issuer_name, "mortgage", acct_suffix),
+                attributes=acct_attrs,
+                source_uri=pdf_path,
+            )
+    else:
+        _create_or_update_entity(
+            account_eid,
+            entity_type,
+            _display_name(issuer_name, statement_type, acct_suffix),
+            attributes=acct_attrs,
+            source_uri=pdf_path,
+        )
     _create_or_update_entity(
         org_eid,
         "organization",

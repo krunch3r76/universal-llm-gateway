@@ -198,7 +198,8 @@ async def _emit_overflow_failed_event(
     reason: str,
 ) -> None:
     """
-    Emit overflow-failed signal after alternates are exhausted or load retry fails.
+    Emit terminal overflow-failed signal once spillover was attempted but the
+    request still died during terminal routing rejection.
     """
     from src.scheduling.events.routing import RoutingOverflowFailed
 

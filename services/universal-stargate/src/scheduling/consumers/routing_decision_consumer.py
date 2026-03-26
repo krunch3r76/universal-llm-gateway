@@ -1,8 +1,8 @@
 """
-Routing decision consumer that aggregates decision trace metrics.
+Routing decision consumer that aggregates selection-attempt and terminal-failure metrics.
 
-Subscribes to ROUTING_DECISION and ROUTING_DECISION_FAILED events
-and provides aggregated metrics for monitoring and observability.
+Subscribes to ROUTING_DECISION and ROUTING_DECISION_FAILED events and keeps
+intermediate no-selection attempts distinct from terminal request failures.
 
 Separate from RoutingMetricsConsumer which emits to UDP.
 """
@@ -21,10 +21,12 @@ logger = get_logger(__name__)
 
 class RoutingDecisionConsumer:
     """
-    Consume ROUTING_DECISION events and aggregate metrics.
+    Consume routing decision events and aggregate metrics.
 
     Tracks:
     - Routing success rate by model
+    - Intermediate no-selection attempts by model
+    - Terminal routing failures by model
     - Average evaluation time
     - Tier distribution (T1/T2/T0)
     - Gateway selection frequency
@@ -49,6 +51,7 @@ class RoutingDecisionConsumer:
         self._metrics: dict[str, Any] = {
             "total_decisions": 0,
             "successful_decisions": 0,
+            "attempts_without_selection": 0,
             "failed_decisions": 0,
             "by_tier": defaultdict(int),
             "by_gateway": defaultdict(int),
@@ -56,6 +59,7 @@ class RoutingDecisionConsumer:
                 lambda: {
                     "total": 0,
                     "successful": 0,
+                    "attempts_without_selection": 0,
                     "failed": 0,
                     "avg_eval_time_ms": 0.0,
                 }
@@ -94,6 +98,7 @@ class RoutingDecisionConsumer:
             selected_gateway = payload.get("selected_gateway")
             selection_tier = payload.get("selection_tier")
             eval_time_ms = payload.get("evaluation_time_ms", 0.0)
+            is_terminal_failure = event.signal == ROUTING_DECISION_FAILED
 
             # Update total metrics
             self._metrics["total_decisions"] += 1
@@ -102,8 +107,10 @@ class RoutingDecisionConsumer:
             if selected_gateway:
                 self._metrics["successful_decisions"] += 1
                 self._metrics["by_gateway"][selected_gateway] += 1
-            else:
+            elif is_terminal_failure:
                 self._metrics["failed_decisions"] += 1
+            else:
+                self._metrics["attempts_without_selection"] += 1
 
             if selection_tier:
                 self._metrics["by_tier"][selection_tier] += 1
@@ -114,8 +121,10 @@ class RoutingDecisionConsumer:
                 model_metrics["total"] += 1
                 if selected_gateway:
                     model_metrics["successful"] += 1
-                else:
+                elif is_terminal_failure:
                     model_metrics["failed"] += 1
+                else:
+                    model_metrics["attempts_without_selection"] += 1
 
                 # Update rolling average eval time
                 current_avg = model_metrics["avg_eval_time_ms"]
@@ -145,6 +154,8 @@ class RoutingDecisionConsumer:
         logger.info(
             f"📊 Routing Decision Metrics (last {self._report_interval_sec}s): "
             f"total={total}, success_rate={success_rate:.1f}%, "
+            f"attempts_without_selection={self._metrics['attempts_without_selection']}, "
+            f"terminal_failures={self._metrics['failed_decisions']}, "
             f"avg_eval_time={avg_eval_time:.2f}ms"
         )
 
@@ -174,6 +185,7 @@ class RoutingDecisionConsumer:
         return {
             "total_decisions": total,
             "successful_decisions": self._metrics["successful_decisions"],
+            "attempts_without_selection": self._metrics["attempts_without_selection"],
             "failed_decisions": self._metrics["failed_decisions"],
             "success_rate": (
                 self._metrics["successful_decisions"] / total * 100 if total > 0 else 0
@@ -191,6 +203,7 @@ class RoutingDecisionConsumer:
         self._metrics = {
             "total_decisions": 0,
             "successful_decisions": 0,
+            "attempts_without_selection": 0,
             "failed_decisions": 0,
             "by_tier": defaultdict(int),
             "by_gateway": defaultdict(int),
@@ -198,6 +211,7 @@ class RoutingDecisionConsumer:
                 lambda: {
                     "total": 0,
                     "successful": 0,
+                    "attempts_without_selection": 0,
                     "failed": 0,
                     "avg_eval_time_ms": 0.0,
                 }

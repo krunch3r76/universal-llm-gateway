@@ -33,36 +33,28 @@ def emit_decision_trace(
         return
 
     try:
-        from src.scheduling.events import RoutingDecision, RoutingDecisionFailed
+        from src.scheduling.events import RoutingDecision
 
         event_data = trace.to_event_payload(
             include_candidates=include_candidate_details,
         )
 
-        if trace.selected_gateway:
-            event = RoutingDecision(
-                model_id=event_data["model_id"],
-                selection_reason=event_data["selection_reason"],
-                candidate_count=event_data["candidate_count"],
-                feasible_count=event_data["feasible_count"],
-                evaluation_time_ms=event_data["evaluation_time_ms"],
-                timestamp=event_data["timestamp"],
-                original_model_id=event_data.get("original_model_id"),
-                selected_gateway=event_data.get("selected_gateway"),
-                selection_tier=event_data.get("selection_tier"),
-                request_id=event_data.get("request_id"),
-                candidates=event_data.get("candidates"),
-            )
-        else:
-            event = RoutingDecisionFailed(
-                model_id=event_data["model_id"],
-                candidate_count=event_data["candidate_count"],
-                evaluation_time_ms=event_data["evaluation_time_ms"],
-                timestamp=event_data["timestamp"],
-                reason=trace.selection_reason,
-                original_model_id=event_data.get("original_model_id"),
-                request_id=event_data.get("request_id"),
-            )
+        # Emit every selection attempt as scheduler.routing.decided, even when
+        # no gateway is currently feasible. Terminal failure is emitted later by
+        # the rejection path once all retryable waits are exhausted.
+        event = RoutingDecision(
+            model_id=event_data["model_id"],
+            selection_reason=event_data["selection_reason"],
+            candidate_count=event_data["candidate_count"],
+            feasible_count=event_data["feasible_count"],
+            evaluation_time_ms=event_data["evaluation_time_ms"],
+            timestamp=event_data["timestamp"],
+            original_model_id=event_data.get("original_model_id"),
+            selected_gateway=event_data.get("selected_gateway"),
+            selection_tier=event_data.get("selection_tier"),
+            request_id=event_data.get("request_id"),
+            candidates=event_data.get("candidates"),
+        )
 
         try:
             asyncio.get_running_loop()

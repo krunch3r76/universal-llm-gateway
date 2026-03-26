@@ -504,14 +504,25 @@ class StargateProxy:
 
     def cancel_request(self, request_id: str, model_id: str | None = None) -> bool:
         """
-        Cancel a pending request (stub — queue-based cancellation removed).
+        Cancel a pending queued request waiting in CapacityPool.
 
-        Returns False. Remote in-flight cancellation is handled by
-        MasterRequestTracker; local queues were removed with unified capacity.
+        Remote in-flight cancellation is handled separately by
+        MasterRequestTracker. This method only removes local queued waiters.
         """
+        capacity_pool = getattr(self, "capacity_pool", None)
+        if capacity_pool is None:
+            logger.debug(
+                "Queue cancellation unavailable (no capacity pool): "
+                "request=%s model=%s",
+                request_id[:8],
+                model_id,
+            )
+            return False
+        cancelled = capacity_pool.cancel_request(request_id, reason="explicit_cancel")
         logger.debug(
-            "Queue cancellation disabled (no waiting queues): request=%s model=%s",
+            "Queue cancellation %s for request=%s model=%s",
+            "succeeded" if cancelled else "missed",
             request_id[:8],
             model_id,
         )
-        return False
+        return cancelled

@@ -182,7 +182,6 @@ failures.
 set.  The events are PascalCase `@event_factory` signals:
 - Success: `RequestCompleted` (`request.completed`) + `RequestSnapshotCompleted` (`request.snapshot.completed`)
 - Failure: `RequestFailed` (`request.failed`) + `RequestSnapshotFailed` (`request.snapshot.failed`)
-- Capacity timeout: `RequestCapacityTimeout` (`request.capacity.timeout`) emitted before `RequestFailed`
 
 Capacity slot release is structural via `CapacityToken.__aexit__` — it does
 NOT depend on these events.  The events are observational (metrics, tracing,
@@ -287,7 +286,6 @@ Each `GATEWAY_RESOURCE_UPDATE` increments epoch and wakes all waiters.
 |---|---|---|
 | `RequestCompleted` | `request.completed` | Non-streaming request completed successfully |
 | `RequestFailed` | `request.failed` | Request failed (all retries exhausted or non-retryable) |
-| `RequestCapacityTimeout` | `request.capacity.timeout` | Capacity retry budget exhausted |
 | `RequestSnapshotCompleted` | `request.snapshot.completed` | Response body captured (non-streaming) |
 | `RequestSnapshotFailed` | `request.snapshot.failed` | Error details captured on failure |
 

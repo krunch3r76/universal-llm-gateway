@@ -157,6 +157,148 @@ def _build_tax_assertions(p: dict[str, Any]) -> list[dict[str, str | None]]:
     return out
 
 
+def _build_mortgage_assertions(p: dict[str, Any]) -> list[dict[str, str | None]]:
+    sd = p.get("statement_date", "")
+    dd = p.get("next_due_date")
+    next_stmt = _add_days(sd, 35) if sd else None
+    out: list[dict[str, str | None]] = []
+    if p.get("principal_balance") is not None and sd:
+        out.append(
+            {
+                "claim": f"Principal balance is {_fmt(p['principal_balance'])} as of {sd}",
+                "valid_from": sd,
+                "valid_until": next_stmt,
+            }
+        )
+    if p.get("monthly_payment") is not None and dd:
+        out.append(
+            {
+                "claim": f"Monthly payment {_fmt(p['monthly_payment'])} due {dd}",
+                "valid_from": sd or None,
+                "valid_until": dd,
+            }
+        )
+    breakdown = p.get("payment_breakdown", {})
+    if breakdown and sd:
+        parts = []
+        for k in ("principal", "interest", "escrow", "other"):
+            v = breakdown.get(k)
+            if v:
+                parts.append(f"{k} {_fmt(v)}")
+        if parts:
+            out.append(
+                {
+                    "claim": f"Payment breakdown: {', '.join(parts)}",
+                    "valid_from": sd,
+                    "valid_until": next_stmt,
+                }
+            )
+    if p.get("interest_rate") is not None:
+        rate_type = p.get("rate_type", "fixed")
+        out.append(
+            {
+                "claim": f"Interest rate {p['interest_rate']}% ({rate_type})",
+                "valid_from": sd or None,
+                "valid_until": None,
+            }
+        )
+    if p.get("escrow_balance") is not None and sd:
+        out.append(
+            {
+                "claim": f"Escrow balance {_fmt(p['escrow_balance'])} as of {sd}",
+                "valid_from": sd,
+                "valid_until": next_stmt,
+            }
+        )
+    if p.get("past_due_amount") and sd:
+        out.append(
+            {
+                "claim": f"Past due amount: {_fmt(p['past_due_amount'])}",
+                "valid_from": sd,
+                "valid_until": next_stmt,
+            }
+        )
+    if p.get("ytd_interest_paid") is not None and sd:
+        year = sd[:4]
+        out.append(
+            {
+                "claim": f"YTD interest paid: {_fmt(p['ytd_interest_paid'])}",
+                "valid_from": sd,
+                "valid_until": f"{year}-12-31" if year else None,
+            }
+        )
+    return out
+
+
+def _build_escrow_assertions(p: dict[str, Any]) -> list[dict[str, str | None]]:
+    sd = p.get("statement_date", "")
+    period = p.get("analysis_period", {})
+    start = period.get("start", sd)
+    end = period.get("end", sd)
+    next_stmt = _add_days(end, 35) if end else None
+    out: list[dict[str, str | None]] = []
+    if p.get("current_balance") is not None and sd:
+        out.append(
+            {
+                "claim": f"Escrow balance {_fmt(p['current_balance'])} as of {sd}",
+                "valid_from": sd,
+                "valid_until": next_stmt,
+            }
+        )
+    if p.get("monthly_escrow_payment") is not None:
+        out.append(
+            {
+                "claim": f"Monthly escrow payment: {_fmt(p['monthly_escrow_payment'])}",
+                "valid_from": start or None,
+                "valid_until": end or None,
+            }
+        )
+    if (
+        p.get("new_monthly_payment") is not None
+        and p.get("previous_monthly_payment") is not None
+    ):
+        prev = _fmt(p["previous_monthly_payment"])
+        new = _fmt(p["new_monthly_payment"])
+        out.append(
+            {
+                "claim": f"Total monthly payment changing from {prev} to {new}",
+                "valid_from": end or None,
+                "valid_until": None,
+            }
+        )
+    if p.get("shortage_amount") and p["shortage_amount"] > 0:
+        out.append(
+            {
+                "claim": f"Escrow shortage: {_fmt(p['shortage_amount'])}",
+                "valid_from": sd or None,
+                "valid_until": end or None,
+            }
+        )
+    if p.get("surplus_amount") and p["surplus_amount"] > 0:
+        out.append(
+            {
+                "claim": f"Escrow surplus: {_fmt(p['surplus_amount'])}",
+                "valid_from": sd or None,
+                "valid_until": end or None,
+            }
+        )
+    for disb in p.get("disbursements", []):
+        dtype = disb.get("type", "other").replace("_", " ")
+        payee = disb.get("payee", "")
+        amt = disb.get("amount")
+        ddate = disb.get("date")
+        if amt is not None and ddate:
+            label = f"{dtype} to {payee}" if payee else dtype
+            out.append(
+                {
+                    "claim": f"Escrow disbursement: {label} {_fmt(amt)} on {ddate}",
+                    "valid_from": ddate,
+                    "valid_until": ddate,
+                }
+            )
+    return out
+
+
 def _build_property_tax_assertions(p: dict[str, Any]) -> list[dict[str, str | None]]:
     ty = p.get("tax_year", "")
     out: list[dict[str, str | None]] = []

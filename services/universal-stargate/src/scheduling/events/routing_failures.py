@@ -14,7 +14,7 @@ Signals:
     routing.capacity.divergence — telemetry/CapacityPool state mismatch
     routing.capacity.preseeded — CapacityPool pre-seeded for cold load
     routing.overflow.triggered — non-sticky spillover path selected
-    routing.overflow.failed — non-sticky spillover had no feasible alternate
+    routing.overflow.failed — overflow attempt ended in terminal routing failure
     capacity.slot.leak.recovered — cancellation race slot recovery in CapacityPool
 """
 
@@ -170,10 +170,10 @@ Payload: {
 
 ROUTING_OVERFLOW_FAILED = "routing.overflow.failed"
 """
-Non-sticky overflow path attempted but no alternate gateway was feasible.
+Non-sticky overflow attempt contributed to a terminal routing failure.
 
-Emitted when the spillover branch is entered and either no alternate candidate
-is selected or overflow model load fails.
+Emitted only when spillover was attempted earlier and the request later still
+fails terminally during routing rejection.
 
 Payload: {
     "request_id": str,
@@ -476,8 +476,8 @@ def RoutingOverflowFailed(
 ) -> Event:
     """Create ROUTING_OVERFLOW_FAILED event.
 
-    Emitted when the non-sticky overflow branch is taken but no alternate
-    gateway can complete the request successfully.
+    Emitted only when an earlier non-sticky overflow attempt is part of the
+    final terminal routing failure.
 
     Args:
         request_id: Request that attempted overflow routing

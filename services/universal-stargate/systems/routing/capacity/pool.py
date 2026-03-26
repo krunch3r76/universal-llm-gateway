@@ -25,6 +25,8 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
+_WAITING_EVENT_INTERVAL_S = 15.0
+
 
 class _EventBusLike(Protocol):
     def subscribe_async(self, signal: str, callback: Any) -> None: ...
@@ -84,6 +86,15 @@ class _Waiter:
     request_id: str
     allowed_gateway_ids: frozenset[str]
     future: asyncio.Future[str]
+    queued_at: float = field(default_factory=time.monotonic)
+
+
+class _WaiterCancelledError(Exception):
+    """Internal signal used to wake queued requests on explicit cancellation."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
 class QueueFullError(Exception):
@@ -124,7 +135,7 @@ class CapacityPool:
         max_queue_depth: int = 0,
     ) -> None:
         self._event_bus = event_bus
-        self._max_queue_depth = max_queue_depth
+        self._max_queue_depth = max(0, int(max_queue_depth))
         self._capacity: dict[_Slot, int] = {}
         self._in_flight: dict[_Slot, int] = {}
         self._queues: dict[str, deque[_Waiter]] = {}
@@ -330,9 +341,9 @@ class CapacityPool:
         For scoped usage, prefer the acquire() context manager instead.
 
         Raises:
-            TimeoutError: if timeout_s expires
             asyncio.CancelledError: if request cancelled
         """
+        del timeout_s
         self._ensure_subscribed()
         gateway_id = self._try_immediate(request_id, model_id, allowed_gateway_ids)
         queued = False
@@ -365,14 +376,12 @@ class CapacityPool:
                 model_id,
                 queue_position,
                 len(allowed_gateway_ids),
-                timeout_s,
             )
             queue_start = time.monotonic()
             gateway_id = await self._wait_for_slot(
                 request_id,
                 model_id,
                 allowed_gateway_ids,
-                timeout_s,
             )
             wait_ms = (time.monotonic() - queue_start) * 1000
             self._emit_queue_admitted(request_id, model_id, gateway_id, wait_ms)
@@ -444,12 +453,12 @@ class CapacityPool:
         request_id: str,
         model_id: str,
         allowed_gateway_ids: frozenset[str],
-        timeout_s: float | None,
     ) -> str:
         """Enqueue a waiter and block until a slot is assigned.  Returns gateway_id.
 
         Creates a Future, appends it to the per-model FIFO queue, and awaits
-        resolution by _dispatch.  On timeout or cancellation, handles the race
+        resolution by _dispatch. Emits periodic non-terminal waiting signals
+        while queued. On cancellation, handles the race
         where _dispatch may have already admitted the waiter (recovering the
         leaked slot to prevent permanent capacity loss).
         """
@@ -472,44 +481,70 @@ class CapacityPool:
 
         wait_start = time.monotonic()
         try:
-            if timeout_s is not None:
-                gateway_id = await asyncio.wait_for(future, timeout=timeout_s)
-            else:
-                gateway_id = await future
-            logger.info(f"Admitted: {request_id} → {gateway_id}/{model_id}")
-            return gateway_id
-        except TimeoutError:
-            wait_ms = (time.monotonic() - wait_start) * 1000
-            self._emit_queue_timeout(request_id, model_id, wait_ms, timeout_s)
-            if future.done() and not future.cancelled():
-                self._recover_leaked_slot(request_id, future.result(), model_id)
-            else:
-                self._cancel_waiter(request_id)
-            raise
+            while True:
+                try:
+                    gateway_id = await asyncio.wait_for(
+                        asyncio.shield(future),
+                        timeout=_WAITING_EVENT_INTERVAL_S,
+                    )
+                    logger.info(f"Admitted: {request_id} → {gateway_id}/{model_id}")
+                    return gateway_id
+                except TimeoutError:
+                    wait_ms = (time.monotonic() - wait_start) * 1000
+                    self._emit_queue_waiting(request_id, model_id, wait_ms)
+                except _WaiterCancelledError as exc:
+                    raise asyncio.CancelledError(exc.reason) from exc
         except asyncio.CancelledError:
-            wait_ms = (time.monotonic() - wait_start) * 1000
-            self._emit_queue_cancelled(request_id, model_id, wait_ms)
             if future.done() and not future.cancelled():
-                self._recover_leaked_slot(request_id, future.result(), model_id)
+                try:
+                    gateway_id = future.result()
+                except _WaiterCancelledError:
+                    raise asyncio.CancelledError("explicit_cancel") from None
+                self._recover_leaked_slot(request_id, gateway_id, model_id)
             else:
-                self._cancel_waiter(request_id)
+                self._remove_waiter(
+                    request_id,
+                    reason="task_cancelled",
+                    wake_with_exception=False,
+                )
             raise
 
-    def _cancel_waiter(self, request_id: str) -> None:
-        """Remove a waiter from its per-model queue by request_id.  Idempotent.
+    def cancel_request(self, request_id: str, reason: str = "explicit_cancel") -> bool:
+        """Remove a waiter from its per-model queue by request_id.
 
-        Cancels the waiter's future if still pending and cleans up the queue
-        entry.  Empty queues are removed from _queues to avoid memory growth.
+        Returns True iff a queued waiter was found and removed. Explicit
+        cancellation wakes the waiting task via a typed exception so callers can
+        distinguish "cancelled while queued" from a real queue error.
         """
+        return self._remove_waiter(
+            request_id,
+            reason=reason,
+            wake_with_exception=True,
+        )
+
+    def _remove_waiter(
+        self,
+        request_id: str,
+        *,
+        reason: str,
+        wake_with_exception: bool,
+    ) -> bool:
+        """Remove a queued waiter and wake it according to the cancellation source."""
         for model_id, queue in list(self._queues.items()):
             for i, waiter in enumerate(queue):
                 if waiter.request_id == request_id:
                     del queue[i]
                     if not waiter.future.done():
-                        waiter.future.cancel()
+                        if wake_with_exception:
+                            waiter.future.set_exception(_WaiterCancelledError(reason))
+                        else:
+                            waiter.future.cancel()
                     if not queue:
                         del self._queues[model_id]
-                    return
+                    wait_ms = (time.monotonic() - waiter.queued_at) * 1000
+                    self._emit_queue_cancelled(request_id, model_id, wait_ms, reason)
+                    return True
+        return False
 
     def _recover_leaked_slot(
         self, request_id: str, gateway_id: str, model_id: str
@@ -557,7 +592,6 @@ class CapacityPool:
         model_id: str,
         queue_position: int,
         allowed_gateways: int,
-        timeout_s: float | None,
     ) -> None:
         if not self._event_bus:
             return
@@ -571,7 +605,6 @@ class CapacityPool:
                         model_id=model_id,
                         queue_position=queue_position,
                         allowed_gateways=allowed_gateways,
-                        timeout_s=timeout_s,
                     )
                 )
             )
@@ -603,6 +636,45 @@ class CapacityPool:
         except Exception as exc:
             logger.warning("Failed to emit capacity.pool.admitted: %s", exc)
 
+    def _emit_queue_waiting(
+        self,
+        request_id: str,
+        model_id: str,
+        wait_ms: float,
+    ) -> None:
+        if not self._event_bus:
+            return
+        queue = self._queues.get(model_id)
+        if not queue:
+            return
+        queue_depth = len(queue)
+        queue_position = next(
+            (
+                idx
+                for idx, waiter in enumerate(queue, start=1)
+                if waiter.request_id == request_id
+            ),
+            None,
+        )
+        if queue_position is None:
+            return
+        try:
+            from src.scheduling.events import CapacityPoolWaiting
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    CapacityPoolWaiting(
+                        request_id=request_id,
+                        model_id=model_id,
+                        wait_ms=wait_ms,
+                        queue_position=queue_position,
+                        queue_depth=queue_depth,
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit capacity.pool.waiting: %s", exc)
+
     def _emit_queue_full(
         self, request_id: str, model_id: str, current_depth: int
     ) -> None:
@@ -624,36 +696,12 @@ class CapacityPool:
         except Exception as exc:
             logger.warning("Failed to emit capacity.pool.full: %s", exc)
 
-    def _emit_queue_timeout(
-        self,
-        request_id: str,
-        model_id: str,
-        wait_ms: float,
-        timeout_s: float | None,
-    ) -> None:
-        if not self._event_bus:
-            return
-        try:
-            from src.scheduling.events import CapacityPoolTimeout
-
-            asyncio.create_task(
-                self._event_bus.publish_async_nowait(
-                    CapacityPoolTimeout(
-                        request_id=request_id,
-                        model_id=model_id,
-                        wait_ms=wait_ms,
-                        timeout_s=timeout_s,
-                    )
-                )
-            )
-        except Exception as exc:
-            logger.warning("Failed to emit capacity.pool.timeout: %s", exc)
-
     def _emit_queue_cancelled(
         self,
         request_id: str,
         model_id: str,
         wait_ms: float,
+        reason: str,
     ) -> None:
         if not self._event_bus:
             return
@@ -666,6 +714,7 @@ class CapacityPool:
                         request_id=request_id,
                         model_id=model_id,
                         wait_ms=wait_ms,
+                        reason=reason,
                     )
                 )
             )

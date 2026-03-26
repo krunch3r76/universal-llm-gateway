@@ -250,7 +250,8 @@ def register_finance_tools(mcp: FastMCP) -> None:
 
         Args:
             path: PDF path relative to /data/files/ sandbox.
-            statement_type: one of checking, credit_card, utility, phone, ploc.
+            statement_type: one of checking, credit_card, utility, phone, ploc,
+                student_loan, brokerage, tax_document, property_tax, mortgage, escrow.
         """
         t0 = monotonic_now()
         record("mcp.finance.parse.called", path=path, statement_type=statement_type)

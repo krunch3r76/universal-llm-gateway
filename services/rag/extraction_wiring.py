@@ -191,6 +191,49 @@ def _describe_infrastructure_failure(timing: dict[str, object]) -> str:
     return "infrastructure: unknown"
 
 
+def _get_optional_str(mapping: dict[str, object], key: str) -> str | None:
+    """Return a string payload field when present and well-typed."""
+    value = mapping.get(key)
+    return value if isinstance(value, str) and value else None
+
+
+def _get_chunk_failure_reason(
+    timing: dict[str, object], *, chunk_id: str
+) -> str | None:
+    """Read per-chunk parse failure metadata attached by the extractor."""
+    reasons = timing.get("parse_failure_reasons")
+    if not isinstance(reasons, dict):
+        return None
+    reason = reasons.get(chunk_id)
+    return reason if isinstance(reason, str) and reason else None
+
+
+def _publish_failed_extraction_event(
+    *,
+    event_bus: EventBus | None,
+    chunk_id: str,
+    source: str,
+    error: str,
+    timing: dict[str, object] | None = None,
+    failure_reason: str | None = None,
+) -> None:
+    """Publish extraction failure with structured batch context when available."""
+    if event_bus is None:
+        return
+    timing = timing or {}
+    _publish_event_nonblocking(
+        event_bus,
+        rag_extraction_failed(
+            chunk_id=chunk_id,
+            error=error,
+            source=source,
+            execution_id=_get_optional_str(timing, "execution_id"),
+            finish_reason=_get_optional_str(timing, "finish_reason"),
+            failure_reason=failure_reason,
+        ),
+    )
+
+
 async def run_extraction(
     *,
     file: str,
@@ -296,12 +339,12 @@ async def run_extraction(
                 increment_attempt=False,
             )
             if event_bus is not None:
-                _publish_event_nonblocking(
-                    event_bus,
-                    rag_extraction_failed(
-                        chunk_id=chunk_id,
-                        error=timeout_error,
-                    ),
+                _publish_failed_extraction_event(
+                    event_bus=event_bus,
+                    chunk_id=chunk_id,
+                    source=file,
+                    error=timeout_error,
+                    failure_reason="batch_timeout",
                 )
         if event_bus is not None:
             _publish_event_nonblocking(
@@ -334,12 +377,12 @@ async def run_extraction(
                 permanent=False,
             )
             if event_bus is not None:
-                _publish_event_nonblocking(
-                    event_bus,
-                    rag_extraction_failed(
-                        chunk_id=chunk_id,
-                        error="invalid extraction response shape",
-                    ),
+                _publish_failed_extraction_event(
+                    event_bus=event_bus,
+                    chunk_id=chunk_id,
+                    source=file,
+                    error="invalid extraction response shape",
+                    failure_reason="invalid_return_shape",
                 )
         return result
     knowledge_list, timing = extract_return
@@ -362,12 +405,12 @@ async def run_extraction(
                 permanent=False,
             )
             if event_bus is not None:
-                _publish_event_nonblocking(
-                    event_bus,
-                    rag_extraction_failed(
-                        chunk_id=chunk_id,
-                        error="invalid extraction list payload",
-                    ),
+                _publish_failed_extraction_event(
+                    event_bus=event_bus,
+                    chunk_id=chunk_id,
+                    source=file,
+                    error="invalid extraction list payload",
+                    failure_reason="invalid_list_payload",
                 )
         return result
     if isinstance(timing, dict):
@@ -451,7 +494,12 @@ async def run_extraction(
                     step="transient_infrastructure_defer",
                     failed=len(failed_ids),
                     model_id=config.extraction_model,
-                    reason=str(timing.get("unavailability_reason", timing.get("stargate_error", "unknown"))),
+                    reason=str(
+                        timing.get(
+                            "unavailability_reason",
+                            timing.get("stargate_error", "unknown"),
+                        )
+                    ),
                 )
                 logger.info(
                     "Extraction deferred for %s due to Stargate infrastructure state"
@@ -517,11 +565,20 @@ async def run_extraction(
                 increment_attempt=not is_infrastructure_failure or is_structural,
             )
             if event_bus is not None:
-                _publish_event_nonblocking(
-                    event_bus,
-                    rag_extraction_failed(
-                        chunk_id=chunk_id,
-                        error=error_msg,
+                _publish_failed_extraction_event(
+                    event_bus=event_bus,
+                    chunk_id=chunk_id,
+                    source=file,
+                    error=error_msg,
+                    timing=timing if isinstance(timing, dict) else None,
+                    failure_reason=(
+                        None
+                        if is_infrastructure_failure
+                        else (
+                            _get_chunk_failure_reason(timing, chunk_id=chunk_id)
+                            if isinstance(timing, dict)
+                            else None
+                        )
                     ),
                 )
                 if is_permanent:

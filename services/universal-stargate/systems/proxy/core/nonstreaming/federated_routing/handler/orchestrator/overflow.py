@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 from universal_logging import get_logger
 
 from ...events import (
-    _emit_overflow_failed_event,
     _emit_overflow_load_started_event,
     _emit_overflow_triggered_event,
 )
@@ -96,21 +95,14 @@ async def apply_non_sticky_overflow(
     )
 
     if overflow_gateway is None:
-        if event_bus:
-            tried_gateways = [
-                g.name for g in gateways_for_routing if g.name != selected_gateway.name
-            ]
-            await _emit_overflow_failed_event(
-                event_bus=event_bus,
-                request_id=context.request_id,
-                model_id=context.selected_model,
-                tried_gateways=tried_gateways,
-                reason=(
-                    overflow_trace.selection_reason
-                    if overflow_trace
-                    else "no_alternate_gateway"
-                ),
-            )
+        context._overflow_failed_tried_gateways = [
+            g.name for g in gateways_for_routing if g.name != selected_gateway.name
+        ]
+        context._overflow_failed_reason = (
+            overflow_trace.selection_reason
+            if overflow_trace
+            else "no_alternate_gateway"
+        )
         return (
             selected_gateway,
             trace,
@@ -170,14 +162,12 @@ async def apply_non_sticky_overflow(
             overflow_gateway.name,
             exc,
         )
-        if event_bus:
-            await _emit_overflow_failed_event(
-                event_bus=event_bus,
-                request_id=context.request_id,
-                model_id=context.selected_model,
-                tried_gateways=[overflow_gateway.name],
-                reason="overflow_load_failed",
-            )
+        # NOTE: This unobserved live branch is retained only so a terminal
+        # rejection can still emit routing.overflow.failed(reason=overflow_load_failed)
+        # if it ever occurs; see agent-bus thread 169. Remove as dead code once
+        # overflow_load_failed is retired from the event contract.
+        context._overflow_failed_tried_gateways = [overflow_gateway.name]
+        context._overflow_failed_reason = "overflow_load_failed"
         selected_gateway = original_selected_gateway
         trace = original_trace
 

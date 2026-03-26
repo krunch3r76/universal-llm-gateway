@@ -99,6 +99,14 @@ class RequestContext:
         # this to compute their remaining timeout instead of static defaults.
         self._capacity_deadline_mono: float | None = None
 
+        # Overflow attempt metadata is only surfaced if routing ends terminally.
+        # NOTE: The overflow_load_failed branch has not been observed live after
+        # extended monitoring; see agent-bus thread 169. Keep this metadata only
+        # while the terminal-only overflow-failed path remains in use, then
+        # remove it as dead code once that branch is retired.
+        self._overflow_failed_tried_gateways: list[str] | None = None
+        self._overflow_failed_reason: str | None = None
+
     @property
     def is_federated(self) -> bool:
         """
