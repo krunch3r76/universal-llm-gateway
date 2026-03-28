@@ -51,6 +51,9 @@ options:
   rerank_prior_weight: 0.70
   scope_options: []
   scope_aliases: {}
+  # Pool B gating: derived from scope prefixes (research parent dir → enabled).
+  # Set pool_b_enabled explicitly in pipeline_options to override auto-detection.
+  # pool_b_enabled: true
   # IDF expansion config (computed inline, concurrent with pool A retrieval)
   max_expansion_terms: 10
   max_idf_terms: 8

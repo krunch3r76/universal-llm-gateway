@@ -164,6 +164,31 @@ _RETRIEVAL_PATH_PRESETS: dict[str, dict[str, Any]] = {
 }
 
 
+def _scope_has_research_prefix(
+    scope: str | list[str] | None,
+    prefix_map: dict[str, list[str]] | None,
+) -> bool:
+    """Return True if any resolved prefix for the scope(s) has a parent dir named 'research'.
+
+    ∀ scope S: research-backed ⟺ ∃ prefix P ∈ S.prefixes where
+    any path component of P equals "research".
+
+    When prefix_map is unavailable (scope catalog unreachable), defaults to True
+    (Pool B enabled) to preserve existing behavior as the safe fallback.
+    """
+    if prefix_map is None:
+        return True
+    scopes: list[str] = (
+        [scope] if isinstance(scope, str) else list(scope) if scope else []
+    )
+    for s in scopes:
+        for prefix in prefix_map.get(s, []):
+            parts = prefix.replace("\\", "/").split("/")
+            if "research" in parts:
+                return True
+    return False
+
+
 def _noise_filter_disable_effective(effective: dict[str, Any]) -> bool:
     v = effective.get("noise_filter_disable")
     if v is not None:
@@ -299,6 +324,7 @@ class RagMultiRetrieveHandler(BaseHandler):
 
         # Pool B facets: either read from a prior step (rewrite pipeline) or
         # computed inline concurrently with pool A (direct pipeline).
+        # Actual dispatch is gated on pool_b_enabled (derived after scope resolution).
         facet_pool: list[tuple[str, str]] = []  # (facet_label, or_query)
         _inline_facets: bool = False
         computed_facets: list[dict[str, object]] = []
@@ -682,6 +708,29 @@ class RagMultiRetrieveHandler(BaseHandler):
             if k not in runtime:
                 effective[k] = v
 
+        # Pool B gating: derive from scope prefixes unless explicitly overridden.
+        _pool_b_override = effective.get("pool_b_enabled")
+        if _pool_b_override is not None:
+            pool_b_enabled = bool(_pool_b_override)
+            logger.info(
+                "Step '%s': pool_b_enabled=%s (explicit override)",
+                step.id,
+                pool_b_enabled,
+            )
+        else:
+            _prefix_map = await fetch_scope_prefixes(base_url)
+            pool_b_enabled = _scope_has_research_prefix(search_scope, _prefix_map)
+            logger.info(
+                "Step '%s': pool_b_enabled=%s (derived from scope prefixes, scope=%s)",
+                step.id,
+                pool_b_enabled,
+                search_scope,
+            )
+        if not pool_b_enabled:
+            facet_pool = []
+            _inline_facets = False
+            computed_facets = []
+
         scope_profile_applied: dict[str, Any] = {}
         if scope_key is not None:
             raw_sd = profiles_data.get("scope_defaults", {})
@@ -757,6 +806,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                 scope=scope,
                 retrieval_mode=retrieval_mode,
                 uses_explicit_prefixes=bool(source_prefixes),
+                pool_b_enabled=pool_b_enabled,
             ),
         )
         try:
@@ -1466,6 +1516,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "rrf_k": rrf_k,
                     "recency_weight": recency_weight,
                     "retrieval_path": retrieval_path,
+                    "pool_b_enabled": pool_b_enabled,
                     "scope_key": scope_key,
                     "scope_defaults_applied": params.scope_profile or None,
                     "scope_confidence_threshold": confidence_threshold,

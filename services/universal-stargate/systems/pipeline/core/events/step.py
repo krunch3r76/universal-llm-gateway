@@ -432,6 +432,7 @@ def RagRetrievalParamsResolved(  # noqa: N802
     scope: str | list[str],
     retrieval_mode: str,
     uses_explicit_prefixes: bool,
+    pool_b_enabled: bool = True,
 ) -> Event:
     """Emitted by rag_multi_retrieve_v1 after effective retrieval params are resolved.
 
@@ -447,6 +448,7 @@ def RagRetrievalParamsResolved(  # noqa: N802
                (research / project / both / custom or list thereof)
         retrieval_mode: "scope" or "source_prefixes"
         uses_explicit_prefixes: True iff caller passed rag_source_prefixes
+        pool_b_enabled: True when Pool B (sparse facet / IDF) runs for this step
     """
     return Event(
         signal="pipeline.rag.retrieval.params.resolved",
@@ -463,6 +465,7 @@ def RagRetrievalParamsResolved(  # noqa: N802
             "scope": scope,
             "retrieval_mode": retrieval_mode,
             "uses_explicit_prefixes": uses_explicit_prefixes,
+            "pool_b_enabled": pool_b_enabled,
         },
     )
 
