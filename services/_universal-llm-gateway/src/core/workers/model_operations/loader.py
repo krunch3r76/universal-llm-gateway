@@ -7,8 +7,9 @@ same result instead of stampeding the loader again.
 """
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
 from . import load_flow, preflight
@@ -26,6 +27,21 @@ def _get_resource_tracker():
 logger = get_logger(__name__)
 
 _LOAD_CACHE_TTL_S = 10.0
+
+
+async def _emit_load_gate_debug(
+    step: str, model_id: str, correlation_id: str | None = None, **extra: Any
+) -> None:
+    await emit_debug_event(
+        "debug.load.gate",
+        {
+            "step": step,
+            "model_id": model_id,
+            "correlation_id": correlation_id,
+            **extra,
+        },
+        source="gateway",
+    )
 
 
 class ModelLoader:
@@ -101,26 +117,62 @@ class ModelLoader:
         """Ensure a model is loaded and available for inference."""
         try:
             resource_tracker = _get_resource_tracker()
+            await _emit_load_gate_debug(
+                "ensure_enter", model_id, correlation_id=correlation_id
+            )
 
             is_valid, ctx_error = await self._validate_context_availability(model_id)
             if not is_valid:
                 resource_tracker.set_model_error(model_id, ctx_error)
+                await _emit_load_gate_debug(
+                    "context_invalid",
+                    model_id,
+                    correlation_id=correlation_id,
+                    error=ctx_error,
+                )
                 return False
 
-            if await self._controller.is_model_loaded(model_id):
+            already_loaded = await self._controller.is_model_loaded(model_id)
+            await _emit_load_gate_debug(
+                "is_model_loaded_result",
+                model_id,
+                correlation_id=correlation_id,
+                already_loaded=already_loaded,
+            )
+            if already_loaded:
                 return True
 
             if self._controller.auto_load_on_request:
                 logger.info(f"🔄 Auto-loading model: {model_id}")
-                return await self.load_model(model_id)
+                await _emit_load_gate_debug(
+                    "autoload_start", model_id, correlation_id=correlation_id
+                )
+                loaded = await self.load_model(model_id)
+                await _emit_load_gate_debug(
+                    "autoload_done",
+                    model_id,
+                    correlation_id=correlation_id,
+                    loaded=loaded,
+                )
+                return loaded
             else:
                 logger.warning(f"⚠️ Model {model_id} not loaded and auto-load disabled")
+                await _emit_load_gate_debug(
+                    "autoload_disabled", model_id, correlation_id=correlation_id
+                )
                 return False
         except Exception as e:
             _get_resource_tracker().set_model_error(model_id, str(e))
             logger.error(
                 f"Error ensuring model {model_id} is loaded: {e}",
                 exc_info=True,
+            )
+            await _emit_load_gate_debug(
+                "ensure_exception",
+                model_id,
+                correlation_id=correlation_id,
+                error_type=type(e).__name__,
+                error=str(e),
             )
             return False
 
@@ -136,7 +188,9 @@ class ModelLoader:
         if existing is not None:
             if not existing.done():
                 logger.info(f"🔗 Coalescing onto in-flight load for {model_id}")
+                await _emit_load_gate_debug("coalesce_inflight", model_id)
                 return await existing
+            await _emit_load_gate_debug("coalesce_cached", model_id)
             return existing.result()
 
         future: asyncio.Future[bool] = asyncio.Future()
@@ -173,6 +227,11 @@ class ModelLoader:
                 ModelStatus.LOADED,
                 ModelStatus.BUSY,
             ):
+                await _emit_load_gate_debug(
+                    "tracker_short_circuit",
+                    model_id,
+                    tracker_status=model_info.status.value,
+                )
                 return True
 
             resources_ok, resource_details = await preflight.check_resources_and_block(
@@ -201,12 +260,17 @@ class ModelLoader:
                 await load_flow.emit_loading_event(
                     self._controller, model_id, "failed", error_msg
                 )
+                await _emit_load_gate_debug(
+                    "preflight_blocked", model_id, error=error_msg
+                )
                 return False
 
             if not await self._validate_dependencies(model_id):
+                await _emit_load_gate_debug("dependency_invalid", model_id)
                 return False
 
             await load_flow.emit_loading_event(self._controller, model_id, "started")
+            await _emit_load_gate_debug("loading_event_started", model_id)
 
             loading_ok = resource_tracker.set_model_loading(model_id)
             if not loading_ok:
@@ -216,18 +280,30 @@ class ModelLoader:
                     "failed",
                     "Rejected transition to LOADING (invalid worker state)",
                 )
+                await _emit_load_gate_debug(
+                    "loading_transition_rejected", model_id
+                )
                 return False
             load_flow.reset_state_machine(model_id)
 
             vram_before = await load_flow.measure_vram_before(model_id)
 
-            if not await load_flow.start_worker_if_needed(self._controller, model_id):
+            worker_started = await load_flow.start_worker_if_needed(
+                self._controller, model_id
+            )
+            await _emit_load_gate_debug(
+                "start_worker_if_needed_done",
+                model_id,
+                worker_started=worker_started,
+            )
+            if not worker_started:
                 return False
 
             config_result = await load_flow.send_model_config(
                 self._controller, model_id
             )
             if not config_result:
+                await _emit_load_gate_debug("send_model_config_failed", model_id)
                 return False
 
             engine_pid = config_result.get("engine_pid")
@@ -235,10 +311,19 @@ class ModelLoader:
                 self._controller._process_state.set_engine_pid(model_id, engine_pid)
                 logger.info("Stored engine_pid=%d for %s", engine_pid, model_id)
 
-            if not await load_flow.verify_model_responsive(self._controller, model_id):
+            responsive = await load_flow.verify_model_responsive(
+                self._controller, model_id
+            )
+            await _emit_load_gate_debug(
+                "verify_model_responsive_done",
+                model_id,
+                responsive=responsive,
+            )
+            if not responsive:
                 return False
 
             resource_tracker.set_model_loaded(model_id)
+            await _emit_load_gate_debug("tracker_set_loaded", model_id)
 
             context_size: int | None = (
                 config_result.get("context_size") if config_result else None

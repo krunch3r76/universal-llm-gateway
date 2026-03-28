@@ -42,6 +42,7 @@ SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
     "trading/stat-arb": "trading_stat_arb",
     "trading/execution": "trading_execution",
     "trading/intraday": "trading_intraday",
+    "trading/prediction-markets": "trading_prediction_markets",
 }
 
 

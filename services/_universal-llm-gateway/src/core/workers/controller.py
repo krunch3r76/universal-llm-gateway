@@ -735,14 +735,38 @@ class WorkerController:
 
     async def is_model_loaded(self, model_id: str) -> bool:
         try:
-            if not await self.get_process_status(model_id):
+            process_status = await self.get_process_status(model_id)
+            if not process_status:
+                await _emit_embedding_debug(
+                    "load_gate_process_status_missing",
+                    model_id,
+                    None,
+                )
                 return False
             alive = await self.is_process_alive(model_id)
             structured_logger.info(
                 f"{model_id}:liveness_check: {'SUCCESS' if alive else 'FAILED'}"
             )
+            await _emit_embedding_debug(
+                "load_gate_liveness_result",
+                model_id,
+                None,
+                process_status=(
+                    process_status.value
+                    if hasattr(process_status, "value")
+                    else str(process_status)
+                ),
+                alive=alive,
+            )
             return alive
-        except (ProcessError, Exception):
+        except (ProcessError, Exception) as e:
+            await _emit_embedding_debug(
+                "load_gate_liveness_exception",
+                model_id,
+                None,
+                error_type=type(e).__name__,
+                error=str(e),
+            )
             return False
 
     async def get_status(self) -> dict[str, Any]:

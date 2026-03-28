@@ -19,6 +19,7 @@ from scripts.model_manager.ensure_venv import find_workspace_root
 
 from .api_server import ManageAPIServer
 from .controller.onboarding import OnboardingController
+from .controller.service_config import ensure_event_service_config
 from .controller.service_ctl import ServiceController
 from .model.catalog_state import CatalogState
 from .model.local_env import LocalEnv
@@ -106,6 +107,7 @@ class ModelManagerApp(App):
         yield StatusBar()
 
     async def on_mount(self) -> None:
+        ensure_event_service_config()
         warning = self._service_controller.check_model_path_ownership()
         if warning:
             self.notify(warning, severity="error", timeout=15)

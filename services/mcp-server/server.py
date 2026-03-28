@@ -46,6 +46,7 @@ from tools.finance_ingest import register_finance_ingest_tools
 from tools.finance_reconcile import register_finance_reconcile_tools
 from tools.finance_smart_ingest import register_finance_smart_ingest_tools
 from tools.ingest_binary import register_ingest_binary_tools
+from tools.lighter_trades import register_lighter_trades_tools
 from tools.llm import register_llm_tools
 from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
@@ -275,6 +276,7 @@ def _build_server() -> FastMCP:
     register_cortex_tools(mcp)
     register_cortex_v2_tools(mcp)
     register_llm_tools(mcp)
+    register_lighter_trades_tools(mcp)
 
     @mcp.tool()
     def health() -> dict[str, str]:
@@ -367,6 +369,9 @@ def _build_server() -> FastMCP:
                 JSON compatible with finance_ingest_statement.
             document_ocr_directory(directory, prompt?, dpi?, model?) — batch OCR all
                 PDFs and images in a directory.
+          Trading:
+            lighter_trades(op, limit?, status?) — query Lighter perps trade log.
+                ops: status (dashboard), trades, signals, pnl, positions.
           Quality & infra:
             quality_gate(files) — run ruff + compileall
             pipeline_consult(execution_id, step_name, problem)

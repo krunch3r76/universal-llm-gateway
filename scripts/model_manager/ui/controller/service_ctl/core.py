@@ -22,10 +22,12 @@ from ..service_config import (
     build_mcp_env,
     build_service_env,
     ensure_bind_mount_dirs,
+    ensure_event_service_config,
     ensure_node_env,
     ensure_socket_dir,
     ensure_stargate_config,
     load_env_file,
+    load_event_service_config,
     load_mcp_config,
     mcp_browser_override_path,
 )
@@ -872,7 +874,27 @@ class ServiceController:
             logger.error("Cannot start event service: %s", socket_err)
             return None
         env = build_service_env(self._root)
-        return ["docker", "compose", "-f", str(compose_path)], env
+        ensure_event_service_config()
+        args = ["docker", "compose", "-f", str(compose_path)]
+
+        cfg = load_event_service_config()
+        if cfg is not None:
+            env["EVENT_RETENTION_DAYS"] = str(cfg.retention_days)
+            env["EVENT_MAX_SESSIONS"] = str(cfg.max_sessions)
+            if cfg.tcp_enabled:
+                tcp_override = compose_path.parent / "event-service-tcp.yml"
+                if tcp_override.exists():
+                    args.extend(["-f", str(tcp_override)])
+                    env["EVENT_TCP_BIND"] = cfg.tcp_host
+                    env["EVENT_INGEST_TCP_PORT"] = str(cfg.tcp_ingest_port)
+                    env["EVENT_QUERY_TCP_PORT"] = str(cfg.tcp_query_port)
+                else:
+                    logger.warning(
+                        "TCP enabled but compose override missing: %s",
+                        tcp_override,
+                    )
+
+        return args, env
 
     async def rebuild_event_service(self, *, no_cache: bool = False) -> str:
         """Rebuild event-service image then start container via dedicated buildx builder."""

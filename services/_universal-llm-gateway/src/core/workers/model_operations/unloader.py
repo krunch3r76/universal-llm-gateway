@@ -189,15 +189,27 @@ class ModelUnloader:
                 logger.info(f"✅ Model {model_id} unloaded successfully")
                 return UnloadResult(success=True, skipped=False, reason="unloaded")
             else:
-                logger.error(f"❌ Failed to unload model {model_id}")
+                terminal_reason = await self._finalize_failed_unload(
+                    model_id, force=force
+                )
+                logger.error(
+                    "❌ Failed to unload model %s (terminal_state=%s)",
+                    model_id,
+                    terminal_reason,
+                )
                 return UnloadResult(
-                    success=False, skipped=False, reason="unload_failed"
+                    success=False,
+                    skipped=False,
+                    reason=f"unload_failed:{terminal_reason}",
                 )
 
         except Exception as e:
+            terminal_reason = await self._finalize_failed_unload(model_id, force=force)
             logger.error(f"❌ Error unloading model {model_id}: {e}")
             return UnloadResult(
-                success=False, skipped=False, reason=f"exception:{str(e)[:50]}"
+                success=False,
+                skipped=False,
+                reason=f"exception:{str(e)[:50]}:{terminal_reason}",
             )
 
     async def _perform_unload(
@@ -366,17 +378,24 @@ class ModelUnloader:
             logger.error(f"❌ Standard termination failed for {model_id}: {e}")
             return False
 
-    async def _fallback_cleanup(self, model_id: str) -> bool:
-        """Fallback cleanup when normal unload fails."""
-        try:
-            mgr = self._controller._lifecycle_manager
-            success = await mgr.fallback_process_cleanup(model_id=model_id)
-            if success:
-                logger.info(f"✅ Fallback cleanup successful for {model_id}")
-            return success
-        except Exception as e:
-            logger.error(f"❌ Fallback cleanup failed for {model_id}: {e}")
-            return False
+    async def _finalize_failed_unload(self, model_id: str, force: bool) -> str:
+        """Leave failed unloads in a terminal local state, never UNLOADING."""
+        supervisor = self._controller._process_state.get_supervisor(model_id)
+        tracked_pid = self._get_tracked_worker_pid(supervisor) if supervisor else None
+
+        if supervisor is None or self._is_pid_gone(tracked_pid):
+            self._remove_supervisor(model_id)
+            self._mark_unloaded(model_id)
+            await self._publish_resource_update()
+            return "not_loaded"
+
+        reason = "force_unload_failed" if force else "unload_failed"
+        _get_resource_tracker().set_model_error(
+            model_id,
+            f"{reason}: worker still alive (tracked_pid={tracked_pid})",
+        )
+        await self._publish_resource_update()
+        return "error"
 
     def _remove_supervisor(self, model_id: str):
         """Remove supervisor from tracking."""

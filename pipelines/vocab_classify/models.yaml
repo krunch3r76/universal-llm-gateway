@@ -8,4 +8,4 @@ models:
     profile: qwen3-instruct
 
   frontier_classify:
-    model: native/chatgpt/gpt-5.4
+    model: native/anthropic/claude-sonnet-4-6

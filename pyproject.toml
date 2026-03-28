@@ -38,6 +38,8 @@ ignore = ["E501"]  # line-too-long
 # Verbatim copy from agent-bus repo — exception names omit *Error suffix by design.
 "services/agent-bus/src/db/turns.py" = ["N818"]
 "services/agent-bus/src/db/threads.py" = ["N818"]
+# Hyphenated service directory — N999 invalid-module-name for paths under event-service/.
+"services/event-service/**/*.py" = ["N999"]
 
 [tool.ruff.format]
 quote-style = "double"

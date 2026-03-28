@@ -21,6 +21,7 @@ services:
       - UDS_PATH=/tmp/universal-protocol/events.sock
       - QUERY_UDS_PATH=/tmp/universal-protocol/events-query.sock
       - RETENTION_DAYS=${EVENT_RETENTION_DAYS:-2}
+      - MAX_SESSIONS=${EVENT_MAX_SESSIONS:-2}
     healthcheck:
       test: ["CMD", "python3", "-c", "import socket,sys;s=socket.socket(socket.AF_UNIX);s.settimeout(3);s.connect('/tmp/universal-protocol/events-query.sock');s.sendall(b'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n');d=s.recv(512);s.close();first=d.split(b'\\r\\n',1)[0];sys.exit(0 if b' 200 ' in first else 1)"]
       interval: 15s

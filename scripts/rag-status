@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from transport_utils.rag_client import make_sync_client, resolve_rag_base_url
+    from transport_utils import make_sync_client, resolve_rag_base_url
 except ModuleNotFoundError:
     make_sync_client = None
     resolve_rag_base_url = None
@@ -36,7 +36,7 @@ WATCH_INTERVAL = 1.5  # seconds between event service availability checks
 WATCH_HEARTBEAT_SECONDS = 120.0
 WS_RETRY_BASE_SECONDS = 1.0
 WS_RETRY_MAX_SECONDS = 30.0
-DB_PATH = Path.home() / ".rag" / "store" / "property_index.db"
+DB_PATH = Path.home() / ".rag" / "store" / "rag_metadata.db"
 _error_truncate_chars: int | None = 120
 _DEFAULT_SAMPLE_LIMIT = 20
 _MAX_SAMPLE_LIMIT = 100

@@ -39,6 +39,14 @@ _SECONDS_PER_DAY = 86400
 _RETENTION_INTERVAL_S = _SECONDS_PER_DAY
 _QUERY_SOCK_MODE = int(os.environ.get("QUERY_UDS_MODE", "660"), 8)
 
+_TCP_ENABLED = os.environ.get("EVENT_TCP_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+_TCP_INGEST_PORT = int(os.environ.get("EVENT_INGEST_TCP_PORT", "7101"))
+_TCP_QUERY_PORT = int(os.environ.get("EVENT_QUERY_TCP_PORT", "7102"))
+
 
 def _event_timestamp() -> tuple[int, str]:
     """Return (unix_ms, ISO8601 Z) timestamp tuple for service events."""
@@ -101,6 +109,7 @@ async def run_service() -> None:
     ingest: IngestServer | None = None
     runner: web.AppRunner | None = None
     site: web.UnixSite | None = None
+    tcp_site: web.TCPSite | None = None
     retention_task: asyncio.Task[None] | None = None
     started = False
     stop_event = asyncio.Event()
@@ -146,13 +155,32 @@ async def run_service() -> None:
                 query_sock.unlink()
             raise
 
+        if _TCP_ENABLED:
+            await ingest.start_tcp("0.0.0.0", _TCP_INGEST_PORT)
+            tcp_site = web.TCPSite(runner, "0.0.0.0", _TCP_QUERY_PORT)
+            await tcp_site.start()
+            logger.info(
+                "TCP developer mode: ingest=:%d, query=:%d",
+                _TCP_INGEST_PORT,
+                _TCP_QUERY_PORT,
+            )
+
         logger.info(
-            "Event service started (ingest=%s, query=%s, db=%s)",
+            "Event service started (ingest=%s, query=%s, db=%s, tcp=%s)",
             _INGEST_SOCK,
             _QUERY_SOCK,
             _DB_PATH,
+            _TCP_ENABLED,
         )
         ts_ms, ts_iso = _event_timestamp()
+        started_payload: dict[str, Any] = {
+            "ingest_sock": _INGEST_SOCK,
+            "query_sock": _QUERY_SOCK,
+            "db_path": _DB_PATH,
+        }
+        if _TCP_ENABLED:
+            started_payload["tcp_ingest_port"] = _TCP_INGEST_PORT
+            started_payload["tcp_query_port"] = _TCP_QUERY_PORT
         await store.insert_events(
             [
                 {
@@ -162,11 +190,7 @@ async def run_service() -> None:
                     "ts_unix_ms": ts_ms,
                     "timestamp": ts_iso,
                     "source": "event_service",
-                    "payload": {
-                        "ingest_sock": _INGEST_SOCK,
-                        "query_sock": _QUERY_SOCK,
-                        "db_path": _DB_PATH,
-                    },
+                    "payload": started_payload,
                 }
             ]
         )
@@ -189,6 +213,8 @@ async def run_service() -> None:
                 pass
         if ingest is not None:
             await ingest.stop()
+        if tcp_site is not None:
+            await tcp_site.stop()
         if site is not None:
             await site.stop()
         if runner is not None:

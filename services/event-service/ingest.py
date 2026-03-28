@@ -48,6 +48,7 @@ class IngestServer:
         self._socket_path = socket_path
         self._subscriber_queues = subscriber_queues
         self._server: asyncio.Server | None = None
+        self._tcp_server: asyncio.Server | None = None
         self._db_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=10000)
         self._writer_task: asyncio.Task[None] | None = None
         self._running = False
@@ -72,14 +73,30 @@ class IngestServer:
         os.chmod(self._socket_path, 0o777)
         logger.info("Ingest server listening on %s", self._socket_path)
 
+    async def start_tcp(self, host: str, port: int) -> None:
+        """Start an additional TCP ingest listener (developer mode).
+
+        Uses the same _handle_connection callback and shared write pipeline
+        as the UDS listener. Same NDJSON protocol.
+        """
+        self._tcp_server = await asyncio.start_server(
+            self._handle_connection,
+            host=host,
+            port=port,
+            limit=_LINE_LIMIT,
+        )
+        logger.info("Ingest TCP listener on %s:%d", host, port)
+
     async def stop(self) -> None:
         self._running = False
+        if self._tcp_server:
+            self._tcp_server.close()
+            await self._tcp_server.wait_closed()
         if self._server:
             self._server.close()
             await self._server.wait_closed()
         if self._writer_task:
             try:
-                # Give the writer loop a chance to drain queued events cleanly.
                 await asyncio.wait_for(self._writer_task, timeout=2.0)
             except TimeoutError:
                 self._writer_task.cancel()

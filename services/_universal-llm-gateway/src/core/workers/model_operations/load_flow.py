@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, Any
 
 from process_ipc import ProcessStatus
+from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
 from ..state_machine import WorkerState
@@ -42,6 +43,18 @@ structured_logger = get_logger("universal_llm_gateway.load_flow")
 
 # Models with an in-flight failed-load cleanup; blocks concurrent loads until done.
 _cleanup_in_progress: set[str] = set()
+
+
+async def _emit_load_flow_debug(step: str, model_id: str, **extra: Any) -> None:
+    await emit_debug_event(
+        "debug.load.flow",
+        {
+            "step": step,
+            "model_id": model_id,
+            **extra,
+        },
+        source="gateway",
+    )
 
 
 def is_model_cleanup_in_progress(model_id: str) -> bool:
@@ -98,6 +111,12 @@ async def start_worker_if_needed(controller: "WorkerController", model_id: str) 
     # Check if process exists and is running
     process_info = procs.get(model_id) if model_id in procs else None
     if process_info and process_info.get("status") == ProcessStatus.RUNNING.value:
+        await _emit_load_flow_debug(
+            "worker_running_seen",
+            model_id,
+            pid=process_info.get("pid"),
+            tracked=model_id in resource_tracker.get_loaded_models(),
+        )
         # Process exists - verify it's actually tracked and healthy
         tracked_models = resource_tracker.get_loaded_models()
         if model_id not in tracked_models:
@@ -112,6 +131,9 @@ async def start_worker_if_needed(controller: "WorkerController", model_id: str) 
                 alive = await controller._lifecycle_manager.verify_process_alive(
                     model_id, controller.get_all_process_info
                 )
+                await _emit_load_flow_debug(
+                    "orphan_health_checked", model_id, alive=alive
+                )
                 if alive:
                     # Process is alive but not tracked - reconcile it
                     logger.info(
@@ -122,20 +144,33 @@ async def start_worker_if_needed(controller: "WorkerController", model_id: str) 
                     # Allow the normal flow to verify and configure it.
                     # Do not return here; let the function proceed to send_model_config and verify_model_responsive.
                     # The existing process will be reused if it passes subsequent checks.
+                    await _emit_load_flow_debug("orphan_reconciled", model_id)
                     return True  # This return needs to be removed or logic adjusted to ensure full load flow.
             except Exception as e:
                 logger.warning(f"Orphaned process health check failed: {e}")
+                await _emit_load_flow_debug(
+                    "orphan_health_exception",
+                    model_id,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                )
 
             # Process is dead or unresponsive - clean it up and start fresh
             logger.info(f"🧹 Cleaning up unresponsive orphaned process for {model_id}")
+            await _emit_load_flow_debug("orphan_cleanup_start", model_id)
             await controller._lifecycle_manager.cleanup_stale_process(model_id)
+            await _emit_load_flow_debug("orphan_cleanup_done", model_id)
             # Fall through to start new worker
         else:
             # Process exists and is tracked - reuse it
+            await _emit_load_flow_debug("worker_reused", model_id)
             return True
 
     # No process or process was cleaned up - start new worker
-    if not await start_worker(controller, model_id):
+    await _emit_load_flow_debug("worker_start_needed", model_id)
+    started = await start_worker(controller, model_id)
+    await _emit_load_flow_debug("worker_start_done", model_id, started=started)
+    if not started:
         logger.error(f"❌ Failed to start worker for {model_id}")
         resource_tracker.set_model_error(model_id, "Failed to start worker")
         await cleanup_failed_worker(controller, model_id, "Worker start failed")
@@ -195,7 +230,9 @@ async def verify_model_responsive(
     controller: "WorkerController", model_id: str
 ) -> bool:
     """Verify model is responsive after loading."""
-    if not await controller.is_process_alive(model_id):
+    alive = await controller.is_process_alive(model_id)
+    await _emit_load_flow_debug("verify_process_alive", model_id, alive=alive)
+    if not alive:
         logger.error(f"❌ Model {model_id} not responsive")
         _get_resource_tracker().set_model_error(model_id, "Model not responsive")
         await cleanup_failed_worker(controller, model_id, "Unresponsive process")
@@ -254,6 +291,14 @@ async def finalize_load(
             process_pid=pid,
         ),
     )
+    await _emit_load_flow_debug(
+        "finalize_loaded_event",
+        model_id,
+        pid=pid,
+        vram_usage_mb=actual_vram,
+        ram_usage_mb=actual_ram,
+        context_length=context_length,
+    )
 
     # Verify tracker state before publishing RESOURCE_UPDATE
     tracker_info = resource_tracker.get_model_info(model_id)
@@ -299,10 +344,14 @@ async def cleanup_failed_worker(
     This is the EVENT HANDLER for load failures - must be robust.
     """
     _cleanup_in_progress.add(model_id)
+    await _emit_load_flow_debug("cleanup_failed_worker_start", model_id, reason=reason)
     try:
         await _cleanup_failed_worker_inner(controller, model_id, reason)
     finally:
         _cleanup_in_progress.discard(model_id)
+        await _emit_load_flow_debug(
+            "cleanup_failed_worker_done", model_id, reason=reason
+        )
 
 
 async def _cleanup_failed_worker_inner(
@@ -328,8 +377,18 @@ async def _cleanup_failed_worker_inner(
         try:
             await supervisor.stop(force=True, timeout=3)
             logger.debug("Supervisor stop attempted for %s", model_id)
+            await _emit_load_flow_debug(
+                "cleanup_supervisor_stop_attempted", model_id, pid=pid
+            )
         except Exception as e:
             logger.warning("Supervisor stop failed for %s: %s", model_id, e)
+            await _emit_load_flow_debug(
+                "cleanup_supervisor_stop_exception",
+                model_id,
+                pid=pid,
+                error_type=type(e).__name__,
+                error=str(e),
+            )
 
         # Always verify process is actually dead, regardless of supervisor.stop outcome
         if pid:
@@ -343,9 +402,18 @@ async def _cleanup_failed_worker_inner(
                         model_id,
                     )
                     try:
+                        await _emit_load_flow_debug(
+                            "cleanup_force_kill_start", model_id, pid=pid
+                        )
                         await controller._lifecycle_manager.kill_pid_tree(pid, model_id)
                         # Re-check if process is dead after force kill
                         process_killed = not psutil.pid_exists(pid)
+                        await _emit_load_flow_debug(
+                            "cleanup_force_kill_done",
+                            model_id,
+                            pid=pid,
+                            process_killed=process_killed,
+                        )
                     except Exception as kill_e:
                         logger.error(
                             "Failed to force kill process %s for %s: %s",
@@ -356,6 +424,9 @@ async def _cleanup_failed_worker_inner(
                         process_killed = False  # Force kill failed
                 else:
                     process_killed = True  # Process was already dead
+                    await _emit_load_flow_debug(
+                        "cleanup_pid_already_dead", model_id, pid=pid
+                    )
             except Exception as e:
                 logger.error(
                     "Process existence check or force kill failed for %s (PID %s): %s",
@@ -363,8 +434,16 @@ async def _cleanup_failed_worker_inner(
                     pid,
                     e,
                 )
+                await _emit_load_flow_debug(
+                    "cleanup_pid_check_exception",
+                    model_id,
+                    pid=pid,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                )
         else:
             process_killed = True
+            await _emit_load_flow_debug("cleanup_no_pid", model_id)
 
         # Clean up state only after process is confirmed dead
         controller._process_state.remove_supervisor(model_id)
@@ -376,6 +455,13 @@ async def _cleanup_failed_worker_inner(
 
     # Update tracker state (process dead or no supervisor — reconcile SM + status)
     resource_tracker.set_model_not_loaded(model_id, reason)
+    await _emit_load_flow_debug(
+        "cleanup_tracker_set_not_loaded",
+        model_id,
+        pid=pid,
+        process_killed=process_killed,
+        reason=reason,
+    )
 
     if process_killed or not pid:
         logger.info(f"✅ Cleaned up failed worker: {model_id} (reason: {reason})")
