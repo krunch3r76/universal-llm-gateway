@@ -233,6 +233,16 @@ _PRIMARY_TOOLS: set[str] = {
     # Cortex (dispatch-style + boot)
     "cortex",
     "cortex_boot",
+    # Trading (direct — claudeburst agents call these first-class)
+    "claudeburst_perps",
+    "lighter_history",
+    "lighter_trades",
+    "lighter_api",
+    "lighter_shadow_create",
+    "lighter_shadow_list",
+    "lighter_shadow_update",
+    "lighter_shadow_cancel",
+    "lighter_shadow_log",
 }
 
 
@@ -374,12 +384,6 @@ def _build_server() -> FastMCP:
                 JSON compatible with finance_ingest_statement.
             document_ocr_directory(directory, prompt?, dpi?, model?) — batch OCR all
                 PDFs and images in a directory.
-          Trading:
-            lighter_trades(op, limit?, status?) — query Lighter perps trade log.
-                ops: status (dashboard), trades, signals, pnl, positions.
-            lighter_api(op, market_id?, depth?, account_address?, account_index?) — query Lighter DEX live state.
-                ops: positions, orders, balance, orderbook, funding, markets.
-                account_address or account_index is required for positions, orders, and balance.
           Quality & infra:
             quality_gate(files) — run ruff + compileall
             pipeline_consult(execution_id, step_name, problem)

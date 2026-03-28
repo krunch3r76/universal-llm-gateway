@@ -2,5 +2,7 @@ models:
   phi4:
     model: phi-4-q4-k-m-16384
   answer:
-    model: qwen3-32b-awq-32768
-    profile: general-chat
+    model: qwen3-14b-q4-k-m-40960
+    # Structured extraction: instruct (non-thinking) is appropriate.
+    # Available profiles: qwen3-instruct, qwen3-thinking
+    profile: qwen3-thinking

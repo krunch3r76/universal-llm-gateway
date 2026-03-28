@@ -32,6 +32,7 @@ from ...controller.service_config import (
     is_rag_configured,
 )
 from ...controller.topology import deploy_remote, list_remotes, wait_for_relay_connected
+from ...model.service_state import ServiceStatus
 from .log_stream import LogStream
 
 logger = logging.getLogger(__name__)
@@ -144,6 +145,17 @@ class TopologyPanel(Widget):
 
     def set_workspace_root(self, path: Path) -> None:
         self._workspace_root = path
+
+    async def _wait_event_service_healthy(self, *, timeout: float = 30.0) -> bool:
+        """Poll the current event-service UDS health check until healthy or timed out."""
+        svc = cast("ModelManagerApp", self.app).service_controller
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            info = await asyncio.to_thread(svc.service_state.check_event_service)
+            if info.status is ServiceStatus.RUNNING:
+                return True
+            await asyncio.sleep(1.0)
+        return False
 
     # ── snapshot → table ──────────────────────────────────────────────────
 
@@ -424,7 +436,7 @@ class TopologyPanel(Widget):
             mk, "event_service", svc.rebuild_event_service, failures
         )
         if ev_ok:
-            if not await svc.wait_healthy_event_service(timeout=30):
+            if not await self._wait_event_service_healthy(timeout=30):
                 self._append_line(mk, "  ⚠ event_service unhealthy (continuing)")
 
         # Phase 3: Critical local services

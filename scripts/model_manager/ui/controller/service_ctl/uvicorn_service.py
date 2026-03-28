@@ -76,6 +76,7 @@ async def _start_uvicorn_service(
     tcp_config: tuple[str, int] | None,
     log_dir: Path,
     log_filename: str,
+    extra_env: dict[str, str] | None = None,
     on_timeout_success: (
         Callable[[Path | None, tuple[str, int] | None, int], None] | None
     ) = None,
@@ -122,6 +123,8 @@ async def _start_uvicorn_service(
         env["PYTHONPATH"] = (
             f"{libs_path}:{existing_pythonpath}" if existing_pythonpath else libs_path
         )
+        if extra_env:
+            env.update(extra_env)
 
         uvicorn_args: list[str] = ["-m", "uvicorn", app_module]
         if uds_mode and socket_path is not None:
@@ -146,7 +149,9 @@ async def _start_uvicorn_service(
             tail = _read_log_tail(log_file)
             return f"{service_name} failed (exit {exit_code}).\n{tail}"
         except TimeoutError:
-            logger.info("%s subprocess remained alive after startup probe", service_name)
+            logger.info(
+                "%s subprocess remained alive after startup probe", service_name
+            )
             if on_timeout_success is not None:
                 on_timeout_success(socket_path, tcp_config, process.pid)
             fd = _acquire_lock(lock_file)

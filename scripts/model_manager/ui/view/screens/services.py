@@ -20,6 +20,7 @@ from ...controller.service_config import (
     is_mcp_configured,
     is_rag_configured,
 )
+from ...model.service_state import ServiceOwnership, ServiceStatus
 from ..widgets.log_stream import LogStream
 
 _SCOPE_FLAGS: dict[str, list[str]] = {
@@ -30,9 +31,6 @@ _SCOPE_FLAGS: dict[str, list[str]] = {
 _CACHE_TARGET_LABELS: dict[str, str] = {
     "gateway": "Gateway",
     "mcp": "MCP",
-    "cortex-api": "Cortex API",
-    "agent-bus": "Agent Bus",
-    "event-service": "Event Service",
 }
 
 
@@ -124,9 +122,6 @@ class ServicesScreen(Screen):
                 [
                     ("Gateway cache", "gateway"),
                     ("MCP cache", "mcp"),
-                    ("Cortex cache", "cortex-api"),
-                    ("Agent Bus cache", "agent-bus"),
-                    ("Event Service cache", "event-service"),
                 ],
                 id="cache-target",
                 value="gateway",
@@ -422,9 +417,13 @@ class ServicesScreen(Screen):
             self.query_one("#svc-cortex", Static).update(
                 f"  Cortex:   {cortex.detail or cortex.status}"
             )
-            cortex_up = cortex.status.value == "running"
-            self.query_one("#btn-start-cortex", Button).disabled = cortex_up
-            self.query_one("#btn-stop-cortex", Button).disabled = not cortex_up
+            cortex_managed = cortex.ownership is ServiceOwnership.MANAGED
+            self.query_one("#btn-start-cortex", Button).disabled = (
+                cortex.status is not ServiceStatus.STOPPED
+            )
+            self.query_one("#btn-stop-cortex", Button).disabled = not (
+                cortex.status is not ServiceStatus.STOPPED and cortex_managed
+            )
         else:
             self.query_one("#svc-cortex", Static).update("  Cortex:   (not configured)")
             self.query_one("#btn-start-cortex", Button).disabled = True
@@ -434,9 +433,13 @@ class ServicesScreen(Screen):
             self.query_one("#svc-agentbus", Static).update(
                 f"  AgentBus: {agent_bus.detail or agent_bus.status}"
             )
-            bus_up = agent_bus.status.value == "running"
-            self.query_one("#btn-start-agentbus", Button).disabled = bus_up
-            self.query_one("#btn-stop-agentbus", Button).disabled = not bus_up
+            bus_managed = agent_bus.ownership is ServiceOwnership.MANAGED
+            self.query_one("#btn-start-agentbus", Button).disabled = (
+                agent_bus.status is not ServiceStatus.STOPPED
+            )
+            self.query_one("#btn-stop-agentbus", Button).disabled = not (
+                agent_bus.status is not ServiceStatus.STOPPED and bus_managed
+            )
         else:
             self.query_one("#svc-agentbus", Static).update(
                 "  AgentBus: (not configured)"
@@ -455,7 +458,7 @@ class ServicesScreen(Screen):
         rag_up = rag_cfg and rag.status.value != "stopped"
         cp_up = cp_cfg and cp.status.value != "stopped"
         sidecar_up = sidecar.status.value == "running"
-        events_up = events.status.value == "running"
+        events_managed = events.ownership is ServiceOwnership.MANAGED
         self.query_one("#btn-start-gw", Button).disabled = gw_exists
         self.query_one("#btn-stop-gw", Button).disabled = not gw_exists
         self.query_one("#btn-start-sg", Button).disabled = sg_up
@@ -466,8 +469,12 @@ class ServicesScreen(Screen):
         self.query_one("#btn-stop-cp", Button).disabled = not cp_up
         self.query_one("#btn-start-sidecar", Button).disabled = sidecar_up
         self.query_one("#btn-stop-sidecar", Button).disabled = not sidecar_up
-        self.query_one("#btn-start-events", Button).disabled = events_up
-        self.query_one("#btn-stop-events", Button).disabled = not events_up
+        self.query_one("#btn-start-events", Button).disabled = (
+            events.status is not ServiceStatus.STOPPED
+        )
+        self.query_one("#btn-stop-events", Button).disabled = not (
+            events.status is not ServiceStatus.STOPPED and events_managed
+        )
 
     def _update_build_flags(self) -> None:
         scope_sel = self.query_one("#build-scope", Select)

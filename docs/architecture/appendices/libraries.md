@@ -17,6 +17,8 @@ All libraries live in `libs/` and are importable via `PYTHONPATH` (set by `sitec
 | `provenance` | Pipeline artifact provenance tracking | Consensus pipelines |
 | `inference_djinn` | Inference engine abstraction | Gateway workers |
 | `transport_utils` | Shared HTTP transport helpers for UDS/TCP resolution | Stargate pipelines, tooling |
+| `event_store` | Embeddable event-service core (ingest, query, retention, operations) | Event Service, observability tooling |
+| `agent_bus_store` | Embeddable agent-bus core (FastAPI app, routes, DB layer, CLI server) | Agent Bus service wrapper, orchestration tooling |
 
 ## universal_event_bus
 
@@ -125,6 +127,27 @@ socket and TCP connectivity.
   UDS default (`unix:///tmp/universal-protocol/rag.sock`) and TCP opt-in
 - Exposes `make_sync_client()` and `make_async_client()` using `httpx`
   UDS transports when needed
+
+## event_store
+
+Embeddable event-service library extracted from `services/event-service/`.
+
+- `server.py` provides `run_service()`, `start_event_service()`, and `create_app()`
+- `ingest.py` handles NDJSON ingest over UDS/TCP with queue-backed DB writer
+- `store.py` owns SQLite schema, retention, and realtime ring buffer
+- `operations.py`, `operations_impl.py`, and `operations_trace.py` define named
+  observability operations and dispatch
+- `query.py` and `subscribe.py` expose HTTP query and WebSocket subscribe handlers
+
+## agent_bus_store
+
+Embeddable agent-bus library extracted from `services/agent-bus/src/`.
+
+- `server.py` provides `create_app()`, `run_service()`, and `start_agent_bus()`
+- `__main__.py` provides CLI startup via `python -m agent_bus_store serve`
+- `db/` contains SQLite schema and CRUD helpers for legacy messages, threads, and turns
+- `routes/` contains FastAPI route handlers for `/messages`, `/threads`, and `/turns`
+- `auth.py`, `models.py`, and `turns_models.py` expose auth dependency and Pydantic API models
 
 ## Dependency Graph
 

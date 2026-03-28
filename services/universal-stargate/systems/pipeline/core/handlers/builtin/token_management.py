@@ -140,7 +140,7 @@ def _check_context_feasibility(
 
         # Bus signal (Event, not PipelineEvent) — via injected callback
         bus_event = StepContextExceeded(
-            pipeline_id=context.pipeline.name,
+            pipeline_id=context.pipeline.id,
             execution_id=context.execution_id,
             step_name=step.name,
             model_id=resolved_model_id,

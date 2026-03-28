@@ -10,6 +10,7 @@ import socket
 import stat
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -32,6 +33,12 @@ class ServiceStatus(StrEnum):
     UNKNOWN = "unknown"
 
 
+class ServiceOwnership(StrEnum):
+    MANAGED = "managed"
+    EXTERNAL = "external"
+    UNKNOWN = "unknown"
+
+
 @dataclass(slots=True, kw_only=True)
 class ServiceInfo:
     name: str
@@ -41,6 +48,7 @@ class ServiceInfo:
     container_name: str | None = None
     health_url: str | None = None
     detail: str = ""
+    ownership: ServiceOwnership = ServiceOwnership.UNKNOWN
 
 
 class ServiceState:
@@ -68,6 +76,9 @@ class ServiceState:
             self.check_stargate(),
             self.check_rag(),
             self.check_cloud_proxy(),
+            self.check_event_service(),
+            self.check_cortex_api(),
+            self.check_agent_bus(),
         ]
 
     def check_rag(self) -> ServiceInfo:
@@ -395,26 +406,155 @@ class ServiceState:
             return info
         return ServiceInfo(name="MCP", status=ServiceStatus.STOPPED)
 
+    CORTEX_API_PID_FILE: Path = Path.home() / ".gateway" / "cortex-api.pid"
+    CORTEX_API_SOCK: Path = Path("/tmp/universal-protocol/cortex-api.sock")
+
+    AGENT_BUS_PID_FILE: Path = Path.home() / ".gateway" / "agent-bus.pid"
+    AGENT_BUS_SOCK: Path = Path("/tmp/universal-protocol/agent-bus.sock")
+
     def check_cortex_api(self) -> ServiceInfo:
-        """Check cortex-api container status using exact-name docker inspection helper."""
-        info = self._check_named_container("cortex-api", service_name="Cortex")
-        if info:
-            return info
-        return ServiceInfo(name="Cortex", status=ServiceStatus.STOPPED)
+        """Check cortex-api status via PID file + UDS health probe."""
+        return self._check_uds_service(
+            name="Cortex",
+            pid_file=self.CORTEX_API_PID_FILE,
+            socket_path=self.CORTEX_API_SOCK,
+            health_endpoint="/health",
+            managed_pid_predicate=lambda pid: self._pid_cmdline_contains(
+                pid, "cortex_store.main:app", "--uds"
+            ),
+        )
 
     def check_agent_bus(self) -> ServiceInfo:
-        """Check agent-bus container status using exact-name docker inspection helper."""
-        info = self._check_named_container("agent-bus", service_name="Agent Bus")
-        if info:
-            return info
-        return ServiceInfo(name="Agent Bus", status=ServiceStatus.STOPPED)
+        """Check agent-bus status via PID file + UDS health probe."""
+        return self._check_uds_service(
+            name="Agent Bus",
+            pid_file=self.AGENT_BUS_PID_FILE,
+            socket_path=self.AGENT_BUS_SOCK,
+            health_endpoint="/health",
+            managed_pid_predicate=lambda pid: self._pid_cmdline_contains(
+                pid, "agent_bus_store.server:app", "--uds"
+            ),
+        )
+
+    EVENT_SERVICE_PID_FILE: Path = Path.home() / ".gateway" / "event-service.pid"
+    EVENT_SERVICE_QUERY_SOCK: Path = Path("/tmp/universal-protocol/events-query.sock")
 
     def check_event_service(self) -> ServiceInfo:
-        """Check event service container status."""
-        info = self._check_named_container("event-service", service_name="Events")
-        if info:
-            return info
-        return ServiceInfo(name="Events", status=ServiceStatus.STOPPED)
+        """Check event service status via PID file + UDS health probe."""
+        return self._check_uds_service(
+            name="Events",
+            pid_file=self.EVENT_SERVICE_PID_FILE,
+            socket_path=self.EVENT_SERVICE_QUERY_SOCK,
+            health_endpoint="/health",
+            managed_pid_predicate=lambda pid: self._pid_cmdline_contains(
+                pid, "event_store", "serve"
+            ),
+        )
+
+    def _event_service_probe_uds(self, socket_path: Path) -> bool:
+        """Probe /health via UDS on the event-service query socket."""
+        return self._probe_uds_health(socket_path, "/health")
+
+    def _probe_uds_health(self, socket_path: Path, endpoint: str = "/health") -> bool:
+        """Probe an endpoint via UDS. Short timeout, fail closed."""
+        from transport_utils import make_sync_client
+
+        try:
+            with make_sync_client(
+                f"unix://{socket_path}", timeout=_SERVICE_HEALTH_TIMEOUT
+            ) as client:
+                resp = client.get(endpoint)
+                return resp.status_code == 200
+        except Exception:
+            return False
+
+    def _check_uds_service(
+        self,
+        *,
+        name: str,
+        pid_file: Path,
+        socket_path: Path,
+        health_endpoint: str = "/health",
+        managed_pid_predicate: Callable[[int], bool] | None = None,
+    ) -> ServiceInfo:
+        """Generic UDS service health check: PID file + socket + health probe."""
+        pid, pid_note = self._resolve_pid_file(pid_file)
+        managed_pid = (
+            pid if pid is not None and self._pid_is_managed(pid, managed_pid_predicate) else None
+        )
+
+        if not socket_path.exists():
+            if managed_pid is not None:
+                return ServiceInfo(
+                    name=name,
+                    status=ServiceStatus.UNHEALTHY,
+                    pid=managed_pid,
+                    health_url=f"unix://{socket_path}{health_endpoint}",
+                    detail=self._with_note(
+                        f"PID {managed_pid}, socket not ready", pid_note
+                    ),
+                    ownership=ServiceOwnership.MANAGED,
+                )
+            return ServiceInfo(
+                name=name,
+                status=ServiceStatus.STOPPED,
+                detail=pid_note or "",
+            )
+        healthy = self._probe_uds_health(socket_path, health_endpoint)
+        listener_pid = self._find_unix_listener_pid(socket_path) if healthy else None
+        listener_is_managed = self._pid_is_managed(listener_pid, managed_pid_predicate)
+        if listener_is_managed and listener_pid is not None and listener_pid != managed_pid:
+            self._write_pid_file(pid_file, listener_pid)
+            managed_pid = listener_pid
+            pid_note = self._merge_notes(
+                pid_note, "PID file refreshed from live socket"
+            )
+        if managed_pid is not None:
+            uptime = self._proc_uptime_str(managed_pid)
+            uptime_str = f" ({uptime})" if uptime else ""
+            return ServiceInfo(
+                name=name,
+                status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
+                pid=managed_pid,
+                health_url=f"unix://{socket_path}{health_endpoint}",
+                detail=self._with_note(
+                    f"PID {managed_pid}{uptime_str}"
+                    + ("" if healthy else ", probe failed"),
+                    pid_note,
+                ),
+                ownership=ServiceOwnership.MANAGED,
+            )
+        if not healthy and self._unlink_stale_socket(socket_path):
+            return ServiceInfo(
+                name=name,
+                status=ServiceStatus.STOPPED,
+                detail=self._merge_notes(pid_note, "stale socket removed") or "",
+            )
+        if listener_pid is not None:
+            uptime = self._proc_uptime_str(listener_pid)
+            uptime_str = f" ({uptime})" if uptime else ""
+            return ServiceInfo(
+                name=name,
+                status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
+                pid=listener_pid,
+                health_url=f"unix://{socket_path}{health_endpoint}",
+                detail=self._with_note(
+                    f"PID {listener_pid}{uptime_str}, externally managed"
+                    + ("" if healthy else ", probe failed"),
+                    pid_note,
+                ),
+                ownership=ServiceOwnership.EXTERNAL,
+            )
+        return ServiceInfo(
+            name=name,
+            status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
+            detail=self._with_note(
+                "Socket ready (PID file missing)"
+                if healthy
+                else "Socket ready, probe failed",
+                pid_note,
+            ),
+        )
 
     def _check_named_container(
         self, name: str, *, service_name: str = "Gateway"
@@ -665,6 +805,26 @@ class ServiceState:
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
             logger.warning("ss lookup failed for socket %s: %s", socket_path, e)
         return None
+
+    @staticmethod
+    def _pid_cmdline_contains(pid: int, *needles: str) -> bool:
+        try:
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(
+                errors="replace"
+            )
+        except OSError:
+            return False
+        return all(needle in cmdline for needle in needles)
+
+    @staticmethod
+    def _pid_is_managed(
+        pid: int | None, predicate: Callable[[int], bool] | None
+    ) -> bool:
+        if pid is None:
+            return False
+        if predicate is None:
+            return True
+        return predicate(pid)
 
     @staticmethod
     def _unlink_path(path: Path) -> bool:

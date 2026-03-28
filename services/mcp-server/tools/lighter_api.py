@@ -1,17 +1,25 @@
 """MCP tool: lighter_api — live Lighter exchange data via public SDK calls.
 
 Read-only access to Lighter DEX: positions, orders, orderbook, balance,
-funding rates, markets. Complements lighter_trades (which reads the bot's
-local DB) by querying the exchange directly.
+funding rates, markets. When CLAUDEBURST_PERPS_HOST is configured, account-
+scoped ops default to the bot's Lighter account (resolved correctly via the
+bot REST endpoint — LIGHTER_API_KEY_INDEX is a signing key index, not an
+account index, and is never used directly as one). Explicit account_index/
+account_address overrides to any account.
 
 Runtime config:
-  LIGHTER_BASE_URL — API endpoint (default: mainnet)
+  LIGHTER_BASE_URL        — API endpoint (default: mainnet)
+  CLAUDEBURST_PERPS_HOST  — bot host for account index resolution
+  CLAUDEBURST_PERPS_PORT  — bot port (default: 8891)
+  LIGHTER_API_KEY_INDEX   — used only to detect bot context; NOT passed to Lighter
+  LIGHTER_L1_ADDRESS      — fallback L1 address for manual resolution
 """
 
 from __future__ import annotations
 
 import logging
 import os
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from mcp_events import monotonic_now, record
@@ -22,6 +30,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _BASE_URL = os.getenv("LIGHTER_BASE_URL", "https://mainnet.zklighter.elliot.ai")
+_DEFAULT_L1_ADDRESS = os.getenv("LIGHTER_L1_ADDRESS", "")
+_BOT_ACCOUNT_INDEX_RAW = os.getenv("LIGHTER_API_KEY_INDEX", "").strip()
+# LIGHTER_API_KEY_INDEX is a signing key selector — NOT a Lighter account index.
+# Never pass this value directly to Lighter account APIs.
+# Transparent bot-account routing is done via the bot REST endpoint (CLAUDEBURST_PERPS_HOST).
+_BOT_PERPS_HOST = os.getenv("CLAUDEBURST_PERPS_HOST", "")
+_BOT_PERPS_PORT = int(os.getenv("CLAUDEBURST_PERPS_PORT", "8891"))
+_HAS_BOT_ACCOUNT = bool(_BOT_ACCOUNT_INDEX_RAW or _BOT_PERPS_HOST)
+_FUNDING_SORT_FIELDS = {"market_id", "symbol", "exchange", "rate", "abs_rate"}
+_FUNDING_GROUP_FIELDS = {"market_id", "symbol", "exchange"}
 
 
 async def _get_api() -> Any:
@@ -30,6 +48,28 @@ async def _get_api() -> Any:
 
     config = lighter.Configuration(host=_BASE_URL)
     return lighter.ApiClient(configuration=config)
+
+
+async def _resolve_bot_account_index() -> int | None:
+    """Ask the bot for its resolved Lighter account index.
+
+    LIGHTER_API_KEY_INDEX is a signing key selector, not a Lighter account
+    index. The bot resolves the real account index at startup. We fetch it here
+    so lighter_api can query the correct account without knowing account 17764+.
+    """
+    if not _BOT_PERPS_HOST:
+        return None
+    import httpx
+
+    base = f"http://{_BOT_PERPS_HOST}:{_BOT_PERPS_PORT}"
+    try:
+        async with httpx.AsyncClient(base_url=base, timeout=5.0) as client:
+            resp = await client.get("/live/account")
+            resp.raise_for_status()
+            return int(resp.json()["account_index"])
+    except Exception as exc:
+        logger.warning("Could not resolve bot account index from %s: %s", base, exc)
+        return None
 
 
 async def _resolve_account_index(
@@ -155,7 +195,52 @@ async def _op_orderbook(api: Any, market_id: int, depth: int) -> dict[str, Any]:
     }
 
 
-async def _op_funding(api: Any) -> dict[str, Any]:
+def _sort_funding_rates(
+    rates: list[dict[str, Any]], sort_by: str
+) -> list[dict[str, Any]]:
+    """Return a deterministically sorted funding snapshot."""
+    if not sort_by:
+        return rates
+
+    descending = sort_by.startswith("-")
+    field = sort_by[1:] if descending else sort_by
+    if field not in _FUNDING_SORT_FIELDS:
+        raise ValueError(
+            "sort_by must be one of: market_id, symbol, exchange, rate, abs_rate"
+        )
+
+    def _rate_key(row: dict[str, Any]) -> float:
+        return abs(float(row["rate"]))
+
+    def _field_key(row: dict[str, Any]) -> Any:
+        return row[field]
+
+    key_fn = _rate_key if field == "abs_rate" else _field_key
+    return sorted(rates, key=key_fn, reverse=descending)
+
+
+def _group_funding_rates(
+    rates: list[dict[str, Any]], group_by: str
+) -> list[dict[str, Any]]:
+    """Group funding rows after any requested sorting has been applied."""
+    if not group_by:
+        return []
+    if group_by not in _FUNDING_GROUP_FIELDS:
+        raise ValueError("group_by must be one of: market_id, symbol, exchange")
+
+    grouped: dict[Any, list[dict[str, Any]]] = defaultdict(list)
+    for row in rates:
+        grouped[row[group_by]].append(row)
+
+    return [
+        {"value": value, "count": len(grouped_rows), "funding_rates": grouped_rows}
+        for value, grouped_rows in grouped.items()
+    ]
+
+
+async def _op_funding(
+    api: Any, *, sort_by: str = "", group_by: str = ""
+) -> dict[str, Any]:
     import lighter
 
     funding_api = lighter.FundingApi(api)
@@ -166,10 +251,21 @@ async def _op_funding(api: Any) -> dict[str, Any]:
             rates.append(
                 {
                     "market_id": int(fr.market_id),
+                    "symbol": str(getattr(fr, "symbol", "")),
+                    "exchange": str(getattr(fr, "exchange", "")),
                     "rate": float(fr.rate),
                 }
             )
-    return {"funding_rates": rates, "count": len(rates)}
+
+    sorted_rates = _sort_funding_rates(rates, sort_by.strip())
+    result: dict[str, Any] = {"funding_rates": sorted_rates, "count": len(sorted_rates)}
+    normalized_group_by = group_by.strip()
+    if sort_by:
+        result["sort_by"] = sort_by.strip()
+    if normalized_group_by:
+        result["group_by"] = normalized_group_by
+        result["groups"] = _group_funding_rates(sorted_rates, normalized_group_by)
+    return result
 
 
 async def _op_markets(api: Any) -> dict[str, Any]:
@@ -197,12 +293,16 @@ def register_lighter_api_tools(mcp: FastMCP) -> None:
         market_id: int = 0,
         depth: int = 5,
         account_address: str = "",
-        account_index: int = 0,
+        account_index: int | None = None,
+        sort_by: str = "",
+        group_by: str = "",
     ) -> dict[str, Any]:
         """Query the public Lighter DEX API — live exchange state, not local DB.
 
         Use lighter_trades for the bot's local trade log (DB).
-        Use lighter_api for live exchange truth (positions, orders, book, balance).
+        Use claudeburst_perps for bot control (status, kill, pause) and bot-local
+        state. For live exchange data (positions, orders, balance), this tool and
+        claudeburst_perps(op="live_account") return the same source of truth.
         This tool is intentionally read-only and does not use wallet credentials.
 
         Operations:
@@ -210,19 +310,45 @@ def register_lighter_api_tools(mcp: FastMCP) -> None:
           orders    — open orders on the exchange
           balance   — collateral/equity
           orderbook — bids/asks for a market (requires market_id, depth default 5)
-          funding   — current funding rates for all markets
+          funding   — current funding rates for all markets; preserves symbol and exchange
           markets   — list all available markets with metadata
 
         Account-scoped operations:
-          positions / orders / balance require either account_address or account_index.
+          positions / orders / balance require an account identifier.
+          If neither `account_index` nor `account_address` is provided:
+            - When the perps bot is configured (CLAUDEBURST_PERPS_HOST), the bot's
+              Lighter account index is resolved automatically via the bot REST API
+              (response includes `_source: "bot_account"` and `_account_index`).
+            - Otherwise, falls back to `LIGHTER_L1_ADDRESS` if set.
+          Pass an explicit `account_index` or `account_address` to inspect a
+          different account.
+          Note: LIGHTER_API_KEY_INDEX is a signing key selector, not an account
+          index — account 5 ≠ key index 5. Never use the key index as an account.
           Public operations (markets / funding / orderbook) do not require either.
+
+        Funding-specific output controls:
+          Use sort_by for deterministic inspection output. Valid fields:
+          market_id, symbol, exchange, rate, abs_rate. Prefix with '-' for descending.
+          Use group_by to bucket funding rows by market_id, symbol, or exchange.
         """
         t0 = monotonic_now()
         api = await _get_api()
         try:
-            resolved_address = account_address.strip() or None
-            resolved_index = account_index if account_index > 0 else None
+            resolved_address = account_address.strip() or _DEFAULT_L1_ADDRESS or None
+            resolved_index = account_index
+            used_bot_default = False
+            idx: int | None = None
             if op in ("positions", "orders", "balance"):
+                if (
+                    resolved_index is None
+                    and not account_address.strip()
+                    and _HAS_BOT_ACCOUNT
+                ):
+                    # Resolve actual Lighter account index from the bot — LIGHTER_API_KEY_INDEX
+                    # is a signing key selector (not an account index; key 5 ≠ account 5).
+                    resolved_index = await _resolve_bot_account_index()
+                    if resolved_index is not None:
+                        used_bot_default = True
                 idx = await _resolve_account_index(
                     api,
                     account_address=resolved_address or "",
@@ -230,17 +356,27 @@ def register_lighter_api_tools(mcp: FastMCP) -> None:
                 )
 
             if op == "positions":
+                if idx is None:
+                    return {"error": "account_address or account_index is required"}
                 result = await _op_positions(api, idx)
             elif op == "orders":
+                if idx is None:
+                    return {"error": "account_address or account_index is required"}
                 result = await _op_orders(api, idx)
             elif op == "balance":
+                if idx is None:
+                    return {"error": "account_address or account_index is required"}
                 result = await _op_balance(api, idx, resolved_address)
             elif op == "orderbook":
                 if market_id <= 0:
                     return {"error": "market_id required for orderbook op"}
                 result = await _op_orderbook(api, market_id, depth)
             elif op == "funding":
-                result = await _op_funding(api)
+                result = await _op_funding(
+                    api,
+                    sort_by=sort_by,
+                    group_by=group_by,
+                )
             elif op == "markets":
                 result = await _op_markets(api)
             else:
@@ -255,4 +391,7 @@ def register_lighter_api_tools(mcp: FastMCP) -> None:
 
         duration = monotonic_now() - t0
         record("mcp.lighter.api.queried", op=op, duration_s=round(duration, 3))
+        if used_bot_default and isinstance(result, dict):
+            result["_source"] = "bot_account"
+            result["_account_index"] = idx
         return result

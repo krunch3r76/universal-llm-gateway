@@ -635,10 +635,13 @@ def normalize_html_to_markdown(path: str, html: str) -> str:
         tag.decompose()
     for node in soup.select("[hidden], [aria-hidden='true']"):
         node.decompose()
-    for node in soup.select(_BOILERPLATE_SELECTORS):
-        node.decompose()
 
     root = soup.select_one("main") or soup.select_one("article") or soup.body or soup
+
+    for node in root.select(_BOILERPLATE_SELECTORS):
+        if node is root:
+            continue
+        node.decompose()
     markdown = md(
         str(root),
         heading_style="ATX",

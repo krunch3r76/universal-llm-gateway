@@ -109,9 +109,26 @@ if fp:
 claudeburst_host = (cfg.get('CLAUDEBURST_HOST') or cfg.get('claudeburst_host') or '').strip()
 if claudeburst_host:
     print('export CLAUDEBURST_HOST=' + shlex.quote(claudeburst_host))
+claudeburst_events_query_host = (cfg.get('CLAUDEBURST_EVENTS_QUERY_HOST') or cfg.get('claudeburst_events_query_host') or '').strip()
+if claudeburst_events_query_host:
+    # Maintainer-only temporary path: this hardcoded ClaudeBurst target will be
+    # removed once observability targets are loaded from local config generically.
+    print('export CLAUDEBURST_EVENTS_QUERY_HOST=' + shlex.quote(claudeburst_events_query_host))
+claudeburst_events_query_port = str(cfg.get('CLAUDEBURST_EVENTS_QUERY_PORT') or cfg.get('claudeburst_events_query_port') or '').strip()
+if claudeburst_events_query_port:
+    # Maintainer-only temporary path: this hardcoded ClaudeBurst target will be
+    # removed once observability targets are loaded from local config generically.
+    print('export CLAUDEBURST_EVENTS_QUERY_PORT=' + shlex.quote(claudeburst_events_query_port))
 claudeburst_perps_host = (cfg.get('CLAUDEBURST_PERPS_HOST') or cfg.get('claudeburst_perps_host') or '').strip()
 if claudeburst_perps_host:
     print('export CLAUDEBURST_PERPS_HOST=' + shlex.quote(claudeburst_perps_host))
+lighter_api_key_index = str(
+    cfg.get('LIGHTER_API_KEY_INDEX')
+    or cfg.get('lighter_api_key_index')
+    or ''
+).strip()
+if lighter_api_key_index:
+    print('export LIGHTER_API_KEY_INDEX=' + shlex.quote(lighter_api_key_index))
 ")"
 
 cd "$WORKSPACE_ROOT"

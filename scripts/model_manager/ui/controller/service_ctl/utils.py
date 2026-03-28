@@ -72,6 +72,32 @@ def _find_uvicorn_pid_by_cmdline(app_module: str, *, uds_mode: bool) -> int | No
     return None
 
 
+def _validate_module_pid(pid: int, module_name: str, subcmd: str = "serve") -> bool:
+    """Check PID is alive and cmdline matches ``python -m module_name subcmd``."""
+    try:
+        proc = psutil.Process(pid)
+        if not proc.is_running():
+            return False
+        cmdline = proc.cmdline() or []
+        cmd_str = " ".join(cmdline)
+        return module_name in cmd_str and subcmd in cmd_str
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return False
+
+
+def _find_module_pid_by_cmdline(module_name: str, subcmd: str = "serve") -> int | None:
+    """Find process by cmdline containing ``module_name`` and ``subcmd``."""
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        try:
+            cmdline = proc.info.get("cmdline") or []
+            cmd_str = " ".join(str(c) for c in cmdline)
+            if module_name in cmd_str and subcmd in cmd_str:
+                return proc.info["pid"]
+        except (psutil.NoSuchProcess, psutil.AccessDenied, TypeError):
+            continue
+    return None
+
+
 def _safe_unlink_stale_socket(socket_path: Path) -> bool:
     """Unlink socket only if stale: not actively listened on by any live process, S_ISSOCK.
 
