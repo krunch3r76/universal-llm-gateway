@@ -106,6 +106,12 @@ if mcp_url:
 fp = (cfg.get('firefox_profile_dir') or '').strip()
 if fp:
     print('export FIREFOX_PROFILE_DIR=' + shlex.quote(str(Path(fp).expanduser())))
+claudeburst_host = (cfg.get('CLAUDEBURST_HOST') or cfg.get('claudeburst_host') or '').strip()
+if claudeburst_host:
+    print('export CLAUDEBURST_HOST=' + shlex.quote(claudeburst_host))
+claudeburst_perps_host = (cfg.get('CLAUDEBURST_PERPS_HOST') or cfg.get('claudeburst_perps_host') or '').strip()
+if claudeburst_perps_host:
+    print('export CLAUDEBURST_PERPS_HOST=' + shlex.quote(claudeburst_perps_host))
 ")"
 
 cd "$WORKSPACE_ROOT"

@@ -7,6 +7,10 @@ DB path: /data/project/claudeburst/data/perps_trades.db
 (host: /mnt/torus/projects/claudeburst/data/perps_trades.db)
 """
 
+# TODO: Migrate status/positions/pnl queries to claudeburst_perps REST API
+# once perps bot REST surface is live. Historical trades/signals may remain
+# as SQLite queries.
+
 from __future__ import annotations
 
 import logging

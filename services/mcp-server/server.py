@@ -31,10 +31,11 @@ from oauth_store import OAuthStore
 from request_profile import current_profile
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
-
 from tools.agent_bus import register_agent_bus_tools
 from tools.agent_consult import register_agent_consult_tools
 from tools.browser import register_browser_tools
+from tools.claudeburst import register_claudeburst_tools
+from tools.claudeburst_perps import register_claudeburst_perps_tools
 from tools.context import register_context_tools
 from tools.cortex import register_cortex_tools
 from tools.cortex_v2 import register_cortex_v2_tools
@@ -46,6 +47,7 @@ from tools.finance_ingest import register_finance_ingest_tools
 from tools.finance_reconcile import register_finance_reconcile_tools
 from tools.finance_smart_ingest import register_finance_smart_ingest_tools
 from tools.ingest_binary import register_ingest_binary_tools
+from tools.lighter_api import register_lighter_api_tools
 from tools.lighter_trades import register_lighter_trades_tools
 from tools.llm import register_llm_tools
 from tools.local_api import register_local_api_tools
@@ -277,6 +279,9 @@ def _build_server() -> FastMCP:
     register_cortex_v2_tools(mcp)
     register_llm_tools(mcp)
     register_lighter_trades_tools(mcp)
+    register_lighter_api_tools(mcp)
+    register_claudeburst_tools(mcp)
+    register_claudeburst_perps_tools(mcp)
 
     @mcp.tool()
     def health() -> dict[str, str]:
@@ -372,6 +377,9 @@ def _build_server() -> FastMCP:
           Trading:
             lighter_trades(op, limit?, status?) — query Lighter perps trade log.
                 ops: status (dashboard), trades, signals, pnl, positions.
+            lighter_api(op, market_id?, depth?, account_address?, account_index?) — query Lighter DEX live state.
+                ops: positions, orders, balance, orderbook, funding, markets.
+                account_address or account_index is required for positions, orders, and balance.
           Quality & infra:
             quality_gate(files) — run ruff + compileall
             pipeline_consult(execution_id, step_name, problem)

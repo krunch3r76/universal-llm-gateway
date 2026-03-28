@@ -69,6 +69,11 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - XAI_API_KEY=${XAI_API_KEY:-}
       - MCP_SERVER_URL=${MCP_SERVER_URL:-}
+      - LIGHTER_BASE_URL=${LIGHTER_BASE_URL:-https://mainnet.zklighter.elliot.ai}
+      - CLAUDEBURST_HOST=${CLAUDEBURST_HOST:-}
+      - CLAUDEBURST_PORT=${CLAUDEBURST_PORT:-8890}
+      - CLAUDEBURST_PERPS_HOST=${CLAUDEBURST_PERPS_HOST:-}
+      - CLAUDEBURST_PERPS_PORT=${CLAUDEBURST_PERPS_PORT:-8891}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:
