@@ -525,6 +525,12 @@ WORKDIR /app/services/_universal-llm-gateway
 ARG CPU_OPTIMIZATION=avx2
 ARG GPU_ARCH=multi
 ARG CUDA_VERSION=13.0.0
+ARG VLLM_VERSION=
+ARG VLLM_FROM_SOURCE=true
+ARG TORCH_NIGHTLY_DATE=20260315
+ARG LLAMA_SERVER_VERSION=b8369
+ARG LLAMA_CPP_PYTHON_VERSION=
+ARG BUILD_TIMESTAMP=
 
 LABEL gpu.enabled="true"
 LABEL gpu.backend="CUDA"
@@ -532,6 +538,13 @@ LABEL gpu.cuda_version="${CUDA_VERSION}"
 LABEL gpu.arch="${GPU_ARCH}"
 LABEL cpu.optimization="${CPU_OPTIMIZATION}"
 LABEL vllm.enabled="${ENABLE_VLLM}"
+LABEL build.vllm.version="${VLLM_VERSION}"
+LABEL build.vllm.from.source="${VLLM_FROM_SOURCE}"
+LABEL build.torch.nightly.date="${TORCH_NIGHTLY_DATE}"
+LABEL build.llama.server.version="${LLAMA_SERVER_VERSION}"
+LABEL build.llama.cpp.python.version="${LLAMA_CPP_PYTHON_VERSION}"
+LABEL build.llama.cpp.python.enabled="${ENABLE_LLAMA_CPP_PYTHON}"
+LABEL build.timestamp="${BUILD_TIMESTAMP}"
 LABEL security.user="appuser"
 LABEL security.uid="1000"
 LABEL security.groups="appuser,video"

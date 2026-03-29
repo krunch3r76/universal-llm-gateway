@@ -116,9 +116,17 @@ class RagRerankAssembleHandler(BaseHandler):
         effective = context.options
         rerank_enabled = bool(effective.get("rerank_enabled", False))
         rerank_mode = str(effective.get("rerank_mode", "generative"))
+        include_section_headings = bool(
+            effective.get("rag_include_section_headings", False)
+        )
+        include_source_titles = bool(effective.get("rag_include_source_titles", False))
 
         if not chunks_data or not rerank_enabled or len(chunks_data) <= 3:
-            context_text = format_context(chunks_data)
+            context_text = format_context(
+                chunks_data,
+                include_section_headings=include_section_headings,
+                include_source_titles=include_source_titles,
+            )
             self._emit_rerank_event(
                 context,
                 step,
@@ -175,6 +183,12 @@ class RagRerankAssembleHandler(BaseHandler):
     ) -> StepOutput:
         """Run sliding-window LLM reranking, fuse scores, format context."""
         _start = _time.monotonic()
+        include_section_headings = bool(
+            context.options.get("rag_include_section_headings", False)
+        )
+        include_source_titles = bool(
+            context.options.get("rag_include_source_titles", False)
+        )
 
         candidates = chunks_data[:max_candidates]
         chunk_ids = [c["content_hash"][:8] for c in candidates]
@@ -266,7 +280,11 @@ class RagRerankAssembleHandler(BaseHandler):
             old_pos = prior_order.get(cid, new_pos)
             max_move_observed = max(max_move_observed, abs(new_pos - old_pos))
 
-        context_text = format_context(all_chunks)
+        context_text = format_context(
+            all_chunks,
+            include_section_headings=include_section_headings,
+            include_source_titles=include_source_titles,
+        )
 
         self._emit_rerank_event(
             context,
@@ -314,6 +332,12 @@ class RagRerankAssembleHandler(BaseHandler):
         ±``max_movement`` positions (default 3) relative to its pre-rerank position.
         """
         _start = _time.monotonic()
+        include_section_headings = bool(
+            context.options.get("rag_include_section_headings", False)
+        )
+        include_source_titles = bool(
+            context.options.get("rag_include_source_titles", False)
+        )
 
         candidates = chunks_data[:max_candidates]
         tail = chunks_data[max_candidates:]
@@ -357,7 +381,11 @@ class RagRerankAssembleHandler(BaseHandler):
                 len(ce_scores_raw),
                 len(candidates),
             )
-            context_text = format_context(chunks_data)
+            context_text = format_context(
+                chunks_data,
+                include_section_headings=include_section_headings,
+                include_source_titles=include_source_titles,
+            )
             self._emit_rerank_event(
                 context,
                 step,
@@ -404,7 +432,11 @@ class RagRerankAssembleHandler(BaseHandler):
             old_pos = prior_order.get(cid, new_pos)
             max_move_observed = max(max_move_observed, abs(new_pos - old_pos))
 
-        context_text = format_context(all_chunks)
+        context_text = format_context(
+            all_chunks,
+            include_section_headings=include_section_headings,
+            include_source_titles=include_source_titles,
+        )
 
         self._emit_rerank_event(
             context,

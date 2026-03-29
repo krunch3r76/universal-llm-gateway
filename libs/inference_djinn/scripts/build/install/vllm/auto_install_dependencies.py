@@ -31,6 +31,9 @@ import sys
 import zipfile
 from pathlib import Path
 
+from packaging.markers import default_environment
+from packaging.requirements import InvalidRequirement, Requirement
+
 
 def extract_dependencies_from_wheel(wheel_path: Path) -> list[str]:
     """
@@ -148,20 +151,36 @@ def install_dependencies(
         print("📦 PyTorch protection disabled (using wheel's PyTorch dependency)")
 
     install_list: list[str] = []
+    marker_env = default_environment()
+    marker_env["extra"] = ""
     for dep in dependencies:
-        # Extract package name (before any version specifier or marker)
-        # Handle both "package>=1.0" and "package>=1.0; python_version>'3.8'"
-        base_dep = dep.split(";")[0].strip() if ";" in dep else dep
-        pkg_name_match = re.match(r"^([a-zA-Z0-9_.-]+)", base_dep)
+        try:
+            requirement = Requirement(dep)
+        except InvalidRequirement:
+            requirement = None
 
-        if pkg_name_match:
-            pkg_name = pkg_name_match.group(1).lower()
-            if pkg_name in protected_packages:
-                print(f"   ⏭️  Skipping protected package: {pkg_name}")
+        if requirement is not None:
+            if requirement.marker and not requirement.marker.evaluate(marker_env):
+                print(f"   ⏭️  Skipping non-matching dependency: {dep}")
                 continue
 
-        # Remove environment markers for installation
-        clean_dep = base_dep
+            pkg_name = requirement.name.lower()
+            clean_dep = str(requirement)
+            if requirement.marker:
+                clean_dep = str(requirement).split(";", 1)[0].strip()
+        else:
+            # Fallback for malformed metadata entries.
+            base_dep = dep.split(";", 1)[0].strip()
+            pkg_name_match = re.match(r"^([a-zA-Z0-9_.-]+)", base_dep)
+            if not pkg_name_match:
+                print(f"   ⚠️  Skipping unparseable dependency: {dep}")
+                continue
+            pkg_name = pkg_name_match.group(1).lower()
+            clean_dep = base_dep
+
+        if pkg_name in protected_packages:
+            print(f"   ⏭️  Skipping protected package: {pkg_name}")
+            continue
 
         # Handle build-specific versions (like xformers==0.0.33+5d4b92a5)
         # Relax to base version

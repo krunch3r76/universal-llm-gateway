@@ -2,5 +2,5 @@ models:
   phi4:
     model: phi-4-q4-k-m-16384
   answer:
-    model: qwen3-5-27b-q8-0-32768
+    model: qwen3-5-27b-q8-0-16384
     profile: qwen3-instruct

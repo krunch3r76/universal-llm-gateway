@@ -263,7 +263,7 @@ MCP_TOOLS = [
         "sandbox": "mcp_files",
     },
     {
-        "name": "sqlite_query",
+        "name": "sql",
         "category": "sqlite",
         "description": "Execute a read-only SELECT against a SQLite database",
         "parameters": '{"sql": "string, required", "db": "string, default default", "params": "list, optional"}',
@@ -278,7 +278,7 @@ MCP_TOOLS = [
         "description": "Execute a write statement (INSERT, UPDATE, DELETE, CREATE TABLE)",
         "parameters": '{"sql": "string, required", "db": "string, default default", "params": "list, optional"}',
         "when_to_use": "Writing structured data, creating tables",
-        "when_not_to_use": "Read queries (use sqlite_query); DROP/PRAGMA blocked by default",
+        "when_not_to_use": "Read queries (use sql); DROP/PRAGMA blocked by default",
         "gotchas": "Destructive statements blocked unless allow_destructive is true",
         "sandbox": "n/a",
     },
@@ -348,7 +348,9 @@ def resolve_db_path(config_path: str | None, db_flag: str | None) -> Path:
             if isinstance(path, str) and path:
                 return Path(os.path.expanduser(path))
         except (OSError, yaml.YAMLError) as exc:
-            print(f"Warning: failed to read config {config_path}: {exc}", file=sys.stderr)
+            print(
+                f"Warning: failed to read config {config_path}: {exc}", file=sys.stderr
+            )
 
     print("Error: no database path found. Use --db or --config.", file=sys.stderr)
     sys.exit(1)

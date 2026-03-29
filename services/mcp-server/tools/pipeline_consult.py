@@ -161,7 +161,7 @@ def register_pipeline_consult_tools(mcp: FastMCP) -> None:
         or what you need advice on.
 
         Args:
-            execution_id: Pipeline execution ID (from pipeline_run result).
+            execution_id: Pipeline execution ID (from pipeline result).
             step_name: Name of the step to consult about.
             problem: Detailed description of the issue, ideally including
                      prompt text and model output excerpts.
@@ -252,7 +252,9 @@ def register_pipeline_consult_tools(mcp: FastMCP) -> None:
             )
             return {"error": f"Consultation timed out after {_CONSULT_TIMEOUT}s."}
         except httpx.ConnectError as e:
-            logger.error("Stargate connection failed during pipeline_consult", exc_info=True)
+            logger.error(
+                "Stargate connection failed during pipeline_consult", exc_info=True
+            )
             record(
                 "mcp.pipeline.consult.failed",
                 execution_id=execution_id,

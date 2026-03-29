@@ -26,7 +26,7 @@ IDE indefinitely.
 Structured events are emitted to the event service UDS at
 /tmp/universal-protocol/events.sock (same NDJSON wire format as all
 gateway services).  This makes proxy lifecycle, request latency, and
-timeout events queryable via query_observability.
+timeout events queryable via observability.
 
 Connects to MCP_URL with proper TLS hostname verification. The default
 uses the public hostname (mcp.k-1.me) with /etc/hosts resolving it to
@@ -71,15 +71,16 @@ _POLL_INTERVAL = 2.0
 _MAX_INFLIGHT = int(os.environ.get("MCP_PROXY_MAX_INFLIGHT", "8"))
 
 # Event service UDS — bind-mounted from host into Docker at same path.
-_EVENTS_SOCK = os.environ.get(
-    "EVENTS_SOCK", "/tmp/universal-protocol/events.sock"
-)
-_EVENTS_ENABLED = os.environ.get(
-    "MCP_PROXY_EVENTS", "true"
-).lower() in {"true", "1", "yes"}
+_EVENTS_SOCK = os.environ.get("EVENTS_SOCK", "/tmp/universal-protocol/events.sock")
+_EVENTS_ENABLED = os.environ.get("MCP_PROXY_EVENTS", "true").lower() in {
+    "true",
+    "1",
+    "yes",
+}
 
 
 # ── Event emitter (UDS, fire-and-forget) ─────────────────────────────
+
 
 class _EventEmitter:
     """Lightweight UDS event publisher matching the gateway NDJSON wire format.
@@ -164,6 +165,7 @@ _events: _EventEmitter | _NullEmitter = (
 
 
 # ── YAML / token helpers ─────────────────────────────────────────────
+
 
 def _strip_quotes(value: str) -> str:
     """Strip paired outer quotes from scalar YAML values."""
@@ -342,6 +344,7 @@ def _post_worker(
 
 # ── Per-message handler (runs in its own thread) ─────────────────────
 
+
 def _handle_message(
     raw_line: str,
     msg: dict[str, Any],
@@ -417,9 +420,7 @@ def _post_with_watchdog(
                 duration_s=round(duration, 3),
                 watchdog_s=_WATCHDOG_TIMEOUT,
             )
-            raise TimeoutError(
-                f"MCP request timed out after {_WATCHDOG_TIMEOUT}s"
-            )
+            raise TimeoutError(f"MCP request timed out after {_WATCHDOG_TIMEOUT}s")
         try:
             kind, value = rq.get(timeout=min(_POLL_INTERVAL, remaining))
         except queue.Empty:
@@ -459,7 +460,9 @@ def _post_with_watchdog(
                 raise value
             raise RuntimeError(f"Unexpected error payload from worker: {value!r}")
 
+
 # ── Main: stdin reader (always draining) ─────────────────────────────
+
 
 def main() -> None:
     try:

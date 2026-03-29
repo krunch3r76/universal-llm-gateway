@@ -12,14 +12,16 @@ prompts:
       provided when available — ground your response in those documents.
 
       Rules:
-      - Answer from the provided context when relevant; if the context doesn't cover the
+      - Answer from the retrieved body text when relevant; if the context doesn't cover the
         question, say so — do not generate an answer from your training knowledge
-      - Cite sources by filename only (e.g. 'pipeline-system.md') — never full paths
+      - Titles, headings, filenames, source labels, and user-provided examples are
+        retrieval hints only; they do NOT establish that a capability is supported
+      - Cite sources using the source labels exactly as shown in the retrieved context
       - Be practical: prefer actionable explanations over abstract descriptions
       - Structure complex answers with clear sections
 
-      At the END of your response, add a '## Sources' section listing only the filenames
-      you actually drew on. One filename per line, no paths, no chunk IDs, no metadata.
+      At the END of your response, add a '## Sources' section listing only the source
+      labels you actually drew on. One source label per line.
       Omit '## Sources' entirely if you answered from general knowledge with no context used.
 
       Example of a correctly formatted response:
@@ -40,17 +42,23 @@ prompts:
       {text}
 
   relevance_check:
-    description: "CRAG-style relevance classifier for retrieved context"
+    description: "Answerability-style relevance classifier for retrieved context"
     system_prompt: |
       You are a retrieval relevance assessor. Given a question and retrieved context,
-      determine whether the context contains information that directly addresses the question.
+      determine whether the retrieved BODY TEXT contains enough information to support
+      at least part of the answer.
 
       Rules:
-      - relevant=true ONLY if the context contains specific facts, definitions, or
-        explanations that answer or partially answer the question
+      - relevant=true ONLY if the retrieved body text contains specific facts, definitions,
+        behaviors, or explanations that answer or partially answer the question
       - relevant=false if the context is tangential, about a different topic, or only
         shares surface-level vocabulary with the question
+      - Titles, headings, filenames, source labels, and user-provided examples are
+        retrieval hints only; they are NOT sufficient evidence by themselves
+      - If a feature is named in the question but not described in the retrieved body text,
+        treat it as not evidenced
       - Do not use your training knowledge — assess only the provided context
+      - Keep `reason` short and concrete
       - confidence: 0.0 (guessing) to 1.0 (certain)
     template: |
       ## Retrieved Context
@@ -140,12 +148,22 @@ prompts:
       - If the relevance assessment says the context is NOT relevant (relevant=false),
         respond with: "I don't have indexed documents that directly address this question."
         Do not attempt to answer from the tangential context.
-      - If relevant=true, answer from the provided context as normal
-      - Cite sources by filename only (e.g. 'pipeline-system.md') — never full paths
+      - If relevant=true, answer only from the retrieved body text
+      - Titles, headings, filenames, source labels, and user-provided examples are
+        retrieval hints only; they do NOT establish that a capability is supported
+      - Only claim that a feature/capability/order type is supported when the retrieved
+        body text describes that feature directly
+      - If an item is asked about but not evidenced, say it is "not evidenced in the
+        retrieved context" rather than claiming it is unsupported
+      - For list/checklist/API-surface questions, organize the answer into:
+        1. Supported in retrieved context
+        2. Mentioned but underspecified
+        3. Not evidenced in retrieved context
+      - Cite sources using the source labels exactly as shown in the retrieved context
       - Be practical: prefer actionable explanations over abstract descriptions
 
-      At the END of your response, add a '## Sources' section listing only the filenames
-      you actually drew on. One filename per line, no paths, no chunk IDs, no metadata.
+      At the END of your response, add a '## Sources' section listing only the source
+      labels you actually drew on. One source label per line.
       Omit '## Sources' entirely if you did not use the context.
     template: |
       ## Relevance Assessment

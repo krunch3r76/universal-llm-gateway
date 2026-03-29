@@ -79,16 +79,18 @@ class AnswerGenerateHandler(GenericGenerateHandler):
         step: StepConfig,
         context: PipelineContext,
     ) -> StepOutput:
-        """Execute answer step, honouring pipeline_options.model when supplied.
+        """Execute answer step with correct model override precedence.
+
+        Model resolution order:
+        1. Executor-level override via context._step_model_override (set by
+           step-level fallback -- must take priority to avoid re-using a failed model)
+        2. pipeline_options.model from context.options (user-supplied cloud model)
+        3. GenericGenerateHandler's standard chain via super().execute()
+           (model_ref -> registry)
 
         Empty-context guard: if the upstream get_context step returned the
         RAG_NO_RESULTS_SENTINEL, skip the LLM call and return a canned
-        not-grounded response. Coupling: depends on the step being named
-        'get_context' in answer-v1.yaml.
-
-        RAG_NO_RETRIEVAL_SENTINEL (needs_retrieval=false / conversational query)
-        is intentionally not blocked — conversational queries may still use
-        model knowledge.
+        not-grounded response.
         """
         # Only bypass model call for the answer step — relevance_check must always
         # run so it can classify the empty context as relevant=false.
@@ -106,10 +108,15 @@ class AnswerGenerateHandler(GenericGenerateHandler):
                 json={"fallback": True, "reason": "no_retrieved_documents"},
             )
 
-        override_model: str | None = (context.options or {}).get("model")
-        if override_model:
+        executor_override: str | None = context._step_model_override.get(step.name)
+        pipeline_override: str | None = (context.options or {}).get("model")
+        if executor_override:
             return await self._execute_with_model_override(
-                step, context, override_model
+                step, context, executor_override
+            )
+        elif pipeline_override:
+            return await self._execute_with_model_override(
+                step, context, pipeline_override
             )
         return await super().execute(step, context)
 
@@ -137,6 +144,10 @@ class AnswerGenerateHandler(GenericGenerateHandler):
             "max_tokens": self._resolve_max_tokens(step, context),
             "json_schema": step.generation_parameters.get("response_format", {}).get(
                 "schema"
+            ),
+            "wants_json": (
+                step.generation_parameters.get("response_format", {}).get("type")
+                == "json_object"
             ),
         }
 

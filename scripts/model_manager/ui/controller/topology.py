@@ -11,6 +11,7 @@ import os
 import secrets
 import shlex
 import signal
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +19,28 @@ from typing import Any, TypedDict
 
 import yaml
 
+from scripts.model_manager.observation_event import (
+    emit_build_image_completed,
+    emit_build_image_mismatch,
+    emit_build_image_started,
+)
+
 logger = logging.getLogger(__name__)
+
+_GATEWAY_GPU_IMAGE = "universal-llm-gateway:gpu"
+# Compared between master and relay images (excludes build.timestamp — always differs).
+_BUILD_MISMATCH_LABEL_KEYS: tuple[str, ...] = (
+    "build.vllm.version",
+    "build.vllm.from.source",
+    "build.torch.nightly.date",
+    "build.llama.server.version",
+    "build.llama.cpp.python.version",
+    "build.llama.cpp.python.enabled",
+    "cpu.optimization",
+    "gpu.arch",
+    "gpu.cuda_version",
+    "vllm.enabled",
+)
 
 _GATEWAY_DIR = Path.home() / ".gateway"
 _NODES_DIR = _GATEWAY_DIR / "nodes"
@@ -255,6 +277,131 @@ def remove_remote(hostname: str) -> bool:
     return True
 
 
+async def _docker_inspect_labels_local(image: str) -> dict[str, str] | None:
+    """Return Config.Labels for a local image, or None if missing / inspect fails."""
+    proc = await asyncio.create_subprocess_exec(
+        "docker",
+        "image",
+        "inspect",
+        image,
+        "--format",
+        "{{json .Config.Labels}}",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    assert proc.stdout is not None
+    raw = await proc.stdout.read()
+    code = await proc.wait()
+    if code != 0:
+        return None
+    try:
+        data = json.loads(raw.decode(errors="replace").strip() or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return {str(k): str(v) for k, v in data.items()}
+
+
+async def _docker_inspect_labels_remote(ssh_target: str, image: str) -> dict[str, str] | None:
+    """Return Config.Labels for image on remote host via SSH."""
+    proc = await asyncio.create_subprocess_exec(
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        ssh_target,
+        "docker",
+        "image",
+        "inspect",
+        image,
+        "--format",
+        "{{json .Config.Labels}}",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    assert proc.stdout is not None
+    raw = await proc.stdout.read()
+    code = await proc.wait()
+    if code != 0:
+        return None
+    try:
+        data = json.loads(raw.decode(errors="replace").strip() or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return {str(k): str(v) for k, v in data.items()}
+
+
+def _pick_build_labels(labels: dict[str, str]) -> dict[str, str]:
+    return {k: labels.get(k, "") for k in _BUILD_MISMATCH_LABEL_KEYS}
+
+
+def _diff_build_labels(
+    local_l: dict[str, str], remote_l: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    """Return (human-readable diffs, keys that differ)."""
+    diffs: list[str] = []
+    keys_out: list[str] = []
+    for key in _BUILD_MISMATCH_LABEL_KEYS:
+        lv = local_l.get(key, "")
+        rv = remote_l.get(key, "")
+        if lv != rv:
+            keys_out.append(key)
+            diffs.append(f"{key}: local={lv!r} remote={rv!r}")
+    return diffs, keys_out
+
+
+async def gateway_image_mismatch_warnings(
+    *,
+    hostname: str,
+    address: str,
+) -> list[str]:
+    """Compare gateway GPU image build labels local vs remote; warn on drift.
+
+    Fails open: missing image or inspect errors yield a single advisory line, not
+    an exception.
+    """
+    node_env = _NODES_DIR / f"{hostname}.env"
+    ssh_user = _read_node_env_key(node_env, "SSH_USER") if node_env.exists() else None
+    if not ssh_user:
+        return []
+
+    local_labels = await _docker_inspect_labels_local(_GATEWAY_GPU_IMAGE)
+    if local_labels is None:
+        return [
+            f"[{hostname}] Image check skipped: local {_GATEWAY_GPU_IMAGE} not found "
+            "(build or pull on master first)."
+        ]
+
+    ssh_target = f"{ssh_user}@{address}"
+    remote_labels = await _docker_inspect_labels_remote(ssh_target, _GATEWAY_GPU_IMAGE)
+    if remote_labels is None:
+        return [
+            f"[{hostname}] Image check skipped: remote {_GATEWAY_GPU_IMAGE} not found "
+            "or docker inspect failed."
+        ]
+
+    local_pick = _pick_build_labels(local_labels)
+    remote_pick = _pick_build_labels(remote_labels)
+    diffs, keys = _diff_build_labels(local_pick, remote_pick)
+    if not diffs:
+        return []
+
+    await emit_build_image_mismatch(
+        host=hostname,
+        mismatched_fields=diffs,
+        local_labels=local_pick,
+        remote_labels=remote_pick,
+    )
+    msg = (
+        f"[{hostname}] WARNING: gateway image build metadata differs from master — "
+        + "; ".join(diffs)
+        + ". Run Rebuild + Deploy All on master and remotes (or rebuild locally) to align."
+    )
+    return [msg]
+
+
 async def deploy_remote(
     *,
     hostname: str,
@@ -267,7 +414,7 @@ async def deploy_remote(
     """Deploy relay+edge to a remote host via rsync + ssh.
 
     Yields log lines as they appear. Three steps:
-    1. rsync repo (excludes local-only files)
+    1. rsync repo (.gitignore rules + explicit .git exclude)
     2. scp ~/.gateway/nodes/<hostname>.env
     3. ssh ./manage relay [--restart] [--build] [--scope SCOPE]
     """
@@ -284,26 +431,14 @@ async def deploy_remote(
     ssh_target = f"{ssh_user}@{address}"
     dest = f"{ssh_target}:~/universal-llm-gateway/"
 
-    rsync_excludes = [
-        ".env.local",
-        "tmp/gpu-nodes",
-        "__pycache__",
-        ".git",
-        "node_modules",
-        ".venv",
-        "*.pyc",
-        # These directories are COPY'd into Docker builder stages (vllm-builder,
-        # llama-builder, llama-server-builder). Syncing them invalidates the
-        # vLLM CUDA build cache, forcing a full recompile (~1h). Remote deploys
-        # are always application-only pushes, never builder script updates.
-        "libs/inference_djinn/scripts/build/",
-        "docker/scripts/build/",
-    ]
+    # Sync working tree (staged or not); exclude paths per .gitignore. .git is
+    # not listed in .gitignore — exclude explicitly.
     rsync_args = [
         "rsync",
         "-az",
         "--delete",
-        *[f"--exclude={x}" for x in rsync_excludes],
+        "--exclude=.git",
+        "--filter=:- .gitignore",
         f"{repo}/",
         dest,
     ]
@@ -350,6 +485,9 @@ async def deploy_remote(
         remote_cmd,
     ]
     yield f"$ {shlex.join(ssh_args)}"
+    build_t0 = time.monotonic() if build else 0.0
+    if build:
+        await emit_build_image_started(host=hostname, scope=scope)
     try:
         async for line in _stream_subprocess(
             ssh_args,
@@ -358,7 +496,21 @@ async def deploy_remote(
         ):
             yield line
     except _StreamedCommandError:
+        if build:
+            await emit_build_image_completed(
+                host=hostname,
+                scope=scope,
+                success=False,
+                duration_s=time.monotonic() - build_t0,
+            )
         return
+    if build:
+        await emit_build_image_completed(
+            host=hostname,
+            scope=scope,
+            success=True,
+            duration_s=time.monotonic() - build_t0,
+        )
 
 
 # ---------------------------------------------------------------------------

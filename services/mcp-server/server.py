@@ -29,13 +29,14 @@ from oauth_routes import build_oauth_routes
 from oauth_service import OAuthService
 from oauth_store import OAuthStore
 from request_profile import current_profile
+from response_size_guard import register_response_guard
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tools.agent_bus import register_agent_bus_tools
 from tools.agent_consult import register_agent_consult_tools
+from tools.bot_control import register_bot_control_tools
 from tools.browser import register_browser_tools
 from tools.claudeburst import register_claudeburst_tools
-from tools.claudeburst_perps import register_claudeburst_perps_tools
 from tools.context import register_context_tools
 from tools.cortex import register_cortex_tools
 from tools.cortex_v2 import register_cortex_v2_tools
@@ -47,8 +48,7 @@ from tools.finance_ingest import register_finance_ingest_tools
 from tools.finance_reconcile import register_finance_reconcile_tools
 from tools.finance_smart_ingest import register_finance_smart_ingest_tools
 from tools.ingest_binary import register_ingest_binary_tools
-from tools.lighter_api import register_lighter_api_tools
-from tools.lighter_trades import register_lighter_trades_tools
+from tools.lighter import register_lighter_tools
 from tools.llm import register_llm_tools
 from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
@@ -217,32 +217,28 @@ _PRIMARY_TOOLS: set[str] = {
     # Meta
     "dispatch",
     "web_search",
-    # Consolidated file surfaces
-    "files",
-    "context",
-    "markdown",
-    "project",
+    # Consolidated file surface
+    "fs",
     # SQLite
-    "sqlite_query",
+    "sql",
     # Infra
-    "pipeline_run",
-    "manage_service",
+    "pipeline",
+    "manage",
     "model_status",
+    "quality_gate",
+    "observability",
     # Agent-bus (dispatch-style)
     "agent_bus",
     # Cortex (dispatch-style + boot)
     "cortex",
     "cortex_boot",
-    # Trading (direct — claudeburst agents call these first-class)
-    "claudeburst_perps",
-    "lighter_history",
-    "lighter_trades",
-    "lighter_api",
-    "lighter_shadow_create",
-    "lighter_shadow_list",
-    "lighter_shadow_update",
-    "lighter_shadow_cancel",
-    "lighter_shadow_log",
+    # RAG (consolidated)
+    "rag",
+    # Trading (consolidated)
+    "lighter",
+    "bot_control",
+    # Response size guard
+    "retrieve",
 }
 
 
@@ -288,17 +284,196 @@ def _build_server() -> FastMCP:
     register_cortex_tools(mcp)
     register_cortex_v2_tools(mcp)
     register_llm_tools(mcp)
-    register_lighter_trades_tools(mcp)
-    register_lighter_api_tools(mcp)
+    register_lighter_tools(mcp)
+    register_bot_control_tools(mcp)
     register_claudeburst_tools(mcp)
-    register_claudeburst_perps_tools(mcp)
 
     @mcp.tool()
     def health() -> dict[str, str]:
         """Health check — confirms the MCP server is reachable."""
         return {"status": "ok"}
 
+    try:
+        register_response_guard(mcp)
+    except Exception:
+        logger.exception("Failed to initialize response size guard — proceeding without it")
+        record("mcp.response.guard.init_failed", error="see server logs")
+
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
+
+    sandbox_tool: dict[str, str] = {
+        "files": "files",
+        "context": "context",
+        "project": "project",
+    }
+    md_op_map: dict[str, str] = {
+        "md_list": "list_sections",
+        "md_read": "read_section",
+        "md_replace": "replace_section",
+        "md_append": "append_section",
+        "md_delete": "delete_section",
+    }
+
+    @mcp.tool()
+    def fs(
+        op: str,
+        sandbox: str,
+        path: str = "",
+        paths: list[str] | None = None,
+        content: str = "",
+        target: str = "",
+        line: int = 0,
+        section: str = "",
+        all_occurrences: bool = False,
+        include_untracked: bool = True,
+    ) -> dict[str, Any]:
+        """Unified file operations across all sandboxes.
+
+        sandbox: "files"   = /data/files (documents, notes, uploads)
+                 "context" = tasks/ (specs, workspace scratchpads)
+                 "project" = repo root (source code, configs)
+
+        Both sandbox and op are REQUIRED.
+
+        Ops (standard):
+          read           — path required
+          read_multi     — paths required (array)
+          write          — path, content required
+          append         — path, content required
+          prepend        — path, content required
+          replace        — path, target required; content = replacement; all_occurrences?
+          insert_at_line — path, content, line required
+          list           — path optional (defaults to sandbox root)
+          delete         — path required
+          search         — project sandbox only; path = dir, content = regex pattern
+
+        Ops (markdown sections — for large docs >5k chars):
+          md_list    — list sections (path required)
+          md_read    — read section (path, section required)
+          md_replace — replace section (path, section, content required)
+          md_append  — append to section (path, section, content required)
+          md_delete  — delete section (path, section required)
+        """
+        if not op:
+            return {"error": "'op' is required"}
+        if sandbox not in sandbox_tool:
+            return {
+                "error": f"sandbox must be 'files', 'context', or 'project', got {sandbox!r}"
+            }
+
+        if op.startswith("md_"):
+            md_fn = overflow_registry.get("markdown")
+            if md_fn is None:
+                return {"error": "markdown tool not available"}
+            md_op = md_op_map.get(op)
+            if md_op is None:
+                valid = ", ".join(sorted(md_op_map))
+                return {"error": f"Unknown markdown op: {op!r}. Available: {valid}"}
+            return md_fn(
+                op=md_op, path=path, sandbox=sandbox, section=section, content=content
+            )
+
+        tool_name = sandbox_tool[sandbox]
+        fn = overflow_registry.get(tool_name)
+        if fn is None:
+            return {"error": f"{tool_name} tool not available"}
+
+        if sandbox == "project":
+            return fn(
+                op=op,
+                path=path,
+                content=content,
+                target_str=target,
+                line=line,
+                all_occurrences=all_occurrences,
+                include_untracked=include_untracked,
+            )
+        if sandbox == "files":
+            if op == "read_multi":
+                paths = paths or []
+                return fn(op=op, path=path, paths=paths, content=content, target=target)
+            return fn(
+                op=op,
+                path=path,
+                content=content,
+                target=target,
+                line=line,
+                all_occurrences=all_occurrences,
+            )
+        return fn(
+            op=op,
+            path=path,
+            content=content,
+            target=target,
+            line=line,
+            all_occurrences=all_occurrences,
+        )
+
+    rag_op_tool: dict[str, str] = {
+        "search": "rag_search",
+        "answer": "rag_answer",
+        "list_scopes": "rag_list_scopes",
+        "coverage": "rag_coverage",
+        "upsert_article": "rag_upsert_article",
+        "delete_source": "rag_delete_source",
+        "refresh_hints": "rag_refresh_corpus_hints",
+        "orphaned_articles": "rag_orphaned_articles",
+        "delete_directory": "rag_delete_directory",
+    }
+
+    @mcp.tool()
+    async def rag(op: str, arguments: str = "{}") -> Any:
+        """RAG knowledge retrieval and index management.
+
+        Ops:
+          search            — query REQUIRED, scope?, prefix?, top_k?
+          answer            — question REQUIRED, scope?, prefix?, deep?
+          list_scopes       — no args
+          coverage          — no args
+          upsert_article    — url REQUIRED, title?, scope?
+          delete_source     — source_hash REQUIRED
+          refresh_hints     — scope?
+          orphaned_articles — no args
+          delete_directory  — directory REQUIRED
+
+        scope and prefix are mutually exclusive.
+        """
+        import json as _json
+
+        tool_name = rag_op_tool.get(op)
+        if tool_name is None:
+            valid = ", ".join(sorted(rag_op_tool))
+            return {"error": f"Unknown rag op: {op!r}. Available: {valid}"}
+
+        profile = current_profile()
+        if not is_dispatch_tool_allowed(profile, tool_name):
+            reason = dispatch_denial_reason(tool_name)
+            record(
+                "mcp.profile.tool.denied",
+                profile=profile,
+                tool=tool_name,
+                entrypoint="rag",
+                reason=reason,
+            )
+            return {"error": reason}
+
+        fn = overflow_registry.get(tool_name)
+        if fn is None:
+            return {"error": f"RAG tool {tool_name!r} not available"}
+
+        try:
+            args = _json.loads(arguments)
+            if not isinstance(args, dict):
+                return {
+                    "error": f"arguments must be a JSON object, got {type(args).__name__}"
+                }
+        except _json.JSONDecodeError as exc:
+            return {"error": f"Invalid arguments JSON: {exc}"}
+
+        result = fn(**args)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return result
 
     @mcp.tool()
     async def dispatch(tool: str, arguments: str = "{}") -> Any:
@@ -308,7 +483,7 @@ def _build_server() -> FastMCP:
         to reach any tool not in your direct list.
 
         Dispatchable tools:
-          Sandboxed files (individual — prefer primary `files` tool):
+          Sandboxed files (individual — prefer primary `fs` tool):
             read_file(path) — read file
             write_file(path, content) — write/create file
             edit_file(path, operation, content, ...) — edit file
@@ -324,13 +499,13 @@ def _build_server() -> FastMCP:
                 Store binary evidence under /data/files/evidence and create the
                 matching Cortex document entity. Use when an agent already has
                 binary bytes and needs a first-class evidence artifact.
-          Context files (individual — prefer primary `context` tool):
+          Context files (individual — prefer primary `fs` tool with sandbox="context"):
             read_context_file(path) — read context file
             write_context_file(path, content) — write context file
             edit_context_file(path, operation, content, ...) — edit context file
             delete_context_file(path) — delete context file
             list_context_directory(path?) — list context directory
-          Project files (individual — prefer primary `project` tool):
+          Project files (individual — prefer primary `fs` tool with sandbox="project"):
             read_project_file(path) — read project file
             write_project_file(path, content) — write project file
             edit_project_file(path, operation, content, ...) — edit project file
@@ -390,7 +565,7 @@ def _build_server() -> FastMCP:
             validate_pipeline(path)
             health() — server health check
           Observability:
-            query_observability(operation, params?) — event queries
+            observability(operation, params?) — event queries (also primary)
           Internal services:
             local_api(service, method, path, body?, token?) — relay to Docker services
           Cortex (dispatch-only — primary ops use cortex(tool=...) directly):

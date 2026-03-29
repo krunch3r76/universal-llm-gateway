@@ -121,7 +121,9 @@ def _service_status_from_probes(
     return ""
 
 
-def _lifecycle_timeout_result(action: str, service: str, timeout: float) -> dict[str, Any]:
+def _lifecycle_timeout_result(
+    action: str, service: str, timeout: float
+) -> dict[str, Any]:
     """Return a progress-oriented result after a long lifecycle call outlives its socket budget."""
     status_result = _probe_manage("status")
     health_result = _probe_manage("health", service=service)
@@ -145,7 +147,7 @@ def _lifecycle_timeout_result(action: str, service: str, timeout: float) -> dict
             "build": build_info,
             "health": health_result,
             "next_step": (
-                f"Call manage_service(action='wait_healthy', service='{service}', timeout=120) "
+                f"Call manage(action='wait_healthy', service='{service}', timeout=120) "
                 "or poll health/status."
             ),
         }
@@ -173,7 +175,7 @@ def _lifecycle_timeout_result(action: str, service: str, timeout: float) -> dict
             "build": build_info,
             "health": health_result,
             "next_step": (
-                f"Call manage_service(action='wait_healthy', service='{service}', timeout=120) "
+                f"Call manage(action='wait_healthy', service='{service}', timeout=120) "
                 "or poll health/status."
             ),
         }
@@ -187,10 +189,10 @@ def _lifecycle_timeout_result(action: str, service: str, timeout: float) -> dict
 
 
 def register_manage_tools(mcp: FastMCP) -> None:
-    """Register the manage_service tool on the MCP server instance."""
+    """Register the manage tool on the MCP server instance."""
 
     @mcp.tool()
-    def manage_service(
+    def manage(
         action: str,
         service: str = "",
         timeout: float = 120.0,
@@ -215,9 +217,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
 
         Agent workflow after code changes:
           1. quality_gate(files=[...])
-          2. manage_service(action="rebuild", service="gateway")
-          3. manage_service(action="wait_healthy", service="gateway", timeout=120)
-          4. pipeline_run(...)
+          2. manage(action="rebuild", service="gateway")
+          3. manage(action="wait_healthy", service="gateway", timeout=120)
+          4. pipeline(...)
 
         Args:
             action: Operation from the list above.

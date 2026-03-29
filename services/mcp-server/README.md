@@ -102,7 +102,7 @@ Safe read/write access to configured SQLite databases.
 
 | Tool | Purpose |
 |------|---------|
-| `sqlite_query` | SELECT-only, parameterized, row-limited |
+| `sql` | SELECT-only, parameterized, row-limited |
 | `sqlite_execute` | INSERT/UPDATE/DELETE (DROP/PRAGMA blocked by default) |
 | `sqlite_list_databases` | List configured database names |
 

@@ -169,6 +169,12 @@ class McpConfig:
     xai_api_key: str = ""
     mcp_server_url: str = ""
     lighter_api_key_index: str = ""
+    claudeburst_host: str = ""
+    claudeburst_port: str = ""
+    claudeburst_events_query_host: str = ""
+    claudeburst_events_query_port: str = ""
+    claudeburst_perps_host: str = ""
+    claudeburst_perps_port: str = ""
     enable_browser_tools: bool = False
     refresh_cursor_descriptors_after_rebuild: bool = False
 
@@ -211,6 +217,15 @@ BRAVE_SEARCH_API_KEY: ""
 # MCP forwards this into the container so claudeburst_perps live_* calls can
 # default to the bot account when no selector is passed.
 # LIGHTER_API_KEY_INDEX: "5"
+#
+# Optional: ClaudeBurst bot endpoints for MCP relays when the bot runs on a
+# remote host instead of exposing a local UDS socket inside /tmp/universal-protocol.
+# CLAUDEBURST_HOST: "10.0.0.76"
+# CLAUDEBURST_PORT: "8890"
+# CLAUDEBURST_PERPS_HOST: "10.0.0.76"
+# CLAUDEBURST_PERPS_PORT: "8891"
+# CLAUDEBURST_EVENTS_QUERY_HOST: "10.0.0.76"
+# CLAUDEBURST_EVENTS_QUERY_PORT: "7102"
 
 # project access control (default: ro — read-only project access for Claude)
 #   ro  = Claude can read project files (code, configs, docs)
@@ -501,6 +516,20 @@ def load_mcp_config() -> McpConfig | None:
         lighter_api_key_index=_get_stripped_str(
             "LIGHTER_API_KEY_INDEX", "lighter_api_key_index"
         ),
+        claudeburst_host=_get_stripped_str("CLAUDEBURST_HOST", "claudeburst_host"),
+        claudeburst_port=_get_stripped_str("CLAUDEBURST_PORT", "claudeburst_port"),
+        claudeburst_events_query_host=_get_stripped_str(
+            "CLAUDEBURST_EVENTS_QUERY_HOST", "claudeburst_events_query_host"
+        ),
+        claudeburst_events_query_port=_get_stripped_str(
+            "CLAUDEBURST_EVENTS_QUERY_PORT", "claudeburst_events_query_port"
+        ),
+        claudeburst_perps_host=_get_stripped_str(
+            "CLAUDEBURST_PERPS_HOST", "claudeburst_perps_host"
+        ),
+        claudeburst_perps_port=_get_stripped_str(
+            "CLAUDEBURST_PERPS_PORT", "claudeburst_perps_port"
+        ),
         firefox_profile_dir=_resolve_firefox_profile(
             _get_stripped_str("firefox_profile_dir")
         ),
@@ -603,6 +632,18 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
         env["MCP_SERVER_URL"] = cfg.mcp_server_url
     if cfg.lighter_api_key_index:
         env["LIGHTER_API_KEY_INDEX"] = cfg.lighter_api_key_index
+    if cfg.claudeburst_host:
+        env["CLAUDEBURST_HOST"] = cfg.claudeburst_host
+    if cfg.claudeburst_port:
+        env["CLAUDEBURST_PORT"] = cfg.claudeburst_port
+    if cfg.claudeburst_events_query_host:
+        env["CLAUDEBURST_EVENTS_QUERY_HOST"] = cfg.claudeburst_events_query_host
+    if cfg.claudeburst_events_query_port:
+        env["CLAUDEBURST_EVENTS_QUERY_PORT"] = cfg.claudeburst_events_query_port
+    if cfg.claudeburst_perps_host:
+        env["CLAUDEBURST_PERPS_HOST"] = cfg.claudeburst_perps_host
+    if cfg.claudeburst_perps_port:
+        env["CLAUDEBURST_PERPS_PORT"] = cfg.claudeburst_perps_port
     if cfg.firefox_profile_dir:
         env["FIREFOX_PROFILE_DIR"] = cfg.firefox_profile_dir
     env["ENABLE_BROWSER_TOOLS"] = "true" if cfg.enable_browser_tools else "false"

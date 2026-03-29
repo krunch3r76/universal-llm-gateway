@@ -16,8 +16,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from mcp_events import monotonic_now, record
-from request_profile import current_profile
-from tool_access import CURSOR_SAFE_PROFILE
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -130,6 +128,7 @@ def _handle_pipeline_error(
 ) -> dict[str, str]:
     """Log, record mcp.rag.pipeline.failed, and return error dict for HTTPX pipeline failures."""
     extra: dict[str, Any] = {}
+    surfaced_message = user_message
     if isinstance(exc, httpx.TimeoutException):
         duration = monotonic_now() - t0
         error_type = "timeout"
@@ -141,28 +140,23 @@ def _handle_pipeline_error(
     elif isinstance(exc, httpx.HTTPStatusError):
         error_type = f"{exc.response.status_code}"
         log_message = f"Pipeline HTTP error: {exc}"
+        try:
+            payload = exc.response.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            nested = payload.get("detail", payload.get("error", {}))
+            if isinstance(nested, dict) and nested.get("message"):
+                surfaced_message = str(nested["message"])
+            elif isinstance(nested, str) and nested.strip():
+                surfaced_message = nested
     else:
         error_type = str(exc)
         log_message = f"Pipeline request error: {exc}"
 
     logger.warning(log_message, exc_info=True)
     record("mcp.rag.pipeline.failed", pipeline=pipeline, error=error_type, **extra)
-    return {"error": user_message}
-
-
-def _deny_cursor_safe(tool: str, reason: str) -> dict[str, str] | None:
-    """Return a profile-denial payload when running in cursor_safe mode."""
-    profile = current_profile()
-    if profile != CURSOR_SAFE_PROFILE:
-        return None
-    record(
-        "mcp.profile.tool.denied",
-        profile=profile,
-        tool=tool,
-        entrypoint="direct",
-        reason=reason,
-    )
-    return {"error": reason}
+    return {"error": surfaced_message}
 
 
 def _extract_content(response: dict[str, Any]) -> str:
@@ -410,11 +404,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
         top_k: int = 20,
         scope: str | list[str] | None = None,
         prefix: str | list[str] | None = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Search the knowledge base and return raw context chunks.
-
-        This full-surface tool is disabled for cursor_safe profile because it
-        can return oversized assembled context payloads.
 
         Returns assembled context with source labels for the agent to
         reason over. Prefer this over rag_answer when exploring a topic,
@@ -444,14 +435,6 @@ def register_rag_tools(mcp: FastMCP) -> None:
                          "context": "<assembled context with source labels>"}
             On error:   {"error": "<message>"}
         """
-        reason = (
-            "rag_search is disabled for cursor_safe profile. "
-            "Use rag_search_preview + rag_get_chunks."
-        )
-        denial = _deny_cursor_safe("rag_search", reason)
-        if denial is not None:
-            return denial
-
         pipeline_options: dict[str, Any] = {}
         scope_override, scope_error = _normalize_scope_override(scope)
         prefixes, prefix_error = _normalize_prefix_override(prefix)
@@ -545,11 +528,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
         scope: str | list[str] | None = None,
         prefix: str | list[str] | None = None,
         deep: bool = False,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Ask a specific question and get a grounded, synthesized answer.
-
-        This full-surface tool is disabled for cursor_safe profile because it
-        can return large synthesized markdown in one call.
 
         Prefer this over rag_search for direct factual or technical
         questions where a synthesized answer is the end goal. Use
@@ -581,14 +561,6 @@ def register_rag_tools(mcp: FastMCP) -> None:
                          "answer": "<grounded answer>"}
             On error:   {"error": "<message>"}
         """
-        reason = (
-            "rag_answer is disabled for cursor_safe profile. "
-            "Use rag_search_preview + rag_get_chunks."
-        )
-        denial = _deny_cursor_safe("rag_answer", reason)
-        if denial is not None:
-            return denial
-
         pipeline = "rag-answer-deep" if deep else "rag-answer"
         pipeline_options: dict[str, Any] = {}
         scope_override, scope_error = _normalize_scope_override(scope)

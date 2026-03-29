@@ -372,6 +372,30 @@ class StepConfig(BaseModel):
                 f"Got: {self.model_ref}"
             )
 
+    def _get_pipeline_model_override(self, context: Any | None) -> str | None:
+        """Return runtime model override when execution semantics honor it.
+
+        `answer_v1` routes generate steps through `pipeline_options.model` when
+        supplied. Coordination and fallback must resolve the same target model as
+        handler execution so gating, eviction protection, and queueing apply to
+        the actually requested model rather than the static `model_ref` alias.
+        """
+        if context is None:
+            return None
+        if getattr(context.pipeline, "domain", None) != "answer_v1":
+            return None
+        if self.type != "generate":
+            return None
+
+        options = getattr(context, "options", None)
+        if not isinstance(options, dict):
+            return None
+
+        override = options.get("model")
+        if isinstance(override, str) and override.strip():
+            return override.strip()
+        return None
+
     def get_target_model_id(
         self,
         registry: Any,
@@ -379,15 +403,21 @@ class StepConfig(BaseModel):
         domain: str | None = None,
         search_path: str | None = None,
         model_ref_overrides: dict[str, str] | None = None,
+        context: Any | None = None,
     ) -> str | None:
         """Get the model_id this step will invoke.
 
         Resolution order:
-        1. model_ref_overrides (explicit user/caller choice)
-        2. model_ref "auto" + model_requirements → /v1/models/select (first candidate)
-        3. model_ref → models.yaml registry lookup
-        4. None (no model_ref set and no model_requirements)
+        1. pipeline runtime override when handler semantics honor it
+        2. model_ref_overrides (explicit user/caller choice)
+        3. model_ref "auto" + model_requirements → /v1/models/select (first candidate)
+        4. model_ref → models.yaml registry lookup
+        5. None (no model_ref set and no model_requirements)
         """
+        runtime_override = self._get_pipeline_model_override(context)
+        if runtime_override:
+            return runtime_override
+
         if model_ref_overrides and self.model_ref:
             override = model_ref_overrides.get(self.name) or model_ref_overrides.get(
                 self.model_ref
@@ -433,9 +463,10 @@ class StepConfig(BaseModel):
         ∀ event-loop callers: use this variant so `model_requirements` selection
         yields while `/v1/models/select` is served by the same Stargate process.
         """
-        # Refactor to avoid duplication with get_target_model_id
-        # Common logic for model_ref_overrides and direct model_ref handling
-        # could be in a helper, with async-specific parts handled here.
+        runtime_override = self._get_pipeline_model_override(context)
+        if runtime_override:
+            return runtime_override
+
         if model_ref_overrides and self.model_ref:
             override = model_ref_overrides.get(self.name) or model_ref_overrides.get(
                 self.model_ref

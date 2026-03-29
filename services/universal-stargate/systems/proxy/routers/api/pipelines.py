@@ -1,7 +1,7 @@
 """Pipeline registry metadata endpoint.
 
 Exposes pipeline metadata (steps, models, timeout, domain) from the
-PipelineRegistry for MCP tooling (validate_pipeline, pipeline_run
+PipelineRegistry for MCP tooling (validate_pipeline, pipeline
 timeout auto-detection).
 """
 
@@ -17,6 +17,7 @@ from ...stargate_core import StargateProxy
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["pipelines"])
+
 
 class PipelineSummary(TypedDict):
     steps: int

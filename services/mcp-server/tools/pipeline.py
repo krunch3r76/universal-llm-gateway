@@ -93,7 +93,7 @@ def _refresh_pipeline_timeouts() -> None:
 
 
 def _resolve_timeout(pipeline: str, explicit: float | None) -> float:
-    """Determine effective HTTP timeout for a pipeline_run call.
+    """Determine effective HTTP timeout for a pipeline call.
 
     Priority: explicit caller override > auto-detected from registry > fallback.
     Adds _TIMEOUT_BUFFER to pipeline-configured timeouts for HTTP overhead.
@@ -152,7 +152,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
     _refresh_pipeline_timeouts()
 
     @mcp.tool()
-    def pipeline_run(
+    def pipeline(
         pipeline: str,
         messages: list[dict[str, str]],
         options: dict[str, Any] | None = None,
@@ -161,7 +161,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         """Run a pipeline and return execution summary with trace.
 
         Blocks until the pipeline completes. Returns the response content
-        plus execution metadata. Use query_observability with
+        plus execution metadata. Use observability with
         operation='pipeline-trace' for detailed step-by-step traces.
 
         Pipeline YAML, prompts, and model configs hot-reload on file

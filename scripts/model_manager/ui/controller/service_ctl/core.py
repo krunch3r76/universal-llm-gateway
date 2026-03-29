@@ -14,6 +14,11 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from scripts.model_manager.observation_event import (
+    emit_build_image_completed,
+    emit_build_image_started,
+)
+
 from ...model.build_state import BuildState, BuildStatus, ImageInfo
 from ...model.service_state import ServiceState
 from ..service_config import (
@@ -185,6 +190,8 @@ class ServiceController:
         env["BUILD_LOG_PATH"] = str(build_log)
         cmd_line = f"$ {' '.join(args)}"
         yield cmd_line
+        build_t0 = time.monotonic()
+        await emit_build_image_started(host="localhost", scope=scope)
         process = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
@@ -240,6 +247,15 @@ class ServiceController:
                 except (ProcessLookupError, PermissionError):
                     pass
             self._build_process = None
+            build_ok = (
+                process.returncode == 0 if process.returncode is not None else False
+            )
+            await emit_build_image_completed(
+                host="localhost",
+                scope=scope,
+                success=build_ok,
+                duration_s=time.monotonic() - build_t0,
+            )
 
     async def _run_build_script(
         self,

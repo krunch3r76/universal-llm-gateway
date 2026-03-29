@@ -44,11 +44,11 @@ Post-merge scoring (applied in this order after the combined RRF merge)
    represented.  Disabled entirely on the ``general`` retrieval path.
 
 All three diversity mechanisms (habituation, source cap, swap) are controlled by
-the ``retrieval_path`` option.  ``research`` (default) enables all three with
-aggressive settings.  ``general`` disables all three — pure relevance ranking.
+the ``retrieval_path`` option.  ``research`` enables all three with aggressive
+settings.  ``general`` (default) disables all three — pure relevance ranking.
 For project documentation, architecture specs, and any corpus where a single
-authoritative source is expected, callers set ``retrieval_path: general`` rather
-than tuning individual diversity parameters.
+authoritative source is expected, prefer ``retrieval_path: general`` rather than
+tuning individual diversity parameters.
 
 Observed dynamics (not formally measured — from pipeline trace analysis):
 - Pool overlap is routine: IDF expansion reliably surfaces the same prominent
@@ -126,6 +126,7 @@ from services.rag.chunk_filters import chunk_is_noise, chunk_metadata_is_noise
 from services.rag.metadata_boost import apply_metadata_boost
 
 from .context_formatting import ChunkData, format_context
+from .query_coverage_bias import apply_query_coverage_bias
 from .retrieval_execution import RetrievedChunk as _RetrievedChunk
 from .retrieval_execution import build_facet_pool as _build_facet_pool
 from .retrieval_execution import (
@@ -137,6 +138,7 @@ from .retrieval_execution import (
     graduated_pool_b_swap as _graduated_pool_b_swap,
 )
 from .retrieval_execution import rrf_merge as _rrf_merge
+from .retrieval_path_defaults import resolve_retrieval_path
 from .retrieval_profiles import load_retrieval_profiles, resolve_retrieval_params
 from .scope_catalog import (
     fetch_scope_prefixes,
@@ -696,7 +698,12 @@ class RagMultiRetrieveHandler(BaseHandler):
 
         scope_key: str | None = scope if isinstance(scope, str) else None
 
-        retrieval_path = str(effective.get("retrieval_path", "research")).strip()
+        retrieval_path = resolve_retrieval_path(
+            runtime=runtime,
+            effective=effective,
+            scope_key=scope_key,
+        )
+        effective["retrieval_path"] = retrieval_path
         path_preset = _RETRIEVAL_PATH_PRESETS.get(retrieval_path, {})
         if retrieval_path and retrieval_path not in _RETRIEVAL_PATH_PRESETS:
             logger.warning(
@@ -1288,6 +1295,30 @@ class RagMultiRetrieveHandler(BaseHandler):
         merged = boost_result.chunks
         merged_scores = boost_result.scores
 
+        coverage_bias_result = apply_query_coverage_bias(
+            merged,
+            merged_scores,
+            query=context.source_text,
+            enabled=bool(effective.get("query_coverage_bias_enabled", True)),
+            anchor_min_score_share=float(
+                effective.get("query_coverage_bias_anchor_min_score_share", 0.45)
+            ),
+            anchor_boost=float(effective.get("query_coverage_bias_anchor_boost", 1.35)),
+            section_cap=int(effective.get("query_coverage_bias_section_cap", 6)),
+        )
+        merged = coverage_bias_result.chunks
+        merged_scores = coverage_bias_result.scores
+        if coverage_bias_result.applied:
+            logger.info(
+                "Step '%s': query coverage bias applied "
+                "(class=%s, anchor=%s, boosted=%d, sections=%d)",
+                step.id,
+                coverage_bias_result.query_class,
+                coverage_bias_result.anchor_source,
+                coverage_bias_result.boosted_chunks,
+                coverage_bias_result.distinct_sections,
+            )
+
         # Pool B score boost with lateral source habituation:
         # - Highest-scoring Pool B chunk per source: full boost (signal detected)
         # - Subsequent chunks from same source: inhibited by 1/boost (lateral inhibition)
@@ -1447,8 +1478,18 @@ class RagMultiRetrieveHandler(BaseHandler):
             }
             for c in merged
         ]
+        include_section_headings = bool(
+            effective.get("rag_include_section_headings", False)
+        )
+        include_source_titles = bool(effective.get("rag_include_source_titles", False))
         context_text = (
-            format_context(chunk_dicts) if chunk_dicts else _NO_RESULTS_SENTINEL
+            format_context(
+                chunk_dicts,
+                include_section_headings=include_section_headings,
+                include_source_titles=include_source_titles,
+            )
+            if chunk_dicts
+            else _NO_RESULTS_SENTINEL
         )
         if not context_text.strip():
             context_text = _NO_RESULTS_SENTINEL
@@ -1495,6 +1536,10 @@ class RagMultiRetrieveHandler(BaseHandler):
                 chunks_after_merge=len(merged),
                 total_retrieval_seconds=_retrieval_seconds,
                 neighbor_expansion_added=neighbor_expansion_added,
+                coverage_bias_applied=coverage_bias_result.applied,
+                coverage_bias_query_class=coverage_bias_result.query_class,
+                coverage_bias_anchor_source=coverage_bias_result.anchor_source,
+                coverage_bias_boosted_chunks=coverage_bias_result.boosted_chunks,
             ),
         )
 
@@ -1515,6 +1560,8 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "max_chunks": max_chunks,
                     "rrf_k": rrf_k,
                     "recency_weight": recency_weight,
+                    "rag_include_section_headings": include_section_headings,
+                    "rag_include_source_titles": include_source_titles,
                     "retrieval_path": retrieval_path,
                     "pool_b_enabled": pool_b_enabled,
                     "scope_key": scope_key,

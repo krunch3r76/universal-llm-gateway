@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, override
 import httpx
 from universal_logging import get_logger
 
+from ..dag import PipelineExecutionError
 from .protocol import AbstractStepHandler, StepOutput
 from .registry import register_handler
 
@@ -46,7 +47,10 @@ def _inject_rag_context_options(merged_options: dict[str, Any], step_id: str) ->
             merged_options["scope_options"] = fetch_scope_options_text()
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "pipeline_call_v1 '%s': failed to inject scope_options for rag-context (%s)",
+                (
+                    "pipeline_call_v1 '%s': failed to inject scope_options "
+                    "for rag-context (%s)"
+                ),
                 step_id,
                 exc,
             )
@@ -156,8 +160,23 @@ class PipelineCallHandler(AbstractStepHandler):
         start = time.monotonic()
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, json=body)
-            response.raise_for_status()
         latency_ms = (time.monotonic() - start) * 1000
+
+        if response.is_error:
+            detail_message = response.text
+            try:
+                error_payload = response.json()
+            except ValueError:
+                error_payload = None
+            if isinstance(error_payload, dict):
+                nested = error_payload.get("detail", error_payload.get("error", {}))
+                if isinstance(nested, dict) and nested.get("message"):
+                    detail_message = str(nested["message"])
+                elif isinstance(nested, str) and nested.strip():
+                    detail_message = nested
+            raise PipelineExecutionError(
+                f"Sub-pipeline '{pipeline_id}' failed: {detail_message}"
+            )
 
         data = response.json()
         content: str = (

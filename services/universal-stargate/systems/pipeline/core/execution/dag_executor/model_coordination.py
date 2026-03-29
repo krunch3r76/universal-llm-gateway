@@ -95,6 +95,53 @@ class StepModelCoordinator:
             None if node.step.get_domain_field("_sub_pipeline_step") else target_model
         )
 
+    def validate_resolution_consistency(
+        self,
+        node: StepNode,
+        target_model: str | None,
+    ) -> None:
+        """Detect when the coordinator-resolved model diverges from handler execution.
+
+        Compares the model used for gating/eviction protection against what
+        the handler would actually execute. Raises PipelineExecutionError on
+        drift to fail-fast instead of silently running the wrong model.
+
+        Scoped to answer_v1 generate steps with a pipeline_options.model
+        override - the only current path where coordination and execution
+        can diverge. Skips during active fallback (when _step_model_override
+        is populated) because the executor intentionally overrides the model.
+        """
+        context = self._executor.context
+        step = node.step
+
+        if step.name in context._step_model_override:
+            return
+
+        if getattr(context.pipeline, "domain", None) != "answer_v1":
+            return
+        if step.type != "generate":
+            return
+
+        execution_override = step._get_pipeline_model_override(context)
+        if not execution_override:
+            return
+
+        if execution_override != target_model:
+            from ...dag import PipelineExecutionError
+
+            logger.error(
+                "Model drift detected for step '%s': coordinator resolved '%s' "
+                "but execution would use '%s'",
+                step.name,
+                target_model,
+                execution_override,
+            )
+            raise PipelineExecutionError(
+                f"Model resolution drift for step '{step.name}': "
+                f"coordinator resolved '{target_model}' but handler "
+                f"override is '{execution_override}'"
+            )
+
     def can_launch_with_lock(self, lock_model: str | None) -> bool:
         """Check whether local model lock can be acquired."""
         if not lock_model:
@@ -109,13 +156,26 @@ class StepModelCoordinator:
         lock_model: str | None,
         models_in_use_this_iteration: set[str],
     ) -> None:
-        """Register local/global tracking when a step transitions to RUNNING."""
+        """Register local lock and global tracking when a step transitions to RUNNING.
+
+        Local model tracker uses lock_model for serialization (None for
+        sub-pipeline steps). Gate events use target_model for consistent
+        identity across claim/release correlation.
+
+        Invariant: lock_model ∈ {None, target_model} -- sub-pipeline steps
+        bypass local lock but still use global tracking for eviction protection.
+        """
+        node = self._executor.nodes.get(step_id)
+        if node:
+            self.validate_resolution_consistency(node, target_model)
+
         if lock_model:
             self._model_tracker.acquire(lock_model, step_id)
             models_in_use_this_iteration.add(lock_model)
+            assert target_model is not None
             self._executor._observability.emit_pipeline_model_gate_claimed(
                 step_id=step_id,
-                model_id=lock_model,
+                model_id=target_model,
             )
         if target_model:
             self.register_global_tracking(target_model, step_id)

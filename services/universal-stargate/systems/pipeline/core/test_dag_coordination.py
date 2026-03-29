@@ -7,14 +7,20 @@ for steps targeting different models.
 """
 
 import asyncio
+import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from .dag import DAGBuilder, StepNode, StepState
-from .execution import DAGExecutor, ModelUsageTracker
-from .handlers.protocol import StepOutput
-from .schemas import StepConfig
+_repo_root = str(Path(__file__).resolve().parents[5])
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
+from .dag import DAGBuilder, StepNode, StepState  # noqa: E402
+from .execution import DAGExecutor, ModelUsageTracker  # noqa: E402
+from .handlers.protocol import StepOutput  # noqa: E402
+from .schemas import StepConfig  # noqa: E402
 
 
 def _build_context(registry: MagicMock) -> MagicMock:
@@ -26,6 +32,10 @@ def _build_context(registry: MagicMock) -> MagicMock:
         domain="test",
         source_search_path=[],
     )
+    context.execution_id = "exec-test"
+    context.recorder = None
+    context._proxy = MagicMock()
+    context._proxy.event_bus.publish_async_nowait = AsyncMock(return_value=None)
     return context
 
 
@@ -391,3 +401,193 @@ async def test_dynamic_model_ref_validation():
     # Should raise ValueError when trying to get target model
     with pytest.raises(ValueError, match="Dynamic model_ref not supported"):
         step.get_target_model_id(registry)
+
+
+@pytest.mark.asyncio
+async def test_answer_v1_runtime_model_override_drives_target_resolution():
+    """Runtime `pipeline_options.model` must drive coordination for answer_v1 steps."""
+    step = StepConfig(id="answer", type="generate", model_ref="answer", depends_on=[])
+    registry = MagicMock()
+    registry.get_model_config.return_value = MagicMock(model="gpt-oss-20b-mxfp4-32768")
+
+    context = MagicMock()
+    context.pipeline = MagicMock(domain="answer_v1")
+    context.options = {"model": "native/openai/gpt-5.4"}
+
+    resolved = await step.get_target_model_id_async(
+        registry,
+        domain="answer_v1",
+        search_path=[],
+        context=context,
+    )
+
+    assert resolved == "native/openai/gpt-5.4"
+    registry.get_model_config.assert_not_called()
+
+
+def _build_answer_context(registry: MagicMock, model_override: str) -> MagicMock:
+    """Build PipelineContext mock for answer_v1 with pipeline_options.model."""
+    context = _build_context(registry)
+    context.pipeline = MagicMock(
+        id="rag-answer",
+        domain="answer_v1",
+        source_search_path=[],
+    )
+    context.options = {"model": model_override}
+    context.execution_id = "exec-test"
+    context.recorder = None
+    context._step_model_override = {}
+    context._proxy = None
+    context.drain_step_calls = lambda _step_name: []
+    context.outputs = {}
+    context.set_output = lambda step_id, output: context.outputs.__setitem__(
+        step_id, output
+    )
+    context.get_output = lambda step_id: context.outputs.get(step_id)
+    return context
+
+
+@pytest.mark.asyncio
+async def test_answer_v1_runtime_override_gate_events():
+    """Gate events must use the runtime override, not the static alias."""
+    from .execution.dag_executor.model_coordination import StepModelCoordinator
+
+    step = StepConfig(id="answer", type="generate", model_ref="answer", depends_on=[])
+    registry = MagicMock()
+    registry.get_model_config.return_value = MagicMock(model="phi-4-q4-k-m-16384")
+
+    context = _build_answer_context(registry, "native/openai/gpt-5.4")
+    nodes = _build_nodes([step])
+    executor = MagicMock(context=context, nodes=nodes)
+    executor._observability = MagicMock()
+
+    coordinator = StepModelCoordinator(executor)
+
+    target_model = await coordinator.resolve_target_model(nodes["answer"])
+    assert target_model == "native/openai/gpt-5.4"
+
+    lock_model = coordinator.get_lock_model(nodes["answer"], target_model)
+    models_in_use: set[str] = set()
+    coordinator.on_step_launched(
+        step_id="answer",
+        target_model=target_model,
+        lock_model=lock_model,
+        models_in_use_this_iteration=models_in_use,
+    )
+
+    executor._observability.emit_pipeline_model_gate_claimed.assert_called_once_with(
+        step_id="answer",
+        model_id="native/openai/gpt-5.4",
+    )
+
+    coordinator.on_step_finished(
+        step_id="answer",
+        target_model=target_model,
+        outcome="success",
+    )
+
+    executor._observability.emit_pipeline_model_gate_released.assert_called_once_with(
+        step_id="answer",
+        model_id="native/openai/gpt-5.4",
+        outcome="success",
+    )
+
+
+@pytest.mark.asyncio
+async def test_answer_v1_runtime_override_fallback_primary():
+    """Fallback uses the runtime override as primary model, not the alias."""
+    from .execution.dag_executor import step_model_fallback as fb_mod
+
+    step = StepConfig(
+        id="answer",
+        type="generate",
+        model_ref="answer",
+        model_requirements={"task": "rag_answer", "source": "any"},
+        depends_on=[],
+    )
+
+    context = _build_answer_context(MagicMock(), "native/openai/gpt-5.4")
+
+    fallback_model = "phi-4-q4-k-m-16384"
+    run_calls: list[str] = []
+
+    async def mock_run(s: StepConfig) -> StepOutput:
+        override = context._step_model_override.get(s.name)
+        run_calls.append(override or "primary")
+        if override == fallback_model:
+            return StepOutput(raw="fallback-success", json={})
+        raise TimeoutError("primary failed")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            fb_mod,
+            "get_ranked_candidates",
+            AsyncMock(return_value=["native/openai/gpt-5.4", fallback_model]),
+        )
+
+        result = await fb_mod.try_step_model_fallback(
+            step,
+            TimeoutError("primary failed"),
+            primary_model_id="native/openai/gpt-5.4",
+            run_step_fn=mock_run,
+            context=context,
+            get_event_context=lambda: ("rag-answer", "exec-test"),
+            publish_event=lambda e: None,
+        )
+
+    assert result.raw == "fallback-success"
+    assert fallback_model in run_calls
+
+
+@pytest.mark.asyncio
+async def test_answer_v1_drift_raises():
+    """Drift between coordination and execution should fail fast."""
+    from .dag import PipelineExecutionError
+    from .execution.dag_executor.model_coordination import StepModelCoordinator
+
+    step = StepConfig(id="answer", type="generate", model_ref="answer", depends_on=[])
+    registry = MagicMock()
+    registry.get_model_config.return_value = MagicMock(model="phi-4-q4-k-m-16384")
+
+    context = _build_answer_context(registry, "native/openai/gpt-5.4")
+    nodes = _build_nodes([step])
+    executor = MagicMock(context=context, nodes=nodes)
+    executor._observability = MagicMock()
+
+    coordinator = StepModelCoordinator(executor)
+
+    with pytest.raises(PipelineExecutionError, match="Model resolution drift"):
+        coordinator.validate_resolution_consistency(
+            nodes["answer"],
+            target_model="phi-4-q4-k-m-16384",
+        )
+
+
+@pytest.mark.asyncio
+async def test_answer_v1_fallback_respects_step_model_override():
+    """Answer generation should honor the active fallback override."""
+    from pipelines.answer_v1.handlers.answer import AnswerGenerateHandler
+
+    step = StepConfig(
+        id="answer",
+        type="generate",
+        model_ref="answer",
+        prompt_ref="answer_v1.answer_gated",
+        depends_on=[],
+    )
+    context = _build_answer_context(MagicMock(), "native/openai/gpt-5.4")
+
+    handler = AnswerGenerateHandler()
+    calls: list[str] = []
+
+    async def mock_override(s, ctx, model_id):
+        calls.append(model_id)
+        return StepOutput(raw=f"answer from {model_id}", json={})
+
+    handler._execute_with_model_override = mock_override
+
+    context._step_model_override["answer"] = "phi-4-q4-k-m-16384"
+    result = await handler.execute(step, context)
+
+    assert result.raw == "answer from phi-4-q4-k-m-16384"
+    assert calls == ["phi-4-q4-k-m-16384"]

@@ -8,7 +8,7 @@ info:
     intent (todos), episodic memory (session journals), temporal awareness
     (deadlines with urgency), and provenance (evidence URIs). cortex-api is
     the sole access path to cortex.db and todos.db — no direct
-    sqlite_query(db="cortex") from agents.
+    sql(db="cortex") from agents.
 
 servers:
   - url: http://localhost

@@ -47,7 +47,7 @@ def register_model_status_tools(mcp: FastMCP) -> None:
         Use this to check whether a model is loaded before sending inference,
         or to debug routing by seeing which models are loaded where.
 
-        Prefer ``manage_service`` for starting services; use this for read-only
+        Prefer ``manage`` for starting services; use this for read-only
         placement and load-state inspection.
 
         Args:

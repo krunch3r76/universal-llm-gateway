@@ -14,8 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from mcp_events import monotonic_now, record
-from request_profile import current_profile
-from tool_access import CURSOR_SAFE_PROFILE
 from transport_utils import make_sync_client
 
 if TYPE_CHECKING:
@@ -91,7 +89,9 @@ def _resolve_target(target: str) -> _EventQueryTarget | None:
     return None
 
 
-def _query_event_service(body: dict[str, Any], *, target: str = "ulg") -> dict[str, Any]:
+def _query_event_service(
+    body: dict[str, Any], *, target: str = "ulg"
+) -> dict[str, Any]:
     """POST a structured query payload to the selected event service instance.
 
     Returns the decoded response body. On transport/query failures, returns an
@@ -154,15 +154,12 @@ def register_event_tools(mcp: FastMCP) -> None:
     """Register event observability tools on the MCP server."""
 
     @mcp.tool()
-    def query_observability(
+    def observability(
         operation: str,
         params: dict[str, Any] | None = None,
         target: str = "ulg",
     ) -> dict[str, Any]:
         """Query system telemetry, traces, and request snapshots.
-
-        This full-surface tool is disabled for cursor_safe profile because
-        some operations can return very large payloads.
 
         Single entry point for all event service operations. Use
         operation='operations' to discover available operations and
@@ -205,21 +202,6 @@ def register_event_tools(mcp: FastMCP) -> None:
             On success: operation-specific result dict
             On error: {"error": "<message>"}
         """
-        profile = current_profile()
-        if profile == CURSOR_SAFE_PROFILE:
-            reason = (
-                "query_observability is disabled for cursor_safe profile. "
-                "Use query_observability_preview."
-            )
-            record(
-                "mcp.profile.tool.denied",
-                profile=profile,
-                tool="query_observability",
-                entrypoint="direct",
-                reason=reason,
-            )
-            return {"error": reason}
-
         if operation not in _VALID_OPERATIONS:
             return {
                 "error": f"Unknown operation: {operation}. "

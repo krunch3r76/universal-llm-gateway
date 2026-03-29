@@ -80,7 +80,7 @@ excluded defensively from business-metric operations via `role NOT IN ('debug',
 
 **Query**: Use `realtime-snapshot` operation to read the buffer:
 ```python
-query_observability(operation="realtime-snapshot", params={"limit": 50})
+observability(operation="realtime-snapshot", params={"limit": 50})
 ```
 
 **Use cases**: Heartbeat telemetry, high-frequency resource updates, live
@@ -550,6 +550,8 @@ failure-boundary signals emitted immediately before the corresponding
 **INVARIANT**: `pipeline.model.gate.claimed` ⟹
 (`pipeline.model.gate.released` ∨ `pipeline.model.gate.failure.release`)
 for the same `pipeline_id` + `execution_id` + `step_id` + `model_id`.
+`model_id` is the resolved execution target model identity used for
+claim/release correlation (not the internal local lock-tracker key).
 
 **INVARIANT**: `pipeline.dag.execution.completed` is emitted exactly once when all
 steps are terminal (`COMPLETED` ∪ `SKIPPED` ∪ `FAILED`).
@@ -655,7 +657,7 @@ pipeline.rag.retrieval.params.resolved
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes`, `pool_b_enabled` | Pre-retrieval: effective parameters after three-tier merge; `scope` may be string or array of strings (multiscope); `pool_b_enabled` indicates sparse facet/IDF pool (Pool B) active |
 | `pipeline.rag.neighbor.expansion.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | Neighbor chunk expansion result — emitted when expansion is enabled, even if zero neighbors were added |
 | `pipeline.rag.coverage.selection.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `applied`, `chunks_before`, `chunks_after` | Coverage-aware selection outcome after metadata boost scoring (only emitted when coverage selection is enabled) |
-| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added` | Post-retrieval: scope prediction + quality metrics (`neighbor_expansion_added` is optional and defaults to 0 when expansion is disabled) |
+| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added`, `coverage_bias_applied`, `coverage_bias_query_class`, `coverage_bias_anchor_source`, `coverage_bias_boosted_chunks` | Post-retrieval: scope prediction + quality metrics; coverage-bias fields default when query-class bias is off (`coverage_bias_applied=false`, `coverage_bias_query_class=default`, `coverage_bias_anchor_source=null`, `coverage_bias_boosted_chunks=0`) |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | All queries failed — no chunks to merge |
 
 Payload semantics:
@@ -674,6 +676,7 @@ Payload semantics:
 - `per_source_limit` / `chunks_dropped` / `chunks_before` / `chunks_after`: Source-diversity cap impact on final candidate pool (emitted only when drops occur)
 - `total_retrieval_seconds`: Wall-clock time from first query dispatch to merge completion/failure
 - `neighbor_expansion_added`: Number of chunks appended during contiguous neighbor expansion (0 when expansion disabled or no eligible neighbors)
+- `coverage_bias_applied` / `coverage_bias_query_class` / `coverage_bias_anchor_source` / `coverage_bias_boosted_chunks`: Query-class coverage bias (enumeration/API-surface queries) — boosts distinct sections from the dominant source before diversity pruning
 
 **Debugging queries**:
 
@@ -1460,7 +1463,7 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `pipeline.step.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | - |
 | `pipeline.step.condition.evaluated` | `pipeline_id`, `execution_id`, `step_name`, `condition`, `result`, `available_outputs` | - |
 | `pipeline.step.model.deferred` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `reason` | deferral due to model admission gate |
-| `pipeline.model.gate.claimed` | `pipeline_id`, `execution_id`, `step_id`, `model_id` | step acquired model gate |
+| `pipeline.model.gate.claimed` | `pipeline_id`, `execution_id`, `step_id`, `model_id` | step acquired model gate; `model_id` is resolved target model identity |
 | `pipeline.model.gate.released` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `outcome` | gate released (`success`\|`failure`\|`cancelled`) |
 | `pipeline.model.gate.failure.release` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `error_type` | explicit failure-boundary release marker |
 | `pipeline.model.registry.lookup.failed` | `pipeline_id`, `execution_id`, `step_id`, `model_ref`, `error` | model_ref lookup failure |
@@ -1477,7 +1480,7 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `pipeline.rag.scope.rejected` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `scope`, `details` | fail-closed scope rejection (0 chunks); reasons: `invalid_scope_override`, `invalid_predicted_scope`, `scope_confidence_below_threshold`, `scope_catalog_unavailable` |
 | `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | - |
 | `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes`, `pool_b_enabled` | `scope` may be string or array of strings (multiscope) |
-| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added` | `neighbor_expansion_added` defaults to 0 when expansion disabled; `fallback_triggered` now reflects alias normalization only (no broad fallback) |
+| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added`, `coverage_bias_applied`, `coverage_bias_query_class`, `coverage_bias_anchor_source`, `coverage_bias_boosted_chunks` | `neighbor_expansion_added` defaults to 0 when expansion disabled; `fallback_triggered` reflects alias normalization only; coverage-bias fields observe enumeration-query section boosting |
 | `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | - |
 | `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | - |
 | `pipeline.rag.retrieval.source.diversity.limited` | `pipeline_id`, `execution_id`, `step_name`, `per_source_limit`, `chunks_dropped`, `chunks_before`, `chunks_after` | - |
@@ -1702,9 +1705,13 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.tool.markdown.section.deleted` | `path`, `sandbox`, `section` | `markdown` delete_section completed |
 | `mcp.tool.markdown.converted.to.dict` | `path`, `sandbox`, `keys` | `markdown` to_dict completed |
 | `mcp.tool.markdown.converted.from.dict` | `path`, `sandbox`, `keys` | `markdown` from_dict completed |
-| `mcp.manage.service.called` | `action`, `service` | manage_service tool invoked |
-| `mcp.manage.service.completed` | `action`, `service`, `duration_s` | manage_service completed successfully |
-| `mcp.manage.service.failed` | `action`, `service`, `error`, `duration_s` | manage_service returned error |
+| `mcp.manage.service.called` | `action`, `service` | manage tool invoked |
+| `mcp.manage.service.completed` | `action`, `service`, `duration_s` | manage completed successfully |
+| `mcp.manage.service.failed` | `action`, `service`, `error`, `duration_s` | manage returned error |
+| `mcp.response.guarded` | `tool_name`, `profile`, `original_bytes`, `threshold_bytes`, `ref_id`, `store_count` | Tool response exceeded profile threshold; stored in memory, reference returned |
+| `mcp.response.retrieved` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Consumer retrieved a stored oversized response via `retrieve` tool |
+| `mcp.response.expired` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Stored response expired or was evicted before retrieval |
+| `mcp.response.guard.init_failed` | `error` | Response size guard middleware failed to initialize at startup |
 
 ### Agent-Bus Signals
 
@@ -1782,7 +1789,7 @@ on every lifecycle operation received over `manage.sock`.
 
 ### MCP Layer Signals
 
-The `manage_service` MCP tool emits its own observation signals:
+The `manage` MCP tool emits its own observation signals:
 
 | Signal | When |
 |--------|------|
@@ -1798,6 +1805,30 @@ scripts/query-events --sql "SELECT signal, payload FROM events WHERE signal LIKE
 
 # Failed rebuilds
 scripts/query-events --sql "SELECT payload FROM events WHERE signal='manage.service.failed' ORDER BY seq DESC LIMIT 10"
+```
+
+## Manage GPU image build signals
+
+Emitted by `./manage` TUI paths: local `build_image` (`ServiceController`) and
+remote `deploy_remote` when `--build` is used. Source: `manage`. Role:
+`observation`. Scope: `node`.
+
+| Signal | When |
+|--------|------|
+| `build.image.started` | Operator started a GPU image build (local host or remote hostname) |
+| `build.image.completed` | Build subprocess finished (`success`, `duration_s`) |
+| `build.image.mismatch` | After rsync + restart, local vs remote `universal-llm-gateway:gpu` build labels differ |
+
+### Payload keys
+
+- `build.image.started`: `host` (str), `scope` (str, e.g. `all` / `llama`)
+- `build.image.completed`: `host`, `scope`, `success` (bool), `duration_s` (float)
+- `build.image.mismatch`: `host`, `mismatched_fields` (list of str), `local_labels`, `remote_labels` (dicts of compared label keys)
+
+### Query example
+
+```bash
+scripts/query-events --sql "SELECT signal, payload FROM events WHERE signal LIKE 'build.image.%' ORDER BY seq DESC LIMIT 30"
 ```
 
 ## Event Service Self-Health Signals

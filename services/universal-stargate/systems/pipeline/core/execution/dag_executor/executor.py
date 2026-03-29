@@ -78,10 +78,10 @@ class DAGExecutor:
             self._proxy_client = None
 
     async def cancel(self) -> None:
-        """
-        Cancel pipeline execution and cleanup resources.
+        """Cancel pipeline execution and cleanup resources.
 
         Called when client disconnects or external cancellation is requested.
+        Best-effort drift check during cleanup - logs but does not raise.
         """
         cancelled_steps: list[str] = []
         for step_id, task in list(self._pending_tasks.items()):
@@ -96,6 +96,17 @@ class DAGExecutor:
             node = self.nodes.get(step_id)
             if node:
                 target_model = await self._model_coordination.resolve_target_model(node)
+                try:
+                    self._model_coordination.validate_resolution_consistency(
+                        node, target_model
+                    )
+                except Exception:
+                    logger.warning(
+                        "Drift check raised during cancellation for step '%s' "
+                        "(best-effort, not raised)",
+                        step_id,
+                        exc_info=True,
+                    )
                 self._model_coordination.on_cancelled_step(
                     step_id=step_id,
                     target_model=target_model,
@@ -354,7 +365,7 @@ class DAGExecutor:
 
         start_time = time.time()
         try:
-            output = await self._run_step(node)
+            output = await self._run_step(node, target_model=target_model)
             duration = time.time() - start_time
             self._observability.record_success(node, output, duration)
         except Exception as e:
@@ -362,14 +373,13 @@ class DAGExecutor:
             self._observability.record_failure(node, e, duration)
             raise
 
-    async def _run_step(self, node: StepNode) -> StepOutput:
+    async def _run_step(
+        self, node: StepNode, *, target_model: str | None = None
+    ) -> StepOutput:
         """Execute step, falling back to alternative models on eligible failures.
 
-        After the primary model exhausts its full retry chain (including
-        handler-level ProxyClientError fallback), the executor resolves
-        model_requirements to find ranked alternatives and re-runs the
-        entire wrapper chain for each. Each fallback model gets its own
-        fresh retry+timeout allocation.
+        Receives the coordinator-resolved target model so fallback can use it
+        as the authoritative primary model identity without re-resolving.
         """
         step = node.step
         logger.debug(f"Executing step '{step.name}' (type: {step.type})")
@@ -397,6 +407,7 @@ class DAGExecutor:
             return await self._try_step_model_fallback(
                 step,
                 primary_err,
+                target_model=target_model,
             )
 
     async def _run_step_inner(self, step: StepConfig) -> StepOutput:
@@ -417,13 +428,20 @@ class DAGExecutor:
         self,
         step: StepConfig,
         primary_err: Exception,
+        *,
+        target_model: str | None = None,
     ) -> StepOutput:
-        """Delegate to extracted step_model_fallback module."""
+        """Delegate fallback with the coordinator-resolved model.
+
+        Passes primary_model_id so fallback does not independently re-resolve,
+        avoiding silent divergence from the coordinated model identity.
+        """
         from .step_model_fallback import try_step_model_fallback
 
         return await try_step_model_fallback(
             step,
             primary_err,
+            primary_model_id=target_model,
             run_step_fn=self._run_step_inner,
             context=self.context,
             get_event_context=self._observability.get_event_context,

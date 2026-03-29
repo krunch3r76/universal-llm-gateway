@@ -352,7 +352,7 @@ scripts/query-events --sql "SELECT signal, COUNT(*) c FROM events GROUP BY signa
 scripts/query-events --subscribe --filter signal=pipeline.*   # live WebSocket
 ```
 
-MCP agents use `query_observability` for the same queries. See [`docs/event-service.md`](docs/event-service.md) for the full API.
+MCP agents use `observability` for the same queries. See [`docs/event-service.md`](docs/event-service.md) for the full API.
 
 | Publisher | Source field | Key signals |
 |---|---|---|

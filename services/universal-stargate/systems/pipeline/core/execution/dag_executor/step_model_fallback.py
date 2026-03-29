@@ -28,6 +28,7 @@ async def try_step_model_fallback(
     step: StepConfig,
     primary_err: Exception,
     *,
+    primary_model_id: str | None,
     run_step_fn: Callable[[StepConfig], Awaitable[StepOutput]],
     context: PipelineContext,
     get_event_context: Callable[[], tuple[str, str]],
@@ -35,9 +36,15 @@ async def try_step_model_fallback(
 ) -> StepOutput:
     """Try fallback models after the primary model's retry chain fails.
 
+    Receives the already-resolved primary model from the executor/coordinator
+    to avoid independent re-resolution that could silently diverge from the
+    coordinated model identity used for gating and eviction protection.
+
     Args:
         step: Step config (must have model_ref and model_requirements).
         primary_err: The exception from the primary model's retry chain.
+        primary_model_id: The resolved primary model ID from the coordinator.
+            If unavailable, fallback is skipped and primary_err is re-raised.
         run_step_fn: Callable that re-runs the step through the wrapper chain.
         context: PipelineContext for model resolution and event recording.
         get_event_context: Returns (pipeline_id, execution_id).
@@ -57,17 +64,9 @@ async def try_step_model_fallback(
     )
     from ...events.step import StepModelFallback
 
-    _mro = context.options.get("model_ref_overrides")
-    mro_dict = _mro if isinstance(_mro, dict) else None
-    primary_model = await step.get_target_model_id_async(
-        registry=context._registry,
-        domain=context.pipeline.domain,
-        search_path=context.pipeline.source_search_path,
-        model_ref_overrides=mro_dict,
-        context=context,
-    )
-    if not primary_model:
+    if not primary_model_id:
         raise primary_err
+    primary_model = primary_model_id
 
     if not step.model_requirements:
         raise primary_err

@@ -54,6 +54,7 @@ COPY --chown=mcp:mcp services/mcp-server/workbench_relay.py .
 COPY --chown=mcp:mcp services/mcp-server/mcp_request_middleware.py .
 COPY --chown=mcp:mcp services/mcp-server/request_profile.py .
 COPY --chown=mcp:mcp services/mcp-server/tool_access.py .
+COPY --chown=mcp:mcp services/mcp-server/response_size_guard.py .
 COPY --chown=mcp:mcp services/mcp-server/tools/ tools/
 
 EXPOSE 443

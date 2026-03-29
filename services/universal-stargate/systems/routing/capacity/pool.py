@@ -900,7 +900,7 @@ class CapacityPool:
 
         Includes per-slot capacity/in_flight, per-model queue contents with
         waiter request_ids and allowed gateways, and aggregate totals.  Used
-        by health endpoints, logging, and the MCP manage_service status command.
+        by health endpoints, logging, and the MCP manage status command.
         """
         return {
             "capacity": {str(s): c for s, c in self._capacity.items()},

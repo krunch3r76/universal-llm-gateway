@@ -469,6 +469,10 @@ export LLAMA_SERVER_VERSION
 
 cd "${PROJECT_ROOT}"
 
+# ISO 8601 UTC — recorded on image for edge-to-edge mismatch checks
+BUILD_TIMESTAMP="${BUILD_TIMESTAMP:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+export BUILD_TIMESTAMP
+
 ensure_buildx_builder() {
     if docker buildx inspect "${BUILDER_NAME}" >/dev/null 2>&1; then
         return
@@ -506,6 +510,7 @@ docker buildx build \
     --build-arg TORCH_NIGHTLY_DATE="${TORCH_NIGHTLY_DATE}" \
     --build-arg ENABLE_LLAMA_SERVER="${ENABLE_LLAMA_SERVER}" \
     --build-arg LLAMA_SERVER_VERSION="${LLAMA_SERVER_VERSION}" \
+    --build-arg BUILD_TIMESTAMP="${BUILD_TIMESTAMP}" \
     ${SOURCE_VERSION:+--build-arg SOURCE_VERSION="${SOURCE_VERSION}"} \
     -f docker/dockerfiles/Dockerfile.gpu \
     -t gateway-base:runtime \

@@ -486,6 +486,10 @@ def RagRetrievalCompleted(  # noqa: N802
     chunks_after_merge: int,
     total_retrieval_seconds: float,
     neighbor_expansion_added: int = 0,
+    coverage_bias_applied: bool = False,
+    coverage_bias_query_class: str = "default",
+    coverage_bias_anchor_source: str | None = None,
+    coverage_bias_boosted_chunks: int = 0,
 ) -> Event:
     """Emitted after successful RAG multi-query retrieval + RRF merge.
 
@@ -507,6 +511,10 @@ def RagRetrievalCompleted(  # noqa: N802
         total_retrieval_seconds: Wall-clock time for all queries + merge
         neighbor_expansion_added: Number of chunks added by neighbor expansion
                                   (0 when expansion is disabled or adds none)
+        coverage_bias_applied: True when enumeration-style query coverage bias ran
+        coverage_bias_query_class: ``default`` or ``enumeration`` from classifier
+        coverage_bias_anchor_source: Dominant source used for section boosting, if any
+        coverage_bias_boosted_chunks: Count of chunks whose scores were boosted
     """
     return Event(
         signal="pipeline.rag.retrieval.completed",
@@ -525,6 +533,10 @@ def RagRetrievalCompleted(  # noqa: N802
             "chunks_after_merge": chunks_after_merge,
             "total_retrieval_seconds": total_retrieval_seconds,
             "neighbor_expansion_added": neighbor_expansion_added,
+            "coverage_bias_applied": coverage_bias_applied,
+            "coverage_bias_query_class": coverage_bias_query_class,
+            "coverage_bias_anchor_source": coverage_bias_anchor_source,
+            "coverage_bias_boosted_chunks": coverage_bias_boosted_chunks,
         },
     )
 

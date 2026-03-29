@@ -51,11 +51,10 @@ async def _get_api() -> Any:
 
 
 async def _resolve_bot_account_index() -> int | None:
-    """Ask the bot for its resolved Lighter account index.
+    """Ask the bot for its cached Lighter account index.
 
-    LIGHTER_API_KEY_INDEX is a signing key selector, not a Lighter account
-    index. The bot resolves the real account index at startup. We fetch it here
-    so lighter_api can query the correct account without knowing account 17764+.
+    Uses the /account-index endpoint which returns the index resolved at bot
+    startup — no live Lighter API call, immune to 429 rate limits.
     """
     if not _BOT_PERPS_HOST:
         return None
@@ -64,9 +63,13 @@ async def _resolve_bot_account_index() -> int | None:
     base = f"http://{_BOT_PERPS_HOST}:{_BOT_PERPS_PORT}"
     try:
         async with httpx.AsyncClient(base_url=base, timeout=5.0) as client:
-            resp = await client.get("/live/account")
+            resp = await client.get("/account-index")
             resp.raise_for_status()
-            return int(resp.json()["account_index"])
+            data = resp.json()
+            if "error" in data:
+                logger.warning("Bot account index not ready: %s", data["error"])
+                return None
+            return int(data["account_index"])
     except Exception as exc:
         logger.warning("Could not resolve bot account index from %s: %s", base, exc)
         return None
@@ -132,22 +135,35 @@ async def _op_positions(api: Any, idx: int) -> dict[str, Any]:
 async def _op_orders(api: Any, idx: int) -> dict[str, Any]:
     import lighter
 
-    acct_api = lighter.AccountApi(api)
-    resp = await acct_api.account(by="index", value=str(idx))
-    acct = resp.accounts[0]
-
     orders: list[dict[str, Any]] = []
-    for order in getattr(acct, "open_orders", []) or []:
-        orders.append(
-            {
-                "order_id": str(getattr(order, "order_id", "")),
-                "market_id": int(getattr(order, "market_id", 0)),
-                "side": str(getattr(order, "side", "")),
-                "price": str(getattr(order, "price", "")),
-                "size": str(getattr(order, "remaining_base_amount", "")),
-                "type": str(getattr(order, "type", "")),
-            }
+    seen_order_ids: set[str] = set()
+    order_api = lighter.OrderApi(api)
+    markets = await order_api.order_books()
+    for market in getattr(markets, "order_books", []) or []:
+        market_id = int(getattr(market, "market_id", 0) or 0)
+        if market_id <= 0:
+            continue
+        response = await order_api.account_active_orders(
+            account_index=idx,
+            market_id=market_id,
         )
+        for order in getattr(response, "orders", []) or []:
+            order_id = str(getattr(order, "order_id", ""))
+            if order_id in seen_order_ids:
+                continue
+            seen_order_ids.add(order_id)
+            orders.append(
+                {
+                    "order_id": order_id,
+                    "market_id": int(getattr(order, "market_index", market_id) or market_id),
+                    "side": str(getattr(order, "side", "")),
+                    "price": str(getattr(order, "price", "")),
+                    "size": str(getattr(order, "remaining_base_amount", "")),
+                    "type": str(getattr(order, "type", "")),
+                    "status": str(getattr(order, "status", "")),
+                    "trigger_price": str(getattr(order, "trigger_price", "")),
+                }
+            )
     return {"orders": orders, "count": len(orders)}
 
 

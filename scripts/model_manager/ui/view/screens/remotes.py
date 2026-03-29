@@ -172,7 +172,9 @@ class RemotesScreen(Screen):
         log.write_line(f"Added relay-{hostname} -> {ssh_user}@{address}")
         log.write_line(f"  Node env: {result['node_env_path']}")
         log.write_line("")
-        log.write_line(f"Go to Home -> Rebuild + Deploy All to deploy to {hostname}.")
+        log.write_line(
+            f"Go to Home -> Sync + Restart All (or Rebuild + Deploy All) for {hostname}."
+        )
         log.write_line("")
 
         self.query_one("#inp-hostname", Input).value = ""

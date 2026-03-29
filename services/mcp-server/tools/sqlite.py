@@ -5,7 +5,7 @@ Config path: SQLITE_CONFIG_PATH env var (default /data/sqlite-config.yaml).
 Database files: stored under configured paths (typically /data/databases/).
 
 Safety:
-  - sqlite_query: SELECT-only, parameterized, row-limited
+  - sql: SELECT-only, parameterized, row-limited
   - sqlite_execute: blocks DROP/PRAGMA unless allow_destructive is set
   - All value bindings use SQLite parameterization
 """
@@ -199,7 +199,9 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
             return {"error": f"Database file does not exist: {db!r}"}
 
         if table and not _IDENTIFIER_PATTERN.fullmatch(table):
-            return {"error": "Invalid table name. Use letters, numbers, and underscore."}
+            return {
+                "error": "Invalid table name. Use letters, numbers, and underscore."
+            }
 
         t0 = monotonic_now()
         try:
@@ -249,11 +251,13 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
             table_count=len(result_tables),
             duration_s=round(duration, 3),
         )
-        logger.info("sqlite_schema: db=%s table=%s -> %d tables", db, table, len(result_tables))
+        logger.info(
+            "sqlite_schema: db=%s table=%s -> %d tables", db, table, len(result_tables)
+        )
         return {"tables": result_tables}
 
     @mcp.tool()
-    def sqlite_query(
+    def sql(
         sql: str,
         db: str = "default",
         params: list[Any] | None = None,
@@ -272,7 +276,7 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
         if not _SELECT_PATTERN.match(sql):
             return {
                 "error": (
-                    "Only SELECT statements are allowed in sqlite_query. "
+                    "Only SELECT statements are allowed in sql. "
                     "Use sqlite_execute for writes."
                 )
             }
@@ -301,7 +305,7 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
             row_count=len(rows),
             duration_s=round(duration, 3),
         )
-        logger.info("sqlite_query: db=%s -> %d rows (%.3fs)", db, len(rows), duration)
+        logger.info("sql: db=%s -> %d rows (%.3fs)", db, len(rows), duration)
         return {"columns": columns, "rows": rows, "count": len(rows)}
 
     @mcp.tool()
@@ -322,7 +326,7 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
         if not db_path.exists():
             return {"error": f"Database file does not exist: {db!r}"}
         if _SELECT_PATTERN.match(sql):
-            return {"error": "SELECT statements should use sqlite_query, not sqlite_execute."}
+            return {"error": "SELECT statements should use sql, not sqlite_execute."}
 
         if not allow_destructive and _DESTRUCTIVE_PATTERN.search(sql):
             record("mcp.sqlite.execute.blocked", db=db, reason="destructive_statement")
