@@ -23,11 +23,18 @@ _OP_REQUIRED: dict[str, list[str]] = {
     "signals": [],
     "pnl": [],
     "logs": [],
+    "risk": [],
+    "health": [],
+    "account_index": [],
     "regime": [],
     "sizing": [],
     "positions": [],
     "orders": [],
     "balance": [],
+    "live_account": [],
+    "live_active_orders": [],
+    "live_recent_orders": [],
+    "live_resolve": [],
     "orderbook": ["market_id"],
     "funding": [],
     "markets": [],
@@ -59,25 +66,56 @@ def _parse_arguments(raw: str) -> dict[str, Any]:
     return parsed
 
 
+def _account_selector_params(args: dict[str, Any]) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    if args.get("account_index") is not None:
+        params["account_index"] = int(args["account_index"])
+    account_address = str(
+        args.get("account_address", "") or args.get("l1_address", "") or ""
+    ).strip()
+    if account_address:
+        params["l1_address"] = account_address
+    return params
+
+
+def _market_id_param(args: dict[str, Any]) -> dict[str, Any]:
+    if args.get("market_id") is None:
+        return {}
+    return {"market_id": int(args["market_id"])}
+
+
 async def _route_bot_local(op: str, args: dict[str, Any]) -> dict[str, Any]:
     """Route bot-local ops to lighter_trades (SQLite) or bot REST API."""
-    if op == "status":
+    if op in {
+        "status",
+        "signals",
+        "risk",
+        "health",
+        "account_index",
+        "regime",
+        "sizing",
+    }:
         from .claudeburst_perps_common import call_bot, enrich_perps_result
 
-        result = await call_bot("GET", "/status")
-        if "error" not in result:
-            result = await enrich_perps_result("status", result)
+        rest_paths = {
+            "status": "/status",
+            "risk": "/risk",
+            "health": "/health",
+            "account_index": "/account-index",
+            "regime": "/regime",
+            "sizing": "/sizing",
+            "signals": "/signals",
+        }
+        params: dict[str, Any] = {}
+        if op == "signals":
+            params["limit"] = max(1, min(int(args.get("limit", 20)), 200))
+            if args.get("market"):
+                params["market"] = args["market"]
+
+        result = await call_bot("GET", rest_paths[op], params=params or None)
+        if "error" not in result and op in {"status", "signals", "risk", "health"}:
+            result = await enrich_perps_result(op, result)
         return result
-
-    if op == "regime":
-        from .claudeburst_perps_common import call_bot
-
-        return await call_bot("GET", "/regime")
-
-    if op == "sizing":
-        from .claudeburst_perps_common import call_bot
-
-        return await call_bot("GET", "/sizing")
 
     if op == "logs":
         from .lighter_trades import _op_logs
@@ -87,7 +125,6 @@ async def _route_bot_local(op: str, args: dict[str, Any]) -> dict[str, Any]:
     from .lighter_trades import (
         _connect,
         _op_pnl,
-        _op_signals,
         _op_trades,
     )
 
@@ -97,8 +134,6 @@ async def _route_bot_local(op: str, args: dict[str, Any]) -> dict[str, Any]:
     try:
         if op == "trades":
             return _op_trades(conn, args.get("limit", 20), args.get("status", "all"))
-        if op == "signals":
-            return _op_signals(conn, args.get("limit", 20))
         if op == "pnl":
             return _op_pnl(conn)
     finally:
@@ -107,7 +142,62 @@ async def _route_bot_local(op: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _route_exchange(op: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Route exchange ops to lighter SDK or bot REST API (fills)."""
+    """Route exchange ops to bot REST API where available."""
+    if op in {"positions", "balance", "live_account"}:
+        from .claudeburst_perps_common import call_bot, enrich_perps_result
+
+        result = await call_bot(
+            "GET", "/live/account", params=_account_selector_params(args)
+        )
+        if "error" in result:
+            return result
+        result = await enrich_perps_result("live_account", result)
+        if op == "balance":
+            return {
+                "account_index": result.get("account_index"),
+                "resolved_by": result.get("resolved_by"),
+                "collateral": result.get("collateral"),
+                "available_balance": result.get("available_balance"),
+                "_data_source": result.get("_data_source"),
+            }
+        if op == "positions":
+            result.setdefault("count", result.get("positions_count", 0))
+        return result
+
+    if op in {"orders", "live_active_orders"}:
+        from .claudeburst_perps_common import call_bot
+
+        params = {
+            **_account_selector_params(args),
+            **_market_id_param(args),
+        }
+        return await call_bot("GET", "/live/orders/active", params=params or None)
+
+    if op == "live_recent_orders":
+        from .claudeburst_perps_common import call_bot
+
+        params = {
+            **_account_selector_params(args),
+            **_market_id_param(args),
+        }
+        if args.get("limit") is not None:
+            params["limit"] = max(1, min(int(args["limit"]), 200))
+        if args.get("cursor"):
+            params["cursor"] = str(args["cursor"])
+        return await call_bot("GET", "/live/orders/recent", params=params or None)
+
+    if op == "live_resolve":
+        from .claudeburst_perps_common import call_bot
+
+        l1_address = str(
+            args.get("account_address", "") or args.get("l1_address", "") or ""
+        ).strip()
+        if not l1_address:
+            return {"error": "op='live_resolve' requires account_address or l1_address"}
+        return await call_bot(
+            "GET", "/live/resolve-account", params={"l1_address": l1_address}
+        )
+
     if op == "fills":
         from .claudeburst_perps_common import call_bot
 
@@ -119,16 +209,10 @@ async def _route_exchange(op: str, args: dict[str, Any]) -> dict[str, Any]:
         return await call_bot("GET", "/account/history", params=params)
 
     from .lighter_api import (
-        _HAS_BOT_ACCOUNT,
         _get_api,
-        _op_balance,
         _op_funding,
         _op_markets,
         _op_orderbook,
-        _op_orders,
-        _op_positions,
-        _resolve_account_index,
-        _resolve_bot_account_index,
     )
 
     api = await _get_api()
@@ -143,25 +227,6 @@ async def _route_exchange(op: str, args: dict[str, Any]) -> dict[str, Any]:
             )
         if op == "markets":
             return await _op_markets(api)
-
-        account_address = args.get("account_address", "")
-        account_index = args.get("account_index")
-        if account_index is not None:
-            account_index = int(account_index)
-
-        if account_index is None and not account_address and _HAS_BOT_ACCOUNT:
-            account_index = await _resolve_bot_account_index()
-
-        idx = await _resolve_account_index(
-            api, account_address=account_address, account_index=account_index
-        )
-
-        if op == "positions":
-            return await _op_positions(api, idx)
-        if op == "orders":
-            return await _op_orders(api, idx)
-        if op == "balance":
-            return await _op_balance(api, idx, account_address or None)
     except Exception as exc:
         record("mcp.lighter.error", op=op, error=str(exc))
         return {"error": f"Lighter API call failed: {exc}"}
@@ -210,10 +275,33 @@ async def _route_shadow(op: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 _BOT_LOCAL_OPS = frozenset(
-    {"status", "trades", "signals", "pnl", "logs", "regime", "sizing"}
+    {
+        "status",
+        "trades",
+        "signals",
+        "pnl",
+        "logs",
+        "risk",
+        "health",
+        "account_index",
+        "regime",
+        "sizing",
+    }
 )
 _EXCHANGE_OPS = frozenset(
-    {"positions", "orders", "balance", "orderbook", "funding", "markets", "fills"}
+    {
+        "positions",
+        "orders",
+        "balance",
+        "live_account",
+        "live_active_orders",
+        "live_recent_orders",
+        "live_resolve",
+        "orderbook",
+        "funding",
+        "markets",
+        "fills",
+    }
 )
 _SHADOW_OPS = frozenset(
     {"shadow_create", "shadow_list", "shadow_update", "shadow_cancel", "shadow_log"}
@@ -231,16 +319,23 @@ def register_lighter_tools(mcp: FastMCP) -> None:
         Ops (bot-local — from trade DB / bot REST):
           status    — full bot snapshot: positions + risk + signals + reconciliation
           trades    — recent trades (limit?, status?)
-          signals   — recent signals (limit?)
+          signals   — recent signals from REST/trade log (limit?, market?)
           pnl       — aggregated PnL (limit?)
           logs      — bot log tail (lines?)
+          risk      — current bot risk snapshot
+          health    — liveness / paused / halted summary
+          account_index — cached bot Lighter account index
           regime    — current regime state, vol metrics, transition history
           sizing    — per-strategy Kelly stats and current effective sizes
 
-        Ops (exchange — live Lighter API):
-          positions — open positions, authoritative (account_index?, account_address?)
-          orders    — open orders (account_index?, account_address?)
-          balance   — collateral/equity (account_index?, account_address?)
+        Ops (exchange — bot REST over live Lighter account data):
+          positions         — `/live/account` payload with authoritative positions
+          orders            — active live orders via `/live/orders/active`
+          balance           — balance subset from `/live/account`
+          live_account      — full `/live/account` payload
+          live_active_orders — direct `/live/orders/active` payload
+          live_recent_orders — direct `/live/orders/recent` payload
+          live_resolve      — resolve account index from `account_address` or `l1_address`
           orderbook — bids/asks (market_id REQUIRED, depth?)
           funding   — funding rates (sort_by?, group_by?)
           markets   — all markets
