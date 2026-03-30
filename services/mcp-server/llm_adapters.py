@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -17,6 +18,7 @@ _ANTHROPIC_SERVER_TOOL_VERSION_MAP = {
     "web_fetch": "web_fetch_20250910",
     "code_execution": "code_execution_20260120",
 }
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +197,34 @@ def _build_anthropic_thinking(thinking: dict[str, Any] | None) -> dict[str, Any]
     return None
 
 
+def _resolve_anthropic_max_tokens(
+    requested_max_tokens: int | None,
+    thinking_config: dict[str, Any] | None,
+    *,
+    model: str,
+) -> int | None:
+    """Ensure Anthropic's max_tokens > thinking.budget_tokens invariant."""
+    if not isinstance(thinking_config, dict) or thinking_config.get("type") != "enabled":
+        return requested_max_tokens
+
+    budget_tokens = thinking_config.get("budget_tokens")
+    if not isinstance(budget_tokens, int) or budget_tokens < 1:
+        return requested_max_tokens
+
+    if isinstance(requested_max_tokens, int) and requested_max_tokens > budget_tokens:
+        return requested_max_tokens
+
+    bumped_max_tokens = budget_tokens * 2
+    logger.warning(
+        "Auto-bumped Anthropic max_tokens from %s to %d for model=%s to satisfy "
+        "max_tokens > thinking.budget_tokens",
+        requested_max_tokens,
+        bumped_max_tokens,
+        model,
+    )
+    return bumped_max_tokens
+
+
 def _build_anthropic_tool(tool: dict[str, Any]) -> dict[str, Any] | None:
     tool_type = tool.get("type")
     if tool_type == "function":
@@ -276,8 +306,6 @@ class AnthropicAdapter:
             "model": req.model,
             "messages": list(req.messages),
         }
-        if req.max_tokens is not None:
-            body["max_tokens"] = req.max_tokens
         if req.system:
             body["system"] = req.system
         if req.temperature is not None:
@@ -291,6 +319,11 @@ class AnthropicAdapter:
         thinking_config = _build_anthropic_thinking(req.thinking)
         if thinking_config is not None:
             body["thinking"] = thinking_config
+        resolved_max_tokens = _resolve_anthropic_max_tokens(
+            req.max_tokens, thinking_config, model=req.model
+        )
+        if resolved_max_tokens is not None:
+            body["max_tokens"] = resolved_max_tokens
 
         # Tools — function calling and Anthropic-hosted tools
         tools_list: list[dict[str, Any]] = []

@@ -27,7 +27,7 @@ _TIMEOUT_BUFFER = 30.0
 _VALIDATE_TIMEOUT = 15.0
 
 _QUERY_SOCKET = os.environ.get(
-    "EVENT_QUERY_SOCKET", "/tmp/universal-protocol/events-query.sock"
+    "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
 )
 
 _pipeline_timeouts: dict[str, float] = {}

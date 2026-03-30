@@ -566,7 +566,9 @@ async def deploy_remote(
 # Event-driven relay readiness
 # ---------------------------------------------------------------------------
 
-_EVENTS_QUERY_SOCKET = Path("/tmp/universal-protocol/events-query.sock")
+_EVENTS_QUERY_SOCKET = Path(
+    os.environ.get("EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock")
+)
 _CONNECTION_EVENT = "federation.connection.established"
 
 

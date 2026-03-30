@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -37,8 +38,12 @@ _LOG_FILENAME = "event-service.log"
 _SERVICE_NAME = "Event service"
 
 _DEFAULT_DB = "~/.events/events.db"
-_DEFAULT_INGEST_SOCK = "/tmp/universal-protocol/events.sock"
-_DEFAULT_QUERY_SOCK = "/tmp/universal-protocol/events-query.sock"
+_DEFAULT_INGEST_SOCK = os.environ.get(
+    "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+)
+_DEFAULT_QUERY_SOCK = os.environ.get(
+    "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
+)
 
 _start_lock: asyncio.Lock | None = None
 

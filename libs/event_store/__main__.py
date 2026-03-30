@@ -20,12 +20,14 @@ def main() -> None:
     )
     serve.add_argument(
         "--sock",
-        default=os.environ.get("UDS_PATH", "/tmp/universal-protocol/events.sock"),
+        default=os.environ.get(
+            "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+        ),
     )
     serve.add_argument(
         "--query-sock",
         default=os.environ.get(
-            "QUERY_UDS_PATH", "/tmp/universal-protocol/events-query.sock"
+            "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
         ),
     )
     serve.add_argument(

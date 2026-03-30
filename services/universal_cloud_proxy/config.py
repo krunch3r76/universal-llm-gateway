@@ -51,7 +51,9 @@ class ProviderConfig:
 DEFAULT_STARGATE_URL = "http://localhost:9999"
 
 
-DEFAULT_SOCKET_PATH = "/tmp/universal-protocol/cloud-proxy.sock"
+DEFAULT_SOCKET_PATH = os.environ.get(
+    "CLOUD_PROXY_SOCKET_PATH", "/tmp/universal-protocol/cloud-proxy.sock"
+)
 
 
 def _load_env_file(path: Path) -> dict[str, str]:

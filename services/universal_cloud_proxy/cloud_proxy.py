@@ -109,7 +109,9 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
     event_bus = EventBus()
     _atexit_event_bus = event_bus
     broadcaster = MinimalEventDebugBroadcaster(
-        uds_publish_path="/tmp/universal-protocol/events.sock",
+        uds_publish_path=os.environ.get(
+            "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+        ),
     )
     event_bus.set_debug_broadcaster(broadcaster)
     await broadcaster.start_debug_server()
@@ -508,6 +510,12 @@ async def chat_completions(request: Request) -> Response:
     The provider is resolved from the incoming `model` field, and the request
     is relayed through the provider adapter with auth injection handled by the
     cloud proxy internals.
+
+    Contract: this route always preserves the OpenAI-compatible chat surface.
+    Providers with non-chat-native upstream APIs (for example xAI MCP requests
+    routed through ``/v1/responses``) are translated into chat-completions JSON
+    or ``chat.completion.chunk`` SSE frames rather than being passed through
+    verbatim.
     """
     catalog = _get_catalog()
     forwarder = _get_forwarder()

@@ -12,7 +12,7 @@ from .main import create_app
 
 logger = logging.getLogger("cortex-api")
 
-_DEFAULT_SOCK = "/tmp/universal-protocol/cortex-api.sock"
+_DEFAULT_SOCK = os.environ.get("CORTEX_API_SOCK", "/tmp/universal-protocol/cortex-api.sock")
 
 
 async def run_service(

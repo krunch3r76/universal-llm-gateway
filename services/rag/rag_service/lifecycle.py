@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -205,7 +206,9 @@ async def _startup() -> None:
     )
     state._event_bus = EventBus()
     state._broadcaster = MinimalEventDebugBroadcaster(
-        uds_publish_path="/tmp/universal-protocol/events.sock",
+        uds_publish_path=os.environ.get(
+            "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+        ),
     )
     state._event_bus.set_debug_broadcaster(state._broadcaster)
     await state._broadcaster.start_debug_server()

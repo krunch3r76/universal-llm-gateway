@@ -20,6 +20,7 @@ from .routes import (
     boot,
     chunks,
     deadlines,
+    edges,
     entities,
     entity_status,
     gated,
@@ -90,6 +91,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(entities.router)
     app.include_router(entity_status.router)
     app.include_router(assertions.router)
+    app.include_router(edges.router)
     app.include_router(chunks.router)
     app.include_router(surface_forms.router)
     app.include_router(relationships.router)

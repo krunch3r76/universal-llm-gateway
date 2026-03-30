@@ -2,7 +2,7 @@
 
 > **Documentation status**: This is a capability overview. Comprehensive API reference and configuration guide are pending.
 
-A semantic search and knowledge management service backed by ChromaDB. Runs as a FastAPI application communicating over Unix domain socket (default: `/tmp/universal-protocol/rag.sock`) or TCP.
+A semantic search and knowledge management service backed by ChromaDB. Runs as a FastAPI application communicating over Unix domain socket (default: `/tmp/universal-protocol/rag.sock`, overrideable via `RAG_SOCKET_PATH`) or TCP.
 
 ## Design Philosophy: Index Smart, Search Cheap
 

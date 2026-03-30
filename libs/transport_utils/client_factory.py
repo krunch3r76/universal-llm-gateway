@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import httpx
+import os
 
-RAG_SOCKET_PATH = "/tmp/universal-protocol/rag.sock"
+RAG_SOCKET_PATH = os.environ.get("RAG_SOCKET_PATH", "/tmp/universal-protocol/rag.sock")
 DEFAULT_RAG_URL = f"unix://{RAG_SOCKET_PATH}"
 
-CORTEX_SOCKET_PATH = "/tmp/universal-protocol/cortex-api.sock"
+CORTEX_SOCKET_PATH = os.environ.get(
+    "CORTEX_API_SOCK", "/tmp/universal-protocol/cortex-api.sock"
+)
 DEFAULT_CORTEX_URL = f"unix://{CORTEX_SOCKET_PATH}"
 
 

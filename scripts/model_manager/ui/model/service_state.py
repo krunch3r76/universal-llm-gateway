@@ -407,10 +407,14 @@ class ServiceState:
         return ServiceInfo(name="MCP", status=ServiceStatus.STOPPED)
 
     CORTEX_API_PID_FILE: Path = Path.home() / ".gateway" / "cortex-api.pid"
-    CORTEX_API_SOCK: Path = Path("/tmp/universal-protocol/cortex-api.sock")
+    CORTEX_API_SOCK: Path = Path(
+        os.environ.get("CORTEX_API_SOCK", "/tmp/universal-protocol/cortex-api.sock")
+    )
 
     AGENT_BUS_PID_FILE: Path = Path.home() / ".gateway" / "agent-bus.pid"
-    AGENT_BUS_SOCK: Path = Path("/tmp/universal-protocol/agent-bus.sock")
+    AGENT_BUS_SOCK: Path = Path(
+        os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
+    )
 
     def check_cortex_api(self) -> ServiceInfo:
         """Check cortex-api status via PID file + UDS health probe."""
@@ -437,7 +441,9 @@ class ServiceState:
         )
 
     EVENT_SERVICE_PID_FILE: Path = Path.home() / ".gateway" / "event-service.pid"
-    EVENT_SERVICE_QUERY_SOCK: Path = Path("/tmp/universal-protocol/events-query.sock")
+    EVENT_SERVICE_QUERY_SOCK: Path = Path(
+        os.environ.get("EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock")
+    )
 
     def check_event_service(self) -> ServiceInfo:
         """Check event service status via PID file + UDS health probe."""

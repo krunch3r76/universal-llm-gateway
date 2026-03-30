@@ -56,7 +56,7 @@ app = create_app()
 async def run_service(
     *,
     db_path: str = "/data/messages.db",
-    sock: str = "/tmp/universal-protocol/agent-bus.sock",
+    sock: str = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock"),
     host: str | None = None,
     port: int | None = None,
 ) -> None:
@@ -76,7 +76,7 @@ async def run_service(
 async def start_agent_bus(
     *,
     db: str = "~/.agent-bus/messages.db",
-    sock: str = "/tmp/universal-protocol/agent-bus.sock",
+    sock: str = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock"),
     host: str | None = None,
     port: int | None = None,
 ) -> asyncio.Task[None]:

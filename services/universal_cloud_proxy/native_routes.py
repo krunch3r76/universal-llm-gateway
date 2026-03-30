@@ -197,7 +197,11 @@ async def native_anthropic_messages(request: Request) -> Response:
 
 @router.post("/xai/responses")
 async def native_xai_responses(request: Request) -> Response:
-    """xAI Responses API — native body shape, raw model id."""
+    """xAI Responses API — native body shape, raw model id, raw streaming surface.
+
+    Unlike ``/v1/chat/completions``, this route is the provider-native ingress:
+    request/response bodies and SSE framing stay in Responses-API form.
+    """
     return await _forward_native(
         request,
         provider_key="xai",

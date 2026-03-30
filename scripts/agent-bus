@@ -25,12 +25,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-_SOCKET = "/tmp/universal-protocol/agent-bus.sock"
+_SOCKET = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
 
 
@@ -386,7 +387,8 @@ def main() -> None:
         }[args.command](args, token)
     except FileNotFoundError:
         print(
-            "Agent-bus socket not found. Is the agent-bus service running?",
+            f"Agent-bus socket not found at {_SOCKET}. "
+            "Is the agent-bus service running?",
             file=sys.stderr,
         )
         sys.exit(1)

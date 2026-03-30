@@ -74,10 +74,10 @@ Client → Master Stargate:9999 (host, orchestrator)
          │                         ├─ Edge Stargate (federation endpoint)
          │                         └─ Gateway + Worker (inference)
          ├─ TCP (remote) → Relay Stargate → Edge container → Gateway
-         └─ loopback (optional) → Cloud Proxy (UDS /tmp/universal-protocol/cloud-proxy.sock) → OpenRouter/Anthropic/etc (HTTPS)
+         └─ loopback (optional) → Cloud Proxy (UDS default /tmp/universal-protocol/cloud-proxy.sock via `CLOUD_PROXY_SOCKET_PATH`) → OpenRouter/Anthropic/etc (HTTPS)
 
 Pipeline-tools sidecar (network_mode: "none", read-only) ← shell execution for pipeline steps
-RAG Service (UDS /tmp/universal-protocol/rag.sock by default) ← semantic search for pipeline handlers
+RAG Service (UDS default /tmp/universal-protocol/rag.sock via `RAG_SOCKET_PATH`) ← semantic search for pipeline handlers
 ```
 For remote GPU nodes, a **Relay Stargate** on the remote host bridges the Master to the network-isolated Edge container on that host.
 
@@ -113,9 +113,9 @@ The **Gateway (inference engine)** is never exposed. It listens on `localhost:99
 | **Worker** | LLM engine process (llama.cpp, vLLM, Whisper, Flux) |
 | **Pipeline-tools sidecar** (container, no network) | Hardened Alpine container for shell execution in pipeline steps |
 | **RAG Service** (host, UDS default) | Semantic search, file indexing, knowledge extraction, ChromaDB vector store |
-| **Cloud Proxy** (host, UDS default) | Optional cloud API relay (OpenRouter, Anthropic, OpenAI, Google); UDS at `/tmp/universal-protocol/cloud-proxy.sock` |
+| **Cloud Proxy** (host, UDS default) | Optional cloud API relay (OpenRouter, Anthropic, OpenAI, Google); default UDS at `/tmp/universal-protocol/cloud-proxy.sock` via `CLOUD_PROXY_SOCKET_PATH` |
 | **MCP Server** (container, port 443) | Internet-facing tool server for cloud model APIs (Anthropic MCP); TLS + bearer auth |
-| **Cortex API** (container, UDS) | REST gateway to cortex.db (knowledge graph) and todos.db; sole access path for agents; Unix socket `/tmp/universal-protocol/cortex-api.sock` (`network_mode: none`) |
+| **Cortex API** (container, UDS) | REST gateway to cortex.db (knowledge graph) and todos.db; sole access path for agents; default Unix socket `/tmp/universal-protocol/cortex-api.sock` via `CORTEX_API_SOCK` (`network_mode: none`) |
 
 ### Key Design Decisions
 

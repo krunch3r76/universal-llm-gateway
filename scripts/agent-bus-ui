@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -21,7 +22,7 @@ import yaml
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 
-_SOCKET = "/tmp/universal-protocol/agent-bus.sock"
+_SOCKET = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
 _DEFAULT_PORT = 7779
 

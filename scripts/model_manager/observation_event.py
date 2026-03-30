@@ -9,12 +9,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_EVENTS_SOCK = "/tmp/universal-protocol/events.sock"
+_EVENTS_SOCK = os.environ.get(
+    "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+)
 
 
 async def _emit(

@@ -44,9 +44,9 @@ def _build_parser(role_prompts: dict[str, str]) -> argparse.ArgumentParser:
               consult -r planner "Add per-model timeouts" -o plan.md
               consult -r planner -Q /tmp/question.txt -o plan.md
               consult --chain -r planner --models local cloud "complex question"
-              consult --models qwen3-32b-awq-32768 google/gemini-2.5-pro "question"
+              consult --models qwen3-32b-awq-32768 openrouter/google/gemini-2.5-pro "question"
               consult --cloud-only -r reviewer -f myfile.py "question"
-              consult --cloud-only --models google/gemini-2.5-pro "question"
+              consult --cloud-only --models openrouter/google/gemini-2.5-pro "question"
               consult -r architect --validate-files "scope a refactor"
         """),
     )

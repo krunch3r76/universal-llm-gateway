@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass
 from enum import Enum
 
@@ -23,7 +24,9 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _STARGATE_BASE = "http://localhost:9999"
-_EVENT_QUERY_SOCK = "/tmp/universal-protocol/events-query.sock"
+_EVENT_QUERY_SOCK = os.environ.get(
+    "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
+)
 _SUBSCRIBE_PATH = "http://localhost/v1/subscribe"  # host ignored with UDS connector
 _client = httpx.AsyncClient(timeout=30.0)
 _RECONNECT_DELAY_S = 5.0

@@ -10,6 +10,7 @@ INVARIANT: ¬ API keys ∧ ¬ outbound HTTPS — proxy is trusted loopback
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Callable
 from time import monotonic
 from typing import Any
@@ -32,7 +33,11 @@ def parse_cloud_proxy_url(url: str) -> tuple[str | None, str]:
     if url.startswith("unix://"):
         path = url[7:].lstrip("/")
         return (
-            f"/{path}" if path else "/tmp/universal-protocol/cloud-proxy.sock",
+            f"/{path}"
+            if path
+            else os.environ.get(
+                "CLOUD_PROXY_SOCKET_PATH", "/tmp/universal-protocol/cloud-proxy.sock"
+            ),
             "http://localhost",
         )
     return None, url

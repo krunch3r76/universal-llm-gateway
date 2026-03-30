@@ -23,7 +23,9 @@ from .uvicorn_service import _start_uvicorn_service, _stop_uvicorn_service
 _AGENT_BUS_APP_MODULE = "agent_bus_store.server:app"
 _AGENT_BUS_PID_FILE = GATEWAY_DIR / "agent-bus.pid"
 _AGENT_BUS_LOCK_FILE = GATEWAY_DIR / "agent-bus.lock"
-_AGENT_BUS_SOCKET = Path("/tmp/universal-protocol/agent-bus.sock")
+_AGENT_BUS_SOCKET = Path(
+    os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
+)
 _AGENT_BUS_LOG_DIR = Path("/tmp/logs/agent-bus")
 
 
@@ -44,7 +46,10 @@ def _agent_bus_runtime_env() -> tuple[dict[str, str], str | None]:
             f"Agent Bus database is not writable: {db_path}. "
             f"Current uid/gid={os.getuid()}:{os.getgid()}."
         )
-    env = {"AGENT_BUS_DB_PATH": str(db_path)}
+    env = {
+        "AGENT_BUS_DB_PATH": str(db_path),
+        "AGENT_BUS_SOCK": str(_AGENT_BUS_SOCKET),
+    }
     mcp_cfg = load_mcp_config()
     if mcp_cfg is not None and mcp_cfg.agent_bus_token:
         env["AGENT_BUS_TOKEN"] = mcp_cfg.agent_bus_token

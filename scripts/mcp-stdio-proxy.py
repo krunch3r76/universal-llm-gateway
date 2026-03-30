@@ -78,7 +78,9 @@ _LARGE_RESPONSE_BYTES = int(
 )
 
 # Event service UDS — bind-mounted from host into Docker at same path.
-_EVENTS_SOCK = os.environ.get("EVENTS_SOCK", "/tmp/universal-protocol/events.sock")
+_EVENTS_SOCK = os.environ.get(
+    "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+)
 _EVENTS_ENABLED = os.environ.get("MCP_PROXY_EVENTS", "true").lower() in {
     "true",
     "1",

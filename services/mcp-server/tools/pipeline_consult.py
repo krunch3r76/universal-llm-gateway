@@ -38,7 +38,7 @@ _CONSULT_PIPELINES = {
 }
 
 _QUERY_SOCKET = os.environ.get(
-    "EVENT_QUERY_SOCKET", "/tmp/universal-protocol/events-query.sock"
+    "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
 )
 
 

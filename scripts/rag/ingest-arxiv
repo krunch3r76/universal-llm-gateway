@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import sys
 import time
 from pathlib import Path
@@ -26,7 +27,9 @@ import yaml
 
 ARXIV_PDF_URL = "https://arxiv.org/pdf/{arxiv_id}.pdf"
 CACHE_DIR = Path("/tmp/arxiv-papers")
-DEFAULT_RAG_SOCKET = Path("/tmp/universal-protocol/rag.sock")
+DEFAULT_RAG_SOCKET = Path(
+    os.environ.get("RAG_SOCKET_PATH", "/tmp/universal-protocol/rag.sock")
+)
 PAPERS_DIR = Path(__file__).parent / "papers"
 RATE_LIMIT_SLEEP = 1.5
 

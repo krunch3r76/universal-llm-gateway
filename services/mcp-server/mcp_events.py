@@ -24,7 +24,7 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-_EVENTS_SOCK = os.getenv("EVENTS_SOCK", "/tmp/universal-protocol/events.sock")
+_EVENTS_SOCK = os.getenv("EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock")
 _ENABLED = os.getenv("MCP_EVENTS_ENABLED", "true").lower() in ("true", "1", "yes")
 _QUEUE_MAX = 500
 _RECONNECT_DELAY = 5.0

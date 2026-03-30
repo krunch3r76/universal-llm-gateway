@@ -604,10 +604,17 @@ class TopologyPanel(Widget):
         if is_cloud_proxy_configured():
             start_ops.append(("cloud_proxy", svc.start_cloud_proxy))
         if is_mcp_configured(ws_root):
+            # rebuild_deploy: full image rebuild + restart.
+            # sync_restart: start existing container only — no image rebuild.
+            #   Rebuilding on every sync+restart is expensive (30-120s build) and
+            #   disrupts Cursor's vortex MCP connection: the prolonged build under
+            #   full-fleet restart load creates a window where the container is
+            #   unavailable long enough for Cursor to mark the server disconnected.
+            #   rebuild-mcp.sh (explicit rebuild) is the right path for image changes.
             mcp_op: Callable[[], Awaitable[str]] = (
                 (lambda: svc.rebuild_mcp(no_cache=True))
                 if rebuild_supporting_services
-                else (lambda: svc.rebuild_mcp(no_cache=False))
+                else svc.start_mcp
             )
             start_ops.append(("mcp", mcp_op))
         if is_cortex_configured():
@@ -662,8 +669,11 @@ class TopologyPanel(Widget):
             stop_ops.append(("rag", svc.stop_rag))
         if is_cloud_proxy_configured():
             stop_ops.append(("cloud_proxy", svc.stop_cloud_proxy))
-        if is_mcp_configured(ws_root):
-            stop_ops.append(("mcp", svc.stop_mcp))
+        # MCP is intentionally excluded from the stop phase: rebuild_mcp calls
+        # `docker compose up -d` which replaces the container in-place, keeping
+        # downtime to the few-second swap window.  Pre-stopping the container
+        # extends the outage to cover the full build duration and causes Cursor's
+        # MCP connection to time out and require manual reconnection.
         if is_cortex_configured():
             stop_ops.append(("cortex_api", svc.stop_cortex_api))
         if is_agent_bus_configured():

@@ -1,0 +1,171 @@
+"""REST endpoints for querying and managing session-edge reasoning links.
+
+This module exposes CRUD and traversal routes used by agents to seed and
+inspect reasoning connections between Cortex entities across sessions.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+from fastapi import APIRouter, Body, HTTPException, Query, status
+
+from ..db import cortex_conn, query
+from ..models import EdgeCreate, EdgeItem, EdgeList, EdgeRetire
+
+router = APIRouter(prefix="/edges", tags=["edges"])
+
+_EDGE_COLS = (
+    "id, session_id, agent, from_node, to_node, edge_type, strength, "
+    "edge_source, context, prompt, seeded_by, valid_until, metadata, created_at"
+)
+_EDGE_SELECT_E = (
+    "e.id, e.session_id, e.agent, e.from_node, e.to_node, e.edge_type, e.strength, "
+    "e.edge_source, e.context, e.prompt, e.seeded_by, e.valid_until, e.metadata, e.created_at"
+)
+
+
+@router.post("", response_model=EdgeItem, status_code=status.HTTP_201_CREATED)
+def create_edge(body: EdgeCreate) -> EdgeItem:
+    """Create a new active session edge after validating edge_type."""
+    conn = cortex_conn()
+    if not query(
+        conn, "SELECT 1 FROM session_edge_types WHERE type = ?", (body.edge_type,)
+    ):
+        raise HTTPException(
+            status_code=422, detail=f"Unknown edge_type: {body.edge_type}"
+        )
+    ins = (
+        "INSERT INTO session_edges (session_id, agent, from_node, to_node, edge_type, strength, "
+        "edge_source, context, prompt, seeded_by, metadata) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+    )
+    cur = conn.execute(
+        ins,
+        (
+            body.session_id,
+            body.agent,
+            body.from_node,
+            body.to_node,
+            body.edge_type,
+            body.strength,
+            body.edge_source,
+            body.context,
+            body.prompt,
+            body.seeded_by,
+            body.metadata,
+        ),
+    )
+    conn.commit()
+    row = query(
+        conn, f"SELECT {_EDGE_COLS} FROM session_edges WHERE id = ?", (cur.lastrowid,)
+    )
+    return EdgeItem(**row[0])
+
+
+@router.get("", response_model=EdgeList)
+def list_edges(
+    from_node: str | None = None,
+    to_node: str | None = None,
+    edge_type: str | None = None,
+    agent: str | None = None,
+    session_id: str | None = None,
+    include_retired: bool = False,
+    limit: int = Query(50, ge=1, le=500),
+) -> EdgeList:
+    """List edges with optional filters and active-only default behavior."""
+    conn = cortex_conn()
+    clauses: list[str] = []
+    params: list[str | int] = []
+    for col, val in (
+        ("from_node", from_node),
+        ("to_node", to_node),
+        ("edge_type", edge_type),
+        ("agent", agent),
+        ("session_id", session_id),
+    ):
+        if val:
+            clauses.append(f"{col} = ?")
+            params.append(val)
+    if not include_retired:
+        clauses.append("valid_until IS NULL")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = f"SELECT {_EDGE_COLS} FROM session_edges {where} ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    rows = query(conn, sql, tuple(params))
+    return EdgeList(items=[EdgeItem(**r) for r in rows], count=len(rows))
+
+
+@router.get("/traverse", response_model=EdgeList)
+def traverse(
+    node: str,
+    hops: int = Query(1, ge=1, le=2),
+    edge_type: str | None = None,
+    min_strength: float = Query(0.0, ge=0.0, le=1.0),
+) -> EdgeList:
+    """Traverse one or two hops from a node with type and strength filters."""
+    conn = cortex_conn()
+    tc = " AND e.edge_type = ?" if edge_type else ""
+    p1: list[str | float] = [min_strength, node, node]
+    if edge_type:
+        p1.append(edge_type)
+    j = "session_edges e JOIN session_edge_types t ON e.edge_type = t.type"
+    w = (
+        "e.valid_until IS NULL AND e.strength >= ? AND "
+        "(e.from_node = ? OR (e.to_node = ? AND NOT t.directional))"
+    )
+    q1 = f"SELECT {_EDGE_SELECT_E} FROM {j} WHERE {w}{tc} ORDER BY e.strength DESC, e.created_at DESC"
+    rows = query(conn, q1, tuple(p1))
+    if hops < 2 or not rows:
+        return EdgeList(items=[EdgeItem(**r) for r in rows], count=len(rows))
+    nbrs: set[str] = set()
+    for r in rows:
+        fn, tn = r["from_node"], r["to_node"]
+        nbrs.add(tn if fn == node else fn)
+    nbrs.discard(node)
+    if not nbrs:
+        return EdgeList(items=[EdgeItem(**r) for r in rows], count=len(rows))
+    ph = ",".join("?" for _ in nbrs)
+    p2: list[str | float] = [min_strength, *nbrs, *nbrs, node, node]
+    if edge_type:
+        p2.append(edge_type)
+    w2 = (
+        f"e.valid_until IS NULL AND e.strength >= ? AND "
+        f"(e.from_node IN ({ph}) OR (e.to_node IN ({ph}) AND NOT t.directional)) AND "
+        f"e.from_node != ? AND e.to_node != ?{tc}"
+    )
+    q2 = f"SELECT {_EDGE_SELECT_E} FROM {j} WHERE {w2} ORDER BY e.strength DESC, e.created_at DESC"
+    rows.extend(query(conn, q2, tuple(p2)))
+    return EdgeList(items=[EdgeItem(**r) for r in rows], count=len(rows))
+
+
+@router.patch("/{edge_id}/retire", response_model=EdgeItem)
+def retire_edge(
+    edge_id: int,
+    body: EdgeRetire | None = Body(default=None),
+) -> EdgeItem:
+    """Retire an active edge by setting valid_until to now or caller value."""
+    conn = cortex_conn()
+    vu = (
+        body.valid_until if body and body.valid_until else datetime.now(UTC).isoformat()
+    )
+    conn.execute(
+        "UPDATE session_edges SET valid_until = ? WHERE id = ? AND valid_until IS NULL",
+        (vu, edge_id),
+    )
+    conn.commit()
+    rows = query(
+        conn, f"SELECT {_EDGE_COLS} FROM session_edges WHERE id = ?", (edge_id,)
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"Edge {edge_id} not found")
+    return EdgeItem(**rows[0])
+
+
+@router.get("/types")
+def list_edge_types() -> list[dict[str, Any]]:
+    """Return the registered session edge taxonomy and directionality flags."""
+    return query(
+        cortex_conn(),
+        "SELECT type, description, directional FROM session_edge_types ORDER BY type",
+    )

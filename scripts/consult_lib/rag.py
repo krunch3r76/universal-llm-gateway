@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,9 @@ def rag_socket_present(rag_url: str) -> bool:
     if not rag_url.startswith("unix://"):
         return True
     rest = rag_url[7:].lstrip("/")
-    socket_path = Path(f"/{rest}") if rest else Path("/tmp/universal-protocol/rag.sock")
+    socket_path = Path(f"/{rest}") if rest else Path(
+        os.environ.get("RAG_SOCKET_PATH", "/tmp/universal-protocol/rag.sock")
+    )
     return socket_path.exists()
 
 

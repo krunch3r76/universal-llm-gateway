@@ -996,7 +996,9 @@ def ensure_cloud_proxy_config() -> Path:
     return config_path
 
 
-CLOUD_PROXY_SOCKET_PATH_DEFAULT = "/tmp/universal-protocol/cloud-proxy.sock"
+CLOUD_PROXY_SOCKET_PATH_DEFAULT = os.environ.get(
+    "CLOUD_PROXY_SOCKET_PATH", "/tmp/universal-protocol/cloud-proxy.sock"
+)
 
 
 def read_cloud_proxy_socket_path(config_path: Path | None = None) -> Path:
@@ -1073,7 +1075,9 @@ def read_cloud_proxy_host(config_path: Path | None = None) -> str:
     return default_host
 
 
-RAG_SOCKET_PATH_DEFAULT = "/tmp/universal-protocol/rag.sock"
+RAG_SOCKET_PATH_DEFAULT = os.environ.get(
+    "RAG_SOCKET_PATH", "/tmp/universal-protocol/rag.sock"
+)
 
 
 def read_rag_socket_path() -> Path:

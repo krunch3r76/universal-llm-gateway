@@ -13,6 +13,7 @@ Usage:
 import argparse
 import asyncio
 import json
+import os
 import socket
 import sqlite3
 import sys
@@ -29,7 +30,9 @@ except ModuleNotFoundError:
     make_sync_client = None
     resolve_rag_base_url = None
 
-EVENT_QUERY_SOCKET = Path("/tmp/universal-protocol/events-query.sock")
+EVENT_QUERY_SOCKET = Path(
+    os.environ.get("EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock")
+)
 EVENT_QUERY_URL = "http://localhost/v1/subscribe"
 EVENT_QUERY_API_URL = "http://localhost/v1/query"
 WATCH_INTERVAL = 1.5  # seconds between event service availability checks
@@ -441,7 +444,9 @@ def _fetch_indexing_status_fallback(url: str, sample_limit: int) -> dict[str, An
 
     if url.startswith("unix://"):
         rest = url[7:].lstrip("/")
-        uds_path = f"/{rest}" if rest else "/tmp/universal-protocol/rag.sock"
+        uds_path = f"/{rest}" if rest else os.environ.get(
+            "RAG_SOCKET_PATH", "/tmp/universal-protocol/rag.sock"
+        )
 
         class _UnixHTTPConnection(HTTPConnection):
             def __init__(self, path: str, timeout: float = 10.0) -> None:

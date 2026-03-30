@@ -273,6 +273,121 @@ def _op_journal_write(
     return result
 
 
+def _op_edge_create(
+    session_id: str | None = None,
+    agent: str | None = None,
+    from_node: str | None = None,
+    to_node: str | None = None,
+    edge_type: str | None = None,
+    strength: float | None = None,
+    edge_source: str | None = None,
+    context: str | None = None,
+    prompt: str | None = None,
+    seeded_by: str | None = None,
+    metadata: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    required = {
+        "session_id": session_id,
+        "agent": agent,
+        "from_node": from_node,
+        "to_node": to_node,
+        "edge_type": edge_type,
+    }
+    for field, val in required.items():
+        if not val:
+            return {"error": f"{field} is required"}
+    body: dict[str, Any] = {
+        "session_id": session_id,
+        "agent": agent,
+        "from_node": from_node,
+        "to_node": to_node,
+        "edge_type": edge_type,
+    }
+    for key, val in [
+        ("strength", strength),
+        ("edge_source", edge_source),
+        ("context", context),
+        ("prompt", prompt),
+        ("seeded_by", seeded_by),
+        ("metadata", metadata),
+    ]:
+        if val is not None:
+            body[key] = val
+    result = _cx("POST", "/edges", body)
+    if "error" not in result:
+        record(
+            "mcp.cortex.edge.created",
+            session_id=session_id,
+            edge_type=edge_type,
+            from_node=from_node,
+            to_node=to_node,
+        )
+    return result
+
+
+def _op_edges(
+    from_node: str | None = None,
+    to_node: str | None = None,
+    edge_type: str | None = None,
+    agent: str | None = None,
+    session_id: str | None = None,
+    include_retired: bool | None = None,
+    limit: int | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    params: dict[str, object] = {"limit": limit or 50}
+    if from_node is not None:
+        params["from_node"] = from_node
+    if to_node is not None:
+        params["to_node"] = to_node
+    if edge_type is not None:
+        params["edge_type"] = edge_type
+    if agent is not None:
+        params["agent"] = agent
+    if session_id is not None:
+        params["session_id"] = session_id
+    if include_retired is not None:
+        params["include_retired"] = str(include_retired).lower()
+    return _cx("GET", f"/edges?{urlencode(params)}")
+
+
+def _op_edge_traverse(
+    node: str | None = None,
+    hops: int | None = None,
+    edge_type: str | None = None,
+    min_strength: float | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if not node:
+        return {"error": "node is required"}
+    params: dict[str, object] = {"node": node}
+    if hops is not None:
+        params["hops"] = hops
+    if edge_type is not None:
+        params["edge_type"] = edge_type
+    if min_strength is not None:
+        params["min_strength"] = min_strength
+    return _cx("GET", f"/edges/traverse?{urlencode(params)}")
+
+
+def _op_edge_retire(
+    edge_id: int | None = None,
+    valid_until: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if edge_id is None:
+        return {"error": "edge_id is required"}
+    body: dict[str, Any] = {}
+    if valid_until is not None:
+        body["valid_until"] = valid_until
+    return _cx("PATCH", f"/edges/{edge_id}/retire", body)
+
+
+def _op_edge_types(**_: object) -> Any:
+    return _cx("GET", "/edges/types")
+
+
 def _op_review_queue(limit: int | None = None, **_: object) -> dict[str, Any]:
     lim = limit or 30
     flagged_resp = _cx(
@@ -337,6 +452,11 @@ _OPS: dict[str, Any] = {
     "journal_read": _op_journal_read,
     "journal_write": _op_journal_write,
     "review_queue": _op_review_queue,
+    "edge_create": _op_edge_create,
+    "edges": _op_edges,
+    "edge_traverse": _op_edge_traverse,
+    "edge_retire": _op_edge_retire,
+    "edge_types": _op_edge_types,
 }
 
 
@@ -390,6 +510,12 @@ def register_cortex_tools(mcp: FastMCP) -> None:
               At next boot, cortex_boot injects current state for these entities.
           review_queue(limit?) — provisional entities + flagged assertions +
               low-confidence unreviewed + thin descriptions (prioritized)
+          edge_create(session_id, agent, from_node, to_node, edge_type, strength?,
+              edge_source?, context?, prompt?, seeded_by?, metadata?) — seed a reasoning connection
+          edges(from_node?, to_node?, edge_type?, agent?, session_id?, include_retired?, limit?) — query edges
+          edge_traverse(node, hops?, edge_type?, min_strength?) — graph traversal from a node (1–2 hops)
+          edge_retire(edge_id, valid_until?) — retire an edge (set valid_until; default now UTC)
+          edge_types() — list registered edge types
 
         Example:
             cortex(tool="entities", arguments='{"type": "person", "limit": 20}')

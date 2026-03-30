@@ -230,7 +230,9 @@ async def initialize_components(
 
     debug_broadcaster = MinimalEventDebugBroadcaster(
         socket_path=socket_path,
-        uds_publish_path="/tmp/universal-protocol/events.sock",
+        uds_publish_path=os.environ.get(
+            "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+        ),
     )
     event_bus.set_debug_broadcaster(debug_broadcaster)
 

@@ -8,7 +8,7 @@ An optional, standalone service that routes inference requests to cloud API prov
 
 - **Isolation by construction**: no other component can make outbound requests; cloud access is opt-in per deployment
 - **Credential containment**: API keys live exclusively in the cloud proxy process; Stargate and edge containers never see them
-- **Network boundary**: communicates with Stargate over loopback only (UDS at `/tmp/universal-protocol/cloud-proxy.sock`); outbound connections restricted to declared provider domains
+- **Network boundary**: communicates with Stargate over loopback only (default UDS at `/tmp/universal-protocol/cloud-proxy.sock`, overrideable via `CLOUD_PROXY_SOCKET_PATH`); outbound connections restricted to declared provider domains
 - **Uniform routing**: cloud models appear in `/v1/models` alongside local models — no separate API surface
 
 ## Providers
@@ -84,7 +84,7 @@ These endpoints are proxied through Stargate on `:9999` so clients don't need di
 Config file: `~/.gateway/cloud-proxy.yaml`
 
 ```yaml
-socket_path: /tmp/universal-protocol/cloud-proxy.sock
+socket_path: /tmp/universal-protocol/cloud-proxy.sock  # default; can also be set via CLOUD_PROXY_SOCKET_PATH
 # OR: host: 0.0.0.0 / port: 8200 (mutually exclusive with socket_path)
 
 stargate_url: http://localhost:9999    # local model catalog source

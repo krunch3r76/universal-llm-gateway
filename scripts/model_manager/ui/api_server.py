@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,7 +30,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SOCK_PATH = Path("/tmp/universal-protocol/manage.sock")
+_SOCK_PATH = Path(
+    os.environ.get("MANAGE_SOCKET", "/tmp/universal-protocol/manage.sock")
+)
 _MAX_REQUEST_BYTES = (
     65_536  # Max allowed size for an incoming JSON-RPC request in bytes
 )

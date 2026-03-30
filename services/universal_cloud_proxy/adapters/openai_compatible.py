@@ -130,6 +130,10 @@ class OpenAICompatibleAdapter:
         Per https://docs.x.ai/developers/tools/remote-mcp: xAI supports remote
         MCP on the Responses API (``/v1/responses``), not on chat completions.
         ``require_approval`` is not supported by xAI.
+
+        This helper prepares the upstream xAI-native body. It does not imply
+        that ``/v1/chat/completions`` becomes a passthrough surface; the
+        OpenAI-compatible route still must translate request/response shapes.
         """
         model_id = str(request_body.get("model", ""))
         upstream_model = self.to_upstream_model_id(model_id)
@@ -203,7 +207,11 @@ class OpenAICompatibleAdapter:
     async def _forward_via_responses_api(
         self, request_body: dict[str, Any]
     ) -> dict[str, Any]:
-        """Forward MCP request via Responses API; translate back to chat completion."""
+        """Call xAI ``/responses`` and translate the final JSON to chat-completions.
+
+        Used only behind the OpenAI-compatible ``/v1/chat/completions`` surface.
+        The native passthrough surface is ``/api/v1/providers/xai/responses``.
+        """
         body = self._build_responses_body(request_body)
         requested_model = str(request_body.get("model", ""))
 
@@ -219,7 +227,16 @@ class OpenAICompatibleAdapter:
     async def _forward_via_responses_api_stream(
         self, request_body: dict[str, Any]
     ) -> AsyncIterator[bytes]:
-        """Stream MCP request via Responses API; translate SSE events to chat.completion.chunk format."""
+        """Stream xAI Responses events and translate them incrementally.
+
+        This is a streaming translator, not a raw passthrough. Upstream emits
+        xAI/OpenAI Responses SSE events; this method converts them on the fly
+        into OpenAI ``chat.completion.chunk`` frames for
+        ``POST /v1/chat/completions`` compatibility.
+
+        For direct byte-for-byte Responses streaming, use the native route
+        ``/api/v1/providers/xai/responses`` instead.
+        """
         body = self._build_responses_body(request_body)
         body["stream"] = True
         requested_model = str(request_body.get("model", ""))
@@ -254,7 +271,31 @@ class OpenAICompatibleAdapter:
 
                 event_type = event.get("type", "")
 
-                if event_type == "response.output_text.delta":
+                if event_type == "response.output_item.added":
+                    item = event.get("item", {})
+                    if (
+                        isinstance(item, dict)
+                        and item.get("type") == "message"
+                        and item.get("role") == "assistant"
+                        and not sent_role
+                    ):
+                        sent_role = True
+                        role_chunk = {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": requested_model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"role": "assistant"},
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                        yield f"data: {json.dumps(role_chunk)}\n\n".encode()
+
+                elif event_type == "response.output_text.delta":
                     delta_text = event.get("delta", "")
                     delta: dict[str, str] = {"content": delta_text}
                     if not sent_role:

@@ -7,6 +7,7 @@ pattern (single socket, standard FastAPI app).
 
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -17,7 +18,9 @@ from .uvicorn_service import _start_uvicorn_service, _stop_uvicorn_service
 _CORTEX_APP_MODULE = "cortex_store.main:app"
 _CORTEX_PID_FILE = GATEWAY_DIR / "cortex-api.pid"
 _CORTEX_LOCK_FILE = GATEWAY_DIR / "cortex-api.lock"
-_CORTEX_SOCKET = Path("/tmp/universal-protocol/cortex-api.sock")
+_CORTEX_SOCKET = Path(
+    os.environ.get("CORTEX_API_SOCK", "/tmp/universal-protocol/cortex-api.sock")
+)
 _CORTEX_LOG_DIR = Path("/tmp/logs/cortex-api")
 
 

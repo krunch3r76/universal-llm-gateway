@@ -122,3 +122,4 @@ snapshots/
 
 # SQL files (may contain private/sensitive data — never commit)
 **/*.sql
+!libs/cortex_store/migrations/013_session_edges.sql

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import sys
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -212,7 +213,9 @@ def _hostname_from_url(url: str) -> str:
         return "unknown"
 
 
-_EVENTS_QUERY_SOCKET = Path("/tmp/universal-protocol/events-query.sock")
+_EVENTS_QUERY_SOCKET = Path(
+    os.environ.get("EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock")
+)
 _TELEMETRY_RECENCY_S = 30.0
 
 

@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-_SOCKET = "/tmp/universal-protocol/agent-bus.sock"
+_SOCKET = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
 
 # ANSI

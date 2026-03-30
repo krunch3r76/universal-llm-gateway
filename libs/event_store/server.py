@@ -89,8 +89,12 @@ async def _retention_loop(
 async def run_service(
     *,
     db_path: str = "/data/events.db",
-    ingest_sock: str = "/tmp/universal-protocol/events.sock",
-    query_sock: str = "/tmp/universal-protocol/events-query.sock",
+    ingest_sock: str = os.environ.get(
+        "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+    ),
+    query_sock: str = os.environ.get(
+        "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
+    ),
     retention_days: int = 7,
     max_sessions: int = 2,
     persist: bool = True,
@@ -278,8 +282,12 @@ async def run_service(
 async def start_event_service(
     *,
     db: str = "~/.events/events.db",
-    sock: str = "/tmp/universal-protocol/events.sock",
-    query_sock: str = "/tmp/universal-protocol/events-query.sock",
+    sock: str = os.environ.get(
+        "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+    ),
+    query_sock: str = os.environ.get(
+        "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
+    ),
     host: str | None = None,
     port: int | None = None,
     retention_days: int = 7,

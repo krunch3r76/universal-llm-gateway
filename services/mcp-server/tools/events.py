@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _QUERY_SOCKET = os.environ.get(
-    "EVENT_QUERY_SOCKET", "/tmp/universal-protocol/events-query.sock"
+    "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
 )
 _QUERY_TIMEOUT = 10.0
 _CURSOR_PREVIEW_LIMIT = 50

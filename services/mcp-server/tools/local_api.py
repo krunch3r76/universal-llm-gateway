@@ -29,7 +29,7 @@ _SERVICES: dict[str, dict[str, str]] = {
         "token_env": "BRIDGE_TOKEN",
     },
     "agent-bus": {
-        "url": "unix:///tmp/universal-protocol/agent-bus.sock",
+        "url": f"unix://{os.environ.get('AGENT_BUS_SOCK', '/tmp/universal-protocol/agent-bus.sock')}",
         "token_env": "AGENT_BUS_TOKEN",
     },
     "cortex-api": {
@@ -192,9 +192,9 @@ def register_local_api_tools(mcp: FastMCP) -> None:
         from the internet — via Unix Domain Socket or Docker bridge network.
 
         Services:
-          agent-bus      — Agent Bus API (UDS: /tmp/universal-protocol/agent-bus.sock)
+          agent-bus      — Agent Bus API (UDS: `AGENT_BUS_SOCK`, default `/tmp/universal-protocol/agent-bus.sock`)
           journal-bridge — Journal Bridge API (Docker bridge, port 8200)
-          cortex-api     — Cortex Knowledge System API (UDS: /tmp/universal-protocol/cortex-api.sock)
+          cortex-api     — Cortex Knowledge System API (UDS: `CORTEX_API_SOCK`, default `/tmp/universal-protocol/cortex-api.sock`)
 
         Args:
             service: Service name from the registry above.

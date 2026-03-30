@@ -16,10 +16,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from typing import Any
 
-_QUERY_SOCKET = "/tmp/universal-protocol/events-query.sock"
+_QUERY_SOCKET = os.environ.get(
+    "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
