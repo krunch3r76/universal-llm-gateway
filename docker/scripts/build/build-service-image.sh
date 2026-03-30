@@ -13,6 +13,17 @@ CONTEXT="${PROJECT_ROOT}"
 NO_CACHE=false
 PULL=false
 BUILD_ARGS=()
+EFFECTIVE_BUILDER=""
+TEMP_BUILDER=false
+
+cleanup() {
+  if [[ "${TEMP_BUILDER}" == "true" && -n "${EFFECTIVE_BUILDER}" ]]; then
+    echo "Removing ephemeral no-cache builder: ${EFFECTIVE_BUILDER}"
+    docker buildx rm "${EFFECTIVE_BUILDER}" >/dev/null 2>&1 || true
+  fi
+}
+
+trap cleanup EXIT
 
 usage() {
   cat <<'EOF'
@@ -27,8 +38,8 @@ Usage: ./docker/scripts/build/build-service-image.sh \
 
 Notes:
   - `--no-cache` also implies `--pull` in this workspace.
-  - Builds use a dedicated buildx builder so cache cleanup can be scoped.
-  - `--no-cache` prunes that dedicated builder before rebuilding.
+  - Cache-preserving builds reuse the named builder you pass via `--builder`.
+  - `--no-cache` builds create a temporary per-run builder and remove it on exit.
 EOF
 }
 
@@ -83,26 +94,30 @@ fi
 
 cd "${PROJECT_ROOT}"
 
-if ! docker buildx inspect "${BUILDER}" >/dev/null 2>&1; then
-  echo "Creating buildx builder: ${BUILDER}"
-  docker buildx create --name "${BUILDER}" --driver docker-container >/dev/null
-fi
-
-if ! docker buildx inspect --bootstrap "${BUILDER}" >/dev/null 2>&1; then
-  echo "Recreating stale buildx builder: ${BUILDER}"
-  docker buildx rm "${BUILDER}" >/dev/null 2>&1 || true
-  docker buildx create --name "${BUILDER}" --driver docker-container >/dev/null
-  docker buildx inspect --bootstrap "${BUILDER}" >/dev/null
-fi
-
 if [[ "${NO_CACHE}" == "true" ]]; then
-  echo "Pruning build cache for ${BUILDER} before no-cache rebuild..."
-  docker buildx prune --builder "${BUILDER}" -af >/dev/null
+  EFFECTIVE_BUILDER="${BUILDER}-rebuild-$(date +%s)-$$"
+  TEMP_BUILDER=true
+  echo "Creating ephemeral no-cache builder: ${EFFECTIVE_BUILDER}"
+  docker buildx create --name "${EFFECTIVE_BUILDER}" --driver docker-container >/dev/null
+  docker buildx inspect --bootstrap "${EFFECTIVE_BUILDER}" >/dev/null
+else
+  EFFECTIVE_BUILDER="${BUILDER}"
+  if ! docker buildx inspect "${EFFECTIVE_BUILDER}" >/dev/null 2>&1; then
+    echo "Creating buildx builder: ${EFFECTIVE_BUILDER}"
+    docker buildx create --name "${EFFECTIVE_BUILDER}" --driver docker-container >/dev/null
+  fi
+
+  if ! docker buildx inspect --bootstrap "${EFFECTIVE_BUILDER}" >/dev/null 2>&1; then
+    echo "Recreating stale buildx builder: ${EFFECTIVE_BUILDER}"
+    docker buildx rm "${EFFECTIVE_BUILDER}" >/dev/null 2>&1 || true
+    docker buildx create --name "${EFFECTIVE_BUILDER}" --driver docker-container >/dev/null
+    docker buildx inspect --bootstrap "${EFFECTIVE_BUILDER}" >/dev/null
+  fi
 fi
 
 CMD=(
   docker buildx build
-  --builder "${BUILDER}"
+  --builder "${EFFECTIVE_BUILDER}"
   --load
   --progress=plain
   --tag "${IMAGE}"
@@ -120,5 +135,5 @@ fi
 CMD+=("${BUILD_ARGS[@]}")
 CMD+=("${CONTEXT}")
 
-echo "Building ${IMAGE} with builder ${BUILDER}..."
+echo "Building ${IMAGE} with builder ${EFFECTIVE_BUILDER}..."
 "${CMD[@]}"

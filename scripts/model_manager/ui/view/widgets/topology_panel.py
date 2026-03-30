@@ -41,6 +41,7 @@ from ...controller.topology import (
     deploy_remote,
     gateway_image_mismatch_warnings,
     list_remotes,
+    stop_remote,
     wait_for_relay_connected,
 )
 from ...model.service_state import ServiceStatus
@@ -315,42 +316,71 @@ class TopologyPanel(Widget):
 
         try:
             assert self._workspace_root is not None
+            stopped_ok = await self._stop_fleet_before_operation(
+                "rebuild" if build else "restart"
+            )
             if build:
-                local_build_ok, remote_results = await self._parallel_build(scope)
-                if local_build_ok:
+                if stopped_ok:
+                    local_build_ok, remote_results = await self._parallel_build(scope)
+                    for hostname, ok in remote_results.items():
+                        if not ok:
+                            failures.append(f"remote_build:{hostname}")
+                    if local_build_ok:
+                        local_restart_ok = await self._restart_local_services(
+                            rebuild_supporting_services=True,
+                            already_stopped=True,
+                        )
+                        if local_restart_ok:
+                            for hostname, ok in remote_results.items():
+                                if ok and not await self._verify_relay_connection(hostname):
+                                    failures.append(f"remote_verify:{hostname}")
+                        else:
+                            failures.append("local_restart")
+                            self._switch_to_node(_MASTER_ROW_KEY)
+                            self._append_line(
+                                _MASTER_ROW_KEY,
+                                "⚠ Localhost restart failed after build; skipped relay verification.",
+                            )
+                    else:
+                        failures.append("local_build")
+                        self._switch_to_node(_MASTER_ROW_KEY)
+                        self._append_line(
+                            _MASTER_ROW_KEY,
+                            "⚠ Local build failed; skipped local restart.",
+                        )
+                else:
+                    failures.append("stop_before_build")
+                    self._switch_to_node(_MASTER_ROW_KEY)
+                    self._append_line(
+                        _MASTER_ROW_KEY,
+                        "⚠ Fleet stop phase failed; aborted rebuild before any new image restart.",
+                    )
+            else:
+                if stopped_ok:
                     local_restart_ok = await self._restart_local_services(
-                        rebuild_supporting_services=True
+                        rebuild_supporting_services=False,
+                        already_stopped=True,
                     )
                     if local_restart_ok:
+                        remote_results = await self._deploy_remotes_parallel(
+                            build=False, scope=scope
+                        )
                         for hostname, ok in remote_results.items():
-                            if ok:
-                                await self._verify_relay_connection(hostname)
+                            if not ok:
+                                failures.append(f"remote_restart:{hostname}")
                     else:
                         failures.append("local_restart")
                         self._switch_to_node(_MASTER_ROW_KEY)
                         self._append_line(
                             _MASTER_ROW_KEY,
-                            "⚠ Localhost restart failed after build; skipped relay verification.",
+                            "⚠ Localhost restart failed; skipped remote sync/restart.",
                         )
                 else:
-                    failures.append("local_build")
+                    failures.append("stop_before_restart")
                     self._switch_to_node(_MASTER_ROW_KEY)
                     self._append_line(
                         _MASTER_ROW_KEY,
-                        "⚠ Local build failed; skipped local restart.",
-                    )
-            else:
-                local_restart_ok = await self._restart_local_services(
-                    rebuild_supporting_services=False
-                )
-                if local_restart_ok:
-                    await self._deploy_remotes_parallel(build=False, scope=scope)
-                else:
-                    failures.append("local_restart")
-                    self._switch_to_node(_MASTER_ROW_KEY)
-                    self._append_line(
-                        _MASTER_ROW_KEY,
-                        "⚠ Localhost restart failed; skipped remote sync/restart.",
+                        "⚠ Fleet stop phase failed; aborted restart before any service start.",
                     )
         finally:
             elapsed = _time.monotonic() - t0
@@ -383,6 +413,77 @@ class TopologyPanel(Widget):
         """
         if not self._deploying and deploy_run_id == self._deploy_run_id:
             self.query_one("#topo-progress", LogStream).display = False
+
+    async def _stop_fleet_before_operation(self, operation: str) -> bool:
+        """Bring local and remote edge processes down before fleet operations."""
+        remotes = list_remotes()
+        targets = _parse_remote_targets(remotes)
+        results: dict[str, bool] = {}
+
+        self._set_node_status(_MASTER_ROW_KEY, f"⟳ stopping before {operation}...")
+        for hostname, _ in targets:
+            self._set_node_status(hostname, f"⟳ stopping before {operation}...")
+
+        async with asyncio.TaskGroup() as tg:
+            local_stop = tg.create_task(self._stop_local_before_operation(operation))
+            for hostname, address in targets:
+                tg.create_task(
+                    self._stop_remote_before_operation(
+                        hostname=hostname,
+                        address=address,
+                        operation=operation,
+                        results=results,
+                    )
+                )
+
+        return local_stop.result() and all(results.values())
+
+    async def _stop_local_before_operation(self, operation: str) -> bool:
+        """Stop local services and fail closed if anything stays up."""
+        mk = _MASTER_ROW_KEY
+        self._node_buffers[mk] = []
+        self._switch_to_node(mk)
+        self._append_line(mk, f"Stopping local services before {operation}...")
+        failures = await self._stop_local_services()
+        if failures:
+            self._set_node_status(mk, "✗ stop failed")
+            self._append_line(mk, f"Stop failed: {', '.join(failures)}")
+            return False
+        self._set_node_status(mk, "○ stopped, next phase pending")
+        self._append_line(mk, f"All local services stopped before {operation}.")
+        return True
+
+    async def _stop_remote_before_operation(
+        self,
+        *,
+        hostname: str,
+        address: str,
+        operation: str,
+        results: dict[str, bool],
+    ) -> None:
+        """Stop a remote relay+edge before fleet operations."""
+        raw: AsyncIterator[str] = stop_remote(hostname=hostname, address=address)
+        summary = tee_with_summary(raw, operation="deploy", host=hostname)
+        failed = False
+        try:
+            async for line in summary:
+                self._append_line(hostname, line)
+                if "[red]" in line:
+                    failed = True
+        except Exception as e:
+            self._append_line(hostname, f"Error stopping remote before {operation}: {e}")
+            logger.exception("Error stopping remote %s before %s", hostname, operation)
+            failed = True
+
+        if failed:
+            self._set_node_status(hostname, "✗ stop failed")
+            self._append_line(hostname, f"--- {hostname}: ✗ stop failed ---")
+            results[hostname] = False
+            return
+
+        self._set_node_status(hostname, "○ stopped, next phase pending")
+        self._append_line(hostname, f"--- {hostname}: ✓ stopped ---")
+        results[hostname] = True
 
     async def _parallel_build(self, scope: str) -> tuple[bool, dict[str, bool]]:
         """Build images on localhost and all remotes in parallel.
@@ -450,11 +551,10 @@ class TopologyPanel(Widget):
         return False
 
     async def _restart_local_services(
-        self, *, rebuild_supporting_services: bool
+        self, *, rebuild_supporting_services: bool, already_stopped: bool = False
     ) -> bool:
         """Restart local services with best-effort phased orchestration.
 
-        ∀ stop operations: best-effort, never abort the restart flow.
         ∀ start operations: try/except wrapped, logged, never abort.
         Critical failures (event_service/gateway/stargate/agent_bus) are surfaced
         distinctly from optional-service failures.
@@ -471,34 +571,8 @@ class TopologyPanel(Widget):
         self._append_line(mk, "Restarting services...")
 
         # Phase 1: Stop all (best-effort, parallel)
-        stop_ops: list[tuple[str, Callable[[], Awaitable[str]]]] = [
-            ("gateway", svc.stop_gateway),
-            ("stargate", svc.stop_stargate),
-            ("sidecar", svc.sidecar.stop),
-        ]
-        if is_rag_configured():
-            stop_ops.append(("rag", svc.stop_rag))
-        if is_cloud_proxy_configured():
-            stop_ops.append(("cloud_proxy", svc.stop_cloud_proxy))
-        if is_mcp_configured(ws_root):
-            stop_ops.append(("mcp", svc.stop_mcp))
-        if is_cortex_configured():
-            stop_ops.append(("cortex_api", svc.stop_cortex_api))
-        if is_agent_bus_configured():
-            stop_ops.append(("agent_bus", svc.stop_agent_bus))
-
-        stop_results = await self._run_ops_parallel(stop_ops)
-        stop_dict: dict[str, bool] = {}
-        for name, ok, msg in stop_results:
-            stop_dict[name] = ok
-            self._append_line(mk, f"  {'✓' if ok else '⚠'} stop {name}")
-            if not ok:
-                logger.warning("stop %s: %s", name, msg)
-        await emit_fleet_service_phase(
-            phase="stop",
-            services=[n for n, _, _ in stop_results],
-            results=stop_dict,
-        )
+        if not already_stopped:
+            await self._stop_local_services()
 
         # Phase 2: Event service (observability backbone)
         event_service_op = (
@@ -571,6 +645,45 @@ class TopologyPanel(Widget):
         status = "✗ core start failed" if core_failed else "◌ partial"
         self._set_node_status(mk, status)
         return not core_failed
+
+    async def _stop_local_services(self) -> list[str]:
+        """Stop local services in parallel and return any failures."""
+        svc = cast("ModelManagerApp", self.app).service_controller
+        mk = _MASTER_ROW_KEY
+        assert self._workspace_root is not None
+        ws_root = self._workspace_root
+
+        stop_ops: list[tuple[str, Callable[[], Awaitable[str]]]] = [
+            ("gateway", svc.stop_gateway),
+            ("stargate", svc.stop_stargate),
+            ("sidecar", svc.sidecar.stop),
+        ]
+        if is_rag_configured():
+            stop_ops.append(("rag", svc.stop_rag))
+        if is_cloud_proxy_configured():
+            stop_ops.append(("cloud_proxy", svc.stop_cloud_proxy))
+        if is_mcp_configured(ws_root):
+            stop_ops.append(("mcp", svc.stop_mcp))
+        if is_cortex_configured():
+            stop_ops.append(("cortex_api", svc.stop_cortex_api))
+        if is_agent_bus_configured():
+            stop_ops.append(("agent_bus", svc.stop_agent_bus))
+
+        stop_results = await self._run_ops_parallel(stop_ops)
+        stop_dict: dict[str, bool] = {}
+        failures: list[str] = []
+        for name, ok, msg in stop_results:
+            stop_dict[name] = ok
+            self._append_line(mk, f"  {'✓' if ok else '⚠'} stop {name}")
+            if not ok:
+                failures.append(name)
+                logger.warning("stop %s: %s", name, msg)
+        await emit_fleet_service_phase(
+            phase="stop",
+            services=[n for n, _, _ in stop_results],
+            results=stop_dict,
+        )
+        return failures
 
     async def _run_ops_parallel(
         self,
@@ -654,7 +767,7 @@ class TopologyPanel(Widget):
             ):
                 self._append_line(hostname, wline)
 
-    async def _verify_relay_connection(self, hostname: str) -> None:
+    async def _verify_relay_connection(self, hostname: str) -> bool:
         """Verify a relay registered with master after deploy."""
         import time as _time
 
@@ -684,8 +797,9 @@ class TopologyPanel(Widget):
                 "  check: remote ./manage relay --restart output for auth/connection errors",
             )
         self._append_line(hostname, f"--- {hostname}: {status} ---")
+        return result.connected
 
-    async def _deploy_remotes_parallel(self, *, build: bool, scope: str) -> None:
+    async def _deploy_remotes_parallel(self, *, build: bool, scope: str) -> dict[str, bool]:
         """Deploy all remotes in parallel via TaskGroup.
 
         Args:
@@ -695,24 +809,32 @@ class TopologyPanel(Widget):
         remotes = list_remotes()
         if not remotes:
             self._append_line(_MASTER_ROW_KEY, "No remotes configured.")
-            return
+            return {}
 
         targets = _parse_remote_targets(remotes)
+        results: dict[str, bool] = {}
         first = True
         async with asyncio.TaskGroup() as tg:
+            tasks: list[asyncio.Task[tuple[str, bool]]] = []
             for hostname, address in targets:
                 self._set_node_status(hostname, "⟳ deploying...")
                 if first:
                     self._switch_to_node(hostname)
                     first = False
-                tg.create_task(
+                tasks.append(
+                    tg.create_task(
                     self._deploy_single_remote(
                         hostname=hostname,
                         address=address,
                         build=build,
                         scope=scope,
                     )
+                    )
                 )
+        for task in tasks:
+            hostname, ok = task.result()
+            results[hostname] = ok
+        return results
 
     async def _deploy_single_remote(
         self,
@@ -721,7 +843,7 @@ class TopologyPanel(Widget):
         address: str,
         build: bool,
         scope: str,
-    ) -> None:
+    ) -> tuple[str, bool]:
         """Deploy one remote, buffering output to its node key.
 
         Args:
@@ -754,7 +876,7 @@ class TopologyPanel(Widget):
         if failed:
             self._set_node_status(hostname, "✗ failed")
             self._append_line(hostname, f"--- {hostname}: ✗ failed ---")
-            return
+            return hostname, False
 
         if build:
             for wline in await gateway_image_mismatch_warnings(
@@ -762,7 +884,10 @@ class TopologyPanel(Widget):
             ):
                 self._append_line(hostname, wline)
 
-        await self._verify_relay_connection(hostname)
+        connected = await self._verify_relay_connection(hostname)
+        if not connected:
+            return hostname, False
+        return hostname, True
 
 
 # ── helpers ───────────────────────────────────────────────────────────────

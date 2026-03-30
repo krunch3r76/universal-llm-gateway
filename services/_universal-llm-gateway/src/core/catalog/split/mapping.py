@@ -9,6 +9,7 @@ SCHEMA_TO_PATH = {
     "faster-whisper": "audio/whisper",
     "ctranslate2": "translation/ctranslate2",
     "diffusers": "graphics/diffusers",
+    "cross-encoder": "reranker/cross-encoder",
 }
 
 # ∀ visual models (capabilities.modalities.input contains "vision"): routed by engine

@@ -10,6 +10,7 @@ class AgentName(StrEnum):
     WEB = "web"
     API = "api"
     CURSOR = "cursor"
+    GROK = "grok"
     KAYWAN = "kaywan"
     ALL = "all"
 

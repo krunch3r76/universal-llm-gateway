@@ -58,6 +58,14 @@ def get_local_catalog_dir() -> Path | None:
     return None
 
 
+def _has_yaml_files(directory: Path) -> bool:
+    """Check if directory contains any YAML files (non-recursive first level check)."""
+    try:
+        return any(directory.rglob("*.yaml"))
+    except OSError:
+        return False
+
+
 def _load_entry(yaml_file: Path) -> dict[str, Any] | None:
     """
     Load single local catalog file.

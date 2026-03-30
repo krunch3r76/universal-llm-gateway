@@ -54,3 +54,21 @@ class ProviderForwarder:
         request_body: dict[str, Any],
     ) -> dict[str, Any]:
         return await self._adapter(provider).forward_embeddings(request_body)
+
+    async def forward_native(
+        self,
+        *,
+        provider: str,
+        request_body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Forward provider-native body (no OpenAI translation)."""
+        return await self._adapter(provider).forward_native(request_body)
+
+    def forward_native_stream(
+        self,
+        *,
+        provider: str,
+        request_body: dict[str, Any],
+    ) -> AsyncIterator[bytes]:
+        """Stream provider-native body (no OpenAI translation)."""
+        return self._adapter(provider).forward_native_stream(request_body)

@@ -10,6 +10,9 @@ Endpoints:
     GET  /catalog/pricing     — configured models with pricing (routing)
     POST /v1/chat/completions — forward with auth injection + SSE relay
     POST /v1/embeddings       — forward with auth injection
+    POST /api/v1/providers/anthropic/messages — native Anthropic Messages API (raw model id)
+    POST /api/v1/providers/xai/responses      — native xAI Responses API (raw model id)
+    POST /api/v1/providers/openai/responses   — reserved stub (501) in phase 1
     GET  /                    — model browser UI
     GET  /api/models          — full OpenRouter catalog with pricing
     POST /api/refresh         — force re-fetch of browser catalog
@@ -57,6 +60,7 @@ from .events import (
 )
 from .forwarder import ProviderForwarder
 from .local_catalog import LocalCatalogCache
+from .native_routes import router as native_router
 
 logger = logging.getLogger(__name__)
 
@@ -752,3 +756,6 @@ async def embeddings(request: Request) -> JSONResponse:
             adapter_type=adapter,
         )
         raise HTTPException(status_code=422, detail=error_text) from exc
+
+
+app.include_router(native_router)

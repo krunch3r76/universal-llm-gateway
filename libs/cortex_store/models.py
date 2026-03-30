@@ -94,6 +94,7 @@ class AssertionCreate(BaseModel):
     )
     evidence: str
     evidence_uris: list[str] | None = None
+    seeded_by: str | None = None
     chunk_id: int | None = None
     derivation_type: DerivationType | None = None
     reasoning_summary: str | None = None
@@ -116,6 +117,7 @@ class AssertionItem(BaseModel):
     confidence_score: float | None = None
     evidence: str | None = None
     evidence_uris: list[str] | None = None
+    seeded_by: str | None = None
     derivation_type: DerivationType | None = None
     chunk_id: int | None = None
     reasoning_summary: str | None = None

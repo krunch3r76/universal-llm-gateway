@@ -196,7 +196,7 @@ class ProcessCommunicationManager:
                 )
 
             # Validate context_size is present (only for LLM models)
-            # Non-LLM models (e.g., Whisper, Flux) don't have context_size
+            # Non-LLM models (e.g., Whisper, Flux, rerankers) don't have context_size
             engine_type = None
             if self.model_registry:
                 model_config = self.model_registry.get_model_config(model_id)
@@ -209,6 +209,7 @@ class ProcessCommunicationManager:
             if context_size is None and engine_type not in (
                 "faster-whisper",
                 "diffusers",
+                "cross-encoder",
             ):
                 logger.error(
                     f"❌ Worker did not return context_size for {model_id}. "

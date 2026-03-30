@@ -70,6 +70,13 @@ _POLL_INTERVAL = 2.0
 # Maximum concurrent in-flight requests.
 _MAX_INFLIGHT = int(os.environ.get("MCP_PROXY_MAX_INFLIGHT", "8"))
 
+# Emit a warning event when a response exceeds this size (defense-in-depth;
+# the server-side guard should prevent oversized payloads, but this catches
+# any that slip through and helps diagnose stdio pipe stalls).
+_LARGE_RESPONSE_BYTES = int(
+    os.environ.get("MCP_PROXY_LARGE_RESPONSE_BYTES", str(32 * 1024))
+)
+
 # Event service UDS — bind-mounted from host into Docker at same path.
 _EVENTS_SOCK = os.environ.get("EVENTS_SOCK", "/tmp/universal-protocol/events.sock")
 _EVENTS_ENABLED = os.environ.get("MCP_PROXY_EVENTS", "true").lower() in {
@@ -391,6 +398,16 @@ def _handle_message(
         return
 
     if result:
+        byte_len = len(result.encode("utf-8"))
+        if byte_len > _LARGE_RESPONSE_BYTES:
+            _events.emit(
+                "mcp.transport.response.large",
+                transport="stdio",
+                msg_id=msg_id,
+                mcp_method=mcp_method,
+                response_bytes=byte_len,
+                threshold_bytes=_LARGE_RESPONSE_BYTES,
+            )
         _write_stdout(result + "\n")
 
 

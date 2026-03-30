@@ -8,6 +8,15 @@ from typing import Any, Protocol
 
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_BETA_MCP = "mcp-client-2025-11-20"
+_ANTHROPIC_BETA_INTERLEAVED = "interleaved-thinking-2025-05-14"
+_ANTHROPIC_BETA_CONTEXT = "context-management-2025-06-27"
+_ANTHROPIC_BETA_COMPACT = "compact-2026-01-12"
+_ANTHROPIC_BETA_FAST = "fast-mode-2026-02-01"
+_ANTHROPIC_SERVER_TOOL_VERSION_MAP = {
+    "web_search": "web_search_20260209",
+    "web_fetch": "web_fetch_20250910",
+    "code_execution": "code_execution_20260120",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +50,7 @@ class FrontierRequest:
 
     messages: list[dict[str, Any]]
     model: str
-    max_tokens: int = 4096
+    max_tokens: int | None = None
     system: str = ""
     inject_mcp: bool = True
     # Generation
@@ -52,11 +61,14 @@ class FrontierRequest:
     stream: bool = False
     # Thinking / Reasoning
     thinking: dict[str, Any] | None = None
+    effort: str | None = None
     # Tools (function calling + server-side)
     tools: list[dict[str, Any]] | None = None
     tool_choice: str | dict[str, Any] | None = None
     # Structured output
     response_format: dict[str, Any] | None = None
+    boot: str = "none"
+    boot_ref: str | None = None
     # Multi-turn state
     conversation_id: str | None = None
     reasoning_trace: list[dict[str, Any]] | None = None
@@ -113,6 +125,92 @@ def flatten_anthropic_system(system: Any) -> str:
                 parts.append(block)
         return "\n".join(parts)
     return str(system)
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        clean = value.strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        deduped.append(clean)
+    return deduped
+
+
+def _is_claude4_model(model: str) -> bool:
+    return any(
+        marker in model for marker in ("claude-sonnet-4", "claude-opus-4", "claude-4")
+    )
+
+
+def _build_anthropic_output_format(response_format: dict[str, Any]) -> dict[str, Any]:
+    if response_format.get("type") != "json_schema":
+        return dict(response_format)
+
+    json_schema = response_format.get("json_schema")
+    if not isinstance(json_schema, dict):
+        return dict(response_format)
+
+    output_format: dict[str, Any] = {"type": "json_schema"}
+    schema = json_schema.get("schema")
+    if schema is not None:
+        output_format["schema"] = schema
+    if "schema" not in output_format and response_format.get("schema") is not None:
+        output_format["schema"] = response_format["schema"]
+    return output_format
+
+
+def _build_anthropic_thinking(thinking: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not thinking:
+        return None
+
+    thinking_type = thinking.get("type")
+    thinking_mode = thinking.get("mode")
+    display = thinking.get("display")
+
+    if thinking_type == "adaptive" or thinking_mode == "adaptive":
+        config: dict[str, Any] = {"type": "adaptive"}
+        if display is not None:
+            config["display"] = display
+        return config
+
+    budget_tokens = thinking.get("budget_tokens")
+    if isinstance(budget_tokens, int) and budget_tokens > 0:
+        config = {"type": "enabled", "budget_tokens": budget_tokens}
+        if display is not None:
+            config["display"] = display
+        return config
+
+    if (
+        thinking_type == "disabled"
+        or thinking_mode == "disabled"
+        or thinking.get("enabled") is False
+    ):
+        return {"type": "disabled"}
+
+    return None
+
+
+def _build_anthropic_tool(tool: dict[str, Any]) -> dict[str, Any] | None:
+    tool_type = tool.get("type")
+    if tool_type == "function":
+        return {
+            "name": tool["name"],
+            "description": tool.get("description", ""),
+            "input_schema": tool.get("parameters", {}),
+        }
+
+    if isinstance(tool_type, str) and tool_type in _ANTHROPIC_SERVER_TOOL_VERSION_MAP:
+        return {
+            "type": _ANTHROPIC_SERVER_TOOL_VERSION_MAP[tool_type],
+            "name": tool_type,
+        }
+
+    return None
 
 
 class AnthropicAdapter:
@@ -176,9 +274,10 @@ class AnthropicAdapter:
         }
         body: dict[str, Any] = {
             "model": req.model,
-            "max_tokens": req.max_tokens,
             "messages": list(req.messages),
         }
+        if req.max_tokens is not None:
+            body["max_tokens"] = req.max_tokens
         if req.system:
             body["system"] = req.system
         if req.temperature is not None:
@@ -189,24 +288,17 @@ class AnthropicAdapter:
             body["stop_sequences"] = req.stop_sequences
 
         # Thinking / extended thinking
-        if req.thinking and req.thinking.get("budget_tokens"):
-            body["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": req.thinking["budget_tokens"],
-            }
+        thinking_config = _build_anthropic_thinking(req.thinking)
+        if thinking_config is not None:
+            body["thinking"] = thinking_config
 
-        # Tools — client-side function calling
+        # Tools — function calling and Anthropic-hosted tools
         tools_list: list[dict[str, Any]] = []
         if req.tools:
             for t in req.tools:
-                if t.get("type") == "function":
-                    tools_list.append(
-                        {
-                            "name": t["name"],
-                            "description": t.get("description", ""),
-                            "input_schema": t.get("parameters", {}),
-                        }
-                    )
+                mapped_tool = _build_anthropic_tool(t)
+                if mapped_tool is not None:
+                    tools_list.append(mapped_tool)
         if mcp is not None and req.inject_mcp:
             mcp_def: dict[str, Any] = {
                 "type": "url",
@@ -219,33 +311,74 @@ class AnthropicAdapter:
                 {"type": "mcp_toolset", "mcp_server_name": mcp.server_name}
             )
             body["mcp_servers"] = [mcp_def]
-            headers["anthropic-beta"] = _ANTHROPIC_BETA_MCP
         if tools_list:
             body["tools"] = tools_list
         if req.tool_choice is not None:
             body["tool_choice"] = req.tool_choice
 
-        # Structured output — Anthropic doesn't have native response_format;
-        # append instruction to system prompt (Phase 1: passthrough only)
+        # Structured output + effort live under output_config for Anthropic.
+        output_config: dict[str, Any] = {}
         if req.response_format:
-            opts = (req.provider_options or {}).get("anthropic", {})
-            body.update({k: v for k, v in opts.items() if k not in body})
+            output_config["format"] = _build_anthropic_output_format(
+                req.response_format
+            )
+        if req.effort is not None:
+            output_config["effort"] = req.effort
+        if output_config:
+            body["output_config"] = output_config
 
         # Provider-specific overrides
         opts = (req.provider_options or {}).get("anthropic", {})
-        if "betas" in opts:
-            existing = headers.get("anthropic-beta", "")
-            betas = ",".join(filter(None, [existing, *opts["betas"]]))
-            headers["anthropic-beta"] = betas
+        for key, value in opts.items():
+            if key == "betas":
+                continue
+            if key == "output_config" and isinstance(value, dict):
+                merged = dict(value)
+                merged.update(body.get("output_config", {}))
+                body["output_config"] = merged
+                continue
+            if key not in body:
+                body[key] = value
+
+        auto_betas: list[str] = []
+        if thinking_config is not None and _is_claude4_model(req.model):
+            auto_betas.append(_ANTHROPIC_BETA_INTERLEAVED)
+
+        context_management = body.get("context_management")
+        if isinstance(context_management, dict):
+            auto_betas.append(_ANTHROPIC_BETA_CONTEXT)
+            edits = context_management.get("edits")
+            if isinstance(edits, list) and any(
+                isinstance(edit, dict)
+                and str(edit.get("type", "")).startswith("compact")
+                for edit in edits
+            ):
+                auto_betas.append(_ANTHROPIC_BETA_COMPACT)
+
+        if opts.get("speed") == "fast":
+            auto_betas.append(_ANTHROPIC_BETA_FAST)
+
+        if (mcp is not None and req.inject_mcp) or body.get("mcp_servers"):
+            auto_betas.append(_ANTHROPIC_BETA_MCP)
+
+        explicit_betas = opts.get("betas", [])
+        if isinstance(explicit_betas, list):
+            beta_values = [*explicit_betas, *auto_betas]
+        else:
+            beta_values = auto_betas
+        if beta_values:
+            headers["anthropic-beta"] = ",".join(_dedupe_preserve_order(beta_values))
 
         url = f"{self._base}/v1/messages"
         return url, headers, body
 
     def parse_frontier_response(self, response_data: dict[str, Any]) -> dict[str, Any]:
         content_parts: list[str] = []
-        thinking_text: str | None = None
+        thinking_parts: list[str] = []
+        thinking_blocks: list[dict[str, Any]] = []
         thinking_tokens = 0
         tool_calls: list[dict[str, Any]] = []
+        server_tool_calls: list[dict[str, Any]] = []
 
         for block in response_data.get("content") or []:
             if not isinstance(block, dict):
@@ -254,7 +387,10 @@ class AnthropicAdapter:
             if btype == "text":
                 content_parts.append(str(block.get("text", "")))
             elif btype == "thinking":
-                thinking_text = str(block.get("thinking", ""))
+                thinking_blocks.append(block)
+                thinking_parts.append(str(block.get("thinking", "")))
+            elif btype == "redacted_thinking":
+                thinking_blocks.append(block)
             elif btype == "tool_use":
                 tool_calls.append(
                     {
@@ -263,6 +399,13 @@ class AnthropicAdapter:
                         "input": block.get("input"),
                     }
                 )
+            elif btype in {
+                "server_tool_use",
+                "web_search_tool_result",
+                "web_fetch_tool_result",
+                "code_execution_tool_result",
+            }:
+                server_tool_calls.append(block)
 
         u = response_data.get("usage") or {}
         usage: dict[str, Any] = {
@@ -273,12 +416,13 @@ class AnthropicAdapter:
         }
 
         thinking: dict[str, Any] | None = None
-        if thinking_text is not None:
+        if thinking_blocks:
             thinking_tokens = int(u.get("thinking_tokens") or 0)
             thinking = {
-                "text": thinking_text,
+                "text": "".join(thinking_parts) or None,
                 "encrypted_content": None,
                 "tokens": thinking_tokens,
+                "blocks": thinking_blocks,
             }
             usage["reasoning_tokens"] = thinking_tokens
 
@@ -289,7 +433,7 @@ class AnthropicAdapter:
             "usage": usage,
             "thinking": thinking,
             "tool_calls": tool_calls or None,
-            "server_tool_calls": None,
+            "server_tool_calls": server_tool_calls or None,
             "response_id": response_data.get("id"),
             "raw": None,
         }
@@ -395,9 +539,10 @@ class ResponsesAPIAdapter:
         body: dict[str, Any] = {
             "model": req.model,
             "input": input_msgs,
-            "max_output_tokens": req.max_tokens,
             "store": False,
         }
+        if req.max_tokens is not None:
+            body["max_output_tokens"] = req.max_tokens
         if req.temperature is not None:
             body["temperature"] = req.temperature
         if req.top_p is not None:
@@ -414,9 +559,21 @@ class ResponsesAPIAdapter:
             if req.thinking.get("effort"):
                 body["reasoning"] = {"effort": req.thinking["effort"]}
 
-        # Response format (JSON schema enforcement)
+        # Response format — unwrap OpenAI json_schema wrapper to Responses API format
         if req.response_format:
-            body["text"] = {"format": req.response_format}
+            fmt = req.response_format
+            json_schema = fmt.get("json_schema") if isinstance(fmt, dict) else None
+            if isinstance(json_schema, dict):
+                body["text"] = {
+                    "format": {
+                        "type": "json_schema",
+                        "name": json_schema.get("name", "response"),
+                        "schema": json_schema["schema"],
+                        "strict": json_schema.get("strict", True),
+                    }
+                }
+            else:
+                body["text"] = {"format": fmt}
 
         # Tools — passthrough for both function calling and server-side
         tools_list: list[dict[str, Any]] = []

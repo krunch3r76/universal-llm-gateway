@@ -7,7 +7,6 @@ metadata:
   architecture: cross-encoder
   parameter_count: "568M"
   capabilities:
-    rerank: true
     modalities:
       input:
         - text

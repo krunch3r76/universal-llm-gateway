@@ -85,6 +85,8 @@ BUILD_SCRIPT="${PROJECT_ROOT}/libs/inference_djinn/scripts/build/python_builders
 IMAGE_NAME="${IMAGE_NAME:-universal-llm-gateway}"
 IMAGE_TAG="${IMAGE_TAG:-gpu}"
 BUILDER_NAME="${BUILDX_BUILDER_NAME:-ulg-gateway}"
+EFFECTIVE_BUILDER_NAME="${BUILDER_NAME}"
+TEMP_BUILDER=false
 CUDA_VERSION="${CUDA_VERSION:-13.0.0}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 # Default: AVX2 for portable Docker images (works on ~95% of servers)
@@ -139,6 +141,19 @@ SOURCE_VERSION=""
 
 # Default: Build readable images (set to true for obfuscated production builds)
 OBFUSCATE="false"
+BUILD_CONTEXT=""
+
+cleanup() {
+    if [[ -n "${BUILD_CONTEXT}" && -d "${BUILD_CONTEXT}" ]]; then
+        rm -rf "${BUILD_CONTEXT}"
+    fi
+    if [[ "${TEMP_BUILDER}" == "true" ]]; then
+        echo "Removing ephemeral no-cache builder: ${EFFECTIVE_BUILDER_NAME}"
+        docker buildx rm "${EFFECTIVE_BUILDER_NAME}" >/dev/null 2>&1 || true
+    fi
+}
+
+trap cleanup EXIT
 
 # Parse arguments
 CACHE_ARGS=()
@@ -476,25 +491,30 @@ BUILD_TIMESTAMP="${BUILD_TIMESTAMP:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 export BUILD_TIMESTAMP
 
 ensure_buildx_builder() {
-    if docker buildx inspect "${BUILDER_NAME}" >/dev/null 2>&1; then
-        if docker buildx inspect --bootstrap "${BUILDER_NAME}" >/dev/null 2>&1; then
+    if [[ "${NO_CACHE}" == "true" ]]; then
+        EFFECTIVE_BUILDER_NAME="${BUILDER_NAME}-rebuild-$(date +%s)-$$"
+        TEMP_BUILDER=true
+        echo "🔧 Creating ephemeral no-cache builder: ${EFFECTIVE_BUILDER_NAME}"
+        docker buildx create --name "${EFFECTIVE_BUILDER_NAME}" --driver docker-container >/dev/null
+        docker buildx inspect --bootstrap "${EFFECTIVE_BUILDER_NAME}" >/dev/null
+        return
+    fi
+
+    if docker buildx inspect "${EFFECTIVE_BUILDER_NAME}" >/dev/null 2>&1; then
+        if docker buildx inspect --bootstrap "${EFFECTIVE_BUILDER_NAME}" >/dev/null 2>&1; then
             return
         fi
-        echo "♻️ Recreating stale buildx builder: ${BUILDER_NAME}"
-        docker buildx rm "${BUILDER_NAME}" >/dev/null 2>&1 || true
+        echo "♻️ Recreating stale buildx builder: ${EFFECTIVE_BUILDER_NAME}"
+        docker buildx rm "${EFFECTIVE_BUILDER_NAME}" >/dev/null 2>&1 || true
     else
-        echo "🔧 Creating buildx builder: ${BUILDER_NAME}"
+        echo "🔧 Creating buildx builder: ${EFFECTIVE_BUILDER_NAME}"
     fi
-    docker buildx create --name "${BUILDER_NAME}" --driver docker-container >/dev/null
-    docker buildx inspect --bootstrap "${BUILDER_NAME}" >/dev/null
+    docker buildx create --name "${EFFECTIVE_BUILDER_NAME}" --driver docker-container >/dev/null
+    docker buildx inspect --bootstrap "${EFFECTIVE_BUILDER_NAME}" >/dev/null
 }
 
 prune_buildx_cache_if_needed() {
-    if [[ "${NO_CACHE}" != "true" ]]; then
-        return
-    fi
-    echo "🧹 Pruning build cache for ${BUILDER_NAME} before no-cache rebuild..."
-    docker buildx prune --builder "${BUILDER_NAME}" -af >/dev/null
+    return
 }
 
 ensure_buildx_builder
@@ -504,34 +524,41 @@ prune_buildx_cache_if_needed
 BUILD_LOG="${BUILD_LOG_PATH:-/tmp/gateway-build.log}"
 rm -f /tmp/gateway-build-[0-9]*.log
 : > "${BUILD_LOG}"
+SOURCE_BUILD_ARGS=()
+if [[ -n "${SOURCE_VERSION}" ]]; then
+    SOURCE_BUILD_ARGS=(--build-arg "SOURCE_VERSION=${SOURCE_VERSION}")
+fi
 
 # Always build base image (tagged for potential obfuscation consumption)
 echo "🔨 Building base image..."
 echo "📋 Build log: ${BUILD_LOG}"
-docker buildx build \
-    --builder "${BUILDER_NAME}" \
-    --load \
-    --progress=plain \
-    "${CACHE_ARGS[@]}" \
-    --build-arg CUDA_VERSION="${CUDA_VERSION}" \
-    --build-arg PYTHON_VERSION="${PYTHON_VERSION}" \
-    --build-arg CPU_OPTIMIZATION="${CPU_OPTIMIZATION}" \
-    --build-arg GPU_ARCH="${GPU_ARCH}" \
-    --build-arg ENABLE_VLLM="${ENABLE_VLLM}" \
-    --build-arg VLLM_FROM_SOURCE="${VLLM_FROM_SOURCE}" \
-    --build-arg VLLM_BUILD_ARGS="${VLLM_BUILD_ARGS}" \
-    --build-arg VLLM_MAX_JOBS="${VLLM_MAX_JOBS}" \
-    --build-arg ENABLE_LLAMA_CPP_PYTHON="${ENABLE_LLAMA_CPP_PYTHON}" \
-    --build-arg LLAMA_CPP_PYTHON_VERSION="${LLAMA_CPP_PYTHON_VERSION}" \
-    --build-arg VLLM_VERSION="${VLLM_VERSION}" \
-    --build-arg TORCH_NIGHTLY_DATE="${TORCH_NIGHTLY_DATE}" \
-    --build-arg ENABLE_LLAMA_SERVER="${ENABLE_LLAMA_SERVER}" \
-    --build-arg LLAMA_SERVER_VERSION="${LLAMA_SERVER_VERSION}" \
-    --build-arg BUILD_TIMESTAMP="${BUILD_TIMESTAMP}" \
-    ${SOURCE_VERSION:+--build-arg SOURCE_VERSION="${SOURCE_VERSION}"} \
-    -f docker/dockerfiles/Dockerfile.gpu \
-    -t gateway-base:runtime \
-    . >> "${BUILD_LOG}" 2>&1
+BASE_BUILD_CMD=(
+    docker buildx build
+    --builder "${EFFECTIVE_BUILDER_NAME}"
+    --load
+    --progress=plain
+    "${CACHE_ARGS[@]}"
+    --build-arg "CUDA_VERSION=${CUDA_VERSION}"
+    --build-arg "PYTHON_VERSION=${PYTHON_VERSION}"
+    --build-arg "CPU_OPTIMIZATION=${CPU_OPTIMIZATION}"
+    --build-arg "GPU_ARCH=${GPU_ARCH}"
+    --build-arg "ENABLE_VLLM=${ENABLE_VLLM}"
+    --build-arg "VLLM_FROM_SOURCE=${VLLM_FROM_SOURCE}"
+    --build-arg "VLLM_BUILD_ARGS=${VLLM_BUILD_ARGS}"
+    --build-arg "VLLM_MAX_JOBS=${VLLM_MAX_JOBS}"
+    --build-arg "ENABLE_LLAMA_CPP_PYTHON=${ENABLE_LLAMA_CPP_PYTHON}"
+    --build-arg "LLAMA_CPP_PYTHON_VERSION=${LLAMA_CPP_PYTHON_VERSION}"
+    --build-arg "VLLM_VERSION=${VLLM_VERSION}"
+    --build-arg "TORCH_NIGHTLY_DATE=${TORCH_NIGHTLY_DATE}"
+    --build-arg "ENABLE_LLAMA_SERVER=${ENABLE_LLAMA_SERVER}"
+    --build-arg "LLAMA_SERVER_VERSION=${LLAMA_SERVER_VERSION}"
+    --build-arg "BUILD_TIMESTAMP=${BUILD_TIMESTAMP}"
+    "${SOURCE_BUILD_ARGS[@]}"
+    -f docker/dockerfiles/Dockerfile.gpu
+    -t gateway-base:runtime
+    .
+)
+"${BASE_BUILD_CMD[@]}" >> "${BUILD_LOG}" 2>&1
 
 if [[ "${OBFUSCATE}" == "true" ]]; then
     echo ""
@@ -539,7 +566,6 @@ if [[ "${OBFUSCATE}" == "true" ]]; then
     
     # Create clean build context with only git-tracked files
     BUILD_CONTEXT=$(mktemp -d)
-    trap "rm -rf ${BUILD_CONTEXT}" EXIT
     
     echo "📦 Exporting git-tracked files to clean build context..."
     git archive HEAD | tar -x -C "${BUILD_CONTEXT}"
@@ -554,29 +580,32 @@ if [[ "${OBFUSCATE}" == "true" ]]; then
     # Copy Dockerfiles (they may be in .dockerignore)
     cp docker/dockerfiles/Dockerfile.obfuscated "${BUILD_CONTEXT}/docker/dockerfiles/"
     
-    docker buildx build \
-        --builder "${BUILDER_NAME}" \
-        --load \
-        --progress=plain \
-        "${CACHE_ARGS[@]}" \
-        --build-arg PYTHON_VERSION="${PYTHON_VERSION}" \
-        --build-arg CUDA_VERSION="${CUDA_VERSION}" \
-        --build-arg CPU_OPTIMIZATION="${CPU_OPTIMIZATION}" \
-        --build-arg GPU_ARCH="${GPU_ARCH}" \
-        --build-arg ENABLE_VLLM="${ENABLE_VLLM}" \
-        --build-arg VLLM_FROM_SOURCE="${VLLM_FROM_SOURCE}" \
-        --build-arg VLLM_BUILD_ARGS="${VLLM_BUILD_ARGS}" \
-        --build-arg VLLM_MAX_JOBS="${VLLM_MAX_JOBS}" \
-        --build-arg ENABLE_LLAMA_CPP_PYTHON="${ENABLE_LLAMA_CPP_PYTHON}" \
-        --build-arg LLAMA_CPP_PYTHON_VERSION="${LLAMA_CPP_PYTHON_VERSION}" \
-        --build-arg VLLM_VERSION="${VLLM_VERSION}" \
-        --build-arg TORCH_NIGHTLY_DATE="${TORCH_NIGHTLY_DATE}" \
-        --build-arg ENABLE_LLAMA_SERVER="${ENABLE_LLAMA_SERVER}" \
-        --build-arg LLAMA_SERVER_VERSION="${LLAMA_SERVER_VERSION}" \
-        ${SOURCE_VERSION:+--build-arg SOURCE_VERSION="${SOURCE_VERSION}"} \
-        -f "${BUILD_CONTEXT}/docker/dockerfiles/Dockerfile.obfuscated" \
-        -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-        "${BUILD_CONTEXT}" >> "${BUILD_LOG}" 2>&1
+    OBFUSCATED_BUILD_CMD=(
+        docker buildx build
+        --builder "${EFFECTIVE_BUILDER_NAME}"
+        --load
+        --progress=plain
+        "${CACHE_ARGS[@]}"
+        --build-arg "PYTHON_VERSION=${PYTHON_VERSION}"
+        --build-arg "CUDA_VERSION=${CUDA_VERSION}"
+        --build-arg "CPU_OPTIMIZATION=${CPU_OPTIMIZATION}"
+        --build-arg "GPU_ARCH=${GPU_ARCH}"
+        --build-arg "ENABLE_VLLM=${ENABLE_VLLM}"
+        --build-arg "VLLM_FROM_SOURCE=${VLLM_FROM_SOURCE}"
+        --build-arg "VLLM_BUILD_ARGS=${VLLM_BUILD_ARGS}"
+        --build-arg "VLLM_MAX_JOBS=${VLLM_MAX_JOBS}"
+        --build-arg "ENABLE_LLAMA_CPP_PYTHON=${ENABLE_LLAMA_CPP_PYTHON}"
+        --build-arg "LLAMA_CPP_PYTHON_VERSION=${LLAMA_CPP_PYTHON_VERSION}"
+        --build-arg "VLLM_VERSION=${VLLM_VERSION}"
+        --build-arg "TORCH_NIGHTLY_DATE=${TORCH_NIGHTLY_DATE}"
+        --build-arg "ENABLE_LLAMA_SERVER=${ENABLE_LLAMA_SERVER}"
+        --build-arg "LLAMA_SERVER_VERSION=${LLAMA_SERVER_VERSION}"
+        "${SOURCE_BUILD_ARGS[@]}"
+        -f "${BUILD_CONTEXT}/docker/dockerfiles/Dockerfile.obfuscated"
+        -t "${IMAGE_NAME}:${IMAGE_TAG}"
+        "${BUILD_CONTEXT}"
+    )
+    "${OBFUSCATED_BUILD_CMD[@]}" >> "${BUILD_LOG}" 2>&1
     
     DEPLOYMENT_TYPE="obfuscated"
 else

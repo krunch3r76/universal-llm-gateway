@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
+from markdown_sections import SectionError, list_sections
 from mcp_events import record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
@@ -26,6 +28,121 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _PREVIEW_MAX_LAST = max(1, int(os.getenv("MCP_AGENT_BUS_PREVIEW_MAX_LAST", "20")))
+_BODY_INLINE_LIMIT = int(os.getenv("MCP_AGENT_BUS_BODY_INLINE_LIMIT", str(48 * 1024)))
+_FILES_ROOT = Path(os.environ.get("MCP_FILES_ROOT", "/data/files"))
+
+
+def _utf8_byte_len(text: str) -> int:
+    return len(text.encode("utf-8"))
+
+
+def _body_too_large_response(*, size_bytes: int, field: str) -> dict[str, Any]:
+    limit_kb = max(1, _BODY_INLINE_LIMIT // 1024)
+    size_kb = max(1, size_bytes // 1024)
+    record(
+        "mcp.agentbus.body.rejected",
+        size_bytes=size_bytes,
+        limit_bytes=_BODY_INLINE_LIMIT,
+        field=field,
+    )
+    return {
+        "error": "body_too_large",
+        "message": (
+            f"{field} is ~{size_kb}KB (limit ~{limit_kb}KB). "
+            "Write markdown with ATX headings under agent-bus/messages/, then pass "
+            "body_file + body_description."
+        ),
+        "instructions": [
+            'fs(sandbox="files", op="write", path="agent-bus/messages/<slug>.md", '
+            'content="# Title\\n\\n## Section\\n...")',
+            'agent_bus(tool="post", arguments=\'{"slug":"...","to":"...","subject":"...",'
+            '"body_description":"What this document covers",'
+            '"body_file":"agent-bus/messages/<slug>.md"}\')',
+            'agent_bus(tool="reply", arguments=\'{"thread":"...","to":"...","subject":"...",'
+            '"after_turn":N,"body_description":"...",'
+            '"body_file":"agent-bus/messages/<slug>.md"}\')',
+            "Put logs, code dumps, or raw data in agent-bus/attachments/ and cite paths in body_description.",
+        ],
+    }
+
+
+def _check_inline_under_limit(text: str, *, field: str) -> dict[str, Any] | None:
+    size = _utf8_byte_len(text)
+    if size <= _BODY_INLINE_LIMIT:
+        return None
+    return _body_too_large_response(size_bytes=size, field=field)
+
+
+def _resolve_body_file(relative_path: str) -> tuple[str | None, str | None]:
+    root = _FILES_ROOT.resolve()
+    candidate = (root / relative_path.lstrip("/")).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None, "body_file resolves outside files sandbox"
+    if not candidate.is_file():
+        return None, f"body_file not found or not a file: {relative_path!r}"
+    try:
+        return candidate.read_text(encoding="utf-8", errors="replace"), None
+    except OSError as exc:
+        return None, str(exc)
+
+
+def _build_manifest_body(
+    body_description: str, file_path_relative: str, content: str
+) -> str:
+    try:
+        sections = list_sections(content)
+    except SectionError:
+        sections = []
+    total_chars = len(content)
+    parts: list[str] = [
+        body_description.strip(),
+        "",
+        "---",
+        "",
+        f"**Attached document**: `{file_path_relative}` ({total_chars} chars)",
+        "",
+        "## Sections",
+        "",
+    ]
+    if not sections:
+        parts.extend(
+            [
+                "_No ATX headings found — add `#` / `##` headings so recipients can use markdown section tools._",
+                "",
+            ]
+        )
+    else:
+        parts.extend(
+            [
+                "| Section | Level | Chars |",
+                "|---------|-------|-------|",
+            ]
+        )
+        for row in sections:
+            heading = str(row.get("heading", "") or "").replace("|", "\\|")
+            level = int(row.get("level", 0) or 0)
+            n_chars = int(row.get("chars", 0) or 0)
+            parts.append(f"| {heading} | {level} | {n_chars} |")
+        parts.append("")
+    parts.extend(
+        [
+            "---",
+            "",
+            "**Traverse with the markdown tool** (prefer sections over reading the whole file):",
+            "",
+            f'  markdown(op="read_section", sandbox="files", path="{file_path_relative}", '
+            f'section="<path-or-heading>")',
+            "",
+            f'  markdown(op="list_sections", sandbox="files", path="{file_path_relative}")',
+            "",
+            f'  fs(sandbox="files", op="read", path="{file_path_relative}")',
+            "",
+            "Supporting material: use `agent-bus/attachments/` and reference paths in your description.",
+        ]
+    )
+    return "\n".join(parts)
 
 
 # ── Impl helpers ────────────────────────────────────────────────────
@@ -371,11 +488,49 @@ def _post_dispatch(
     to: str = "",
     subject: str = "",
     body: str = "",
+    body_file: str = "",
+    body_description: str = "",
     from_agent: str = "web",
     summary: str | None = None,
 ) -> dict[str, Any]:
+    body_file_effective = body_file.strip()
+    if body_file_effective:
+        if not slug or not to or not subject:
+            return {"error": "post requires: slug, to, subject (with body_file)"}
+        if not body_description.strip():
+            return {
+                "error": "post with body_file requires body_description "
+                "(describe the document for the recipient)"
+            }
+        content, read_err = _resolve_body_file(body_file_effective)
+        if read_err is not None:
+            return {"error": read_err}
+        manifest = _build_manifest_body(
+            body_description.strip(), body_file_effective, content
+        )
+        too = _check_inline_under_limit(manifest, field="manifest_body")
+        if too is not None:
+            return too
+        record(
+            "mcp.agentbus.body.file.resolved",
+            body_file=body_file_effective,
+            op="post",
+        )
+        return _post_impl(
+            slug=slug,
+            to=to,
+            subject=subject,
+            body=manifest,
+            from_agent=from_agent,
+            summary=summary,
+        )
     if not slug or not to or not subject or not body:
-        return {"error": "post requires: slug, to, subject, body"}
+        return {
+            "error": "post requires: slug, to, subject, body (or body_file + body_description)"
+        }
+    too = _check_inline_under_limit(body, field="body")
+    if too is not None:
+        return too
     return _post_impl(
         slug=slug,
         to=to,
@@ -392,13 +547,56 @@ def _reply_dispatch(
     to: str = "",
     subject: str = "",
     body: str = "",
+    body_file: str = "",
+    body_description: str = "",
     after_turn: int = 0,
     from_agent: str = "web",
     status: str = "open",
     mark_read: bool = False,
 ) -> dict[str, Any]:
+    body_file_effective = body_file.strip()
+    if body_file_effective:
+        if not thread or not to or not subject or after_turn < 1:
+            return {
+                "error": "reply requires: thread, to, subject, after_turn (with body_file)"
+            }
+        if not body_description.strip():
+            return {
+                "error": "reply with body_file requires body_description "
+                "(describe the document for the recipient)"
+            }
+        content, read_err = _resolve_body_file(body_file_effective)
+        if read_err is not None:
+            return {"error": read_err}
+        manifest = _build_manifest_body(
+            body_description.strip(), body_file_effective, content
+        )
+        too = _check_inline_under_limit(manifest, field="manifest_body")
+        if too is not None:
+            return too
+        record(
+            "mcp.agentbus.body.file.resolved",
+            body_file=body_file_effective,
+            op="reply",
+        )
+        return _reply_impl(
+            thread=thread,
+            to=to,
+            subject=subject,
+            body=manifest,
+            after_turn=after_turn,
+            from_agent=from_agent,
+            status=status,
+            mark_read=mark_read,
+        )
     if not thread or not to or not subject or not body or after_turn < 1:
-        return {"error": "reply requires: thread, to, subject, body, after_turn"}
+        return {
+            "error": "reply requires: thread, to, subject, body, after_turn "
+            "(or body_file + body_description)"
+        }
+    too = _check_inline_under_limit(body, field="body")
+    if too is not None:
+        return too
     return _reply_impl(
         thread=thread,
         to=to,
@@ -435,6 +633,18 @@ def _update_dispatch(
         return {"error": "update requires at least one of: body, append, subject"}
     if append is True and body is None:
         return {"error": "update with append=true requires body"}
+    if body is not None:
+        too = _check_inline_under_limit(body, field="body")
+        if too is not None:
+            return too
+    if isinstance(append, str):
+        too = _check_inline_under_limit(append, field="append")
+        if too is not None:
+            return too
+    elif append is True and body is not None:
+        too = _check_inline_under_limit(body, field="body")
+        if too is not None:
+            return too
     return _update_impl(
         thread=thread,
         turn_number=turn_number,
@@ -511,25 +721,50 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
     def agent_bus(tool: str, arguments: str = "{}") -> Any:
         """Agent bus — inter-agent communication, dispatch by tool name.
 
+        **Message length guidance**: keep inline bodies concise and readable
+        (aim for <8KB).  Long bodies bloat recipient context windows and risk
+        triggering the response size guard on fetch.  Move supporting material
+        (logs, code dumps, raw data, specs, full traces) into attachments:
+
+        1. Write the attachment:
+           fs(sandbox="files", op="write", path="agent-bus/attachments/<slug>.md", content="...")
+        2. Reference the path in your body or body_description.
+
+        For messages whose body itself exceeds ~48KB UTF-8, use body_file +
+        body_description (the bus stores a manifest with section table so
+        recipients traverse with markdown section tools).
+
+        **Bodies must be markdown** (ATX headings recommended). Short messages use
+        inline `body`. Above the inline size limit (~48KB UTF-8), write markdown to
+        `fs(sandbox="files", path="agent-bus/messages/...")`, then use
+        `body_file` + `body_description` — the bus stores a manifest (your
+        description, section table, markdown-tool reminders) so recipients traverse
+        with `markdown(op="read_section"|"list_sections", sandbox="files", ...)`.
+
         Available tools:
-          post(slug, to, subject, body, from_agent?, summary?) — create thread + first turn
-          reply(thread, to, subject, body, after_turn, from_agent?, status='open', mark_read?) — reply
-          fetch(to?, thread?, last?, unread?, mark_read?, compact?) — fetch turns (inbox or thread)
+          post(slug, to, subject, body?, body_file?, body_description?, from_agent?, summary?)
+              — create thread + first turn. Use body_file + body_description for large
+              content; inline body rejected over limit with instructions.
+          reply(thread, to, subject, body?, after_turn, body_file?, body_description?,
+                from_agent?, status='open', mark_read?) — same file-backed rules as post.
+          fetch(to?, thread?, last?, unread?, mark_read?, compact?) — fetch turns.
+              Use compact=true and small last= values to avoid oversized responses.
           get(thread, turn_number) — fetch one turn by number
-          threads(status?) — list threads (status: active|closed|blocked|waiting|all; default active)
-          close(thread, summary?, mark_all_read?) — close thread + mark all read
-          update_thread(thread, status?, summary?) — update thread metadata
-          update(thread, turn_number, body?, append?, subject?) — edit unread turn
-              Prefer update() over reply() when correcting or expanding your own
-              unread turns — it avoids cluttering the thread with fixup turns.
-              append=true appends `body` to the existing turn body instead of
-              replacing it. Read turns are immutable.
+          threads(status?) — list threads (active|closed|blocked|waiting|all)
+          close(thread, summary?, mark_all_read?)
+          update_thread(thread, status?, summary?)
+          update(thread, turn_number, body?, append?, subject?) — edit unread turn;
+              inline body/append over limit returns body_too_large (use a new reply
+              with body_file instead). Prefer update() over reply() for fixups.
           delete_thread(thread, force?) — delete thread and turns
           delete_turn(thread, turn_number, force?) — delete single turn
 
+        Recipients: file-backed turns include a section manifest — prefer
+        markdown section reads over `fs` full-file read unless necessary.
+
         Example:
-            agent_bus(tool="fetch", arguments='{"thread": "111", "last": 10, "compact": false}')
-            agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "Details..."}')
+            agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
+            agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\\n..."}')
 
         Args:
             tool: Name of the agent-bus operation to invoke.

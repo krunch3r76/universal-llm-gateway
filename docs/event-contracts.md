@@ -1762,6 +1762,8 @@ unnecessary — each operation succeeds or fails atomically.
 | `mcp.agentbus.turn.updated` | `thread`, `turn_number`, `has_append` | Turn body/subject updated |
 | `mcp.agentbus.thread.deleted` | `thread`, `force`, `deleted_turns` | Thread and all turns deleted |
 | `mcp.agentbus.turn.deleted` | `thread`, `turn_number`, `force` | Single turn deleted |
+| `mcp.agentbus.body.rejected` | `size_bytes`, `limit_bytes`, `field` | Inline body/append exceeded MCP inline limit |
+| `mcp.agentbus.body.file.resolved` | `body_file`, `op` | body_file read; manifest built for post/reply |
 
 All signals: `role="observation"`, `scope="global"`.
 

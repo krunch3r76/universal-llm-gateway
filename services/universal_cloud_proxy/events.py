@@ -60,6 +60,7 @@ def CloudProxyRequestForwarded(  # noqa: N802
     model: str,
     streaming: bool,
     adapter_type: str,
+    surface: str = "openai_chat",
 ) -> Event:
     """Emit request forwarded event for cloud provider calls."""
     return Event(
@@ -69,6 +70,7 @@ def CloudProxyRequestForwarded(  # noqa: N802
             "model": model,
             "streaming": streaming,
             "adapter_type": adapter_type,
+            "surface": surface,
         },
     )
 

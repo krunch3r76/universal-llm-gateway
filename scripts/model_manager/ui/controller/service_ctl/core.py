@@ -200,70 +200,58 @@ class ServiceController:
         yield cmd_line
         build_t0 = time.monotonic()
         await emit_build_image_started(host="localhost", scope=scope)
-        process = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=str(self._root),
-            env=env,
-            start_new_session=True,
-        )
-        self._build_process = process
-        try:
-            if process.stdout is None:
-                yield "ERROR: Could not capture build output."
-                return
-            queue: asyncio.Queue[str | object] = asyncio.Queue()
-            stdout_done = object()
-            build_log_done = object()
+        with build_log.open("a", encoding="utf-8", errors="replace") as build_fh:
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=build_fh,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=str(self._root),
+                env=env,
+                start_new_session=True,
+            )
+            self._build_process = process
+            try:
+                queue: asyncio.Queue[str | object] = asyncio.Queue()
+                build_log_done = object()
 
-            async def _pump_stdout() -> None:
-                assert process.stdout is not None
-                async for raw_line in process.stdout:
-                    await queue.put(raw_line.decode(errors="replace").rstrip())
-                await queue.put(stdout_done)
-
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(_pump_stdout())
-                tg.create_task(
-                    _pump_build_log(
-                        build_log=build_log,
-                        process=process,
-                        queue=queue,
-                        sentinel=build_log_done,
+                async with asyncio.TaskGroup() as tg:
+                    tg.create_task(
+                        _pump_build_log(
+                            build_log=build_log,
+                            process=process,
+                            queue=queue,
+                            sentinel=build_log_done,
+                        )
                     )
+                    while True:
+                        item = await queue.get()
+                        if item is build_log_done:
+                            break
+                        yield str(item)
+                exit_code = await process.wait()
+                if exit_code == 0:
+                    msg = "Build completed successfully."
+                elif exit_code == -signal.SIGTERM or exit_code == -signal.SIGKILL:
+                    msg = "Build cancelled."
+                else:
+                    msg = f"Build FAILED (exit code {exit_code})."
+                yield msg
+            finally:
+                if process.returncode is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                self._build_process = None
+                build_ok = (
+                    process.returncode == 0 if process.returncode is not None else False
                 )
-                completed = 0
-                while completed < 2:
-                    item = await queue.get()
-                    if item is stdout_done or item is build_log_done:
-                        completed += 1
-                        continue
-                    yield str(item)
-            exit_code = await process.wait()
-            if exit_code == 0:
-                msg = "Build completed successfully."
-            elif exit_code == -signal.SIGTERM or exit_code == -signal.SIGKILL:
-                msg = "Build cancelled."
-            else:
-                msg = f"Build FAILED (exit code {exit_code})."
-            yield msg
-        finally:
-            if process.returncode is None:
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except (ProcessLookupError, PermissionError):
-                    pass
-            self._build_process = None
-            build_ok = (
-                process.returncode == 0 if process.returncode is not None else False
-            )
-            await emit_build_image_completed(
-                host="localhost",
-                scope=scope,
-                success=build_ok,
-                duration_s=time.monotonic() - build_t0,
-            )
+                await emit_build_image_completed(
+                    host="localhost",
+                    scope=scope,
+                    success=build_ok,
+                    duration_s=time.monotonic() - build_t0,
+                )
 
     async def _run_build_script(
         self,

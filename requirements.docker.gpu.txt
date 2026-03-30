@@ -110,6 +110,9 @@ scipy>=1.11.0
 # vLLM dependencies (transformers, accelerate) - installed conditionally in Dockerfile
 # when ENABLE_VLLM=true - DO NOT install here
 
+# Cross-encoder reranker runtime
+sentence-transformers
+
 # ============================================================================
 # Notes:
 # ============================================================================

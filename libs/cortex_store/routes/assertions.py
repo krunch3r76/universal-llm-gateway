@@ -22,7 +22,7 @@ _JSON_FIELDS = frozenset({"evidence_uris"})
 _VALID_CONFIDENCE = {"confirmed", "believed", "suspected", "hypothesized"}
 
 _ASSERTION_COLS = (
-    "id, entity_id, claim, confidence, confidence_score, evidence, evidence_uris, "
+    "id, entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by, "
     "derivation_type, chunk_id, reasoning_summary, is_atomic, is_decontextualized, "
     "observed_at, valid_from, valid_until, superseded_by, "
     "review_status, reviewer, reviewed_at, review_notes, created_at"
@@ -141,10 +141,10 @@ def create_assertion(body: AssertionCreate) -> AssertionItem:
 
         cur = conn.execute(
             "INSERT INTO assertions ("
-            "  entity_id, claim, confidence, confidence_score, evidence, evidence_uris,"
+            "  entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by,"
             "  chunk_id, derivation_type, reasoning_summary, observed_at,"
             "  valid_from, valid_until, is_atomic, is_decontextualized"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.entity_id,
                 body.claim,
@@ -152,6 +152,7 @@ def create_assertion(body: AssertionCreate) -> AssertionItem:
                 body.confidence_score,
                 body.evidence,
                 json_encode(body.evidence_uris),
+                body.seeded_by,
                 body.chunk_id,
                 body.derivation_type or "inference",
                 body.reasoning_summary,

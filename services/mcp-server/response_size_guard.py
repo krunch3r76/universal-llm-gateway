@@ -44,8 +44,12 @@ _REASONING_TARGET_MAX_BYTES: int = int(
     os.getenv("MCP_REASONING_TARGET_MAX_BYTES", str(48 * 1024))
 )
 
-_CURSOR_THRESHOLD: int = int(os.getenv("MCP_CURSOR_RESPONSE_SIZE_LIMIT", str(32 * 1024)))
-_DEFAULT_THRESHOLD: int = int(os.getenv("MCP_DEFAULT_RESPONSE_SIZE_LIMIT", str(128 * 1024)))
+_CURSOR_THRESHOLD: int = int(
+    os.getenv("MCP_CURSOR_RESPONSE_SIZE_LIMIT", str(32 * 1024))
+)
+_DEFAULT_THRESHOLD: int = int(
+    os.getenv("MCP_DEFAULT_RESPONSE_SIZE_LIMIT", str(128 * 1024))
+)
 _OVERRIDE_THRESHOLD: int | None = (
     int(os.environ["MCP_RESPONSE_SIZE_LIMIT"])
     if "MCP_RESPONSE_SIZE_LIMIT" in os.environ
@@ -258,7 +262,9 @@ def _agent_bus_items(payload: Any) -> tuple[str, list[dict[str, Any]]]:
     if isinstance(payload.get("turns"), list):
         return "turns", [item for item in payload["turns"] if isinstance(item, dict)]
     if isinstance(payload.get("threads"), list):
-        return "threads", [item for item in payload["threads"] if isinstance(item, dict)]
+        return "threads", [
+            item for item in payload["threads"] if isinstance(item, dict)
+        ]
     if isinstance(payload.get("turn"), dict):
         return "single_turn", [payload["turn"]]
     return "unknown", []
@@ -456,7 +462,9 @@ def _cortex_manifest(
 
     if kind == "entity_get" and items:
         entity = items[0]
-        entity_id = str(entity.get("id", "") or request_meta.get("cortex_entity_id", "")).strip()
+        entity_id = str(
+            entity.get("id", "") or request_meta.get("cortex_entity_id", "")
+        ).strip()
         assertions = entity.get("assertions")
         relationships = entity.get("relationships")
         manifest["entity"] = {
@@ -464,7 +472,9 @@ def _cortex_manifest(
             "type": str(entity.get("type", "") or ""),
             "name": _truncate_text(str(entity.get("name", "") or ""), 80),
             "assertion_count": len(assertions) if isinstance(assertions, list) else 0,
-            "relationship_count": len(relationships) if isinstance(relationships, list) else 0,
+            "relationship_count": len(relationships)
+            if isinstance(relationships, list)
+            else 0,
         }
         selective_options: list[str] = []
         if entity_id:
@@ -477,7 +487,9 @@ def _cortex_manifest(
             selective_options.append(
                 f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{entity_id}"}}\')'
             )
-        manifest["selective_options"] = selective_options or [f'retrieve(id="{ref_id}")']
+        manifest["selective_options"] = selective_options or [
+            f'retrieve(id="{ref_id}")'
+        ]
         return manifest
 
     if kind == "entities":
@@ -516,7 +528,9 @@ def _cortex_manifest(
                 f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}"}}\')'
             )
         manifest["request_particular_payload"] = bool(first_id)
-        manifest["selective_options"] = selective_options or [f'retrieve(id="{ref_id}")']
+        manifest["selective_options"] = selective_options or [
+            f'retrieve(id="{ref_id}")'
+        ]
         return manifest
 
     if kind == "assertions":
@@ -579,13 +593,27 @@ def _cortex_manifest(
         return manifest
 
     if kind == "review_queue":
-        provisional = payload.get("provisional_entities", []) if isinstance(payload, dict) else []
-        flagged = payload.get("flagged_assertions", []) if isinstance(payload, dict) else []
+        provisional = (
+            payload.get("provisional_entities", []) if isinstance(payload, dict) else []
+        )
+        flagged = (
+            payload.get("flagged_assertions", []) if isinstance(payload, dict) else []
+        )
         manifest["review_queue_counts"] = {
-            "provisional_entities": len(provisional) if isinstance(provisional, list) else 0,
+            "provisional_entities": len(provisional)
+            if isinstance(provisional, list)
+            else 0,
             "flagged_assertions": len(flagged) if isinstance(flagged, list) else 0,
-            "low_confidence_assertions": len(payload.get("low_confidence_assertions", [])) if isinstance(payload, dict) and isinstance(payload.get("low_confidence_assertions"), list) else 0,
-            "thin_descriptions": len(payload.get("thin_descriptions", [])) if isinstance(payload, dict) and isinstance(payload.get("thin_descriptions"), list) else 0,
+            "low_confidence_assertions": len(
+                payload.get("low_confidence_assertions", [])
+            )
+            if isinstance(payload, dict)
+            and isinstance(payload.get("low_confidence_assertions"), list)
+            else 0,
+            "thin_descriptions": len(payload.get("thin_descriptions", []))
+            if isinstance(payload, dict)
+            and isinstance(payload.get("thin_descriptions"), list)
+            else 0,
         }
         selective_options = [
             'cortex(tool="assertions", arguments=\'{"review_status":"flagged","limit":10}\')',
@@ -611,7 +639,9 @@ def _cortex_manifest(
     return manifest
 
 
-def _replacement_result(ref_id: str, tool_name: str, size: int, threshold: int, result: ToolResult) -> ToolResult:
+def _replacement_result(
+    ref_id: str, tool_name: str, size: int, threshold: int, result: ToolResult
+) -> ToolResult:
     """Build the compact reference ToolResult returned for oversized responses.
 
     Contains a natural-language message with the reference ID and retrieval
@@ -655,9 +685,7 @@ def _replacement_result(ref_id: str, tool_name: str, size: int, threshold: int, 
             f"Stored as: {ref_id} (expires in 10 min).",
         ]
         if manifest.get("adaptive_limit") is not None:
-            note_lines.append(
-                f"Suggested smaller limit: {manifest['adaptive_limit']}."
-            )
+            note_lines.append(f"Suggested smaller limit: {manifest['adaptive_limit']}.")
         if manifest.get("request_particular_payload"):
             note_lines.append(
                 "This is a discrete collection. Request the specific entity or subset you need."
@@ -690,6 +718,9 @@ def _replacement_result(ref_id: str, tool_name: str, size: int, threshold: int, 
     return ToolResult(content=note)
 
 
+_SEMANTIC_GUARD_TOOLS: frozenset[str] = frozenset({"agent_bus", "cortex"})
+
+
 class ResponseSizeGuard(Middleware):
     """FastMCP middleware that intercepts oversized tool responses.
 
@@ -697,6 +728,11 @@ class ResponseSizeGuard(Middleware):
     Oversized responses are stored untruncated in memory and replaced with a
     compact reference that the consumer redeems via the ``retrieve`` tool.
     The ``retrieve`` tool itself is exempt from guarding to prevent recursion.
+
+    For ``agent_bus`` and ``cortex`` tools, a tighter "reasoning target"
+    threshold applies: even responses under the hard byte threshold are guarded
+    when they exceed the reasoning target, because these tools carry markdown
+    payloads that bloat LLM reasoning tokens.
     """
 
     async def on_call_tool(
@@ -716,20 +752,44 @@ class ResponseSizeGuard(Middleware):
 
         threshold = _threshold_for_profile()
         reasoning_target = _reasoning_target_bytes(threshold)
+        needs_semantic_guard = tool_name in _SEMANTIC_GUARD_TOOLS
 
-        if result.structured_content is not None:
-            estimate = len(json.dumps(result.structured_content, default=str).encode("utf-8"))
-            if estimate < threshold // 2:
+        try:
+            size = self._estimate_size(result, threshold, needs_semantic_guard)
+            if size is None:
                 return result
 
-        size = _measure_result(result)
-        should_semantic_guard = (
-            tool_name in {"agent_bus", "cortex"} and size > reasoning_target
-        )
-        if size <= threshold and not should_semantic_guard:
+            effective_limit = reasoning_target if needs_semantic_guard else threshold
+            if size <= effective_limit:
+                return result
+        except Exception:
+            logger.warning(
+                "Guard measurement failed for %s — passing through",
+                tool_name,
+                exc_info=True,
+            )
+            record(
+                "mcp.response.guard.error",
+                tool_name=tool_name,
+                phase="measure",
+            )
             return result
 
-        ref_id = _store_result(tool_name, result, size)
+        try:
+            ref_id = _store_result(tool_name, result, size)
+        except Exception:
+            logger.warning(
+                "Guard store failed for %s — passing through",
+                tool_name,
+                exc_info=True,
+            )
+            record(
+                "mcp.response.guard.error",
+                tool_name=tool_name,
+                phase="store",
+            )
+            return result
+
         record(
             "mcp.response.guarded",
             tool_name=tool_name,
@@ -739,9 +799,30 @@ class ResponseSizeGuard(Middleware):
             reasoning_target_bytes=reasoning_target,
             ref_id=ref_id,
             store_count=len(_store),
-            semantic_guard=should_semantic_guard and size <= threshold,
+            semantic_guard=needs_semantic_guard and size <= threshold,
         )
         return _replacement_result(ref_id, tool_name, size, threshold, result)
+
+    @staticmethod
+    def _estimate_size(
+        result: ToolResult,
+        threshold: int,
+        needs_semantic_guard: bool,
+    ) -> int | None:
+        """Return measured byte size, or None when the result is safe to pass through.
+
+        For semantic-guard tools (agent_bus, cortex) we always measure fully —
+        no fast-path early exit.  For other tools, a quick structured_content
+        estimate skips the expensive full serialization when clearly under limit.
+        """
+        if not needs_semantic_guard and result.structured_content is not None:
+            estimate = len(
+                json.dumps(result.structured_content, default=str).encode("utf-8")
+            )
+            if estimate < threshold // 2:
+                return None
+
+        return _measure_result(result)
 
 
 def register_response_guard(mcp: FastMCP) -> None:

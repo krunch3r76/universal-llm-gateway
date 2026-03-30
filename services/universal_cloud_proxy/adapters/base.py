@@ -37,3 +37,13 @@ class ProviderAdapter(Protocol):
     async def forward_embeddings(
         self, request_body: dict[str, Any]
     ) -> dict[str, Any]: ...
+
+    async def forward_native(self, request_body: dict[str, Any]) -> dict[str, Any]:
+        """Forward provider-native body unchanged (no OpenAI translation)."""
+        ...
+
+    def forward_native_stream(
+        self, request_body: dict[str, Any]
+    ) -> AsyncIterator[bytes]:
+        """Stream provider-native body unchanged."""
+        ...

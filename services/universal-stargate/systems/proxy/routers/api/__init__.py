@@ -7,6 +7,7 @@ from .model_availability_watch import router as model_availability_watch_router
 from .model_status import router as model_status_router
 from .pipelines import router as pipelines_router
 from .profiles import router as profiles_router
+from .providers_native import router as providers_native_router
 from .rag_articles import router as rag_articles_router
 from .rag_coverage import router as rag_coverage_router
 from .rag_scopes import router as rag_scopes_router
@@ -19,6 +20,7 @@ router = APIRouter(prefix="/api/v1", tags=["api"])
 
 # Include sub-routers
 router.include_router(profiles_router)
+router.include_router(providers_native_router)
 router.include_router(gateways_router)
 router.include_router(model_status_router)
 router.include_router(model_availability_watch_router)

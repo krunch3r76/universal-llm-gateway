@@ -734,16 +734,29 @@ def ensure_bind_mount_dirs(
 
     Returns an error message if any dir is root-owned, None on success.
     """
+    runtime_dirs = [
+        workspace_root / "tmp" / "gpu-nodes" / node_id / "logs",
+        workspace_root / "tmp" / "gpu-nodes" / node_id / "output",
+        workspace_root / "tmp" / "gpu-nodes" / node_id / "catalog",
+    ]
     dirs = [
         model_path,
         GATEWAY_DIR / "catalog",
         GATEWAY_DIR / "nodes",
         Path.home() / ".cache" / "vllm",
-        workspace_root / "tmp" / "gpu-nodes" / node_id / "logs",
-        workspace_root / "tmp" / "gpu-nodes" / node_id / "output",
+        *runtime_dirs,
     ]
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
+    if os.getuid() != 0:
+        for d in runtime_dirs:
+            if d.exists() and d.stat().st_uid == 0:
+                logger.warning(
+                    "Runtime bind dir %s is root-owned (Docker bind-mount race); "
+                    "attempting recovery",
+                    d,
+                )
+                _recover_root_owned_bind_dir(d)
     root_owned = [d for d in dirs if d.exists() and d.stat().st_uid == 0]
     if root_owned and os.getuid() != 0:
         paths = "\n  ".join(str(d) for d in root_owned)
@@ -754,6 +767,28 @@ def ensure_bind_mount_dirs(
             f"Fix with:\n  sudo chown -R {uid}:{gid} {' '.join(str(d) for d in root_owned)}"
         )
     return None
+
+
+def _recover_root_owned_bind_dir(bind_dir: Path) -> bool:
+    """Remove a Docker-created runtime bind dir and recreate it as the host user."""
+    import shutil
+
+    try:
+        shutil.rmtree(bind_dir)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.error("Failed to remove root-owned bind dir %s: %s", bind_dir, exc)
+        return False
+
+    try:
+        bind_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.error("Failed to recreate bind dir %s: %s", bind_dir, exc)
+        return False
+
+    logger.info("Recovered root-owned bind dir: %s", bind_dir)
+    return True
 
 
 def ensure_socket_dir() -> str | None:

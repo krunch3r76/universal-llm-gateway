@@ -110,9 +110,9 @@ class LoadHandlers:
         Raises:
             EngineError: If max_model_len/n_ctx missing from catalog for LLM models
         """
-        # Check if this is a non-LLM model (e.g., Whisper, Flux)
+        # Check if this is a non-LLM model (e.g., Whisper, Flux, rerankers)
         engine_type = self.model_config.get("engine") if self.model_config else None
-        if engine_type in ("faster-whisper", "diffusers"):
+        if engine_type in ("faster-whisper", "diffusers", "cross-encoder"):
             logger.debug(
                 f"🔧 [worker] [request_id={request_id}] "
                 f"Model {self.model_id} is engine={engine_type}, "

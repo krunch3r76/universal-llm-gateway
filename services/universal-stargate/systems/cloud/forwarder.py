@@ -373,3 +373,45 @@ class CloudProxyClient:
             content=content,
             headers=headers or {},
         )
+
+    async def post_provider_native_json(
+        self,
+        path: str,
+        body: dict[str, Any],
+    ) -> httpx.Response:
+        """POST JSON to cloud-proxy provider-native path (body preserved as-is)."""
+        return await self._client.post(
+            path,
+            json=body,
+            headers={"Content-Type": "application/json"},
+        )
+
+    async def stream_provider_native(
+        self,
+        path: str,
+        body: dict[str, Any],
+    ) -> AsyncIterator[bytes]:
+        """Stream POST to cloud-proxy native path (Anthropic Messages, etc.)."""
+        async with self._client.stream(
+            "POST",
+            path,
+            json=body,
+            headers={"Content-Type": "application/json"},
+        ) as response:
+            if response.status_code >= 400:
+                error_body = await response.aread()
+                error_preview = error_body.decode(errors="replace")[:300]
+                logger.error(
+                    "Provider-native stream %d: %s",
+                    response.status_code,
+                    error_preview,
+                )
+                raise httpx.HTTPStatusError(
+                    f"Proxy returned {response.status_code}: {error_preview}",
+                    request=response.request,
+                    response=response,
+                )
+            async for line in response.aiter_lines():
+                stripped = line.strip()
+                if stripped:
+                    yield (stripped + "\n").encode()

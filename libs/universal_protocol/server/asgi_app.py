@@ -9,15 +9,16 @@ Actual business logic (model loading, inference) is outside this module.
 """
 
 import json
-from universal_logging import get_logger
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
+from universal_logging import get_logger
 
 from universal_protocol.errors import ProtocolError, RPCError
 from universal_protocol.observability import increment_rpc_error, increment_rpc_request
@@ -858,17 +859,15 @@ routes = [
     WebSocketRoute("/stream/{stream_id}", stream_handler),
 ]
 
-app = Starlette(routes=routes)
-
-
-@app.on_event("startup")
-async def on_startup() -> None:
-    """Application startup hook."""
+@asynccontextmanager
+async def lifespan(app: Starlette) -> AsyncIterator[None]:
+    """Initialize and tear down minimal process-global app state."""
     app.state.start_time = time.time()
     logger.info("Universal Protocol ASGI app started (with supervisor support)")
+    try:
+        yield
+    finally:
+        logger.info("Universal Protocol ASGI app shutting down")
 
 
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
-    """Application shutdown hook."""
-    logger.info("Universal Protocol ASGI app shutting down")
+app = Starlette(routes=routes, lifespan=lifespan)

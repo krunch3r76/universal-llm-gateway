@@ -111,6 +111,7 @@ ensure_runtime_dirs() {
     fi
 }
 
+
 # ============================================================================
 # GPU Detection and Validation
 # ============================================================================
@@ -297,11 +298,12 @@ start_gateway() {
         log_info "Initializing config from defaults..."
         cp -r "${GATEWAY_DIR}/config.default" "${GATEWAY_DIR}/config"
     fi
-    
+
     # Export environment variables for gateway
     export GATEWAY_HOST GATEWAY_PORT LOG_LEVEL ENVIRONMENT
     export MODEL_PATH_ROOT="${GOLEM_MODELS}"
     export WORKER_LOG_DIR SOCKET_DIR MODEL_CACHE_DIR
+    export GATEWAY_LOCAL_CATALOG_DIR GATEWAY_BASE_CATALOG_DIR
     export ENABLE_MODEL_AVAILABILITY_CHECK ENABLE_MANAGEMENT_API
     export DISABLE_HEALTH_CHECKING DEBUG_MODE ENABLE_PROFILING
     export PROCESS_STARTUP_TIMEOUT GATEWAY_SHUTDOWN_GRACE
@@ -475,9 +477,7 @@ start_both() {
     
     # STARGATE_CONFIG is set via Docker environment variable to point to specific config
     # No copying needed - Python code reads directly from STARGATE_CONFIG path
-    
-    # Gateway configuration is now in stargate_config.yaml (no separate gateways.yaml)
-    
+
     # Cleanup old Unix sockets if they exist
     if [[ -n "${GATEWAY_UNIX_SOCKET:-}" ]]; then
         rm -f "${GATEWAY_UNIX_SOCKET}"
@@ -498,6 +498,7 @@ start_both() {
     export ENABLE_MODEL_AVAILABILITY_CHECK ENABLE_MANAGEMENT_API
     export DISABLE_HEALTH_CHECKING DEBUG_MODE ENABLE_PROFILING
     export PROCESS_STARTUP_TIMEOUT GATEWAY_SHUTDOWN_GRACE
+    export GATEWAY_LOCAL_CATALOG_DIR GATEWAY_BASE_CATALOG_DIR
     
     # Gateway-specific exports
     export GATEWAY_LOG_DIR="${GOLEM_LOGS}/gateway"

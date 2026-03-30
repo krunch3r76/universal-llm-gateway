@@ -92,7 +92,260 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "boot_section_max_oneline": 15,
         "boot_section_type_exclude": None,
     },
+    "subagent": {
+        "include_deadlines": True,
+        "include_review_queue": True,
+        "include_investigations": True,
+        "session_agent_filter": None,
+        "entity_type_exclude": None,
+        "session_limit": 3,
+        "assertion_limit": 50,
+        "continuation_decision_limit": 5,
+        "continuation_service_limit": 3,
+        "boot_section_max_full": 5,
+        "boot_section_max_oneline": 15,
+        "boot_section_type_exclude": None,
+    },
 }
+
+
+def run_cortex_boot(
+    agent: str = "web",
+    pre_files: str = "",
+    post_files: str = "",
+) -> dict[str, Any]:
+    """Build a persona-scoped Cortex boot briefing for internal callers and MCP."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    profile = _BOOT_PROFILES.get(agent, _BOOT_PROFILES["web"])
+
+    pre_list = [p.strip() for p in pre_files.split(",") if p.strip()] if pre_files else []
+    post_list = (
+        [p.strip() for p in post_files.split(",") if p.strip()] if post_files else []
+    )
+    pre_file_results = read_files_batch(pre_list) if pre_list else {}
+    inbox_qs = urlencode({"to": agent, "unread": "true", "last": 10, "compact": "true"})
+
+    session_qs_parts: dict[str, str | int] = {"limit": profile.get("session_limit", 3)}
+    if profile.get("session_agent_filter"):
+        session_qs_parts["agent"] = profile["session_agent_filter"]
+    session_qs = urlencode(session_qs_parts)
+
+    assertion_qs_parts: dict[str, str | int] = {
+        "superseded": "false",
+        "limit": profile.get("assertion_limit", 50),
+    }
+    if profile.get("entity_type_exclude"):
+        assertion_qs_parts["entity_type_exclude"] = profile["entity_type_exclude"]
+    assertion_qs = urlencode(assertion_qs_parts)
+
+    futures_spec: dict[str, tuple[Any, ...]] = {
+        "sessions": (_cx, "GET", f"/session-journals?{session_qs}"),
+        "assertions": (_cx, "GET", f"/assertions?{assertion_qs}"),
+        "threads": (_relay, "agent-bus", "GET", "/threads?status=active"),
+        "inbox": (_relay, "agent-bus", "GET", f"/turns?{inbox_qs}"),
+    }
+    if profile.get("include_deadlines", True):
+        futures_spec["deadlines"] = (_cx, "GET", "/deadlines")
+    if profile.get("include_review_queue", True):
+        futures_spec["staging"] = (
+            _cx,
+            "GET",
+            "/staging?status=pending&limit=30",
+        )
+
+    decision_limit = profile.get("continuation_decision_limit", 0)
+    service_limit = profile.get("continuation_service_limit", 0)
+    if decision_limit > 0:
+        cont_decision_qs = urlencode(
+            {
+                "entity_type": "decision",
+                "superseded": "false",
+                "limit": decision_limit,
+            }
+        )
+        futures_spec["cont_decisions"] = (
+            _cx,
+            "GET",
+            f"/assertions?{cont_decision_qs}",
+        )
+    if service_limit > 0:
+        cont_service_qs = urlencode(
+            {
+                "entity_type": "service",
+                "superseded": "false",
+                "confidence": "believed",
+                "limit": service_limit,
+            }
+        )
+        futures_spec["cont_services"] = (
+            _cx,
+            "GET",
+            f"/assertions?{cont_service_qs}",
+        )
+
+    todo_limit = 15
+    todo_qs_parts: dict[str, Any] = {"limit": todo_limit}
+    if agent == "cursor":
+        todo_qs_parts["context"] = "code"
+    futures_spec["todos"] = (
+        _cx,
+        "GET",
+        f"/boot-todos?{urlencode(todo_qs_parts)}",
+    )
+
+    boot_section_qs_parts: dict[str, Any] = {
+        "persona": agent,
+        "agent": agent,
+        "max_full": profile.get("boot_section_max_full", 5),
+        "max_oneline": profile.get("boot_section_max_oneline", 15),
+    }
+    bs_type_exclude = profile.get("boot_section_type_exclude")
+    if bs_type_exclude:
+        boot_section_qs_parts["type_exclude"] = bs_type_exclude
+    futures_spec["boot_sections"] = (
+        _cx,
+        "GET",
+        f"/boot-sections?{urlencode(boot_section_qs_parts)}",
+    )
+    futures_spec["temporal"] = (_cx, "GET", "/boot-temporal")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
+        raw = {k: f.result() for k, f in submitted.items()}
+
+    sessions: list[dict[str, Any]] = safe_list(raw["sessions"])
+
+    gated_entity_ids = _extract_entity_ids(sessions)
+    gated_raw: dict[str, Any] = {}
+    if gated_entity_ids:
+        gated_qs = urlencode({"entity_ids": ",".join(gated_entity_ids), "per_entity": 5})
+        gated_raw = _cx("GET", f"/boot-gated?{gated_qs}")
+
+    post_file_results = read_files_batch(post_list) if post_list else {}
+
+    deadlines: list[dict[str, Any]] = safe_list(raw.get("deadlines", []))
+    all_assertions: list[dict[str, Any]] = safe_list(raw["assertions"])
+    threads: list[dict[str, Any]] = safe_list(raw["threads"], "threads")
+    unread_turns: list[dict[str, Any]] = safe_list(raw["inbox"], "turns")
+    staging_items: list[dict[str, Any]] = safe_list(raw.get("staging", []))
+
+    cont_decisions: list[dict[str, Any]] = safe_list(raw.get("cont_decisions", []))
+    cont_services: list[dict[str, Any]] = safe_list(raw.get("cont_services", []))
+    todos: list[dict[str, Any]] = safe_list(raw.get("todos", []))
+
+    boot_sections_raw = raw.get("boot_sections")
+    boot_sections: dict[str, Any] | None = None
+    if isinstance(boot_sections_raw, dict) and "sections" in boot_sections_raw:
+        boot_sections = boot_sections_raw["sections"]
+
+    temporal_raw = raw.get("temporal", {})
+    temporal_active: list[dict[str, Any]] = safe_list(
+        temporal_raw.get("active", []) if isinstance(temporal_raw, dict) else []
+    )
+    temporal_upcoming: list[dict[str, Any]] = safe_list(
+        temporal_raw.get("upcoming", []) if isinstance(temporal_raw, dict) else []
+    )
+
+    suspected = []
+    hypothesized = []
+    low_conf_unreviewed = []
+    if profile.get("include_investigations", True):
+        for a in all_assertions:
+            confidence = a.get("confidence")
+            if confidence == "suspected":
+                suspected.append(a)
+            elif confidence == "hypothesized":
+                hypothesized.append(a)
+            if confidence in ("suspected", "hypothesized") and not a.get(
+                "human_reviewed"
+            ):
+                low_conf_unreviewed.append(a)
+
+    review_total: int | None = None
+    if profile.get("include_review_queue", True):
+        review_total = len(staging_items) + len(low_conf_unreviewed)
+
+    gated_entities = build_gated_entities(
+        gated_raw.get("entities", []) if isinstance(gated_raw, dict) else [],
+        temporal_active,
+    )
+
+    narrative = render_boot_narrative(
+        boot_sections=boot_sections,
+        deadlines=deadlines if profile.get("include_deadlines", True) else None,
+        temporal_active=temporal_active or None,
+        temporal_upcoming=temporal_upcoming or None,
+        sessions=sessions,
+        suspected=suspected if profile.get("include_investigations", True) else None,
+        hypothesized=hypothesized
+        if profile.get("include_investigations", True)
+        else None,
+        threads=threads,
+        unread=unread_turns,
+        review_total=review_total,
+        continuation_decisions=cont_decisions or None,
+        continuation_services=cont_services or None,
+        todos=todos or None,
+        gated_entities=gated_entities or None,
+    )
+
+    logger.info(
+        "cortex_boot: agent=%s profile=%s sessions=%d assertions=%d",
+        agent,
+        "custom" if agent not in _BOOT_PROFILES else agent,
+        len(sessions),
+        len(all_assertions),
+    )
+    record("mcp.cortex.boot", agent=agent)
+
+    result: dict[str, Any] = {
+        "recent_sessions": sessions,
+        "agent_bus": {
+            "active_threads": [
+                {
+                    "thread": t.get("id", ""),
+                    "slug": t.get("slug", ""),
+                    "turns": t.get("turns_count", 0),
+                    "unread": t.get("unread_count", 0),
+                }
+                for t in threads
+            ],
+            "unread_turns": unread_turns,
+        },
+        "pre_files": pre_file_results,
+        "post_files": post_file_results,
+        "boot_narrative": narrative,
+    }
+
+    if profile.get("include_deadlines", True):
+        result["deadlines"] = deadlines
+    if profile.get("include_investigations", True):
+        result["open_investigations"] = {
+            "suspected": suspected,
+            "hypothesized": hypothesized,
+        }
+    if profile.get("include_review_queue", True):
+        result["review_queue"] = {
+            "staging_count": len(staging_items),
+            "assertion_count": len(low_conf_unreviewed),
+            "total": review_total,
+        }
+    if temporal_active or temporal_upcoming:
+        result["temporal"] = {
+            "active": temporal_active,
+            "upcoming": temporal_upcoming,
+        }
+    if cont_decisions or cont_services or todos:
+        result["continuation_state"] = {
+            "decisions": cont_decisions,
+            "service_observations": cont_services,
+            "open_todos": todos,
+        }
+    if gated_entities:
+        result["gated_entities"] = gated_entities
+
+    return result
 
 
 def register_cortex_v2_tools(mcp: FastMCP) -> None:
@@ -300,246 +553,4 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
             Boot briefing with persona-scoped sections, continuation_state,
             boot_narrative, pre_files, and post_files.
         """
-        from concurrent.futures import ThreadPoolExecutor
-
-        profile = _BOOT_PROFILES.get(agent, _BOOT_PROFILES["web"])
-
-        pre_list = (
-            [p.strip() for p in pre_files.split(",") if p.strip()] if pre_files else []
-        )
-        post_list = (
-            [p.strip() for p in post_files.split(",") if p.strip()]
-            if post_files
-            else []
-        )
-        pre_file_results = read_files_batch(pre_list) if pre_list else {}
-        inbox_qs = urlencode(
-            {"to": agent, "unread": "true", "last": 10, "compact": "true"}
-        )
-
-        session_qs_parts: dict[str, str | int] = {
-            "limit": profile.get("session_limit", 3)
-        }
-        if profile.get("session_agent_filter"):
-            session_qs_parts["agent"] = profile["session_agent_filter"]
-        session_qs = urlencode(session_qs_parts)
-
-        assertion_qs_parts: dict[str, str | int] = {
-            "superseded": "false",
-            "limit": profile.get("assertion_limit", 50),
-        }
-        if profile.get("entity_type_exclude"):
-            assertion_qs_parts["entity_type_exclude"] = profile["entity_type_exclude"]
-        assertion_qs = urlencode(assertion_qs_parts)
-
-        futures_spec: dict[str, tuple[Any, ...]] = {
-            "sessions": (_cx, "GET", f"/session-journals?{session_qs}"),
-            "assertions": (_cx, "GET", f"/assertions?{assertion_qs}"),
-            "threads": (_relay, "agent-bus", "GET", "/threads?status=active"),
-            "inbox": (_relay, "agent-bus", "GET", f"/turns?{inbox_qs}"),
-        }
-        if profile.get("include_deadlines", True):
-            futures_spec["deadlines"] = (_cx, "GET", "/deadlines")
-        if profile.get("include_review_queue", True):
-            futures_spec["staging"] = (
-                _cx,
-                "GET",
-                "/staging?status=pending&limit=30",
-            )
-
-        decision_limit = profile.get("continuation_decision_limit", 0)
-        service_limit = profile.get("continuation_service_limit", 0)
-        if decision_limit > 0:
-            cont_decision_qs = urlencode(
-                {
-                    "entity_type": "decision",
-                    "superseded": "false",
-                    "limit": decision_limit,
-                }
-            )
-            futures_spec["cont_decisions"] = (
-                _cx,
-                "GET",
-                f"/assertions?{cont_decision_qs}",
-            )
-        if service_limit > 0:
-            cont_service_qs = urlencode(
-                {
-                    "entity_type": "service",
-                    "superseded": "false",
-                    "confidence": "believed",
-                    "limit": service_limit,
-                }
-            )
-            futures_spec["cont_services"] = (
-                _cx,
-                "GET",
-                f"/assertions?{cont_service_qs}",
-            )
-
-        todo_limit = 15
-        todo_qs_parts: dict[str, Any] = {"limit": todo_limit}
-        if agent == "cursor":
-            todo_qs_parts["context"] = "code"
-        futures_spec["todos"] = (
-            _cx,
-            "GET",
-            f"/boot-todos?{urlencode(todo_qs_parts)}",
-        )
-
-        boot_section_qs_parts: dict[str, Any] = {
-            "persona": agent,
-            "agent": agent,
-            "max_full": profile.get("boot_section_max_full", 5),
-            "max_oneline": profile.get("boot_section_max_oneline", 15),
-        }
-        bs_type_exclude = profile.get("boot_section_type_exclude")
-        if bs_type_exclude:
-            boot_section_qs_parts["type_exclude"] = bs_type_exclude
-        futures_spec["boot_sections"] = (
-            _cx,
-            "GET",
-            f"/boot-sections?{urlencode(boot_section_qs_parts)}",
-        )
-        futures_spec["temporal"] = (_cx, "GET", "/boot-temporal")
-
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
-            raw = {k: f.result() for k, f in submitted.items()}
-
-        sessions: list[dict[str, Any]] = safe_list(raw["sessions"])
-
-        gated_entity_ids = _extract_entity_ids(sessions)
-        gated_raw: dict[str, Any] = {}
-        if gated_entity_ids:
-            gated_qs = urlencode(
-                {"entity_ids": ",".join(gated_entity_ids), "per_entity": 5}
-            )
-            gated_raw = _cx("GET", f"/boot-gated?{gated_qs}")
-
-        post_file_results = read_files_batch(post_list) if post_list else {}
-
-        deadlines: list[dict[str, Any]] = safe_list(raw.get("deadlines", []))
-        all_assertions: list[dict[str, Any]] = safe_list(raw["assertions"])
-        threads: list[dict[str, Any]] = safe_list(raw["threads"], "threads")
-        unread_turns: list[dict[str, Any]] = safe_list(raw["inbox"], "turns")
-        staging_items: list[dict[str, Any]] = safe_list(raw.get("staging", []))
-
-        cont_decisions: list[dict[str, Any]] = safe_list(raw.get("cont_decisions", []))
-        cont_services: list[dict[str, Any]] = safe_list(raw.get("cont_services", []))
-        todos: list[dict[str, Any]] = safe_list(raw.get("todos", []))
-
-        boot_sections_raw = raw.get("boot_sections")
-        boot_sections: dict[str, Any] | None = None
-        if isinstance(boot_sections_raw, dict) and "sections" in boot_sections_raw:
-            boot_sections = boot_sections_raw["sections"]
-
-        temporal_raw = raw.get("temporal", {})
-        temporal_active: list[dict[str, Any]] = safe_list(
-            temporal_raw.get("active", []) if isinstance(temporal_raw, dict) else []
-        )
-        temporal_upcoming: list[dict[str, Any]] = safe_list(
-            temporal_raw.get("upcoming", []) if isinstance(temporal_raw, dict) else []
-        )
-
-        suspected = []
-        hypothesized = []
-        low_conf_unreviewed = []
-        if profile.get("include_investigations", True):
-            for a in all_assertions:
-                confidence = a.get("confidence")
-                if confidence == "suspected":
-                    suspected.append(a)
-                elif confidence == "hypothesized":
-                    hypothesized.append(a)
-                if confidence in ("suspected", "hypothesized") and not a.get(
-                    "human_reviewed"
-                ):
-                    low_conf_unreviewed.append(a)
-
-        review_total: int | None = None
-        if profile.get("include_review_queue", True):
-            review_total = len(staging_items) + len(low_conf_unreviewed)
-
-        gated_entities = build_gated_entities(
-            gated_raw.get("entities", []) if isinstance(gated_raw, dict) else [],
-            temporal_active,
-        )
-
-        narrative = render_boot_narrative(
-            boot_sections=boot_sections,
-            deadlines=deadlines if profile.get("include_deadlines", True) else None,
-            temporal_active=temporal_active or None,
-            temporal_upcoming=temporal_upcoming or None,
-            sessions=sessions,
-            suspected=suspected
-            if profile.get("include_investigations", True)
-            else None,
-            hypothesized=hypothesized
-            if profile.get("include_investigations", True)
-            else None,
-            threads=threads,
-            unread=unread_turns,
-            review_total=review_total,
-            continuation_decisions=cont_decisions or None,
-            continuation_services=cont_services or None,
-            todos=todos or None,
-            gated_entities=gated_entities or None,
-        )
-
-        logger.info(
-            "cortex_boot: agent=%s profile=%s sessions=%d assertions=%d",
-            agent,
-            "custom" if agent not in _BOOT_PROFILES else agent,
-            len(sessions),
-            len(all_assertions),
-        )
-        record("mcp.cortex.boot", agent=agent)
-
-        result: dict[str, Any] = {
-            "recent_sessions": sessions,
-            "agent_bus": {
-                "active_threads": [
-                    {
-                        "thread": t.get("id", ""),
-                        "slug": t.get("slug", ""),
-                        "turns": t.get("turns_count", 0),
-                        "unread": t.get("unread_count", 0),
-                    }
-                    for t in threads
-                ],
-                "unread_turns": unread_turns,
-            },
-            "pre_files": pre_file_results,
-            "post_files": post_file_results,
-            "boot_narrative": narrative,
-        }
-
-        if profile.get("include_deadlines", True):
-            result["deadlines"] = deadlines
-        if profile.get("include_investigations", True):
-            result["open_investigations"] = {
-                "suspected": suspected,
-                "hypothesized": hypothesized,
-            }
-        if profile.get("include_review_queue", True):
-            result["review_queue"] = {
-                "staging_count": len(staging_items),
-                "assertion_count": len(low_conf_unreviewed),
-                "total": review_total,
-            }
-        if temporal_active or temporal_upcoming:
-            result["temporal"] = {
-                "active": temporal_active,
-                "upcoming": temporal_upcoming,
-            }
-        if cont_decisions or cont_services or todos:
-            result["continuation_state"] = {
-                "decisions": cont_decisions,
-                "service_observations": cont_services,
-                "open_todos": todos,
-            }
-        if gated_entities:
-            result["gated_entities"] = gated_entities
-
-        return result
+        return run_cortex_boot(agent=agent, pre_files=pre_files, post_files=post_files)

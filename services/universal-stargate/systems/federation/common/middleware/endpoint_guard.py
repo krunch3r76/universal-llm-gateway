@@ -29,6 +29,7 @@ REMOTE_MODE_ALLOWED_PREFIXES: frozenset[str] = frozenset(
 EDGE_MODE_ALLOWED_PREFIXES: frozenset[str] = frozenset(
     [
         "/api/v1/federation/",
+        "/api/v1/providers/",  # Provider-native cloud ingress (proxied to cloud-proxy)
         "/gateway/",  # Gateway management APIs (catalog, models, jobs)
         "/health",
         "/healthz",

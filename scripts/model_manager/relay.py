@@ -80,7 +80,7 @@ def _render_template(template: Path, env: dict[str, str]) -> Path:
 
 _SCOPE_FLAGS: dict[str, list[str]] = {
     "all": ["--cpu-native", "--gpu-native"],
-    "llama": ["--cpu-native", "--gpu-native"],
+    "llama": ["--cpu-native", "--gpu-native", "--no-vllm"],
 }
 
 _STARGATE_SENTINEL = "Stargate Proxy started successfully"

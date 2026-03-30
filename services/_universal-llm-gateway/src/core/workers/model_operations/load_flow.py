@@ -1,5 +1,6 @@
 """Model loading flow operations: worker lifecycle, verification, finalization."""
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from process_ipc import ProcessStatus
@@ -291,6 +292,20 @@ async def finalize_load(
             process_pid=pid,
         ),
     )
+    reconciled_vram = await asyncio.to_thread(
+        _reconcile_catalog_vram,
+        model_id,
+        actual_vram,
+        actual_ram,
+    )
+    if reconciled_vram:
+        from src.core.events.types import CatalogReloaded
+
+        await _publish_event(
+            controller.event_bus,
+            CatalogReloaded(reason="auto_vram_reconcile"),
+        )
+
     await _emit_load_flow_debug(
         "finalize_loaded_event",
         model_id,
@@ -327,6 +342,21 @@ async def finalize_load(
         f"✅ Model {model_id} loaded - VRAM: {actual_vram}MB, RAM: {actual_ram}MB"
         + (f", Context: {context_length}" if context_length else "")
     )
+
+
+def _reconcile_catalog_vram(
+    model_id: str,
+    actual_vram: int,
+    actual_ram: int,
+) -> bool:
+    """Persist higher measured VRAM into the local operational catalog."""
+    try:
+        from src.core.catalog.vram_reconciliation import reconcile_max_observed_vram
+
+        return reconcile_max_observed_vram(model_id, actual_vram, actual_ram)
+    except Exception as e:
+        logger.warning("Failed catalog VRAM reconciliation for %s: %s", model_id, e)
+        return False
 
 
 async def cleanup_failed_worker(

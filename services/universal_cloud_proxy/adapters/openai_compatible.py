@@ -216,6 +216,101 @@ class OpenAICompatibleAdapter:
             await self._raise_provider_http_error(response)
         return self._responses_to_chat_completion(response.json(), requested_model)
 
+    async def _forward_via_responses_api_stream(
+        self, request_body: dict[str, Any]
+    ) -> AsyncIterator[bytes]:
+        """Stream MCP request via Responses API; translate SSE events to chat.completion.chunk format."""
+        body = self._build_responses_body(request_body)
+        body["stream"] = True
+        requested_model = str(request_body.get("model", ""))
+        chunk_id = f"chatcmpl-{int(time.time() * 1000)}"
+        created = int(time.time())
+        sent_role = False
+
+        async with self._client.stream(
+            "POST",
+            f"{self._config.base_url}/responses",
+            json=body,
+            headers=self._headers(),
+        ) as response:
+            if response.status_code >= 400:
+                await self._raise_provider_http_error(response)
+
+            async for line in response.aiter_lines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("event:"):
+                    continue
+                if not stripped.startswith("data:"):
+                    continue
+
+                payload = stripped[len("data:") :].strip()
+                if payload == "[DONE]":
+                    break
+
+                try:
+                    event = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = event.get("type", "")
+
+                if event_type == "response.output_text.delta":
+                    delta_text = event.get("delta", "")
+                    delta: dict[str, str] = {"content": delta_text}
+                    if not sent_role:
+                        delta["role"] = "assistant"
+                        sent_role = True
+                    chunk = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": requested_model,
+                        "choices": [
+                            {"index": 0, "delta": delta, "finish_reason": None}
+                        ],
+                    }
+                    yield f"data: {json.dumps(chunk)}\n\n".encode()
+
+                elif event_type == "response.completed":
+                    resp_data = event.get("response", {})
+                    usage_raw = resp_data.get("usage") or {}
+                    prompt_tokens = int(
+                        usage_raw.get("input_tokens")
+                        or usage_raw.get("prompt_tokens")
+                        or 0
+                    )
+                    completion_tokens = int(
+                        usage_raw.get("output_tokens")
+                        or usage_raw.get("completion_tokens")
+                        or 0
+                    )
+                    final_chunk = {
+                        "id": chunk_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": requested_model,
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                        "usage": {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": prompt_tokens + completion_tokens,
+                        },
+                    }
+                    yield f"data: {json.dumps(final_chunk)}\n\n".encode()
+
+        yield b"data: [DONE]\n\n"
+
+    async def forward_native(self, request_body: dict[str, Any]) -> dict[str, Any]:
+        """POST Responses API JSON unchanged (native xAI/OpenAI-shaped ingress)."""
+        response = await self._client.post(
+            f"{self._config.base_url}/responses",
+            json=request_body,
+            headers=self._headers(),
+        )
+        if response.status_code >= 400:
+            await self._raise_provider_http_error(response)
+        return response.json()
+
     def _headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self._config.api_key}",
@@ -268,9 +363,8 @@ class OpenAICompatibleAdapter:
     ) -> AsyncIterator[bytes]:
         """Forward a streaming chat request and preserve provider error payloads before iterating the stream."""
         if self._is_responses_api_request(request_body):
-            result = await self._forward_via_responses_api(request_body)
-            yield (f"data: {json.dumps(result)}\n").encode()
-            yield b"data: [DONE]\n"
+            async for chunk in self._forward_via_responses_api_stream(request_body):
+                yield chunk
             return
         body = self._prepare_chat_body(request_body, stream=True)
         async with self._client.stream(

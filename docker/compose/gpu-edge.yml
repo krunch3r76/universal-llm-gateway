@@ -54,7 +54,7 @@ services:
       - ../../tmp/gpu-nodes/${NODE_ID}/logs:/golem/logs
       - ../../tmp/gpu-nodes/${NODE_ID}/output:/golem/output
       - ${SOCKET_DIR:-/tmp/universal-protocol}:/tmp/universal-protocol
-      - ${HOME}/.gateway/catalog:/golem/catalog:ro
+      - ${HOME}/.gateway/catalog:/golem/catalog
       - ${HOME}/.cache/vllm:/golem/vllm_cache:rw
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro

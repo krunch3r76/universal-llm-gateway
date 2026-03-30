@@ -30,6 +30,16 @@ An optional, standalone service that routes inference requests to cloud API prov
 | `POST /v1/chat/completions` | POST | Forward chat completion with auth injection and SSE relay |
 | `POST /v1/embeddings` | POST | Forward embedding request with auth |
 
+### Provider-native (non–OpenAI-shaped)
+
+Workspace IDs (`anthropic/...`, `xai/...`) stay on `POST /v1/chat/completions`. These routes accept **raw provider model IDs** and **native JSON** bodies; Stargate exposes the same paths on `:9999` under `/api/v1/providers/...`.
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `POST /api/v1/providers/anthropic/messages` | POST | Anthropic Messages API passthrough |
+| `POST /api/v1/providers/xai/responses` | POST | xAI Responses API passthrough |
+| `POST /api/v1/providers/openai/responses` | POST | Reserved — returns **501** (not implemented) in phase 1 |
+
 ### Catalog
 
 | Endpoint | Method | Purpose |
@@ -65,6 +75,9 @@ These endpoints are proxied through Stargate on `:9999` so clients don't need di
 - `GET /api/models` — cloud model catalog
 - `POST /api/select` — task-aware selection
 - `POST /api/refresh` — force catalog refresh
+- `POST /api/v1/providers/anthropic/messages` — native Anthropic Messages
+- `POST /api/v1/providers/xai/responses` — native xAI Responses
+- `POST /api/v1/providers/openai/responses` — OpenAI-native stub (501)
 
 ## Configuration
 

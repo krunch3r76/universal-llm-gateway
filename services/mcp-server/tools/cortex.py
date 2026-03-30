@@ -175,6 +175,7 @@ def _op_assert(
     confidence: str | None = None,
     evidence: str | None = None,
     evidence_uris: list[str] | str | None = None,
+    seeded_by: str | None = None,
     derivation_type: str | None = None,
     confidence_score: float | None = None,
     observed_at: str | None = None,
@@ -208,6 +209,7 @@ def _op_assert(
             evidence_uris = [evidence_uris]
         body["evidence_uris"] = [str(u) for u in evidence_uris]
     for key, val in [
+        ("seeded_by", seeded_by),
         ("derivation_type", derivation_type),
         ("confidence_score", confidence_score),
         ("observed_at", observed_at),
@@ -363,9 +365,10 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           assertions(entity_id?, confidence?, review_status?, superseded?, limit?)
               List assertions. review_status: committed/flagged/staged/rejected
           assert(entity_id, claim, confidence, evidence, evidence_uris?,
-                 derivation_type?, confidence_score?, observed_at?, valid_from?, chunk_id?)
+                 seeded_by?, derivation_type?, confidence_score?, observed_at?, valid_from?, chunk_id?)
               Direct write with no review gate. Use for session observations,
               confirmed decisions, and real-time notes.
+              seeded_by: optional agent/frontier provenance tag for seeded assertions
               confidence: confirmed / believed / suspected / hypothesized
               derivation_type: quotation / compression / inference / other
               confidence_score: 0.0–1.0 numeric confidence

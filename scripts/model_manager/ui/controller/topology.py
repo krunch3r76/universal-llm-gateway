@@ -84,7 +84,9 @@ def _relay_remote_command(relay_cmd: str) -> str:
     command_prefix = f"{prefix} " if prefix else ""
     command = f"cd ~/universal-llm-gateway && {command_prefix}{relay_cmd}"
     wrapped = (
-        "trap 'pkill -TERM -g $$ 2>/dev/null; wait 2>/dev/null' EXIT HUP INT TERM; "
+        # On remote start/restart flows, successful shell exit must not tear down
+        # the detached relay services we just launched.
+        "trap 'pkill -TERM -g $$ 2>/dev/null; wait 2>/dev/null' HUP INT TERM; "
         f"{command}"
     )
     return f"bash -lc {shlex.quote(wrapped)}"
@@ -404,6 +406,43 @@ async def gateway_image_mismatch_warnings(
         + ". Run Rebuild + Deploy All on master and remotes (or rebuild locally) to align."
     )
     return [msg]
+
+
+async def stop_remote(*, hostname: str, address: str) -> AsyncIterator[str]:
+    """Stop relay Stargate and edge container on a remote host."""
+    node_env = _NODES_DIR / f"{hostname}.env"
+    if not node_env.exists():
+        yield f"[red]Node env not found: {node_env}. Add Remote first.[/red]"
+        return
+
+    ssh_user = _read_node_env_key(node_env, "SSH_USER")
+    if not ssh_user:
+        yield f"[red]SSH_USER missing in {node_env}. Re-add the remote.[/red]"
+        return
+
+    ssh_target = f"{ssh_user}@{address}"
+    remote_cmd = _relay_remote_command("./manage relay --stop")
+    ssh_args = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ServerAliveInterval=5",
+        "-o",
+        "ServerAliveCountMax=2",
+        ssh_target,
+        remote_cmd,
+    ]
+    yield f"$ {shlex.join(ssh_args)}"
+    try:
+        async for line in _stream_subprocess(
+            ssh_args,
+            stream_failure_line="[red]ssh relay stop failed to stream output.[/red]",
+            exit_failure_prefix="[red]ssh relay stop failed",
+        ):
+            yield line
+    except _StreamedCommandError:
+        return
 
 
 async def deploy_remote(
