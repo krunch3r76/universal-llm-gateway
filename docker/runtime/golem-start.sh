@@ -507,8 +507,54 @@ start_both() {
     
     # Trap signals for graceful shutdown
     EDGE_PID=""
-    trap 'kill -TERM $GATEWAY_PID $STARGATE_PID ${EDGE_PID:-} 2>/dev/null; wait' SIGTERM SIGINT
-    
+    EVENT_SERVICE_PID=""
+    trap 'kill -TERM ${EVENT_SERVICE_PID:-} $GATEWAY_PID $STARGATE_PID ${EDGE_PID:-} 2>/dev/null; wait' SIGTERM SIGINT
+
+    # ── Phase 0: In-memory Event Service (observability backbone) ─────
+    CONTAINER_EVENTS_DIR="/tmp/container-events"
+    mkdir -p "${CONTAINER_EVENTS_DIR}"
+    EVENTS_INGEST_SOCK="${CONTAINER_EVENTS_DIR}/events.sock"
+    EVENTS_QUERY_SOCK="${CONTAINER_EVENTS_DIR}/events-query.sock"
+    export EVENTS_INGEST_SOCK EVENTS_QUERY_SOCK
+
+    MEMORY_FLAG="--memory"
+    DB_FLAG=""
+    if [[ "${EVENT_PERSIST:-false}" == "true" ]]; then
+        MEMORY_FLAG=""
+        DB_FLAG="--db ${EVENT_DB_PATH:-/golem/logs/events.db}"
+    fi
+
+    BRIDGE_FLAGS=""
+    if [[ -n "${EVENT_BRIDGE_UPSTREAM:-}" ]]; then
+        BRIDGE_FLAGS="--bridge-upstream ${EVENT_BRIDGE_UPSTREAM} --bridge-origin ${EVENT_BRIDGE_ORIGIN:-edge-${NODE_ID:-unknown}}"
+    fi
+
+    log_info "Starting in-memory Event Service..."
+    (
+        export PYTHONPATH="${APP_DIR}:${APP_DIR}/libs:${PYTHONPATH:-}"
+        # shellcheck disable=SC2086
+        python3 -m event_store serve \
+            ${MEMORY_FLAG} \
+            ${DB_FLAG} \
+            --sock "${EVENTS_INGEST_SOCK}" \
+            --query-sock "${EVENTS_QUERY_SOCK}" \
+            ${BRIDGE_FLAGS}
+    ) &
+    EVENT_SERVICE_PID=$!
+    log_info "  Event Service PID: ${EVENT_SERVICE_PID}"
+
+    for _i in $(seq 1 20); do
+        [ -S "${EVENTS_INGEST_SOCK}" ] && break
+        sleep 0.25
+    done
+    if [ ! -S "${EVENTS_INGEST_SOCK}" ]; then
+        log_error "Event Service did not start within 5s — continuing without container events"
+        kill "${EVENT_SERVICE_PID}" 2>/dev/null || true
+        EVENT_SERVICE_PID=""
+    else
+        log_info "  Event Service ready"
+    fi
+
     log_info "Starting Gateway service..."
     (
         cd "${GATEWAY_DIR}" || exit 1
@@ -622,10 +668,10 @@ start_both() {
     
     # Wait for processes and report which one exited
     if [[ -n "${EDGE_PID}" ]]; then
-        log_info "🔍 DIAGNOSTIC: Waiting for processes (Gateway PID=$GATEWAY_PID, Relay Stargate PID=$STARGATE_PID, Edge Stargate PID=$EDGE_PID)"
+        log_info "🔍 DIAGNOSTIC: Waiting for processes (Gateway PID=$GATEWAY_PID, Relay Stargate PID=$STARGATE_PID, Edge Stargate PID=$EDGE_PID, EventService PID=$EVENT_SERVICE_PID)"
         wait -n $GATEWAY_PID $STARGATE_PID $EDGE_PID
     else
-        log_info "🔍 DIAGNOSTIC: Waiting for both processes (Gateway PID=$GATEWAY_PID, Stargate PID=$STARGATE_PID)"
+        log_info "🔍 DIAGNOSTIC: Waiting for processes (Gateway PID=$GATEWAY_PID, Stargate PID=$STARGATE_PID, EventService PID=$EVENT_SERVICE_PID)"
         wait -n $GATEWAY_PID $STARGATE_PID
     fi
     exit_code=$?
@@ -636,19 +682,19 @@ start_both() {
         gw_exit=$?
         log_error "🚨 Gateway (PID $GATEWAY_PID) exited first with code $gw_exit"
         log_info "Stargate(s) still running, killing..."
-        kill -TERM $STARGATE_PID ${EDGE_PID:-} 2>/dev/null || true
+        kill -TERM $STARGATE_PID ${EDGE_PID:-} ${EVENT_SERVICE_PID:-} 2>/dev/null || true
     elif ! kill -0 $STARGATE_PID 2>/dev/null; then
         wait $STARGATE_PID 2>/dev/null || true
         sg_exit=$?
         log_error "🚨 Relay Stargate (PID $STARGATE_PID) exited first with code $sg_exit"
         log_info "Gateway (PID $GATEWAY_PID) still running, killing..."
-        kill -TERM $GATEWAY_PID ${EDGE_PID:-} 2>/dev/null || true
+        kill -TERM $GATEWAY_PID ${EDGE_PID:-} ${EVENT_SERVICE_PID:-} 2>/dev/null || true
     elif [[ -n "${EDGE_PID}" ]] && ! kill -0 $EDGE_PID 2>/dev/null; then
         wait $EDGE_PID 2>/dev/null || true
         edge_exit=$?
         log_error "🚨 Edge Stargate (PID $EDGE_PID) exited first with code $edge_exit"
         log_info "Gateway/Relay still running, killing..."
-        kill -TERM $GATEWAY_PID $STARGATE_PID 2>/dev/null || true
+        kill -TERM $GATEWAY_PID $STARGATE_PID ${EVENT_SERVICE_PID:-} 2>/dev/null || true
     else
         log_error "🚨 wait returned but processes still running? exit_code=$exit_code"
     fi

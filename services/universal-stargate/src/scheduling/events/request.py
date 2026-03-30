@@ -12,6 +12,7 @@ Signals:
     request.completed — request completed successfully
     request.failed — request failed
     request.timed.out — request timed out
+    request.client.disconnected — downstream/client stream disconnected
     request.removed — request removed from queue (client disconnect)
     federation.snapshot.sent — Edge Stargate broadcast snapshot to Master
 """
@@ -97,6 +98,18 @@ Payload: {
     "gateway_url": Optional[str],
     "model_id": str,
     "timeout_seconds": float
+}
+"""
+
+REQUEST_CLIENT_DISCONNECTED = "request.client.disconnected"
+"""
+Request stream terminated because the downstream client disconnected.
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "hop": str,
+    "gateway_url": Optional[str],
+    "duration": Optional[float]
 }
 """
 
@@ -408,6 +421,39 @@ def RequestTimeout(
             "timeout_seconds": timeout_seconds,
         },
     )
+
+
+@event_factory
+def RequestClientDisconnected(
+    request_id: str,
+    model_id: str,
+    hop: str,
+    gateway_url: str | None = None,
+    duration: float | None = None,
+) -> Event:
+    """
+    Create REQUEST_CLIENT_DISCONNECTED event.
+
+    Args:
+        request_id: Proxy request ID for tracking and tracing
+        model_id: Model requested
+        hop: Component that observed the disconnect
+        gateway_url: Gateway URL (optional)
+        duration: Seconds elapsed before disconnect (optional)
+
+    Returns:
+        Event with RequestClientDisconnected signal
+    """
+    payload: dict[str, object] = {
+        "request_id": request_id,
+        "model_id": model_id,
+        "hop": hop,
+    }
+    if gateway_url is not None:
+        payload["gateway_url"] = gateway_url
+    if duration is not None:
+        payload["duration"] = duration
+    return Event(signal=REQUEST_CLIENT_DISCONNECTED, payload=payload)
 
 
 @event_factory

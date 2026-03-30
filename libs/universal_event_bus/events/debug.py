@@ -20,7 +20,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_EVENTS_SOCK = "/tmp/universal-protocol/events.sock"
+import os
+
+_EVENTS_SOCK = os.environ.get(
+    "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+)
 
 
 async def emit_debug_event(

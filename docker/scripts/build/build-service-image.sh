@@ -28,6 +28,7 @@ Usage: ./docker/scripts/build/build-service-image.sh \
 Notes:
   - `--no-cache` also implies `--pull` in this workspace.
   - Builds use a dedicated buildx builder so cache cleanup can be scoped.
+  - `--no-cache` prunes that dedicated builder before rebuilding.
 EOF
 }
 
@@ -85,6 +86,18 @@ cd "${PROJECT_ROOT}"
 if ! docker buildx inspect "${BUILDER}" >/dev/null 2>&1; then
   echo "Creating buildx builder: ${BUILDER}"
   docker buildx create --name "${BUILDER}" --driver docker-container >/dev/null
+fi
+
+if ! docker buildx inspect --bootstrap "${BUILDER}" >/dev/null 2>&1; then
+  echo "Recreating stale buildx builder: ${BUILDER}"
+  docker buildx rm "${BUILDER}" >/dev/null 2>&1 || true
+  docker buildx create --name "${BUILDER}" --driver docker-container >/dev/null
+  docker buildx inspect --bootstrap "${BUILDER}" >/dev/null
+fi
+
+if [[ "${NO_CACHE}" == "true" ]]; then
+  echo "Pruning build cache for ${BUILDER} before no-cache rebuild..."
+  docker buildx prune --builder "${BUILDER}" -af >/dev/null
 fi
 
 CMD=(

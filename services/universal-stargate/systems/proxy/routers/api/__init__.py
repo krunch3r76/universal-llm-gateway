@@ -11,6 +11,7 @@ from .rag_articles import router as rag_articles_router
 from .rag_coverage import router as rag_coverage_router
 from .rag_scopes import router as rag_scopes_router
 from .report_model import router as report_model_router
+from .rerank import router as rerank_router
 from .v1.cancel import router as cancel_router
 
 # Create main API v1 router
@@ -27,3 +28,4 @@ router.include_router(cancel_router)
 router.include_router(rag_scopes_router)
 router.include_router(rag_coverage_router)
 router.include_router(rag_articles_router)
+router.include_router(rerank_router)

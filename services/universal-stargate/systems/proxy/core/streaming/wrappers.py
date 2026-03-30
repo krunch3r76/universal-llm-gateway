@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from universal_logging import get_logger
 
 from src.scheduling.events import (
+    RequestClientDisconnected,
     RequestCompleted,
     RequestFailed,
 )
@@ -50,12 +51,14 @@ def wrap_streaming_response_for_tracking(
         """Emit completion events when streaming terminates."""
         stream_error: Exception | None = None
         stream_succeeded = False
+        client_disconnected = False
         try:
             async for chunk in response.body_iterator:
                 yield chunk
             stream_succeeded = True
         except (GeneratorExit, asyncio.CancelledError):
             # Client disconnected - log and ensure slot release
+            client_disconnected = True
             logger.warning(
                 "🔌 [REQ:%s] Client disconnect during streaming for %s",
                 context.request_id[:8],
@@ -84,6 +87,16 @@ def wrap_streaming_response_for_tracking(
                             request_id=context.request_id,
                             gateway_url=gateway_url,
                             model_id=model_id,
+                            duration=time.time() - start_time,
+                        )
+                    )
+                elif client_disconnected:
+                    await event_bus.publish_async_nowait(
+                        RequestClientDisconnected(
+                            request_id=context.request_id,
+                            model_id=model_id,
+                            hop="stargate_streaming_wrapper",
+                            gateway_url=gateway_url,
                             duration=time.time() - start_time,
                         )
                     )

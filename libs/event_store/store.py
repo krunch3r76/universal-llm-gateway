@@ -4,6 +4,10 @@ WAL mode with PRAGMA synchronous=NORMAL for high-throughput writes.
 Generated virtual columns promote correlation fields from JSON payload
 for indexed O(log N) lookups without schema churn.
 
+Uses stdlib sqlite3 directly (synchronous). All methods are async to
+preserve the caller API, but DB calls are sub-millisecond (especially
+in-memory) and do not yield. Zero third-party dependencies.
+
 Invariant: SQLite is the sole authoritative store for all queries.
 """
 
@@ -12,13 +16,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-import aiosqlite
 
 from .retention import HEARTBEAT_SIGNALS
 
@@ -107,32 +110,33 @@ class EventStore:
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
-        self._db: aiosqlite.Connection | None = None
+        self._db: sqlite3.Connection | None = None
         self._realtime_buffer: deque[dict[str, Any]] = deque(
             maxlen=_REALTIME_BUFFER_SIZE
         )
 
     async def open(self) -> None:
         """Open SQLite, apply performance pragmas, and ensure schema exists."""
-        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self._db_path)
-        self._db.row_factory = aiosqlite.Row
+        if self._db_path != ":memory:":
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._db = sqlite3.connect(self._db_path)
+        self._db.row_factory = sqlite3.Row
         try:
-            await self._db.execute("PRAGMA journal_mode=WAL")
-            await self._db.execute("PRAGMA synchronous=NORMAL")
-            await self._db.execute("PRAGMA auto_vacuum=INCREMENTAL")
-            await self._db.execute("PRAGMA busy_timeout=5000")
-            await self._db.executescript(_SCHEMA_SQL)
-            await self._db.commit()
+            self._db.execute("PRAGMA journal_mode=WAL")
+            self._db.execute("PRAGMA synchronous=NORMAL")
+            self._db.execute("PRAGMA auto_vacuum=INCREMENTAL")
+            self._db.execute("PRAGMA busy_timeout=5000")
+            self._db.executescript(_SCHEMA_SQL)
+            self._db.commit()
         except Exception:
-            await self._db.rollback()
+            self._db.rollback()
             raise
         logger.info("EventStore opened: %s", self._db_path)
 
     async def close(self) -> None:
         """Close the SQLite connection if it is open."""
         if self._db:
-            await self._db.close()
+            self._db.close()
             self._db = None
 
     def push_realtime(self, event: dict[str, Any]) -> None:
@@ -202,9 +206,9 @@ class EventStore:
             return []
 
         try:
-            await self._db.executemany(_INSERT_EVENT, rows)
-            await self._db.commit()
-        except aiosqlite.Error as e:
+            self._db.executemany(_INSERT_EVENT, rows)
+            self._db.commit()
+        except sqlite3.Error as e:
             logger.error(
                 "DB write failed, dropping %d events (signals: %s): %s",
                 len(rows),
@@ -230,7 +234,7 @@ class EventStore:
         payload = snap.get("payload")
         payload_str = json.dumps(payload) if payload is not None else None
         try:
-            await self._db.execute(
+            self._db.execute(
                 _INSERT_SNAPSHOT,
                 (
                     snap.get("request_id", ""),
@@ -241,8 +245,8 @@ class EventStore:
                     payload_str,
                 ),
             )
-            await self._db.commit()
-        except aiosqlite.Error as e:
+            self._db.commit()
+        except sqlite3.Error as e:
             logger.error(
                 "Snapshot insert failed request_id=%s phase=%s: %s",
                 snap.get("request_id"),
@@ -269,10 +273,10 @@ class EventStore:
             logger.error("query called before EventStore.open(); sql=%s", sql[:120])
             return []
         try:
-            async with self._db.execute(sql, params) as cursor:
-                raw_rows = await cursor.fetchmany(limit)
-                return [dict(r) for r in raw_rows]
-        except aiosqlite.Error as e:
+            cursor = self._db.execute(sql, params)
+            raw_rows = cursor.fetchmany(limit)
+            return [dict(r) for r in raw_rows]
+        except sqlite3.Error as e:
             logger.error("Query failed: %s params=%s - %s", sql[:120], params, e)
             return []
         except Exception as e:
@@ -290,19 +294,17 @@ class EventStore:
             return 0
         cutoff = int(time.time() * 1000) - max_age_ms
         try:
-            r1 = await self._db.execute(
-                "DELETE FROM events WHERE ts_unix_ms < ?", (cutoff,)
-            )
-            r2 = await self._db.execute(
+            r1 = self._db.execute("DELETE FROM events WHERE ts_unix_ms < ?", (cutoff,))
+            r2 = self._db.execute(
                 "DELETE FROM request_snapshots WHERE ts_unix_ms < ?", (cutoff,)
             )
-            r3 = await self._db.execute(
+            r3 = self._db.execute(
                 "DELETE FROM evaluations WHERE ts_unix_ms < ?", (cutoff,)
             )
-            await self._db.execute("PRAGMA incremental_vacuum")
-            await self._db.commit()
+            self._db.execute("PRAGMA incremental_vacuum")
+            self._db.commit()
             return (r1.rowcount or 0) + (r2.rowcount or 0) + (r3.rowcount or 0)
-        except aiosqlite.Error as e:
+        except sqlite3.Error as e:
             logger.error("Retention failed cutoff=%s: %s", cutoff, e)
             return 0
         except Exception as e:
@@ -330,13 +332,13 @@ class EventStore:
 
         cutoff_ts = int(rows[0]["ts"])
         try:
-            result = await self._db.execute(
+            result = self._db.execute(
                 "DELETE FROM events WHERE role = 'debug' AND ts_unix_ms < ?",
                 (cutoff_ts,),
             )
-            await self._db.commit()
+            self._db.commit()
             return result.rowcount or 0
-        except aiosqlite.Error as e:
+        except sqlite3.Error as e:
             logger.error("Debug event prune failed cutoff_ts=%s: %s", cutoff_ts, e)
             return 0
         except Exception as e:
@@ -369,13 +371,13 @@ class EventStore:
         cutoff_ts = int(rows[0]["ts"])
         placeholders = ", ".join("?" for _ in HEARTBEAT_SIGNALS)
         try:
-            result = await self._db.execute(
+            result = self._db.execute(
                 f"DELETE FROM events WHERE signal IN ({placeholders}) AND ts_unix_ms < ?",
                 (*sorted(HEARTBEAT_SIGNALS), cutoff_ts),
             )
-            await self._db.commit()
+            self._db.commit()
             return result.rowcount or 0
-        except aiosqlite.Error as e:
+        except sqlite3.Error as e:
             logger.error("Heartbeat signal prune failed cutoff_ts=%s: %s", cutoff_ts, e)
             return 0
         except Exception as e:
@@ -408,19 +410,19 @@ class EventStore:
 
         cutoff_ts = int(rows[0]["ts_unix_ms"])
         try:
-            r1 = await self._db.execute(
+            r1 = self._db.execute(
                 "DELETE FROM events WHERE ts_unix_ms < ?", (cutoff_ts,)
             )
-            r2 = await self._db.execute(
+            r2 = self._db.execute(
                 "DELETE FROM request_snapshots WHERE ts_unix_ms < ?", (cutoff_ts,)
             )
-            r3 = await self._db.execute(
+            r3 = self._db.execute(
                 "DELETE FROM evaluations WHERE ts_unix_ms < ?", (cutoff_ts,)
             )
-            await self._db.execute("PRAGMA incremental_vacuum")
-            await self._db.commit()
+            self._db.execute("PRAGMA incremental_vacuum")
+            self._db.commit()
             return (r1.rowcount or 0) + (r2.rowcount or 0) + (r3.rowcount or 0)
-        except aiosqlite.Error as e:
+        except sqlite3.Error as e:
             logger.error("Session retention failed cutoff_ts=%s: %s", cutoff_ts, e)
             return 0
         except Exception as e:

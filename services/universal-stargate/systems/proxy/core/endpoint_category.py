@@ -28,12 +28,12 @@ def derive_endpoint_category(
         path: Explicit path string (fallback)
 
     Returns:
-        EndpointCategory.GENERATION or EndpointCategory.EMBEDDING
+        EndpointCategory.GENERATION, EMBEDDING, or RERANK
 
     Raises:
         ValueError: If path is unknown/unsupported
 
-    INVARIANT: ∀ path: category ∈ {GENERATION, EMBEDDING} ∨ raises ValueError
+    INVARIANT: ∀ path: category ∈ {GENERATION, EMBEDDING, RERANK} ∨ raises ValueError
     """
     if request is not None:
         path = str(request.url.path)
@@ -44,6 +44,9 @@ def derive_endpoint_category(
     # Explicit path matching (not substring heuristics)
     if path.endswith("/embeddings") or "/embeddings?" in path:
         return EndpointCategory.EMBEDDING
+
+    if path.endswith("/rerank") or "/rerank?" in path:
+        return EndpointCategory.RERANK
 
     if path.endswith("/chat/completions") or "/chat/completions?" in path:
         return EndpointCategory.GENERATION

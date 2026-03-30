@@ -69,7 +69,6 @@ SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
     "trading/stat-arb": "trading_stat_arb",
     "trading/execution": "trading_execution",
     "trading/intraday": "trading_intraday",
-    "thirdparty/lighter": "lighter",
 }
 
 
@@ -202,10 +201,10 @@ def main() -> int:
 
     # Step 1: Download
     if dest.exists() and not args.force:
-        print(f"\nFile exists, skipping download. Use --force to re-download.")
+        print("\nFile exists, skipping download. Use --force to re-download.")
         byte_count = dest.stat().st_size
     else:
-        print(f"\nDownloading...", end=" ", flush=True)
+        print("\nDownloading...", end=" ", flush=True)
         try:
             byte_count = download_pdf(pdf_url, dest)
             print(f"OK ({byte_count:,} bytes)")

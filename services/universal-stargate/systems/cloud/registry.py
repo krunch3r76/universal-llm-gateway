@@ -95,6 +95,8 @@ class CloudProxyCatalogPoller:
 
         reachable, detection_method = await self._probe_health()
         if not reachable:
+            await self._gateway_manager.remove_gateways(self._gateway_ids)
+            self._gateway_ids.clear()
             logger.warning(
                 "Cloud proxy not reachable at %s (%s) — no cloud models registered",
                 self._proxy_url,
@@ -198,10 +200,11 @@ class CloudProxyCatalogPoller:
 
         # Prune gateways absent from this catalog iteration.
         stale = [gid for gid in self._gateway_ids if gid not in current_ids]
-        self._gateway_ids = [gid for gid in self._gateway_ids if gid in current_ids]
-
         for gid in stale:
             logger.info("Pruned stale cloud gateway '%s' (absent from catalog)", gid)
+        if stale:
+            await self._gateway_manager.remove_gateways(stale)
+        self._gateway_ids = [gid for gid in self._gateway_ids if gid in current_ids]
 
         await self._emit_catalog_updated(len(catalog or []))
 
@@ -244,6 +247,8 @@ class CloudProxyCatalogPoller:
                 reachable, detection_method = await self._probe_health()
                 if not reachable:
                     self._connected = False
+                    await self._gateway_manager.remove_gateways(self._gateway_ids)
+                    self._gateway_ids.clear()
                     await self._emit_unavailable(
                         "health probe failed during refresh",
                         detection_method=detection_method,

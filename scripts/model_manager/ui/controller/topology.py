@@ -28,6 +28,7 @@ from scripts.model_manager.observation_event import (
 logger = logging.getLogger(__name__)
 
 _GATEWAY_GPU_IMAGE = "universal-llm-gateway:gpu"
+_WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
 # Compared between master and relay images (excludes build.timestamp — always differs).
 _BUILD_MISMATCH_LABEL_KEYS: tuple[str, ...] = (
     "build.vllm.version",
@@ -83,7 +84,8 @@ def _relay_remote_command(relay_cmd: str) -> str:
     command_prefix = f"{prefix} " if prefix else ""
     command = f"cd ~/universal-llm-gateway && {command_prefix}{relay_cmd}"
     wrapped = (
-        f"trap 'pkill -P $$ 2>/dev/null; wait 2>/dev/null' EXIT HUP INT TERM; {command}"
+        "trap 'pkill -TERM -g $$ 2>/dev/null; wait 2>/dev/null' EXIT HUP INT TERM; "
+        f"{command}"
     )
     return f"bash -lc {shlex.quote(wrapped)}"
 
@@ -303,7 +305,9 @@ async def _docker_inspect_labels_local(image: str) -> dict[str, str] | None:
     return {str(k): str(v) for k, v in data.items()}
 
 
-async def _docker_inspect_labels_remote(ssh_target: str, image: str) -> dict[str, str] | None:
+async def _docker_inspect_labels_remote(
+    ssh_target: str, image: str
+) -> dict[str, str] | None:
     """Return Config.Labels for image on remote host via SSH."""
     proc = await asyncio.create_subprocess_exec(
         "ssh",
@@ -417,6 +421,9 @@ async def deploy_remote(
     1. rsync repo (.gitignore rules + explicit .git exclude)
     2. scp ~/.gateway/nodes/<hostname>.env
     3. ssh ./manage relay [--restart] [--build] [--scope SCOPE]
+
+    Edge compose bind-mounts ``libs/`` and ``services/`` from the rsynced tree, so a
+    restart without *build* picks up Python changes without rebuilding the image.
     """
     repo = workspace_root.resolve()
     node_env = _NODES_DIR / f"{hostname}.env"
@@ -480,7 +487,10 @@ async def deploy_remote(
         "ssh",
         "-o",
         "BatchMode=yes",
-        "-t",
+        "-o",
+        "ServerAliveInterval=5",
+        "-o",
+        "ServerAliveCountMax=2",
         ssh_target,
         remote_cmd,
     ]
@@ -635,42 +645,15 @@ async def restart_relay(
     address: str,
     build: bool = False,
 ) -> AsyncIterator[str]:
-    """SSH into remote and restart (optionally rebuild) the relay.
-
-    Skips rsync — assumes repo is already deployed. Use deploy_remote for
-    first-time setup or when source changes need to be pushed.
-    """
-    node_env = _NODES_DIR / f"{hostname}.env"
-    if not node_env.exists():
-        yield f"[red]Node env not found: {node_env}. Run Deploy first.[/red]"
-        return
-    ssh_user = _read_node_env_key(node_env, "SSH_USER")
-    if not ssh_user:
-        yield f"[red]SSH_USER missing in {node_env}. Re-add the remote.[/red]"
-        return
-    ssh_target = f"{ssh_user}@{address}"
-    relay_cmd = "./manage relay --restart"
-    if build:
-        relay_cmd += " --build"
-    remote_cmd = _relay_remote_command(relay_cmd)
-    ssh_args = [
-        "ssh",
-        "-o",
-        "BatchMode=yes",
-        "-t",
-        ssh_target,
-        remote_cmd,
-    ]
-    yield f"$ {shlex.join(ssh_args)}"
-    try:
-        async for line in _stream_subprocess(
-            ssh_args,
-            stream_failure_line="[red]ssh relay restart failed to stream output.[/red]",
-            exit_failure_prefix="[red]ssh relay restart failed",
-        ):
-            yield line
-    except _StreamedCommandError:
-        return
+    """Sync the repo to a remote and then restart (optionally rebuild) the relay."""
+    async for line in deploy_remote(
+        hostname=hostname,
+        address=address,
+        workspace_root=_WORKSPACE_ROOT,
+        build=build,
+        restart=True,
+    ):
+        yield line
 
 
 def list_node_envs() -> list[Path]:

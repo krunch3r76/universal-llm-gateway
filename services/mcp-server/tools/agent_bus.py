@@ -11,16 +11,18 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
 from mcp_events import record
+from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
 from .local_api import _relay
 
 if TYPE_CHECKING:
-    from fastmcp import FastMCP
     from collections.abc import Callable
+
+    from fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 _PREVIEW_MAX_LAST = max(1, int(os.getenv("MCP_AGENT_BUS_PREVIEW_MAX_LAST", "20")))
@@ -544,6 +546,23 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                 "error": f"Unknown agent_bus tool {tool!r}. "
                 f"Available: {sorted(_AGENT_BUS_OPS.keys())}"
             }
-        parsed = _json.loads(arguments)
-        record("mcp.agentbus.dispatch", tool=tool)
-        return handler(**parsed)
+        t_prog, prog_timer = toolprogress_begin("agent_bus", inner_tool=tool)
+        err: str | None = None
+        try:
+            try:
+                parsed = _json.loads(arguments)
+            except _json.JSONDecodeError as exc:
+                return {"error": f"Invalid arguments JSON: {exc}"}
+            record("mcp.agentbus.dispatch", tool=tool)
+            return handler(**parsed)
+        except Exception as exc:
+            err = str(exc)
+            raise
+        finally:
+            toolprogress_end(
+                t_prog,
+                prog_timer,
+                "agent_bus",
+                error=err,
+                inner_tool=tool,
+            )

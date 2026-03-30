@@ -1,6 +1,6 @@
 # Virtual model id: vocab-classify-v1
 # pipeline_options: mode (local|frontier), scopes (optional list), skip_fresh (bool),
-#   model_ref_overrides (optional dict, e.g. {"classify": "native/chatgpt/gpt-5.4"})
+#   model_ref_overrides (optional dict, e.g. {"classify": "openai/gpt-5.4"})
 #
 # Per-scope frontier classification with single-pass RAG grounding.
 # Each scope is classified independently — fault isolation, parallelism,

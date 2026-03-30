@@ -56,7 +56,7 @@ After bulk indexing, three derived artifacts are built from the property index:
 
 ### Search Time — Two-Pool Retrieval
 
-The RAG service exposes low-level search primitives (`/search`, `/embed_batch`, `/rerank`). The pipeline layer orchestrates these into a two-pool architecture:
+The RAG service exposes low-level search primitives (`/search`, `/embed_batch`). The pipeline layer orchestrates these into a two-pool architecture:
 
 8. **Pool A — broad semantic retrieval** — ChromaDB cosine similarity + BM25 sidecar, merged via mini-RRF. Finds text related to the _idea_ even when query vocabulary differs from corpus text. Standard dense+sparse hybrid.
 9. **Pool B — vocabulary-aware sparse retrieval** — FTS5 full-text search with BM25 ranking, no embedding model. Queries are factored into sub-phrases (phrase extraction) and augmented with corpus-derived co-occurrence terms (IDF expansion from corpus hints). Each facet is dispatched as its own keyword query, catching identifiers and technical terms that dense search blurs. Pool B searches the full corpus independently — it doesn't re-score Pool A's results.
@@ -73,7 +73,7 @@ The pipeline layer (`rag-context`, `rag-answer`, `rag-answer-deep`) orchestrates
 
 ## Pipeline Layer (`rag-context`)
 
-The `rag-context` pipeline (v2.0) runs on top of the RAG service and implements the two-pool retrieval architecture with cross-encoder reranking. Zero LLM calls on the default path. Exposed as a virtual model ID (`rag-context`, `rag-answer`, `rag-answer-deep`) through Stargate. Average end-to-end latency: **~1.6s**.
+The `rag-context` pipeline (v2.0) runs on top of the RAG service and implements the two-pool retrieval architecture with Gateway-managed reranking. Zero LLM calls on the default path. Exposed as a virtual model ID (`rag-context`, `rag-answer`, `rag-answer-deep`) through Stargate. Average end-to-end latency: **~1.6s**.
 
 ### Pipeline Steps
 
@@ -82,7 +82,7 @@ The `rag-context` pipeline (v2.0) runs on top of the RAG service and implements 
 | `direct_scope` | `rag_direct_scope_v1` | No | Fixed scope resolution (default `"all"`, overridable via `scope_override`) |
 | `generate_hyde` | `generate` | Yes (conditional) | Hypothetical document embedding — only runs when `hyde_enabled: true` (default: off) |
 | `retrieve_assemble` | `rag_multi_retrieve_v1` | No | Batched embedding + concurrent IDF expansion + two-pool retrieval + RRF merge + source habituation |
-| `rerank_assemble` | `rag_rerank_assemble_v1` | Depends on mode | Cross-encoder (default, ~100ms) or generative sliding-window reranker |
+| `rerank_assemble` | `rag_rerank_assemble_v1` | Depends on mode | Gateway-managed reranking (default, ~100ms) or generative sliding-window reranker |
 
 ### Pre-Retrieval: Inline Term Expansion
 
@@ -132,20 +132,20 @@ Example: `project-assistant` forwards `retrieval_path: "general"` to `rag-contex
 
 ### Reranking: Refine, Don't Bulldoze
 
-Default mode: **cross-encoder** (`rerank_mode: cross_encoder`). A `BAAI/bge-reranker-v2-m3` cross-encoder scores (query, passage) pairs in a single forward pass — ~80-175ms for 14 passages on GPU. Scores are fused with RRF prior: `final = prior_weight × rrf_score + (1 − prior_weight) × cross_encoder_score`, bounded by `rerank_max_movement`.
+Default mode: **gateway reranker**. A managed reranker in Gateway scores (query, passage) pairs in a single forward pass — ~80-175ms for 14 passages on GPU. Scores are fused with RRF prior: `final = prior_weight × rrf_score + (1 − prior_weight) × reranker_score`, bounded by `rerank_max_movement`.
 
 The 0.70/0.30 default fusion keeps the retrieval signal dominant. A **movement cap** (default 3 positions) prevents a marginally relevant chunk from leapfrogging a stronger retrieval result regardless of reranker score.
 
 Alternative mode: **generative** (`rerank_mode: generative`). Sliding-window LLM reranker with facet-aware prompting. Higher quality ceiling but 4-7s latency.
 
-The cross-encoder model loads lazily on first call and stays resident (~550MB GPU memory). See `services/rag/cross_encoder.py`.
+Reranker model lifecycle is managed by Gateway; RAG no longer hosts a local reranker runtime.
 
 ### Key Pipeline Options
 
 | Option | Default | Effect |
 |--------|---------|--------|
 | `retrieval_path` | `research` | `general` for depth-first ranking (no diversity penalties). Named preset — sets `source_diversity_max`, `source_habituation_factor`, `facet_pool_swap_enabled`. |
-| `rerank_mode` | `cross_encoder` | `generative` for LLM sliding-window reranker |
+| `rerank_mode` | `gateway` (literal) | `generative` for LLM sliding-window reranker |
 | `rerank_enabled` | `true` | `false` skips reranking entirely |
 | `hyde_enabled` | `false` | `true` adds one LLM call for hypothetical document embedding |
 | `max_idf_terms` | `8` | `0` skips IDF expansion |
@@ -190,7 +190,6 @@ Pipeline configuration: `pipelines/rag/rag_context_v1/rag-context-v1-direct.yaml
 |----------|--------|---------|
 | `POST /search` | POST | Semantic search — accepts `query`, `top_k`, `scope`, `source_prefixes`, `recency_weight`, `max_distance`, optional `query_embedding` (pre-computed) |
 | `POST /embed_batch` | POST | Batch-embed multiple query texts in a single GPU forward pass. Returns list of embedding vectors. |
-| `POST /rerank` | POST | Score (query, passage) pairs via cross-encoder model. Returns relevance scores per passage. |
 | `POST /chunks_by_index` | POST | Fetch chunks by source path and chunk index (neighbor expansion) |
 
 ### Indexing
@@ -437,7 +436,6 @@ For subsystem-specific investigation, reference these paths directly:
 | Pipeline structure | `pipelines/rag/rag_context_v1/rag-context-v1-direct.yaml` | Step sequence, model refs, generation params |
 | Pipeline handlers | `pipelines/rag/rag_context_v1/handlers/` | Retrieval, reranking, scope resolution |
 | Term expansion | `pipelines/rag/rag_context_v1/term_expansion.py` | IDF expansion, phrase extraction (shared pure functions) |
-| Cross-encoder | `services/rag/cross_encoder.py` | Cross-encoder model loading and inference |
 | Metadata DB schema | `services/rag/property_index.py` | Schema versioning, migration, all metadata tables |
 | Corpus hints flow | `services/rag/corpus_hints.py` | Hint generation, DB read/write, co-occurrence filtering |
 | Vocabulary classification | `scripts/rag/classify_vocabulary.py` | LLM-based taxonomy classification (configurable categories) |
@@ -477,5 +475,4 @@ The intended design: breadth-first retrieval across the corpus surfaces which so
 | `metadata_boost.py` | Score boosting from extracted metadata |
 | `watcher_manager.py` | Inotify file watching; reconciliation sweeps (worker pool, adaptive interval) |
 | `embeddings.py` | Embedding model client (via Gateway); batch embedding support |
-| `cross_encoder.py` | Cross-encoder reranking model (BAAI/bge-reranker-v2-m3) |
 | `admin_routes.py` | Administrative API endpoints |

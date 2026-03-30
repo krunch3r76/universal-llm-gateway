@@ -78,6 +78,20 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "boot_section_max_oneline": 15,
         "boot_section_type_exclude": None,
     },
+    "grok": {
+        "include_deadlines": True,
+        "include_review_queue": True,
+        "include_investigations": True,
+        "session_agent_filter": None,
+        "entity_type_exclude": None,
+        "session_limit": 3,
+        "assertion_limit": 50,
+        "continuation_decision_limit": 5,
+        "continuation_service_limit": 3,
+        "boot_section_max_full": 5,
+        "boot_section_max_oneline": 15,
+        "boot_section_type_exclude": None,
+    },
 }
 
 

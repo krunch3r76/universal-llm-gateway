@@ -320,6 +320,25 @@ class CloudProxyClient:
         response.raise_for_status()
         return response.json()
 
+    async def forward_rerank_request(
+        self,
+        request_body: dict[str, Any],
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Forward a rerank request via the cloud proxy."""
+        path = "/v1/rerank"
+        logger.debug(
+            "Proxy forward (rerank) model=%s",
+            request_body.get("model", "?"),
+            extra={"request_id": request_id},
+        )
+
+        response = await self._client.post(
+            path, json=request_body, headers={"Content-Type": "application/json"}
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def get_models(self) -> dict[str, Any]:
         """GET /api/models — full OpenRouter catalog with pricing."""
         response = await self._client.get("/api/models")

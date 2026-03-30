@@ -186,7 +186,9 @@ class ServicesScreen(Screen):
                     variant="error",
                     disabled=True,
                 )
-                yield Button("Restart Local", id="btn-restart-local", variant="warning")
+                yield Button(
+                    "Sync + Restart Local", id="btn-restart-local", variant="warning"
+                )
 
         yield LogStream(id="svc-log")
 
@@ -522,7 +524,7 @@ class ServicesScreen(Screen):
         log.clear()
         svc = self.app.service_controller  # type: ignore[attr-defined]
         summary = tee_with_summary(
-            svc.build_image(scope=scope),
+            svc.build_image(scope=scope, no_cache=True),
             operation="build",
             host="localhost",
         )

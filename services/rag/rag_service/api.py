@@ -23,8 +23,6 @@ from services.rag.models import (
     EmbedBatchResponse,
     FailedChunkItem,
     FailedExtractionResponse,
-    RerankRequest,
-    RerankResponse,
     ScopeInfo,
     ScopeRegisterRequest,
     ScopeRegisterResponse,
@@ -93,29 +91,6 @@ async def embed_batch(request: EmbedBatchRequest) -> EmbedBatchResponse:
             detail=f"Batch embedding failed: {exc}",
         )
     return EmbedBatchResponse(embeddings=embeddings)
-
-
-@router.post("/rerank", response_model=RerankResponse)
-async def rerank_endpoint(request: RerankRequest) -> RerankResponse:
-    """Score (query, passage) pairs via cross-encoder model.
-
-    Returns relevance scores for each passage. The cross-encoder sees
-    query + passage concatenated — higher quality ranking than bi-encoder
-    similarity, at the cost of not being pre-computable.
-    """
-    import asyncio
-
-    from services.rag.cross_encoder import is_available, rerank
-
-    if not is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="Cross-encoder model not available. Install sentence-transformers.",
-        )
-    scores = await asyncio.to_thread(rerank, request.query, request.passages)
-    from services.rag.cross_encoder import DEFAULT_MODEL, _model_name
-
-    return RerankResponse(scores=scores, model=_model_name or DEFAULT_MODEL)
 
 
 @router.post("/chunks_by_index", response_model=ChunksByIndexResponse)

@@ -404,6 +404,54 @@ class MasterRequestTracker:
             self.release_routing_key(request_id)
             self._remove_from_cancel_groups(request_id)
 
+    async def forward_rerank(
+        self,
+        gateway: FederatedGateway,
+        request_body: dict[str, Any],
+        model_id: str,
+        request_id: str | None = None,
+        *,
+        cancel_group: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Forward rerank request to federated gateway.
+
+        Same tracking lifecycle as `forward_embedding`.
+        """
+        if request_id is None:
+            request_id = str(uuid.uuid4())
+        remote_request_id = str(uuid.uuid4())
+        endpoint_category_normalized = EndpointCategory.RERANK.value
+
+        tracked = TrackedRequest(
+            request_id=request_id,
+            remote_id=gateway.remote_stargate_id,
+            remote_request_id=remote_request_id,
+            endpoint_category=endpoint_category_normalized,
+            compute_type="",
+        )
+        self._active[request_id] = tracked
+        if cancel_group:
+            self.register_cancel_group(cancel_group, request_id)
+
+        try:
+            response = await self._forwarder.forward_rerank_request(
+                gateway, request_body, request_id
+            )
+            tracked.state = RequestState.COMPLETED
+            return response
+
+        except asyncio.CancelledError:
+            await self._try_cancel(tracked)
+            raise
+        except Exception:
+            tracked.state = RequestState.COMPLETED
+            raise
+        finally:
+            self._active.pop(request_id, None)
+            self.release_routing_key(request_id)
+            self._remove_from_cancel_groups(request_id)
+
     def register_cancel_group(self, group_id: str, request_id: str) -> None:
         """Register request_id under a cancel group.
 

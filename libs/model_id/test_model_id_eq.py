@@ -47,15 +47,15 @@ def test_modelid_eq_other_types():
     assert result is NotImplemented
 
 
-def test_routing_layer_native():
-    """native/ prefix parsed into routing_layer, provider, and api_model_id."""
-    m = ModelId.parse("native/anthropic/claude-sonnet-4")
-    assert m.routing_layer == "native"
+def test_bare_cloud_native():
+    """Bare cloud IDs route to native provider — no routing_layer prefix."""
+    m = ModelId.parse("anthropic/claude-sonnet-4")
+    assert m.routing_layer is None
     assert m.provider == "anthropic"
     assert m.base_id == "anthropic/claude-sonnet-4"
     assert m.api_model_id == "claude-sonnet-4"
     assert m.is_cloud is True
-    assert m.original == "native/anthropic/claude-sonnet-4"
+    assert m.original == "anthropic/claude-sonnet-4"
 
 
 def test_routing_layer_openrouter():
@@ -73,7 +73,7 @@ def test_routing_layer_none_for_bare_cloud():
     m = ModelId.parse("anthropic/claude-sonnet-4-20250514")
     assert m.routing_layer is None
     assert m.provider == "anthropic"
-    assert m.api_model_id == "anthropic/claude-sonnet-4-20250514"
+    assert m.api_model_id == "claude-sonnet-4-20250514"
 
 
 def test_routing_layer_none_for_local():
@@ -86,17 +86,68 @@ def test_routing_layer_none_for_local():
 
 def test_routing_layer_identity():
     """Routing layer is not part of model identity (eq/hash)."""
-    m_native = ModelId.parse("native/anthropic/claude-sonnet-4")
+    m_openrouter = ModelId.parse("openrouter/anthropic/claude-sonnet-4")
     m_bare = ModelId.parse("anthropic/claude-sonnet-4")
-    assert m_native == m_bare
-    assert hash(m_native) == hash(m_bare)
+    assert m_openrouter == m_bare
+    assert hash(m_openrouter) == hash(m_bare)
 
 
 def test_routing_layer_preserved_by_with_context():
     """with_context() preserves routing_layer."""
-    m = ModelId.parse("native/anthropic/claude-sonnet-4")
+    m = ModelId.parse("openrouter/anthropic/claude-sonnet-4")
     m2 = m.with_context(8192)
-    assert m2.routing_layer == "native"
+    assert m2.routing_layer == "openrouter"
+
+
+def test_xai_native_bare():
+    """xAI native models are bare provider/model — no routing prefix."""
+    m = ModelId.parse("xai/grok-4-fast-reasoning")
+    assert m.routing_layer is None
+    assert m.provider == "xai"
+    assert m.base_id == "xai/grok-4-fast-reasoning"
+    assert m.api_model_id == "grok-4-fast-reasoning"
+    assert m.is_cloud is True
+
+
+def test_cloud_native_mcp_suffix():
+    """Cloud IDs with -mcp: is_mcp set, api_model_id strips provider and -mcp."""
+    m = ModelId.parse("anthropic/claude-sonnet-4-6-mcp")
+    assert m.is_mcp is True
+    assert m.provider == "anthropic"
+    assert m.base_id == "anthropic/claude-sonnet-4-6"
+    assert m.api_model_id == "claude-sonnet-4-6"
+    assert m.normalized == "anthropic/claude-sonnet-4-6-mcp"
+    assert m.is_cloud is True
+
+
+def test_cloud_mcp_distinct_from_base():
+    """Base cloud model and -mcp variant are distinct identity."""
+    base = ModelId.parse("anthropic/claude-sonnet-4-6")
+    mcp = ModelId.parse("anthropic/claude-sonnet-4-6-mcp")
+    assert base != mcp
+    assert hash(base) != hash(mcp)
+    assert base.normalized != mcp.normalized
+
+
+def test_openrouter_cloud_mcp():
+    """openrouter/ prefix preserved with -mcp on cloud id."""
+    m = ModelId.parse("openrouter/anthropic/claude-sonnet-4-6-mcp")
+    assert m.routing_layer == "openrouter"
+    assert m.is_mcp is True
+    assert m.provider == "anthropic"
+    assert m.base_id == "anthropic/claude-sonnet-4-6"
+    assert m.api_model_id == "anthropic/claude-sonnet-4-6"
+
+
+def test_local_hybrid_mcp():
+    """Local model can combine -hybrid and -mcp (mcp outermost)."""
+    m = ModelId.parse("model-8192-hybrid-mcp")
+    assert m.is_hybrid is True
+    assert m.is_mcp is True
+    assert m.base_id == "model"
+    assert m.context_length == 8192
+    assert m.normalized == "model-8192-mcp"
+    assert m.synthetic_id == "model-8192-hybrid-mcp"
 
 
 if __name__ == "__main__":
@@ -105,10 +156,15 @@ if __name__ == "__main__":
     test_modelid_hash()
     test_modelid_eq_invalid_string()
     test_modelid_eq_other_types()
-    test_routing_layer_native()
+    test_bare_cloud_native()
     test_routing_layer_openrouter()
     test_routing_layer_none_for_bare_cloud()
     test_routing_layer_none_for_local()
     test_routing_layer_identity()
     test_routing_layer_preserved_by_with_context()
+    test_xai_native_bare()
+    test_cloud_native_mcp_suffix()
+    test_cloud_mcp_distinct_from_base()
+    test_openrouter_cloud_mcp()
+    test_local_hybrid_mcp()
     print("All tests passed!")

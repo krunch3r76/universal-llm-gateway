@@ -9,8 +9,9 @@ Examples:
     >>> m.base_id           # "hermes"
     >>> m.context_length    # 16384
     >>> m.is_hybrid         # True
-    >>> m.routing_key       # "hermes" (strips -hybrid for routing)
+    >>> m.routing_key       # "hermes-16384" (strips -hybrid for routing)
     >>> m.normalized        # "hermes-16384" (strips -hybrid, keeps -cpu)
+    >>> ModelId.parse("anthropic/claude-sonnet-4-mcp").is_mcp  # True
 """
 
 from .model_id import ModelId, get_compute_type, parse_model_id

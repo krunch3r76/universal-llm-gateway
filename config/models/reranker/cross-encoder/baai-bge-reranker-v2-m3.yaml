@@ -1,0 +1,26 @@
+catalog_schema: 4
+schema: cross-encoder
+metadata:
+  name: BAAI BGE Reranker v2 M3
+  format: cross-encoder
+  family: bge-reranker
+  architecture: cross-encoder
+  parameter_count: "568M"
+  capabilities:
+    rerank: true
+    modalities:
+      input:
+        - text
+      output:
+        - text
+  description: >
+    Cross-encoder reranker model for scoring (query, passage) relevance.
+    ~550MB VRAM on GPU. Produces scalar relevance scores without text generation.
+download:
+  huggingface:
+    repo: BAAI/bge-reranker-v2-m3
+    file: null
+    verified: false
+    local_subdir: baai-bge-reranker-v2-m3
+loader:
+  trust_remote_code: true

@@ -100,7 +100,7 @@ def _run_build(node_env: dict[str, str], scope: str = "all") -> int:
         return 1
     flags = _SCOPE_FLAGS.get(scope, _SCOPE_FLAGS["all"])
     return subprocess.run(
-        [str(_BUILD_SCRIPT), *flags, "--refresh-source"],
+        [str(_BUILD_SCRIPT), *flags, "--no-cache"],
         env=_build_env(node_env),
         cwd=str(_ROOT),
     ).returncode
@@ -232,6 +232,7 @@ def _launch_stargate(node_id: str, stargate_env: dict[str, str]) -> int:
             [str(_STARGATE_SCRIPT), "debug"],
             env=stargate_env,
             cwd=str(_ROOT),
+            stdin=subprocess.DEVNULL,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -284,12 +285,17 @@ def main() -> int:
         help="Override hostname for node env lookup (default: hostname)",
     )
     parser.add_argument(
-        "--build", action="store_true", help="Build Docker image before starting"
+        "--build",
+        action="store_true",
+        help="Full no-cache rebuild of the gateway image before starting (implies source refresh)",
     )
     parser.add_argument(
         "--restart",
         action="store_true",
-        help="Stop running relay+edge, then start again (combine with --build to rebuild)",
+        help=(
+            "Stop running relay+edge, then start again; source is bind-mounted from the "
+            "repo (use --build for a full no-cache image rebuild)"
+        ),
     )
     parser.add_argument(
         "--scope",

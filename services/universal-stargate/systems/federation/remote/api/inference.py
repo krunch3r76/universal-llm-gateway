@@ -39,7 +39,7 @@ def _get_endpoint_category(endpoint_path: str) -> str:
     circular dependency.
 
     Returns:
-        "generation" or "embedding"
+        Endpoint category value (e.g. generation, embedding, rerank).
 
     Raises:
         ValueError: If endpoint path is unknown/unsupported
@@ -579,8 +579,8 @@ def create_inference_router(
             # Step 4: Forward to gateway
             stream = original_request.get("stream", False)
 
-            # Embeddings are always non-streaming
-            if endpoint == "/v1/embeddings":
+            # Embeddings and rerank are always non-streaming
+            if endpoint in ("/v1/embeddings", "/v1/rerank"):
                 stream = False
 
             if stream:

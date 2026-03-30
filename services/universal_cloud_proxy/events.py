@@ -301,21 +301,145 @@ def McpAdapterMcpToolUseSeen(  # noqa: N802
     *,
     tool_name: str,
     server_name: str,
+    correlation_id: str | None = None,
 ) -> Event:
     """Response contained an mcp_tool_use block (Anthropic-executed MCP tool)."""
-    return Event(
-        signal="mcp.adapter.tool.seen",
-        payload={"tool_name": tool_name, "server_name": server_name},
-    )
+    payload: dict[str, object] = {
+        "tool_name": tool_name,
+        "server_name": server_name,
+    }
+    if correlation_id:
+        payload["correlation_id"] = correlation_id
+    return Event(signal="mcp.adapter.tool.seen", payload=payload)
 
 
 @event_factory
 def McpAdapterToolSearchSeen(  # noqa: N802
     *,
     references_count: int,
+    correlation_id: str | None = None,
 ) -> Event:
     """Response contained a tool_search_tool_result block."""
+    payload: dict[str, object] = {"references_count": references_count}
+    if correlation_id:
+        payload["correlation_id"] = correlation_id
+    return Event(signal="mcp.adapter.search.seen", payload=payload)
+
+
+@event_factory
+def CloudproxyMcpCorrelationAssigned(  # noqa: N802
+    *,
+    correlation_id: str,
+    provider: str,
+) -> Event:
+    """Stable ID for joining cloud-proxy Anthropic handling to downstream MCP telemetry."""
     return Event(
-        signal="mcp.adapter.search.seen",
-        payload={"references_count": references_count},
+        signal="cloudproxy.mcp.correlation.assigned",
+        payload={"correlation_id": correlation_id, "provider": provider},
+    )
+
+
+@event_factory
+def CloudproxyMcpRequestStarted(  # noqa: N802
+    *,
+    correlation_id: str,
+    provider: str,
+    model: str,
+    has_mcp_servers: bool,
+    streaming: bool,
+) -> Event:
+    """Anthropic Messages request issued (MCP may be active)."""
+    return Event(
+        signal="cloudproxy.mcp.request.started",
+        payload={
+            "correlation_id": correlation_id,
+            "provider": provider,
+            "model": model,
+            "has_mcp_servers": has_mcp_servers,
+            "streaming": streaming,
+        },
+    )
+
+
+@event_factory
+def CloudproxyMcpRequestCompleted(  # noqa: N802
+    *,
+    correlation_id: str,
+    provider: str,
+    duration_s: float,
+    outcome: str,
+) -> Event:
+    """Anthropic adapter finished handling one chat request."""
+    return Event(
+        signal="cloudproxy.mcp.request.completed",
+        payload={
+            "correlation_id": correlation_id,
+            "provider": provider,
+            "duration_s": duration_s,
+            "outcome": outcome,
+        },
+    )
+
+
+@event_factory
+def CloudproxyMcpPathFailed(  # noqa: N802
+    *,
+    correlation_id: str,
+    provider: str,
+    error: str,
+    exc_type: str,
+) -> Event:
+    """Exception during Anthropic forward path (before or during streaming)."""
+    return Event(
+        signal="cloudproxy.mcp.path.failed",
+        payload={
+            "correlation_id": correlation_id,
+            "provider": provider,
+            "error": error,
+            "exc_type": exc_type,
+        },
+    )
+
+
+@event_factory
+def CloudproxyMcpStreamHeartbeat(  # noqa: N802
+    *,
+    correlation_id: str,
+    provider: str,
+    model: str,
+    idle_s: float,
+) -> Event:
+    """Anthropic streaming request emitted a keepalive during upstream silence."""
+    return Event(
+        signal="cloudproxy.mcp.stream.heartbeat",
+        payload={
+            "correlation_id": correlation_id,
+            "provider": provider,
+            "model": model,
+            "idle_s": idle_s,
+        },
+    )
+
+
+@event_factory
+def CloudproxyMcpStreamCancelled(  # noqa: N802
+    *,
+    correlation_id: str,
+    provider: str,
+    model: str,
+    duration_s: float,
+    stage: str,
+    reason: str,
+) -> Event:
+    """Anthropic streaming request was cancelled before a terminal provider response."""
+    return Event(
+        signal="cloudproxy.mcp.stream.cancelled",
+        payload={
+            "correlation_id": correlation_id,
+            "provider": provider,
+            "model": model,
+            "duration_s": duration_s,
+            "stage": stage,
+            "reason": reason,
+        },
     )

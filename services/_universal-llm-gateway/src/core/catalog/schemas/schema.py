@@ -350,7 +350,10 @@ class BaseEngineSchema(ABC):
             )
         else:
             repo = hf_info.get("repo") or model_id
-            path = repo.split("/")[-1] if "/" in repo else repo
+            if local_subdir:
+                path = local_subdir
+            else:
+                path = repo.split("/")[-1] if "/" in repo else repo
 
         quant_value = metadata.get("quant")
         quant_str = str(quant_value) if quant_value is not None else None

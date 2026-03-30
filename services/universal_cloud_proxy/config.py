@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,9 @@ import yaml
 logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path.home() / ".gateway" / "cloud-proxy.yaml"
+_WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+_SECRETS_ENV_PATH = Path.home() / ".gateway" / "secrets.env"
+_DOTENV_LOCAL_PATH = _WORKSPACE_ROOT / ".env.local"
 
 DEFAULT_PORT = 8200
 DEFAULT_HOST = "127.0.0.1"
@@ -48,6 +52,36 @@ DEFAULT_STARGATE_URL = "http://localhost:9999"
 
 
 DEFAULT_SOCKET_PATH = "/tmp/universal-protocol/cloud-proxy.sock"
+
+
+def _load_env_file(path: Path) -> dict[str, str]:
+    """Parse KEY=VALUE entries from an env file if it exists."""
+    entries: dict[str, str] = {}
+    if not path.exists():
+        return entries
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        logger.warning("Could not read env file %s: %s", path, exc)
+        return entries
+    for line in lines:
+        line = line.strip()
+        if line.startswith("export "):
+            line = line[len("export ") :]
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if key:
+                entries[key] = os.path.expandvars(value.strip())
+    return entries
+
+
+def _build_provider_env() -> dict[str, str]:
+    """Mirror service startup env precedence for passive config reads."""
+    merged = dict(os.environ)
+    merged.update(_load_env_file(_DOTENV_LOCAL_PATH))
+    merged.update(_load_env_file(_SECRETS_ENV_PATH))
+    return merged
 
 
 def _default_base_url(provider: str) -> str:
@@ -109,7 +143,9 @@ def _validate_allow_prefixes(provider: str, value: Any) -> list[str]:
     return value
 
 
-def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
+def _parse_provider(
+    entry: dict[str, Any], env: Mapping[str, str]
+) -> ProviderConfig | None:
     """Parse and validate a single provider entry. Returns None if skipped."""
     if not isinstance(entry, dict):
         raise ValueError(
@@ -128,7 +164,7 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
             raise ValueError(
                 f"providers[{provider}] must set 'api_key' (literal) or 'api_key_env' (env var name)"
             )
-        api_key = os.environ.get(api_key_env, "").strip()
+        api_key = env.get(api_key_env, "").strip()
 
     if not api_key:
         logger.warning(
@@ -188,7 +224,7 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
 
     mcp_auth_token: str | None = None
     if mcp_auth_token_env:
-        token_from_env = os.environ.get(mcp_auth_token_env, "").strip()
+        token_from_env = env.get(mcp_auth_token_env, "").strip()
         if token_from_env:
             mcp_auth_token = token_from_env
         else:
@@ -240,7 +276,11 @@ def _parse_provider(entry: dict[str, Any]) -> ProviderConfig | None:
     )
 
 
-def load_config(config_path: Path | None = None) -> CloudProxyConfig:
+def load_config(
+    config_path: Path | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> CloudProxyConfig:
     """Load cloud proxy config from YAML file.
 
     Returns a config with empty providers list if the file is missing
@@ -325,6 +365,8 @@ def load_config(config_path: Path | None = None) -> CloudProxyConfig:
                 stargate_url_val,
             )
 
+    provider_env = env if env is not None else _build_provider_env()
+
     raw_providers = raw.get("providers", [])
     if not isinstance(raw_providers, list):
         logger.error("providers must be a list")
@@ -334,7 +376,7 @@ def load_config(config_path: Path | None = None) -> CloudProxyConfig:
 
     providers: list[ProviderConfig] = []
     for entry in raw_providers:
-        parsed = _parse_provider(entry)
+        parsed = _parse_provider(entry, provider_env)
         if parsed is not None:
             providers.append(parsed)
 

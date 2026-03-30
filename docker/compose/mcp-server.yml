@@ -69,16 +69,6 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - XAI_API_KEY=${XAI_API_KEY:-}
       - MCP_SERVER_URL=${MCP_SERVER_URL:-}
-      - LIGHTER_BASE_URL=${LIGHTER_BASE_URL:-https://mainnet.zklighter.elliot.ai}
-      - LIGHTER_API_KEY_INDEX=${LIGHTER_API_KEY_INDEX:-}
-      - CLAUDEBURST_HOST=${CLAUDEBURST_HOST:-}
-      - CLAUDEBURST_PORT=${CLAUDEBURST_PORT:-8890}
-      # Maintainer-only temporary path: this hardcoded ClaudeBurst observability
-      # target will be removed once generic local target config is implemented.
-      - CLAUDEBURST_EVENTS_QUERY_HOST=${CLAUDEBURST_EVENTS_QUERY_HOST:-}
-      - CLAUDEBURST_EVENTS_QUERY_PORT=${CLAUDEBURST_EVENTS_QUERY_PORT:-7102}
-      - CLAUDEBURST_PERPS_HOST=${CLAUDEBURST_PERPS_HOST:-}
-      - CLAUDEBURST_PERPS_PORT=${CLAUDEBURST_PERPS_PORT:-8891}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:

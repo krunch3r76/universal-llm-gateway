@@ -1,7 +1,10 @@
 """
 Core ModelId class for parsing and representing model identifiers.
 
-Pattern: {base_model_id}[-{context}][-hybrid][-cpu]
+Pattern: {base_model_id}[-{context}][-hybrid][-cpu][-mcp]
+
+Optional ``-mcp`` (outermost, stripped first) opts into remote MCP for cloud
+and local IDs; it is identity-bearing in ``normalized`` / ``routing_key``.
 
 Examples:
     - 'hermes3-llama-3.1-70b' → base only
@@ -19,7 +22,7 @@ from dataclasses import dataclass
 _CONTEXT_PATTERN = re.compile(r"-(\d{3,6})$")
 
 # Known routing layer prefixes — tell the system HOW to reach the provider
-_ROUTING_PREFIXES = frozenset({"native", "openrouter"})
+_ROUTING_PREFIXES = frozenset({"openrouter"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +34,8 @@ class ModelId:
         - routing_key includes context (different contexts = different models)
         - normalized is consistent for dict keys (strips -hybrid, keeps -cpu)
         - Two ModelIds with same routing_key represent the same loadable variant
-        - Cloud IDs (containing '/') skip suffix parsing entirely
+        - Cloud IDs skip local -cpu/-hybrid/context parsing; ``-mcp`` is
+          stripped before cloud detection.
 
     Usage:
         model = ModelId.parse("model-8192-hybrid")
@@ -63,6 +67,9 @@ class ModelId:
     is_hybrid: bool
     """True if model ID ends with -hybrid suffix."""
 
+    is_mcp: bool = False
+    """True if model ID ends with -mcp suffix (explicit remote MCP opt-in)."""
+
     backend_type: str | None = None
     """Backend type: None (local), 'federated', 'cloud_api', 'vps'."""
 
@@ -70,12 +77,14 @@ class ModelId:
     """Cloud provider name (e.g., 'anthropic'). None for local models."""
 
     routing_layer: str | None = None
-    """Routing prefix: 'native' for direct API, 'openrouter' for cost proxy.
+    """Routing prefix: 'openrouter' when routed via OpenRouter, None for
+    direct native providers and local models.
 
-    Parsed from model ID strings like ``native/anthropic/claude-sonnet-4``
-    or ``openrouter/anthropic/claude-3.5-sonnet``.  None when no routing
-    prefix is present.  Not part of model identity — excluded from
-    ``normalized``, ``__eq__``, and ``__hash__``.
+    Parsed from model ID strings like ``openrouter/anthropic/claude-3.5-sonnet``.
+    Bare cloud IDs (``anthropic/claude-sonnet-4``, ``xai/grok-4``) have
+    ``routing_layer=None`` and route to the native provider directly.
+    Not part of model identity — excluded from ``normalized``, ``__eq__``,
+    and ``__hash__``.
     """
 
     @classmethod
@@ -84,9 +93,10 @@ class ModelId:
         Parse a model ID string into a ModelId object.
 
         Parse order (outermost to innermost):
-        1. Device suffix (-cpu)
-        2. Hybrid suffix (-hybrid)
-        3. Context length (-NNNN)
+        0. MCP opt-in suffix (-mcp), cloud and local
+        1. Routing prefix (openrouter/)
+        2. Cloud branch (contains /) or local: device (-cpu), hybrid (-hybrid),
+           context (-NNNN)
 
         Args:
             model_id: Raw model ID string or ModelId object
@@ -110,7 +120,14 @@ class ModelId:
 
         original = model_id_str
 
-        # Strip known routing prefix (native/, openrouter/) before parsing.
+        is_mcp = False
+        if model_id_str.endswith("-mcp"):
+            if len(model_id_str) <= 4:
+                raise ValueError("Model ID cannot be only '-mcp'")
+            is_mcp = True
+            model_id_str = model_id_str[:-4]
+
+        # Strip known routing prefix (openrouter/) before parsing.
         routing_layer: str | None = None
         if "/" in model_id_str:
             first_segment = model_id_str.split("/", 1)[0]
@@ -119,7 +136,7 @@ class ModelId:
                 model_id_str = model_id_str[len(first_segment) + 1 :]
 
         # Cloud model IDs contain '/' (e.g., 'anthropic/claude-sonnet-4-20250514').
-        # Skip all suffix parsing — the ID is opaque and pass-through.
+        # Opaque pass-through except -mcp (already stripped from base_id string).
         if "/" in model_id_str:
             provider_prefix = model_id_str.split("/", 1)[0]
             return cls(
@@ -128,6 +145,7 @@ class ModelId:
                 context_length=None,
                 is_cpu=False,
                 is_hybrid=False,
+                is_mcp=is_mcp,
                 backend_type="cloud_api",
                 provider=provider_prefix,
                 routing_layer=routing_layer,
@@ -159,6 +177,7 @@ class ModelId:
             context_length=context_length,
             is_cpu=is_cpu,
             is_hybrid=is_hybrid,
+            is_mcp=is_mcp,
         )
 
     @property
@@ -169,7 +188,7 @@ class ModelId:
         Invariant: Two models with same routing_key represent the same
         loadable model variant. Different context lengths are different variants.
 
-        Format: "{base_id}[-{context}][-cpu]"
+        Format: "{base_id}[-{context}][-cpu][-mcp]"
         Note: -hybrid is stripped (hybrid and non-hybrid share routing key)
         Note: Context length IS included (different contexts = different resources)
         """
@@ -183,7 +202,7 @@ class ModelId:
         Strips -hybrid suffix (informational only).
         Preserves -cpu suffix (affects resource allocation).
 
-        Format: "{base_id}[-{context}][-cpu]"
+        Format: "{base_id}[-{context}][-cpu][-mcp]"
         """
         parts = [self.base_id]
         if self.context_length is not None:
@@ -191,6 +210,8 @@ class ModelId:
         result = "-".join(parts)
         if self.is_cpu:
             result += "-cpu"
+        if self.is_mcp:
+            result += "-mcp"
         return result
 
     @property
@@ -198,7 +219,8 @@ class ModelId:
         """
         ID for catalog lookups (base + context for config resolution).
 
-        Format: "{base_id}-{context}" or "{base_id}"
+        Format: "{base_id}-{context}" or "{base_id}" (no ``-mcp``; use
+        ``normalized`` / ``original`` for MCP-specific catalog entries).
         """
         if self.context_length is not None:
             return f"{self.base_id}-{self.context_length}"
@@ -209,7 +231,7 @@ class ModelId:
         """
         Full synthetic ID including all suffixes.
 
-        Format: "{base_id}-{context}[-hybrid][-cpu]"
+        Format: "{base_id}-{context}[-hybrid][-cpu][-mcp]"
         """
         parts = [self.base_id]
         if self.context_length is not None:
@@ -219,18 +241,23 @@ class ModelId:
             result += "-hybrid"
         if self.is_cpu:
             result += "-cpu"
+        if self.is_mcp:
+            result += "-mcp"
         return result
 
     @property
     def api_model_id(self) -> str:
         """Model ID to send to the upstream API.
 
-        For ``native/`` routing, strips the provider prefix so the upstream
-        receives just the model name (e.g. ``claude-sonnet-4``).  For
-        ``openrouter/`` routing and unrouted models, returns ``base_id``
-        as-is (OpenRouter expects ``provider/model``).
+        For bare cloud models (direct native provider), strips the provider
+        prefix so the upstream receives just the model name (e.g.
+        ``claude-sonnet-4``).  For ``openrouter/`` routing, returns
+        ``base_id`` as-is (OpenRouter expects ``provider/model``). Local
+        models also return ``base_id`` unchanged.
         """
-        if self.routing_layer == "native" and self.provider:
+        if self.routing_layer == "openrouter":
+            return self.base_id
+        if self.provider:
             prefix = f"{self.provider}/"
             if self.base_id.startswith(prefix):
                 return self.base_id[len(prefix) :]
@@ -312,6 +339,7 @@ class ModelId:
             context_length=context,
             is_cpu=self.is_cpu,
             is_hybrid=self.is_hybrid,
+            is_mcp=self.is_mcp,
             backend_type=self.backend_type,
             provider=self.provider,
             routing_layer=self.routing_layer,
@@ -327,6 +355,7 @@ class ModelId:
             context_length=self.context_length,
             is_cpu=cpu,
             is_hybrid=hybrid,
+            is_mcp=self.is_mcp,
             backend_type=self.backend_type,
             provider=self.provider,
             routing_layer=self.routing_layer,
@@ -359,6 +388,8 @@ class ModelId:
             parts.append("cpu=True")
         if self.is_hybrid:
             parts.append("hybrid=True")
+        if self.is_mcp:
+            parts.append("mcp=True")
         if self.backend_type:
             parts.append(f"backend={self.backend_type}")
         if self.provider:

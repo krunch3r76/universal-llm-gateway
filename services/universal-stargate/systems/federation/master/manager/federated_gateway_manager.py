@@ -312,6 +312,78 @@ class FederatedGatewayManager(Sequential):
                 seeded += 1
         return seeded
 
+    def _cache_catalog_for_gateway(self, gateway_id: str, gw: FederatedGateway) -> None:
+        """Persist last-known catalog for reconnect flows that restore remote edges."""
+        if gw.available_models:
+            self._catalog_cache[gateway_id] = _CatalogCacheEntry(
+                available_models=gw.available_models,
+                model_resources=dict(gw.model_resources),
+                activated_models=gw.activated_models,
+                activated_contexts=dict(gw.activated_contexts),
+            )
+
+    def _remove_gateway(
+        self,
+        gateway_id: str,
+        gw: FederatedGateway,
+        *,
+        cache_catalog: bool,
+    ) -> None:
+        """Remove one gateway and emit the same catalog-shrink signals."""
+        if cache_catalog:
+            self._cache_catalog_for_gateway(gateway_id, gw)
+        if self._capacity_pool:
+            self._capacity_pool.remove_gateway(gateway_id)
+            logger.debug(f"📊 Capacity pool: removed gateway {gateway_id}")
+        self.clear_inference_bans(gateway_id)
+        del self._gateways[gateway_id]
+
+        if not self._event_bus:
+            return
+
+        from src.scheduling.events import FederationGatewayCatalogChanged
+        from src.scheduling.events.federation_signaling import FederatedGatewayRemoved
+
+        asyncio.create_task(
+            self._event_bus.publish_async_nowait(
+                FederatedGatewayRemoved(
+                    gateway_id=gateway_id,
+                    remote_id=gw.remote_stargate_id,
+                )
+            )
+        )
+        if gw.available_models:
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    FederationGatewayCatalogChanged(
+                        gateway_id=gateway_id,
+                        old_model_count=len(gw.available_models),
+                        new_model_count=0,
+                    )
+                )
+            )
+
+    @sequential
+    async def remove_gateways(
+        self,
+        gateway_ids: list[str],
+        *,
+        cache_catalog: bool = False,
+    ) -> list[str]:
+        """Remove explicit gateway IDs and wake waiters after the catalog shrinks."""
+        removed: list[str] = []
+        for gateway_id in gateway_ids:
+            gw = self._gateways.get(gateway_id)
+            if gw is None:
+                continue
+            self._remove_gateway(gateway_id, gw, cache_catalog=cache_catalog)
+            removed.append(gateway_id)
+
+        if removed:
+            logger.info("Removed %d gateways: %s", len(removed), removed)
+            await self.notify_state_change()
+        return removed
+
     @sequential
     async def register_cloud_gateway(self, gateway: FederatedGateway) -> None:
         """Register a config-driven cloud gateway (virtual, no telemetry path).
@@ -1509,32 +1581,8 @@ class FederatedGatewayManager(Sequential):
         for gateway_id in list(self._gateways.keys()):
             gw = self._gateways[gateway_id]
             if gw.remote_stargate_id == remote_stargate_id:
-                if gw.available_models:
-                    self._catalog_cache[gateway_id] = _CatalogCacheEntry(
-                        available_models=gw.available_models,
-                        model_resources=dict(gw.model_resources),
-                        activated_models=gw.activated_models,
-                        activated_contexts=dict(gw.activated_contexts),
-                    )
-                if self._capacity_pool:
-                    self._capacity_pool.remove_gateway(gateway_id)
-                    logger.debug(f"📊 Capacity pool: removed gateway {gateway_id}")
-                self.clear_inference_bans(gateway_id)
-                del self._gateways[gateway_id]
+                self._remove_gateway(gateway_id, gw, cache_catalog=True)
                 removed.append(gateway_id)
-                if self._event_bus:
-                    from src.scheduling.events.federation_signaling import (
-                        FederatedGatewayRemoved,
-                    )
-
-                    asyncio.create_task(
-                        self._event_bus.publish_async_nowait(
-                            FederatedGatewayRemoved(
-                                gateway_id=gateway_id,
-                                remote_id=remote_stargate_id,
-                            )
-                        )
-                    )
 
         if removed:
             logger.info(f"Removed {len(removed)} gateways from {remote_stargate_id}")

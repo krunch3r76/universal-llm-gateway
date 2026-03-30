@@ -319,7 +319,7 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
         if ctl.build_running:
             raise RuntimeError("Gateway build already in progress")
         lines: list[str] = []
-        async for line in ctl.build_image():
+        async for line in ctl.build_image(no_cache=True):
             lines.append(line)
         last = lines[-1] if lines else "Build completed."
         if "FAILED" in last or last.lower().startswith("build failed"):

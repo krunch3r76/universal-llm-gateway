@@ -173,7 +173,7 @@ request.routed
   └─> request.queued (if queued)
       └─> request.processing
           └─> request.inference.started
-          └─> request.completed | request.failed | request.timed.out
+          └─> request.completed | request.failed | request.timed.out | request.client.disconnected
 ```
 
 ### Capacity & Slot Lifecycle
@@ -896,7 +896,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `request.failed` | `request_id`, `error` | `correlation_id` |
 | `request.timed.out` | `request_id` | `correlation_id`, `timeout_ms` |
 | `request.profile.resolved` | `request_id`, `model_id`, `profile_name` | `correlation_id` |
-| `request.client.disconnected` | `request_id`, `model_id`, `hop` | `correlation_id` |
+| `request.client.disconnected` | `request_id`, `model_id`, `hop` | `correlation_id`, `gateway_url`, `duration` |
 | `scheduler.routing.failed` | `model_id`, `candidate_count`, `evaluation_time_ms`, `timestamp`, `reason` | `original_model_id`, `request_id` |
 | `scheduler.routing.queued` | `request_id`, `model_id`, `constraint`, `timestamp` | `gateway_id` |
 | `scheduler.routing.dequeued` | `request_id`, `model_id`, `gateway_id`, `wait_ms`, `timestamp` | - |
@@ -1610,8 +1610,8 @@ MCP adapter signals track the v1→v2 migration and MCP tool execution visibilit
 |---|---|---|
 | `mcp.adapter.v2.configured` | First request where `mcp_v2=true` builds toolset | `provider`, `server_name`, `always_loaded_count`, `deferred_count` |
 | `mcp.adapter.request.shape` | Every MCP request (v1 or v2) | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` |
-| `mcp.adapter.tool.seen` | Response contains `mcp_tool_use` block | `tool_name`, `server_name` |
-| `mcp.adapter.search.seen` | Response contains `tool_search_tool_result` | `references_count` |
+| `mcp.adapter.tool.seen` | Response contains `mcp_tool_use` block | `tool_name`, `server_name`, `correlation_id` (optional) |
+| `mcp.adapter.search.seen` | Response contains `tool_search_tool_result` | `references_count`, `correlation_id` (optional) |
 
 ### Invariants
 
@@ -1677,6 +1677,22 @@ mcp.adapter.request.shape (proxy sends request with mcp_v2 toolset)
       → mcp.adapter.search.seen (proxy sees tool search result)
 ```
 
+## cloudproxy.mcp.*
+
+Anthropic adapter in universal cloud proxy (`source: "universal-cloud-proxy"` via
+event bus debug broadcaster). Join to MCP server `mcp.transport.*` / `mcp.request.*`
+using `correlation_id` and timestamp; optional header `X-Cloudproxy-Correlation-Id`
+is sent upstream and may appear on MCP ingress when the provider forwards it.
+
+| Signal | Payload fields | Description |
+|---|---|---|
+| `cloudproxy.mcp.correlation.assigned` | `correlation_id`, `provider` | UUID assigned for one Messages request |
+| `cloudproxy.mcp.request.started` | `correlation_id`, `provider`, `model`, `has_mcp_servers`, `streaming` | About to POST to Anthropic |
+| `cloudproxy.mcp.request.completed` | `correlation_id`, `provider`, `duration_s`, `outcome` | Adapter finished (`outcome`: `success` \| `error` \| `cancelled`) |
+| `cloudproxy.mcp.path.failed` | `correlation_id`, `provider`, `error`, `exc_type` | Exception during forward/stream |
+| `cloudproxy.mcp.stream.heartbeat` | `correlation_id`, `provider`, `model`, `idle_s` | Idle keepalive emitted while waiting for Anthropic stream output |
+| `cloudproxy.mcp.stream.cancelled` | `correlation_id`, `provider`, `model`, `duration_s`, `stage`, `reason` | Downstream cancelled/disconnected before stream completion |
+
 ## MCP Server Signals
 
 The internet-facing MCP server (`source: "mcp-server"`) publishes to the
@@ -1684,9 +1700,23 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 
 | Signal | Payload fields | Description |
 |---|---|---|
+| `mcp.auth.admitted` | `client_ip`, `client_port`, `auth_mode`, `path`, `user_agent`, optional `oauth_client_id` | Request passed auth — source IP for firewall auditing |
+| `mcp.request.unauthorized` | `client_ip`, `client_port`, `path`, `user_agent`, `reason` | Request rejected by auth — rejected source IP |
 | `mcp.request.started` | `method`, `client_ip`, `mcp_method`, `auth_mode` | HTTP request received at `/mcp` |
 | `mcp.request.completed` | `method`, `client_ip`, `duration_s`, `auth_mode` | Request completed normally |
 | `mcp.request.failed` | `method`, `client_ip`, `duration_s`, `error`, `exc_type`, `auth_mode` | Request raised an exception |
+| `mcp.transport.request.started` | `transport` (`https`\|`stdio`), `method`, `client_ip`, `mcp_method`, `auth_mode`, optional `cloudproxy_correlation_id`, `jsonrpc_id`, `tool_name` | Transport-level request start |
+| `mcp.transport.stream.opened` | `transport`, `client_ip`, optional `cloudproxy_correlation_id`, `jsonrpc_id`, `tool_name`, `mcp_method`, `auth_mode` | First response body bytes sent (HTTPS) |
+| `mcp.transport.request.completed` | `transport`, `client_ip`, `duration_s`, `auth_mode`, `response_bytes`, optional `cloudproxy_correlation_id`, `jsonrpc_id`, `tool_name` | Transport-level normal completion |
+| `mcp.transport.request.failed` | `transport`, `client_ip`, `duration_s`, `error`, `exc_type`, `auth_mode`, `response_bytes`, optional fields as above | Transport-level failure |
+| `mcp.transport.sse.session.started` | `transport`, `channel` | SSE worker began streaming |
+| `mcp.transport.sse.session.ended` | `transport`, `channel`, `duration_s` | SSE stream finished cleanly |
+| `mcp.transport.sse.session.aborted` | `transport`, `channel`, `duration_s`, `error`, `exc_type` | SSE stream aborted |
+| `mcp.toolprogress.started` | `tool_name`, context fields (`pipeline`, `op`, `inner_tool`, …) | Long-running tool entered |
+| `mcp.toolprogress.phase` | `tool_name`, `phase`, … | Milestone within a tool |
+| `mcp.toolprogress.heartbeat` | `tool_name`, `phase`, … | Mid-flight still-alive (timer) |
+| `mcp.toolprogress.completed` | `tool_name`, `duration_s`, … | Tool finished successfully |
+| `mcp.toolprogress.failed` | `tool_name`, `duration_s`, `error`, … | Tool failed |
 | `mcp.profile.bound` | `profile`, `auth_mode` | Auth middleware mapped request token to profile |
 | `mcp.profile.rejected` | `reason` | Profile admission rejected token/profile mapping |
 | `mcp.profile.tool.denied` | `profile`, `tool`, `entrypoint`, `reason` | Profile policy denied a direct or dispatch tool |
@@ -1737,17 +1767,18 @@ All signals: `role="observation"`, `scope="global"`.
 
 ## MCP Stdio Proxy Signals
 
-Fallback-only stdio proxy (`source: "mcp-stdio-proxy"`) emits transport-level
-signals. These remain documented while proxy fallback remains supported.
+Fallback-only stdio proxy (`source: "mcp-stdio-proxy"`) emits `mcp.transport.*`
+signals (`transport=stdio`). Supersedes legacy `proxy.*` names.
 
 | Signal | Payload fields | Description |
 |---|---|---|
-| `proxy.started` | `watchdog_s`, `socket_s`, `max_inflight`, `mcp_url` | Proxy process initialized |
-| `proxy.request.started` | `msg_id`, `mcp_method`, `is_notification` | JSON-RPC message accepted for relay |
-| `proxy.request.completed` | `msg_id`, `mcp_method`, `duration_s` | Request relay completed |
-| `proxy.request.error` | `msg_id`, `mcp_method`, `duration_s`, `error`, `error_type` | Request relay failed |
-| `proxy.request.timeout` | `msg_id`, `mcp_method`, `duration_s`, `watchdog_s` | Watchdog timeout fired |
-| `proxy.heartbeat.forwarded` | `msg_id`, `mcp_method`, `count` | SSE heartbeat forwarded as progress |
+| `mcp.transport.stdio.started` | `transport`, `watchdog_s`, `socket_s`, `max_inflight`, `mcp_url` | Proxy process initialized |
+| `mcp.transport.request.started` | `transport`, `msg_id`, `mcp_method`, `is_notification` | JSON-RPC message accepted for relay |
+| `mcp.transport.stream.opened` | `transport`, `msg_id`, `mcp_method`, `http_status` | Upstream HTTP response opened |
+| `mcp.transport.request.completed` | `transport`, `msg_id`, `mcp_method`, `duration_s` | Request relay completed |
+| `mcp.transport.request.failed` | `transport`, `msg_id`, `mcp_method`, `duration_s`, `error`, `error_type` | Request relay failed |
+| `mcp.transport.request.timedout` | `transport`, `msg_id`, `mcp_method`, `duration_s`, `watchdog_s` | Watchdog timeout fired |
+| `mcp.transport.heartbeat.forwarded` | `transport`, `msg_id`, `mcp_method`, `count` | SSE heartbeat forwarded as progress |
 
 ### OAuth Signals
 

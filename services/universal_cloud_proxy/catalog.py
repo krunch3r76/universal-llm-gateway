@@ -90,7 +90,8 @@ class CatalogManager:
         self,
         providers: list[ProviderConfig],
         adapters: dict[str, ProviderAdapter],
-        on_provider_catalog_refreshed: Callable[[str, int], Awaitable[None]] | None = None,
+        on_provider_catalog_refreshed: Callable[[str, int], Awaitable[None]]
+        | None = None,
         on_provider_catalog_refresh_failed: Callable[[str, str], Awaitable[None]]
         | None = None,
     ) -> None:
@@ -166,7 +167,9 @@ class CatalogManager:
         except httpx.HTTPError as exc:
             logger.error("Failed to fetch models from %s: %s", config.provider, exc)
             if self._on_provider_catalog_refresh_failed is not None:
-                await self._on_provider_catalog_refresh_failed(config.provider, str(exc))
+                await self._on_provider_catalog_refresh_failed(
+                    config.provider, str(exc)
+                )
             return False
 
         models: list[CatalogModel] = []
@@ -181,20 +184,31 @@ class CatalogManager:
                     continue
 
             pricing = entry.get("pricing") or {}
-            models.append(
-                CatalogModel(
-                    id=mid,
-                    provider=config.provider,
-                    max_concurrent=config.max_concurrent,
-                    prompt_cost_per_m=_per_million(pricing, "prompt"),
-                    completion_cost_per_m=_per_million(pricing, "completion"),
-                    context_length=int(
-                        entry.get("context_length", entry.get("max_context_tokens", 0))
-                        or 0
-                    ),
-                    name=str(entry.get("name", entry.get("display_name", mid))),
-                )
+            base_model = CatalogModel(
+                id=mid,
+                provider=config.provider,
+                max_concurrent=config.max_concurrent,
+                prompt_cost_per_m=_per_million(pricing, "prompt"),
+                completion_cost_per_m=_per_million(pricing, "completion"),
+                context_length=int(
+                    entry.get("context_length", entry.get("max_context_tokens", 0)) or 0
+                ),
+                name=str(entry.get("name", entry.get("display_name", mid))),
             )
+            models.append(base_model)
+            if config.mcp_server_url and not mid.endswith("-mcp"):
+                mcp_id = f"{mid}-mcp"
+                models.append(
+                    CatalogModel(
+                        id=mcp_id,
+                        provider=config.provider,
+                        max_concurrent=config.max_concurrent,
+                        prompt_cost_per_m=base_model.prompt_cost_per_m,
+                        completion_cost_per_m=base_model.completion_cost_per_m,
+                        context_length=base_model.context_length,
+                        name=f"{base_model.name} (MCP)" if base_model.name else mcp_id,
+                    )
+                )
 
         self._catalogs[config.provider] = ProviderCatalog(
             provider=config.provider,
@@ -214,7 +228,9 @@ class CatalogManager:
         )
         return True
 
-    async def _fetch_provider_with_startup_retries(self, config: ProviderConfig) -> None:
+    async def _fetch_provider_with_startup_retries(
+        self, config: ProviderConfig
+    ) -> None:
         """Retry transient startup fetch failures before leaving a provider empty."""
         for attempt in range(1, _STARTUP_FETCH_ATTEMPTS + 1):
             if await self._fetch_provider(config):

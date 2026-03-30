@@ -24,6 +24,7 @@ from auth_middleware import AuthMiddleware
 from fastmcp import FastMCP
 from mcp_events import monotonic_now, record
 from mcp_request_middleware import McpRequestEventsMiddleware
+from mcp_toolprogress import toolprogress_begin, toolprogress_end
 from oauth_config import OAuthServerConfig, load_oauth_config
 from oauth_routes import build_oauth_routes
 from oauth_service import OAuthService
@@ -34,9 +35,7 @@ from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tools.agent_bus import register_agent_bus_tools
 from tools.agent_consult import register_agent_consult_tools
-from tools.bot_control import register_bot_control_tools
 from tools.browser import register_browser_tools
-from tools.claudeburst import register_claudeburst_tools
 from tools.context import register_context_tools
 from tools.cortex import register_cortex_tools
 from tools.cortex_v2 import register_cortex_v2_tools
@@ -47,8 +46,8 @@ from tools.finance import register_finance_tools
 from tools.finance_ingest import register_finance_ingest_tools
 from tools.finance_reconcile import register_finance_reconcile_tools
 from tools.finance_smart_ingest import register_finance_smart_ingest_tools
+from tools.frontier import register_frontier_tools
 from tools.ingest_binary import register_ingest_binary_tools
-from tools.lighter import register_lighter_tools
 from tools.llm import register_llm_tools
 from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
@@ -129,6 +128,11 @@ def _patch_sse_lifecycle_events() -> None:
     async def _stream_with_events(self: EventSourceResponse, send: Send) -> None:
         t0 = monotonic_now()
         record("mcp.sse.stream.started")
+        record(
+            "mcp.transport.sse.session.started",
+            transport="https",
+            channel="sse",
+        )
         try:
             await _orig_stream(self, send)
         except Exception as exc:
@@ -137,6 +141,14 @@ def _patch_sse_lifecycle_events() -> None:
                 "mcp.sse.stream.aborted",
                 duration_s=round(duration, 3),
                 reason=str(exc),
+                exc_type=type(exc).__name__,
+            )
+            record(
+                "mcp.transport.sse.session.aborted",
+                transport="https",
+                channel="sse",
+                duration_s=round(duration, 3),
+                error=str(exc),
                 exc_type=type(exc).__name__,
             )
             logger.warning(
@@ -152,6 +164,12 @@ def _patch_sse_lifecycle_events() -> None:
                 "mcp.sse.stream.ended",
                 duration_s=round(duration, 3),
                 reason="clean",
+            )
+            record(
+                "mcp.transport.sse.session.ended",
+                transport="https",
+                channel="sse",
+                duration_s=round(duration, 3),
             )
             # Only log streams that did real work; sub-100ms = ListTools handshake.
             if duration >= 0.1:
@@ -232,11 +250,10 @@ _PRIMARY_TOOLS: set[str] = {
     # Cortex (dispatch-style + boot)
     "cortex",
     "cortex_boot",
+    # LLM
+    "frontier_generate",
     # RAG (consolidated)
     "rag",
-    # Trading (consolidated)
-    "lighter",
-    "bot_control",
     # Response size guard
     "retrieve",
 }
@@ -284,9 +301,7 @@ def _build_server() -> FastMCP:
     register_cortex_tools(mcp)
     register_cortex_v2_tools(mcp)
     register_llm_tools(mcp)
-    register_lighter_tools(mcp)
-    register_bot_control_tools(mcp)
-    register_claudeburst_tools(mcp)
+    register_frontier_tools(mcp)
 
     @mcp.tool()
     def health() -> dict[str, str]:
@@ -296,7 +311,9 @@ def _build_server() -> FastMCP:
     try:
         register_response_guard(mcp)
     except Exception:
-        logger.exception("Failed to initialize response size guard — proceeding without it")
+        logger.exception(
+            "Failed to initialize response size guard — proceeding without it"
+        )
         record("mcp.response.guard.init_failed", error="see server logs")
 
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
@@ -461,19 +478,27 @@ def _build_server() -> FastMCP:
         if fn is None:
             return {"error": f"RAG tool {tool_name!r} not available"}
 
+        t_prog, prog_timer = toolprogress_begin("rag", op=op)
+        err: str | None = None
         try:
-            args = _json.loads(arguments)
-            if not isinstance(args, dict):
-                return {
-                    "error": f"arguments must be a JSON object, got {type(args).__name__}"
-                }
-        except _json.JSONDecodeError as exc:
-            return {"error": f"Invalid arguments JSON: {exc}"}
+            try:
+                args = _json.loads(arguments)
+                if not isinstance(args, dict):
+                    return {
+                        "error": f"arguments must be a JSON object, got {type(args).__name__}"
+                    }
+            except _json.JSONDecodeError as exc:
+                return {"error": f"Invalid arguments JSON: {exc}"}
 
-        result = fn(**args)
-        if asyncio.iscoroutine(result):
-            result = await result
-        return result
+            result = fn(**args)
+            if asyncio.iscoroutine(result):
+                result = await result
+            return result
+        except Exception as exc:
+            err = str(exc)
+            raise
+        finally:
+            toolprogress_end(t_prog, prog_timer, "rag", error=err, op=op)
 
     @mcp.tool()
     async def dispatch(tool: str, arguments: str = "{}") -> Any:
@@ -534,7 +559,8 @@ def _build_server() -> FastMCP:
             sqlite_list_databases() — list configured DBs
           LLM generation:
             llm_generate(messages, system?, model?, max_tokens?) — generate text
-                via Anthropic API with server-side credentials
+                via native cloud API (Anthropic / xAI / OpenAI) with server-side
+                credentials; returns {content, model, usage, provider}
           Finance:
             finance_extract_pdf(path) — extract tables + text from a PDF via pdfplumber.
                 Returns per-page tables (column-aligned) and full text. Best for bank/CC statements.

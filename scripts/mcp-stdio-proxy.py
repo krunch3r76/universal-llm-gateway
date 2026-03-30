@@ -281,6 +281,7 @@ _QueueItem = (
     tuple[Literal["heartbeat"], int]
     | tuple[Literal["result"], str | None]
     | tuple[Literal["error"], Exception]
+    | tuple[Literal["stream_opened"], int]
 )
 
 
@@ -307,6 +308,7 @@ def _post_worker(
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=_SOCKET_TIMEOUT) as resp:
+            result_queue.put(("stream_opened", resp.status))
             if resp.status == 202:
                 result_queue.put((_RESULT, None))
                 return
@@ -361,7 +363,8 @@ def _handle_message(
     mcp_method = msg.get("method")
 
     _events.emit(
-        "proxy.request.started",
+        "mcp.transport.request.started",
+        transport="stdio",
         msg_id=msg_id,
         mcp_method=mcp_method,
         is_notification=is_notification,
@@ -414,7 +417,8 @@ def _post_with_watchdog(
         if remaining <= 0:
             duration = time.monotonic() - t0
             _events.emit(
-                "proxy.request.timeout",
+                "mcp.transport.request.timedout",
+                transport="stdio",
                 msg_id=msg_id,
                 mcp_method=mcp_method,
                 duration_s=round(duration, 3),
@@ -430,17 +434,28 @@ def _post_with_watchdog(
             if msg_id is not None:
                 _emit_progress(msg_id, value)
             _events.emit(
-                "proxy.heartbeat.forwarded",
+                "mcp.transport.heartbeat.forwarded",
+                transport="stdio",
                 msg_id=msg_id,
                 mcp_method=mcp_method,
                 count=value,
             )
             deadline = time.monotonic() + _WATCHDOG_TIMEOUT
             continue
+        if kind == "stream_opened":
+            _events.emit(
+                "mcp.transport.stream.opened",
+                transport="stdio",
+                msg_id=msg_id,
+                mcp_method=mcp_method,
+                http_status=value,
+            )
+            continue
         elif kind == _RESULT:
             duration = time.monotonic() - t0
             _events.emit(
-                "proxy.request.completed",
+                "mcp.transport.request.completed",
+                transport="stdio",
                 msg_id=msg_id,
                 mcp_method=mcp_method,
                 duration_s=round(duration, 3),
@@ -449,7 +464,8 @@ def _post_with_watchdog(
         elif kind == _ERROR:
             duration = time.monotonic() - t0
             _events.emit(
-                "proxy.request.error",
+                "mcp.transport.request.failed",
+                transport="stdio",
                 msg_id=msg_id,
                 mcp_method=mcp_method,
                 duration_s=round(duration, 3),
@@ -472,7 +488,8 @@ def main() -> None:
         raise SystemExit(2) from exc
 
     _events.emit(
-        "proxy.started",
+        "mcp.transport.stdio.started",
+        transport="stdio",
         watchdog_s=_WATCHDOG_TIMEOUT,
         socket_s=_SOCKET_TIMEOUT,
         max_inflight=_MAX_INFLIGHT,

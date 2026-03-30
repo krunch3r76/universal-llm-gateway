@@ -93,13 +93,25 @@ async def run_service(
     query_sock: str = "/tmp/universal-protocol/events-query.sock",
     retention_days: int = 7,
     max_sessions: int = 2,
+    persist: bool = True,
     tcp_enabled: bool = False,
     tcp_ingest_port: int = 7101,
     tcp_query_port: int = 7102,
     query_sock_mode: int = _DEFAULT_QUERY_SOCK_MODE,
+    bridge_upstream_sock: str | None = None,
+    bridge_origin_node: str | None = None,
 ) -> None:
-    """Main service lifecycle - parameterized for library use."""
-    store = EventStore(db_path)
+    """Main service lifecycle - parameterized for library use.
+
+    Args:
+        persist: When False, uses SQLite :memory: (no disk writes, no retention).
+                 Full query/subscribe/fanout surface remains available.
+        bridge_upstream_sock: When set, forward scope=global events to this
+                             upstream Event Service ingest socket.
+        bridge_origin_node: Node identifier stamped on bridged events.
+    """
+    effective_db = db_path if persist else ":memory:"
+    store = EventStore(effective_db)
     subscriber_queues: set[asyncio.Queue[dict[str, Any]]] = set()
     ingest: IngestServer | None = None
     uds_server: uvicorn.Server | None = None
@@ -161,18 +173,21 @@ async def run_service(
                 tcp_query_port,
             )
 
+        mode_label = "persistent" if persist else "in-memory"
         logger.info(
-            "Event service started (ingest=%s, query=%s, db=%s, tcp=%s)",
+            "Event service started (%s, ingest=%s, query=%s, db=%s, tcp=%s)",
+            mode_label,
             ingest_sock,
             query_sock,
-            db_path,
+            effective_db,
             tcp_enabled,
         )
         ts_ms, ts_iso = _event_timestamp()
         started_payload: dict[str, Any] = {
             "ingest_sock": ingest_sock,
             "query_sock": query_sock,
-            "db_path": db_path,
+            "db_path": effective_db,
+            "persist": persist,
         }
         if tcp_enabled:
             started_payload["tcp_ingest_port"] = tcp_ingest_port
@@ -192,13 +207,27 @@ async def run_service(
         )
         started = True
 
-        retention_task = asyncio.create_task(
-            _retention_loop(
-                store,
-                retention_days=retention_days,
-                max_sessions=max_sessions,
+        if persist:
+            retention_task = asyncio.create_task(
+                _retention_loop(
+                    store,
+                    retention_days=retention_days,
+                    max_sessions=max_sessions,
+                )
             )
-        )
+
+        # Event bridge: forward scope=global events to upstream
+        bridge: Any = None
+        if bridge_upstream_sock and bridge_origin_node:
+            from .bridge import EventBridge
+
+            bridge = EventBridge(
+                local_query_sock=query_sock,
+                upstream_ingest_sock=bridge_upstream_sock,
+                origin_node=bridge_origin_node,
+            )
+            await bridge.start()
+
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, _signal_handler)
 
@@ -207,6 +236,8 @@ async def run_service(
         logger.critical("Event service lifecycle failure: %s", e, exc_info=True)
     finally:
         logger.info("Event service shutting down...")
+        if bridge is not None:
+            await bridge.stop()
         if retention_task is not None:
             retention_task.cancel()
             try:
@@ -225,7 +256,7 @@ async def run_service(
                 await t
             except (asyncio.CancelledError, Exception):
                 pass
-        if started:
+        if started and persist:
             ts_ms, ts_iso = _event_timestamp()
             await store.insert_events(
                 [
@@ -253,8 +284,17 @@ async def start_event_service(
     port: int | None = None,
     retention_days: int = 7,
     max_sessions: int = 2,
+    persist: bool = True,
+    bridge_upstream_sock: str | None = None,
+    bridge_origin_node: str | None = None,
 ) -> asyncio.Task[None]:
-    """Start the event service as a background asyncio task."""
+    """Start the event service as a background asyncio task.
+
+    Args:
+        persist: When False, uses SQLite :memory: (no disk, no retention).
+        bridge_upstream_sock: Forward scope=global events to upstream ingest socket.
+        bridge_origin_node: Node identifier stamped on bridged events.
+    """
     db_path = os.path.expanduser(db)
     tcp_enabled = host is not None and port is not None
     task = asyncio.create_task(
@@ -264,9 +304,12 @@ async def start_event_service(
             query_sock=query_sock,
             retention_days=retention_days,
             max_sessions=max_sessions,
+            persist=persist,
             tcp_enabled=tcp_enabled,
             tcp_ingest_port=port or 7101,
             tcp_query_port=(port or 7101) + 1,
+            bridge_upstream_sock=bridge_upstream_sock,
+            bridge_origin_node=bridge_origin_node,
         )
     )
     return task

@@ -175,8 +175,19 @@ class EngineFactory:
         # Whisper models use model identifiers (e.g., "large-v3", "medium")
         # faster-whisper handles auto-download from Hugging Face Hub
         if engine_type.lower() == "faster-whisper":
-            # Model identifier format: tiny, base, small, medium, large-v2, large-v3
             logger.info(f"🔧 [factory] Whisper model identifier: {model_path}")
+            return
+
+        # Cross-encoder models use HuggingFace model identifiers or local paths
+        if engine_type.lower() == "cross-encoder":
+            if path.exists():
+                logger.info(
+                    f"🔧 [factory] Using local cross-encoder model: {model_path}"
+                )
+            else:
+                logger.info(
+                    f"🔧 [factory] Cross-encoder model identifier: {model_path}"
+                )
             return
 
         # Diffusers models use local directories (like HF/AWQ/GPTQ)
@@ -221,7 +232,7 @@ class EngineFactory:
 
         Args:
             engine_type: Engine type identifier
-                (native, vllm, faster-whisper, diffusers)
+                (native, vllm, faster-whisper, diffusers, cross-encoder)
 
         Returns:
             Engine class
@@ -275,6 +286,19 @@ class EngineFactory:
                     "Diffusers engine not available - diffusers not installed. "
                     "Install with: pip install diffusers>=0.36.0 "
                     "transformers accelerate"
+                ) from e
+
+        elif engine_type == "cross-encoder":
+            try:
+                from inference_djinn.engines.cross_encoder.engine import (
+                    CrossEncoderEngine,
+                )
+
+                return CrossEncoderEngine
+            except ImportError as e:
+                raise ImportError(
+                    "Cross-encoder engine not available - sentence-transformers "
+                    "not installed. Install with: pip install sentence-transformers"
                 ) from e
 
         else:

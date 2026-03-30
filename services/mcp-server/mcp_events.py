@@ -19,6 +19,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from request_profile import current_request_metadata
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
@@ -109,6 +110,7 @@ def record(signal: str, **payload: Any) -> None:
     if _publisher is None:
         return
 
+    merged_payload = {**current_request_metadata(), **payload}
     event: dict[str, Any] = {
         "signal": signal,
         "source": "mcp-server",
@@ -116,7 +118,7 @@ def record(signal: str, **payload: Any) -> None:
         "scope": "global",
         "timestamp": (now := datetime.now(UTC)).isoformat(),
         "ts_unix_ms": int(now.timestamp() * 1000),
-        "payload": payload,
+        "payload": merged_payload,
     }
     _publisher.put_nowait(json.dumps(event, default=str) + "\n")
 

@@ -145,7 +145,12 @@ def run_build(versions: dict[str, str]) -> int:
         print(f"ERROR: Build script not found: {_BUILD_SCRIPT}", file=sys.stderr)
         return 1
 
-    args = [str(_BUILD_SCRIPT), "--cpu-native", "--gpu-native"]
+    args = [
+        str(_BUILD_SCRIPT),
+        "--cpu-native",
+        "--gpu-native",
+        "--no-cache",
+    ]
     for component, tag in versions.items():
         args.append(f"{_BUILD_FLAGS[component]}={tag}")
 
@@ -211,7 +216,8 @@ def run_remote(
     """SSH into a remote node and run build + restart."""
     version_flags = " ".join(f"{_BUILD_FLAGS[c]}={v}" for c, v in versions.items())
     build_cmd = (
-        f"./docker/scripts/build/build-gpu.sh --cpu-native --gpu-native {version_flags}"
+        f"./docker/scripts/build/build-gpu.sh --cpu-native --gpu-native --no-cache "
+        f"{version_flags}"
     )
     restart_cmd = "./manage relay --restart"
     remote_cmd = f"cd ~/universal-llm-gateway && {build_cmd} && {restart_cmd}"

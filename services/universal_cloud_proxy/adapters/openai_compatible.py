@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import json
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
+from model_id import ModelId
 from universal_logging import get_logger
 
 from ..config import ProviderConfig
 
 _APP_TITLE = "Stargate"
 _APP_URL = "https://github.com/krunch3r76/universal-llm-gateway"
+_MCP_SERVER_NAME = "vortex"
 
 logger = get_logger(__name__)
 
@@ -34,32 +38,183 @@ class OpenAICompatibleAdapter:
         return self._client
 
     def normalize_catalog_model_id(self, raw_model_id: str) -> str:
+        """Normalize provider model IDs into the catalog namespace.
+
+        OpenRouter: prefix with openrouter/ so IDs are unambiguous.
+        Native providers: bare provider/model (already the canonical form).
+        Bare model names (no slash): prefix with provider name.
+        """
         provider = self._config.provider.strip().lower()
         if provider == "openrouter":
+            if raw_model_id.startswith("openrouter/"):
+                return raw_model_id
+            return f"openrouter/{raw_model_id}"
+        if "/" in raw_model_id:
             return raw_model_id
-        if raw_model_id.startswith("native/"):
-            return raw_model_id
-        if "/" not in raw_model_id:
-            if provider == "anthropic":
-                return f"native/anthropic/{raw_model_id}"
-            if provider in {"openai", "chatgpt"}:
-                return f"native/chatgpt/{raw_model_id}"
-            return f"{provider}/{raw_model_id}"
-        if provider in {"anthropic", "openai", "chatgpt"}:
-            return f"native/{raw_model_id}"
-        return raw_model_id
+        return f"{provider}/{raw_model_id}"
 
     def to_upstream_model_id(self, catalog_model_id: str) -> str:
-        provider = self._config.provider.strip().lower()
-        prefixes = (
-            "native/anthropic/",
-            "native/chatgpt/",
-            f"{provider}/",
+        """Strip catalog namespace back to the ID the upstream API expects.
+
+        OpenRouter expects provider/model. Native providers expect bare model name.
+        """
+        return ModelId.parse(catalog_model_id).api_model_id
+
+    def _remote_mcp_tool(self) -> dict[str, Any]:
+        auth_header = (
+            f"Bearer {self._config.mcp_auth_token}"
+            if self._config.mcp_auth_token
+            else ""
         )
-        for prefix in prefixes:
-            if catalog_model_id.startswith(prefix):
-                return catalog_model_id.removeprefix(prefix)
-        return catalog_model_id
+        tool: dict[str, Any] = {
+            "type": "mcp",
+            "server_url": str(self._config.mcp_server_url),
+            "server_label": _MCP_SERVER_NAME,
+        }
+        if auth_header:
+            tool["authorization"] = auth_header
+        if self._config.provider.strip().lower() in {"openai", "chatgpt"}:
+            tool["require_approval"] = "never"
+        return tool
+
+    def _prepare_chat_body(
+        self, request_body: dict[str, Any], *, stream: bool | None = None
+    ) -> dict[str, Any]:
+        model_id = str(request_body.get("model", ""))
+        parsed = ModelId.parse(model_id)
+        body = {
+            **request_body,
+            "model": self.to_upstream_model_id(model_id),
+        }
+        if stream is not None:
+            body["stream"] = stream
+
+        inject_mcp = (
+            self._config.mcp_server_url
+            and parsed.is_mcp
+            and body.get("tool_choice") != "none"
+        )
+        if not inject_mcp:
+            return body
+
+        tools_in = body.get("tools")
+        tools_out = (
+            [t for t in tools_in if isinstance(t, dict)]
+            if isinstance(tools_in, list)
+            else []
+        )
+        if not any(
+            t.get("type") == "mcp"
+            and t.get("server_url") == self._config.mcp_server_url
+            for t in tools_out
+        ):
+            tools_out.append(self._remote_mcp_tool())
+        body["tools"] = tools_out
+        return body
+
+    def _is_responses_api_request(self, request_body: dict[str, Any]) -> bool:
+        """True when this request should route via the Responses API (xAI MCP)."""
+        if self._config.provider.strip().lower() != "xai":
+            return False
+        model_id = str(request_body.get("model", ""))
+        parsed = ModelId.parse(model_id)
+        return bool(
+            self._config.mcp_server_url
+            and parsed.is_mcp
+            and request_body.get("tool_choice") != "none"
+        )
+
+    def _build_responses_body(self, request_body: dict[str, Any]) -> dict[str, Any]:
+        """Build Responses API body with remote MCP tools for xAI.
+
+        Per https://docs.x.ai/developers/tools/remote-mcp: xAI supports remote
+        MCP on the Responses API (``/v1/responses``), not on chat completions.
+        ``require_approval`` is not supported by xAI.
+        """
+        model_id = str(request_body.get("model", ""))
+        upstream_model = self.to_upstream_model_id(model_id)
+
+        input_msgs: list[dict[str, Any]] = [
+            msg for msg in request_body.get("messages", []) if isinstance(msg, dict)
+        ]
+
+        mcp_tool: dict[str, Any] = {
+            "type": "mcp",
+            "server_url": str(self._config.mcp_server_url),
+            "server_label": _MCP_SERVER_NAME,
+        }
+        if self._config.mcp_auth_token:
+            mcp_tool["authorization"] = f"Bearer {self._config.mcp_auth_token}"
+
+        body: dict[str, Any] = {
+            "model": upstream_model,
+            "input": input_msgs,
+            "tools": [mcp_tool],
+            "store": False,
+        }
+
+        max_tokens = request_body.get("max_tokens")
+        if isinstance(max_tokens, int) and max_tokens > 0:
+            body["max_output_tokens"] = max_tokens
+        return body
+
+    def _responses_to_chat_completion(
+        self, resp_json: dict[str, Any], requested_model: str
+    ) -> dict[str, Any]:
+        """Convert Responses API JSON to OpenAI chat completion shape."""
+        text = resp_json.get("output_text", "")
+        if not text:
+            parts: list[str] = []
+            for item in resp_json.get("output", []):
+                if not isinstance(item, dict):
+                    continue
+                for block in item.get("content", []):
+                    if isinstance(block, dict) and block.get("type") == "output_text":
+                        parts.append(str(block.get("text", "")))
+            text = "".join(parts)
+
+        usage_raw = resp_json.get("usage") or {}
+        prompt_tokens = int(
+            usage_raw.get("input_tokens") or usage_raw.get("prompt_tokens") or 0
+        )
+        completion_tokens = int(
+            usage_raw.get("output_tokens") or usage_raw.get("completion_tokens") or 0
+        )
+
+        return {
+            "id": resp_json.get("id", f"chatcmpl-{int(time.time() * 1000)}"),
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": requested_model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": text},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+
+    async def _forward_via_responses_api(
+        self, request_body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Forward MCP request via Responses API; translate back to chat completion."""
+        body = self._build_responses_body(request_body)
+        requested_model = str(request_body.get("model", ""))
+
+        response = await self._client.post(
+            f"{self._config.base_url}/responses",
+            json=body,
+            headers=self._headers(),
+        )
+        if response.status_code >= 400:
+            await self._raise_provider_http_error(response)
+        return self._responses_to_chat_completion(response.json(), requested_model)
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -96,10 +251,9 @@ class OpenAICompatibleAdapter:
 
     async def forward_chat(self, request_body: dict[str, Any]) -> dict[str, Any]:
         """Forward a non-streaming chat request and preserve provider error payloads on HTTP failure."""
-        body = {
-            **request_body,
-            "model": self.to_upstream_model_id(str(request_body.get("model", ""))),
-        }
+        if self._is_responses_api_request(request_body):
+            return await self._forward_via_responses_api(request_body)
+        body = self._prepare_chat_body(request_body)
         response = await self._client.post(
             f"{self._config.base_url}/chat/completions",
             json=body,
@@ -113,11 +267,12 @@ class OpenAICompatibleAdapter:
         self, request_body: dict[str, Any]
     ) -> AsyncIterator[bytes]:
         """Forward a streaming chat request and preserve provider error payloads before iterating the stream."""
-        body = {
-            **request_body,
-            "stream": True,
-            "model": self.to_upstream_model_id(str(request_body.get("model", ""))),
-        }
+        if self._is_responses_api_request(request_body):
+            result = await self._forward_via_responses_api(request_body)
+            yield (f"data: {json.dumps(result)}\n").encode()
+            yield b"data: [DONE]\n"
+            return
+        body = self._prepare_chat_body(request_body, stream=True)
         async with self._client.stream(
             "POST",
             f"{self._config.base_url}/chat/completions",

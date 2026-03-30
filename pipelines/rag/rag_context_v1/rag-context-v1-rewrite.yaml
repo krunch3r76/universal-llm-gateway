@@ -84,6 +84,7 @@ options:
   # --- LLM reranking (post-RRF, pre-formatting) ---
   rerank_enabled: true               # LLM-based reranking for relevance + diversity
   rerank_model: qwen3_9b             # Qwen 3 9B parameter model; alias for reranking LLM calls
+  rerank_cross_encoder_model: cross_encoder
   rerank_window_size: 5              # Chunks per sliding window
   rerank_overlap: 1                  # Overlap between adjacent windows
   rerank_max_candidates: 14          # Top-N chunks sent to reranker (rest pass through)

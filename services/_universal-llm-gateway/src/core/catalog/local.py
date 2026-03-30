@@ -22,6 +22,7 @@ ALLOWED_DOMAINS = frozenset(
         "visual",
         "graphics",
         "embedding",
+        "reranker",
     }
 )
 

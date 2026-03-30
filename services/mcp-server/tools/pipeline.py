@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from mcp_events import monotonic_now, record
+from mcp_toolprogress import toolprogress_begin, toolprogress_end, toolprogress_phase
 from transport_utils import make_sync_client
 
 if TYPE_CHECKING:
@@ -191,20 +192,52 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         """
         t0 = monotonic_now()
         record("mcp.pipeline.run.called", pipeline=pipeline)
+        tp_t0, tp_timer = toolprogress_begin("pipeline", pipeline=pipeline)
 
         effective_timeout = _resolve_timeout(pipeline, timeout)
         body: dict[str, Any] = {"model": pipeline, "messages": messages}
         if options:
             body["pipeline_options"] = options
 
+        tp_err: str | None = None
+        tp_exec_id: str | None = None
         try:
+            toolprogress_phase("pipeline", "stargate_post_begin", pipeline=pipeline)
             url = f"{_STARGATE_URL}/v1/chat/completions"
             with httpx.Client(timeout=effective_timeout) as client:
                 resp = client.post(url, json=body)
                 resp.raise_for_status()
                 data = resp.json()
+            toolprogress_phase("pipeline", "stargate_post_done", pipeline=pipeline)
+
+            duration = monotonic_now() - t0
+            content = ""
+            choices = data.get("choices", [])
+            if choices:
+                content = choices[0].get("message", {}).get("content", "")
+
+            tp_exec_id = resp.headers.get("x-pipeline-execution-id", "") or None
+
+            result: dict[str, Any] = {
+                "content": content,
+                "model": data.get("model", pipeline),
+                "duration_s": round(duration, 3),
+            }
+            if tp_exec_id:
+                result["execution_id"] = tp_exec_id
+            if "usage" in data:
+                result["usage"] = data["usage"]
+
+            record(
+                "mcp.pipeline.run.completed",
+                pipeline=pipeline,
+                duration_s=round(duration, 3),
+                content_length=len(content),
+            )
+            return result
         except httpx.TimeoutException:
             duration = monotonic_now() - t0
+            tp_err = "timeout"
             record(
                 "mcp.pipeline.run.failed",
                 pipeline=pipeline,
@@ -215,9 +248,11 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                 "error": f"Pipeline '{pipeline}' timed out after {effective_timeout}s."
             }
         except httpx.ConnectError as e:
+            tp_err = "connect_error"
             record("mcp.pipeline.run.failed", pipeline=pipeline, error="connect_error")
             return {"error": f"Stargate not reachable: {e}"}
         except httpx.HTTPStatusError as e:
+            tp_err = f"http_{e.response.status_code}"
             record(
                 "mcp.pipeline.run.failed",
                 pipeline=pipeline,
@@ -226,33 +261,18 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
             return {
                 "error": f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
             }
-
-        duration = monotonic_now() - t0
-
-        content = ""
-        choices = data.get("choices", [])
-        if choices:
-            content = choices[0].get("message", {}).get("content", "")
-
-        execution_id = resp.headers.get("x-pipeline-execution-id", "")
-
-        result: dict[str, Any] = {
-            "content": content,
-            "model": data.get("model", pipeline),
-            "duration_s": round(duration, 3),
-        }
-        if execution_id:
-            result["execution_id"] = execution_id
-        if "usage" in data:
-            result["usage"] = data["usage"]
-
-        record(
-            "mcp.pipeline.run.completed",
-            pipeline=pipeline,
-            duration_s=round(duration, 3),
-            content_length=len(content),
-        )
-        return result
+        except Exception as exc:
+            tp_err = str(exc)
+            raise
+        finally:
+            toolprogress_end(
+                tp_t0,
+                tp_timer,
+                "pipeline",
+                error=tp_err,
+                pipeline=pipeline,
+                execution_id=tp_exec_id,
+            )
 
     @mcp.tool()
     def validate_pipeline(pipeline: str) -> dict[str, Any]:

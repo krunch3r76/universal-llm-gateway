@@ -65,6 +65,7 @@ async def _forward_with_retry(
     request_id: str,
     parsed_model_id: Any,
     oom_recovery_fn: Callable[..., Awaitable[bool]] | None,
+    workload_label: str = "Embedding",
 ) -> dict[str, Any]:
     """Forward embedding request with retry on transient downstream errors.
 
@@ -122,8 +123,9 @@ async def _forward_with_retry(
             base = _FORWARD_RETRY_BASE_S * (2 ** (attempt - 1))
             delay = min(base, _FORWARD_RETRY_MAX_S) * random.uniform(0.75, 1.25)
             logger.warning(
-                "Embedding forward %d/%d returned %d; retrying in %.1fs "
+                "%s forward %d/%d returned %d; retrying in %.1fs "
                 "(model=%s, gateway=%s)",
+                workload_label,
                 attempt,
                 _FORWARD_RETRY_ATTEMPTS,
                 last_exc.status_code if last_exc else 0,
@@ -134,8 +136,9 @@ async def _forward_with_retry(
             await asyncio.sleep(delay)
 
     logger.error(
-        "Embedding forward exhausted %d attempts (model=%s, gateway=%s, "
+        "%s forward exhausted %d attempts (model=%s, gateway=%s, "
         "last_status=%d)",
+        workload_label,
         _FORWARD_RETRY_ATTEMPTS,
         request_body.get("model", "?"),
         fed_gateway.gateway_id,

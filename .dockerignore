@@ -43,7 +43,9 @@ scripts/
 
 # Logs (we'll create fresh directories in container)
 logs/
+**/logs/
 *.log
+**/*.log
 
 # Build artifacts
 dist/
@@ -73,6 +75,7 @@ docker/*.yaml
 docker/*.md
 # docker/runtime/ is automatically included (container entrypoint scripts)
 Dockerfile*
+**/Dockerfile*
 # Allow obfuscated Dockerfiles for CPU builds
 !Dockerfile.obfuscated-cpu
 .dockerignore

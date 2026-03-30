@@ -58,6 +58,22 @@ def main() -> None:
         default=os.environ.get("QUERY_UDS_MODE", "660"),
         help="Octal file mode for query UDS socket (e.g. 660).",
     )
+    serve.add_argument(
+        "--memory",
+        action="store_true",
+        default=os.environ.get("EVENT_PERSIST", "true").lower() not in ("1", "true"),
+        help="In-memory SQLite (no disk writes). Overrides --db.",
+    )
+    serve.add_argument(
+        "--bridge-upstream",
+        default=os.environ.get("EVENT_BRIDGE_UPSTREAM"),
+        help="Forward scope=global events to this upstream ingest socket.",
+    )
+    serve.add_argument(
+        "--bridge-origin",
+        default=os.environ.get("EVENT_BRIDGE_ORIGIN"),
+        help="Node identifier stamped on bridged events.",
+    )
     args = parser.parse_args()
 
     if args.command != "serve":
@@ -78,10 +94,13 @@ def main() -> None:
             query_sock=args.query_sock,
             retention_days=args.retention_days,
             max_sessions=args.max_sessions,
+            persist=not args.memory,
             tcp_enabled=args.tcp,
             tcp_ingest_port=args.tcp_ingest_port,
             tcp_query_port=args.tcp_query_port,
             query_sock_mode=query_sock_mode,
+            bridge_upstream_sock=args.bridge_upstream,
+            bridge_origin_node=args.bridge_origin,
         )
     )
 

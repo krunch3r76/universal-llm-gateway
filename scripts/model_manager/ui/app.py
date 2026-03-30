@@ -193,7 +193,10 @@ def run() -> None:
         ts = datetime.now(UTC).isoformat()
         with _TUI_LOG_PATH.open("a") as fh:
             fh.write(f"\n[{ts}] TUI crashed:\n{tb}\n")
-        print(f"\nManage TUI crashed. Traceback written to {_TUI_LOG_PATH}", file=sys.stderr)
+        print(
+            f"\nManage TUI crashed. Traceback written to {_TUI_LOG_PATH}",
+            file=sys.stderr,
+        )
         app.bell()
         # Optionally, display an error screen: app.push_screen(ErrorScreen(...))
         # app.push_screen(ErrorScreen(message="An unexpected error occurred. See logs for details."))

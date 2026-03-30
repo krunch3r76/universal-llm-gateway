@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 # Rebuild MCP server image and start the container.
 # Reads MCP_PROJECT_DIR, MCP_AUTH_TOKEN, etc. from ~/.gateway/mcp.yaml.
-# Usage: ./scripts/rebuild-mcp.sh [--use-cache] [from repo root or any subdir]
+# Usage: ./scripts/rebuild-mcp.sh [--no-cache] [from repo root or any subdir]
 
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/rebuild-mcp.sh [--use-cache]
+Usage: ./scripts/rebuild-mcp.sh [--no-cache]
 
 Options:
-  --use-cache  Rebuild with normal Docker layer cache instead of a fresh build.
+  --no-cache   Force full rebuild without cache (pulls fresh base images).
   -h, --help   Show this help text.
 EOF
 }
 
-USE_CACHE=false
+NO_CACHE=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --use-cache)
-      USE_CACHE=true
+    --no-cache)
+      NO_CACHE=true
       ;;
     -h|--help)
       usage
@@ -48,6 +48,12 @@ eval "$(python3 -c "
 import os, shlex, yaml
 from pathlib import Path
 cfg = yaml.safe_load(Path(os.environ.get('MCP_YAML', str(Path.home() / '.gateway/mcp.yaml'))).read_text()) or {}
+def parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+    return bool(value)
 token = ''
 token_env = (cfg.get('auth_token_env') or '').strip()
 if token_env:
@@ -67,6 +73,10 @@ print('export MCP_PROJECT_DIR=' + shlex.quote(project_dir))
 print('export MCP_TASKS_DIR=' + shlex.quote(tasks_dir))
 print('export MCP_DATA_DIR=' + shlex.quote(data_dir))
 print('export ENABLE_BROWSER_TOOLS=' + shlex.quote('true' if cfg.get('enable_browser_tools') else 'false'))
+print(
+    'export REFRESH_CURSOR_DESCRIPTORS_AFTER_REBUILD='
+    + shlex.quote('true' if parse_bool(cfg.get('refresh_cursor_descriptors_after_rebuild', False)) else 'false')
+)
 print('export ENABLE_CONTEXT_TOOLS=true')
 project_access = (cfg.get('project_access') or 'ro').strip().lower()
 if project_access == 'rw':
@@ -106,29 +116,6 @@ if mcp_url:
 fp = (cfg.get('firefox_profile_dir') or '').strip()
 if fp:
     print('export FIREFOX_PROFILE_DIR=' + shlex.quote(str(Path(fp).expanduser())))
-claudeburst_host = (cfg.get('CLAUDEBURST_HOST') or cfg.get('claudeburst_host') or '').strip()
-if claudeburst_host:
-    print('export CLAUDEBURST_HOST=' + shlex.quote(claudeburst_host))
-claudeburst_events_query_host = (cfg.get('CLAUDEBURST_EVENTS_QUERY_HOST') or cfg.get('claudeburst_events_query_host') or '').strip()
-if claudeburst_events_query_host:
-    # Maintainer-only temporary path: this hardcoded ClaudeBurst target will be
-    # removed once observability targets are loaded from local config generically.
-    print('export CLAUDEBURST_EVENTS_QUERY_HOST=' + shlex.quote(claudeburst_events_query_host))
-claudeburst_events_query_port = str(cfg.get('CLAUDEBURST_EVENTS_QUERY_PORT') or cfg.get('claudeburst_events_query_port') or '').strip()
-if claudeburst_events_query_port:
-    # Maintainer-only temporary path: this hardcoded ClaudeBurst target will be
-    # removed once observability targets are loaded from local config generically.
-    print('export CLAUDEBURST_EVENTS_QUERY_PORT=' + shlex.quote(claudeburst_events_query_port))
-claudeburst_perps_host = (cfg.get('CLAUDEBURST_PERPS_HOST') or cfg.get('claudeburst_perps_host') or '').strip()
-if claudeburst_perps_host:
-    print('export CLAUDEBURST_PERPS_HOST=' + shlex.quote(claudeburst_perps_host))
-lighter_api_key_index = str(
-    cfg.get('LIGHTER_API_KEY_INDEX')
-    or cfg.get('lighter_api_key_index')
-    or ''
-).strip()
-if lighter_api_key_index:
-    print('export LIGHTER_API_KEY_INDEX=' + shlex.quote(lighter_api_key_index))
 ")"
 
 cd "$WORKSPACE_ROOT"
@@ -137,15 +124,58 @@ if [[ "$ENABLE_BROWSER_TOOLS" == "true" ]]; then
   COMPOSE_ARGS+=(-f docker/compose/mcp-server-browser.override.yml)
 fi
 
-if [[ "$USE_CACHE" == "true" ]]; then
-  echo "Building MCP server (using cache)..."
-  bash docker/scripts/build/build-mcp.sh
-else
+wait_for_mcp_healthy() {
+  local timeout_s="${1:-90}"
+  local start_ts status
+  start_ts="$(date +%s)"
+  while true; do
+    status="$(
+      docker inspect \
+        -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+        mcp-server 2>/dev/null || true
+    )"
+    case "$status" in
+      healthy|running)
+        return 0
+        ;;
+      unhealthy|exited|dead)
+        echo "WARNING: MCP server entered state '${status}'." >&2
+        return 1
+        ;;
+    esac
+    if (( $(date +%s) - start_ts >= timeout_s )); then
+      echo "WARNING: Timed out waiting for MCP server to become healthy." >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+if [[ "$NO_CACHE" == "true" ]]; then
   echo "Building MCP server (no cache, pulling fresh base images)..."
   bash docker/scripts/build/build-mcp.sh --no-cache
+else
+  echo "Building MCP server (cached, refreshing source layers)..."
+  bash docker/scripts/build/build-mcp.sh --refresh-source
 fi
 
 echo "Starting MCP server..."
 docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+
+if wait_for_mcp_healthy; then
+  if [[ "${REFRESH_CURSOR_DESCRIPTORS_AFTER_REBUILD}" == "true" ]]; then
+    REFRESH_SCRIPT="$WORKSPACE_ROOT/scripts/refresh-cursor-mcp-descriptors"
+    if [[ -f "$REFRESH_SCRIPT" ]]; then
+      echo "Refreshing Cursor MCP descriptors..."
+      if ! bash "$REFRESH_SCRIPT"; then
+        echo "WARNING: Cursor MCP descriptor refresh failed." >&2
+      fi
+    else
+      echo "WARNING: Cursor descriptor refresh is enabled, but script is missing: $REFRESH_SCRIPT" >&2
+    fi
+  fi
+else
+  echo "WARNING: Skipping descriptor refresh because MCP server is not healthy." >&2
+fi
 
 echo "Done. Check: docker ps --filter name=mcp-server"

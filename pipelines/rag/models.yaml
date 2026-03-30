@@ -21,3 +21,5 @@ models:
   qwen3_27b:
     model: qwen3-5-27b-q8-0-32768
     profile: qwen3-instruct
+  cross_encoder:
+    model: baai-bge-reranker-v2-m3

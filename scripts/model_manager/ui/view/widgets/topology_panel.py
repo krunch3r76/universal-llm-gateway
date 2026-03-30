@@ -21,6 +21,12 @@ from textual.widgets import Button, DataTable, Select, Static
 if TYPE_CHECKING:
     from ...app import ModelManagerApp
 
+from scripts.model_manager.observation_event import (
+    emit_fleet_operation_completed,
+    emit_fleet_operation_started,
+    emit_fleet_relay_status,
+    emit_fleet_service_phase,
+)
 from scripts.model_manager.topology import TopologySnapshot, build_snapshot
 
 from ...controller.operation_log import tee_with_summary
@@ -166,8 +172,6 @@ class TopologyPanel(Widget):
 
     def update_from_snapshot(self, snapshot: TopologySnapshot) -> None:
         """Refresh the table rows from a topology snapshot."""
-        if self._deploying:
-            return
         table = self.query_one("#topo-table", DataTable)
         table.clear()
 
@@ -276,6 +280,8 @@ class TopologyPanel(Widget):
         self.run_worker(self._do_fleet_deploy(build=build, scope=scope), exclusive=True)
 
     async def _do_fleet_deploy(self, *, build: bool, scope: str) -> None:
+        import time as _time
+
         svc = cast("ModelManagerApp", self.app).service_controller
         self._deploying = True
         self._deploy_run_id += 1
@@ -288,21 +294,51 @@ class TopologyPanel(Widget):
         log.display = True
         log.clear()
 
+        operation = "rebuild_deploy" if build else "sync_restart"
+        remotes = [h for h, _ in _parse_remote_targets(list_remotes())]
+        t0 = _time.monotonic()
+
+        # Ensure the event service is up before emitting any events.
+        # In the build path it hasn't been stopped yet; in the restart path
+        # _restart_local_services handles it.  Either way, a quick health
+        # check + start keeps events flowing for the entire operation.
+        mk = _MASTER_ROW_KEY
+        if not await self._wait_event_service_healthy(timeout=3):
+            self._append_line(mk, "  ○ starting event_service (for observability)")
+            await svc.start_event_service()
+            await self._wait_event_service_healthy(timeout=10)
+
+        await emit_fleet_operation_started(
+            operation=operation, build=build, scope=scope, remotes=remotes
+        )
+        failures: list[str] = []
+
         try:
             assert self._workspace_root is not None
             if build:
                 local_build_ok, remote_results = await self._parallel_build(scope)
                 if local_build_ok:
-                    await self._restart_local_services(rebuild_supporting_services=True)
+                    local_restart_ok = await self._restart_local_services(
+                        rebuild_supporting_services=True
+                    )
+                    if local_restart_ok:
+                        for hostname, ok in remote_results.items():
+                            if ok:
+                                await self._verify_relay_connection(hostname)
+                    else:
+                        failures.append("local_restart")
+                        self._switch_to_node(_MASTER_ROW_KEY)
+                        self._append_line(
+                            _MASTER_ROW_KEY,
+                            "⚠ Localhost restart failed after build; skipped relay verification.",
+                        )
                 else:
+                    failures.append("local_build")
                     self._switch_to_node(_MASTER_ROW_KEY)
                     self._append_line(
                         _MASTER_ROW_KEY,
                         "⚠ Local build failed; skipped local restart.",
                     )
-                for hostname, ok in remote_results.items():
-                    if ok:
-                        await self._verify_relay_connection(hostname)
             else:
                 local_restart_ok = await self._restart_local_services(
                     rebuild_supporting_services=False
@@ -310,12 +346,21 @@ class TopologyPanel(Widget):
                 if local_restart_ok:
                     await self._deploy_remotes_parallel(build=False, scope=scope)
                 else:
+                    failures.append("local_restart")
                     self._switch_to_node(_MASTER_ROW_KEY)
                     self._append_line(
                         _MASTER_ROW_KEY,
                         "⚠ Localhost restart failed; skipped remote sync/restart.",
                     )
         finally:
+            elapsed = _time.monotonic() - t0
+            await emit_fleet_operation_completed(
+                operation=operation,
+                build=build,
+                success=not failures,
+                duration_s=elapsed,
+                failures=failures,
+            )
             self._deploying = False
             self.post_message(self.DeployStateChanged(deploying=False))
             self.set_timer(10, lambda: self._auto_hide_log(deploy_run_id))
@@ -383,7 +428,7 @@ class TopologyPanel(Widget):
         self._set_node_status(mk, "● running (build in progress)")
         self._append_line(mk, f"Building image (scope={scope})...")
         summary = tee_with_summary(
-            svc.build_image(scope=scope),
+            svc.build_image(scope=scope, no_cache=True),
             operation="build",
             host=mk,
         )
@@ -443,10 +488,17 @@ class TopologyPanel(Widget):
             stop_ops.append(("agent_bus", svc.stop_agent_bus))
 
         stop_results = await self._run_ops_parallel(stop_ops)
+        stop_dict: dict[str, bool] = {}
         for name, ok, msg in stop_results:
+            stop_dict[name] = ok
             self._append_line(mk, f"  {'✓' if ok else '⚠'} stop {name}")
             if not ok:
                 logger.warning("stop %s: %s", name, msg)
+        await emit_fleet_service_phase(
+            phase="stop",
+            services=[n for n, _, _ in stop_results],
+            results=stop_dict,
+        )
 
         # Phase 2: Event service (observability backbone)
         event_service_op = (
@@ -478,7 +530,11 @@ class TopologyPanel(Widget):
         if is_cloud_proxy_configured():
             start_ops.append(("cloud_proxy", svc.start_cloud_proxy))
         if is_mcp_configured(ws_root):
-            mcp_op = svc.rebuild_mcp if rebuild_supporting_services else svc.start_mcp
+            mcp_op: Callable[[], Awaitable[str]] = (
+                (lambda: svc.rebuild_mcp(no_cache=True))
+                if rebuild_supporting_services
+                else (lambda: svc.rebuild_mcp(no_cache=False))
+            )
             start_ops.append(("mcp", mcp_op))
         if is_cortex_configured():
             cortex_api_op = (
@@ -489,10 +545,17 @@ class TopologyPanel(Widget):
             start_ops.append(("cortex_api", cortex_api_op))
 
         start_results = await self._run_ops_parallel(start_ops)
+        start_dict: dict[str, bool] = {}
         for name, ok, msg in start_results:
+            start_dict[name] = ok
             self._append_line(mk, f"  {'✓' if ok else '✗'} {name}")
             if not ok:
                 failures.append(name)
+        await emit_fleet_service_phase(
+            phase="start",
+            services=[n for n, _, _ in start_results],
+            results=start_dict,
+        )
 
         self._append_line(mk, "  ○ sidecar left stopped")
 
@@ -503,8 +566,7 @@ class TopologyPanel(Widget):
 
         self._append_line(mk, f"Done — failed: {', '.join(failures)}")
         core_failed = any(
-            f in ("event_service", "gateway", "stargate", "agent_bus")
-            for f in failures
+            f in ("event_service", "gateway", "stargate", "agent_bus") for f in failures
         )
         status = "✗ core start failed" if core_failed else "◌ partial"
         self._set_node_status(mk, status)
@@ -594,14 +656,21 @@ class TopologyPanel(Widget):
 
     async def _verify_relay_connection(self, hostname: str) -> None:
         """Verify a relay registered with master after deploy."""
+        import time as _time
+
         remote_id = f"relay-{hostname}"
         self._set_node_status(hostname, "⟳ connecting...")
         self._append_line(
             hostname, f"[{hostname}] Waiting for relay to register with master..."
         )
+        t0 = _time.monotonic()
         result = await wait_for_relay_connected(remote_id)
+        elapsed = _time.monotonic() - t0
         status = "● connected" if result.connected else "◌ unreachable"
         self._set_node_status(hostname, status)
+        await emit_fleet_relay_status(
+            hostname=hostname, connected=result.connected, duration_s=elapsed
+        )
         if not result.connected and result.reason:
             self._append_line(hostname, f"  reason: {result.reason}")
         if not result.connected:
@@ -687,10 +756,11 @@ class TopologyPanel(Widget):
             self._append_line(hostname, f"--- {hostname}: ✗ failed ---")
             return
 
-        for wline in await gateway_image_mismatch_warnings(
-            hostname=hostname, address=address
-        ):
-            self._append_line(hostname, wline)
+        if build:
+            for wline in await gateway_image_mismatch_warnings(
+                hostname=hostname, address=address
+            ):
+                self._append_line(hostname, wline)
 
         await self._verify_relay_connection(hostname)
 
@@ -776,6 +846,7 @@ def _classify_result(msg: str) -> bool:
     if any(
         k in lower
         for k in (
+            "gateway container started",
             "starting (pid",
             "is not running",
             "is already running",

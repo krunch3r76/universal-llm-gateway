@@ -1,11 +1,9 @@
-"""LLM proxy — Anthropic Messages API passthrough with credential + MCP injection.
+"""LLM proxy — multi-provider passthrough with credential + MCP injection.
 
-Accepts standard Anthropic Messages API requests at ``/llm/v1/messages``,
-injects the Anthropic API key and MCP server configuration server-side,
-then forwards to ``https://api.anthropic.com/v1/messages``.
-
-Clients authenticate with a Vortex bearer token.  The Anthropic key and
-MCP server URL never leave the server.
+Accepts Anthropic-shaped JSON at ``POST /llm/v1/messages`` (messages, optional
+system, max_tokens). Routes by model ID: Anthropic Messages API, or xAI/OpenAI
+Responses API. Clients authenticate with the Vortex bearer token; provider keys
+and MCP URL never leave the server.
 """
 
 from __future__ import annotations
@@ -14,6 +12,15 @@ import json
 import os
 
 import httpx
+from llm_adapters import (
+    AnthropicAdapter,
+    ResponsesAPIAdapter,
+    anthropic_inject_mcp_into_body,
+    body_to_llm_request,
+    effective_provider_for_model,
+    mcp_config_from_env,
+    resolve_llm_adapter,
+)
 from mcp_events import monotonic_now, record
 from model_id import ModelId
 from starlette.requests import Request
@@ -22,11 +29,13 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-_ANTHROPIC_API_URL = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_BETA = "mcp-client-2025-11-20"
 _MCP_SERVER_NAME = "vortex"
 _MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "").strip()
+_ANTHROPIC_BASE = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip(
+    "/"
+)
 
 _TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
 
@@ -40,10 +49,6 @@ _CORS_HEADERS: dict[str, str] = {
 }
 
 
-def _get_api_key() -> str | None:
-    return os.environ.get("ANTHROPIC_API_KEY", "").strip() or None
-
-
 def _get_mcp_auth_token() -> str:
     return os.environ.get("MCP_AUTH_TOKEN", "").strip()
 
@@ -53,24 +58,14 @@ def handle_llm_preflight() -> JSONResponse:
     return JSONResponse({"status": "ok"}, headers=_CORS_HEADERS)
 
 
+def _content_block_count(result: dict, *, provider: str) -> int:
+    if provider == "anthropic":
+        return len(result.get("content", []))
+    return len(result.get("output", []))
+
+
 async def handle_llm_proxy(request: Request) -> JSONResponse:
-    """Proxy POST /llm/v1/messages to Anthropic with key + MCP injection.
-
-    The client sends a standard Anthropic Messages API payload.  This handler:
-    1. Validates the JSON body
-    2. Injects ``mcp_servers`` (if configured and tools not suppressed)
-    3. Forwards to Anthropic with server-side ``x-api-key``
-    4. Returns the upstream response unchanged
-    """
-    api_key = _get_api_key()
-    if not api_key:
-        logger.error("ANTHROPIC_API_KEY not set — LLM proxy unavailable")
-        return JSONResponse(
-            {"error": "LLM proxy not configured (missing API key)"},
-            status_code=503,
-            headers=_CORS_HEADERS,
-        )
-
+    """Proxy POST /llm/v1/messages to the resolved provider with key + MCP injection."""
     try:
         body = await request.json()
     except json.JSONDecodeError:
@@ -94,27 +89,15 @@ async def handle_llm_proxy(request: Request) -> JSONResponse:
             headers=_CORS_HEADERS,
         )
 
-    if _MCP_SERVER_URL and body.get("tool_choice") != "none":
-        mcp_auth = _get_mcp_auth_token()
-        mcp_server_def: dict[str, str] = {
-            "type": "url",
-            "url": _MCP_SERVER_URL,
-            "name": _MCP_SERVER_NAME,
-        }
-        if mcp_auth:
-            mcp_server_def["authorization_token"] = mcp_auth
-
-        if "mcp_servers" not in body:
-            body["mcp_servers"] = [mcp_server_def]
-
-        if "tools" not in body:
-            body["tools"] = [
-                {"type": "mcp_toolset", "mcp_server_name": _MCP_SERVER_NAME}
-            ]
-
-    raw_model = body.get("model", "unknown")
-    parsed = ModelId.parse(raw_model)
-    routing = parsed.routing_layer or "native"
+    raw_model = body.get("model")
+    if not raw_model:
+        return JSONResponse(
+            {"error": "model field is required"},
+            status_code=400,
+            headers=_CORS_HEADERS,
+        )
+    parsed = ModelId.parse(str(raw_model))
+    routing = parsed.routing_layer
 
     if routing == "openrouter":
         return JSONResponse(
@@ -123,32 +106,85 @@ async def handle_llm_proxy(request: Request) -> JSONResponse:
             headers=_CORS_HEADERS,
         )
 
+    if parsed.provider is None:
+        return JSONResponse(
+            {"error": "Cloud provider model_id is required (provider/model)"},
+            status_code=400,
+            headers=_CORS_HEADERS,
+        )
+
+    provider_key = effective_provider_for_model(parsed.provider)
+    adapter = resolve_llm_adapter(parsed.provider)
+    if adapter is None:
+        logger.error(
+            "No API key for LLM provider %s — LLM proxy unavailable", provider_key
+        )
+        return JSONResponse(
+            {
+                "error": f"LLM proxy not configured (missing API key for provider {provider_key})",
+            },
+            status_code=503,
+            headers=_CORS_HEADERS,
+        )
+
     model = parsed.api_model_id
     body["model"] = model
     t0 = monotonic_now()
-    record("mcp.llm.proxy.called", model=model)
-
-    upstream_headers = {
-        "x-api-key": api_key,
-        "anthropic-version": _ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
-    if body.get("mcp_servers"):
-        upstream_headers["anthropic-beta"] = _ANTHROPIC_BETA
-
-    body.pop("stream", None)
+    record("mcp.llm.proxy.called", model=model, provider=provider_key)
 
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(
-                f"{_ANTHROPIC_API_URL}/v1/messages",
-                headers=upstream_headers,
-                json=body,
-            )
+            if isinstance(adapter, AnthropicAdapter):
+                if (
+                    _MCP_SERVER_URL
+                    and parsed.is_mcp
+                    and body.get("tool_choice") != "none"
+                ):
+                    anthropic_inject_mcp_into_body(
+                        body,
+                        mcp_url=_MCP_SERVER_URL,
+                        mcp_name=_MCP_SERVER_NAME,
+                        mcp_auth_token=_get_mcp_auth_token(),
+                    )
+                upstream_headers = {
+                    "x-api-key": os.environ.get("ANTHROPIC_API_KEY", "").strip(),
+                    "anthropic-version": _ANTHROPIC_VERSION,
+                    "content-type": "application/json",
+                }
+                if body.get("mcp_servers"):
+                    upstream_headers["anthropic-beta"] = _ANTHROPIC_BETA
+                body.pop("stream", None)
+                resp = await client.post(
+                    f"{_ANTHROPIC_BASE}/v1/messages",
+                    headers=upstream_headers,
+                    json=body,
+                )
+            elif isinstance(adapter, ResponsesAPIAdapter):
+                llm_req = body_to_llm_request(
+                    body, model, wants_remote_mcp=parsed.is_mcp
+                )
+                mcp = mcp_config_from_env()
+                url, headers, json_body = adapter.build_request(
+                    llm_req, mcp if llm_req.inject_mcp else None
+                )
+                resp = await client.post(url, headers=headers, json=json_body)
+            else:
+                return JSONResponse(
+                    {"error": "Unsupported adapter type"},
+                    status_code=500,
+                    headers=_CORS_HEADERS,
+                )
     except httpx.TimeoutException:
         duration = monotonic_now() - t0
-        record("mcp.llm.proxy.timeout", duration_s=round(duration, 3), model=model)
-        logger.warning("Anthropic API timeout after %.1fs", duration)
+        record(
+            "mcp.llm.proxy.timeout",
+            duration_s=round(duration, 3),
+            model=model,
+            provider=provider_key,
+        )
+        logger.warning(
+            "LLM upstream timeout after %.1fs (provider=%s)", duration, provider_key
+        )
         return JSONResponse(
             {"error": "Upstream timeout"},
             status_code=504,
@@ -156,8 +192,13 @@ async def handle_llm_proxy(request: Request) -> JSONResponse:
         )
     except httpx.RequestError as exc:
         duration = monotonic_now() - t0
-        record("mcp.llm.proxy.error", duration_s=round(duration, 3), error=str(exc))
-        logger.error("Anthropic API request failed: %s", exc)
+        record(
+            "mcp.llm.proxy.error",
+            duration_s=round(duration, 3),
+            error=str(exc),
+            provider=provider_key,
+        )
+        logger.error("LLM upstream request failed: %s", exc)
         return JSONResponse(
             {"error": "Upstream connection failed"},
             status_code=502,
@@ -172,11 +213,13 @@ async def handle_llm_proxy(request: Request) -> JSONResponse:
             status=resp.status_code,
             duration_s=round(duration, 3),
             model=model,
+            provider=provider_key,
         )
         logger.warning(
-            "Anthropic API returned %d after %.1fs",
+            "LLM upstream returned %d after %.1fs (provider=%s)",
             resp.status_code,
             duration,
+            provider_key,
         )
         return JSONResponse(
             {
@@ -190,25 +233,39 @@ async def handle_llm_proxy(request: Request) -> JSONResponse:
     try:
         result = resp.json()
     except json.JSONDecodeError:
-        record("mcp.llm.proxy.invalid.response", duration_s=round(duration, 3))
+        record(
+            "mcp.llm.proxy.invalid.response",
+            duration_s=round(duration, 3),
+            provider=provider_key,
+        )
         return JSONResponse(
             {"error": "Upstream returned invalid JSON"},
             status_code=502,
             headers=_CORS_HEADERS,
         )
 
-    content_blocks = len(result.get("content", []))
+    if not isinstance(result, dict):
+        record("mcp.llm.proxy.invalid.response", duration_s=round(duration, 3))
+        return JSONResponse(
+            {"error": "Upstream returned non-object JSON"},
+            status_code=502,
+            headers=_CORS_HEADERS,
+        )
+
+    blocks = _content_block_count(result, provider=provider_key)
     record(
         "mcp.llm.proxy.completed",
         duration_s=round(duration, 3),
-        content_blocks=content_blocks,
+        content_blocks=blocks,
         model=result.get("model", model),
+        provider=provider_key,
     )
     logger.info(
-        "LLM proxy completed: %.1fs, %d blocks, model=%s",
+        "LLM proxy completed: %.1fs, %d blocks, model=%s provider=%s",
         duration,
-        content_blocks,
+        blocks,
         model,
+        provider_key,
     )
 
     return JSONResponse(result, headers=_CORS_HEADERS)

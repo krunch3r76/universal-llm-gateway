@@ -27,10 +27,10 @@ try:
     from ..routers.api.v1.status import detailed, resources
     from ..routers.api.v1.tokens import count
     from ..routers.middleware import setup_all_middleware
+    from ..routers.v1 import embeddings, rerank
     from ..routers.v1.audio import stream as audio_stream
     from ..routers.v1.audio import transcriptions as audio_transcriptions
     from ..routers.v1.chat import completions
-    from ..routers.v1 import embeddings
     from ..routers.v1.images import generations as image_generations
     from ..routers.v1.models import extended as models_extended
     from ..routers.v1.models import get as models_get
@@ -61,10 +61,10 @@ except ImportError:
     from src.routers.api.v1.status import detailed, resources
     from src.routers.api.v1.tokens import count
     from src.routers.middleware import setup_all_middleware
+    from src.routers.v1 import embeddings, rerank
     from src.routers.v1.audio import stream as audio_stream
     from src.routers.v1.audio import transcriptions as audio_transcriptions
     from src.routers.v1.chat import completions
-    from src.routers.v1 import embeddings
     from src.routers.v1.images import generations as image_generations
     from src.routers.v1.models import extended as models_extended
     from src.routers.v1.models import get as models_get
@@ -151,6 +151,7 @@ def create_app() -> FastAPI:
     # v1 endpoints
     app.include_router(completions.router, prefix="/v1")
     app.include_router(embeddings.router, prefix="/v1", tags=["OpenAI Compatible"])
+    app.include_router(rerank.router, prefix="/v1", tags=["Reranking"])
     app.include_router(models_get.router, prefix="/v1")
     app.include_router(models_extended.router, prefix="/v1")
     app.include_router(model_get.router, prefix="/v1")

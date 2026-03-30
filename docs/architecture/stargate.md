@@ -74,12 +74,13 @@ until `queue_timeout` or `upstream_retry_timeout`.
 - `POST /v1/audio/transcriptions` — Whisper
 - `POST /v1/pipelines/estimate` — estimate token budgets and first-fit-decreasing batches for pipeline inputs
 
-**`/v1/models` returns both local and cloud models.** Cloud model IDs contain
-`/` (e.g. `google/gemini-2.5-pro`, `anthropic/claude-3.5-sonnet`); local GPU
-model IDs do not. Cloud models are sourced from the cloud proxy and only appear
-when the cloud proxy service is running. Stargate is the **sole inference
-endpoint** for both model types — callers never contact the cloud proxy directly
-for inference.
+**`/v1/models` returns both local and cloud models.** Local GPU model IDs do not
+contain `/`. Cloud IDs are explicit: bare `provider/model` targets the native
+provider directly (for example `google/gemini-2.5-pro`, `anthropic/claude-3.5-sonnet`),
+while OpenRouter-routed IDs use the `openrouter/provider/model` form. Cloud models
+are sourced from the cloud proxy and only appear when the cloud proxy service is
+running. Stargate is the **sole inference endpoint** for both model types —
+callers never contact the cloud proxy directly for inference.
 
 ## Cloud Proxy Integration
 

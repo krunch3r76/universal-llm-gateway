@@ -26,6 +26,7 @@ class EndpointCategory(StrEnum):
 
     GENERATION = "generation"  # /v1/chat/completions, /v1/completions
     EMBEDDING = "embedding"  # /v1/embeddings
+    RERANK = "rerank"  # /api/v1/rerank → /v1/rerank
 
 
 class StargateMode(StrEnum):

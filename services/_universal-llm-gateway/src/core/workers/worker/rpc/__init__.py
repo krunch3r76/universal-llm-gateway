@@ -6,6 +6,7 @@ from .inference import InferenceHandlers
 from .lifecycle import LifecycleHandlers
 from .load import LoadHandlers
 from .metadata import MetadataHandlers
+from .rerank import RerankHandlers
 from .streams import StreamHandlers
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "LifecycleHandlers",
     "LoadHandlers",
     "MetadataHandlers",
+    "RerankHandlers",
     "StreamHandlers",
 ]

@@ -34,29 +34,19 @@ ARG SOURCE_VERSION=0
 # Use ARG so changing SOURCE_VERSION invalidates this and all following layers
 RUN echo "$SOURCE_VERSION" > /tmp/source_version
 
-# Shared libs — available as `from transport_utils import ...`, `from model_id import ...`
+# Full project source — mirrors edge node pattern.
+# .dockerignore strips __pycache__/, models/, .git/, venv/, docs/, tests/.
 COPY --chown=mcp:mcp libs/ /app/libs/
+COPY --chown=mcp:mcp services/ /app/services/
+COPY --chown=mcp:mcp config/ /app/config/
+COPY --chown=mcp:mcp sitecustomize.py /app/
+COPY --chown=mcp:mcp pipelines/ /app/pipelines/
 ENV PYTHONPATH=/app/libs
+ENV WORKSPACE_ROOT=/app
 
-# Application code last — only this layer rebuilds on code changes
-COPY --chown=mcp:mcp services/mcp-server/server.py .
-COPY --chown=mcp:mcp services/mcp-server/mcp_events.py .
-COPY --chown=mcp:mcp services/mcp-server/oauth_config.py .
-COPY --chown=mcp:mcp services/mcp-server/oauth_models.py .
-COPY --chown=mcp:mcp services/mcp-server/oauth_store.py .
-COPY --chown=mcp:mcp services/mcp-server/oauth_service.py .
-COPY --chown=mcp:mcp services/mcp-server/oauth_routes.py .
-COPY --chown=mcp:mcp services/mcp-server/auth_middleware.py .
-COPY --chown=mcp:mcp services/mcp-server/artifact_proxy.py .
-COPY --chown=mcp:mcp services/mcp-server/cortex_proxy.py .
-COPY --chown=mcp:mcp services/mcp-server/llm_proxy.py .
-COPY --chown=mcp:mcp services/mcp-server/workbench_relay.py .
-COPY --chown=mcp:mcp services/mcp-server/mcp_request_middleware.py .
-COPY --chown=mcp:mcp services/mcp-server/request_profile.py .
-COPY --chown=mcp:mcp services/mcp-server/tool_access.py .
-COPY --chown=mcp:mcp services/mcp-server/response_size_guard.py .
-COPY --chown=mcp:mcp services/mcp-server/tools/ tools/
+WORKDIR /app/services/mcp-server
 
 EXPOSE 443
 
 CMD ["python", "server.py"]
+

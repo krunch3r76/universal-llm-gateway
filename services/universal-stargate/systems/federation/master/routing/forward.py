@@ -48,6 +48,10 @@ class _CloudForwarder(Protocol):
         self, request_body: dict[str, Any], request_id: str
     ) -> dict[str, Any]: ...
 
+    async def forward_rerank_request(
+        self, request_body: dict[str, Any], request_id: str
+    ) -> dict[str, Any]: ...
+
 
 class FederatedRequestForwarder:
     """
@@ -226,7 +230,9 @@ class FederatedRequestForwarder:
             return await self._cloud_forwarder.forward_request(request_body, request_id)
 
         client = self._get_client_for_url(gateway.remote_stargate_url)
-        endpoint = self._get_endpoint(gateway.remote_stargate_url, "/api/v1/federation/inference")
+        endpoint = self._get_endpoint(
+            gateway.remote_stargate_url, "/api/v1/federation/inference"
+        )
         headers = self._build_headers(gateway.remote_stargate_id, hop_count, request_id)
         body = self._build_body(request_body, gateway, request_id, hop_count, hints)
 
@@ -308,7 +314,9 @@ class FederatedRequestForwarder:
             return
 
         client = self._get_client_for_url(gateway.remote_stargate_url)
-        endpoint = self._get_endpoint(gateway.remote_stargate_url, "/api/v1/federation/inference")
+        endpoint = self._get_endpoint(
+            gateway.remote_stargate_url, "/api/v1/federation/inference"
+        )
         headers = self._build_headers(gateway.remote_stargate_id, hop_count, request_id)
         body = self._build_body(request_body, gateway, request_id, hop_count, hints)
 
@@ -390,8 +398,9 @@ class FederatedRequestForwarder:
             httpx.RequestError: On connection failure
         """
         if gateway.is_cloud:
-            # Downstream only uses token_count and context_limit; with 0/0 it skips
-            # max_tokens adjustment. max_generation_tokens unused but included for shape.
+            # Downstream only uses token_count and context_limit; with 0/0 it
+            # skips max_tokens adjustment. max_generation_tokens unused but
+            # included for shape.
             return {
                 "token_count": 0,
                 "context_limit": 0,
@@ -399,7 +408,9 @@ class FederatedRequestForwarder:
             }
 
         client = self._get_client_for_url(gateway.remote_stargate_url)
-        endpoint = self._get_endpoint(gateway.remote_stargate_url, "/api/v1/federation/tokens/count")
+        endpoint = self._get_endpoint(
+            gateway.remote_stargate_url, "/api/v1/federation/tokens/count"
+        )
         headers = self._build_headers(
             gateway.remote_stargate_id,
             hop_count=0,  # Token counting doesn't use hop semantics
@@ -603,7 +614,9 @@ class FederatedRequestForwarder:
             )
 
         client = self._get_client_for_url(gateway.remote_stargate_url)
-        endpoint = self._get_endpoint(gateway.remote_stargate_url, "/api/v1/federation/inference")
+        endpoint = self._get_endpoint(
+            gateway.remote_stargate_url, "/api/v1/federation/inference"
+        )
 
         # Generate request_id if not provided
         req_id = request_id or str(uuid.uuid4())
@@ -662,6 +675,85 @@ class FederatedRequestForwarder:
             )
 
             # Preserve remote status code and detail
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=error_detail,
+            )
+
+        return response.json()
+
+    async def forward_rerank_request(
+        self,
+        gateway: FederatedGateway,
+        request_body: dict[str, Any],
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Forward rerank request to federated gateway.
+
+        Same envelope as embeddings; federation endpoint hint is `/v1/rerank`.
+        """
+        if gateway.is_cloud and self._cloud_forwarder:
+            req_id = request_id or str(uuid.uuid4())
+            return await self._cloud_forwarder.forward_rerank_request(
+                request_body, req_id
+            )
+
+        client = self._get_client_for_url(gateway.remote_stargate_url)
+        endpoint = self._get_endpoint(
+            gateway.remote_stargate_url, "/api/v1/federation/inference"
+        )
+
+        req_id = request_id or str(uuid.uuid4())
+        hop_count = 1
+
+        headers = self._build_headers(
+            gateway.remote_stargate_id,
+            hop_count,
+            req_id,
+        )
+
+        body = self._build_body(
+            request_body,
+            gateway,
+            req_id,
+            hop_count,
+            hints=None,
+        )
+
+        body["federation"]["endpoint"] = "/v1/rerank"
+
+        logger.debug(
+            f"Forwarding rerank request to {gateway.gateway_id} "
+            f"via {gateway.remote_stargate_id}",
+            extra={
+                "gateway_id": gateway.gateway_id,
+                "request_id": req_id,
+            },
+        )
+
+        response = await client.post(
+            endpoint,
+            json=body,
+            headers=headers,
+            timeout=30.0,
+        )
+
+        if not response.is_success:
+            try:
+                error_detail = response.json()
+            except Exception:
+                error_detail = {"message": response.text[:500]}
+
+            logger.error(
+                f"Federated rerank request failed: {response.status_code}",
+                extra={
+                    "request_id": req_id,
+                    "gateway_id": gateway.gateway_id,
+                    "error": error_detail,
+                },
+            )
+
             raise HTTPException(
                 status_code=response.status_code,
                 detail=error_detail,

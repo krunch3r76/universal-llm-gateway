@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-_IMPLICIT_RETRIEVAL_PATH_BY_SCOPE: dict[str, str] = {
-    "lighter": "general",
-}
+_IMPLICIT_RETRIEVAL_PATH_BY_SCOPE: dict[str, str] = {}
 """Scope-specific retrieval-path defaults used only when the caller omitted the option."""
 
 

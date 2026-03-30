@@ -20,7 +20,7 @@ def test_runtime_retrieval_path_override_wins() -> None:
         resolve_retrieval_path(
             runtime={"retrieval_path": "research"},
             effective={},
-            scope_key="lighter",
+            scope_key="retired_scope",
         )
         == "research"
     )
@@ -31,7 +31,7 @@ def test_scope_specific_default_applies_when_omitted() -> None:
         resolve_retrieval_path(
             runtime={},
             effective={},
-            scope_key="lighter",
+            scope_key="retired_scope",
         )
         == "general"
     )

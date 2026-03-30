@@ -15,7 +15,6 @@ except ImportError:
 
 from ..config import Config
 from ..registry import Catalog
-from ..models import CatalogModel
 from ..utils import format_size
 from .network_check import check_network_flag
 
@@ -30,13 +29,14 @@ def cmd_download_from_catalog(args: argparse.Namespace, config: Config) -> int:
 
     if not model:
         print(f"Error: Model not found in catalog: {args.model_id}", file=sys.stderr)
-        print(f"Use 'model-manager list' to see available models", file=sys.stderr)
+        print("Use 'model-manager list' to see available models", file=sys.stderr)
         return 1
 
     # Extract download info from catalog
     download_info = model.download.get("huggingface", {})
     repo = download_info.get("repo")
     file = download_info.get("file")
+    local_subdir = download_info.get("local_subdir")
     format_type = model.metadata.get("format", "gguf")
 
     if not repo:
@@ -57,14 +57,19 @@ def cmd_download_from_catalog(args: argparse.Namespace, config: Config) -> int:
             print("Continuing without explicit login (may fail for gated models)", file=sys.stderr)
 
     # Download based on format
-    if format_type in ("hf", "awq", "gptq"):
-        # Directory-based download (vLLM models)
+    if format_type in ("hf", "awq", "gptq", "cross-encoder"):
+        # Directory-based download (vLLM and cross-encoder models)
         return _download_directory_model(
             model_id=args.model_id,
             repo=repo,
             dest_dir=dest_dir,
-            filename=model.metadata.get("name") or args.model_id,
+            filename=local_subdir or model.metadata.get("name") or args.model_id,
             ignore_patterns=args.ignore_patterns,
+            format_label=(
+                "cross-encoder"
+                if format_type == "cross-encoder"
+                else "vLLM (directory-based)"
+            ),
         )
     elif format_type == "gguf":
         # Single file download (GGUF models)
@@ -85,7 +90,10 @@ def cmd_download_from_catalog(args: argparse.Namespace, config: Config) -> int:
             f"Error: Unsupported format '{format_type}' for model {args.model_id}",
             file=sys.stderr,
         )
-        print("Supported formats: gguf, hf, awq, gptq", file=sys.stderr)
+        print(
+            "Supported formats: gguf, hf, awq, gptq, cross-encoder",
+            file=sys.stderr,
+        )
         return 1
 
 
@@ -96,7 +104,7 @@ def _download_gguf_model(
     dest_path = dest_dir / file
 
     print(f"Downloading: {model_id}")
-    print(f"  Format: GGUF")
+    print("  Format: GGUF")
     print(f"  Repo: {repo}")
     print(f"  File: {file}")
     print(f"  Dest: {dest_path}")
@@ -138,12 +146,13 @@ def _download_directory_model(
     dest_dir: Path,
     filename: str,
     ignore_patterns: list[str] | None = None,
+    format_label: str = "vLLM (directory-based)",
 ) -> int:
-    """Download directory-based model (vLLM: hf/awq/gptq)."""
+    """Download directory-based model (vLLM or cross-encoder)."""
     target_dir = dest_dir / filename
 
     print(f"Downloading: {model_id}")
-    print(f"  Format: vLLM (directory-based)")
+    print(f"  Format: {format_label}")
     print(f"  Repo: {repo}")
     print(f"  Dest: {target_dir}")
     print()

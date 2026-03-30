@@ -124,7 +124,7 @@ consult --no-rag "question"   # skip RAG, useful for quick queries
 |---|---|---|
 | `-r / --role` | `researcher` | See role table below |
 | `--models` | Auto-selected per role (intelligence profiles -> `/api/select` fallback) | Model IDs to query |
-| `--cloud-only` | off | Restrict to cloud IDs (`/`) and validate availability in live `/v1/models`; fail fast if cloud is unavailable |
+| `--cloud-only` | off | Restrict to cloud IDs and validate availability in live `/v1/models`; bare `provider/model` targets the native provider directly, while OpenRouter-routed IDs must be explicit `openrouter/provider/model` |
 | `-f PATH` | — | Inject file as context; repeat per file; directories glob `*.py` only |
 | `--no-rag` | — | Disable RAG — required when calling from foreign workspaces |
 | `--chain` | — | Sequential: first model analyses, rest review prior output |
@@ -187,7 +187,7 @@ Default model: `rag-answer` (query rewriting + RAG + grounded answer).
 ```bash
 ask "What does research say about RRF?"          # default: rag-answer
 ask -m phi-4-q4-k-m-16384 "Explain attention"    # specific model
-ask -M arcee-ai/trinity:free "question"           # cloud model via rag-answer
+ask -M openrouter/arcee-ai/trinity:free "question" # OpenRouter-routed cloud model via rag-answer
 ask -s research "question"                        # scope override
 ask -o output.txt "question"                      # save to file
 ```

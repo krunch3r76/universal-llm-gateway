@@ -24,8 +24,6 @@ logger = logging.getLogger(__name__)
 _QUERY_SOCKET = os.environ.get(
     "EVENT_QUERY_SOCKET", "/tmp/universal-protocol/events-query.sock"
 )
-_CLAUDEBURST_QUERY_HOST = os.environ.get("CLAUDEBURST_EVENTS_QUERY_HOST", "").strip()
-_CLAUDEBURST_QUERY_PORT = int(os.environ.get("CLAUDEBURST_EVENTS_QUERY_PORT", "7102"))
 _QUERY_TIMEOUT = 10.0
 _CURSOR_PREVIEW_LIMIT = 50
 _CURSOR_PREVIEW_BLOCKED = frozenset(
@@ -63,7 +61,6 @@ _VALID_OPERATIONS = frozenset(
 class _EventQueryTarget:
     name: str
     url: str
-    transport: str
 
 
 def _resolve_target(target: str) -> _EventQueryTarget | None:
@@ -72,19 +69,6 @@ def _resolve_target(target: str) -> _EventQueryTarget | None:
         return _EventQueryTarget(
             name="ulg",
             url=f"unix://{_QUERY_SOCKET}",
-            transport="uds",
-        )
-    if normalized == "claudeburst":
-        if not _CLAUDEBURST_QUERY_HOST:
-            return None
-        # Maintainer-only temporary branch: this hardcoded target name exists so
-        # tonight's workflow can reach the ClaudeBurst event service instance.
-        # Future versions should remove this branch in favor of generic local
-        # config-driven target resolution.
-        return _EventQueryTarget(
-            name="claudeburst",
-            url=f"http://{_CLAUDEBURST_QUERY_HOST}:{_CLAUDEBURST_QUERY_PORT}",
-            transport="tcp",
         )
     return None
 
@@ -102,20 +86,14 @@ def _query_event_service(
         return {
             "error": (
                 f"Unknown observability target: {target}. "
-                "Valid targets: ulg, claudeburst"
+                "Valid targets: ulg"
             )
         }
     try:
-        if resolved_target.transport == "uds":
-            client_ctx = make_sync_client(
-                resolved_target.url,
-                timeout=_QUERY_TIMEOUT,
-            )
-        else:
-            client_ctx = httpx.Client(
-                base_url=resolved_target.url,
-                timeout=_QUERY_TIMEOUT,
-            )
+        client_ctx = make_sync_client(
+            resolved_target.url,
+            timeout=_QUERY_TIMEOUT,
+        )
         with client_ctx as client:
             resp = client.post("/v1/query", json=body)
             resp.raise_for_status()
@@ -166,9 +144,7 @@ def register_event_tools(mcp: FastMCP) -> None:
         their detailed parameter schemas.
 
         `target` selects which event service instance to query. Use the default
-        `ulg` target for repository-wide observability. `claudeburst` is a
-        maintainer-only temporary target for the same event service API on a
-        separate instance; it will be replaced by generic local config targets.
+        `ulg` target for repository-wide observability.
 
         Default time window semantics are owned by Event Service operations.
         This tool forwards params through unchanged.
@@ -194,7 +170,7 @@ def register_event_tools(mcp: FastMCP) -> None:
         Authoritative operation set: _VALID_OPERATIONS in this module.
 
         Args:
-            target: Event service instance to query (`ulg` by default).
+            target: Event service instance to query (`ulg`).
             operation: Operation name from the list above.
             params: Operation-specific parameters (see 'operations' for schema).
 
@@ -256,8 +232,6 @@ def register_event_tools(mcp: FastMCP) -> None:
 
         Prefer this tool when the caller only needs a small recent slice of
         telemetry. Use `target="ulg"` for the default repo-wide instance.
-        `target="claudeburst"` is a maintainer-only temporary route to the
-        same event service API on a separate instance.
         """
         if operation not in _VALID_OPERATIONS:
             return {

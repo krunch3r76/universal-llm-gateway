@@ -18,6 +18,7 @@ An optional, standalone service that routes inference requests to cloud API prov
 | OpenRouter | OpenAI-compatible | Primary multi-provider gateway |
 | Anthropic | Native adapter | Direct Claude API |
 | OpenAI | OpenAI-compatible | Direct OpenAI API |
+| xAI | OpenAI-compatible | Grok at `https://api.x.ai/v1` |
 | Google | OpenAI-compatible | Via OpenRouter or direct |
 
 ## API Endpoints
@@ -93,6 +94,10 @@ providers:
     max_concurrent: 10
     allow_prefixes:
       - "claude-"
+
+  - provider: xai
+    api_key_env: XAI_API_KEY
+    base_url: https://api.x.ai/v1
 ```
 
 ### Key Options
@@ -105,6 +110,7 @@ providers:
 | `providers[].allow_prefixes` | Filter which models are exposed from each provider |
 | `providers[].max_concurrent` | Concurrent request limit per provider |
 | `providers[].native_tools` | Tool-use allowlist per provider |
+| `providers[].mcp_server_url` | Publish `provider/model-mcp` variants that auto-attach the remote MCP server |
 | `providers[].refresh_interval_hours` | Catalog refresh frequency |
 
 ## Events

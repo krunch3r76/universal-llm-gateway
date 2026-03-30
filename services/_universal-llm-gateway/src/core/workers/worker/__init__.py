@@ -15,6 +15,7 @@ from .rpc import (
     LifecycleHandlers,
     LoadHandlers,
     MetadataHandlers,
+    RerankHandlers,
     StreamHandlers,
 )
 from .rpc.helpers import RPCHelpers
@@ -35,6 +36,7 @@ class Worker(
     StreamingHandlers,
     FluxImageHandlers,
     EmbeddingHandlers,
+    RerankHandlers,
     EngineLifecycle,
 ):
     """
@@ -51,8 +53,9 @@ class Worker(
     8. StreamingHandlers - Stream start logic
     9. FluxImageHandlers - Flux.2 image generation
     10. EmbeddingHandlers - Text embedding generation
-    11. EngineLifecycle - Engine loading
-    12. WorkerBase - Base process infrastructure
+    11. RerankHandlers - Cross-encoder reranking
+    12. EngineLifecycle - Engine loading
+    13. WorkerBase - Base process infrastructure
     """
 
     @override

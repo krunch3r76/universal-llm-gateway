@@ -258,9 +258,21 @@ class AuthMiddleware:
             return
 
         auth_header = request.headers.get("authorization", "")
+        client_ip = request.client.host if request.client else "unknown"
+        client_port = request.client.port if request.client else 0
+        user_agent = request.headers.get("user-agent", "")
+
         if self._is_static_token_authorized(auth_header):
             scope["auth_mode"] = "static"
             scope["mcp_profile"] = self._resolve_profile(auth_header)
+            record(
+                "mcp.auth.admitted",
+                client_ip=client_ip,
+                client_port=client_port,
+                auth_mode="static",
+                path=path,
+                user_agent=user_agent,
+            )
             record(
                 "mcp.profile.bound",
                 profile=scope["mcp_profile"],
@@ -273,6 +285,15 @@ class AuthMiddleware:
         if token is not None and self._oauth_service is not None:
             token_record = self._oauth_service.validate_access_token(token)
             if token_record is not None:
+                record(
+                    "mcp.auth.admitted",
+                    client_ip=client_ip,
+                    client_port=client_port,
+                    auth_mode="oauth",
+                    oauth_client_id=token_record.client_id,
+                    path=path,
+                    user_agent=user_agent,
+                )
                 record("mcp.oauth.token.accepted", client_id=token_record.client_id)
                 scope["auth_mode"] = "oauth"
                 scope["oauth_client_id"] = token_record.client_id
@@ -293,8 +314,13 @@ class AuthMiddleware:
             )
 
         record(
-            "mcp.request.unauthorized", path=path, reason="no_valid_token"
-        )  # Example event
+            "mcp.request.unauthorized",
+            client_ip=client_ip,
+            client_port=client_port,
+            path=path,
+            user_agent=user_agent,
+            reason="no_valid_token",
+        )
         headers: dict[str, str] = {}
         if www_authenticate := self._build_www_authenticate_header():
             headers["WWW-Authenticate"] = www_authenticate

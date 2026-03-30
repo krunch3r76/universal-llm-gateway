@@ -43,6 +43,11 @@ services:
               capabilities: [gpu]
 
     volumes:
+      # Live repo source: reuse the baked image for deps/CUDA; refresh Python by editing
+      # the host tree (rsync on remotes) and restarting the container — no docker build.
+      - ../../libs:/app/libs:ro
+      - ../../services:/app/services:ro
+      - ../../sitecustomize.py:/app/sitecustomize.py:ro
       - ../../docker/runtime/golem-start.sh:/app/golem-start.sh:ro
       - ../../config:/app/config:ro
       - ${MODEL_PATH:?MODEL_PATH required}:/golem/models
@@ -88,6 +93,14 @@ services:
       ENABLE_MODEL_AVAILABILITY_CHECK: "true"
       ENABLE_MANAGEMENT_API: "true"
       DISABLE_HEALTH_CHECKING: "false"
+
+      # Container Event Service (in-memory by default, bridge to host)
+      EVENTS_INGEST_SOCK: /tmp/container-events/events.sock
+      EVENTS_QUERY_SOCK: /tmp/container-events/events-query.sock
+      EVENT_PERSIST: "${EVENT_PERSIST:-true}"
+      EVENT_DB_PATH: "${EVENT_DB_PATH:-/golem/logs/events.db}"
+      EVENT_BRIDGE_UPSTREAM: /tmp/universal-protocol/events.sock
+      EVENT_BRIDGE_ORIGIN: "edge-${NODE_ID}"
 
     command: ["/app/golem-start.sh", "both"]
 

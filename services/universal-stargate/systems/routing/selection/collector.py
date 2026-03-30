@@ -57,7 +57,7 @@ def _validate_model_requirements(
     if vram_usage is None and ram_usage is None:
         # No requirements available - exclude from routing
         logger.warning(
-            f"No resource requirements for loaded model {model_id_str}, "
+            f"No resource requirements for routable model {model_id_str}, "
             f"excluding from model_details"
         )
         return None
@@ -124,24 +124,34 @@ async def collect_gateways(
             model_details: dict[ModelId, dict[str, Any]] = {}
             cached_inference = getattr(status, "model_last_inference", {})
             cached_model_details = getattr(status, "model_details", {})
+            loaded_model_ids = set(status.loaded_models)
 
-            # MUST include all loaded models even if last_inference_time missing
-            for model_id_str in status.loaded_models:
-                model_id = ModelId.parse(model_id_str)  # CHANGED: parse to ModelId
+            async def _populate_model_details(
+                model_id_str: str,
+                *,
+                status_value: str,
+            ) -> None:
+                model_id = ModelId.parse(model_id_str)
                 last_inf = cached_inference.get(model_id_str)
 
-                # Get resource usage from WebSocket state (MODEL_LOADED events)
-                # This avoids expensive HTTP calls to gateway
+                # Prefer live websocket resource state for loaded models.
                 cached_details = cached_model_details.get(model_id_str, {})
                 vram_usage = cached_details.get("vram_usage")
                 ram_usage = cached_details.get("ram_usage")
 
-                # Fallback to HTTP configuration fetch only if WebSocket cache is empty
-                # (e.g., models loaded before Stargate connected)
-                if (vram_usage is None or ram_usage is None) and gateway_manager:
+                # Available-but-unloaded models still need resource requirements so
+                # routing can reserve capacity and trigger load-on-demand.
+                if vram_usage is None or ram_usage is None:
                     try:
-                        model_config = await gateway_manager.fetch_model_configuration(
-                            model_id
+                        api_lookup_id = (
+                            model_id.synthetic_id
+                            if model_id.is_cpu
+                            else model_id.catalog_lookup_id
+                        )
+                        model_config = (
+                            await gw_instance.client.fetch_model_configuration(
+                                api_lookup_id
+                            )
                         )
                         if model_config:
                             vram_usage = model_config.vram_usage
@@ -152,25 +162,35 @@ async def collect_gateways(
                             extra={"model_id": model_id_str, "error": str(e)},
                         )
 
-                # Validate requirements (fail-closed policy)
                 requirements = _validate_model_requirements(
                     vram_usage, ram_usage, model_id_str
                 )
                 if requirements is None:
-                    continue  # Skip adding to model_details
+                    return
 
                 vram_usage, ram_usage = requirements
-                model_details[model_id] = {  # CHANGED: key is ModelId
+                model_details[model_id] = {
                     "last_inference_time": last_inf,
                     "vram_usage": vram_usage,
                     "ram_usage": ram_usage,
-                    "status": (
+                    "status": status_value,
+                }
+
+            # MUST include all loaded models even if last_inference_time missing
+            for model_id_str in status.loaded_models:
+                await _populate_model_details(
+                    model_id_str,
+                    status_value=(
                         "busy" if model_id_str in status.busy_models else "loaded"
                     ),
-                }
+                )
 
             # Get available models from WebSocket cache (instant, no HTTP)
             available_models = gw_instance.client.get_models()
+            for model_id_str in available_models:
+                if model_id_str in loaded_model_ids:
+                    continue
+                await _populate_model_details(model_id_str, status_value="available")
 
             # Parse measured VRAM from WebSocket state (populated by RESOURCE_UPDATE)
             client_state = getattr(gw_instance.client, "state", None)

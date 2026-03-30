@@ -156,6 +156,58 @@ class RequestExecutor:
             oom_recovery_fn=_oom_recovery if self._federated_manager else None,
         )
 
+    async def execute_rerank_request(
+        self,
+        model_id: str,
+        request_body: dict[str, Any],
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Execute a rerank request via federation.
+
+        Delegates to `rerank.execute_rerank_request`, mirroring the embedding path.
+        """
+        from .rerank import execute_rerank_request as _exec
+        from .rerank import forward_rerank_request
+
+        async def _forward(*, gateway, request_body, request_id):  # type: ignore[override]
+            return await forward_rerank_request(
+                gateway,
+                request_body,
+                request_id,
+                federation_integration=self._federation_integration,
+                federation_forwarder=self._federation_forwarder,
+            )
+
+        async def _oom_recovery(*, gateway, model_id, request_id):
+            from .oom_recovery import attempt_oom_recovery
+
+            request_tracker = None
+            if self._federation_integration is not None:
+                request_tracker = self._federation_integration.request_tracker
+
+            return await attempt_oom_recovery(
+                gateway=gateway,
+                model_id=model_id,
+                federated_manager=self._federated_manager,
+                federation_forwarder=self._federation_forwarder,
+                request_tracker=request_tracker,
+                event_bus=self.event_bus,
+                request_id=request_id,
+            )
+
+        return await _exec(
+            model_id=model_id,
+            request_body=request_body,
+            request_id=request_id,
+            select_gateway_fn=self._select_gateway_and_load_model,
+            release_routing_key_fn=self._release_routing_key_on_error,
+            release_capacity_token_fn=self._release_capacity_token,
+            forward_rerank_fn=_forward,
+            event_bus=self.event_bus,
+            oom_recovery_fn=_oom_recovery if self._federated_manager else None,
+        )
+
     # ------------------------------------------------------------------
     # Internal: gateway selection and capacity management
     # ------------------------------------------------------------------

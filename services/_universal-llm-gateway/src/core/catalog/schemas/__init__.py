@@ -24,6 +24,7 @@ V2 Schema Enforcement (Phase 3):
 
 from typing import Any
 
+from .cross_encoder import CrossEncoderSchema
 from .ctranslate2 import CTranslate2Schema
 from .diffusers import DiffusersSchema
 from .exllamav3 import ExllamaV3Schema
@@ -44,6 +45,7 @@ __all__ = [
     "FasterWhisperSchema",
     "DiffusersSchema",
     "CTranslate2Schema",
+    "CrossEncoderSchema",
 ]
 
 
@@ -75,6 +77,7 @@ class SchemaRegistry:
         cls.register(FasterWhisperSchema())
         cls.register(DiffusersSchema())
         cls.register(CTranslate2Schema())
+        cls.register(CrossEncoderSchema())
         cls._initialized = True
 
     @classmethod

@@ -168,8 +168,11 @@ class StargateProxy:
         debug_config = self.config.get_debug_event_config()
         socket_path = debug_config.get("socket_path")
 
-        # UDS path for event service publishing (always enabled)
-        uds_publish_path = "/tmp/universal-protocol/events.sock"
+        import os as _os
+
+        uds_publish_path = _os.environ.get(
+            "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+        )
 
         # Create broadcaster if socket or event service publishing is enabled
         if socket_path or uds_publish_path:
@@ -500,6 +503,46 @@ class StargateProxy:
             request_id=request_id_val,
         )
 
+        return result
+
+    async def process_rerank_request(
+        self,
+        model_id: str,
+        query: str,
+        passages: list[str],
+        request: Request,
+    ) -> dict[str, Any]:
+        """
+        Process rerank request through federation.
+
+        Args:
+            model_id: Reranker model identifier
+            query: Query to score against passages
+            passages: Passages to score
+            request: Original FastAPI request
+
+        Returns:
+            Rerank response with scores and model
+        """
+        request_id_val = getattr(request.state, "request_id", None)
+
+        request_body = {
+            "model": model_id,
+            "query": query,
+            "passages": passages,
+        }
+
+        if self.request_executor is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Request executor unavailable for rerank requests",
+            )
+
+        result = await self.request_executor.execute_rerank_request(
+            model_id=model_id,
+            request_body=request_body,
+            request_id=request_id_val,
+        )
         return result
 
     def cancel_request(self, request_id: str, model_id: str | None = None) -> bool:

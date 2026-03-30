@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
+import os
 import time
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from model_id import ModelId
 
 from ..events import (
+    CloudproxyMcpCorrelationAssigned,
+    CloudproxyMcpPathFailed,
+    CloudproxyMcpRequestCompleted,
+    CloudproxyMcpRequestStarted,
+    CloudproxyMcpStreamCancelled,
+    CloudproxyMcpStreamHeartbeat,
     McpAdapterMcpToolUseSeen,
     McpAdapterToolSearchSeen,
 )
@@ -34,6 +45,9 @@ logger = logging.getLogger(__name__)
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_BETA_MCP_V1 = "mcp-client-2025-04-04"
 _ANTHROPIC_BETA_MCP_V2 = "mcp-client-2025-11-20"
+_STREAM_HEARTBEAT_INTERVAL_S = float(
+    os.getenv("CLOUDPROXY_ANTHROPIC_STREAM_HEARTBEAT_S", "15")
+)
 
 _MCP_ALWAYS_LOADED: frozenset[str] = frozenset(
     {
@@ -79,31 +93,26 @@ class AnthropicAdapter:
         return self._client
 
     def normalize_catalog_model_id(self, raw_model_id: str) -> str:
-        """Normalize provider model IDs into the catalog namespace."""
-        if raw_model_id.startswith("native/"):
-            return raw_model_id
+        """Normalize provider model IDs into the catalog namespace.
+
+        Bare model names get anthropic/ prefix. Slashful IDs pass through.
+        """
         if "/" in raw_model_id:
-            return f"native/{raw_model_id}"
-        return f"native/anthropic/{raw_model_id}"
+            return raw_model_id
+        return f"anthropic/{raw_model_id}"
 
     def to_upstream_model_id(self, catalog_model_id: str) -> str:
-        """Map catalog model IDs back to Anthropic upstream IDs."""
-        if catalog_model_id.startswith("native/anthropic/"):
-            return catalog_model_id.removeprefix("native/anthropic/")
-        if catalog_model_id.startswith("native/"):
-            return catalog_model_id.removeprefix("native/")
-        if catalog_model_id.startswith("anthropic/"):
-            return catalog_model_id.removeprefix("anthropic/")
-        return catalog_model_id
+        """Strip anthropic/ prefix and ``-mcp`` — Anthropic API expects bare model names."""
+        return ModelId.parse(catalog_model_id).api_model_id
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, *, include_mcp_beta: bool = False) -> dict[str, str]:
         """Build HTTP headers for Anthropic API requests."""
         headers = {
             "x-api-key": self._config.api_key,
             "anthropic-version": _ANTHROPIC_VERSION,
             "Content-Type": "application/json",
         }
-        if self._config.mcp_server_url:
+        if include_mcp_beta and self._config.mcp_server_url:
             headers["anthropic-beta"] = (
                 _ANTHROPIC_BETA_MCP_V2
                 if self._config.mcp_v2
@@ -155,10 +164,16 @@ class AnthropicAdapter:
         """Encode an SSE data frame from a JSON payload."""
         return f"data: {json.dumps(payload)}\n\n".encode()
 
+    @staticmethod
+    def _sse_comment(comment: str) -> bytes:
+        """Encode an SSE comment frame that clients ignore but proxies observe."""
+        return f": {comment}\n\n".encode()
+
     def _openai_to_anthropic(self, request_body: dict[str, Any]) -> dict[str, Any]:
         """Convert OpenAI-compatible request payloads into Anthropic format."""
         model_id = str(request_body.get("model", "")).strip()
-        anthropic_model = self.to_upstream_model_id(model_id)
+        parsed = ModelId.parse(model_id)
+        anthropic_model = parsed.api_model_id
 
         raw_messages = request_body.get("messages")
         openai_messages: list[dict[str, Any]] = (
@@ -257,10 +272,11 @@ class AnthropicAdapter:
         if bool(request_body.get("stream", False)):
             payload["stream"] = True
 
-        # Inject MCP server when configured so the model can see and use it.
-        # Inject whenever mcp_server_url is set except when the client explicitly
-        # requested no tools (tool_choice="none"), so chat-only requests still get MCP.
-        if self._config.mcp_server_url and tool_choice_in != "none":
+        # Remote MCP only when model id ends with -mcp and provider has MCP URL.
+        inject_mcp = (
+            self._config.mcp_server_url and parsed.is_mcp and tool_choice_in != "none"
+        )
+        if inject_mcp:
             payload["mcp_servers"] = [
                 {
                     "type": "url",
@@ -348,66 +364,236 @@ class AnthropicAdapter:
 
     async def forward_chat(self, request_body: dict[str, Any]) -> dict[str, Any]:
         """Forward a non-streaming Anthropic request, preserving provider error detail and normalizing the response."""
-        body = self._openai_to_anthropic(request_body)
-        response = await self._client.post(
-            f"{self._config.base_url}/messages",
-            json=body,
-            headers=self._headers(),
-        )
-        if response.status_code >= 400:
-            await self._raise_provider_http_error(response)
-        result, mcp_meta = self._anthropic_to_openai_response(
-            response.json(), str(request_body.get("model", ""))
-        )
-        await self._emit_mcp_response_events(mcp_meta)
-        return result
+        correlation_id = str(uuid.uuid4())
+        t0 = time.monotonic()
+        outcome = "error"
+        try:
+            body = self._openai_to_anthropic(request_body)
+            has_mcp = bool(body.get("mcp_servers"))
+            req_headers = dict(self._headers(include_mcp_beta=has_mcp))
+            req_headers["X-Cloudproxy-Correlation-Id"] = correlation_id
+            if self._event_bus:
+                await self._event_bus.publish_async(
+                    CloudproxyMcpCorrelationAssigned(
+                        correlation_id=correlation_id,
+                        provider=self._config.provider,
+                    )
+                )
+                await self._event_bus.publish_async(
+                    CloudproxyMcpRequestStarted(
+                        correlation_id=correlation_id,
+                        provider=self._config.provider,
+                        model=str(request_body.get("model", "")),
+                        has_mcp_servers=has_mcp,
+                        streaming=False,
+                    )
+                )
+            response = await self._client.post(
+                f"{self._config.base_url}/messages",
+                json=body,
+                headers=req_headers,
+            )
+            if response.status_code >= 400:
+                await self._raise_provider_http_error(response)
+            result, mcp_meta = self._anthropic_to_openai_response(
+                response.json(), str(request_body.get("model", ""))
+            )
+            await self._emit_mcp_response_events(
+                mcp_meta, correlation_id=correlation_id
+            )
+            outcome = "success"
+            return result
+        except Exception as exc:
+            if self._event_bus:
+                await self._event_bus.publish_async(
+                    CloudproxyMcpPathFailed(
+                        correlation_id=correlation_id,
+                        provider=self._config.provider,
+                        error=str(exc)[:500],
+                        exc_type=type(exc).__name__,
+                    )
+                )
+            raise
+        finally:
+            if self._event_bus:
+                duration = time.monotonic() - t0
+                await self._event_bus.publish_async(
+                    CloudproxyMcpRequestCompleted(
+                        correlation_id=correlation_id,
+                        provider=self._config.provider,
+                        duration_s=round(duration, 3),
+                        outcome=outcome,
+                    )
+                )
 
     async def forward_chat_stream(
         self, request_body: dict[str, Any]
     ) -> AsyncIterator[bytes]:
         """Forward streaming chat requests as OpenAI-compatible SSE chunks."""
-        body = self._openai_to_anthropic({**request_body, "stream": True})
-        async with self._client.stream(
-            "POST",
-            f"{self._config.base_url}/messages",
-            json=body,
-            headers=self._headers(),
-        ) as response:
-            if response.status_code >= 400:
-                error_body = await response.aread()
-                error_preview = error_body.decode(errors="replace")[:300]
-                raise httpx.HTTPStatusError(
-                    f"Provider returned {response.status_code}: {error_preview}",
-                    request=response.request,
-                    response=response,
-                )
+        correlation_id = str(uuid.uuid4())
+        t0 = time.monotonic()
+        outcome = "error"
+        requested_model = str(request_body.get("model", ""))
 
-            translator = StreamTranslator(str(request_body.get("model", "")))
-            done_seen = False
-            async for line in response.aiter_lines():
-                chunks = translator.process_line(
-                    line,
-                    request=response.request,
-                    response=response,
-                )
-                for chunk in chunks:
-                    if chunk == b"data: [DONE]\n\n":
-                        if not done_seen:
+        async def _gen() -> AsyncIterator[bytes]:
+            nonlocal outcome
+            stage = "build_request"
+            try:
+                body = self._openai_to_anthropic({**request_body, "stream": True})
+                has_mcp = bool(body.get("mcp_servers"))
+                req_headers = dict(self._headers(include_mcp_beta=has_mcp))
+                req_headers["X-Cloudproxy-Correlation-Id"] = correlation_id
+                translator = StreamTranslator(requested_model)
+                if self._event_bus:
+                    await self._event_bus.publish_async(
+                        CloudproxyMcpCorrelationAssigned(
+                            correlation_id=correlation_id,
+                            provider=self._config.provider,
+                        )
+                    )
+                    await self._event_bus.publish_async(
+                        CloudproxyMcpRequestStarted(
+                            correlation_id=correlation_id,
+                            provider=self._config.provider,
+                            model=str(request_body.get("model", "")),
+                            has_mcp_servers=has_mcp,
+                            streaming=True,
+                        )
+                    )
+                stage = "open_upstream_stream"
+                async with self._client.stream(
+                    "POST",
+                    f"{self._config.base_url}/messages",
+                    json=body,
+                    headers=req_headers,
+                ) as response:
+                    if response.status_code >= 400:
+                        error_body = await response.aread()
+                        error_preview = error_body.decode(errors="replace")[:300]
+                        raise httpx.HTTPStatusError(
+                            f"Provider returned {response.status_code}: {error_preview}",
+                            request=response.request,
+                            response=response,
+                        )
+
+                    stage = "await_upstream_chunk"
+                    done_seen = False
+                    heartbeat_enabled = _STREAM_HEARTBEAT_INTERVAL_S > 0
+                    line_iter = response.aiter_lines()
+                    pending_line: asyncio.Task[str] | None = asyncio.create_task(
+                        anext(line_iter)
+                    )
+                    try:
+                        while pending_line is not None:
+                            done, _ = await asyncio.wait(
+                                {pending_line},
+                                timeout=(
+                                    _STREAM_HEARTBEAT_INTERVAL_S
+                                    if heartbeat_enabled
+                                    else None
+                                ),
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            if not done:
+                                if self._event_bus:
+                                    await self._event_bus.publish_async(
+                                        CloudproxyMcpStreamHeartbeat(
+                                            correlation_id=correlation_id,
+                                            provider=self._config.provider,
+                                            model=requested_model,
+                                            idle_s=_STREAM_HEARTBEAT_INTERVAL_S,
+                                        )
+                                    )
+                                yield self._sse_comment("heartbeat")
+                                continue
+
+                            try:
+                                line = pending_line.result()
+                            except StopAsyncIteration:
+                                pending_line = None
+                                break
+                            pending_line = None
+                            stage = "relay_upstream_chunk"
+                            chunks = translator.process_line(
+                                line,
+                                request=response.request,
+                                response=response,
+                            )
+                            for chunk in chunks:
+                                if chunk == b"data: [DONE]\n\n":
+                                    if not done_seen:
+                                        yield chunk
+                                        done_seen = True
+                                    continue  # Skip subsequent [DONE] from process_line
+                                yield chunk
+                            stage = "await_upstream_chunk"
+                            pending_line = asyncio.create_task(anext(line_iter))
+                    finally:
+                        if pending_line is not None and not pending_line.done():
+                            pending_line.cancel()
+                            with contextlib.suppress(
+                                asyncio.CancelledError, StopAsyncIteration
+                            ):
+                                await pending_line
+
+                    stage = "finalize_stream"
+                    for chunk in translator.finalize():
+                        if chunk == b"data: [DONE]\n\n":
+                            if not done_seen:
+                                yield chunk
+                                done_seen = True
+                        else:
                             yield chunk
-                            done_seen = True
-                        continue  # Skip subsequent [DONE] from process_line
-                    yield chunk
+                    await self._emit_mcp_response_events(
+                        translator.mcp_meta, correlation_id=correlation_id
+                    )
+                    outcome = "success"
+            except asyncio.CancelledError:
+                outcome = "cancelled"
+                if self._event_bus:
+                    await self._event_bus.publish_async(
+                        CloudproxyMcpStreamCancelled(
+                            correlation_id=correlation_id,
+                            provider=self._config.provider,
+                            model=requested_model,
+                            duration_s=round(time.monotonic() - t0, 3),
+                            stage=stage,
+                            reason="downstream_cancelled",
+                        )
+                    )
+                raise
+            except Exception as exc:
+                if self._event_bus:
+                    await self._event_bus.publish_async(
+                        CloudproxyMcpPathFailed(
+                            correlation_id=correlation_id,
+                            provider=self._config.provider,
+                            error=str(exc)[:500],
+                            exc_type=type(exc).__name__,
+                        )
+                    )
+                raise
+            finally:
+                if self._event_bus:
+                    duration = time.monotonic() - t0
+                    await self._event_bus.publish_async(
+                        CloudproxyMcpRequestCompleted(
+                            correlation_id=correlation_id,
+                            provider=self._config.provider,
+                            duration_s=round(duration, 3),
+                            outcome=outcome,
+                        )
+                    )
 
-            for chunk in translator.finalize():
-                if chunk == b"data: [DONE]\n\n":
-                    if not done_seen:
-                        yield chunk
-                        done_seen = True
-                else:
-                    yield chunk
-            await self._emit_mcp_response_events(translator.mcp_meta)
+        async for chunk in _gen():
+            yield chunk
 
-    async def _emit_mcp_response_events(self, mcp_meta: dict[str, Any]) -> None:
+    async def _emit_mcp_response_events(
+        self,
+        mcp_meta: dict[str, Any],
+        *,
+        correlation_id: str | None = None,
+    ) -> None:
         """Emit per-response MCP events from mcp_meta collected during translation."""
         if not mcp_meta or not self._event_bus:
             return
@@ -416,12 +602,16 @@ class AnthropicAdapter:
                 McpAdapterMcpToolUseSeen(
                     tool_name=tool_name,
                     server_name=_MCP_SERVER_NAME,
+                    correlation_id=correlation_id,
                 )
             )
         ref_count = mcp_meta.get("tool_search_ref_count", 0)
         if ref_count:
             await self._event_bus.publish_async(
-                McpAdapterToolSearchSeen(references_count=ref_count)
+                McpAdapterToolSearchSeen(
+                    references_count=ref_count,
+                    correlation_id=correlation_id,
+                )
             )
 
     async def forward_embeddings(self, request_body: dict[str, Any]) -> dict[str, Any]:

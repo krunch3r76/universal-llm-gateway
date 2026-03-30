@@ -200,11 +200,29 @@ class LoadHandlers:
                         "loader_config": params.get("loader_config", {}),
                     }
 
+                import time as _time
+
+                from ..events import (
+                    emit_model_failed,
+                    emit_model_loaded,
+                    emit_model_loading,
+                )
+
                 logger.info(
                     f"🔧 [worker] [request_id={request_id}] "
                     f"Loading model engine for {self.model_id}"
                 )
+                await emit_model_loading(
+                    worker_id=self.worker_id, model_id=self.model_id
+                )
+                _t0 = _time.monotonic()
                 await self._load_model_engine()
+
+                await emit_model_loaded(
+                    worker_id=self.worker_id,
+                    model_id=self.model_id,
+                    duration_s=_time.monotonic() - _t0,
+                )
 
                 self._init_inference_gate(request_id)
 
@@ -223,6 +241,11 @@ class LoadHandlers:
                 return result
 
             except Exception as e:
+                await emit_model_failed(
+                    worker_id=self.worker_id,
+                    model_id=self.model_id,
+                    error=str(e),
+                )
                 logger.error(
                     f"❌ [worker] [request_id={request_id}] Model loading error: {e}"
                 )

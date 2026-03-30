@@ -412,7 +412,7 @@ async def test_answer_v1_runtime_model_override_drives_target_resolution():
 
     context = MagicMock()
     context.pipeline = MagicMock(domain="answer_v1")
-    context.options = {"model": "native/openai/gpt-5.4"}
+    context.options = {"model": "openai/gpt-5.4"}
 
     resolved = await step.get_target_model_id_async(
         registry,
@@ -421,7 +421,7 @@ async def test_answer_v1_runtime_model_override_drives_target_resolution():
         context=context,
     )
 
-    assert resolved == "native/openai/gpt-5.4"
+    assert resolved == "openai/gpt-5.4"
     registry.get_model_config.assert_not_called()
 
 
@@ -456,7 +456,7 @@ async def test_answer_v1_runtime_override_gate_events():
     registry = MagicMock()
     registry.get_model_config.return_value = MagicMock(model="phi-4-q4-k-m-16384")
 
-    context = _build_answer_context(registry, "native/openai/gpt-5.4")
+    context = _build_answer_context(registry, "openai/gpt-5.4")
     nodes = _build_nodes([step])
     executor = MagicMock(context=context, nodes=nodes)
     executor._observability = MagicMock()
@@ -464,7 +464,7 @@ async def test_answer_v1_runtime_override_gate_events():
     coordinator = StepModelCoordinator(executor)
 
     target_model = await coordinator.resolve_target_model(nodes["answer"])
-    assert target_model == "native/openai/gpt-5.4"
+    assert target_model == "openai/gpt-5.4"
 
     lock_model = coordinator.get_lock_model(nodes["answer"], target_model)
     models_in_use: set[str] = set()
@@ -477,7 +477,7 @@ async def test_answer_v1_runtime_override_gate_events():
 
     executor._observability.emit_pipeline_model_gate_claimed.assert_called_once_with(
         step_id="answer",
-        model_id="native/openai/gpt-5.4",
+        model_id="openai/gpt-5.4",
     )
 
     coordinator.on_step_finished(
@@ -488,7 +488,7 @@ async def test_answer_v1_runtime_override_gate_events():
 
     executor._observability.emit_pipeline_model_gate_released.assert_called_once_with(
         step_id="answer",
-        model_id="native/openai/gpt-5.4",
+        model_id="openai/gpt-5.4",
         outcome="success",
     )
 
@@ -506,7 +506,7 @@ async def test_answer_v1_runtime_override_fallback_primary():
         depends_on=[],
     )
 
-    context = _build_answer_context(MagicMock(), "native/openai/gpt-5.4")
+    context = _build_answer_context(MagicMock(), "openai/gpt-5.4")
 
     fallback_model = "phi-4-q4-k-m-16384"
     run_calls: list[str] = []
@@ -522,13 +522,13 @@ async def test_answer_v1_runtime_override_fallback_primary():
         mp.setattr(
             fb_mod,
             "get_ranked_candidates",
-            AsyncMock(return_value=["native/openai/gpt-5.4", fallback_model]),
+            AsyncMock(return_value=["openai/gpt-5.4", fallback_model]),
         )
 
         result = await fb_mod.try_step_model_fallback(
             step,
             TimeoutError("primary failed"),
-            primary_model_id="native/openai/gpt-5.4",
+            primary_model_id="openai/gpt-5.4",
             run_step_fn=mock_run,
             context=context,
             get_event_context=lambda: ("rag-answer", "exec-test"),
@@ -549,7 +549,7 @@ async def test_answer_v1_drift_raises():
     registry = MagicMock()
     registry.get_model_config.return_value = MagicMock(model="phi-4-q4-k-m-16384")
 
-    context = _build_answer_context(registry, "native/openai/gpt-5.4")
+    context = _build_answer_context(registry, "openai/gpt-5.4")
     nodes = _build_nodes([step])
     executor = MagicMock(context=context, nodes=nodes)
     executor._observability = MagicMock()
@@ -575,7 +575,7 @@ async def test_answer_v1_fallback_respects_step_model_override():
         prompt_ref="answer_v1.answer_gated",
         depends_on=[],
     )
-    context = _build_answer_context(MagicMock(), "native/openai/gpt-5.4")
+    context = _build_answer_context(MagicMock(), "openai/gpt-5.4")
 
     handler = AnswerGenerateHandler()
     calls: list[str] = []

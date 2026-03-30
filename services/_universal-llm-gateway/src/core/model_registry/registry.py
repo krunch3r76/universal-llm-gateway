@@ -287,6 +287,19 @@ class ModelRegistry:
                         "vram_mb": resources.get("vram_mb"),
                     }
 
+            # Named-profile models (for example cross-encoder/default) do not
+            # expose numeric context keys. Use the first profile that has valid
+            # resource fields so INIT/GATEWAY_SNAPSHOT can advertise them.
+            for profile in profiles.values():
+                resources = profile.get("resources", {})
+                ram_mb = resources.get("ram_mb")
+                vram_mb = resources.get("vram_mb")
+                if ram_mb is None or vram_mb is None:
+                    continue
+                if is_cpu and vram_mb != 0:
+                    continue
+                return {"ram_mb": ram_mb, "vram_mb": vram_mb}
+
         return None
 
     def is_model_enabled(self, model_id: str) -> bool:

@@ -142,9 +142,11 @@ OBFUSCATE="false"
 
 # Parse arguments
 CACHE_ARGS=()
+NO_CACHE=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --no-cache)
+            NO_CACHE=true
             CACHE_ARGS=(--no-cache --pull)
             shift
             ;;
@@ -475,13 +477,28 @@ export BUILD_TIMESTAMP
 
 ensure_buildx_builder() {
     if docker buildx inspect "${BUILDER_NAME}" >/dev/null 2>&1; then
+        if docker buildx inspect --bootstrap "${BUILDER_NAME}" >/dev/null 2>&1; then
+            return
+        fi
+        echo "♻️ Recreating stale buildx builder: ${BUILDER_NAME}"
+        docker buildx rm "${BUILDER_NAME}" >/dev/null 2>&1 || true
+    else
+        echo "🔧 Creating buildx builder: ${BUILDER_NAME}"
+    fi
+    docker buildx create --name "${BUILDER_NAME}" --driver docker-container >/dev/null
+    docker buildx inspect --bootstrap "${BUILDER_NAME}" >/dev/null
+}
+
+prune_buildx_cache_if_needed() {
+    if [[ "${NO_CACHE}" != "true" ]]; then
         return
     fi
-    echo "🔧 Creating buildx builder: ${BUILDER_NAME}"
-    docker buildx create --name "${BUILDER_NAME}" --driver docker-container >/dev/null
+    echo "🧹 Pruning build cache for ${BUILDER_NAME} before no-cache rebuild..."
+    docker buildx prune --builder "${BUILDER_NAME}" -af >/dev/null
 }
 
 ensure_buildx_builder
+prune_buildx_cache_if_needed
 
 # Single rolling build log for both local and remote builds.
 BUILD_LOG="${BUILD_LOG_PATH:-/tmp/gateway-build.log}"

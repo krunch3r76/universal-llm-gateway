@@ -22,12 +22,14 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.tool import ToolResult
+from markdown_sections import SectionError
+from markdown_sections import list_sections as md_list_sections
 from mcp_events import record
-from request_profile import current_profile
+from request_profile import current_profile, current_request_metadata
 from tool_access import CURSOR_SAFE_PROFILE
 
 if TYPE_CHECKING:
@@ -38,6 +40,9 @@ logger = logging.getLogger(__name__)
 
 _TTL_SECONDS: float = 600.0
 _CAPACITY: int = 50
+_REASONING_TARGET_MAX_BYTES: int = int(
+    os.getenv("MCP_REASONING_TARGET_MAX_BYTES", str(48 * 1024))
+)
 
 _CURSOR_THRESHOLD: int = int(os.getenv("MCP_CURSOR_RESPONSE_SIZE_LIMIT", str(32 * 1024)))
 _DEFAULT_THRESHOLD: int = int(os.getenv("MCP_DEFAULT_RESPONSE_SIZE_LIMIT", str(128 * 1024)))
@@ -188,12 +193,493 @@ def _store_result(tool_name: str, result: ToolResult, size: int) -> str:
     return ref_id
 
 
-def _replacement_result(ref_id: str, tool_name: str, size: int, threshold: int) -> ToolResult:
+def _truncate_text(text: str, limit: int = 80) -> str:
+    """Return a single-line preview clipped to *limit* characters."""
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 3] + "..."
+
+
+def _reasoning_target_bytes(threshold: int) -> int:
+    """Soft target below the wire threshold for multi-item reasoning payloads."""
+    return max(8 * 1024, min(_REASONING_TARGET_MAX_BYTES, threshold // 3))
+
+
+def _normalize_optional_int(value: Any) -> int | None:
+    """Parse an optional integer from request metadata."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _adaptive_limit(
+    *,
+    size_bytes: int,
+    item_count: int,
+    threshold_bytes: int,
+    requested_limit: int | None = None,
+) -> int | None:
+    """Return a smaller limit suggestion when a discrete payload is too large."""
+    if item_count <= 1 or size_bytes <= 0:
+        return None
+    target_bytes = _reasoning_target_bytes(threshold_bytes)
+    if size_bytes <= target_bytes:
+        return None
+    scaled = max(1, int(item_count * target_bytes / size_bytes))
+    if requested_limit is not None and requested_limit > 0:
+        scaled = min(scaled, requested_limit)
+    return max(1, scaled)
+
+
+def _summarize_markdown_sections(text: str, max_sections: int = 5) -> list[str]:
+    """Return up to *max_sections* markdown section paths from *text*."""
+    if not text.strip():
+        return []
+    try:
+        sections = md_list_sections(text)
+    except SectionError:
+        return []
+    return [
+        str(section.get("path", "")).strip()
+        for section in sections[:max_sections]
+        if str(section.get("path", "")).strip()
+    ]
+
+
+def _agent_bus_items(payload: Any) -> tuple[str, list[dict[str, Any]]]:
+    """Classify agent-bus payload shape and normalize it to a list of items."""
+    if isinstance(payload, list):
+        return "turns", [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return "unknown", []
+    if isinstance(payload.get("turns"), list):
+        return "turns", [item for item in payload["turns"] if isinstance(item, dict)]
+    if isinstance(payload.get("threads"), list):
+        return "threads", [item for item in payload["threads"] if isinstance(item, dict)]
+    if isinstance(payload.get("turn"), dict):
+        return "single_turn", [payload["turn"]]
+    return "unknown", []
+
+
+def _agent_bus_manifest(
+    ref_id: str,
+    payload: Any,
+    size: int,
+    threshold: int,
+) -> dict[str, Any]:
+    """Build a selective-read manifest for oversized agent-bus payloads."""
+    kind, items = _agent_bus_items(payload)
+    request_meta = current_request_metadata()
+    adaptive_last = _adaptive_limit(
+        size_bytes=size,
+        item_count=len(items),
+        threshold_bytes=threshold,
+        requested_limit=_normalize_optional_int(request_meta.get("agent_bus_last")),
+    )
+    manifest: dict[str, Any] = {
+        "large_payload": True,
+        "tool": "agent_bus",
+        "kind": kind,
+        "size_bytes": size,
+        "size_kb": round(size / 1024, 1),
+        "threshold_bytes": threshold,
+        "threshold_kb": round(threshold / 1024, 1),
+        "ref_id": ref_id,
+        "reasoning_risk": "large_markdown_thread_payload",
+        "prefer_selective_reads": True,
+        "full_retrieve_last_resort": f'retrieve(id="{ref_id}")',
+        "adaptive_last": adaptive_last,
+    }
+
+    if kind in {"turns", "single_turn"}:
+        thread_ids = [
+            str(item.get("thread", "")).strip()
+            for item in items
+            if str(item.get("thread", "")).strip()
+        ]
+        unique_threads = list(dict.fromkeys(thread_ids))
+        manifest["turn_count"] = len(items)
+        manifest["thread_ids"] = unique_threads[:5]
+        manifest["body_chars_total"] = sum(
+            len(str(item.get("body", "") or "")) for item in items
+        )
+        manifest["turn_samples"] = [
+            {
+                "thread": str(item.get("thread", "") or ""),
+                "turn_number": item.get("turn_number"),
+                "subject": _truncate_text(str(item.get("subject", "") or ""), 60),
+                "body_chars": len(str(item.get("body", "") or "")),
+                "markdown_sections": _summarize_markdown_sections(
+                    str(item.get("body", "") or "")
+                ),
+            }
+            for item in items[:5]
+        ]
+        example_thread = unique_threads[0] if unique_threads else ""
+        example_turn = items[0].get("turn_number") if items else None
+        selective_options = [
+            'agent_bus(tool="threads", arguments=\'{"status":"active"}\')',
+        ]
+        if adaptive_last is not None and example_thread:
+            selective_options.append(
+                f'agent_bus(tool="fetch", arguments=\'{{"thread":"{example_thread}","last":{adaptive_last},"compact":true}}\')'
+            )
+        if example_thread:
+            selective_options.append(
+                f'agent_bus(tool="fetch", arguments=\'{{"thread":"{example_thread}","last":3,"compact":true}}\')'
+            )
+        if example_thread and isinstance(example_turn, int) and example_turn > 0:
+            selective_options.append(
+                f'agent_bus(tool="get", arguments=\'{{"thread":"{example_thread}","turn_number":{example_turn}}}\')'
+            )
+        manifest["selective_options"] = selective_options
+        return manifest
+
+    if kind == "threads":
+        thread_ids = [
+            str(item.get("id", "") or item.get("thread", "") or "").strip()
+            for item in items
+            if str(item.get("id", "") or item.get("thread", "") or "").strip()
+        ]
+        manifest["thread_count"] = len(items)
+        manifest["thread_ids"] = thread_ids[:8]
+        manifest["thread_samples"] = [
+            {
+                "thread": str(item.get("id", "") or item.get("thread", "") or ""),
+                "subject": _truncate_text(str(item.get("subject", "") or ""), 60),
+                "summary": _truncate_text(str(item.get("summary", "") or ""), 80),
+                "status": str(item.get("status", "") or ""),
+            }
+            for item in items[:8]
+        ]
+        example_thread = thread_ids[0] if thread_ids else ""
+        selective_options = [
+            'agent_bus(tool="threads", arguments=\'{"status":"active"}\')',
+        ]
+        if adaptive_last is not None and example_thread:
+            selective_options.append(
+                f'agent_bus(tool="fetch", arguments=\'{{"thread":"{example_thread}","last":{adaptive_last},"compact":true}}\')'
+            )
+        if example_thread:
+            selective_options.append(
+                f'agent_bus(tool="fetch", arguments=\'{{"thread":"{example_thread}","last":3,"compact":true}}\')'
+            )
+        manifest["selective_options"] = selective_options
+        return manifest
+
+    manifest["selective_options"] = [f'retrieve(id="{ref_id}")']
+    return manifest
+
+
+def _cortex_items(payload: Any) -> tuple[str, list[dict[str, Any]]]:
+    """Classify cortex payload shape and normalize common collections."""
+    if not isinstance(payload, dict):
+        return "unknown", []
+
+    if any(
+        key in payload
+        for key in (
+            "provisional_entities",
+            "flagged_assertions",
+            "low_confidence_assertions",
+            "thin_descriptions",
+        )
+    ):
+        items: list[dict[str, Any]] = []
+        for key in (
+            "provisional_entities",
+            "flagged_assertions",
+            "low_confidence_assertions",
+            "thin_descriptions",
+        ):
+            value = payload.get(key)
+            if isinstance(value, list):
+                items.extend(item for item in value if isinstance(item, dict))
+        return "review_queue", items
+
+    if isinstance(payload.get("items"), list):
+        items = [item for item in payload["items"] if isinstance(item, dict)]
+        if not items:
+            return "collection", items
+        first = items[0]
+        if "claim" in first or "confidence" in first:
+            return "assertions", items
+        if "agent" in first and "summary" in first:
+            return "journal_read", items
+        if {"id", "type", "name"}.issubset(first):
+            return "entities", items
+        return "collection", items
+
+    if {"id", "type", "name"}.issubset(payload):
+        return "entity_get", [payload]
+
+    return "unknown", []
+
+
+def _cortex_manifest(
+    ref_id: str,
+    payload: Any,
+    size: int,
+    threshold: int,
+) -> dict[str, Any]:
+    """Build a selective-read manifest for oversized cortex payloads."""
+    request_meta = current_request_metadata()
+    selector = str(request_meta.get("cortex_tool", "") or "").strip()
+    kind, items = _cortex_items(payload)
+    adaptive_limit = _adaptive_limit(
+        size_bytes=size,
+        item_count=len(items),
+        threshold_bytes=threshold,
+        requested_limit=_normalize_optional_int(request_meta.get("cortex_limit")),
+    )
+    manifest: dict[str, Any] = {
+        "large_payload": True,
+        "tool": "cortex",
+        "kind": kind,
+        "cortex_tool": selector or None,
+        "size_bytes": size,
+        "size_kb": round(size / 1024, 1),
+        "threshold_bytes": threshold,
+        "threshold_kb": round(threshold / 1024, 1),
+        "ref_id": ref_id,
+        "reasoning_risk": "large_cortex_knowledge_payload",
+        "prefer_selective_reads": True,
+        "full_retrieve_last_resort": f'retrieve(id="{ref_id}")',
+        "adaptive_limit": adaptive_limit,
+    }
+
+    if selector:
+        manifest["requested_selector"] = selector
+
+    if kind == "entity_get" and items:
+        entity = items[0]
+        entity_id = str(entity.get("id", "") or request_meta.get("cortex_entity_id", "")).strip()
+        assertions = entity.get("assertions")
+        relationships = entity.get("relationships")
+        manifest["entity"] = {
+            "id": entity_id,
+            "type": str(entity.get("type", "") or ""),
+            "name": _truncate_text(str(entity.get("name", "") or ""), 80),
+            "assertion_count": len(assertions) if isinstance(assertions, list) else 0,
+            "relationship_count": len(relationships) if isinstance(relationships, list) else 0,
+        }
+        selective_options: list[str] = []
+        if entity_id:
+            selective_options.append(
+                f'cortex(tool="assertions", arguments=\'{{"entity_id":"{entity_id}","limit":10}}\')'
+            )
+            selective_options.append(
+                f'cortex(tool="relationships", arguments=\'{{"entity_id":"{entity_id}","limit":10}}\')'
+            )
+            selective_options.append(
+                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{entity_id}"}}\')'
+            )
+        manifest["selective_options"] = selective_options or [f'retrieve(id="{ref_id}")']
+        return manifest
+
+    if kind == "entities":
+        item_type = str(request_meta.get("cortex_type", "") or "")
+        if not item_type and items:
+            sample_types = {
+                str(item.get("type", "") or "")
+                for item in items[:10]
+                if str(item.get("type", "") or "")
+            }
+            if len(sample_types) == 1:
+                item_type = next(iter(sample_types))
+        manifest["item_count"] = len(items)
+        if item_type:
+            manifest["entity_type"] = item_type
+        manifest["entity_samples"] = [
+            {
+                "id": str(item.get("id", "") or ""),
+                "type": str(item.get("type", "") or ""),
+                "name": _truncate_text(str(item.get("name", "") or ""), 60),
+            }
+            for item in items[:8]
+        ]
+        selective_options = []
+        if item_type and adaptive_limit is not None:
+            selective_options.append(
+                f'cortex(tool="entities", arguments=\'{{"type":"{item_type}","limit":{adaptive_limit}}}\')'
+            )
+        if item_type:
+            selective_options.append(
+                f'cortex(tool="entities", arguments=\'{{"type":"{item_type}","limit":10}}\')'
+            )
+        first_id = str(items[0].get("id", "") or "") if items else ""
+        if first_id:
+            selective_options.append(
+                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}"}}\')'
+            )
+        manifest["request_particular_payload"] = bool(first_id)
+        manifest["selective_options"] = selective_options or [f'retrieve(id="{ref_id}")']
+        return manifest
+
+    if kind == "assertions":
+        manifest["item_count"] = len(items)
+        entity_ids = [
+            str(item.get("entity_id", "") or "")
+            for item in items
+            if str(item.get("entity_id", "") or "")
+        ]
+        unique_entity_ids = list(dict.fromkeys(entity_ids))
+        manifest["entity_ids"] = unique_entity_ids[:8]
+        manifest["assertion_samples"] = [
+            {
+                "entity_id": str(item.get("entity_id", "") or ""),
+                "confidence": str(item.get("confidence", "") or ""),
+                "claim": _truncate_text(str(item.get("claim", "") or ""), 100),
+            }
+            for item in items[:6]
+        ]
+        selective_options = []
+        if len(unique_entity_ids) == 1 and adaptive_limit is not None:
+            selective_options.append(
+                f'cortex(tool="assertions", arguments=\'{{"entity_id":"{unique_entity_ids[0]}","limit":{adaptive_limit}}}\')'
+            )
+        if len(unique_entity_ids) == 1:
+            selective_options.append(
+                f'cortex(tool="assertions", arguments=\'{{"entity_id":"{unique_entity_ids[0]}","limit":10}}\')'
+            )
+            selective_options.append(
+                f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{unique_entity_ids[0]}"}}\')'
+            )
+        else:
+            if adaptive_limit is not None:
+                selective_options.append(
+                    f'cortex(tool="assertions", arguments=\'{{"limit":{adaptive_limit}}}\')'
+                )
+            selective_options.append(
+                'cortex(tool="assertions", arguments=\'{"limit":10}\')'
+            )
+        manifest["selective_options"] = selective_options
+        return manifest
+
+    if kind == "journal_read":
+        manifest["item_count"] = len(items)
+        manifest["journal_samples"] = [
+            {
+                "timestamp": str(item.get("timestamp", "") or ""),
+                "agent": str(item.get("agent", "") or ""),
+                "summary": _truncate_text(str(item.get("summary", "") or ""), 100),
+            }
+            for item in items[:6]
+        ]
+        options: list[str] = []
+        if adaptive_limit is not None:
+            options.append(
+                f'cortex(tool="journal_read", arguments=\'{{"limit":{adaptive_limit}}}\')'
+            )
+        options.append('cortex(tool="journal_read", arguments=\'{"limit":3}\')')
+        manifest["selective_options"] = options
+        return manifest
+
+    if kind == "review_queue":
+        provisional = payload.get("provisional_entities", []) if isinstance(payload, dict) else []
+        flagged = payload.get("flagged_assertions", []) if isinstance(payload, dict) else []
+        manifest["review_queue_counts"] = {
+            "provisional_entities": len(provisional) if isinstance(provisional, list) else 0,
+            "flagged_assertions": len(flagged) if isinstance(flagged, list) else 0,
+            "low_confidence_assertions": len(payload.get("low_confidence_assertions", [])) if isinstance(payload, dict) and isinstance(payload.get("low_confidence_assertions"), list) else 0,
+            "thin_descriptions": len(payload.get("thin_descriptions", [])) if isinstance(payload, dict) and isinstance(payload.get("thin_descriptions"), list) else 0,
+        }
+        selective_options = [
+            'cortex(tool="assertions", arguments=\'{"review_status":"flagged","limit":10}\')',
+            'cortex(tool="entities", arguments=\'{"limit":10}\')',
+        ]
+        if isinstance(provisional, list) and provisional:
+            first_id = str(provisional[0].get("id", "") or "")
+            if first_id:
+                selective_options.append(
+                    f'cortex(tool="entity_get", arguments=\'{{"entity_id":"{first_id}"}}\')'
+                )
+        manifest["selective_options"] = selective_options
+        return manifest
+
+    limit_value = request_meta.get("cortex_limit")
+    selective_options = []
+    if selector and isinstance(limit_value, int) and limit_value > 10:
+        selective_options.append(
+            f'cortex(tool="{selector}", arguments=\'{{"limit":10}}\')'
+        )
+    selective_options.append(f'retrieve(id="{ref_id}")')
+    manifest["selective_options"] = selective_options
+    return manifest
+
+
+def _replacement_result(ref_id: str, tool_name: str, size: int, threshold: int, result: ToolResult) -> ToolResult:
     """Build the compact reference ToolResult returned for oversized responses.
 
     Contains a natural-language message with the reference ID and retrieval
     instructions. Any MCP consumer (LLM or programmatic) can parse and follow it.
     """
+    if tool_name == "agent_bus":
+        payload = result.structured_content
+        manifest = _agent_bus_manifest(ref_id, payload, size, threshold)
+        note_lines = [
+            "Large agent_bus markdown payload flagged.",
+            f"Size: {manifest['size_kb']}KB over {manifest['threshold_kb']}KB threshold.",
+            f"Stored as: {ref_id} (expires in 10 min).",
+        ]
+        if manifest.get("adaptive_last") is not None:
+            note_lines.append(
+                f"Suggested smaller window: last={manifest['adaptive_last']}."
+            )
+        note_lines.extend(
+            [
+                "",
+                "Prefer selective follow-ups before full retrieval:",
+            ]
+        )
+        for option in manifest.get("selective_options", []):
+            note_lines.append(f"- {option}")
+        note_lines.extend(
+            [
+                "",
+                "Use full retrieval only as a last resort:",
+                f'- retrieve(id="{ref_id}")',
+            ]
+        )
+        return ToolResult(content="\n".join(note_lines), structured_content=manifest)
+
+    if tool_name == "cortex":
+        payload = result.structured_content
+        manifest = _cortex_manifest(ref_id, payload, size, threshold)
+        note_lines = [
+            "Large cortex knowledge payload flagged.",
+            f"Size: {manifest['size_kb']}KB over {manifest['threshold_kb']}KB threshold.",
+            f"Stored as: {ref_id} (expires in 10 min).",
+        ]
+        if manifest.get("adaptive_limit") is not None:
+            note_lines.append(
+                f"Suggested smaller limit: {manifest['adaptive_limit']}."
+            )
+        if manifest.get("request_particular_payload"):
+            note_lines.append(
+                "This is a discrete collection. Request the specific entity or subset you need."
+            )
+        note_lines.extend(
+            [
+                "",
+                "Prefer selective follow-ups before full retrieval:",
+            ]
+        )
+        for option in manifest.get("selective_options", []):
+            if option != f'retrieve(id="{ref_id}")':
+                note_lines.append(f"- {option}")
+        note_lines.extend(
+            [
+                "",
+                "Use full retrieval only as a last resort:",
+                f'- retrieve(id="{ref_id}")',
+            ]
+        )
+        return ToolResult(content="\n".join(note_lines), structured_content=manifest)
+
     note = (
         f"Response exceeded size limit "
         f"({size // 1024}KB > {threshold // 1024}KB threshold).\n"
@@ -229,6 +715,7 @@ class ResponseSizeGuard(Middleware):
             return result
 
         threshold = _threshold_for_profile()
+        reasoning_target = _reasoning_target_bytes(threshold)
 
         if result.structured_content is not None:
             estimate = len(json.dumps(result.structured_content, default=str).encode("utf-8"))
@@ -236,7 +723,10 @@ class ResponseSizeGuard(Middleware):
                 return result
 
         size = _measure_result(result)
-        if size <= threshold:
+        should_semantic_guard = (
+            tool_name in {"agent_bus", "cortex"} and size > reasoning_target
+        )
+        if size <= threshold and not should_semantic_guard:
             return result
 
         ref_id = _store_result(tool_name, result, size)
@@ -246,10 +736,12 @@ class ResponseSizeGuard(Middleware):
             profile=current_profile(),
             original_bytes=size,
             threshold_bytes=threshold,
+            reasoning_target_bytes=reasoning_target,
             ref_id=ref_id,
             store_count=len(_store),
+            semantic_guard=should_semantic_guard and size <= threshold,
         )
-        return _replacement_result(ref_id, tool_name, size, threshold)
+        return _replacement_result(ref_id, tool_name, size, threshold, result)
 
 
 def register_response_guard(mcp: FastMCP) -> None:

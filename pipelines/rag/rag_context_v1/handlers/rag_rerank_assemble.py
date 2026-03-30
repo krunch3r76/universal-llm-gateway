@@ -36,7 +36,6 @@ from systems.pipeline.core.events.step import RagRerankCompleted
 from systems.pipeline.core.execution.resolver import NamespaceResolver
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
-from transport_utils import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
 
 from .context_formatting import ChunkData, format_context
@@ -343,35 +342,27 @@ class RagRerankAssembleHandler(BaseHandler):
         tail = chunks_data[max_candidates:]
         passages = [c["content"][:2000] for c in candidates]
 
-        socket_path: str | None = step.get_domain_field("socket_path")
-        if socket_path:
-            base_url = (
-                socket_path
-                if socket_path.startswith("unix://")
-                else f"unix://{socket_path}"
-            )
-        else:
-            base_url = resolve_rag_base_url()
-        rerank_path = "/rerank"
+        ce_ref = str(context.options.get("rerank_cross_encoder_model") or "cross_encoder")
+        model_id, _profile = self._resolve_rerank_model(
+            step, context, model_ref_override=ce_ref
+        )
 
         try:
-            rag_timeout = float(context.options.get("rag_client_timeout", 30.0))
+            rerank_timeout = float(context.options.get("rag_client_timeout", 30.0))
         except (TypeError, ValueError):
-            rag_timeout = 30.0
+            rerank_timeout = 30.0
 
-        model_id = "cross_encoder"
-        async with make_async_client(base_url, timeout=rag_timeout) as client:
-            resp = await client.post(
-                rerank_path,
-                json={
-                    "query": context.source_text,
-                    "passages": passages,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            ce_scores_raw: list[float] = data.get("scores", [])
-            model_id = data.get("model", "cross_encoder")
+        proxy_client = context.get_proxy_client()
+        result = await proxy_client.rerank(
+            model=model_id,
+            query=context.source_text,
+            passages=passages,
+            execution_id=context.execution_id,
+            step_id=step.id,
+            timeout=rerank_timeout,
+        )
+        ce_scores_raw: list[float] = result.get("scores", [])
+        model_id = result.get("model", model_id)
 
         if len(ce_scores_raw) != len(candidates):
             logger.warning(
@@ -496,6 +487,8 @@ class RagRerankAssembleHandler(BaseHandler):
         self,
         step: StepConfig,
         context: PipelineContext,
+        *,
+        model_ref_override: str | None = None,
     ) -> tuple[str, str | None]:
         """Resolve model ID and profile from models.yaml registry.
 
@@ -503,8 +496,12 @@ class RagRerankAssembleHandler(BaseHandler):
         false``) that must reach the inference engine. Without it, Qwen3 models
         default to thinking mode and spend the entire token budget on hidden
         ``<think>`` blocks, producing empty visible content.
+
+        ``model_ref_override`` selects the cross-encoder alias (see
+        ``rerank_cross_encoder_model``) while ``step.model_ref`` remains the
+        generative rerank LLM.
         """
-        alias = step.model_ref
+        alias = model_ref_override if model_ref_override is not None else step.model_ref
         if alias and alias.startswith("optionsNs."):
             key = alias[len("optionsNs.") :]
             alias = (context.options or {}).get(key, alias)
@@ -517,7 +514,7 @@ class RagRerankAssembleHandler(BaseHandler):
             )
             return model_config.model, model_config.profile
         except KeyError:
-            resolved = self._resolve_model_alias(step.model_ref, context)
+            resolved = self._resolve_model_alias(alias, context)
             return resolved, None
 
     @override

@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 _PGID_KILL_TIMEOUT = 5
 _CURSOR_DESCRIPTOR_REFRESH_TIMEOUT_S = 30
+_GATEWAY_CRASH_DETECT_S = 5.0
 _MCP_HEALTH_WAIT_TIMEOUT_S = 60.0
 _MCP_HEALTH_POLL_INTERVAL_S = 1.0
 _BUILD_LOG_POLL_INTERVAL_S = 0.25
@@ -156,12 +157,16 @@ class ServiceController:
         self,
         *,
         scope: str = "all",
-        no_cache: bool = False,
+        no_cache: bool = True,
         gpu_native: bool = True,
         cpu_native: bool = True,
     ) -> AsyncIterator[str]:
         """
         Build Docker GPU image via build-gpu.sh, yielding log lines.
+
+        By default *no_cache* is true: ``build-gpu.sh`` runs with ``--no-cache --pull``
+        so base images and all layers are rebuilt. Pass ``no_cache=False`` only for
+        a faster incremental build (not used by the Services UI).
 
         Yields lines from stdout/stderr as they appear.
         """
@@ -180,8 +185,11 @@ class ServiceController:
             *(["--gpu-native"] if gpu_native else []),
             *(["--no-cache"] if no_cache else []),
             *(["--no-vllm"] if scope == "llama" else []),
-            "--refresh-source",
         ]
+        # Full rebuild (--no-cache) already re-runs every COPY; --refresh-source only
+        # matters for cache-preserving builds.
+        if not no_cache:
+            args.append("--refresh-source")
 
         env = build_service_env(self._root)
         build_log = Path(
@@ -262,10 +270,15 @@ class ServiceController:
         *,
         script: Path,
         env: dict[str, str],
-        no_cache: bool,
+        no_cache: bool = False,
+        extra_args: list[str] | None = None,
     ) -> tuple[int, str]:
         """Run one service image build script and return (exit_code, merged output)."""
-        args = [str(script)] + (["--no-cache"] if no_cache else [])
+        args = [str(script)]
+        if extra_args:
+            args.extend(extra_args)
+        elif no_cache:
+            args.append("--no-cache")
         proc = await asyncio.create_subprocess_exec(
             "bash",
             *args,
@@ -279,15 +292,12 @@ class ServiceController:
         return proc.returncode, text
 
     async def start_gateway(self, *, node_id: str = "localhost") -> str:
-        """Start Edge+Gateway container via parameterized compose."""
-        # Example of simplified structure (actual implementation would need a helper)
-        # errors = _check_prerequisites(
-        #     lambda: None if compose_path.exists() else f"Compose file not found: {compose_path}",
-        #     ensure_socket_dir,
-        #     lambda: ensure_bind_mount_dirs(self._root, node_id, model_path)
-        # )
-        # if errors: return errors
+        """Start Edge+Gateway container via parameterized compose.
 
+        Python source under ``libs/`` and ``services/`` is bind-mounted from the
+        repo (see ``docker/compose/gpu-edge.yml``). Reuse the existing image until
+        you run an explicit rebuild (Services → Build Image / ``--build`` on relay).
+        """
         compose_path = self._root / "docker" / "compose" / "gpu-edge.yml"
         if not compose_path.exists():
             return f"Compose file not found: {compose_path}"
@@ -320,6 +330,14 @@ class ServiceController:
         output = await result.communicate()
         text = output[0].decode(errors="replace") if output[0] else ""
         if result.returncode == 0:
+            container_name = f"edge-{node_id}"
+            crash = await self._detect_container_crash(
+                container_name, wait_s=_GATEWAY_CRASH_DETECT_S
+            )
+            if crash is not None:
+                return (
+                    f"Gateway exited immediately ({container_name}).\n{text}\n{crash}"
+                )
             return f"Gateway container started (edge-{node_id}).\n{text}"
         logger.error("Failed to start Gateway (exit %d):\n%s", result.returncode, text)
         return f"Failed to start Gateway (exit {result.returncode}).\n{text}"
@@ -511,10 +529,12 @@ class ServiceController:
         if base is None:
             return "MCP server is not running (compose file missing)."
         args, _ = base
+        env = build_mcp_env(self._root)
 
         result = await asyncio.create_subprocess_exec(
             *args,
             "down",
+            env=env,
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
@@ -529,16 +549,22 @@ class ServiceController:
         return f"Failed to stop MCP server (exit {result.returncode}).\n{text}"
 
     async def rebuild_mcp(self, *, no_cache: bool = False) -> str:
-        """Rebuild MCP server image and restart via dedicated buildx builder."""
+        """Rebuild MCP server image from source and restart.
+
+        Default is a cached rebuild that refreshes only source layers — fast
+        enough for the sync+restart workflow.  Pass ``no_cache=True`` for a
+        full fresh build (pulls base images, rebuilds all layers).
+        """
         base = self._mcp_compose_args()
         if base is None:
             return "Compose file not found: docker/compose/mcp-server.yml"
         env = build_mcp_env(self._root)
         script = self._root / "docker" / "scripts" / "build" / "build-mcp.sh"
+        extra_args = ["--no-cache"] if no_cache else ["--refresh-source"]
         build_code, build_text = await self._run_build_script(
             script=script,
             env=env,
-            no_cache=no_cache,
+            extra_args=extra_args,
         )
         build_failed = build_code != 0
         if build_failed:
@@ -683,6 +709,34 @@ class ServiceController:
         """Rebuild event service — host process, so rebuild = restart."""
         await self.stop_event_service()
         return await self.start_event_service()
+
+    async def _detect_container_crash(
+        self, container_name: str, *, wait_s: float
+    ) -> str | None:
+        """Wait *wait_s* seconds then check if the container exited.
+
+        Returns None if the container is still running (success), or a
+        diagnostic message if it already exited/died.  Much faster than
+        _wait_container_healthy because it doesn't wait for Docker's
+        start_period — just catches immediate crashes.
+        """
+        await asyncio.sleep(wait_s)
+        inspect = await asyncio.create_subprocess_exec(
+            "docker",
+            "inspect",
+            "--format",
+            "{{.State.Status}}",
+            container_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output = await inspect.communicate()
+        status = output[0].decode(errors="replace").strip().lower()
+        if inspect.returncode != 0:
+            return f"{container_name} not found after start."
+        if status in {"exited", "dead"}:
+            return f"{container_name} exited within {wait_s:.0f}s (state: {status})."
+        return None
 
     async def _wait_container_healthy(
         self, container_name: str, *, timeout: float

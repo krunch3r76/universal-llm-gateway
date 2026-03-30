@@ -689,6 +689,66 @@ class WorkerController:
             ) from exc
         return result
 
+    async def rerank(
+        self,
+        model_id: str,
+        query: str,
+        passages: list[str],
+        correlation_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Rerank passages via worker RPC.
+
+        Args:
+            model_id: Reranker model identifier
+            query: Query to score against passages
+            passages: Passages to score
+            correlation_id: Request correlation ID
+
+        Returns:
+            Dict with "scores" (list[float]) and "model" (str)
+
+        Raises:
+            RuntimeError: If model not loaded or RPC fails
+        """
+        params = {
+            "query": query,
+            "passages": passages,
+            "model": model_id,
+        }
+
+        resource_tracker = _get_resource_tracker()
+        try:
+            async with resource_tracker.track_inference(model_id):
+                result = await self._call_rpc(model_id, "rerank", params)
+        except TimeoutError as exc:
+            resource_tracker.set_model_error(
+                model_id, f"Rerank timeout — worker recycled: {exc}"
+            )
+            await self._recycle_after_rerank_timeout(model_id, correlation_id)
+            raise RuntimeError(
+                f"Rerank timed out — worker process terminated for {model_id}"
+            ) from exc
+        return result
+
+    async def _recycle_after_rerank_timeout(
+        self, model_id: str, correlation_id: str | None = None
+    ) -> None:
+        """Force-recycle worker after rerank timeout to release GPU resources."""
+        logger.error(f"⏰ Rerank timeout for {model_id} — killing worker process")
+        sup = self._process_state.get_supervisor(model_id)
+        if sup:
+            try:
+                await sup.stop(force=True, timeout=5)
+                logger.info(f"✅ Killed timed-out rerank worker for {model_id}")
+            except Exception as e:
+                logger.error(
+                    f"Failed to kill timed-out rerank worker for {model_id}: {e}"
+                )
+        self._process_state.remove_supervisor(model_id)
+        self._process_state.remove_socket_path(model_id)
+        await self._cleanup_socket_file(model_id)
+
     async def _recycle_after_embedding_timeout(
         self, model_id: str, correlation_id: str | None = None
     ) -> None:

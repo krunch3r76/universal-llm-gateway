@@ -87,3 +87,66 @@ async def emit_build_image_mismatch(
             "remote_labels": remote_labels,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Fleet lifecycle events
+# ---------------------------------------------------------------------------
+
+
+async def emit_fleet_operation_started(
+    *, operation: str, build: bool, scope: str, remotes: list[str]
+) -> None:
+    """Emitted when Sync+Restart All or Rebuild+Deploy All begins."""
+    await _emit(
+        "fleet.operation.started",
+        {
+            "operation": operation,
+            "build": build,
+            "scope": scope,
+            "remotes": remotes,
+        },
+    )
+
+
+async def emit_fleet_operation_completed(
+    *,
+    operation: str,
+    build: bool,
+    success: bool,
+    duration_s: float,
+    failures: list[str],
+) -> None:
+    await _emit(
+        "fleet.operation.completed",
+        {
+            "operation": operation,
+            "build": build,
+            "success": success,
+            "duration_s": round(duration_s, 3),
+            "failures": failures,
+        },
+    )
+
+
+async def emit_fleet_service_phase(
+    *, phase: str, services: list[str], results: dict[str, bool]
+) -> None:
+    """Emitted after each restart phase (stop, start-critical, start-optional)."""
+    await _emit(
+        "fleet.service.phase",
+        {"phase": phase, "services": services, "results": results},
+    )
+
+
+async def emit_fleet_relay_status(
+    *, hostname: str, connected: bool, duration_s: float
+) -> None:
+    await _emit(
+        "fleet.relay.status",
+        {
+            "hostname": hostname,
+            "connected": connected,
+            "duration_s": round(duration_s, 3),
+        },
+    )

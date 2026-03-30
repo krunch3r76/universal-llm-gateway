@@ -83,6 +83,12 @@ class Worker(WorkerProcess):
         logger.info(f"✅ Worker {self.model_id} ASGI server started on {socket_path}")
         self.initialization_complete = True
 
+        from .events import emit_worker_started
+
+        await emit_worker_started(
+            worker_id=self.worker_id, model_id=self.model_id, pid=os.getpid()
+        )
+
     async def _start_asgi_server(self) -> None:
         """Start the Universal Protocol ASGI server."""
         # Configure RPC handlers before starting server
@@ -143,6 +149,8 @@ class Worker(WorkerProcess):
                 "generate_image": self.handle_generate_image,
                 # Embedding generation handler
                 "generate_embeddings": self.handle_generate_embeddings,
+                # Cross-encoder reranking handler
+                "rerank": self.handle_rerank,
             }
         )
 
@@ -189,7 +197,13 @@ class Worker(WorkerProcess):
         """Shutdown worker and ASGI server."""
         logger.info(f"Shutting down worker {self.model_id}")
 
-        # Cancel ASGI server task
+        from .events import emit_worker_stopped, shutdown_publisher
+
+        await emit_worker_stopped(
+            worker_id=self.worker_id, model_id=self.model_id, exit_code=0
+        )
+        await shutdown_publisher()
+
         if self.asgi_server_task and not self.asgi_server_task.done():
             self.asgi_server_task.cancel()
             try:
@@ -197,10 +211,7 @@ class Worker(WorkerProcess):
             except asyncio.CancelledError:
                 pass
 
-        # Clean up resources
         await self._cleanup_worker()
-
-        # Set shutdown event
         self._shutdown_event.set()
 
     async def _cleanup_worker(self) -> None:

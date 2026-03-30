@@ -9,10 +9,15 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import Any
 
 _REQUEST_PROFILE: ContextVar[str] = ContextVar(
     "mcp_request_profile",
     default="default",
+)
+_REQUEST_METADATA: ContextVar[dict[str, Any]] = ContextVar(
+    "mcp_request_metadata",
+    default={},
 )
 
 
@@ -22,10 +27,30 @@ def current_profile() -> str:
 
 
 @contextmanager
-def bind_profile(profile: str) -> Iterator[None]:
-    """Bind a request profile for the duration of a request dispatch scope."""
+def bind_request(profile: str, **metadata: Any) -> Iterator[None]:
+    """Bind request profile plus stable correlation metadata for one dispatch scope."""
     token = _REQUEST_PROFILE.set(profile or "default")
+    meta_token = _REQUEST_METADATA.set(
+        {
+            key: value
+            for key, value in metadata.items()
+            if value is not None and value != ""
+        }
+    )
     try:
         yield
     finally:
+        _REQUEST_METADATA.reset(meta_token)
         _REQUEST_PROFILE.reset(token)
+
+
+def current_request_metadata() -> dict[str, Any]:
+    """Return request-scoped metadata copied from the active dispatch context."""
+    return dict(_REQUEST_METADATA.get())
+
+
+@contextmanager
+def bind_profile(profile: str) -> Iterator[None]:
+    """Bind only a request profile for the duration of a request dispatch scope."""
+    with bind_request(profile):
+        yield
