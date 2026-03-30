@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 import uvicorn
 
@@ -12,21 +13,33 @@ from .main import create_app
 
 logger = logging.getLogger("cortex-api")
 
-_DEFAULT_SOCK = os.environ.get("CORTEX_API_SOCK", "/tmp/universal-protocol/cortex-api.sock")
+
+def _default_sock() -> str:
+    """Resolve the default cortex-api UDS path from env with /tmp fallback."""
+    return os.environ.get("CORTEX_API_SOCK", "/tmp/universal-protocol/cortex-api.sock")
+
+
+def _resolve_sock(sock: str | None) -> str:
+    """Normalize the configured socket path for direct library starts."""
+    raw = sock or _default_sock()
+    path = Path(os.path.expanduser(raw))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return str(path)
 
 
 async def run_service(
     *,
     db_path: str = "~/.cortex/cortex.db",
-    sock: str = _DEFAULT_SOCK,
+    sock: str | None = None,
     host: str | None = None,
     port: int | None = None,
 ) -> None:
     """Main service lifecycle — parameterised for library use."""
     app = create_app(db_path=db_path)
+    resolved_sock = _resolve_sock(sock)
     config = uvicorn.Config(
         app,
-        uds=sock if host is None else None,
+        uds=resolved_sock if host is None else None,
         host=host,
         port=port or 8200,
         log_level="info",
@@ -38,7 +51,7 @@ async def run_service(
 async def start_cortex_api(
     *,
     db: str = "~/.cortex/cortex.db",
-    sock: str = _DEFAULT_SOCK,
+    sock: str | None = None,
     host: str | None = None,
     port: int | None = None,
 ) -> asyncio.Task[None]:
@@ -48,5 +61,5 @@ async def start_cortex_api(
     """
     db_path = os.path.expanduser(db)
     return asyncio.create_task(
-        run_service(db_path=db_path, sock=sock, host=host, port=port)
+        run_service(db_path=db_path, sock=_resolve_sock(sock), host=host, port=port)
     )

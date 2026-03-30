@@ -10,12 +10,14 @@ INVARIANT: ¬ API keys ∧ ¬ outbound HTTPS — proxy is trusted loopback
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator, Callable
 from time import monotonic
 from typing import Any
 
 import httpx
+from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
@@ -108,6 +110,33 @@ class CloudProxyClient:
     def proxy_mode(self) -> str:
         """Transport mode: 'uds' for unix://, 'tcp' for http://."""
         return "uds" if self._proxy_url.startswith("unix://") else "tcp"
+
+    def _emit_stream_debug(
+        self,
+        *,
+        step: str,
+        request_id: str,
+        model_id: str,
+        stream_start: float,
+        chunk_bytes: int | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "step": step,
+            "request_id": request_id,
+            "model_id": model_id,
+            "elapsed_ms": round((monotonic() - stream_start) * 1000.0, 1),
+            "proxy_mode": self.proxy_mode,
+        }
+        if chunk_bytes is not None:
+            payload["chunk_bytes"] = chunk_bytes
+        asyncio.create_task(
+            emit_debug_event(
+                "debug.stargate.stream",
+                payload,
+                source="stargate",
+                scope="global",
+            )
+        )
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
@@ -223,8 +252,8 @@ class CloudProxyClient:
     ) -> AsyncIterator[bytes]:
         """Forward a streaming request via the cloud proxy.
 
-        Yields complete SSE lines as bytes, same interface as the
-        previous direct cloud forwarder for drop-in compatibility with
+        Yields raw SSE bytes while preserving upstream event framing for
+        drop-in compatibility with
         FederatedRequestForwarder.
         """
         path = "/v1/chat/completions"
@@ -240,6 +269,7 @@ class CloudProxyClient:
         model_id = str(body.get("model", "unknown"))
         observed_error = False
         total_content_chars = 0  # for approximate tok/s
+        first_chunk_seen = False
         try:
             async with self._client.stream(
                 "POST",
@@ -269,10 +299,17 @@ class CloudProxyClient:
                         response=response,
                     )
 
-                async for line in response.aiter_lines():
-                    stripped = line.strip()
-                    if stripped:
-                        chunk = (stripped + "\n").encode("utf-8")
+                async for chunk in response.aiter_raw():
+                    if chunk:
+                        if not first_chunk_seen:
+                            first_chunk_seen = True
+                            self._emit_stream_debug(
+                                step="firstchunk",
+                                request_id=request_id,
+                                model_id=model_id,
+                                stream_start=start,
+                                chunk_bytes=len(chunk),
+                            )
                         total_content_chars += len(chunk)
                         yield chunk
         except httpx.TimeoutException:
@@ -396,7 +433,7 @@ class CloudProxyClient:
         path: str,
         body: dict[str, Any],
     ) -> AsyncIterator[bytes]:
-        """Stream POST to cloud-proxy native path (Anthropic Messages, etc.)."""
+        """Stream POST to cloud-proxy native path preserving raw SSE framing."""
         async with self._client.stream(
             "POST",
             path,
@@ -416,7 +453,6 @@ class CloudProxyClient:
                     request=response.request,
                     response=response,
                 )
-            async for line in response.aiter_lines():
-                stripped = line.strip()
-                if stripped:
-                    yield (stripped + "\n").encode()
+            async for chunk in response.aiter_raw():
+                if chunk:
+                    yield chunk
