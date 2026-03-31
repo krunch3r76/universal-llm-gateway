@@ -34,6 +34,7 @@ def _build_context(registry: MagicMock) -> MagicMock:
     )
     context.execution_id = "exec-test"
     context.recorder = None
+    context._step_model_override = {}
     context._proxy = MagicMock()
     context._proxy.event_bus.publish_async_nowait = AsyncMock(return_value=None)
     return context
@@ -591,3 +592,213 @@ async def test_answer_v1_fallback_respects_step_model_override():
 
     assert result.raw == "answer from phi-4-q4-k-m-16384"
     assert calls == ["phi-4-q4-k-m-16384"]
+
+
+@pytest.mark.asyncio
+async def test_local_registry_model_does_not_fallback_to_cloud_candidates():
+    """Local registry-resolved primaries must not recompute cloud fallback pools."""
+    from .execution.dag_executor import step_model_fallback as fb_mod
+    from .execution.proxy_client import ProxyClientError
+
+    step = StepConfig(
+        id="plan",
+        type="generate",
+        model_ref="plan_model",
+        model_requirements={"task": "code_architecture", "source": "cloud"},
+        depends_on=[],
+    )
+    registry = MagicMock()
+    registry.get_model_config.return_value = MagicMock(model="qwen3-32b-awq-32768")
+    context = _build_context(registry)
+    primary_resolution = await step.get_target_model_resolution_async(
+        registry,
+        domain="test",
+        search_path=[],
+        context=context,
+    )
+    primary_model_id = primary_resolution.model_id if primary_resolution else None
+    primary_err = ProxyClientError("Local gateway returned 503", status_code=503)
+    emitted = []
+    run_step = AsyncMock()
+    suppressed_lookup = AsyncMock(
+        side_effect=AssertionError("cloud fallback should be suppressed")
+    )
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fb_mod, "get_ranked_candidates", suppressed_lookup)
+        with pytest.raises(ProxyClientError) as exc_info:
+            await fb_mod.try_step_model_fallback(
+                step,
+                primary_err,
+                primary_model_id=primary_model_id,
+                primary_resolution=primary_resolution,
+                run_step_fn=run_step,
+                context=context,
+                get_event_context=lambda: ("test-pipeline", "exec-test"),
+                publish_event=emitted.append,
+            )
+
+    assert exc_info.value is primary_err
+    assert primary_resolution is not None
+    assert primary_resolution.came_from_registry_model_ref is True
+    assert primary_resolution.is_local is True
+    assert run_step.await_count == 0
+    assert emitted[-1].signal == "pipeline.step.model.fallback.suppressed"
+    assert emitted[-1].payload["suppression_reason"] == "routing_layer_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_auto_cloud_step_still_falls_back_to_cloud_candidate():
+    """Auto/cloud steps should preserve normal cloud-to-cloud fallback."""
+    from .execution.dag_executor import step_model_fallback as fb_mod
+    from .execution.proxy_client import ProxyClientError
+    from .step_config import ResolvedTargetModel
+
+    step = StepConfig(
+        id="plan",
+        type="generate",
+        model_ref="auto",
+        model_requirements={"task": "code_architecture", "source": "cloud"},
+        depends_on=[],
+    )
+    context = _build_context(MagicMock())
+    primary_resolution = ResolvedTargetModel.build(
+        "openai/o3",
+        resolution_source="model_requirements",
+        model_ref="auto",
+        requirements_source="cloud",
+    )
+    primary_err = ProxyClientError("Primary cloud model failed", status_code=503)
+
+    async def run_step(step_config: StepConfig) -> StepOutput:
+        override = context._step_model_override.get(step_config.name)
+        if override == "openai/gpt-5.4":
+            return StepOutput(raw="fallback-success", json={})
+        raise AssertionError(f"unexpected fallback override {override!r}")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            fb_mod,
+            "get_ranked_candidates",
+            AsyncMock(return_value=["openai/o3", "openai/gpt-5.4"]),
+        )
+        result = await fb_mod.try_step_model_fallback(
+            step,
+            primary_err,
+            primary_model_id=primary_resolution.model_id,
+            primary_resolution=primary_resolution,
+            run_step_fn=run_step,
+            context=context,
+            get_event_context=lambda: ("test-pipeline", "exec-test"),
+            publish_event=lambda _event: None,
+        )
+
+    assert result.raw == "fallback-success"
+
+
+@pytest.mark.asyncio
+async def test_explicit_cloud_model_still_falls_back():
+    """Registry aliases that resolve to cloud models must keep cloud fallback."""
+    from .execution.dag_executor import step_model_fallback as fb_mod
+    from .execution.proxy_client import ProxyClientError
+
+    step = StepConfig(
+        id="plan",
+        type="generate",
+        model_ref="frontier_model",
+        model_requirements={"task": "code_architecture", "source": "cloud"},
+        depends_on=[],
+    )
+    registry = MagicMock()
+    registry.get_model_config.return_value = MagicMock(
+        model="anthropic/claude-sonnet-4"
+    )
+    context = _build_context(registry)
+    primary_resolution = await step.get_target_model_resolution_async(
+        registry,
+        domain="test",
+        search_path=[],
+        context=context,
+    )
+    primary_model_id = primary_resolution.model_id if primary_resolution else None
+    primary_err = ProxyClientError("Primary cloud model failed", status_code=503)
+
+    async def run_step(step_config: StepConfig) -> StepOutput:
+        override = context._step_model_override.get(step_config.name)
+        if override == "openai/gpt-5.4":
+            return StepOutput(raw="fallback-success", json={})
+        raise AssertionError(f"unexpected fallback override {override!r}")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            fb_mod,
+            "get_ranked_candidates",
+            AsyncMock(
+                return_value=["anthropic/claude-sonnet-4", "openai/gpt-5.4"]
+            ),
+        )
+        result = await fb_mod.try_step_model_fallback(
+            step,
+            primary_err,
+            primary_model_id=primary_model_id,
+            primary_resolution=primary_resolution,
+            run_step_fn=run_step,
+            context=context,
+            get_event_context=lambda: ("test-pipeline", "exec-test"),
+            publish_event=lambda _event: None,
+        )
+
+    assert primary_resolution is not None
+    assert primary_resolution.is_cloud is True
+    assert result.raw == "fallback-success"
+
+
+@pytest.mark.asyncio
+async def test_local_registry_model_re_raises_original_proxy_error():
+    """Suppressed local->cloud fallback must preserve the original local failure."""
+    from .execution.dag_executor import step_model_fallback as fb_mod
+    from .execution.proxy_client import ProxyClientError
+
+    step = StepConfig(
+        id="plan",
+        type="generate",
+        model_ref="plan_model",
+        model_requirements={"task": "code_architecture", "source": "cloud"},
+        depends_on=[],
+    )
+    registry = MagicMock()
+    registry.get_model_config.return_value = MagicMock(model="qwen3-32b-awq-32768")
+    context = _build_context(registry)
+    primary_resolution = await step.get_target_model_resolution_async(
+        registry,
+        domain="test",
+        search_path=[],
+        context=context,
+    )
+    primary_model_id = primary_resolution.model_id if primary_resolution else None
+    primary_err = ProxyClientError("Local gateway returned 503", status_code=503)
+    suppressed_lookup = AsyncMock(
+        side_effect=AssertionError("cloud fallback should be suppressed")
+    )
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fb_mod, "get_ranked_candidates", suppressed_lookup)
+        with pytest.raises(ProxyClientError) as exc_info:
+            await fb_mod.try_step_model_fallback(
+                step,
+                primary_err,
+                primary_model_id=primary_model_id,
+                primary_resolution=primary_resolution,
+                run_step_fn=AsyncMock(),
+                context=context,
+                get_event_context=lambda: ("test-pipeline", "exec-test"),
+                publish_event=lambda _event: None,
+            )
+
+    assert exc_info.value is primary_err
+    assert exc_info.value.status_code == 503
+    assert "OpenRouter" not in str(exc_info.value)
+    assert any(
+        "routing layer mismatch" in note.lower()
+        for note in getattr(exc_info.value, "__notes__", [])
+    )

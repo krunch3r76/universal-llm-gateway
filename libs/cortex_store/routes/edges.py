@@ -68,12 +68,19 @@ def list_edges(
     from_node: str | None = None,
     to_node: str | None = None,
     edge_type: str | None = None,
+    edge_type_exclude: str | None = None,
     agent: str | None = None,
     session_id: str | None = None,
+    since_hours: int | None = Query(None, ge=1, le=720),
     include_retired: bool = False,
     limit: int = Query(50, ge=1, le=500),
 ) -> EdgeList:
-    """List edges with optional filters and active-only default behavior."""
+    """List edges with optional filters and active-only default behavior.
+
+    Args:
+        edge_type_exclude: Comma-separated edge types to exclude.
+        since_hours: Only return edges created within this many hours.
+    """
     conn = cortex_conn()
     clauses: list[str] = []
     params: list[str | int] = []
@@ -87,6 +94,14 @@ def list_edges(
         if val:
             clauses.append(f"{col} = ?")
             params.append(val)
+    if edge_type_exclude:
+        excluded = [t.strip() for t in edge_type_exclude.split(",") if t.strip()]
+        if excluded:
+            ph = ",".join("?" for _ in excluded)
+            clauses.append(f"edge_type NOT IN ({ph})")
+            params.extend(excluded)
+    if since_hours is not None:
+        clauses.append(f"created_at >= datetime('now', '-{since_hours} hours')")
     if not include_retired:
         clauses.append("valid_until IS NULL")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""

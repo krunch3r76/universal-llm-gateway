@@ -47,10 +47,28 @@ def count_demand_for(routing_key: str) -> int:
 
 
 def extract_retryable_constraint(trace: Any) -> str | None:
-    """Extract the first retryable constraint name from a decision trace."""
+    """Extract the first queueable capacity constraint from a decision trace.
+
+    Sticky-capacity requests should wait whenever the failure is transient.
+    Most transient constraints mark ``details.retryable=True`` directly, but
+    resource failures only become transient when the same candidate also reports
+    ``can_fit_with_eviction``. Keep the queue gate aligned with terminal
+    ``STICKY_CAPACITY`` classification so retryable requests do not fail fast.
+    """
     for candidate in getattr(trace, "candidates", ()):
-        for failure in getattr(candidate, "constraints_failed", ()):
+        failures = tuple(getattr(candidate, "constraints_failed", ()))
+        failed_constraints = {
+            getattr(failure, "constraint", None) for failure in failures
+        }
+
+        for failure in failures:
             details = getattr(failure, "details", None) or {}
             if details.get("retryable"):
                 return getattr(failure, "constraint", None)
+
+        if "can_fit_with_eviction" in failed_constraints:
+            for resource_constraint in ("has_enough_vram", "has_enough_ram"):
+                if resource_constraint in failed_constraints:
+                    return resource_constraint
+
     return None

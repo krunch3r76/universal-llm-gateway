@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
+from ..execution.fallback_eligibility import get_fallback_suppression_reason
+from ..step_config import ResolvedTargetModel
 from .builtin import BaseHandler
 from .protocol import StepOutput
 from .registry import register_handler
@@ -113,6 +115,33 @@ def _resolve_avoid_models(
     return []
 
 
+def _annotate_routing_mismatch_error(
+    *,
+    primary_err: Exception,
+    step: StepConfig,
+    primary_model: str,
+    primary_resolution: ResolvedTargetModel | None,
+) -> None:
+    """Attach a clearer note when local primary fallback is suppressed."""
+    if not hasattr(primary_err, "add_note"):
+        return
+
+    origin = "resolved model"
+    if primary_resolution is not None:
+        if primary_resolution.came_from_registry_model_ref and step.model_ref:
+            origin = f"registry model_ref '{step.model_ref}'"
+        elif primary_resolution.came_from_model_requirements:
+            origin = "model_requirements"
+        elif primary_resolution.model_ref:
+            origin = f"model_ref '{primary_resolution.model_ref}'"
+
+    primary_err.add_note(
+        "Fallback suppressed due to routing layer mismatch: "
+        f"step '{step.name}' resolved local primary model '{primary_model}' from "
+        f"{origin}, but model_requirements.source='cloud' would cross routing layers."
+    )
+
+
 @register_handler
 class GenericGenerateHandler(BaseHandler):
     """
@@ -180,10 +209,17 @@ class GenericGenerateHandler(BaseHandler):
             model_id = executor_override
             model_system_prompt = None
             model_profile = None
+            primary_resolution = None
         elif runtime_override:
             model_id = runtime_override
             model_system_prompt = None
             model_profile = None
+            primary_resolution = ResolvedTargetModel.build(
+                model_id,
+                resolution_source="model_ref_override",
+                model_ref=step.model_ref,
+                requirements_source=step._get_requirements_source(),
+            )
             logger.info("[%s] Using runtime model override: %s", step.name, model_id)
         elif step.model_ref == "auto" or (
             not step.model_ref and step.model_requirements
@@ -241,6 +277,12 @@ class GenericGenerateHandler(BaseHandler):
             model_id = candidates[0]
             model_system_prompt = None
             model_profile = None
+            primary_resolution = ResolvedTargetModel.build(
+                model_id,
+                resolution_source="model_requirements",
+                model_ref=step.model_ref,
+                requirements_source=step._get_requirements_source(),
+            )
             logger.info(
                 "[%s] Auto-resolved model from requirements: %s",
                 step.name,
@@ -256,10 +298,22 @@ class GenericGenerateHandler(BaseHandler):
                 model_id = model_config.model
                 model_system_prompt = model_config.system_prompt
                 model_profile = model_config.profile
+                primary_resolution = ResolvedTargetModel.build(
+                    model_id,
+                    resolution_source="registry_model_ref",
+                    model_ref=step.model_ref,
+                    requirements_source=step._get_requirements_source(),
+                )
             except KeyError:
                 model_id = step.model_ref
                 model_system_prompt = None
                 model_profile = None
+                primary_resolution = ResolvedTargetModel.build(
+                    model_id,
+                    resolution_source="raw_model_ref",
+                    model_ref=step.model_ref,
+                    requirements_source=step._get_requirements_source(),
+                )
                 logger.info(
                     "[%s] Using raw model ID (not in models.yaml): %s",
                     step.name,
@@ -281,12 +335,26 @@ class GenericGenerateHandler(BaseHandler):
             if executor_override or not step.model_requirements:
                 raise
 
+            suppression_reason = get_fallback_suppression_reason(
+                primary_resolution=primary_resolution,
+                model_requirements=step.model_requirements,
+            )
+            if suppression_reason:
+                _annotate_routing_mismatch_error(
+                    primary_err=primary_err,
+                    step=step,
+                    primary_model=model_id,
+                    primary_resolution=primary_resolution,
+                )
+                raise
+
             from .model_fallback import resolve_fallback_models, try_fallbacks
 
             fallback_ids = await resolve_fallback_models(
                 step,
                 context,
                 exclude=model_id,
+                primary_resolution=primary_resolution,
             )
             if not fallback_ids:
                 raise

@@ -323,10 +323,10 @@ def _build_server() -> FastMCP:
 
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
 
+    valid_sandboxes = {"files", "context", "project"}
     sandbox_tool: dict[str, str] = {
         "files": "files",
         "context": "context",
-        "project": "project",
     }
     md_op_map: dict[str, str] = {
         "md_list": "list_sections",
@@ -351,11 +351,11 @@ def _build_server() -> FastMCP:
     ) -> dict[str, Any]:
         """File I/O across sandboxes (files, context, project). Both sandbox and op are REQUIRED.
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="fs")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="fs")
         """
         if not op:
             return {"error": "'op' is required"}
-        if sandbox not in sandbox_tool:
+        if sandbox not in valid_sandboxes:
             return {
                 "error": f"sandbox must be 'files', 'context', or 'project', got {sandbox!r}"
             }
@@ -372,21 +372,49 @@ def _build_server() -> FastMCP:
                 op=md_op, path=path, sandbox=sandbox, section=section, content=content
             )
 
+        if sandbox == "project":
+            if op == "read":
+                fn = overflow_registry.get("read_project_file")
+                if fn is None:
+                    return {"error": "read_project_file tool not available"}
+                return fn(path)
+            if op == "write":
+                fn = overflow_registry.get("write_project_file")
+                if fn is None:
+                    return {"error": "write_project_file tool not available"}
+                return fn(path, content)
+            if op == "list":
+                fn = overflow_registry.get("list_project_files")
+                if fn is None:
+                    return {"error": "list_project_files tool not available"}
+                return fn(path, include_untracked=include_untracked)
+            if op == "search":
+                fn = overflow_registry.get("search_project_files")
+                if fn is None:
+                    return {"error": "search_project_files tool not available"}
+                return fn(content, directory=path, include_untracked=include_untracked)
+            if op in {"append", "prepend"}:
+                fn = overflow_registry.get("edit_project_file")
+                if fn is None:
+                    return {"error": "edit_project_file tool not available"}
+                return fn(path, op, content)
+            if op == "replace":
+                fn = overflow_registry.get("edit_project_file")
+                if fn is None:
+                    return {"error": "edit_project_file tool not available"}
+                return fn(path, "replace", content, target_str=target, all_occurrences=all_occurrences)
+            if op == "insert_at_line":
+                fn = overflow_registry.get("edit_project_file")
+                if fn is None:
+                    return {"error": "edit_project_file tool not available"}
+                return fn(path, "insert_at_line", content, line=line)
+            valid = "read, write, append, prepend, replace, insert_at_line, list, search"
+            return {"error": f"Unknown project op: {op!r}. Available: {valid}"}
+
         tool_name = sandbox_tool[sandbox]
         fn = overflow_registry.get(tool_name)
         if fn is None:
             return {"error": f"{tool_name} tool not available"}
-
-        if sandbox == "project":
-            return fn(
-                op=op,
-                path=path,
-                content=content,
-                target_str=target,
-                line=line,
-                all_occurrences=all_occurrences,
-                include_untracked=include_untracked,
-            )
         if sandbox == "files":
             if op == "read_multi":
                 paths = paths or []
@@ -424,7 +452,7 @@ def _build_server() -> FastMCP:
     async def rag(op: str, arguments: str = "{}") -> Any:
         """RAG knowledge retrieval and index management — dispatch by op name.
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="rag")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="rag")
         """
         import json as _json
 
@@ -475,7 +503,7 @@ def _build_server() -> FastMCP:
     async def dispatch(tool: str, arguments: str = "{}") -> Any:
         """Call any server tool by name — gateway to tools beyond the primary set.
 
-        Full catalog: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="dispatch")
+        Full catalog: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="dispatch")
         """
         import json as _json
 

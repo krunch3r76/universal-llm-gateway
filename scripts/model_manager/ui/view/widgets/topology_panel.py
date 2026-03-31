@@ -987,6 +987,7 @@ def _classify_result(msg: str) -> bool:
             "is already running",
             "stopped (pid",
             "already exited",
+            "sigkill'd after",
         )
     ):
         return True

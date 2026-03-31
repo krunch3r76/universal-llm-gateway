@@ -139,7 +139,7 @@ def register_event_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Query system telemetry, traces, and request snapshots from Event Service.
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="observability")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="observability")
         """
         if operation not in _VALID_OPERATIONS:
             return {

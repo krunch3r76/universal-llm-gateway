@@ -311,7 +311,7 @@ It runs as a containerized FastAPI service on `:443` with TLS and bearer token a
 | Tool Category | Tools | Security Policy |
 |---|---|---|
 | **Filesystem** | `read_file`, `write_file`, `edit_file`, etc. | Sandboxed to `/data/files` volume; path traversal prohibited |
-| **Project** | `list_project_files`, `read_project_file`, `search_project_files`, `project(...)` | Mount under `PROJECT_ROOT`; list/search default to on-disk files, including `tmp/` and other gitignored trees; set `include_untracked=False` for git-tracked-only results |
+| **Project** | `fs(sandbox="project", ...)`, `list_project_files`, `read_project_file`, `search_project_files` | Mount under `PROJECT_ROOT`; list/search default to on-disk files, including `tmp/` and other gitignored trees; set `include_untracked=False` for git-tracked-only results |
 | **RAG** | `rag_search`, `rag_answer`, etc. | Routes through Stargate pipelines via `host.docker.internal` |
 | **Web** | `web_search`, `web_fetch` | Brave Search API; SSRF guard blocks private/loopback URLs |
 | **Browser** | `browser_navigate`, `browser_click`, etc. | **Requires seccomp override** to allow Firefox's internal sandboxing syscalls; no new capabilities are added |

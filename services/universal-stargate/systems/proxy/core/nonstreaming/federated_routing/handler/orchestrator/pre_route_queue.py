@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_MAX_ITERATIONS = 60
 _DEFAULT_PRE_ROUTE_TIMEOUT_S: float = 120.0
 
 
@@ -97,7 +96,7 @@ async def wait_for_retryable_capacity(
     )
 
     try:
-        for _ in range(_MAX_ITERATIONS):
+        while True:
             elapsed = time.monotonic() - queue_start
             if elapsed >= queue_timeout:
                 break

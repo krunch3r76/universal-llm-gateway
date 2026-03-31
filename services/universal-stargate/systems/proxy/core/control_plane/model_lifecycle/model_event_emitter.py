@@ -103,7 +103,7 @@ async def emit_model_loading_failed(
     error_message: str,
 ) -> None:
     """
-    Emit MODEL_LOADING_FAILED event to EventBus.
+    Emit MODEL_LOAD_FAILED event to EventBus.
 
     Call this from WebSocket MODEL_LOAD_FAILED callback handler.
 
@@ -125,6 +125,6 @@ async def emit_model_loading_failed(
                 error=error_message,
             )
         )
-        logger.debug(f"Emitted MODEL_LOADING_FAILED for {model_id} on {gateway_name}")
+        logger.debug(f"Emitted MODEL_LOAD_FAILED for {model_id} on {gateway_name}")
     except Exception as e:
-        logger.warning(f"Failed to emit MODEL_LOADING_FAILED for {model_id}: {e}")
+        logger.warning(f"Failed to emit MODEL_LOAD_FAILED for {model_id}: {e}")

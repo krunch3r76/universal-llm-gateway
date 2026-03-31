@@ -511,7 +511,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
     def agent_bus(tool: str, arguments: str = "{}") -> Any:
         """Inter-agent message bus — threads, turns, read/reply coordination.
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="agent_bus")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="agent_bus")
         """
         import json as _json
 

@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import datetime
 import logging
+import sqlite3
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from ..db import cortex_conn, query
-from ..models import RelationshipCreate, RelationshipItem, RelationshipList
+from ..models import (
+    RelationshipCreate,
+    RelationshipCreateResponse,
+    RelationshipItem,
+    RelationshipList,
+)
+
+SYMMETRIC_REL_TYPES: frozenset[str] = frozenset({"related_to", "co-occurs_with"})
 
 logger = logging.getLogger("cortex-api.relationships")
 router = APIRouter(prefix="/relationships", tags=["relationships"])
@@ -55,10 +63,25 @@ def list_relationships(
     return RelationshipList(items=[RelationshipItem(**row) for row in rows])
 
 
-@router.post("", response_model=RelationshipItem, status_code=status.HTTP_201_CREATED)
-def create_relationship(body: RelationshipCreate) -> RelationshipItem:
-    """Create a typed relationship between two entities."""
+@router.post("", response_model=RelationshipCreateResponse)
+def create_relationship(
+    body: RelationshipCreate, response: Response
+) -> RelationshipCreateResponse:
+    """Create a typed relationship between two entities with idempotent dedup.
+
+    Duplicate active relationships (same from/to/type) are silent no-ops
+    that return the existing relationship with ``was_new: false``.
+    Symmetric relationship types have their direction canonicalized.
+    """
     now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    from_entity = body.source_id
+    to_entity = body.target_id
+    if body.type_id in SYMMETRIC_REL_TYPES:
+        from_entity, to_entity = (
+            min(from_entity, to_entity),
+            max(from_entity, to_entity),
+        )
 
     with cortex_conn() as conn:
         for eid, label in [
@@ -81,38 +104,58 @@ def create_relationship(body: RelationshipCreate) -> RelationshipItem:
                 f"Relationship type not found: {body.type_id}",
             )
 
-        cur = conn.execute(
-            "INSERT INTO relationships "
-            "(type, from_entity, to_entity, role, strength, evidence, "
-            " chunk_id, valid_from, valid_until, source_uri, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                body.type_id,
-                body.source_id,
-                body.target_id,
-                body.role,
-                body.strength if body.strength is not None else 1.0,
-                body.evidence,
-                body.chunk_id,
-                body.valid_from,
-                body.valid_until,
-                body.source_uri,
-                now,
-                now,
-            ),
-        )
-        conn.commit()
-
-        rows = query(
-            conn,
-            f"SELECT {_SELECT} {_FROM} WHERE r.id = ?",
-            (cur.lastrowid,),
-        )
+        try:
+            cur = conn.execute(
+                "INSERT INTO relationships "
+                "(type, from_entity, to_entity, role, strength, evidence, "
+                " chunk_id, valid_from, valid_until, source_uri, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    body.type_id,
+                    from_entity,
+                    to_entity,
+                    body.role,
+                    body.strength if body.strength is not None else 1.0,
+                    body.evidence,
+                    body.chunk_id,
+                    body.valid_from,
+                    body.valid_until,
+                    body.source_uri,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            was_new = True
+            rows = query(
+                conn,
+                f"SELECT {_SELECT} {_FROM} WHERE r.id = ?",
+                (cur.lastrowid,),
+            )
+        except sqlite3.IntegrityError:
+            was_new = False
+            rows = query(
+                conn,
+                f"SELECT {_SELECT} {_FROM} "
+                "WHERE r.from_entity = ? AND r.to_entity = ? AND r.type = ? AND r.active = 1",
+                (from_entity, to_entity, body.type_id),
+            )
+            if rows:
+                logger.info(
+                    "Relationship dedup: existing %s -[%s]-> %s (id=%d)",
+                    from_entity,
+                    body.type_id,
+                    to_entity,
+                    rows[0]["id"],
+                )
 
     if not rows:
-        logger.error("Relationship create succeeded but no row returned")
+        logger.error("Relationship create: no row found after insert/dedup")
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "Relationship created but could not be read back",
         )
-    return RelationshipItem(**rows[0])
+
+    item = RelationshipItem(**rows[0])
+    response.status_code = status.HTTP_201_CREATED if was_new else status.HTTP_200_OK
+    return RelationshipCreateResponse(was_new=was_new, item=item)

@@ -54,6 +54,8 @@ _GATEWAY_CRASH_DETECT_S = 5.0
 _MCP_HEALTH_WAIT_TIMEOUT_S = 60.0
 _MCP_HEALTH_POLL_INTERVAL_S = 1.0
 _BUILD_LOG_POLL_INTERVAL_S = 0.25
+_DEFAULT_STARGATE_SHUTDOWN_GRACE_S = 20.0
+_STARGATE_SHUTDOWN_BUFFER_S = 2.0
 
 
 async def _pump_build_log(
@@ -783,6 +785,27 @@ class ServiceController:
     def sidecar(self) -> SidecarController:
         return self._sidecar
 
+    def _stargate_sigterm_timeout(self) -> float:
+        """Return the SIGTERM wait budget for Stargate shutdown.
+
+        Keep this aligned with Stargate's own service-manager cleanup window so
+        manage does not force-kill the manager during normal child shutdown.
+        """
+        env = build_service_env(self._root)
+        raw = env.get("STARGATE_SHUTDOWN_GRACE", "").strip()
+        if not raw:
+            return _DEFAULT_STARGATE_SHUTDOWN_GRACE_S + _STARGATE_SHUTDOWN_BUFFER_S
+        try:
+            grace = float(raw)
+        except ValueError:
+            logger.warning(
+                "Invalid STARGATE_SHUTDOWN_GRACE=%r; using default %.1fs",
+                raw,
+                _DEFAULT_STARGATE_SHUTDOWN_GRACE_S,
+            )
+            grace = _DEFAULT_STARGATE_SHUTDOWN_GRACE_S
+        return max(grace, 0.0) + _STARGATE_SHUTDOWN_BUFFER_S
+
     async def stop_stargate(self) -> str:
         """Stop Stargate regardless of whether the PID file is current.
 
@@ -793,6 +816,7 @@ class ServiceController:
         """
         pid_file = GATEWAY_DIR / "stargate.pid"
         port = ServiceState.STARGATE_PORT
+        sigterm_timeout = self._stargate_sigterm_timeout()
 
         recorded_pid: int | None = None
         if pid_file.exists():
@@ -814,7 +838,11 @@ class ServiceController:
                 )
                 recorded_pid = None
             else:
-                return await self._kill_and_wait(recorded_pid, pid_file)
+                return await self._kill_and_wait(
+                    recorded_pid,
+                    pid_file,
+                    sigterm_timeout=sigterm_timeout,
+                )
 
         pid_file.unlink(missing_ok=True)
         port_open = self._service_state._port_open(port)
@@ -827,7 +855,11 @@ class ServiceController:
                 f"Port {port} is open but the listener could not be identified.\n"
                 "Run: ss -tlnp 'sport = :9999'"
             )
-        return await self._kill_and_wait(listener, None)
+        return await self._kill_and_wait(
+            listener,
+            None,
+            sigterm_timeout=sigterm_timeout,
+        )
 
     async def _kill_and_wait(
         self,

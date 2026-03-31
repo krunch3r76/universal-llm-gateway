@@ -1,7 +1,7 @@
 """
 Model loading state consumer for tracking loading operations.
 
-Subscribes to MODEL_LOADING_STARTED / MODEL_LOADED / MODEL_LOADING_FAILED events
+Subscribes to MODEL_LOADING_STARTED / MODEL_LOADED / MODEL_LOAD_FAILED events
 to maintain loading state visibility and detect failures.
 """
 
@@ -12,8 +12,8 @@ from universal_event_bus import Event, EventBus
 from universal_logging import get_logger
 
 from ..events import (
+    MODEL_LOAD_FAILED,
     MODEL_LOADED,
-    MODEL_LOADING_FAILED,
     MODEL_LOADING_STARTED,
     ModelLoadingStuck,
 )
@@ -44,9 +44,7 @@ class ModelLoadingConsumer:
             MODEL_LOADING_STARTED, self._handle_loading_started
         )
         self.event_bus.subscribe_async(MODEL_LOADED, self._handle_loading_completed)
-        self.event_bus.subscribe_async(
-            MODEL_LOADING_FAILED, self._handle_loading_failed
-        )
+        self.event_bus.subscribe_async(MODEL_LOAD_FAILED, self._handle_loading_failed)
         logger.info("✅ ModelLoadingConsumer started")
 
     def stop(self) -> None:

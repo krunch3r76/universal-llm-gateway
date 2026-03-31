@@ -39,7 +39,7 @@ def register_model_status_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Query model load/busy/loading status across Stargate nodes.
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="model_status")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="model_status")
         """
         if model_id:
             url = f"{_STARGATE_URL}/api/v1/model-status/{model_id}"

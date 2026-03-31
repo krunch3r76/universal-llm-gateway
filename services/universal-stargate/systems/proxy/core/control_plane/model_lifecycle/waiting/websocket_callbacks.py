@@ -268,7 +268,7 @@ async def _emit_model_loading_failed_event(
     error_message: str,
     event_bus,
 ) -> None:
-    """Emit MODEL_LOADING_FAILED event to EventBus."""
+    """Emit MODEL_LOAD_FAILED event to EventBus."""
     if not event_bus:
         return
 
@@ -285,4 +285,4 @@ async def _emit_model_loading_failed_event(
             error_message=error_message,
         )
     except Exception as e:
-        logger.debug(f"Failed to emit MODEL_LOADING_FAILED event: {e}")
+        logger.debug(f"Failed to emit MODEL_LOAD_FAILED event: {e}")

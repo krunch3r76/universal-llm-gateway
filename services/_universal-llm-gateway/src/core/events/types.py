@@ -24,7 +24,11 @@ Payload:
 
 MODEL_LOADED = "model.loaded"
 """
-Emitted when a model has been successfully loaded into memory.
+Emitted when a model is engine-ready: the worker process is alive AND the
+inference engine reports is_loaded() == True. This is the authoritative
+readiness signal - consumers (remote load endpoint, master routing,
+resource tracker) may treat this as "ready for immediate inference and
+token counting".
 
 Payload:
     model_id: str - Unique identifier for the loaded model

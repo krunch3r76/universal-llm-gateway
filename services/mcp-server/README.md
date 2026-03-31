@@ -40,7 +40,7 @@ under the mount. Writes require `project_access: rw` and
 | `list_project_files` | List files; optional `include_untracked` for gitignored trees |
 | `read_project_file` | Read text file by relative path |
 | `search_project_files` | Regex search; optional `include_untracked` |
-| `project` | Unified read/write/list/**search** (same flags) |
+| `fs(sandbox="project", ...)` | Preferred unified read/write/list/search surface over project-mounted files |
 
 ### Pipeline Consultation (`tools/pipeline_consult.py`)
 

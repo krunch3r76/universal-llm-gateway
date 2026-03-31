@@ -13,8 +13,9 @@ Domain fields (from pipeline YAML step config):
         can apply model-specific retrieval profiles (optional)
     stargate_url: str — Stargate base URL (default: http://localhost:9999)
 
-Forwards rag_* and scope_* keys from context.options so callers can tune
-retrieval via the end-to-end path (e.g. rag-answer → rag-context).
+Forwards rag_*, scope_*, and rerank_* keys from context.options so callers
+can tune retrieval and reranking via the end-to-end path (e.g. rag-answer →
+rag-context).
 """
 
 from __future__ import annotations
@@ -74,7 +75,7 @@ class PipelineCallHandler(AbstractStepHandler):
 
     Sends context.source_text as the user message and returns the
     pipeline's response as StepOutput.raw. Forwards pipeline_options
-    from step config and rag_* / scope_* from context.options.
+    from step config and rag_* / scope_* / rerank_* from context.options.
 
     If ``consumer_model_ref`` is set, resolves the alias via the
     calling pipeline's models.yaml and injects ``consumer_model``
@@ -105,7 +106,7 @@ class PipelineCallHandler(AbstractStepHandler):
         forwarded: dict[str, Any] = {
             k: v
             for k, v in context.options.items()
-            if k.startswith("rag_") or k.startswith("scope_")
+            if k.startswith(("rag_", "scope_", "rerank_"))
         }
         merged_options = {**step_options, **forwarded}
         if pipeline_id == "rag-context":

@@ -125,7 +125,7 @@ from universal_logging import get_logger
 from services.rag.chunk_filters import chunk_is_noise, chunk_metadata_is_noise
 from services.rag.metadata_boost import apply_metadata_boost
 
-from .context_formatting import ChunkData, format_context
+from .context_formatting import ChunkData, format_context, merge_adjacent_chunks
 from .query_coverage_bias import apply_query_coverage_bias
 from .retrieval_execution import RetrievedChunk as _RetrievedChunk
 from .retrieval_execution import build_facet_pool as _build_facet_pool
@@ -1484,7 +1484,7 @@ class RagMultiRetrieveHandler(BaseHandler):
         include_source_titles = bool(effective.get("rag_include_source_titles", False))
         context_text = (
             format_context(
-                chunk_dicts,
+                merge_adjacent_chunks(chunk_dicts),
                 include_section_headings=include_section_headings,
                 include_source_titles=include_source_titles,
             )

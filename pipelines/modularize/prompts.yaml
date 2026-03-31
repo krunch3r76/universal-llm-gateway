@@ -140,11 +140,23 @@ prompts:
 
       1. Build a complete top-level symbol inventory from source_code:
          - Include top-level functions, classes, and assignments/constants.
+         - Treat module-level runtime assignments as symbols too, not just
+           constants (for example: `logger`, compiled regexes, caches, sentinels,
+           and path/config assignments).
          - Include private names (leading underscore) and public names.
+         - Do NOT count nested functions, class methods, or
+           `if __name__ == "__main__":` blocks as standalone symbols.
       2. Cross-check inventory against modules[].definitions:
          - Mark each symbol as ASSIGNED, MISSING, or PHANTOM.
          - Ensure every source symbol is ASSIGNED exactly once.
+         - Compute `assigned_symbols` as the exact flat set union of all names
+           listed in modules[].definitions.
+         - When missing=0 and phantom=0, `total` and `assigned` MUST both equal
+           `len(source_symbol_inventory)` and `len(assigned_symbols)`.
       3. Emit a machine-parseable audit in `reasoning`:
+         - Derive the audit numbers only from the explicit top-level symbol
+           inventory and the exact names present in modules[].definitions.
+         - Do NOT estimate from prose, module descriptions, or moved-method counts.
          - Format exactly:
            "Symbol audit: <total> total symbols | <assigned> assigned | <missing> missing | <phantom> phantom"
          - Output is valid only when missing=0 and phantom=0.

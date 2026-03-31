@@ -98,7 +98,7 @@ Signals that MUST carry `role="coordination"`. Suppressing these breaks system c
 | `model.capacity.freed` | CapacityWaiter | Queue wake (model unloaded) |
 | `model.loaded` | SequentialLoader | Load completion |
 | `model.unloaded` | SequentialLoader | Unload completion |
-| `model.loading.failed` | SequentialLoader | Load failure |
+| `model.load.failed` | SequentialLoader | Load failure |
 | `model.available` | RAG, admission tooling | Aggregate catalog: at least one connected path can serve `model_id` (union of Stargate-visible catalogs). Not resident load state. |
 | `model.unavailable` | RAG, admission tooling | Aggregate catalog: no path can serve `model_id`. Emitted only when the last serving path disappears. |
 
@@ -222,12 +222,12 @@ contain `request_id` and `gateway_id` for slot tracking.
 
 ### Model Lifecycle
 
-**INVARIANT**: `model.load.initiated` ⟹ (`model.loaded` ∨ `model.loading.failed`)
+**INVARIANT**: `model.load.initiated` ⟹ (`model.loaded` ∨ `model.load.failed`)
 
 ```
 model.load.initiated
   └─> model.loading.started
-      └─> model.loaded | model.loading.failed
+      └─> model.loaded | model.load.failed
 ```
 
 ### Federation Monitoring Events

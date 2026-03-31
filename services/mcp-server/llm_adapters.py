@@ -7,6 +7,11 @@ import os
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from provider_model_limits import (
+    anthropic_max_output_tokens,
+    clamp_anthropic_max_tokens,
+)
+
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_BETA_MCP = "mcp-client-2025-11-20"
 _ANTHROPIC_BETA_INTERLEAVED = "interleaved-thinking-2025-05-14"
@@ -149,29 +154,6 @@ def _is_claude4_model(model: str) -> bool:
     )
 
 
-_ANTHROPIC_MAX_OUTPUT_TOKENS: list[tuple[str, int]] = [
-    ("claude-opus-4", 32768),
-    ("claude-sonnet-4", 16384),
-    ("claude-3-5-sonnet", 8192),
-    ("claude-3-5-haiku", 8192),
-    ("claude-3-opus", 4096),
-    ("claude-3-sonnet", 4096),
-    ("claude-3-haiku", 4096),
-]
-
-
-def _anthropic_model_max_tokens(model: str) -> int:
-    """Return the model's actual maximum output tokens.
-
-    Anthropic requires max_tokens and rejects values above the model limit,
-    so we must match the model's real cap rather than picking an arbitrary number.
-    """
-    for prefix, limit in _ANTHROPIC_MAX_OUTPUT_TOKENS:
-        if prefix in model:
-            return limit
-    return 16384
-
-
 def _xai_supports_reasoning_effort(model: str) -> bool:
     """Only grok-3 family accepts reasoning.effort control.
 
@@ -296,6 +278,14 @@ class AnthropicAdapter:
     def build_request(
         self, req: LLMRequest, mcp: MCPConfig | None
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
+        resolved_max_tokens = clamp_anthropic_max_tokens(req.model, req.max_tokens)
+        if resolved_max_tokens != req.max_tokens:
+            logger.info(
+                "Clamped Anthropic max_tokens from %d to %d for model=%s",
+                req.max_tokens,
+                resolved_max_tokens,
+                req.model,
+            )
         headers: dict[str, str] = {
             "x-api-key": self._api_key,
             "anthropic-version": _ANTHROPIC_VERSION,
@@ -303,7 +293,7 @@ class AnthropicAdapter:
         }
         body: dict[str, Any] = {
             "model": req.model,
-            "max_tokens": req.max_tokens,
+            "max_tokens": resolved_max_tokens,
             "messages": req.messages,
         }
         if req.system:
@@ -359,10 +349,19 @@ class AnthropicAdapter:
         resolved_max_tokens = _resolve_anthropic_max_tokens(
             req.max_tokens, thinking_config, model=req.model
         )
+        model_max = anthropic_max_output_tokens(req.model)
         if resolved_max_tokens is not None:
-            body["max_tokens"] = resolved_max_tokens
+            body["max_tokens"] = clamp_anthropic_max_tokens(
+                req.model, resolved_max_tokens
+            )
+            if body["max_tokens"] != resolved_max_tokens:
+                logger.info(
+                    "Clamped Anthropic max_tokens from %d to %d for model=%s",
+                    resolved_max_tokens,
+                    body["max_tokens"],
+                    req.model,
+                )
         else:
-            model_max = _anthropic_model_max_tokens(req.model)
             body["max_tokens"] = model_max
             logger.info(
                 "No max_tokens specified for model=%s; using model max %d",
@@ -627,9 +626,9 @@ class ResponsesAPIAdapter:
             "input": input_msgs,
             "store": False,
         }
-        _RESPONSES_MIN_OUTPUT_TOKENS = 16384
+        responses_min_output_tokens = 16384
         if req.max_tokens is not None:
-            effective = max(req.max_tokens, _RESPONSES_MIN_OUTPUT_TOKENS)
+            effective = max(req.max_tokens, responses_min_output_tokens)
             if effective != req.max_tokens:
                 logger.info(
                     "Bumped max_tokens from %d to %d for model=%s "

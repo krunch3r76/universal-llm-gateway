@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from model_id import ModelId
+from provider_model_limits import anthropic_max_output_tokens
 
 from ..events import (
     CloudproxyMcpCorrelationAssigned,
@@ -68,16 +69,6 @@ _MCP_SERVER_NAME = "vortex"
 class AnthropicAdapter:
     """Translate OpenAI-compatible requests to Anthropic APIs and back."""
 
-    _MODEL_MAX_OUTPUT_TOKENS: list[tuple[str, int]] = [
-        ("claude-opus-4", 32768),
-        ("claude-sonnet-4", 16384),
-        ("claude-3-5-sonnet", 8192),
-        ("claude-3-5-haiku", 8192),
-        ("claude-3-opus", 4096),
-        ("claude-3-sonnet", 4096),
-        ("claude-3-haiku", 4096),
-    ]
-
     def __init__(
         self,
         *,
@@ -90,14 +81,6 @@ class AnthropicAdapter:
         self._event_bus = event_bus
         self._mcp_v2_configured_emitted = False
         self._model_max_tokens: dict[str, int] = {}
-
-    @classmethod
-    def _fallback_max_tokens(cls, model: str) -> int:
-        """Model-aware fallback when catalog hasn't been fetched yet."""
-        for prefix, limit in cls._MODEL_MAX_OUTPUT_TOKENS:
-            if prefix in model:
-                return limit
-        return 16384
 
     @property
     def adapter_type(self) -> str:
@@ -201,6 +184,9 @@ class AnthropicAdapter:
 
         system_text = extract_system_text(openai_messages)
         anthropic_messages = convert_messages(openai_messages)
+        model_max_tokens = self._model_max_tokens.get(
+            anthropic_model, anthropic_max_output_tokens(anthropic_model)
+        )
 
         response_format = request_body.get("response_format")
         json_mode = False
@@ -243,12 +229,21 @@ class AnthropicAdapter:
             elif anthropic_model in self._model_max_tokens:
                 max_tokens = self._model_max_tokens[anthropic_model]
             else:
-                max_tokens = self._fallback_max_tokens(anthropic_model)
+                max_tokens = model_max_tokens
                 logger.info(
                     "No max_tokens resolved for model=%s; using model max %d",
                     anthropic_model,
                     max_tokens,
                 )
+        clamped_max_tokens = min(max_tokens, model_max_tokens)
+        if clamped_max_tokens != max_tokens:
+            logger.info(
+                "Clamped Anthropic max_tokens from %d to %d for model=%s",
+                max_tokens,
+                clamped_max_tokens,
+                anthropic_model,
+            )
+        max_tokens = clamped_max_tokens
 
         payload: dict[str, Any] = {
             "model": anthropic_model,

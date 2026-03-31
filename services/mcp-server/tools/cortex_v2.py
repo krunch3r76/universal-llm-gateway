@@ -41,6 +41,7 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "include_deadlines": False,
         "include_review_queue": False,
         "include_investigations": False,
+        "include_session_edges": True,
         "session_agent_filter": "cursor",
         "entity_type_exclude": "legal_matter,person,property,organization",
         "session_limit": 3,
@@ -50,11 +51,14 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "boot_section_max_full": 3,
         "boot_section_max_oneline": 10,
         "boot_section_type_exclude": "legal_matter,person,property,organization",
+        "session_edges_hours": 48,
+        "session_edges_limit": 15,
     },
     "api": {
         "include_deadlines": False,
         "include_review_queue": False,
         "include_investigations": True,
+        "include_session_edges": True,
         "session_agent_filter": "api",
         "entity_type_exclude": "legal_matter,person,property",
         "session_limit": 3,
@@ -64,11 +68,14 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "boot_section_max_full": 5,
         "boot_section_max_oneline": 15,
         "boot_section_type_exclude": "legal_matter,person,property",
+        "session_edges_hours": 48,
+        "session_edges_limit": 15,
     },
     "web": {
         "include_deadlines": True,
         "include_review_queue": True,
         "include_investigations": True,
+        "include_session_edges": True,
         "session_agent_filter": None,
         "entity_type_exclude": None,
         "session_limit": 3,
@@ -78,11 +85,14 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "boot_section_max_full": 5,
         "boot_section_max_oneline": 15,
         "boot_section_type_exclude": None,
+        "session_edges_hours": 48,
+        "session_edges_limit": 20,
     },
     "grok": {
         "include_deadlines": True,
         "include_review_queue": True,
         "include_investigations": True,
+        "include_session_edges": True,
         "session_agent_filter": None,
         "entity_type_exclude": None,
         "session_limit": 3,
@@ -92,11 +102,14 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "boot_section_max_full": 5,
         "boot_section_max_oneline": 15,
         "boot_section_type_exclude": None,
+        "session_edges_hours": 48,
+        "session_edges_limit": 20,
     },
     "subagent": {
         "include_deadlines": True,
         "include_review_queue": True,
         "include_investigations": True,
+        "include_session_edges": True,
         "session_agent_filter": None,
         "entity_type_exclude": None,
         "session_limit": 3,
@@ -106,6 +119,8 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "boot_section_max_full": 5,
         "boot_section_max_oneline": 15,
         "boot_section_type_exclude": None,
+        "session_edges_hours": 48,
+        "session_edges_limit": 20,
     },
 }
 
@@ -123,7 +138,9 @@ def run_cortex_boot(
 
     profile = _BOOT_PROFILES.get(agent, _BOOT_PROFILES["web"])
 
-    pre_list = [p.strip() for p in pre_files.split(",") if p.strip()] if pre_files else []
+    pre_list = (
+        [p.strip() for p in pre_files.split(",") if p.strip()] if pre_files else []
+    )
     post_list = (
         [p.strip() for p in post_files.split(",") if p.strip()] if post_files else []
     )
@@ -214,6 +231,21 @@ def run_cortex_boot(
     )
     futures_spec["temporal"] = (_cx, "GET", "/boot-temporal")
 
+    if profile.get("include_session_edges", True):
+        edge_hours = profile.get("session_edges_hours", 48)
+        edge_limit = profile.get("session_edges_limit", 15)
+        edge_base = f"since_hours={edge_hours}&limit={edge_limit}"
+        futures_spec["edges_supersedes"] = (
+            _cx,
+            "GET",
+            f"/edges?edge_type=supersedes&{edge_base}",
+        )
+        futures_spec["edges_reasoning"] = (
+            _cx,
+            "GET",
+            f"/edges?edge_type_exclude=supersedes,superseded_by&{edge_base}",
+        )
+
     with ThreadPoolExecutor(max_workers=8) as pool:
         submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
         raw = {k: f.result() for k, f in submitted.items()}
@@ -223,7 +255,9 @@ def run_cortex_boot(
     gated_entity_ids = _extract_entity_ids(sessions)
     gated_raw: dict[str, Any] = {}
     if gated_entity_ids:
-        gated_qs = urlencode({"entity_ids": ",".join(gated_entity_ids), "per_entity": 5})
+        gated_qs = urlencode(
+            {"entity_ids": ",".join(gated_entity_ids), "per_entity": 5}
+        )
         gated_raw = _cx("GET", f"/boot-gated?{gated_qs}")
 
     post_file_results = read_files_batch(post_list) if post_list else {}
@@ -242,6 +276,9 @@ def run_cortex_boot(
     boot_sections: dict[str, Any] | None = None
     if isinstance(boot_sections_raw, dict) and "sections" in boot_sections_raw:
         boot_sections = boot_sections_raw["sections"]
+
+    edges_supersedes: list[dict[str, Any]] = safe_list(raw.get("edges_supersedes", []))
+    edges_reasoning: list[dict[str, Any]] = safe_list(raw.get("edges_reasoning", []))
 
     temporal_raw = raw.get("temporal", {})
     temporal_active: list[dict[str, Any]] = safe_list(
@@ -292,6 +329,8 @@ def run_cortex_boot(
         continuation_services=cont_services or None,
         todos=todos or None,
         gated_entities=gated_entities or None,
+        edges_supersedes=edges_supersedes or None,
+        edges_reasoning=edges_reasoning or None,
     )
 
     logger.info(
@@ -349,6 +388,11 @@ def run_cortex_boot(
         }
     if gated_entities:
         result["gated_entities"] = gated_entities
+    if edges_supersedes or edges_reasoning:
+        result["session_edges"] = {
+            "supersession_chains": edges_supersedes,
+            "reasoning_edges": edges_reasoning,
+        }
 
     return result
 
@@ -535,6 +579,6 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Persona-scoped boot briefing for session start (web, cursor, api, grok).
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="cortex_boot")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="cortex_boot")
         """
         return run_cortex_boot(agent=agent, pre_files=pre_files, post_files=post_files)

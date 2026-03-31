@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ...dag import StepNode
     from ...handlers.protocol import PipelineContext, StepOutput
     from ...schemas import StepConfig
+    from ...step_config import ResolvedTargetModel
     from ..checkpoint import CheckpointManager
 
 logger = get_logger(__name__)
@@ -353,19 +354,22 @@ class DAGExecutor:
         model_ref_overrides: dict[str, str] | None = (
             _mro if isinstance(_mro, dict) else None
         )
-        target_model = (
-            await self._model_coordination.resolve_target_model_for_execution(
-                node,
-                model_ref_overrides,
-            )
+        resolve_target_model = (
+            self._model_coordination.resolve_target_model_resolution_for_execution
         )
+        target_resolution = await resolve_target_model(node, model_ref_overrides)
+        target_model = target_resolution.model_id if target_resolution else None
 
         self._observability.emit_step_started(node=node, target_model=target_model)
         self._observability.emit_step_inputs(node=node)
 
         start_time = time.time()
         try:
-            output = await self._run_step(node, target_model=target_model)
+            output = await self._run_step(
+                node,
+                target_model=target_model,
+                target_resolution=target_resolution,
+            )
             duration = time.time() - start_time
             self._observability.record_success(node, output, duration)
         except Exception as e:
@@ -374,7 +378,11 @@ class DAGExecutor:
             raise
 
     async def _run_step(
-        self, node: StepNode, *, target_model: str | None = None
+        self,
+        node: StepNode,
+        *,
+        target_model: str | None = None,
+        target_resolution: ResolvedTargetModel | None = None,
     ) -> StepOutput:
         """Execute step, falling back to alternative models on eligible failures.
 
@@ -408,6 +416,7 @@ class DAGExecutor:
                 step,
                 primary_err,
                 target_model=target_model,
+                target_resolution=target_resolution,
             )
 
     async def _run_step_inner(self, step: StepConfig) -> StepOutput:
@@ -430,6 +439,7 @@ class DAGExecutor:
         primary_err: Exception,
         *,
         target_model: str | None = None,
+        target_resolution: ResolvedTargetModel | None = None,
     ) -> StepOutput:
         """Delegate fallback with the coordinator-resolved model.
 
@@ -442,6 +452,7 @@ class DAGExecutor:
             step,
             primary_err,
             primary_model_id=target_model,
+            primary_resolution=target_resolution,
             run_step_fn=self._run_step_inner,
             context=self.context,
             get_event_context=self._observability.get_event_context,

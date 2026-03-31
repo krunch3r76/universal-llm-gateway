@@ -64,9 +64,17 @@ def is_model_cleanup_in_progress(model_id: str) -> bool:
 
 
 async def emit_loading_event(
-    controller: "WorkerController", model_id: str, status: str, error: str = None
-):
-    """Emit model loading events."""
+    controller: "WorkerController",
+    model_id: str,
+    status: str,
+    error: str | None = None,
+) -> None:
+    """Emit model loading lifecycle events (started, failed).
+
+    Publishes MODEL_LOADING_STARTED or MODEL_LOAD_FAILED via the controller's
+    event bus. Does not handle the "loaded" status - MODEL_LOADED is emitted
+    by finalize_load() after resource measurement.
+    """
     model_load_failed, model_loaded, model_loading_started = _get_event_classes()
     event_map = {
         "started": model_loading_started(model_id=model_id),

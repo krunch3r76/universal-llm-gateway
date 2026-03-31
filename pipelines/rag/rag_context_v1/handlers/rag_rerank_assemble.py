@@ -38,7 +38,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from universal_logging import get_logger
 
-from .context_formatting import ChunkData, format_context
+from .context_formatting import ChunkData, format_context, merge_adjacent_chunks
 from .rerank_scoring import (
     aggregate_window_scores,
     apply_bounded_movement,
@@ -122,7 +122,7 @@ class RagRerankAssembleHandler(BaseHandler):
 
         if not chunks_data or not rerank_enabled or len(chunks_data) <= 3:
             context_text = format_context(
-                chunks_data,
+                merge_adjacent_chunks(chunks_data) if chunks_data else [],
                 include_section_headings=include_section_headings,
                 include_source_titles=include_source_titles,
             )
@@ -279,8 +279,9 @@ class RagRerankAssembleHandler(BaseHandler):
             old_pos = prior_order.get(cid, new_pos)
             max_move_observed = max(max_move_observed, abs(new_pos - old_pos))
 
+        merged_chunks = merge_adjacent_chunks(all_chunks)
         context_text = format_context(
-            all_chunks,
+            merged_chunks,
             include_section_headings=include_section_headings,
             include_source_titles=include_source_titles,
         )
@@ -342,7 +343,9 @@ class RagRerankAssembleHandler(BaseHandler):
         tail = chunks_data[max_candidates:]
         passages = [c["content"][:2000] for c in candidates]
 
-        ce_ref = str(context.options.get("rerank_cross_encoder_model") or "cross_encoder")
+        ce_ref = str(
+            context.options.get("rerank_cross_encoder_model") or "cross_encoder"
+        )
         model_id, _profile = self._resolve_rerank_model(
             step, context, model_ref_override=ce_ref
         )
@@ -373,7 +376,7 @@ class RagRerankAssembleHandler(BaseHandler):
                 len(candidates),
             )
             context_text = format_context(
-                chunks_data,
+                merge_adjacent_chunks(chunks_data),
                 include_section_headings=include_section_headings,
                 include_source_titles=include_source_titles,
             )
@@ -423,8 +426,9 @@ class RagRerankAssembleHandler(BaseHandler):
             old_pos = prior_order.get(cid, new_pos)
             max_move_observed = max(max_move_observed, abs(new_pos - old_pos))
 
+        merged_chunks = merge_adjacent_chunks(all_chunks)
         context_text = format_context(
-            all_chunks,
+            merged_chunks,
             include_section_headings=include_section_headings,
             include_source_titles=include_source_titles,
         )

@@ -199,7 +199,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Service lifecycle — start, stop, restart, rebuild, health, wait_healthy.
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="manage")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="manage")
         """
         if action not in _VALID_ACTIONS:
             return {

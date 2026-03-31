@@ -13,6 +13,7 @@ from ..model_tracker import ModelUsageTracker
 
 if TYPE_CHECKING:
     from ...dag import StepNode
+    from ...step_config import ResolvedTargetModel
     from .executor import DAGExecutor
 
 logger = get_logger(__name__)
@@ -24,14 +25,18 @@ class StepModelCoordinator:
     def __init__(self, executor: DAGExecutor) -> None:
         self._executor = executor
         self._model_tracker = ModelUsageTracker()
-        self._resolved_target_models: dict[
+        self._resolved_target_model_resolutions: dict[
             tuple[str, tuple[tuple[str, str], ...] | None],
-            str | None,
+            ResolvedTargetModel | None,
         ] = {}
 
     async def resolve_target_model(self, node: StepNode) -> str | None:
         """Resolve step target model using pipeline registry/domain context."""
-        return await self._resolve_target_model(node, model_ref_overrides=None)
+        resolved = await self._resolve_target_model_resolution(
+            node,
+            model_ref_overrides=None,
+        )
+        return resolved.model_id if resolved else None
 
     async def resolve_target_model_for_execution(
         self,
@@ -39,27 +44,39 @@ class StepModelCoordinator:
         model_ref_overrides: dict[str, str] | None,
     ) -> str | None:
         """Resolve target model using execution-time model overrides."""
-        return await self._resolve_target_model(
+        resolved = await self._resolve_target_model_resolution(
+            node,
+            model_ref_overrides=model_ref_overrides,
+        )
+        return resolved.model_id if resolved else None
+
+    async def resolve_target_model_resolution_for_execution(
+        self,
+        node: StepNode,
+        model_ref_overrides: dict[str, str] | None,
+    ) -> ResolvedTargetModel | None:
+        """Resolve structured execution-time model metadata."""
+        return await self._resolve_target_model_resolution(
             node,
             model_ref_overrides=model_ref_overrides,
         )
 
-    async def _resolve_target_model(
+    async def _resolve_target_model_resolution(
         self,
         node: StepNode,
         *,
         model_ref_overrides: dict[str, str] | None,
-    ) -> str | None:
+    ) -> ResolvedTargetModel | None:
         """Resolve once per step+override set to avoid repeated self-selection."""
         override_key = (
             tuple(sorted(model_ref_overrides.items())) if model_ref_overrides else None
         )
         cache_key = (node.step.id, override_key)
-        if cache_key in self._resolved_target_models:
-            return self._resolved_target_models[cache_key]
+        if cache_key in self._resolved_target_model_resolutions:
+            return self._resolved_target_model_resolutions[cache_key]
 
         try:
-            resolved = await node.step.get_target_model_id_async(
+            resolved = await node.step.get_target_model_resolution_async(
                 self._executor.context._registry,
                 domain=self._executor.context.pipeline.domain,
                 search_path=self._executor.context.pipeline.source_search_path,
@@ -80,7 +97,7 @@ class StepModelCoordinator:
                 exc,
             )
             resolved = None
-        self._resolved_target_models[cache_key] = resolved
+        self._resolved_target_model_resolutions[cache_key] = resolved
         return resolved
 
     @staticmethod

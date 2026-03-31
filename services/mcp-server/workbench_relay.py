@@ -14,6 +14,10 @@ import os
 
 import httpx
 from mcp_events import monotonic_now, record
+from provider_model_limits import (
+    anthropic_max_output_tokens,
+    clamp_anthropic_max_tokens,
+)
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -23,7 +27,6 @@ _ANTHROPIC_API_URL = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com"
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_BETA = "mcp-client-2025-11-20"
 _DEFAULT_MODEL = "claude-sonnet-4-20250514"
-_MAX_TOKENS_CAP = 16384
 _MCP_SERVER_NAME = "vortex"
 _MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "").strip()
 _ALLOWED_ORIGIN = "*"
@@ -100,7 +103,8 @@ async def handle_relay(request: Request) -> JSONResponse:
 
     if not isinstance(max_tokens, int) or max_tokens < 1:
         max_tokens = 4096
-    max_tokens = min(max_tokens, _MAX_TOKENS_CAP)
+    model_max_tokens = anthropic_max_output_tokens(_DEFAULT_MODEL)
+    max_tokens = clamp_anthropic_max_tokens(_DEFAULT_MODEL, max_tokens)
 
     mcp_auth = _get_mcp_auth_token()
     mcp_server_def: dict = {
@@ -126,6 +130,7 @@ async def handle_relay(request: Request) -> JSONResponse:
         "mcp.workbench.relay.called",
         model=_DEFAULT_MODEL,
         max_tokens=max_tokens,
+        model_max_tokens=model_max_tokens,
         user_msg_len=len(user_msg),
     )
 

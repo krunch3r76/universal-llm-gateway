@@ -56,6 +56,8 @@ def render_boot_narrative(
     continuation_services: list[dict[str, Any]] | None = None,
     todos: list[dict[str, Any]] | None = None,
     gated_entities: list[dict[str, Any]] | None = None,
+    edges_supersedes: list[dict[str, Any]] | None = None,
+    edges_reasoning: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render boot briefing as Markdown narrative.
 
@@ -92,6 +94,30 @@ def render_boot_narrative(
                 parts.append(f"- [{t.get('id', '?')}] {t.get('title', '')}")
         if not has_content:
             parts.append("No continuation state available.")
+
+    if edges_supersedes is not None or edges_reasoning is not None:
+        sup = edges_supersedes or []
+        reas = edges_reasoning or []
+        if sup or reas:
+            parts.append("\n## Session Edges (last 48h)")
+            if sup:
+                parts.append(f"\n**Supersession chains** ({len(sup)}):")
+                for e in sup:
+                    parts.append(
+                        f"- `{e.get('from_node', '?')}` supersedes "
+                        f"`{e.get('to_node', '?')}` "
+                        f"({e.get('agent', '?')}, {e.get('created_at', '?')[:16]})"
+                    )
+            if reas:
+                parts.append(f"\n**Reasoning edges** ({len(reas)}):")
+                for e in reas:
+                    ctx = e.get("context", "")
+                    ctx_suffix = f" — {ctx}" if ctx else ""
+                    parts.append(
+                        f"- `{e.get('from_node', '?')}` "
+                        f"—[{e.get('edge_type', '?')}]→ "
+                        f"`{e.get('to_node', '?')}`{ctx_suffix}"
+                    )
 
     if gated_entities:
         total_assertions = sum(e.get("assertions_shown", 0) for e in gated_entities)

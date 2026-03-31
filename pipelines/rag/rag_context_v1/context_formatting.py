@@ -15,6 +15,7 @@ from systems.pipeline.core.constants import (
     RAG_NO_RESULTS_SENTINEL as _NO_RESULTS_SENTINEL,
 )
 
+
 class ChunkData(TypedDict):
     """Serialized chunk for inter-step transfer."""
 
@@ -115,65 +116,49 @@ def _format_source_line(
     heading = str(meta.get("heading") or meta.get("section_path") or "").strip()
     heading_prefix = f"## {heading}\n\n" if heading else ""
     body_text = (
-        content[len(heading_prefix) :] if heading_prefix and content.startswith(heading_prefix) else content
+        content[len(heading_prefix) :]
+        if heading_prefix and content.startswith(heading_prefix)
+        else content
     )
 
     sections = [f"[Source: {display_label} | Last changed: {c['indexed_at']}]"]
     if include_section_heading and heading:
         sections.append(
-            "[Section heading — retrieval hint only, not evidence]\n"
-            f"{heading}"
+            f"[Section heading — retrieval hint only, not evidence]\n{heading}"
         )
     sections.append(f"[Body evidence]\n{body_text}")
     return "\n".join(sections)
 
 
-def format_context(
-    chunks: list[ChunkData],
-    *,
-    include_section_headings: bool = False,
-    include_source_titles: bool = False,
-) -> str:
-    """Format chunks for prompt injection as source blocks only.
+def merge_adjacent_chunks(chunks: list[ChunkData]) -> list[ChunkData]:
+    """Merge consecutive same-source chunks with adjacent indices.
 
-    Source paths are normalized to filenames.  Chunks whose source extension
-    is in _BINARY_EXTENSIONS are silently dropped.
+    Walks *chunks* in their given order (rank order after reranking, retrieval
+    order otherwise).  When two neighbors share the same source **and**
+    ``section_path`` **and** have consecutive ``chunk_index`` values, they are
+    collapsed into a single chunk with overlap trimmed.  The merged chunk
+    inherits the metadata (and score) of the first chunk in the run.
 
-    Contiguous chunks from the same source (adjacent chunk_index values) are
-    merged into a single source block with overlap trimmed.
-
-    Invariant: ∀ non-empty chunks list: returns non-empty string.
+    Chunks from the same source that are **not** consecutive in the list are
+    left separate — they occupy independent rank positions.
     """
     if not chunks:
-        return _NO_RESULTS_SENTINEL
+        return []
 
-    filtered: list[ChunkData] = []
-
-    for c in chunks:
-        if source_is_binary(c["source"]):
-            continue
-        filtered.append(c)
-
-    if not filtered:
-        return _NO_RESULTS_SENTINEL
-
-    filtered.sort(key=lambda c: (c["source"], c["metadata"].get("chunk_index", 0)))
-
-    sections: list[str] = []
+    merged: list[ChunkData] = []
     i = 0
-    while i < len(filtered):
-        run_start = i
-        source = filtered[i]["source"]
-        run_text = filtered[i]["content"]
+    while i < len(chunks):
+        first = chunks[i]
+        run_text = first["content"]
 
-        while i + 1 < len(filtered):
-            nxt = filtered[i + 1]
-            cur_meta = filtered[i].get("metadata") or {}
+        while i + 1 < len(chunks):
+            cur_meta = chunks[i].get("metadata") or {}
+            nxt = chunks[i + 1]
             nxt_meta = nxt.get("metadata") or {}
             cur_idx = cur_meta.get("chunk_index")
             nxt_idx = nxt_meta.get("chunk_index")
             if (
-                nxt["source"] != source
+                nxt["source"] != first["source"]
                 or cur_meta.get("section_path") != nxt_meta.get("section_path")
                 or cur_idx is None
                 or nxt_idx is None
@@ -187,24 +172,53 @@ def format_context(
                 run_text += "\n\n" + continuation
             i += 1
 
-        first = filtered[run_start]
-        merged_chunk: ChunkData = {
-            "content": run_text,
-            "source": first["source"],
-            "indexed_at": first["indexed_at"],
-            "metadata": first["metadata"],
-            "content_hash": first.get("content_hash", ""),
-            "score": first.get("score", 0.0),
-        }
-        label = normalize_source(source)
+        merged.append(
+            {
+                "content": run_text,
+                "source": first["source"],
+                "indexed_at": first["indexed_at"],
+                "metadata": first["metadata"],
+                "content_hash": first.get("content_hash", ""),
+                "score": first.get("score", 0.0),
+            }
+        )
+        i += 1
+
+    return merged
+
+
+def format_context(
+    chunks: list[ChunkData],
+    *,
+    include_section_headings: bool = False,
+    include_source_titles: bool = False,
+) -> str:
+    """Render pre-ordered, pre-merged chunks as prompt-ready source blocks.
+
+    Pure rendering function — receives chunks in the order they should appear
+    (rank order from reranker, retrieval order otherwise) and emits formatted
+    text.  Binary-extension sources are silently dropped.
+
+    Callers are responsible for merging adjacent chunks via
+    ``merge_adjacent_chunks()`` before calling this function.
+
+    Invariant: ∀ non-empty chunks list: returns non-empty string.
+    """
+    if not chunks:
+        return _NO_RESULTS_SENTINEL
+
+    sections: list[str] = []
+    for c in chunks:
+        if source_is_binary(c["source"]):
+            continue
+        label = normalize_source(c["source"])
         sections.append(
             _format_source_line(
                 label,
-                merged_chunk,
+                c,
                 include_section_heading=include_section_headings,
                 include_source_title=include_source_titles,
             )
         )
-        i += 1
 
-    return "\n\n---\n\n".join(sections)
+    return "\n\n---\n\n".join(sections) if sections else _NO_RESULTS_SENTINEL

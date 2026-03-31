@@ -12,7 +12,7 @@ Signals:
     model.loaded — model available on gateway
     model.unloaded — model removed from gateway
     model.loading.started — model load in progress
-    model.loading.failed — model load failed
+    model.load.failed — model load failed
     model.loading.stuck — model load exceeded stuck TTL
     model.execution.started — one request started execution
     model.execution.completed — one request completed (triggers slot release)
@@ -55,7 +55,7 @@ Payload: {
 }
 """
 
-MODEL_LOADING_FAILED = "model.loading.failed"
+MODEL_LOAD_FAILED = "model.load.failed"
 """
 Model loading failed on gateway
 Payload: {
@@ -294,7 +294,7 @@ def ModelLoadingFailed(
     gateway_name: str | None = None,
 ) -> Event:
     """
-    Create MODEL_LOADING_FAILED event.
+    Create MODEL_LOAD_FAILED event.
 
     Args:
         url: Gateway URL
@@ -303,7 +303,7 @@ def ModelLoadingFailed(
         gateway_name: Optional gateway name (for enriched events)
 
     Returns:
-        Event with MODEL_LOADING_FAILED signal.
+        Event with MODEL_LOAD_FAILED signal.
     """
     payload = {
         "url": url,
@@ -313,7 +313,7 @@ def ModelLoadingFailed(
     }
     payload = {k: v for k, v in payload.items() if v is not None}
     return Event(
-        signal=MODEL_LOADING_FAILED,
+        signal=MODEL_LOAD_FAILED,
         payload=payload,
         role="coordination",
     )

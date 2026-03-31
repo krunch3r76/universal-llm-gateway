@@ -470,7 +470,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
     def cortex(tool: str, arguments: str = "{}") -> Any:
         """Cortex knowledge system — entities, assertions, relationships, edges, journals.
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="cortex")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="cortex")
         """
         import json as _json
 

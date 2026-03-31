@@ -14,12 +14,15 @@ from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
-from ..fallback_eligibility import classify_fallback_error
+from ..fallback_eligibility import (
+    classify_fallback_error,
+    get_fallback_suppression_reason,
+)
 from ..resolved_candidates import get_ranked_candidates
 
 if TYPE_CHECKING:
     from ...handlers.protocol import PipelineContext, StepOutput
-    from ...step_config import StepConfig
+    from ...step_config import ResolvedTargetModel, StepConfig
 
 logger = get_logger(__name__)
 
@@ -29,6 +32,7 @@ async def try_step_model_fallback(
     primary_err: Exception,
     *,
     primary_model_id: str | None,
+    primary_resolution: ResolvedTargetModel | None = None,
     run_step_fn: Callable[[StepConfig], Awaitable[StepOutput]],
     context: PipelineContext,
     get_event_context: Callable[[], tuple[str, str]],
@@ -60,15 +64,59 @@ async def try_step_model_fallback(
         StepModelFallbackAttempted,
         StepModelFallbackExhausted,
         StepModelFallbackSucceeded,
-        StepModelFallbackSuppressed,
     )
-    from ...events.step import StepModelFallback
+    from ...events.inference import (
+        StepModelFallbackSuppressed as RecorderStepModelFallbackSuppressed,
+    )
+    from ...events.step import (
+        StepModelFallback,
+    )
+    from ...events.step import (
+        StepModelFallbackSuppressed as StepModelFallbackSuppressedEvent,
+    )
 
     if not primary_model_id:
         raise primary_err
     primary_model = primary_model_id
 
     if not step.model_requirements:
+        raise primary_err
+
+    suppression_reason = get_fallback_suppression_reason(
+        primary_resolution=primary_resolution,
+        model_requirements=step.model_requirements,
+    )
+    if suppression_reason:
+        eligibility = classify_fallback_error(
+            primary_err,
+            suppression_reason=suppression_reason,
+        )
+        recorder = context.recorder
+        pipeline_id, execution_id = get_event_context()
+        if recorder:
+            recorder.emit(
+                RecorderStepModelFallbackSuppressed(
+                    step_name=step.name,
+                    model_id=primary_model,
+                    primary_error_type=eligibility.error_type,
+                    suppression_reason=eligibility.reason,
+                )
+            )
+        publish_event(
+            StepModelFallbackSuppressedEvent(
+                pipeline_id=pipeline_id,
+                execution_id=execution_id,
+                step_name=step.name,
+                primary_error_type=eligibility.error_type,
+                suppression_reason=eligibility.reason,
+            )
+        )
+        _annotate_routing_mismatch_error(
+            primary_err=primary_err,
+            step=step,
+            primary_model=primary_model,
+            primary_resolution=primary_resolution,
+        )
         raise primary_err
 
     fallback_ids = [
@@ -162,7 +210,7 @@ async def try_step_model_fallback(
             if not eligibility.should_fallback:
                 if recorder:
                     recorder.emit(
-                        StepModelFallbackSuppressed(
+                        RecorderStepModelFallbackSuppressed(
                             step_name=step.name,
                             model_id=fallback_id,
                             primary_error_type=eligibility.error_type,
@@ -170,7 +218,7 @@ async def try_step_model_fallback(
                         )
                     )
                 publish_event(
-                    StepModelFallbackSuppressed(
+                    StepModelFallbackSuppressedEvent(
                         pipeline_id=pipeline_id,
                         execution_id=execution_id,
                         step_name=step.name,
@@ -222,3 +270,30 @@ async def try_step_model_fallback(
         )
 
     raise last_error
+
+
+def _annotate_routing_mismatch_error(
+    *,
+    primary_err: Exception,
+    step: StepConfig,
+    primary_model: str,
+    primary_resolution: ResolvedTargetModel | None,
+) -> None:
+    """Attach a clearer note when local primary fallback is suppressed."""
+    if not hasattr(primary_err, "add_note"):
+        return
+
+    origin = "resolved model"
+    if primary_resolution is not None:
+        if primary_resolution.came_from_registry_model_ref and step.model_ref:
+            origin = f"registry model_ref '{step.model_ref}'"
+        elif primary_resolution.came_from_model_requirements:
+            origin = "model_requirements"
+        elif primary_resolution.model_ref:
+            origin = f"model_ref '{primary_resolution.model_ref}'"
+
+    primary_err.add_note(
+        "Fallback suppressed due to routing layer mismatch: "
+        f"step '{step.name}' resolved local primary model '{primary_model}' from "
+        f"{origin}, but model_requirements.source='cloud' would cross routing layers."
+    )

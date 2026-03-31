@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
+from ..claim_hash import compute_claim_hash
 from ..db import cortex_conn, decode_row, json_encode, query
 from ..models import (
     AssertionCreate,
+    AssertionCreateResponse,
     AssertionItem,
     AssertionList,
     AssertionUpdate,
+    NearDuplicateWarning,
     SupersedeRequest,
     SupersedeResponse,
 )
+from ..near_dup import check_near_duplicate, record_near_duplicate
 
 logger = logging.getLogger("cortex-api.assertions")
 router = APIRouter(prefix="/assertions", tags=["assertions"])
@@ -119,14 +123,22 @@ def list_assertions(
     return AssertionList(items=items)
 
 
-@router.post("", response_model=AssertionItem, status_code=status.HTTP_201_CREATED)
-def create_assertion(body: AssertionCreate) -> AssertionItem:
-    """Create an assertion for an existing entity with full v2 provenance."""
+@router.post("", response_model=AssertionCreateResponse)
+def create_assertion(
+    body: AssertionCreate, response: Response
+) -> AssertionCreateResponse:
+    """Create an assertion with idempotent dedup via claim_hash.
+
+    Exact duplicate claims (same entity + normalized text) are silent no-ops
+    that return the existing assertion with ``was_new: false``.
+    """
     if body.confidence not in _VALID_CONFIDENCE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid confidence: {body.confidence!r}. Must be one of {sorted(_VALID_CONFIDENCE)}",
         )
+
+    claim_hash = compute_claim_hash(body.entity_id, body.claim)
 
     conn = cortex_conn()
     try:
@@ -140,11 +152,11 @@ def create_assertion(body: AssertionCreate) -> AssertionItem:
             )
 
         cur = conn.execute(
-            "INSERT INTO assertions ("
+            "INSERT OR IGNORE INTO assertions ("
             "  entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by,"
             "  chunk_id, derivation_type, reasoning_summary, observed_at,"
-            "  valid_from, valid_until, is_atomic, is_decontextualized"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  valid_from, valid_until, is_atomic, is_decontextualized, claim_hash"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.entity_id,
                 body.claim,
@@ -161,28 +173,62 @@ def create_assertion(body: AssertionCreate) -> AssertionItem:
                 body.valid_until,
                 body.is_atomic,
                 body.is_decontextualized,
+                claim_hash,
             ),
         )
         conn.commit()
-        rows = query(
-            conn,
-            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
-            (cur.lastrowid,),
-        )
+
+        was_new = cur.rowcount > 0
+        new_id = cur.lastrowid
+
+        if was_new:
+            rows = query(
+                conn,
+                f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
+                (new_id,),
+            )
+        else:
+            rows = query(
+                conn,
+                f"SELECT {_ASSERTION_COLS} FROM assertions "
+                "WHERE entity_id = ? AND claim_hash = ? AND superseded_by IS NULL",
+                (body.entity_id, claim_hash),
+            )
+
+        near_dup_warning: NearDuplicateWarning | None = None
+        if was_new:
+            match = check_near_duplicate(conn, body.entity_id, body.claim, new_id)
+            if match:
+                record_near_duplicate(conn, new_id, match.existing_id, match.score)
+                near_dup_warning = NearDuplicateWarning(
+                    existing_id=match.existing_id, score=match.score
+                )
     finally:
         conn.close()
 
     if not rows:
         logger.error(
-            "Assertion create succeeded but no row returned for entity_id=%s, assertion_id=%s",
+            "Assertion create: no row found for entity_id=%s claim_hash=%s was_new=%s",
             body.entity_id,
-            cur.lastrowid,
+            claim_hash[:16],
+            was_new,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Assertion created but could not be read back",
         )
-    return AssertionItem(**decode_row(rows[0], _JSON_FIELDS))
+
+    item = AssertionItem(**decode_row(rows[0], _JSON_FIELDS))
+    response.status_code = status.HTTP_201_CREATED if was_new else status.HTTP_200_OK
+    if not was_new:
+        logger.info(
+            "Assertion dedup: exact duplicate for entity_id=%s, returning existing id=%d",
+            body.entity_id,
+            item.id,
+        )
+    return AssertionCreateResponse(
+        was_new=was_new, item=item, near_duplicate_warning=near_dup_warning
+    )
 
 
 @router.patch("/{assertion_id}", response_model=AssertionItem)

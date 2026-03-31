@@ -244,7 +244,6 @@ async def _wait_and_retry_selection(
 
     global _eviction_wait_queue_depth
     wait_start = time.monotonic()
-    max_iterations = 60
     trace: Any = None
 
     _eviction_wait_queue_depth += 1
@@ -262,7 +261,7 @@ async def _wait_and_retry_selection(
         )
 
     try:
-        for _ in range(max_iterations):
+        while True:
             elapsed_s = time.monotonic() - wait_start
             if elapsed_s >= timeout_s:
                 break

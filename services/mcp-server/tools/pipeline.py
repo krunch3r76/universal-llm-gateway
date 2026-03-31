@@ -161,7 +161,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Run a pipeline, block until done, return result with execution_id.
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="pipeline")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="pipeline")
         """
         t0 = monotonic_now()
         record("mcp.pipeline.run.called", pipeline=pipeline)
@@ -231,9 +231,17 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                 pipeline=pipeline,
                 error=f"{e.response.status_code}",
             )
-            return {
+            result = {
                 "error": f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
             }
+            try:
+                detail = e.response.text.strip()
+            except Exception as exc:
+                logger.warning("Failed reading pipeline error response body: %s", exc)
+            else:
+                if detail:
+                    result["detail"] = detail[:500]
+            return result
         except Exception as exc:
             tp_err = str(exc)
             raise

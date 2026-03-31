@@ -23,6 +23,7 @@ from .routes import (
     edges,
     entities,
     entity_status,
+    extraction_runs,
     gated,
     relationships,
     salience,
@@ -100,6 +101,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(stats.router)
     app.include_router(salience.router)
     app.include_router(boot.router)
+    app.include_router(extraction_runs.router)
     app.include_router(gated.router)
 
     @app.get("/health")

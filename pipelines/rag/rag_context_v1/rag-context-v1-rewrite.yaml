@@ -14,7 +14,7 @@ description: >
 output: rerank_assemble
 
 options:
-  timeout_seconds: 60    # §4.2: raised from 30s; GPU contention headroom
+  timeout_seconds: 66    # §4.2: raised from 30s; GPU contention headroom
   corpus_hints: ""       # Optional. Injected at runtime from corpus_hints.yaml. Provides
                          # additional context or keywords to guide retrieval.
   rewrite_enabled: true  # Diagnostic toggle: skip rewrite generation/HyDE when false

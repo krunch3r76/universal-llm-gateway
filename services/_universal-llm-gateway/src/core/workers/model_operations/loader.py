@@ -27,6 +27,8 @@ def _get_resource_tracker():
 logger = get_logger(__name__)
 
 _LOAD_CACHE_TTL_S = 10.0
+_ENGINE_READY_MAX_ATTEMPTS = 5
+_ENGINE_READY_BACKOFF_S = 1.0
 
 
 async def _emit_load_gate_debug(
@@ -322,6 +324,10 @@ class ModelLoader:
             if not responsive:
                 return False
 
+            engine_ready = await self._wait_for_engine_ready(model_id)
+            if not engine_ready:
+                return False
+
             resource_tracker.set_model_loaded(model_id)
             await _emit_load_gate_debug("tracker_set_loaded", model_id)
 
@@ -353,3 +359,59 @@ class ModelLoader:
             logger.error(f"❌ {error_msg}")
             _get_resource_tracker().set_model_error(model_id, error_msg)
         return is_valid
+
+    async def _wait_for_engine_ready(self, model_id: str) -> bool:
+        """Wait for the inference engine to become ready after worker start.
+
+        Bounded retry over check_engine_health() to absorb the warm-up window
+        that subprocess-backed engines (llama-server, vLLM) may exhibit after
+        the load_model RPC returns. Fail-closed: if readiness cannot be proven
+        within the retry budget, the load is treated as failed.
+
+        Returns True if engine is ready, False if all attempts exhausted.
+        """
+        for attempt in range(1, _ENGINE_READY_MAX_ATTEMPTS + 1):
+            ready = await self._controller.check_engine_health(model_id)
+            await _emit_load_gate_debug(
+                "engine_health_check",
+                model_id,
+                attempt=attempt,
+                max_attempts=_ENGINE_READY_MAX_ATTEMPTS,
+                ready=ready,
+            )
+            if ready:
+                logger.info(
+                    "Engine ready for %s on attempt %d/%d",
+                    model_id,
+                    attempt,
+                    _ENGINE_READY_MAX_ATTEMPTS,
+                )
+                return True
+
+            if attempt < _ENGINE_READY_MAX_ATTEMPTS:
+                logger.info(
+                    "Engine not ready for %s (attempt %d/%d), retrying in %.1fs",
+                    model_id,
+                    attempt,
+                    _ENGINE_READY_MAX_ATTEMPTS,
+                    _ENGINE_READY_BACKOFF_S,
+                )
+                await asyncio.sleep(_ENGINE_READY_BACKOFF_S)
+
+        error_msg = (
+            f"Engine readiness check failed after "
+            f"{_ENGINE_READY_MAX_ATTEMPTS} attempts for {model_id}"
+        )
+        logger.error(f"❌ {error_msg}")
+        resource_tracker = _get_resource_tracker()
+        resource_tracker.set_model_error(model_id, error_msg)
+        await load_flow.emit_loading_event(self._controller, model_id, "failed", error_msg)
+        await load_flow.cleanup_failed_worker(
+            self._controller, model_id, "Engine readiness check failed"
+        )
+        await _emit_load_gate_debug(
+            "engine_health_exhausted",
+            model_id,
+            attempts=_ENGINE_READY_MAX_ATTEMPTS,
+        )
+        return False

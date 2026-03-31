@@ -53,7 +53,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         MCP injection are enabled unless the caller opts out with
         ``boot="none"`` or ``inject_mcp=False``.
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="grok_generate")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="grok_generate")
         """
         full_model = model if "/" in model else f"xai/{model}"
 
@@ -130,7 +130,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         MCP injection are enabled unless the caller opts out with
         ``boot="none"`` or ``inject_mcp=False``.
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="claude_generate")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="claude_generate")
         """
         full_model = model if "/" in model else f"anthropic/{model}"
 
@@ -209,7 +209,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Backward-compatible generation — routes to grok_generate or claude_generate.
 
-        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="frontier_generate")
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="frontier_generate")
         """
         if stream:
             return {"error": "Streaming not yet implemented for frontier_generate"}

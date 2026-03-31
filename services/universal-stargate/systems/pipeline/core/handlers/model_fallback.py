@@ -11,8 +11,11 @@ from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
+from ..execution.fallback_eligibility import get_fallback_suppression_reason
+
 if TYPE_CHECKING:
     from ..schemas import PromptConfig, StepConfig
+    from ..step_config import ResolvedTargetModel
     from .protocol import PipelineContext, StepOutput
 
 logger = get_logger(__name__)
@@ -23,9 +26,23 @@ async def resolve_fallback_models(
     context: PipelineContext,
     *,
     exclude: str,
+    primary_resolution: ResolvedTargetModel | None,
 ) -> list[str]:
     """Resolve model_requirements to a ranked fallback list, excluding primary."""
     from ..execution.resolved_candidates import get_ranked_candidates
+
+    suppression_reason = get_fallback_suppression_reason(
+        primary_resolution=primary_resolution,
+        model_requirements=step.model_requirements,
+    )
+    if suppression_reason:
+        logger.warning(
+            "[%s] Suppressing fallback candidate resolution for '%s': %s",
+            step.name,
+            exclude,
+            suppression_reason,
+        )
+        return []
 
     model_ids = await get_ranked_candidates(
         context=context,

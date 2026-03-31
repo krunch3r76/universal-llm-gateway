@@ -8,8 +8,10 @@ Contains the StepConfig model and parsing/normalization helpers.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Literal, Self
 
+from model_id import ModelId
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .execution.retry import RetryPolicy
@@ -22,6 +24,62 @@ from .step_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedTargetModel:
+    """Structured model resolution result for coordination and fallback."""
+
+    model_id: str
+    parsed_model_id: ModelId
+    resolution_source: Literal[
+        "pipeline_runtime_override",
+        "model_ref_override",
+        "model_requirements",
+        "registry_model_ref",
+        "raw_model_ref",
+    ]
+    model_ref: str | None = None
+    requirements_source: str | None = None
+
+    @classmethod
+    def build(
+        cls,
+        model_id: str,
+        *,
+        resolution_source: Literal[
+            "pipeline_runtime_override",
+            "model_ref_override",
+            "model_requirements",
+            "registry_model_ref",
+            "raw_model_ref",
+        ],
+        model_ref: str | None = None,
+        requirements_source: str | None = None,
+    ) -> ResolvedTargetModel:
+        return cls(
+            model_id=model_id,
+            parsed_model_id=ModelId.parse(model_id),
+            resolution_source=resolution_source,
+            model_ref=model_ref,
+            requirements_source=requirements_source,
+        )
+
+    @property
+    def is_local(self) -> bool:
+        return not self.parsed_model_id.is_cloud
+
+    @property
+    def is_cloud(self) -> bool:
+        return self.parsed_model_id.is_cloud
+
+    @property
+    def came_from_registry_model_ref(self) -> bool:
+        return self.resolution_source == "registry_model_ref"
+
+    @property
+    def came_from_model_requirements(self) -> bool:
+        return self.resolution_source == "model_requirements"
 
 
 class StepConfig(BaseModel):
@@ -414,22 +472,58 @@ class StepConfig(BaseModel):
         4. model_ref → models.yaml registry lookup
         5. None (no model_ref set and no model_requirements)
         """
+        resolved = self.get_target_model_resolution(
+            registry,
+            domain=domain,
+            search_path=search_path,
+            model_ref_overrides=model_ref_overrides,
+            context=context,
+        )
+        return resolved.model_id if resolved else None
+
+    def get_target_model_resolution(
+        self,
+        registry: Any,
+        *,
+        domain: str | None = None,
+        search_path: str | None = None,
+        model_ref_overrides: dict[str, str] | None = None,
+        context: Any | None = None,
+    ) -> ResolvedTargetModel | None:
+        """Return structured target-model resolution metadata for this step."""
         runtime_override = self._get_pipeline_model_override(context)
         if runtime_override:
-            return runtime_override
+            return ResolvedTargetModel.build(
+                runtime_override,
+                resolution_source="pipeline_runtime_override",
+                model_ref=self.model_ref,
+                requirements_source=self._get_requirements_source(),
+            )
 
         if model_ref_overrides and self.model_ref:
             override = model_ref_overrides.get(self.name) or model_ref_overrides.get(
                 self.model_ref
             )
             if isinstance(override, str) and override.strip():
-                return override.strip()
+                return ResolvedTargetModel.build(
+                    override.strip(),
+                    resolution_source="model_ref_override",
+                    model_ref=self.model_ref,
+                    requirements_source=self._get_requirements_source(),
+                )
 
         if self.model_ref == "auto" or (not self.model_ref and self.model_requirements):
             from .execution.requirements_resolver import resolve_model_requirements
 
             candidates = resolve_model_requirements(self.model_requirements or {})
-            return candidates[0] if candidates else None
+            if not candidates:
+                return None
+            return ResolvedTargetModel.build(
+                candidates[0],
+                resolution_source="model_requirements",
+                model_ref=self.model_ref,
+                requirements_source=self._get_requirements_source(),
+            )
 
         if not self.model_ref:
             return None
@@ -439,7 +533,21 @@ class StepConfig(BaseModel):
             model_config = registry.get_model_config(
                 self.model_ref, domain=domain, search_path=search_path
             )
-            return model_config.model if model_config else None
+            if not model_config:
+                return None
+            return ResolvedTargetModel.build(
+                model_config.model,
+                resolution_source="registry_model_ref",
+                model_ref=self.model_ref,
+                requirements_source=self._get_requirements_source(),
+            )
+        except KeyError:
+            return ResolvedTargetModel.build(
+                self.model_ref,
+                resolution_source="raw_model_ref",
+                model_ref=self.model_ref,
+                requirements_source=self._get_requirements_source(),
+            )
         except Exception as exc:
             logger.warning(
                 "Step '%s': model lookup failed for model_ref=%r: %s",
@@ -463,16 +571,45 @@ class StepConfig(BaseModel):
         ∀ event-loop callers: use this variant so `model_requirements` selection
         yields while `/v1/models/select` is served by the same Stargate process.
         """
+        resolved = await self.get_target_model_resolution_async(
+            registry,
+            domain=domain,
+            search_path=search_path,
+            model_ref_overrides=model_ref_overrides,
+            context=context,
+        )
+        return resolved.model_id if resolved else None
+
+    async def get_target_model_resolution_async(
+        self,
+        registry: Any,
+        *,
+        domain: str | None = None,
+        search_path: str | None = None,
+        model_ref_overrides: dict[str, str] | None = None,
+        context: Any | None = None,
+    ) -> ResolvedTargetModel | None:
+        """Async structured target-model resolution for live execution paths."""
         runtime_override = self._get_pipeline_model_override(context)
         if runtime_override:
-            return runtime_override
+            return ResolvedTargetModel.build(
+                runtime_override,
+                resolution_source="pipeline_runtime_override",
+                model_ref=self.model_ref,
+                requirements_source=self._get_requirements_source(),
+            )
 
         if model_ref_overrides and self.model_ref:
             override = model_ref_overrides.get(self.name) or model_ref_overrides.get(
                 self.model_ref
             )
             if isinstance(override, str) and override.strip():
-                return override.strip()
+                return ResolvedTargetModel.build(
+                    override.strip(),
+                    resolution_source="model_ref_override",
+                    model_ref=self.model_ref,
+                    requirements_source=self._get_requirements_source(),
+                )
 
         if self.model_ref == "auto" or (not self.model_ref and self.model_requirements):
             from .execution.requirements_resolver import (
@@ -489,7 +626,14 @@ class StepConfig(BaseModel):
                     step_name=self.name,
                     requirements=requirements,
                 )
-            return candidates[0] if candidates else None
+            if not candidates:
+                return None
+            return ResolvedTargetModel.build(
+                candidates[0],
+                resolution_source="model_requirements",
+                model_ref=self.model_ref,
+                requirements_source=self._get_requirements_source(),
+            )
 
         if not self.model_ref:
             return None
@@ -499,7 +643,21 @@ class StepConfig(BaseModel):
             model_config = registry.get_model_config(
                 self.model_ref, domain=domain, search_path=search_path
             )
-            return model_config.model if model_config else None
+            if not model_config:
+                return None
+            return ResolvedTargetModel.build(
+                model_config.model,
+                resolution_source="registry_model_ref",
+                model_ref=self.model_ref,
+                requirements_source=self._get_requirements_source(),
+            )
+        except KeyError:
+            return ResolvedTargetModel.build(
+                self.model_ref,
+                resolution_source="raw_model_ref",
+                model_ref=self.model_ref,
+                requirements_source=self._get_requirements_source(),
+            )
         except Exception as exc:
             logger.warning(
                 "Step '%s': async model lookup failed for model_ref=%r: %s",
@@ -508,6 +666,14 @@ class StepConfig(BaseModel):
                 exc,
             )
             return None
+
+    def _get_requirements_source(self) -> str | None:
+        """Return the configured model_requirements.source value when present."""
+        requirements = self.model_requirements
+        if not isinstance(requirements, dict):
+            return None
+        source = requirements.get("source")
+        return source if isinstance(source, str) and source else None
 
     def get_retry_policy(self) -> RetryPolicy | None:
         """Parse retry_policy dict to RetryPolicy object."""
