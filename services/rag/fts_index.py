@@ -158,21 +158,15 @@ class FtsIndex:
         conn, _ = self._ensure()
         if not source_prefixes:
             return self.search(query, limit=limit)
-        # FTS5 MATCH on content, then Python-side prefix filter.
-        # At 8K docs this is efficient; FTS5 narrows the candidate set first.
+        source_clause = " OR ".join("source LIKE ?" for _ in source_prefixes)
+        params = (query, *(f"{prefix}%" for prefix in source_prefixes), limit)
         rows = conn.execute(
             "SELECT chunk_id, source, bm25(chunks_fts) AS score"
-            " FROM chunks_fts WHERE chunks_fts MATCH ?"
+            f" FROM chunks_fts WHERE chunks_fts MATCH ? AND ({source_clause})"
             " ORDER BY score LIMIT ?",
-            (query, limit * 3),
+            params,
         ).fetchall()
-        filtered: list[tuple[str, float]] = []
-        for chunk_id, source, score in rows:
-            if any(source.startswith(p) for p in source_prefixes):
-                filtered.append((chunk_id, score))
-                if len(filtered) >= limit:
-                    break
-        return filtered
+        return [(row[0], row[2]) for row in rows]
 
     def get_count(self) -> int:
         """Return total number of rows in the FTS5 table."""

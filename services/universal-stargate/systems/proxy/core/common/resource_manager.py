@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """
 VRAM/RAM reservation manager for model loading.
 

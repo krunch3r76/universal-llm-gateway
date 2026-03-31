@@ -89,7 +89,8 @@ class ErrorNormalizer:
         """
         Normalize error to OpenAI format (legacy method).
 
-        This method is preserved for backward compatibility with the gateway_name parameter.
+        This method is preserved for backward compatibility with the
+        gateway_name parameter.
         New code should use normalize_to_format() instead.
         """
         # Build operation context including gateway_name (legacy parameter)
@@ -261,7 +262,8 @@ class ErrorNormalizer:
             for err in errors:
                 loc = err.get("loc", ())
                 msg = err.get("msg", "Invalid value")
-                field = ".".join(str(l) for l in loc if l != "body")
+                loc_parts = [str(p) for p in loc if p != "body"]
+                field = ".".join(loc_parts)
 
                 if not first_param:
                     first_param = field

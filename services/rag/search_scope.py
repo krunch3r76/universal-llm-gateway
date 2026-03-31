@@ -335,22 +335,9 @@ def apply_bm25_sidecar(
     document text and metadata, then inserted with a synthetic distance
     derived from the RRF score relative to the dense tail.
     """
-    cross_scope_threshold = 3
-
     try:
         if source_prefixes:
             bm25_hits = fts.search_scoped(query, source_prefixes, limit=bm25_limit)
-            # Cross-scope fallback: when scoped BM25 returns very few hits,
-            # the query likely contains a term that exists elsewhere in the
-            # corpus. Unscoped BM25 surfaces cross-scope exact matches that
-            # dense retrieval also missed.
-            if len(bm25_hits) < cross_scope_threshold:
-                unscoped = fts.search(query, limit=bm25_limit)
-                seen = {cid for cid, _ in bm25_hits}
-                for cid, score in unscoped:
-                    if cid not in seen:
-                        bm25_hits.append((cid, score))
-                        seen.add(cid)
         else:
             bm25_hits = fts.search(query, limit=bm25_limit)
     except Exception:
@@ -437,6 +424,18 @@ def apply_bm25_sidecar(
             all_metadatas.append(meta)
             all_distances.append(tail_distance)
             bm25_hit_count += 1
+
+    if source_prefixes:
+        all_ids, all_chunks, all_metadatas, all_distances = (
+            apply_source_prefix_filter_with_ids(
+                ids=all_ids,
+                chunks=all_chunks,
+                metadatas=all_metadatas,
+                distances=all_distances,
+                source_prefixes=source_prefixes,
+                top_k=len(all_ids),
+            )
+        )
 
     # Re-sort everything by RRF score
     combined = sorted(

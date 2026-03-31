@@ -18,6 +18,7 @@ from fastapi.responses import Response
 from universal_logging import get_logger
 
 from src.scheduling.events import (
+    RequestAliasResolved,
     RequestProcessing,
     RequestProfileResolved,
     RequestSnapshotReceived,
@@ -60,10 +61,18 @@ async def process_chat_completion(
 
     Returns the HTTP Response (streaming or non-streaming) from the executor.
     """
-    target_model = model_override or chat_request.model
+    requested_model = model_override or chat_request.model
+    effective_model_override = model_override
+    if requested_model and getattr(proxy, "persona_alias_manager", None):
+        alias = proxy.persona_alias_manager.get(requested_model)
+        if alias is not None:
+            effective_model_override = alias.backing_model
+
+    target_model_for_pipeline_check = effective_model_override or chat_request.model
     is_pipeline = (
         proxy.pipeline_registry is not None
-        and proxy.pipeline_registry.is_pipeline(target_model)
+        and target_model_for_pipeline_check is not None
+        and proxy.pipeline_registry.is_pipeline(target_model_for_pipeline_check)
     )
 
     if is_pipeline and chat_request.messages:
@@ -86,11 +95,12 @@ async def process_chat_completion(
     context = await proxy.request_preparer.prepare_request(
         request,
         chat_request,
-        model_override=model_override,
+        model_override=effective_model_override,
         profile_override=profile_override,
         disable_profile=disable_profile,
         is_pipeline=is_pipeline,
         skip_token_counting=skip_token_counting,
+        requested_model=requested_model,
     )
 
     if proxy.event_bus:
@@ -102,7 +112,7 @@ async def process_chat_completion(
             await proxy.event_bus.publish_async_nowait(
                 RequestSnapshotReceived(
                     request_id=context.request_id,
-                    model_id=target_model,
+                    model_id=context.requested_model,
                     messages=msgs[:10],
                     is_pipeline=is_pipeline,
                 )
@@ -186,6 +196,16 @@ async def process_chat_completion(
     if proxy.event_bus:
         try:
             profile_name = getattr(context, "request_profile", None)
+            if getattr(context, "persona_alias_id", None) and getattr(
+                context, "persona_backing_model", None
+            ):
+                await proxy.event_bus.publish_async_nowait(
+                    RequestAliasResolved(
+                        request_id=context.request_id,
+                        alias_id=context.persona_alias_id,
+                        backing_model_id=context.persona_backing_model,
+                    )
+                )
             if profile_name:
                 await proxy.event_bus.publish_async_nowait(
                     RequestProfileResolved(

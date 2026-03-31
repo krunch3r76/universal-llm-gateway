@@ -968,6 +968,18 @@ This covers both auto-assignment by model basename and explicit profile override
 | `model_id` | string | Selected model for this request |
 | `profile_name` | string | Resolved profile name applied to request policy |
 
+### request.alias.resolved
+
+Emitted during request preparation when a user-local persona alias is resolved
+to a backing model. This is an ingress convenience: routing and execution always
+use the backing model ID.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string | Request that resolved a persona alias |
+| `alias_id` | string | Persona alias ID requested by client |
+| `backing_model_id` | string | Concrete model ID used for routing/execution |
+
 ### request.processing vs request.inference.started
 
 `request.processing` marks the admission/dispatch boundary (request accepted for

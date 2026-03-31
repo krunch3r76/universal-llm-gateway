@@ -120,20 +120,23 @@ class GatewayErrorInterceptor:
             # Execute HTTP request
             response = await client.request(method, url, **kwargs)
 
-            # 202 Accepted is valid for model loading operations (async processing started)
-            # The caller will poll for completion, so we should return 202 without raising
+            # 202 Accepted is valid for model loading operations
+            # (async processing started)
+            # The caller will poll for completion, so we should return 202
+            # without raising.
             if response.status_code == 202 and operation == "model_load":
                 logger.info(
-                    f"✅ Gateway '{gateway_name}' returned 202 Accepted for model_load operation - "
-                    f"loading started, caller will poll for completion. Returning response without raising error."
+                    f"✅ Gateway '{gateway_name}' returned 202 Accepted for "
+                    "model_load operation - loading started, caller will poll "
+                    "for completion. Returning response without raising error."
                 )
                 return response
 
             # DIAGNOSTIC: Log if we're about to raise for status
             if response.status_code >= 400:
                 logger.warning(
-                    f"⚠️ DIAGNOSTIC [model_load]: About to call raise_for_status() on status {response.status_code} "
-                    f"for operation '{operation}'"
+                    "⚠️ DIAGNOSTIC [model_load]: About to call raise_for_status() "
+                    f"on status {response.status_code} for operation '{operation}'"
                 )
 
             response.raise_for_status()
@@ -143,8 +146,9 @@ class GatewayErrorInterceptor:
             # DIAGNOSTIC: Check if this is a 202 that somehow raised HTTPStatusError
             if e.response.status_code == 202 and operation == "model_load":
                 logger.warning(
-                    "⚠️ DIAGNOSTIC: HTTPStatusError raised for 202 response in model_load operation. "
-                    "This should not happen - returning response anyway."
+                    "⚠️ DIAGNOSTIC: HTTPStatusError raised for 202 response in "
+                    "model_load operation. This should not happen - returning "
+                    "response anyway."
                 )
                 return e.response
 
@@ -158,7 +162,8 @@ class GatewayErrorInterceptor:
             )
 
             logger.error(
-                f"❌ DIAGNOSTIC: HTTPStatusError for status {status} during {operation} on {gateway_name}"
+                "❌ DIAGNOSTIC: HTTPStatusError for status "
+                f"{status} during {operation} on {gateway_name}"
             )
 
             # Add gateway context if not already present
@@ -189,7 +194,8 @@ class GatewayErrorInterceptor:
 
             # Enhance message with gateway context
             error_dict["error"]["message"] = (
-                f"Gateway '{gateway_name}' connection error during {operation}: {str(e)}"
+                f"Gateway '{gateway_name}' connection error during {operation}: "
+                f"{e}"
             )
             error_dict["error"]["type"] = "service_unavailable"
             error_dict["error"]["code"] = "gateway_connection_failed"
@@ -211,7 +217,8 @@ class GatewayErrorInterceptor:
         except Exception as e:
             # Unexpected error (should be rare)
             logger.error(
-                f"Unexpected error calling gateway '{gateway_name}' during {operation}: {e}",
+                f"Unexpected error calling gateway '{gateway_name}' during "
+                f"{operation}: {e}",
                 exc_info=True,
             )
 

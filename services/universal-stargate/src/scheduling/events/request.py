@@ -9,6 +9,7 @@ Signals:
     request.processing — request started processing on gateway
     request.inference.started — request began downstream runtime execution
     request.profile.resolved — profile auto-assigned for request
+    request.alias.resolved — persona alias resolved to backing model
     request.completed — request completed successfully
     request.failed — request failed
     request.timed.out — request timed out
@@ -65,6 +66,17 @@ Payload: {
     "request_id": str,
     "model_id": str,
     "profile_name": str
+}
+"""
+
+REQUEST_ALIAS_RESOLVED = "request.alias.resolved"
+"""
+Persona alias resolved at ingress to a backing model.
+
+Payload: {
+    "request_id": str,
+    "alias_id": str,
+    "backing_model_id": str
 }
 """
 
@@ -290,6 +302,23 @@ def RequestProfileResolved(
             "request_id": request_id,
             "model_id": model_id,
             "profile_name": profile_name,
+        },
+    )
+
+
+@event_factory
+def RequestAliasResolved(
+    request_id: str,
+    alias_id: str,
+    backing_model_id: str,
+) -> Event:
+    """Create REQUEST_ALIAS_RESOLVED event."""
+    return Event(
+        signal=REQUEST_ALIAS_RESOLVED,
+        payload={
+            "request_id": request_id,
+            "alias_id": alias_id,
+            "backing_model_id": backing_model_id,
         },
     )
 

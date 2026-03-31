@@ -71,7 +71,7 @@ def determine_status_code(exc: Exception, default: int = 500) -> int:
         return exc.status_code
 
     # Map exception types to status codes
-    if isinstance(exc, (ValueError, TypeError, KeyError)):
+    if isinstance(exc, ValueError | TypeError | KeyError):
         return 400  # Bad Request
 
     if isinstance(exc, FileNotFoundError):

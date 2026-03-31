@@ -34,6 +34,7 @@ if TYPE_CHECKING:  # pragma: no cover - type checking only imports
 
     from systems.federation import FederationIntegration
     from systems.federation.master.orchestration import FederatedLoadOrchestrator
+    from systems.persona_aliases.manager import PersonaAliasManager
 
     from ...profiles import ProfileManager
     from ..core.nonstreaming import RequestExecutor, RequestForwarder, RequestPreparer
@@ -77,6 +78,8 @@ class StargateProxy:
         self._is_execution_capable = self._detect_execution_capability(
             gateway_config, config_path
         )
+
+        self.persona_alias_manager: PersonaAliasManager | None = None
 
         if not self._is_execution_capable:
             logger.info(

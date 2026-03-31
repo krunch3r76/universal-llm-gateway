@@ -1,3 +1,4 @@
+# ruff: noqa: N802
 """Federation model load orchestration and catalog event signals.
 
 Covers federated model load requests/confirmations/failures, orchestrator

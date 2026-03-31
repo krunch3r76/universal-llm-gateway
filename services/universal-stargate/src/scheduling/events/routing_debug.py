@@ -1,3 +1,4 @@
+# ruff: noqa: N802
 """Debug observability signals for routing decisions and gateway state changes.
 
 Emitted on anomalies only — not on every routing call. Designed for
@@ -133,5 +134,3 @@ def RoutingDebugGatewayRegistered(
             "is_http_polling": is_http_polling,
         },
     )
-
-

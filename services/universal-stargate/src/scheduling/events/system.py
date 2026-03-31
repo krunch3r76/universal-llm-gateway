@@ -1,3 +1,4 @@
+# ruff: noqa: N802
 """System lifecycle event signals.
 
 Signals:

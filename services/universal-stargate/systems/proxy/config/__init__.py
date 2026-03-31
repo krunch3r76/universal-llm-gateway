@@ -1,7 +1,8 @@
 """
 Configuration management for universal-stargate proxy.
 
-Provides typed configuration loading and validation for gateway and resource management settings.
+Provides typed configuration loading and validation for gateway and resource
+management settings.
 """
 
 from .resource_management import (

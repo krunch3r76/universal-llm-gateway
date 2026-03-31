@@ -1,3 +1,4 @@
+# ruff: noqa: N802
 """Gateway state, retry, and resource event signals.
 
 Covers gateway connectivity/health transitions, retry telemetry,

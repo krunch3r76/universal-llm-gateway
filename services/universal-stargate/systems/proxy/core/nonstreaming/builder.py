@@ -45,7 +45,7 @@ class RequestBuilder:
         # Include explicitly set client fields
         # CRITICAL: Preserve all fields including 'stream' parameter
         # EXCEPT Stargate-only routing/control parameters
-        STARGATE_ONLY_PARAMS = {
+        stargate_only_params = {
             "skip_token_counting",
             "profile",
             "filter",
@@ -55,7 +55,7 @@ class RequestBuilder:
         filtered_count = 0
         for field_name, field_value in context.raw_client_fields.items():
             if field_value is not None:
-                if field_name in STARGATE_ONLY_PARAMS:
+                if field_name in stargate_only_params:
                     filtered_count += 1
                     logger.debug(
                         f"🚫 Filtered Stargate-only parameter: "
@@ -80,6 +80,20 @@ class RequestBuilder:
         # Apply token management modifications
         if "max_tokens" in context.user_params:
             request_data["max_tokens"] = context.user_params["max_tokens"]
+
+        # Apply persona alias parameters (fill-only; never override user intent)
+        persona_params = getattr(context, "persona_params", None)
+        persona_alias_id = getattr(context, "persona_alias_id", None)
+        if persona_alias_id and isinstance(persona_params, dict) and persona_params:
+            applied = []
+            for key, value in persona_params.items():
+                if key not in context.user_params and key not in request_data:
+                    request_data[key] = value
+                    applied.append(key)
+            if applied:
+                context.middleware_actions.append(
+                    f"persona_alias_params_applied:{persona_alias_id}:{','.join(applied)}"
+                )
 
         # Apply profile parameters from pre-resolved profile data
         if hasattr(context, "profile_data") and context.profile_data:

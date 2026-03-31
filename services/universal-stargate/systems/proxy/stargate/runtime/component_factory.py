@@ -9,6 +9,7 @@ from universal_logging import get_logger
 
 from systems.routing.selection.catalog import get_all_available_models
 
+from ....persona_aliases.manager import PersonaAliasManager
 from ....profiles import ProfileConfigLoader, ProfileManager
 from ....transformations import TransformationConfigLoader, TransformationEngine
 from ...core.nonstreaming import RequestExecutor, RequestForwarder, RequestPreparer
@@ -85,6 +86,18 @@ def initialize_profile_manager(config_dir: Path) -> ProfileManager:
     return manager
 
 
+def initialize_persona_alias_manager(config_dir: Path) -> PersonaAliasManager:
+    """
+    Initialize the PersonaAliasManager at startup.
+
+    Persona aliases are loaded from config_dir/persona_aliases.yaml.
+    This file is user-local and intentionally not bundled in the repo.
+    """
+    manager = PersonaAliasManager.load_from_config_dir(config_dir)
+    logger.info("PersonaAliasManager initialized")
+    return manager
+
+
 def create_token_allocation_policy(proxy: StargateProxy):
     """
     Create token allocation policy from proxy state.
@@ -143,11 +156,13 @@ def initialize_request_components(proxy: StargateProxy) -> None:
 
     # Initialize profile manager (startup I/O) - stored on proxy for DI access
     proxy.profile_manager = initialize_profile_manager(config_dir)
+    proxy.persona_alias_manager = initialize_persona_alias_manager(config_dir)
 
     proxy.request_preparer = RequestPreparer(
         gateway_manager=proxy.gateway_manager,
         transformation_engine=transformation_engine,
         profile_manager=proxy.profile_manager,
+        persona_alias_manager=proxy.persona_alias_manager,
         token_manager=proxy.token_manager,
         token_management_enabled=proxy.token_management_enabled,
         config=proxy.config,
@@ -236,12 +251,14 @@ def initialize_master_request_components(proxy: StargateProxy) -> None:
 
     # Initialize profile manager (startup I/O) - stored on proxy for DI access
     proxy.profile_manager = initialize_profile_manager(config_dir)
+    proxy.persona_alias_manager = initialize_persona_alias_manager(config_dir)
 
     # Master preparer: no local gateway, applies client-facing policy (profiles)
     proxy.request_preparer = RequestPreparer(
         gateway_manager=None,  # No local gateway -> Master mode
         transformation_engine=transformation_engine,
         profile_manager=proxy.profile_manager,
+        persona_alias_manager=proxy.persona_alias_manager,
         token_manager=None,
         token_management_enabled=False,
         config=proxy.config,

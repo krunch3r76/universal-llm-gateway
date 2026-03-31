@@ -45,35 +45,42 @@ class ResourceManagementConfig:
         # Validate concurrency limits
         if self.max_concurrent_model_loads < 1:
             raise ResourceManagementConfigError(
-                f"max_concurrent_model_loads must be >= 1, got {self.max_concurrent_model_loads}"
+                "max_concurrent_model_loads must be >= 1, "
+                f"got {self.max_concurrent_model_loads}"
             )
         if self.max_concurrent_model_loads > 100:
             raise ResourceManagementConfigError(
-                f"max_concurrent_model_loads exceeds recommended maximum of 100, got {self.max_concurrent_model_loads}"
+                "max_concurrent_model_loads exceeds recommended maximum of 100, "
+                f"got {self.max_concurrent_model_loads}"
             )
 
         # Validate timeout ranges
         if not (0.1 <= self.model_loading_slot_acquisition_timeout <= 60.0):
             raise ResourceManagementConfigError(
-                f"model_loading_slot_acquisition_timeout must be between 0.1 and 60.0 seconds, got {self.model_loading_slot_acquisition_timeout}"
+                "model_loading_slot_acquisition_timeout must be between 0.1 "
+                f"and 60.0 seconds, got {self.model_loading_slot_acquisition_timeout}"
             )
 
         if not (60 <= self.reservation_timeout <= 7200):  # 1 minute to 2 hours
             raise ResourceManagementConfigError(
-                f"reservation_timeout must be between 60 and 7200 seconds, got {self.reservation_timeout}"
+                "reservation_timeout must be between 60 and 7200 seconds, "
+                f"got {self.reservation_timeout}"
             )
 
         if not (
             10 <= self.reservation_cleanup_interval <= 600
         ):  # 10 seconds to 10 minutes
             raise ResourceManagementConfigError(
-                f"reservation_cleanup_interval must be between 10 and 600 seconds, got {self.reservation_cleanup_interval}"
+                "reservation_cleanup_interval must be between 10 and 600 seconds, "
+                f"got {self.reservation_cleanup_interval}"
             )
 
         # Validate cleanup interval vs reservation timeout
         if self.reservation_cleanup_interval >= self.reservation_timeout:
             raise ResourceManagementConfigError(
-                f"reservation_cleanup_interval ({self.reservation_cleanup_interval}) must be less than reservation_timeout ({self.reservation_timeout})"
+                "reservation_cleanup_interval "
+                f"({self.reservation_cleanup_interval}) must be less than "
+                f"reservation_timeout ({self.reservation_timeout})"
             )
 
     @classmethod
@@ -103,7 +110,8 @@ class ResourceManagementConfig:
         for field_name, expected_type in required_fields.items():
             if field_name not in config_dict:
                 raise ResourceManagementConfigError(
-                    f"Required field '{field_name}' missing from resource_management configuration"
+                    f"Required field '{field_name}' missing from "
+                    "resource_management configuration"
                 )
 
             value = config_dict[field_name]
@@ -114,7 +122,8 @@ class ResourceManagementConfig:
                     else str(expected_type)
                 )
                 raise ResourceManagementConfigError(
-                    f"Field '{field_name}' must be of type {type_name}, got {type(value).__name__}: {value}"
+                    f"Field '{field_name}' must be of type {type_name}, got "
+                    f"{type(value).__name__}: {value}"
                 )
 
         # Extract values with proper types
@@ -181,14 +190,16 @@ class GatewayConfig:
             Validated GatewayConfig instance
 
         Raises:
-            ResourceManagementConfigError: If configuration is invalid or resource_management missing
+            ResourceManagementConfigError: If configuration is invalid or
+                resource_management missing
         """
 
         # Resource management is now required
         if "resource_management" not in config_dict:
             raise ResourceManagementConfigError(
-                f"Gateway '{config_dict.get('name', 'unnamed')}' requires resource_management configuration. "
-                "The previous optional behavior has been removed for production safety."
+                f"Gateway '{config_dict.get('name', 'unnamed')}' requires "
+                "resource_management configuration. The previous optional "
+                "behavior has been removed for production safety."
             )
 
         try:
@@ -229,13 +240,16 @@ def load_gateway_configs(config_path: Path) -> dict[str, GatewayConfig]:
         Dictionary mapping gateway names to validated GatewayConfig instances
 
     Raises:
-        ResourceManagementConfigError: If configuration file is invalid or gateways missing resource management
+        ResourceManagementConfigError: If configuration file is invalid or gateways
+            missing resource management
         FileNotFoundError: If configuration file does not exist
         yaml.YAMLError: If YAML parsing fails
     """
 
     if not config_path.exists():
-        raise FileNotFoundError(f"Gateway configuration file not found: {config_path}")
+        raise FileNotFoundError(
+            f"Gateway configuration file not found: {config_path}"
+        )
 
     try:
         with open(config_path) as f:
