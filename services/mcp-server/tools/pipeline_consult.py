@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://host.docker.internal:9999")
+_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _CONSULT_TIMEOUT = 300.0
 _CONSULT_PIPELINE = "consult-prompt-engineer"
 

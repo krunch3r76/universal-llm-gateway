@@ -153,6 +153,8 @@ class SupersedeRequest(BaseModel):
     evidence_uris: list[str] | None = None
     valid_from: str | None = None
     derivation_type: DerivationType | None = None
+    session_id: str
+    agent: str
 
 
 class SupersedeResponse(BaseModel):

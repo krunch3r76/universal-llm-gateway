@@ -149,6 +149,40 @@ def _is_claude4_model(model: str) -> bool:
     )
 
 
+_ANTHROPIC_MAX_OUTPUT_TOKENS: list[tuple[str, int]] = [
+    ("claude-opus-4", 32768),
+    ("claude-sonnet-4", 16384),
+    ("claude-3-5-sonnet", 8192),
+    ("claude-3-5-haiku", 8192),
+    ("claude-3-opus", 4096),
+    ("claude-3-sonnet", 4096),
+    ("claude-3-haiku", 4096),
+]
+
+
+def _anthropic_model_max_tokens(model: str) -> int:
+    """Return the model's actual maximum output tokens.
+
+    Anthropic requires max_tokens and rejects values above the model limit,
+    so we must match the model's real cap rather than picking an arbitrary number.
+    """
+    for prefix, limit in _ANTHROPIC_MAX_OUTPUT_TOKENS:
+        if prefix in model:
+            return limit
+    return 16384
+
+
+def _xai_supports_reasoning_effort(model: str) -> bool:
+    """Only grok-3 family accepts reasoning.effort control.
+
+    All grok-4 family models (including -reasoning variants) reject
+    reasoningEffort despite xAI docs suggesting otherwise (tested 2026-03-31).
+    The -reasoning/-non-reasoning distinction controls WHETHER the model
+    reasons, not the effort level.
+    """
+    return any(prefix in model for prefix in ("grok-3-mini", "grok-3"))
+
+
 def _build_anthropic_output_format(response_format: dict[str, Any]) -> dict[str, Any]:
     if response_format.get("type") != "json_schema":
         return dict(response_format)
@@ -204,7 +238,10 @@ def _resolve_anthropic_max_tokens(
     model: str,
 ) -> int | None:
     """Ensure Anthropic's max_tokens > thinking.budget_tokens invariant."""
-    if not isinstance(thinking_config, dict) or thinking_config.get("type") != "enabled":
+    if (
+        not isinstance(thinking_config, dict)
+        or thinking_config.get("type") != "enabled"
+    ):
         return requested_max_tokens
 
     budget_tokens = thinking_config.get("budget_tokens")
@@ -324,6 +361,14 @@ class AnthropicAdapter:
         )
         if resolved_max_tokens is not None:
             body["max_tokens"] = resolved_max_tokens
+        else:
+            model_max = _anthropic_model_max_tokens(req.model)
+            body["max_tokens"] = model_max
+            logger.info(
+                "No max_tokens specified for model=%s; using model max %d",
+                req.model,
+                model_max,
+            )
 
         # Tools — function calling and Anthropic-hosted tools
         tools_list: list[dict[str, Any]] = []
@@ -350,13 +395,21 @@ class AnthropicAdapter:
             body["tool_choice"] = req.tool_choice
 
         # Structured output + effort live under output_config for Anthropic.
+        # effort requires thinking support; strip silently when no thinking config
+        # so callers don't need to know which models support it.
         output_config: dict[str, Any] = {}
         if req.response_format:
             output_config["format"] = _build_anthropic_output_format(
                 req.response_format
             )
-        if req.effort is not None:
+        if req.effort is not None and thinking_config is not None:
             output_config["effort"] = req.effort
+        elif req.effort is not None:
+            logger.info(
+                "Stripping effort=%s for model=%s (no thinking config)",
+                req.effort,
+                req.model,
+            )
         if output_config:
             body["output_config"] = output_config
 
@@ -574,8 +627,18 @@ class ResponsesAPIAdapter:
             "input": input_msgs,
             "store": False,
         }
+        _RESPONSES_MIN_OUTPUT_TOKENS = 16384
         if req.max_tokens is not None:
-            body["max_output_tokens"] = req.max_tokens
+            effective = max(req.max_tokens, _RESPONSES_MIN_OUTPUT_TOKENS)
+            if effective != req.max_tokens:
+                logger.info(
+                    "Bumped max_tokens from %d to %d for model=%s "
+                    "(frontier floor)",
+                    req.max_tokens,
+                    effective,
+                    req.model,
+                )
+            body["max_output_tokens"] = effective
         if req.temperature is not None:
             body["temperature"] = req.temperature
         if req.top_p is not None:
@@ -589,8 +652,19 @@ class ResponsesAPIAdapter:
         if req.thinking:
             if req.thinking.get("include_encrypted"):
                 body.setdefault("include", []).append("reasoning.encrypted_content")
-            if req.thinking.get("effort"):
-                body["reasoning"] = {"effort": req.thinking["effort"]}
+            effort = req.thinking.get("effort")
+            if effort:
+                if self._vendor == "xai" and _xai_supports_reasoning_effort(req.model):
+                    body["reasoning"] = {"effort": effort}
+                elif self._vendor == "xai":
+                    logger.info(
+                        "Stripping reasoning.effort=%s for model=%s "
+                        "(built-in reasoning, does not accept effort control)",
+                        effort,
+                        req.model,
+                    )
+                else:
+                    body["reasoning"] = {"effort": effort}
 
         # Response format — unwrap OpenAI json_schema wrapper to Responses API format
         if req.response_format:

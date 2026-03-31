@@ -5,7 +5,7 @@ rag-answer-deep) for multi-query rewriting, RRF merge, entity synthesis,
 relevance gating, and optionally iterative retrieval.
 
 Connectivity: MCP container → Stargate host on port 9999 via
-host.docker.internal (extra_hosts in compose) or STARGATE_URL env override.
+Stargate master via STARGATE_URL env (default: http://io:9999).
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://host.docker.internal:9999")
+_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _CONTEXT_TIMEOUT = 90.0
 _ANSWER_TIMEOUT = 180.0
 _SCOPES_TIMEOUT = 15.0

@@ -68,6 +68,16 @@ _MCP_SERVER_NAME = "vortex"
 class AnthropicAdapter:
     """Translate OpenAI-compatible requests to Anthropic APIs and back."""
 
+    _MODEL_MAX_OUTPUT_TOKENS: list[tuple[str, int]] = [
+        ("claude-opus-4", 32768),
+        ("claude-sonnet-4", 16384),
+        ("claude-3-5-sonnet", 8192),
+        ("claude-3-5-haiku", 8192),
+        ("claude-3-opus", 4096),
+        ("claude-3-sonnet", 4096),
+        ("claude-3-haiku", 4096),
+    ]
+
     def __init__(
         self,
         *,
@@ -79,6 +89,15 @@ class AnthropicAdapter:
         self._client = client
         self._event_bus = event_bus
         self._mcp_v2_configured_emitted = False
+        self._model_max_tokens: dict[str, int] = {}
+
+    @classmethod
+    def _fallback_max_tokens(cls, model: str) -> int:
+        """Model-aware fallback when catalog hasn't been fetched yet."""
+        for prefix, limit in cls._MODEL_MAX_OUTPUT_TOKENS:
+            if prefix in model:
+                return limit
+        return 16384
 
     @property
     def adapter_type(self) -> str:
@@ -221,13 +240,21 @@ class AnthropicAdapter:
                 max_tokens = max_tokens_from_completion
             elif self._config.default_max_tokens is not None:
                 max_tokens = self._config.default_max_tokens
+            elif anthropic_model in self._model_max_tokens:
+                max_tokens = self._model_max_tokens[anthropic_model]
+            else:
+                max_tokens = self._fallback_max_tokens(anthropic_model)
+                logger.info(
+                    "No max_tokens resolved for model=%s; using model max %d",
+                    anthropic_model,
+                    max_tokens,
+                )
 
         payload: dict[str, Any] = {
             "model": anthropic_model,
             "messages": anthropic_messages,
+            "max_tokens": max_tokens,
         }
-        if isinstance(max_tokens, int):
-            payload["max_tokens"] = max_tokens
         if system_text:
             payload["system"] = system_text
 
@@ -346,7 +373,19 @@ class AnthropicAdapter:
         response.raise_for_status()
         body: dict[str, Any] = response.json()
         data = body.get("data", [])
-        return data if isinstance(data, list) else []
+        entries = data if isinstance(data, list) else []
+
+        limits: dict[str, int] = {}
+        for entry in entries:
+            mid = str(entry.get("id", "")).strip()
+            mt = entry.get("max_tokens")
+            if mid and isinstance(mt, int) and mt > 0:
+                limits[mid] = mt
+        self._model_max_tokens = limits
+        if limits:
+            logger.debug("Cached max_tokens for %d Anthropic models", len(limits))
+
+        return entries
 
     async def _raise_provider_http_error(self, response: httpx.Response) -> None:
         """Raise HTTPStatusError with provider response body preserved for diagnostics."""

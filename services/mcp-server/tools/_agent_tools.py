@@ -14,7 +14,7 @@ import httpx
 
 from ._cortex_relay import _cx
 
-_STARGATE_URL = os.getenv("STARGATE_URL", "http://host.docker.internal:9999")
+_STARGATE_URL = os.getenv("STARGATE_URL", "http://io:9999")
 
 SYSTEM_PROMPT = """\
 You are an advisory agent with access to a structured knowledge system (Cortex) \

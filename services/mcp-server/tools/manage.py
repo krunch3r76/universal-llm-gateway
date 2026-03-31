@@ -197,40 +197,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
         service: str = "",
         timeout: float = 120.0,
     ) -> dict[str, Any]:
-        """Manage gateway service lifecycle — start, stop, rebuild, restart, or check health.
+        """Service lifecycle — start, stop, restart, rebuild, health, wait_healthy.
 
-        Connects to manage.sock (the ./manage process UDS API) and dispatches
-        the requested lifecycle operation via JSON-RPC 2.0. Use action='status'
-        to survey all services without specifying a service name.
-
-        Actions:
-          status       — Return running/stopped for core services from check_all (no service arg needed)
-          health       — Return health detail for one service
-          start        — Start a stopped service
-          stop         — Stop a running service
-          restart      — Stop then start a service
-          rebuild      — Rebuild container image and restart (gateway, mcp, event_service, cortex_api, agent_bus)
-          wait_healthy — Block until service is RUNNING or timeout (use after start/restart/rebuild)
-
-        Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,
-        cortex_api, agent_bus
-
-        Agent workflow after code changes:
-          1. quality_gate(files=[...])
-          2. manage(action="rebuild", service="gateway")
-          3. manage(action="wait_healthy", service="gateway", timeout=120)
-          4. pipeline(...)
-
-        Args:
-            action: Operation from the list above.
-            service: Target service name (not needed for 'status').
-            timeout: Client wait budget in seconds for long-running actions
-                (`wait_healthy`, `start`, `restart`, `rebuild`). On timeout,
-                the tool returns structured progress when possible.
-
-        Returns:
-            On success: action-specific result dict
-            On error: {"error": "<message>"}
+        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="manage")
         """
         if action not in _VALID_ACTIONS:
             return {

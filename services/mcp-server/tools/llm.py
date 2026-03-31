@@ -1,25 +1,23 @@
-"""LLM generation tool — model-routed API call with credential injection.
+"""LLM generation tool — universal chat via Stargate.
 
-Routes LLM generation through model routing so sandbox clients (e.g. Cortex
-Workbench on claude.ai) get privacy-by-default via ``anthropic/...``,
-with optional ``xai/...`` and ``openai/...``. The API key never
-leaves the server.
+Routes all generation through Stargate ``/v1/chat/completions`` so every
+model known to the system (local, pipeline, cloud) is reachable with a
+single tool call.  Stargate handles model resolution, pipeline dispatch,
+cloud proxy passthrough, and load-on-demand.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from typing import TYPE_CHECKING, Any
 
 import httpx
 from llm_adapters import (
     LLMRequest,
-    effective_provider_for_model,
-    mcp_config_from_env,
     resolve_llm_adapter,
 )
 from mcp_events import monotonic_now, record
-from model_id import ModelId
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -27,7 +25,8 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_TIMEOUT = httpx.Timeout(connect=10.0, read=180.0, write=30.0, pool=10.0)
+_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
 
 def _call_anthropic(
@@ -113,144 +112,115 @@ def register_llm_tools(mcp: FastMCP) -> None:
         stop_sequences: list[str] | None = None,
         seed: int | None = None,
     ) -> dict[str, Any]:
-        """Generate text via LLM proxy with model routing.
+        """Generate text via Stargate — works with any model, pipeline, or cloud provider.
 
-        Supports routed model strings for provider selection:
-        - ``anthropic/claude-sonnet-4`` — Anthropic Messages API (default, no remote MCP)
-        - ``anthropic/claude-sonnet-4-mcp`` — same model with remote MCP (requires
-          ``MCP_SERVER_URL`` / token on server)
-        - ``anthropic/claude-opus-4`` — Anthropic (higher capability)
-        - ``xai/grok-4-1-fast-reasoning`` — xAI Responses API; add ``-mcp`` for remote MCP
-        - ``xai/grok-4.20-reasoning`` — xAI Responses API
-        - ``openai/gpt-5`` — OpenAI Responses API; add ``-mcp`` for remote MCP
-        - ``openrouter/...`` — not implemented (returns error)
+        All requests go through ``/v1/chat/completions`` on Stargate.
+        Stargate resolves the model: local inference, pipeline dispatch,
+        or cloud proxy passthrough. Use ``claude_generate`` / ``grok_generate``
+        only when you need provider-native features (thinking, MCP, structured output).
 
         Args:
             messages: Conversation messages (list of ``{role, content}`` dicts).
-            system: Optional system prompt (plain string).
-            model: Routed model identifier (default: anthropic/claude-sonnet-4).
-            max_tokens: Maximum tokens to generate (maps to ``max_tokens`` /
-                ``max_output_tokens`` per provider).
-            temperature: Sampling temperature (0.0–1.0+ depending on provider).
-                None = use provider default.
-            top_p: Nucleus sampling probability mass. None = use provider default.
-            stop_sequences: List of stop strings (``stop_sequences`` for Anthropic,
-                ``stop`` for xAI/OpenAI — adapter maps automatically).
-                None = no custom stop sequences.
-            seed: Random seed for reproducible outputs (xAI / OpenAI only;
-                silently ignored for Anthropic). None = non-deterministic.
+            system: Optional system prompt prepended as a ``{"role": "system"}``
+                message.  Ignored when empty.
+            model: Any model ID known to Stargate — local model, pipeline,
+                or cloud (e.g. ``anthropic/claude-sonnet-4``).
+            max_tokens: Maximum tokens to generate.
+            temperature: Sampling temperature. None = model/provider default.
+            top_p: Nucleus sampling probability mass. None = default.
+            stop_sequences: Stop strings. None = none.
+            seed: Random seed. None = non-deterministic.
 
         Returns:
-            ``{"content": str, "model": str, "usage": {input_tokens, output_tokens},
-            "provider": str}``, or ``{"error": "..."}`` on failure.
+            ``{"role": "assistant", "content": str, "finish_reason": str | None,
+            "model": str, "usage": {prompt_tokens, completion_tokens}}``,
+            or ``{"error": "..."}`` on failure.
+
+            Append the response directly to your ``messages`` array for
+            multi-turn conversations::
+
+                result = llm_generate(messages=history, ...)
+                history.append({"role": result["role"], "content": result["content"]})
+                history.append({"role": "user", "content": next_turn})
         """
-        parsed = ModelId.parse(model)
-        routing = parsed.routing_layer
-        provider_key = effective_provider_for_model(parsed.provider)
-
         t0 = monotonic_now()
-        record(
-            "mcp.llm.generate.called",
-            model=model,
-            routing=routing,
-            provider=provider_key,
-        )
+        record("mcp.llm.generate.called", model=model)
 
-        if routing == "openrouter":
-            record(
-                "mcp.llm.generate.error",
-                error="openrouter_not_implemented",
-                provider=provider_key,
-            )
-            return {"error": "OpenRouter routing not yet implemented"}
+        wire_messages: list[dict[str, Any]] = []
+        if system:
+            wire_messages.append({"role": "system", "content": system})
+        wire_messages.extend(messages)
 
-        adapter = resolve_llm_adapter(parsed.provider)
-        if adapter is None:
-            logger.error(
-                "No API key for LLM provider %s — llm_generate unavailable",
-                provider_key,
-            )
-            record(
-                "mcp.llm.generate.error",
-                error="missing_api_key",
-                provider=provider_key,
-            )
-            return {
-                "error": f"LLM generation not configured (missing API key for provider {provider_key})",
-            }
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": wire_messages,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        if temperature is not None:
+            body["temperature"] = temperature
+        if top_p is not None:
+            body["top_p"] = top_p
+        if stop_sequences:
+            body["stop"] = stop_sequences
+        if seed is not None:
+            body["seed"] = seed
 
-        api_model = parsed.api_model_id
-        req = LLMRequest(
-            messages=messages,
-            model=api_model,
-            max_tokens=max_tokens,
-            system=system,
-            inject_mcp=parsed.is_mcp,
-            temperature=temperature,
-            top_p=top_p,
-            stop_sequences=stop_sequences,
-            seed=seed,
-        )
-        mcp_cfg = mcp_config_from_env()
-        url, headers, json_body = adapter.build_request(
-            req, mcp_cfg if mcp_cfg else None
-        )
-
+        url = f"{_STARGATE_URL}/v1/chat/completions"
         try:
             with httpx.Client(timeout=_TIMEOUT) as client:
-                resp = client.post(url, headers=headers, json=json_body)
+                resp = client.post(url, json=body)
         except httpx.TimeoutException:
-            return {"error": "Upstream timeout"}
+            record("mcp.llm.generate.error", error="timeout", model=model)
+            return {"error": "Stargate timeout"}
         except httpx.RequestError as exc:
-            logger.error("LLM upstream request failed: %s", exc)
-            return {"error": "Upstream connection failed"}
+            logger.error("Stargate request failed: %s", exc)
+            record("mcp.llm.generate.error", error="connection", model=model)
+            return {"error": "Stargate connection failed"}
 
         if resp.status_code >= 400:
-            logger.warning(
-                "LLM upstream returned %d for model=%s provider=%s",
-                resp.status_code,
-                model,
-                provider_key,
+            logger.warning("Stargate returned %d for model=%s", resp.status_code, model)
+            record(
+                "mcp.llm.generate.error",
+                error=f"http_{resp.status_code}",
+                model=model,
             )
             return {
-                "error": f"Upstream error ({resp.status_code})",
+                "error": f"Stargate error ({resp.status_code})",
                 "detail": resp.text[:500],
             }
 
         try:
-            raw = resp.json()
+            data = resp.json()
         except json.JSONDecodeError:
-            return {"error": "Upstream returned invalid JSON"}
-
-        if not isinstance(raw, dict):
-            return {"error": "Upstream returned non-object JSON"}
+            return {"error": "Stargate returned invalid JSON"}
+        if not isinstance(data, dict):
+            return {"error": "Stargate returned non-object JSON"}
 
         duration = monotonic_now() - t0
-        content_text = adapter.extract_text(raw)
-        usage = adapter.extract_usage(raw)
-        if "content" in raw and isinstance(raw.get("content"), list):
-            block_count = len(raw["content"])
-        else:
-            out = raw.get("output")
-            block_count = len(out) if isinstance(out, list) else 0
+
+        choices = data.get("choices") or []
+        choice = choices[0] if choices else {}
+        msg = choice.get("message") or {}
+        usage_raw = data.get("usage") or {}
+
+        content = msg.get("content", "")
+        finish_reason = choice.get("finish_reason")
+        returned_model = data.get("model", model)
 
         record(
             "mcp.llm.generate.completed",
             duration_s=round(duration, 3),
-            content_blocks=block_count,
-            model=raw.get("model", api_model),
-            routing=routing,
-            provider=adapter.provider_label,
+            model=returned_model,
         )
-        logger.info(
-            "llm_generate completed: %.3fs, provider=%s model=%s",
-            duration,
-            adapter.provider_label,
-            model,
-        )
+        logger.info("llm_generate completed: %.3fs, model=%s", duration, returned_model)
         return {
-            "content": content_text,
-            "model": str(raw.get("model", api_model)),
-            "usage": usage,
-            "provider": adapter.provider_label,
+            "role": msg.get("role", "assistant"),
+            "content": content,
+            "finish_reason": finish_reason,
+            "model": str(returned_model),
+            "usage": {
+                "prompt_tokens": usage_raw.get("prompt_tokens", 0),
+                "completion_tokens": usage_raw.get("completion_tokens", 0),
+            },
         }

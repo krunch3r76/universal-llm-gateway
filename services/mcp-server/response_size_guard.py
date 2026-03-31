@@ -836,16 +836,7 @@ def register_response_guard(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def retrieve(id: str) -> ToolResult | dict[str, str]:
-        """Retrieve a stored oversized tool response by its reference ID.
-
-        When a tool response exceeds the profile-specific byte threshold,
-        the response size guard stores the complete untruncated result in
-        memory and returns a compact reference. Call this tool with that
-        reference ID to claim the full original result.
-
-        Pop semantics: each stored response can be retrieved exactly once.
-        Responses expire after 10 minutes if unclaimed.
-        """
+        """Retrieve a stored oversized tool response by reference ID (pop semantics, 10min TTL)."""
         now = time.monotonic()
         expired_events: list[_ExpiredEvent]
         with _lock:

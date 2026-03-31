@@ -509,42 +509,9 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def agent_bus(tool: str, arguments: str = "{}") -> Any:
-        """Agent bus — inter-agent communication, dispatch by tool name.
+        """Inter-agent message bus — threads, turns, read/reply coordination.
 
-        **Bodies must be markdown** (ATX headings recommended).  Keep messages
-        concise and readable.  Move supporting material (logs, code dumps,
-        raw data, specs, full traces) into attachments:
-
-        1. Write the attachment:
-           fs(sandbox="files", op="write", path="agent-bus/attachments/<slug>.md", content="...")
-        2. Reference the path in your body.
-
-        Available tools:
-          post(slug, to, subject, body, from_agent?, summary?)
-              — create thread + first turn.
-          reply(thread, to, subject, body, after_turn, from_agent?, status='open', mark_read?)
-              — add a turn to an existing thread.
-          fetch(to?, thread?, last?, unread?, mark_read?, compact?) — fetch turns.
-              Use compact=true and small last= values to avoid oversized responses.
-          get(thread, turn_number) — fetch one turn by number
-          threads(status?) — list threads (active|closed|blocked|waiting|all)
-          close(thread, summary?, mark_all_read?)
-          update_thread(thread, status?, summary?)
-          update(thread, turn_number, body?, append?, subject?) — edit unread turn.
-              Prefer update() over reply() for fixups.
-          delete_thread(thread, force?) — delete thread and turns
-          delete_turn(thread, turn_number, force?) — delete single turn
-
-        Example:
-            agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
-            agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\\n..."}')
-
-        Args:
-            tool: Name of the agent-bus operation to invoke.
-            arguments: JSON string of operation arguments (default "{}").
-
-        Returns:
-            Operation-specific result dict, or {"error": "<message>"}.
+        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="agent_bus")
         """
         import json as _json
 

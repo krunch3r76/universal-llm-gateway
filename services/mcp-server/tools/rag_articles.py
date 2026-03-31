@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://host.docker.internal:9999")
+_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _ARTICLE_TIMEOUT = 15.0
 
 

@@ -31,8 +31,11 @@ from oauth_service import OAuthService
 from oauth_store import OAuthStore
 from request_profile import current_profile
 from response_size_guard import register_response_guard
+from schema_compact import patch_fastmcp_tool_serialization
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
+from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
+
 from tools.agent_bus import register_agent_bus_tools
 from tools.agent_consult import register_agent_consult_tools
 from tools.browser import register_browser_tools
@@ -181,6 +184,7 @@ def _patch_sse_lifecycle_events() -> None:
 
 _patch_sse_ping()
 _patch_sse_lifecycle_events()
+patch_fastmcp_tool_serialization()
 
 
 def _require_env(name: str) -> str:
@@ -250,8 +254,9 @@ _PRIMARY_TOOLS: set[str] = {
     # Cortex (dispatch-style + boot)
     "cortex",
     "cortex_boot",
-    # LLM
-    "frontier_generate",
+    # LLM — provider-specific surfaces
+    "grok_generate",
+    "claude_generate",
     # RAG (consolidated)
     "rag",
     # Response size guard
@@ -344,32 +349,9 @@ def _build_server() -> FastMCP:
         all_occurrences: bool = False,
         include_untracked: bool = True,
     ) -> dict[str, Any]:
-        """Unified file operations across all sandboxes.
+        """File I/O across sandboxes (files, context, project). Both sandbox and op are REQUIRED.
 
-        sandbox: "files"   = /data/files (documents, notes, uploads)
-                 "context" = tasks/ (specs, workspace scratchpads)
-                 "project" = repo root (source code, configs)
-
-        Both sandbox and op are REQUIRED.
-
-        Ops (standard):
-          read           — path required
-          read_multi     — paths required (array)
-          write          — path, content required
-          append         — path, content required
-          prepend        — path, content required
-          replace        — path, target required; content = replacement; all_occurrences?
-          insert_at_line — path, content, line required
-          list           — path optional (defaults to sandbox root)
-          delete         — path required
-          search         — project sandbox only; path = dir, content = regex pattern
-
-        Ops (markdown sections — for large docs >5k chars):
-          md_list    — list sections (path required)
-          md_read    — read section (path, section required)
-          md_replace — replace section (path, section, content required)
-          md_append  — append to section (path, section, content required)
-          md_delete  — delete section (path, section required)
+        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="fs")
         """
         if not op:
             return {"error": "'op' is required"}
@@ -440,20 +422,9 @@ def _build_server() -> FastMCP:
 
     @mcp.tool()
     async def rag(op: str, arguments: str = "{}") -> Any:
-        """RAG knowledge retrieval and index management.
+        """RAG knowledge retrieval and index management — dispatch by op name.
 
-        Ops:
-          search            — query REQUIRED, scope?, prefix?, top_k?
-          answer            — question REQUIRED, scope?, prefix?, deep?
-          list_scopes       — no args
-          coverage          — no args
-          upsert_article    — url REQUIRED, title?, scope?
-          delete_source     — source_hash REQUIRED
-          refresh_hints     — scope?
-          orphaned_articles — no args
-          delete_directory  — directory REQUIRED
-
-        scope and prefix are mutually exclusive.
+        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="rag")
         """
         import json as _json
 
@@ -504,124 +475,7 @@ def _build_server() -> FastMCP:
     async def dispatch(tool: str, arguments: str = "{}") -> Any:
         """Call any server tool by name — gateway to tools beyond the primary set.
 
-        Some MCP clients enumerate only a limited number of tools. Use dispatch
-        to reach any tool not in your direct list.
-
-        Dispatchable tools:
-          Sandboxed files (individual — prefer primary `fs` tool):
-            read_file(path) — read file
-            write_file(path, content) — write/create file
-            edit_file(path, operation, content, ...) — edit file
-            list_files(directory?) — list sandboxed files
-            delete_file(path) — delete sandboxed file
-          File utilities:
-            view_image(path, max_dimension?, quality?, mode?) — view photo/screenshot
-                mode: "copy" (default) returns a shared local image path; "image" returns inline ImageContent
-            move_file(source, destination) — move/rename any file
-            copy_file(source, destination) — copy any file
-            remove_directory(directory) — delete directory and contents
-            ingest_binary(path, content_base64, media_type?, entity_id?, entity_name?, entity_description?)
-                Store binary evidence under /data/files/evidence and create the
-                matching Cortex document entity. Use when an agent already has
-                binary bytes and needs a first-class evidence artifact.
-          Context files (individual — prefer primary `fs` tool with sandbox="context"):
-            read_context_file(path) — read context file
-            write_context_file(path, content) — write context file
-            edit_context_file(path, operation, content, ...) — edit context file
-            delete_context_file(path) — delete context file
-            list_context_directory(path?) — list context directory
-          Project files (individual — prefer primary `fs` tool with sandbox="project"):
-            read_project_file(path) — read project file
-            write_project_file(path, content) — write project file
-            edit_project_file(path, operation, content, ...) — edit project file
-            list_project_files(directory?, max_depth?) — list project files
-            search_project_files(pattern, directory?, max_results?) — search code
-          Search & knowledge:
-            rag_search(query, scope?, prefix?, top_k?) — semantic search.
-                scope: named scope or list (e.g. "research", ["rag_systems","workflows"]).
-                prefix: absolute source-path prefix or list for ad-hoc filtering
-                    (e.g. "/mnt/torus/projects/.../docs/research/rag-systems").
-                scope and prefix are mutually exclusive. top_k default 20.
-            rag_answer(question, scope?, prefix?, deep?) — RAG-grounded answer.
-                scope/prefix same as rag_search. deep=True for iterative retrieval.
-            rag_list_scopes() — list available scopes with prefixes and coverage
-            rag_coverage() — per-scope, per-prefix indexed file counts
-            rag_upsert_article(url, title?, scope?) — index article
-            rag_delete_source(source_hash) — delete indexed source
-            rag_refresh_corpus_hints(scope?) — regenerate discriminative vocabulary hints
-            rag_orphaned_articles() — find articles not in any scope
-            rag_delete_directory(directory) — delete all indexed content under a path
-          Web:
-            web_fetch(url) — fetch URL content
-          Database:
-            sqlite_execute(db, statement, params?) — execute SQL write
-            sqlite_schema(db?) — show table schemas
-            sqlite_list_databases() — list configured DBs
-          LLM generation:
-            llm_generate(messages, system?, model?, max_tokens?) — generate text
-                via native cloud API (Anthropic / xAI / OpenAI) with server-side
-                credentials; returns {content, model, usage, provider}
-          Finance:
-            finance_extract_pdf(path) — extract tables + text from a PDF via pdfplumber.
-                Returns per-page tables (column-aligned) and full text. Best for bank/CC statements.
-            finance_extract_directory(directory) — batch extract all PDFs in a directory.
-                Runs finance_extract_pdf on each .pdf found; returns array of results.
-            finance_parse_statement(path, statement_type) — parse a financial PDF into
-                structured JSON via Claude API. statement_type: checking, credit_card,
-                utility, phone, ploc, student_loan, brokerage, tax_document, property_tax.
-            finance_parse_directory(directory, type_map) — batch-parse all PDFs in a
-                directory. type_map maps filename patterns to statement types.
-            finance_ingest_statement(parsed_json?, path?, statement_type?) — ingest a
-                parsed financial statement into Cortex. End-to-end mode (path + type)
-                runs Phase 2 parser then ingests. Direct mode (parsed_json) skips parsing.
-                Creates account/tax/property entities + temporally scoped assertions.
-            finance_ingest_directory(directory, type_map) — batch ingest all PDFs via
-                end-to-end pipeline. One-command monthly ingestion into Cortex.
-          Document OCR:
-            document_ocr(path, prompt?, pages?, dpi?, model?) — OCR a scanned PDF or
-                image via Claude Vision. Use when pdfplumber returns empty/garbage.
-            document_ocr_structured(path, statement_type, dpi?, model?) — OCR + structured
-                extraction combo. Renders scanned pages, sends with schema prompt, returns
-                JSON compatible with finance_ingest_statement.
-            document_ocr_directory(directory, prompt?, dpi?, model?) — batch OCR all
-                PDFs and images in a directory.
-          Quality & infra:
-            quality_gate(files) — run ruff + compileall
-            pipeline_consult(execution_id, step_name, problem)
-            validate_pipeline(path)
-            health() — server health check
-          Observability:
-            observability(operation, params?) — event queries (also primary)
-          Internal services:
-            local_api(service, method, path, body?, token?) — relay to Docker services
-          Cortex (dispatch-only — primary ops use cortex(tool=...) directly):
-            cortex_chunk_create(content, source_uri?, ...) — create source chunk
-            cortex_chunk_get(chunk_id) — get chunk by ID
-            cortex_surface_form_create(mention, entity_id, chunk_id, ...) — resolved mention
-            cortex_surface_form_lookup(mention, context_hash) — resolution cache lookup
-            cortex_staging_list(status?, source_uri?, limit?) — list staging proposals
-            cortex_staging_reject(staging_id, reviewer?) — reject staging proposal
-          Journal:
-            list_journal_entries() — list recent entries
-            read_journal_entry(id) — read entry
-            write_journal_entry(title, content, tags?)
-            list_clips() — list saved clips
-            read_clip(name) — read a clip
-          Browser (if enabled):
-            browser_navigate, browser_click, browser_fill,
-            browser_screenshot, browser_get_structure, browser_get_content
-
-        Example:
-            dispatch(tool="quality_gate", arguments='{"files": ["server.py"]}')
-            dispatch(tool="read_file", arguments='{"path": "notes.md"}')
-
-        Args:
-            tool: Name of the tool to invoke.
-            arguments: JSON string of tool arguments (default "{}").
-
-        Returns:
-            Native MCP content for passthrough tool outputs, otherwise
-            {"tool": "<name>", "result": <tool output as dict/list>}.
+        Full catalog: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="dispatch")
         """
         import json as _json
 
@@ -765,9 +619,10 @@ def main() -> None:
         )
 
     # Middleware composition order (outermost first):
-    # AuthMiddleware → McpRequestEventsMiddleware → asgi_app
+    # AuthMiddleware → McpRequestEventsMiddleware → GZip → asgi_app
     # Rejected tokens terminate before mcp.request.started fires.
-    evented_app = McpRequestEventsMiddleware(asgi_app)
+    compressed_app = GZipMiddleware(asgi_app, minimum_size=500)
+    evented_app = McpRequestEventsMiddleware(compressed_app)
     protected_app = AuthMiddleware(
         evented_app,
         token=auth_token,

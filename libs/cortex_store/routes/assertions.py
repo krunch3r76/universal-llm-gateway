@@ -326,6 +326,21 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             "WHERE id = ?",
             (now, new_id, now, body.old_assertion_id),
         )
+        conn.execute(
+            "INSERT INTO session_edges ("
+            "  session_id, agent, from_node, to_node, edge_type, strength, edge_source, context"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                body.session_id,
+                body.agent,
+                f"assertion:{new_id}",
+                f"assertion:{body.old_assertion_id}",
+                "supersedes",
+                1.0,
+                "derived",
+                "auto-created by supersede tool",
+            ),
+        )
         conn.commit()
 
         old_result = query(

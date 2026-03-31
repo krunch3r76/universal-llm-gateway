@@ -137,46 +137,9 @@ def register_event_tools(mcp: FastMCP) -> None:
         params: dict[str, Any] | None = None,
         target: str = "ulg",
     ) -> dict[str, Any]:
-        """Query system telemetry, traces, and request snapshots.
+        """Query system telemetry, traces, and request snapshots from Event Service.
 
-        Single entry point for all event service operations. Use
-        operation='operations' to discover available operations and
-        their detailed parameter schemas.
-
-        `target` selects which event service instance to query. Use the default
-        `ulg` target for repository-wide observability.
-
-        Default time window semantics are owned by Event Service operations.
-        This tool forwards params through unchanged.
-
-        Operations:
-          recent-failures    — Failures/errors (window defaults in Event Service)
-          noise-profile      — Signal frequency histogram (window defaults in Event Service)
-          coordination-audit — Recent role=coordination events
-          model-timeline     — Load/execute/unload for a model
-          request-trace      — All events for a request_id
-          request-lifecycle  — Snapshot phases for a request
-          request-summary    — Aggregate request stats
-          pipeline-trace     — Step-by-step execution trace
-          compare-runs       — Side-by-side metrics for two runs
-          federation-health  — Latest relay telemetry
-          capacity-snapshot  — Current slot usage
-          signal-events      — Recent events for a signal pattern, with payload
-          stack-last-started — Per-service last startup timestamp + overall session start
-          realtime-snapshot  — Last N events from in-memory ring buffer (no SQLite)
-          operations         — List all available operations
-          raw_sql            — Raw SQL query (SELECT only, use "params" list for bindings)
-
-        Authoritative operation set: _VALID_OPERATIONS in this module.
-
-        Args:
-            target: Event service instance to query (`ulg`).
-            operation: Operation name from the list above.
-            params: Operation-specific parameters (see 'operations' for schema).
-
-        Returns:
-            On success: operation-specific result dict
-            On error: {"error": "<message>"}
+        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="observability")
         """
         if operation not in _VALID_OPERATIONS:
             return {

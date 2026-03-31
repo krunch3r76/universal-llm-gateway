@@ -67,18 +67,7 @@ def register_web_tools(mcp: FastMCP) -> None:
         query: str,
         max_results: int = 5,
     ) -> dict[str, list[dict[str, str]] | str]:
-        """Search the web using Brave Search API.
-
-        Returns a list of results with title, URL, snippet, and age.
-        Requires BRAVE_SEARCH_API_KEY to be configured.
-
-        Args:
-            query: Search query string.
-            max_results: Maximum number of results (1-20, default 5).
-
-        Returns:
-            {"results": [{"title", "url", "snippet", "age"}, ...]}
-        """
+        """Search the web via Brave Search API. Returns {results: [{title, url, snippet, age}]}."""
         api_key = os.environ.get(_BRAVE_KEY_ENV, "").strip()
         if not api_key:
             return {

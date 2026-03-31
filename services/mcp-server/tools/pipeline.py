@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://host.docker.internal:9999")
+_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _RUN_TIMEOUT_FALLBACK = 480.0
 _TIMEOUT_BUFFER = 30.0
 _VALIDATE_TIMEOUT = 15.0
@@ -159,36 +159,9 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         options: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        """Run a pipeline and return execution summary with trace.
+        """Run a pipeline, block until done, return result with execution_id.
 
-        Blocks until the pipeline completes. Returns the response content
-        plus execution metadata. Use observability with
-        operation='pipeline-trace' for detailed step-by-step traces.
-
-        Pipeline YAML, prompts, and model configs hot-reload on file
-        change (~2s debounce) — no service restart needed between runs.
-
-        The HTTP timeout is auto-detected from the pipeline's configured
-        timeout_seconds (via Stargate registry), so callers don't need to
-        know each pipeline's budget. Falls back to 480s if metadata is
-        unavailable.
-
-        Args:
-            pipeline: Pipeline ID (e.g. 'consensus', 'rag-context').
-            messages: Chat messages in OpenAI format.
-            options: Optional pipeline_options dict.
-            timeout: Override HTTP timeout in seconds. Auto-detected from
-                pipeline registry when not provided.
-
-        Returns:
-            On success: {
-                "content": "<response>",
-                "model": "<pipeline ID>",
-                "execution_id": "<from response headers if available>",
-                "duration_s": <float>,
-                "usage": {...}
-            }
-            On error: {"error": "<message>"}
+        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="pipeline")
         """
         t0 = monotonic_now()
         record("mcp.pipeline.run.called", pipeline=pipeline)

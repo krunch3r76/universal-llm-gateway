@@ -62,6 +62,8 @@ def _op_supersede(
     evidence_uris: list[str] | None = None,
     valid_from: str | None = None,
     derivation_type: str | None = None,
+    session_id: str | None = None,
+    agent: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     for field, val in [
@@ -70,6 +72,8 @@ def _op_supersede(
         ("claim", claim),
         ("confidence", confidence),
         ("evidence", evidence),
+        ("session_id", session_id),
+        ("agent", agent),
     ]:
         if not val:
             return {"error": f"{field} is required"}
@@ -79,6 +83,8 @@ def _op_supersede(
         "claim": claim,
         "confidence": confidence,
         "evidence": evidence,
+        "session_id": session_id,
+        "agent": agent,
     }
     for key, val in [
         ("evidence_uris", evidence_uris),

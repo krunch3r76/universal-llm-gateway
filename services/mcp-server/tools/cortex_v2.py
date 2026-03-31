@@ -8,6 +8,7 @@ dispatch(tool="cortex_boot", ...) etc.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode
 
@@ -116,6 +117,9 @@ def run_cortex_boot(
 ) -> dict[str, Any]:
     """Build a persona-scoped Cortex boot briefing for internal callers and MCP."""
     from concurrent.futures import ThreadPoolExecutor
+
+    t_boot = datetime.now(UTC)
+    session_id = f"{agent}-{t_boot.strftime('%Y-%m-%d-%H%M')}"
 
     profile = _BOOT_PROFILES.get(agent, _BOOT_PROFILES["web"])
 
@@ -300,6 +304,7 @@ def run_cortex_boot(
     record("mcp.cortex.boot", agent=agent)
 
     result: dict[str, Any] = {
+        "session_id": session_id,
         "recent_sessions": sessions,
         "agent_bus": {
             "active_threads": [
@@ -528,29 +533,8 @@ def register_cortex_v2_tools(mcp: FastMCP) -> None:
         pre_files: str = "",
         post_files: str = "",
     ) -> dict[str, Any]:
-        """Unified boot briefing for session start.
+        """Persona-scoped boot briefing for session start (web, cursor, api, grok).
 
-        Persona-scoped: each agent gets a tailored boot based on its profile.
-        Cursor gets continuation state, recent decisions, service observations,
-        and workspace todos — no legal deadlines or personal investigations.
-        Web gets everything.
-
-        Always use this at session start instead of calling the individual boot
-        queries separately. Returns both structured JSON and a pre-rendered
-        narrative that can be shown to the user directly.
-
-        Args:
-            agent: Which agent is booting — determines boot profile
-                and inbox filter (default 'web'). Known agents: web, cursor, api.
-            pre_files: Comma-separated file paths loaded before the API briefing,
-                e.g. "prompts/boot.md,prompts/ops.md". Typically prompts or
-                operating instructions that should be read first.
-            post_files: Comma-separated file paths loaded after the API briefing,
-                e.g. "notes/legal/context.md". Typically reference material
-                that rounds out session context.
-
-        Returns:
-            Boot briefing with persona-scoped sections, continuation_state,
-            boot_narrative, pre_files, and post_files.
+        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="cortex_boot")
         """
         return run_cortex_boot(agent=agent, pre_files=pre_files, post_files=post_files)

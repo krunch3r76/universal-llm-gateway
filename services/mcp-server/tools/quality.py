@@ -27,21 +27,7 @@ def register_quality_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def quality_gate(files: list[str]) -> dict[str, Any]:
-        """Run code quality checks (ruff + compileall) on specified files.
-
-        Verifies that Python files pass linting and compile without syntax
-        errors. Use after modifying pipeline handlers or service code.
-
-        Args:
-            files: List of file paths relative to project root.
-
-        Returns:
-            {
-                "passed": true/false,
-                "ruff": {"passed": bool, "output": "..."},
-                "compile": {"passed": bool, "output": "..."}
-            }
-        """
+        """Run ruff lint + compileall on specified files. Returns {passed, ruff, compile}."""
         t0 = monotonic_now()
         record("mcp.quality.gate.called", file_count=len(files))
 

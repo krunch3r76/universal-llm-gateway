@@ -145,7 +145,7 @@ class RequestForwarder:
 
         # Get timeout from config (default to 600 seconds for long-running inference)
         gateway_config = self.config.get_gateway_config()
-        request_timeout = gateway_config.get("request_timeout", 600.0)
+        request_timeout = gateway_config.get("request_timeout", 1200.0)
 
         # Extract model name and create filter
         model_name = extract_model_name(context, content)

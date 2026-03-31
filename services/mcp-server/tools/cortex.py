@@ -468,66 +468,9 @@ def register_cortex_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def cortex(tool: str, arguments: str = "{}") -> Any:
-        """Cortex knowledge system — dispatch by tool name.
+        """Cortex knowledge system — entities, assertions, relationships, edges, journals.
 
-        Available tools:
-          entities(type?, limit?) — list entities
-          entity_get(entity_id) — get entity with assertions + relationships
-          entity_create(id, type, name, description?, status?, notes?, aliases?, attributes?, source_uri?, content_hash?)
-              Create a new entity. Returns 409 if the entity already exists.
-              status: confirmed (default) / provisional / merged / deprecated
-              content_hash: sha256:<hex> fingerprint. Auto-computed from source_uri
-              when it resolves to a local file under /data/files/.
-          entity_update(entity_id, name?, description?, status?, notes?, aliases?, attributes?, source_uri?, content_hash?)
-              Update mutable entity metadata. Send a field as null to clear it;
-              omit a field to leave it untouched. content_hash is auto-computed
-              when source_uri is set and resolves to a local file.
-          assertions(entity_id?, confidence?, review_status?, superseded?, limit?)
-              List assertions. review_status: committed/flagged/staged/rejected
-          assert(entity_id, claim, confidence, evidence, evidence_uris?,
-                 seeded_by?, derivation_type?, confidence_score?, observed_at?, valid_from?, chunk_id?)
-              Direct write with no review gate. Use for session observations,
-              confirmed decisions, and real-time notes.
-              seeded_by: optional agent/frontier provenance tag for seeded assertions
-              confidence: confirmed / believed / suspected / hypothesized
-              derivation_type: quotation / compression / inference / other
-              confidence_score: 0.0–1.0 numeric confidence
-          assertion_update(assertion_id, superseded_by?, valid_until?, confidence?,
-              confidence_score?, review_status?, reviewer?, reviewed_at?)
-              Update metadata. review_status: committed/flagged/staged/rejected
-          supersede(old_assertion_id, entity_id, claim, confidence, evidence,
-              evidence_uris?, valid_from?, derivation_type?)
-              Atomic: closes old + creates new in one transaction.
-          relationships(entity_id?, type_id?, limit?) — list with names, strength
-          relationship_create(source_id, target_id, type_id, role?, strength?,
-              evidence?, chunk_id?, valid_from?, valid_until?, source_uri?)
-          stats() — dashboard counts across all tables
-          surface_forms(entity_id?, mention?, mention_type?, limit?) — resolution cache
-          deadlines() — legal deadlines
-          journal_read(limit?) — recent session journals
-          journal_write(timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, file_path?)
-              entity_ids: JSON array of entity IDs referenced in this session.
-              At next boot, cortex_boot injects current state for these entities.
-          review_queue(limit?) — provisional entities + flagged assertions +
-              low-confidence unreviewed + thin descriptions (prioritized)
-          edge_create(session_id, agent, from_node, to_node, edge_type, strength?,
-              edge_source?, context?, prompt?, seeded_by?, metadata?) — seed a reasoning connection
-          edges(from_node?, to_node?, edge_type?, agent?, session_id?, include_retired?, limit?) — query edges
-          edge_traverse(node, hops?, edge_type?, min_strength?) — graph traversal from a node (1–2 hops)
-          edge_retire(edge_id, valid_until?) — retire an edge (set valid_until; default now UTC)
-          edge_types() — list registered edge types
-
-        Example:
-            cortex(tool="entities", arguments='{"type": "person", "limit": 20}')
-            cortex(tool="supersede", arguments='{"old_assertion_id": 4, "entity_id": "person:foo", "claim": "...", "confidence": "confirmed", "evidence": "..."}')
-            cortex(tool="relationships", arguments='{"entity_id": "person:kaywan"}')
-
-        Args:
-            tool: Name of the cortex operation to invoke.
-            arguments: JSON string of operation arguments (default "{}").
-
-        Returns:
-            Operation-specific result dict, or {"error": "<message>"}.
+        Full docs: fs(op="md_read", sandbox="project", path="docs/tool-reference.md", section="cortex")
         """
         import json as _json
 

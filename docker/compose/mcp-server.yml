@@ -56,7 +56,7 @@ services:
       - PROJECT_READ_ONLY=${PROJECT_READ_ONLY:-true}
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
       - SQLITE_CONFIG_PATH=/data/sqlite-config.yaml
-      - STARGATE_URL=${STARGATE_URL:-http://host.docker.internal:9999}
+      - STARGATE_URL=${STARGATE_URL:-http://io:9999}
       - MCP_SHARED_IMAGE_DIR=/data/files/.shared-images
       # MCP_SHARED_IMAGE_HOST_ROOT is derived from MCP_DATA_DIR and MCP_SHARED_IMAGE_DIR within the application.
       # Event service socket — /tmp/universal-protocol is already mounted above
