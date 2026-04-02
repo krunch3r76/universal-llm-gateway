@@ -45,6 +45,7 @@ from services.rag.events.extraction import (
 from services.rag.knowledge_extractor import (
     BatchTimeoutError,
     ExtractedKnowledge,
+    _record_batch_outcome,
     extract_knowledge_batch,
 )
 from services.rag.property_index import PropertyIndex
@@ -315,6 +316,7 @@ async def run_extraction(
             file=file,
         )
     except BatchTimeoutError as exc:
+        _record_batch_outcome(all_failed=True)
         duration = time.monotonic() - start
         timeout_error = f"batch extraction timeout ({exc.timeout_seconds:.0f}s)"
         await _emit_extraction_debug(
@@ -359,6 +361,7 @@ async def run_extraction(
         return result
     duration = time.monotonic() - start
     if not isinstance(extract_return, tuple) or len(extract_return) != 2:
+        _record_batch_outcome(all_failed=True)
         await _emit_extraction_debug(
             file=file,
             step="invalid_return_shape",
@@ -387,6 +390,7 @@ async def run_extraction(
         return result
     knowledge_list, timing = extract_return
     if not isinstance(knowledge_list, list):
+        _record_batch_outcome(all_failed=True)
         await _emit_extraction_debug(
             file=file,
             step="invalid_list_payload",
@@ -433,10 +437,12 @@ async def run_extraction(
 
     failed_ids = [cid for cid in ids if cid not in staged]
     successful = len(staged)
+    _record_batch_outcome(all_failed=(successful == 0 and len(ids) > 0))
     finish_reason = timing.get("finish_reason") if isinstance(timing, dict) else None
     is_infrastructure_failure = isinstance(timing, dict) and (
         "stargate_error" in timing
         or "model_unavailable" in timing
+        or "circuit_breaker" in timing
         or ("capacity_retries" in timing and successful == 0)
     )
     is_structural = isinstance(timing, dict) and _is_structural_infrastructure_failure(

@@ -82,8 +82,11 @@ DerivationType = Literal[
     "direct_observation",
     "agent_observation",
     "stated",
+    "commitment",
     "other",
 ]
+
+ResolutionStatus = Literal["pending", "fulfilled", "breached", "unknown"]
 
 
 class AssertionCreate(BaseModel):
@@ -104,6 +107,8 @@ class AssertionCreate(BaseModel):
     confidence_score: float | None = None
     is_atomic: bool = True
     is_decontextualized: bool = True
+    resolution_status: ResolutionStatus | None = None
+    fulfillment_assertion_id: int | None = None
 
 
 ReviewStatus = Literal["committed", "flagged", "staged", "rejected"]
@@ -131,6 +136,9 @@ class AssertionItem(BaseModel):
     reviewer: str | None = None
     reviewed_at: str | None = None
     review_notes: str | None = None
+    resolution_status: str | None = None
+    fulfillment_assertion_id: int | None = None
+    quality_score: float | None = None
     created_at: str
 
 
@@ -142,6 +150,8 @@ class AssertionUpdate(BaseModel):
     review_status: ReviewStatus | None = None
     reviewer: str | None = None
     reviewed_at: str | None = None
+    resolution_status: ResolutionStatus | None = None
+    fulfillment_assertion_id: int | None = None
 
 
 class SupersedeRequest(BaseModel):
@@ -171,6 +181,7 @@ class AssertionCreateResponse(BaseModel):
     was_new: bool
     item: AssertionItem
     near_duplicate_warning: NearDuplicateWarning | None = None
+    validation_warnings: list[dict[str, str]] | None = None
 
 
 class AssertionList(BaseModel):
@@ -291,6 +302,57 @@ class ChunkList(BaseModel):
 
 
 # --- Surface Forms ---
+
+
+# --- Extraction Runs ---
+
+
+# --- Ingest ---
+
+
+class IngestDocumentRequest(BaseModel):
+    source_uri: str
+    content: str
+    observer: str = "web"
+    source_date: str | None = None
+
+
+class ChunkResult(BaseModel):
+    chunk_id: int
+    chunk_index: int
+    snippet: str = Field(description="First 200 chars of chunk content")
+    extracted_dates: list[str]
+    token_count: int
+
+
+class IngestDocumentResponse(BaseModel):
+    source_uri: str
+    chunk_count: int
+    chunks: list[ChunkResult]
+
+
+class AssertFromChunkRequest(BaseModel):
+    chunk_id: int
+    entity_id: str
+    claim: str
+    confidence: str
+    evidence: str
+    evidence_uris: list[str] | None = None
+    derivation_type: str | None = None
+    confidence_score: float | None = None
+    observed_at: str | None = None
+    valid_from: str | None = None
+    reasoning_summary: str | None = None
+    resolution_status: str | None = None
+    seeded_by: str | None = None
+
+
+class AssertFromChunkResponse(BaseModel):
+    item: AssertionItem
+    was_new: bool
+    suggested_valid_from: str | None = None
+    quality_score: float
+    validation_warnings: list[dict[str, str]] | None = None
 
 
 # --- Extraction Runs ---

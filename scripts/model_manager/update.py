@@ -213,7 +213,12 @@ def run_remote(
     ssh_user: str,
     versions: dict[str, str],
 ) -> int:
-    """SSH into a remote node and run build + restart."""
+    """SSH into a remote node and run build + restart.
+
+    Remote output is written to /tmp/update-<hostname>.log to avoid
+    polluting local build progress output. Path is printed so the user
+    can tail it.
+    """
     version_flags = " ".join(f"{_BUILD_FLAGS[c]}={v}" for c, v in versions.items())
     build_cmd = (
         f"./docker/scripts/build/build-gpu.sh --cpu-native --gpu-native --no-cache "
@@ -231,13 +236,33 @@ def run_remote(
         remote_cmd,
     ]
 
-    print(f"\n--- Remote: {hostname} ---")
-    print(f"$ {' '.join(ssh_args)}")
+    log_path = Path(f"/tmp/update-{hostname}.log")
+    print(f"\n--- Remote: {hostname} → {log_path} ---")
 
-    code = _run_with_registry(ssh_args, cwd=_ROOT)
-    if code != 0:
+    with log_path.open("w") as log_fh:
+        log_fh.write(f"$ {' '.join(ssh_args)}\n\n")
+        log_fh.flush()
+        proc = subprocess.Popen(
+            ssh_args,
+            cwd=str(_ROOT),
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        with _active_lock:
+            _active_processes.add(proc)
+        try:
+            proc.wait()
+        finally:
+            with _active_lock:
+                _active_processes.discard(proc)
+
+    code = proc.returncode if proc.returncode is not None else -1
+    if code == 0:
+        print(f"  {hostname}: ✅ done")
+    else:
         print(
-            f"ERROR: Remote update on {hostname} failed (exit {code})",
+            f"  {hostname}: ❌ failed (exit {code}) — see {log_path}",
             file=sys.stderr,
         )
     return code

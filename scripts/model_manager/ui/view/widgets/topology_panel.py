@@ -604,17 +604,15 @@ class TopologyPanel(Widget):
         if is_cloud_proxy_configured():
             start_ops.append(("cloud_proxy", svc.start_cloud_proxy))
         if is_mcp_configured(ws_root):
-            # rebuild_deploy: full image rebuild + restart.
-            # sync_restart: start existing container only — no image rebuild.
-            #   Rebuilding on every sync+restart is expensive (30-120s build) and
-            #   disrupts Cursor's vortex MCP connection: the prolonged build under
-            #   full-fleet restart load creates a window where the container is
-            #   unavailable long enough for Cursor to mark the server disconnected.
-            #   rebuild-mcp.sh (explicit rebuild) is the right path for image changes.
+            # rebuild_deploy: full no-cache image rebuild + restart.
+            # sync_restart: cached rebuild (--refresh-source) — bakes updated source
+            #   layers into the image without invalidating pip/base layers (~20s).
+            #   MCP code is baked into the image (not bind-mounted), so a restart
+            #   alone cannot pick up source changes; a rebuild is required.
             mcp_op: Callable[[], Awaitable[str]] = (
                 (lambda: svc.rebuild_mcp(no_cache=True))
                 if rebuild_supporting_services
-                else svc.start_mcp
+                else svc.rebuild_mcp
             )
             start_ops.append(("mcp", mcp_op))
         if is_cortex_configured():

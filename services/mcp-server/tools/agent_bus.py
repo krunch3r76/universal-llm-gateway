@@ -487,6 +487,23 @@ def _delete_turn_dispatch(
     return _delete_turn_impl(thread=thread, turn_number=turn_number, force=force)
 
 
+def _mark_read_dispatch(
+    *, thread: str = "", turn_number: int = 0
+) -> dict[str, Any]:
+    """Mark a specific turn as read. Clears it from unread counts."""
+    if not thread or turn_number < 1:
+        return {"error": "mark_read requires: thread, turn_number (>= 1)"}
+    turn_id, err = _resolve_turn_id(thread=thread, turn_number=turn_number)
+    if err:
+        return err
+    result = _relay("agent-bus", "PATCH", f"/turns/{turn_id}/read")
+    if isinstance(result, dict) and "error" in result:
+        return result
+    logger.info("agent_bus mark_read: thread=%s turn=%d", thread, turn_number)
+    record("mcp.agentbus.turn.marked_read", thread=thread, turn_number=turn_number)
+    return {"status": "ok", "thread": thread, "turn_number": turn_number}
+
+
 _AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "post": _post_dispatch,
     "reply": _reply_dispatch,
@@ -498,6 +515,7 @@ _AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "update": _update_dispatch,
     "delete_thread": _delete_thread_dispatch,
     "delete_turn": _delete_turn_dispatch,
+    "mark_read": _mark_read_dispatch,
 }
 
 

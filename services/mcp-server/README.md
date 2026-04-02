@@ -20,8 +20,8 @@ Sandboxed read/write/list in `/data/files`. Path traversal rejected at code leve
 
 | Tool | Purpose |
 |------|---------|
-| `write_file` | Write content to `.md`, `.txt`, `.docx`, `.pdf` |
-| `read_file` | Read `.md`, `.txt`, `.docx`, `.odt` |
+| `write_file` | Write content to `.md`, `.txt`, `.csv`, `.docx`, `.pdf` |
+| `read_file` | Read `.md`, `.txt`, `.csv`, `.docx`, `.odt` |
 | `edit_file` | Atomic prepend/append/insert/replace on text files |
 | `delete_file` | Delete individual files |
 | `list_files` | Recursive file listing |

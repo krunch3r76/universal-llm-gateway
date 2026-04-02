@@ -4,8 +4,8 @@ All paths are resolved relative to _SANDBOX_ROOT. Traversal attempts
 (../) are rejected before resolution so that the container volume mount
 is complemented by explicit code-level defense in depth.
 
-Supported read formats: .md, .txt, .docx, .odt, .eml, .pdf, .html, .json, .yaml.
-Supported write formats: .md, .txt, .docx, .pdf, .yaml, .yml.
+Supported read formats: .md, .txt, .csv, .docx, .odt, .eml, .pdf, .html, .json, .yaml.
+Supported write formats: .md, .txt, .csv, .docx, .pdf, .yaml, .yml.
 """
 
 from __future__ import annotations
@@ -37,7 +37,16 @@ _SHARED_IMAGE_DIR = Path(
 _SHARED_IMAGE_HOST_ROOT = Path(
     os.environ.get("MCP_SHARED_IMAGE_HOST_ROOT", str(_SHARED_IMAGE_DIR))
 )
-_ALLOWED_WRITE_SUFFIXES = {".md", ".txt", ".docx", ".pdf", ".yaml", ".yml", ".py"}
+_ALLOWED_WRITE_SUFFIXES = {
+    ".md",
+    ".txt",
+    ".csv",
+    ".docx",
+    ".pdf",
+    ".yaml",
+    ".yml",
+    ".py",
+}
 _ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
 _EDITABLE_SUFFIXES = {".md", ".txt"}
 
@@ -135,7 +144,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
     def write_file(path: str, content: str) -> dict[str, str]:
         """Write *content* to *path* inside the sandboxed files directory.
 
-        Supported extensions: .md, .txt, .docx, .pdf, .yaml, .yml.
+        Supported extensions: .md, .txt, .csv, .docx, .pdf, .yaml, .yml, .py.
         Intermediate directories are created automatically.
 
         Args:
@@ -186,30 +195,44 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         return {"status": "written", "path": str(dest)}
 
     @mcp.tool()
-    def read_file(path: str) -> dict[str, str]:
+    def read_file(path: str, binary: bool = False) -> dict[str, Any]:
         """Read and return the contents of *path* from the sandboxed directory.
 
-        Supported formats: .md, .txt, .docx, .odt, .eml, .pdf, .html, .json, .yaml
+        Use the default text mode for markdown, notes, PDFs, and other supported
+        document formats. Use ``binary=True`` when another tool needs raw bytes
+        (for example OCR, binary ingest, or vision workflows). Prefer
+        ``view_image()`` when the goal is visual inspection rather than moving
+        bytes between tools.
+
+        Supported text formats: .md, .txt, .csv, .docx, .odt, .eml, .pdf, .html, .json, .yaml
 
         Args:
             path: Relative file path, e.g. "documents/notes.md".
+            binary: If True, return base64-encoded bytes instead of decoded text.
 
         Returns:
-            {"content": "<file contents>", "path": "<resolved path>"}
+            Text mode: {"content": "<file contents>", "path": "<resolved path>"}
+            Binary mode: {"content_base64", "mime_type", "encoding", "bytes", "path"}
 
         Raises:
             FileNotFoundError: If the file does not exist.
             ValueError: If the path is outside the sandbox or invalid.
         """
-        result = read_file_result(path)
+        result = read_file_result(path, binary=binary)
         record(
             "mcp.tool.file.read",
             path=path,
             resolved=result["path"],
-            chars=len(result["content"]),
+            binary=binary,
+            chars=len(result["content"]) if "content" in result else 0,
+            bytes=result.get("bytes", 0),
         )
         logger.debug(
-            "read_file: read %s (%d chars)", result["path"], len(result["content"])
+            "read_file: read %s (%s)",
+            result["path"],
+            f"{result.get('bytes', 0)} bytes"
+            if binary
+            else f"{len(result['content'])} chars",
         )
         return result
 
@@ -551,6 +574,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         target: str = "",
         line: int = 0,
         all_occurrences: bool = False,
+        binary: bool = False,
     ) -> dict[str, Any]:
         """Unified file operations for the sandboxed /data/files directory.
 
@@ -562,6 +586,11 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         (with sandbox="files") which provides section-level read/write/delete
         without ingesting the entire file.
 
+        Use `binary=True` with `read` or `read_multi` when you need base64
+        bytes for downstream tools such as OCR or binary ingest. Prefer
+        `view_image` when the task is to inspect an image rather than pass
+        its bytes onward.
+
         Ops:
           read   — read file contents (path required)
           read_multi — batch read multiple files (paths required)
@@ -571,6 +600,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
           replace — find-and-replace in file (path, target required; content = replacement)
           insert_at_line — insert at line N (path, content, line required)
           list   — list files in directory (path optional, defaults to root)
+          move   — move or rename a file (path = source, target = destination)
 
         read_multi — batch read multiple files (paths required)
             Use when loading multiple related files such as boot sequence prompts
@@ -585,6 +615,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             target: String to find — required for replace.
             line: 1-indexed line number — required for insert_at_line.
             all_occurrences: For replace: replace all matches (default false).
+            binary: For read/read_multi, return base64 bytes instead of decoded text.
 
         Returns:
             Operation-dependent result dict.
@@ -594,11 +625,11 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         if op == "read":
             if not path:
                 raise ValueError("'path' is required for read")
-            return read_file(path)
+            return read_file(path, binary=binary)
         if op == "read_multi":
             if not paths:
                 raise ValueError("'paths' is required for read_multi")
-            results = read_files_batch(paths)
+            results = read_files_batch(paths, binary=binary)
             for batch_path, batch_result in results.items():
                 if isinstance(batch_result, str):
                     record(
@@ -607,6 +638,18 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
                         resolved=str(_safe_path(batch_path)),
                         chars=len(batch_result),
                         batched=True,
+                        binary=False,
+                    )
+                elif (
+                    isinstance(batch_result, dict) and "content_base64" in batch_result
+                ):
+                    record(
+                        "mcp.tool.file.read",
+                        path=batch_path,
+                        resolved=str(_safe_path(batch_path)),
+                        bytes=batch_result.get("bytes", 0),
+                        batched=True,
+                        binary=True,
                     )
             logger.debug("files: batch read %d file(s)", len(paths))
             return {"files": results}
@@ -642,7 +685,13 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             if not line:
                 raise ValueError("'line' is required for insert_at_line")
             return edit_file(path, "insert_at_line", content, line=line)
+        if op == "move":
+            if not path:
+                raise ValueError("'path' is required for move")
+            if not target:
+                raise ValueError("'target' is required for move")
+            return move_file(path, target)
         raise ValueError(
             f"Unknown op: {op!r}. "
-            "Use: read, read_multi, write, append, prepend, replace, insert_at_line, list"
+            "Use: read, read_multi, write, append, prepend, replace, insert_at_line, list, move"
         )

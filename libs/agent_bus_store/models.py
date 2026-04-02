@@ -12,6 +12,7 @@ class AgentName(StrEnum):
     CURSOR = "cursor"
     GROK = "grok"
     KAYWAN = "kaywan"
+    OPPIE = "oppie"
     ALL = "all"
 
 

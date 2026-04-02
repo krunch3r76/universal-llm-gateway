@@ -61,7 +61,7 @@ MCP_URL = os.environ.get("MCP_URL", "https://mcp.k-1.me/mcp")
 # Primary timeout: watchdog kills the request after this many seconds.
 # Safety-net: urllib socket timeout is set slightly higher so the watchdog
 # fires first under normal conditions.
-_WATCHDOG_TIMEOUT = int(os.environ.get("MCP_PROXY_TIMEOUT", "60"))
+_WATCHDOG_TIMEOUT = int(os.environ.get("MCP_PROXY_TIMEOUT", "300"))
 _SOCKET_TIMEOUT = _WATCHDOG_TIMEOUT + 30  # safety net beyond watchdog
 
 # How often to poll the result queue when no events arrive.

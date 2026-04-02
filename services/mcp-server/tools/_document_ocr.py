@@ -2,11 +2,16 @@
 
 Uses PyMuPDF (fitz) for PDF→PNG conversion and Anthropic Claude Vision for
 text extraction. Supports both generic OCR and structured financial extraction.
+
+All images are auto-resized to fit within _MAX_IMAGE_DIMENSION before encoding
+to avoid Anthropic API 400 errors on oversized payloads (high-res scans,
+high-DPI PDF renders).
 """
 
 from __future__ import annotations
 
 import base64
+import io
 import json
 import logging
 from pathlib import Path
@@ -20,6 +25,7 @@ _DEFAULT_DPI = 200
 _MAX_PAGES_PER_BATCH = 4
 _OCR_MODEL = "claude-sonnet-4-20250514"
 _OCR_MAX_TOKENS = 8192
+_MAX_IMAGE_DIMENSION = 1600
 
 _DEFAULT_OCR_PROMPT = (
     "Extract all text from this document. Preserve tables, columns, "
@@ -32,8 +38,32 @@ _OCR_SYSTEM = (
 _IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".tiff", ".tif", ".webp", ".bmp"})
 
 
-def _pdf_page_to_base64(pdf_path: Path, page_num: int, dpi: int = _DEFAULT_DPI) -> str:
-    """Render a single PDF page to PNG and return base64-encoded bytes."""
+def _resize_to_limit(
+    png_bytes: bytes, *, max_dim: int = _MAX_IMAGE_DIMENSION
+) -> tuple[bytes, str]:
+    """Resize image bytes so the longest side ≤ *max_dim*; return (jpeg_bytes, media_type).
+
+    If already within limits, returns the original bytes as JPEG for consistency.
+    Converts RGBA/P modes to RGB for JPEG compatibility.
+    """
+    from PIL import Image as PILImage
+
+    img = PILImage.open(io.BytesIO(png_bytes))
+    w, h = img.size
+    if max(w, h) > max_dim:
+        img.thumbnail((max_dim, max_dim), PILImage.Resampling.LANCZOS)
+        logger.info("Resized %dx%d → %dx%d for OCR", w, h, img.width, img.height)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85, optimize=True)
+    return buf.getvalue(), "image/jpeg"
+
+
+def _pdf_page_to_base64(
+    pdf_path: Path, page_num: int, dpi: int = _DEFAULT_DPI
+) -> tuple[str, str]:
+    """Render a PDF page to image, resize to fit API limits, return (base64, media_type)."""
     import fitz
 
     doc = fitz.open(str(pdf_path))
@@ -42,26 +72,18 @@ def _pdf_page_to_base64(pdf_path: Path, page_num: int, dpi: int = _DEFAULT_DPI) 
         zoom = dpi / 72
         mat = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=mat)
-        return base64.b64encode(pix.tobytes("png")).decode("ascii")
+        raw_png = pix.tobytes("png")
     finally:
         doc.close()
+    resized_bytes, media_type = _resize_to_limit(raw_png)
+    return base64.b64encode(resized_bytes).decode("ascii"), media_type
 
 
 def _image_file_to_base64(path: Path) -> tuple[str, str]:
-    """Read an image file and return (base64_data, media_type)."""
-    suffix = path.suffix.lower()
-    media_map = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".tiff": "image/tiff",
-        ".tif": "image/tiff",
-        ".webp": "image/webp",
-        ".bmp": "image/bmp",
-    }
-    media_type = media_map.get(suffix, "image/png")
-    data = base64.b64encode(path.read_bytes()).decode("ascii")
-    return data, media_type
+    """Read an image file, resize to fit API limits, return (base64_data, media_type)."""
+    raw_bytes = path.read_bytes()
+    resized_bytes, media_type = _resize_to_limit(raw_bytes)
+    return base64.b64encode(resized_bytes).decode("ascii"), media_type
 
 
 def _pdf_page_count(pdf_path: Path) -> int:
@@ -161,9 +183,7 @@ def ocr_pages(
 
     for batch_start in range(0, len(page_indices), _MAX_PAGES_PER_BATCH):
         batch = page_indices[batch_start : batch_start + _MAX_PAGES_PER_BATCH]
-        images = [
-            (_pdf_page_to_base64(abs_path, idx, dpi), "image/png") for idx in batch
-        ]
+        images = [_pdf_page_to_base64(abs_path, idx, dpi) for idx in batch]
         blocks = _build_image_blocks(images)
 
         page_labels = ", ".join(str(idx + 1) for idx in batch)
@@ -235,9 +255,7 @@ def ocr_structured(
         images = [(data, media)]
     else:
         total = _pdf_page_count(abs_path)
-        images = [
-            (_pdf_page_to_base64(abs_path, i, dpi), "image/png") for i in range(total)
-        ]
+        images = [_pdf_page_to_base64(abs_path, i, dpi) for i in range(total)]
 
     all_parsed: dict[str, Any] = {}
     for batch_start in range(0, len(images), _MAX_PAGES_PER_BATCH):

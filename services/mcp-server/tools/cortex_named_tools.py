@@ -1,7 +1,7 @@
-"""Cortex v2 dispatch-only tools — provenance, resolution, staging extras, and boot.
+"""Cortex named MCP tools — provenance, resolution, staging extras, and boot.
 
-These remain as individually-named dispatch tools (not part of the unified
-cortex(tool=..., arguments=...) surface). They are lower-frequency operations accessed via
+These are individually registered tools (not part of the unified
+cortex(tool=..., arguments=...) surface). Lower-frequency operations accessed via
 dispatch(tool="cortex_boot", ...) etc.
 """
 
@@ -14,7 +14,13 @@ from urllib.parse import quote, urlencode
 
 from mcp_events import record
 
-from ._boot_helpers import build_gated_entities, render_boot_narrative, safe_list
+from ._boot_helpers import (
+    AGENT_PERSONA_SEEDS,
+    build_gated_entities,
+    render_boot_narrative,
+    render_operational_context,
+    safe_list,
+)
 from ._cortex_relay import _cx
 from ._file_helpers import read_files_batch
 from .local_api import _relay
@@ -88,7 +94,7 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
         "session_edges_hours": 48,
         "session_edges_limit": 20,
     },
-    "grok": {
+    "oppie": {
         "include_deadlines": True,
         "include_review_queue": True,
         "include_investigations": True,
@@ -138,14 +144,18 @@ def run_cortex_boot(
 
     profile = _BOOT_PROFILES.get(agent, _BOOT_PROFILES["web"])
 
-    pre_list = (
-        [p.strip() for p in pre_files.split(",") if p.strip()] if pre_files else []
-    )
+    if pre_files:
+        pre_list = [p.strip() for p in pre_files.split(",") if p.strip()]
+    else:
+        default_seed = AGENT_PERSONA_SEEDS.get(agent, "")
+        pre_list = [default_seed] if default_seed else []
     post_list = (
         [p.strip() for p in post_files.split(",") if p.strip()] if post_files else []
     )
     pre_file_results = read_files_batch(pre_list) if pre_list else {}
-    inbox_qs = urlencode({"to": agent, "unread": "true", "last": 10, "compact": "true"})
+    unread_turns_qs = urlencode(
+        {"to": agent, "unread": "true", "last": 10, "compact": "true"}
+    )
 
     session_qs_parts: dict[str, str | int] = {"limit": profile.get("session_limit", 3)}
     if profile.get("session_agent_filter"):
@@ -164,7 +174,12 @@ def run_cortex_boot(
         "sessions": (_cx, "GET", f"/session-journals?{session_qs}"),
         "assertions": (_cx, "GET", f"/assertions?{assertion_qs}"),
         "threads": (_relay, "agent-bus", "GET", "/threads?status=active"),
-        "inbox": (_relay, "agent-bus", "GET", f"/turns?{inbox_qs}"),
+        "unread_turns": (
+            _relay,
+            "agent-bus",
+            "GET",
+            f"/turns?{unread_turns_qs}",
+        ),
     }
     if profile.get("include_deadlines", True):
         futures_spec["deadlines"] = (_cx, "GET", "/deadlines")
@@ -246,6 +261,12 @@ def run_cortex_boot(
             f"/edges?edge_type_exclude=supersedes,superseded_by&{edge_base}",
         )
 
+    futures_spec["commitments"] = (_cx, "GET", "/boot-commitments?limit=10")
+    if not profile.get("entity_type_exclude") or "legal_matter" not in profile.get(
+        "entity_type_exclude", ""
+    ):
+        futures_spec["legal_contacts"] = (_cx, "GET", "/boot-legal-contacts")
+
     with ThreadPoolExecutor(max_workers=8) as pool:
         submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
         raw = {k: f.result() for k, f in submitted.items()}
@@ -265,7 +286,7 @@ def run_cortex_boot(
     deadlines: list[dict[str, Any]] = safe_list(raw.get("deadlines", []))
     all_assertions: list[dict[str, Any]] = safe_list(raw["assertions"])
     threads: list[dict[str, Any]] = safe_list(raw["threads"], "threads")
-    unread_turns: list[dict[str, Any]] = safe_list(raw["inbox"], "turns")
+    unread_turns: list[dict[str, Any]] = safe_list(raw["unread_turns"], "turns")
     staging_items: list[dict[str, Any]] = safe_list(raw.get("staging", []))
 
     cont_decisions: list[dict[str, Any]] = safe_list(raw.get("cont_decisions", []))
@@ -279,6 +300,17 @@ def run_cortex_boot(
 
     edges_supersedes: list[dict[str, Any]] = safe_list(raw.get("edges_supersedes", []))
     edges_reasoning: list[dict[str, Any]] = safe_list(raw.get("edges_reasoning", []))
+
+    commitments_raw = raw.get("commitments", {})
+    commitments: list[dict[str, Any]] = (
+        commitments_raw.get("items", []) if isinstance(commitments_raw, dict) else []
+    )
+    legal_contacts_raw = raw.get("legal_contacts", {})
+    legal_contacts: list[dict[str, Any]] = (
+        legal_contacts_raw.get("contacts", [])
+        if isinstance(legal_contacts_raw, dict)
+        else []
+    )
 
     temporal_raw = raw.get("temporal", {})
     temporal_active: list[dict[str, Any]] = safe_list(
@@ -331,6 +363,8 @@ def run_cortex_boot(
         gated_entities=gated_entities or None,
         edges_supersedes=edges_supersedes or None,
         edges_reasoning=edges_reasoning or None,
+        commitments=commitments or None,
+        legal_contacts=legal_contacts or None,
     )
 
     logger.info(
@@ -341,6 +375,12 @@ def run_cortex_boot(
         len(all_assertions),
     )
     record("mcp.cortex.boot", agent=agent)
+
+    ops_context = render_operational_context(
+        agent=agent,
+        unread_count=len(unread_turns),
+        review_total=review_total,
+    )
 
     result: dict[str, Any] = {
         "session_id": session_id,
@@ -360,6 +400,8 @@ def run_cortex_boot(
         "pre_files": pre_file_results,
         "post_files": post_file_results,
         "boot_narrative": narrative,
+        "operational_context": ops_context,
+        "operational_context_version": "v2.0",
     }
 
     if profile.get("include_deadlines", True):
@@ -397,8 +439,8 @@ def run_cortex_boot(
     return result
 
 
-def register_cortex_v2_tools(mcp: FastMCP) -> None:
-    """Register dispatch-only Cortex v2 tools on the MCP server instance, including chunk, surface form, staging, and boot operations."""
+def register_cortex_named_tools(mcp: FastMCP) -> None:
+    """Register named Cortex MCP tools: chunk, surface form, staging, and boot."""
 
     # --------------------------------------------------------------- chunks
 

@@ -65,6 +65,18 @@ _MCP_ALWAYS_LOADED: frozenset[str] = frozenset(
 
 _MCP_SERVER_NAME = "vortex"
 
+_MCP_V2_TOOL_TYPES = frozenset({"mcp_toolset", "tool_search_tool_bm25_20251119"})
+
+
+def _body_uses_mcp_v2(body: dict[str, Any]) -> bool:
+    """Detect v2 MCP tool types in a native request body."""
+    tools = body.get("tools")
+    if not isinstance(tools, list):
+        return False
+    return any(
+        isinstance(t, dict) and t.get("type") in _MCP_V2_TOOL_TYPES for t in tools
+    )
+
 
 class AnthropicAdapter:
     """Translate OpenAI-compatible requests to Anthropic APIs and back."""
@@ -107,17 +119,22 @@ class AnthropicAdapter:
         """Strip anthropic/ prefix and ``-mcp`` — Anthropic API expects bare model names."""
         return ModelId.parse(catalog_model_id).api_model_id
 
-    def _headers(self, *, include_mcp_beta: bool = False) -> dict[str, str]:
+    def _headers(
+        self,
+        *,
+        include_mcp_beta: bool = False,
+        force_mcp_v2: bool = False,
+    ) -> dict[str, str]:
         """Build HTTP headers for Anthropic API requests."""
         headers = {
             "x-api-key": self._config.api_key,
             "anthropic-version": _ANTHROPIC_VERSION,
             "Content-Type": "application/json",
         }
-        if include_mcp_beta and self._config.mcp_server_url:
+        if include_mcp_beta:
             headers["anthropic-beta"] = (
                 _ANTHROPIC_BETA_MCP_V2
-                if self._config.mcp_v2
+                if (self._config.mcp_v2 or force_mcp_v2)
                 else _ANTHROPIC_BETA_MCP_V1
             )
         return headers
@@ -629,7 +646,10 @@ class AnthropicAdapter:
         outcome = "error"
         try:
             has_mcp = bool(request_body.get("mcp_servers"))
-            req_headers = dict(self._headers(include_mcp_beta=has_mcp))
+            needs_v2 = _body_uses_mcp_v2(request_body)
+            req_headers = dict(
+                self._headers(include_mcp_beta=has_mcp, force_mcp_v2=needs_v2)
+            )
             req_headers["X-Cloudproxy-Correlation-Id"] = correlation_id
             if self._event_bus:
                 await self._event_bus.publish_async(
@@ -693,7 +713,10 @@ class AnthropicAdapter:
             try:
                 body = {**request_body, "stream": True}
                 has_mcp = bool(body.get("mcp_servers"))
-                req_headers = dict(self._headers(include_mcp_beta=has_mcp))
+                needs_v2 = _body_uses_mcp_v2(body)
+                req_headers = dict(
+                    self._headers(include_mcp_beta=has_mcp, force_mcp_v2=needs_v2)
+                )
                 req_headers["X-Cloudproxy-Correlation-Id"] = correlation_id
                 if self._event_bus:
                     await self._event_bus.publish_async(

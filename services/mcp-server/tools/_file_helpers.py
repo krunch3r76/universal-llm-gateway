@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import base64
+import mimetypes
 from pathlib import Path
+from typing import Any
 
 FILES_ROOT = Path("/data/files")
 ALLOWED_READ_SUFFIXES = {
     ".md",
     ".txt",
+    ".csv",
     ".docx",
     ".odt",
     ".eml",
@@ -131,13 +135,39 @@ def resolve_files_path(relative: str, root: Path = FILES_ROOT) -> Path:
     return candidate
 
 
-def read_file_result(path: str, root: Path = FILES_ROOT) -> dict[str, str]:
+def build_binary_read_result(
+    src: Path,
+    *,
+    path_value: str | None = None,
+) -> dict[str, Any]:
+    """Return a standard base64 payload for binary-safe file reads."""
+    raw = src.read_bytes()
+    mime_type, _ = mimetypes.guess_type(src.name)
+    return {
+        "path": path_value or str(src),
+        "content_base64": base64.b64encode(raw).decode("ascii"),
+        "mime_type": mime_type or "application/octet-stream",
+        "encoding": "base64",
+        "bytes": len(raw),
+        "is_binary": True,
+    }
+
+
+def read_file_result(
+    path: str,
+    root: Path = FILES_ROOT,
+    *,
+    binary: bool = False,
+) -> dict[str, Any]:
     """Read one sandboxed file and return the standard MCP payload shape."""
     src = resolve_files_path(path, root=root)
     if not src.exists():
         raise FileNotFoundError(f"File not found: {path!r}")
     if not src.is_file():
         raise ValueError(f"Path is not a file: {path!r}")
+
+    if binary:
+        return build_binary_read_result(src)
 
     suffix = src.suffix.lower()
     if suffix not in ALLOWED_READ_SUFFIXES:
@@ -160,12 +190,15 @@ def read_file_result(path: str, root: Path = FILES_ROOT) -> dict[str, str]:
 def read_files_batch(
     paths: list[str],
     root: Path = FILES_ROOT,
-) -> dict[str, str | dict[str, str]]:
+    *,
+    binary: bool = False,
+) -> dict[str, Any]:
     """Read multiple sandboxed files, preserving per-path errors inline."""
-    results: dict[str, str | dict[str, str]] = {}
+    results: dict[str, Any] = {}
     for path in paths:
         try:
-            results[path] = read_file_result(path, root=root)["content"]
+            result = read_file_result(path, root=root, binary=binary)
+            results[path] = result if binary else result["content"]
         except Exception as exc:
             results[path] = {"error": str(exc)}
     return results

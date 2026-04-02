@@ -26,8 +26,8 @@ Each has assertions — claims with confidence levels (confirmed, believed, \
 suspected, hypothesized), evidence, and optional temporal scope (valid_from, \
 valid_until for time-bounded facts like balances and due dates).
 
-Entity IDs use type:slug format: person:kaywan-mansubi, account:chase-credit_card-0780, \
-legal_matter:osaic-demand, decision:finance-pipeline-phase3.
+Entity IDs use type:slug format: person:jane-doe, decision:api-migration-v2, \
+service:rag, todo:section-aware-chunking.
 
 ## RAG Corpus
 Contains research papers, legal documents, financial records, project docs, \
@@ -64,7 +64,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         {
             "entity_id": {
                 "type": "string",
-                "description": "Entity ID (e.g. person:kaywan-mansubi)",
+                "description": "Entity ID in type:slug format (e.g. person:jane-doe)",
             }
         },
         ["entity_id"],

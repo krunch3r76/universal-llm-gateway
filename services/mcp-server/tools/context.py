@@ -13,12 +13,14 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
 from mcp_events import record
 
+from ._file_helpers import build_binary_read_result
 from .file_editor import perform_edit
 
 if TYPE_CHECKING:
@@ -278,16 +280,21 @@ def register_context_tools(mcp: FastMCP) -> None:
         return {"entries": entries}
 
     @mcp.tool()
-    def read_context_file(path: str) -> dict[str, str]:
-        """Read any text file from the tasks/ workspace context.
+    def read_context_file(path: str, binary: bool = False) -> dict[str, Any]:
+        """Read a file from the tasks/ workspace context.
 
         Use list_context_directory() to discover available files first.
 
+        Use ``binary=True`` when another tool needs raw bytes rather than
+        decoded text.
+
         Args:
             path: Relative file path within tasks/ (e.g. "discoveries/index.yaml").
+            binary: If True, return base64 bytes instead of decoded text.
 
         Returns:
-            {"content": "<file contents>", "path": "<relative path>"}
+            Text mode: {"content": "<file contents>", "path": "<relative path>"}
+            Binary mode: {"content_base64", "mime_type", "encoding", "bytes", "path"}
         """
         target = _safe_tasks_path(path)
         if not target.exists():
@@ -295,9 +302,24 @@ def register_context_tools(mcp: FastMCP) -> None:
         if not target.is_file():
             return {"error": f"Not a file: {path}"}
 
+        if binary:
+            result = build_binary_read_result(target, path_value=path)
+            logger.info(
+                "read_context_file: %s (%d bytes, binary)", path, result["bytes"]
+            )
+            record(
+                "mcp.tool.context.file.read",
+                path=path,
+                bytes=result["bytes"],
+                binary=True,
+            )
+            return result
+
         content = target.read_text(encoding="utf-8", errors="replace")
         logger.info("read_context_file: %s (%d chars)", path, len(content))
-        record("mcp.tool.context.file.read", path=path, chars=len(content))
+        record(
+            "mcp.tool.context.file.read", path=path, chars=len(content), binary=False
+        )
         return {"content": content, "path": path}
 
     @mcp.tool()
@@ -474,6 +496,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         target: str = "",
         line: int = 0,
         all_occurrences: bool = False,
+        binary: bool = False,
     ) -> dict[str, Any]:
         """Unified file operations for the tasks/ workspace context directory.
 
@@ -494,6 +517,7 @@ def register_context_tools(mcp: FastMCP) -> None:
           prepend — insert at beginning of file (path, content required)
           replace — find-and-replace in file (path, target required; content = replacement)
           insert_at_line — insert at line N (path, content, line required)
+          move    — move or rename a file (path = source, target = destination)
           delete  — delete a file (path required)
           list    — list directory entries (path optional, defaults to root)
 
@@ -508,6 +532,7 @@ def register_context_tools(mcp: FastMCP) -> None:
             target: String to find — required for replace.
             line: 1-indexed line number — required for insert_at_line.
             all_occurrences: For replace: replace all matches (default false).
+            binary: For read, return base64 bytes instead of decoded text.
 
         Returns:
             Operation-dependent result dict.
@@ -515,7 +540,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         if not op:
             raise ValueError("'op' is required")
         handlers = {
-            "read": lambda: read_context_file(path)
+            "read": lambda: read_context_file(path, binary=binary)
             if path
             else _raise_value_error("'path' is required for read"),
             "write": lambda: write_context_file(path, content)
@@ -540,6 +565,9 @@ def register_context_tools(mcp: FastMCP) -> None:
             else _raise_value_error(
                 "'path' and 'line' are required for insert_at_line"
             ),
+            "move": lambda: move_context_file(path, target)
+            if path and target
+            else _raise_value_error("'path' and 'target' are required for move"),
             "delete": lambda: delete_context_file(path)
             if path
             else _raise_value_error("'path' is required for delete"),
@@ -550,11 +578,36 @@ def register_context_tools(mcp: FastMCP) -> None:
         else:
             raise ValueError(
                 f"Unknown op: {op!r}. "
-                "Use: read, write, append, prepend, replace, insert_at_line, delete, list"
+                "Use: read, write, append, prepend, replace, insert_at_line, move, delete, list"
             )
 
     def _raise_value_error(msg: str) -> Any:
         raise ValueError(msg)
+
+    @mcp.tool()
+    def move_context_file(path: str, target: str) -> dict[str, str]:
+        """Move or rename a file in the tasks/ workspace context."""
+        if _TASKS_READ_ONLY:
+            _record_read_only_violation(
+                tool="move_context_file", path=path, operation="move"
+            )
+            return _read_only_error()
+
+        try:
+            src = _safe_tasks_path(path)
+            dst = _safe_tasks_path(target)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        if not src.exists():
+            return {"error": f"File not found: {path}"}
+        if not src.is_file():
+            return {"error": f"Not a file: {path}"}
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        logger.info("move_context_file: %s -> %s", path, target)
+        record("mcp.tool.context.file.moved", source=path, destination=target)
+        return {"status": "moved", "from": path, "to": target}
 
     @mcp.tool()
     def delete_context_file(path: str) -> dict[str, str]:

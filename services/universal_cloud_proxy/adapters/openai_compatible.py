@@ -182,32 +182,71 @@ class OpenAICompatibleAdapter:
         if self._config.mcp_auth_token:
             mcp_tool["authorization"] = f"Bearer {self._config.mcp_auth_token}"
 
+        tools: list[dict[str, Any]] = [mcp_tool]
+        for t in request_body.get("tools") or []:
+            if not isinstance(t, dict) or t.get("type") == "mcp":
+                continue
+            if t.get("type") == "function" and isinstance(t.get("function"), dict):
+                fn = t["function"]
+                tools.append(
+                    {
+                        "type": "function",
+                        "name": fn.get("name", ""),
+                        "description": fn.get("description", ""),
+                        "parameters": fn.get("parameters", {}),
+                    }
+                )
+
         body: dict[str, Any] = {
             "model": upstream_model,
             "input": input_msgs,
-            "tools": [mcp_tool],
+            "tools": tools,
             "store": False,
         }
 
         max_tokens = request_body.get("max_tokens")
         if isinstance(max_tokens, int) and max_tokens > 0:
             body["max_output_tokens"] = max_tokens
+        tool_choice = request_body.get("tool_choice")
+        if tool_choice is not None and tool_choice != "none":
+            body["tool_choice"] = tool_choice
         return body
 
     def _responses_to_chat_completion(
         self, resp_json: dict[str, Any], requested_model: str
     ) -> dict[str, Any]:
-        """Convert Responses API JSON to OpenAI chat completion shape."""
+        """Convert Responses API JSON to OpenAI chat completion shape.
+
+        Translates xAI/OpenAI Responses output items (message, function_call)
+        into the OpenAI chat completion format including tool_calls.
+        """
         text = resp_json.get("output_text", "")
-        if not text:
-            parts: list[str] = []
-            for item in resp_json.get("output", []):
-                if not isinstance(item, dict):
-                    continue
+        tool_calls: list[dict[str, Any]] = []
+
+        for item in resp_json.get("output", []):
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type")
+            if item_type == "message" and not text:
+                parts: list[str] = []
                 for block in item.get("content", []):
                     if isinstance(block, dict) and block.get("type") == "output_text":
                         parts.append(str(block.get("text", "")))
-            text = "".join(parts)
+                text = "".join(parts)
+            elif item_type == "function_call":
+                call_id = (
+                    item.get("call_id") or item.get("id") or f"call_{len(tool_calls)}"
+                )
+                tool_calls.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": item.get("name", ""),
+                            "arguments": item.get("arguments", "{}"),
+                        },
+                    }
+                )
 
         usage_raw = resp_json.get("usage") or {}
         prompt_tokens = int(
@@ -217,6 +256,10 @@ class OpenAICompatibleAdapter:
             usage_raw.get("output_tokens") or usage_raw.get("completion_tokens") or 0
         )
 
+        message: dict[str, Any] = {"role": "assistant", "content": text}
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+
         return {
             "id": resp_json.get("id", f"chatcmpl-{int(time.time() * 1000)}"),
             "object": "chat.completion",
@@ -225,8 +268,8 @@ class OpenAICompatibleAdapter:
             "choices": [
                 {
                     "index": 0,
-                    "message": {"role": "assistant", "content": text},
-                    "finish_reason": "stop",
+                    "message": message,
+                    "finish_reason": "tool_calls" if tool_calls else "stop",
                 }
             ],
             "usage": {
@@ -277,6 +320,8 @@ class OpenAICompatibleAdapter:
         sent_role = False
         first_delta_seen = False
         stream_start = time.monotonic()
+        tool_call_index: dict[str, int] = {}
+        has_tool_calls = False
 
         async with self._client.stream(
             "POST",
@@ -307,7 +352,39 @@ class OpenAICompatibleAdapter:
 
                 if event_type == "response.output_item.added":
                     item = event.get("item", {})
-                    if (
+                    if isinstance(item, dict) and item.get("type") == "function_call":
+                        has_tool_calls = True
+                        idx = len(tool_call_index)
+                        item_id = str(item.get("id", f"fc_{idx}"))
+                        tool_call_index[item_id] = idx
+                        call_id = item.get("call_id") or item_id
+                        tc_chunk = {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": requested_model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {
+                                        "tool_calls": [
+                                            {
+                                                "index": idx,
+                                                "id": call_id,
+                                                "type": "function",
+                                                "function": {
+                                                    "name": item.get("name", ""),
+                                                    "arguments": "",
+                                                },
+                                            }
+                                        ]
+                                    },
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                        yield f"data: {json.dumps(tc_chunk)}\n\n".encode()
+                    elif (
                         isinstance(item, dict)
                         and item.get("type") == "message"
                         and item.get("role") == "assistant"
@@ -328,6 +405,34 @@ class OpenAICompatibleAdapter:
                             ],
                         }
                         yield f"data: {json.dumps(role_chunk)}\n\n".encode()
+
+                elif event_type == "response.function_call_arguments.delta":
+                    item_id = str(event.get("item_id", ""))
+                    idx = tool_call_index.get(item_id)
+                    if idx is not None:
+                        args_chunk = {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": requested_model,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {
+                                        "tool_calls": [
+                                            {
+                                                "index": idx,
+                                                "function": {
+                                                    "arguments": event.get("delta", ""),
+                                                },
+                                            }
+                                        ]
+                                    },
+                                    "finish_reason": None,
+                                }
+                            ],
+                        }
+                        yield f"data: {json.dumps(args_chunk)}\n\n".encode()
 
                 elif event_type == "response.output_text.delta":
                     delta_text = event.get("delta", "")
@@ -368,12 +473,13 @@ class OpenAICompatibleAdapter:
                         or usage_raw.get("completion_tokens")
                         or 0
                     )
+                    fr = "tool_calls" if has_tool_calls else "stop"
                     final_chunk = {
                         "id": chunk_id,
                         "object": "chat.completion.chunk",
                         "created": created,
                         "model": requested_model,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": fr}],
                         "usage": {
                             "prompt_tokens": prompt_tokens,
                             "completion_tokens": completion_tokens,

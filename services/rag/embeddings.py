@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 GATEWAY_URL = "http://localhost:9999"
 
-_client = httpx.AsyncClient(timeout=60.0)
+_client = httpx.AsyncClient(timeout=120.0)
 logger = logging.getLogger(__name__)
 
 _embed_model: str = ""
@@ -228,7 +228,7 @@ def _is_instruction_aware_model(model_id: str) -> bool:
     return "qwen3-embedding" in model_id.lower()
 
 
-_EMBED_BATCH_SIZE = 64
+_EMBED_BATCH_SIZE = 16
 # Conservative estimate: 3 chars ≈ 1 token for dense technical/research text.
 # The qwen3 tokenizer produces more tokens per character than bge-m3 for English
 # research content. Using 3 rather than 4 avoids the llama.cpp n_batch overflow
@@ -264,7 +264,7 @@ _QUERY_RETRY_ATTEMPTS = 4
 _QUERY_RETRY_BASE_S = 0.25
 _QUERY_RETRY_MAX_S = 3.0
 
-_TRANSIENT_STATUS_CODES = frozenset({502, 503, 429})
+_TRANSIENT_STATUS_CODES = frozenset({429, 502, 503, 504})
 
 # Cached from the first successful embedding response so zero-vector fallbacks
 # match the model's output dimension. Set once, never reset.

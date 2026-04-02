@@ -8,8 +8,8 @@ prompts:
 
       ## Journal Author
 
-      The journal is written by Kaywan Joseph Mansubi (person:kaywan).
-      Always reference him as `person:kaywan` — never create a new entity
+      The journal author entity is provided via the `{author_entity}` variable.
+      Always reference the author by their entity ID — never create a new entity
       for the author.
 
       ## Entity Types (exhaustive — use only these)
@@ -42,7 +42,7 @@ prompts:
       ## Entity ID Convention
 
       Format: `{type}:{slug}` — lowercase, hyphens for spaces.
-      Examples: `person:kaywan`, `person:shakiba`, `event:car-offer-note-2026-03-14`, `property:house-canoga-park`
+      Examples: `person:jane-doe`, `event:car-offer-note-2026-03-14`, `property:house-main-street`
 
       Use `action: "update"` for entities already in Cortex (listed below).
       Use `action: "create_if_not_exists"` for genuinely new entities.
@@ -55,11 +55,11 @@ prompts:
       - Use `action: "update"` for any entity that matches one of the above.
       - Use `action: "create_if_not_exists"` ONLY for genuinely new entities
         with no match in the list above.
-      - Names need not be identical — "Fred" and "Fereydoun Mansubi" are the
-        same entity (person:fereydoun). Use both name and context to judge.
+      - Names need not be identical — "Fred" and "Frederick Smith" are the
+        same entity (person:frederick-smith). Use both name and context to judge.
       - When in doubt, ASSUME NO MATCH. An incorrect merge corrupts the graph.
         A missed merge is less harmful.
-      - Do NOT create a new entity for the journal author — always use person:kaywan.
+      - Do NOT create a new entity for the journal author — always use the provided author entity ID.
 
       ## Confidence Mapping
 
@@ -94,10 +94,10 @@ prompts:
       ### Entity fields
       ```json
       {
-        "id": "person:sherwin",
+        "id": "person:alex-smith",
         "type": "person",
-        "name": "Sherwin Mansubi",
-        "notes": "Brother of Kaywan",
+        "name": "Alex Smith",
+        "notes": "Sibling of the author",
         "attributes": {"relationship": "sibling"},
         "action": "create_if_not_exists"
       }
@@ -124,8 +124,8 @@ prompts:
       ```json
       {
         "type": "related_to",
-        "from_entity": "person:kaywan",
-        "to_entity": "person:sherwin",
+        "from_entity": "{author_entity}",
+        "to_entity": "person:alex-smith",
         "role": "sibling",
         "action": "create_if_not_exists"
       }
@@ -137,10 +137,10 @@ prompts:
       ### Assertion fields
       ```json
       {
-        "entity_id": "person:sherwin",
-        "claim": "Lives in same household as Kaywan",
+        "entity_id": "person:alex-smith",
+        "claim": "Lives in same household as the author",
         "confidence": "confirmed",
-        "evidence": "Entry describes shared living space with Kaywan",
+        "evidence": "Entry describes shared living space",
         "evidence_uris": []
       }
       ```

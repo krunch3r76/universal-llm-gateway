@@ -1,15 +1,17 @@
 """Cortex dispatch tool — cortex(tool=..., arguments=...) surface for the Cortex knowledge system.
 
 Routes all Cortex CRUD operations through cortex-api via the local_api relay.
-Core handlers live here; v2.1 handlers (assertion lifecycle, relationships,
-stats, surface forms) live in cortex_v21.py and are imported into _OPS.
-Only cortex_boot remains as a standalone tool (in cortex_v2.py).
+Core handlers live here; extra dispatch ops (assertion lifecycle, relationships,
+stats, surface forms) live in cortex_dispatch_ops.py and are imported into _OPS.
+Named tools (boot, chunks, staging extras) register via cortex_named_tools.py.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
@@ -17,7 +19,7 @@ from urllib.parse import urlencode
 from mcp_events import record
 
 from ._cortex_relay import _cx
-from .cortex_v21 import (
+from .cortex_dispatch_ops import (
     _op_assertion_update,
     _op_relationship_create,
     _op_relationships,
@@ -33,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 _FILES_ROOT = Path("/data/files")
+_DEFAULT_USER_ENTITY = os.getenv("CORTEX_DEFAULT_USER_ENTITY", "")
 _ENTITY_MUTABLE = frozenset(
     {
         "name",
@@ -234,6 +237,118 @@ def _op_assert(
     return result
 
 
+def _op_observe(
+    entity_id: str | None = None,
+    claim: str | None = None,
+    confidence: str = "believed",
+    agent: str | None = None,
+    evidence: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    """Lightweight observation — 1 required field (claim), sensible defaults.
+
+    Use for inline observations about entities during normal work.
+    Defaults: entity_id from CORTEX_DEFAULT_USER_ENTITY env var, confidence=believed,
+    derivation_type=agent_observation, seeded_by={agent}, observed_at=now.
+    """
+    if not entity_id:
+        entity_id = _DEFAULT_USER_ENTITY
+    if not entity_id:
+        return {
+            "error": "entity_id is required (set CORTEX_DEFAULT_USER_ENTITY env var for a default)"
+        }
+    if not claim:
+        return {"error": "claim is required"}
+    if confidence not in _VALID_CONFIDENCE:
+        return {
+            "error": f"Invalid confidence {confidence!r}. "
+            f"Must be one of: {sorted(_VALID_CONFIDENCE)}"
+        }
+    body: dict[str, Any] = {
+        "entity_id": entity_id,
+        "claim": claim,
+        "confidence": confidence,
+        "evidence": evidence or "Agent observation during session",
+        "derivation_type": "agent_observation",
+        "observed_at": datetime.now(UTC).isoformat(),
+        "confidence_score": 0.8 if confidence == "believed" else 0.6,
+    }
+    if agent:
+        body["seeded_by"] = agent
+    result = _cx("POST", "/assertions", body)
+    if "error" not in result:
+        logger.info(
+            "cortex observe: %s — %s (%s, by %s)",
+            entity_id,
+            claim[:60],
+            confidence,
+            agent or "unknown",
+        )
+        record(
+            "mcp.cortex.observation.seeded",
+            entity_id=entity_id,
+            confidence=confidence,
+            agent=agent,
+        )
+    return result
+
+
+def _op_friction(
+    service: str | None = None,
+    category: str | None = None,
+    note: str | None = None,
+    suggestion: str | None = None,
+    agent: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    """Log a friction event — when tools, schema, or boot context didn't work as expected.
+
+    Categories: tool_mismatch, schema_gap, boot_drift, lesson_gap,
+    lesson_conflict, stale_context, tool_absent.
+    """
+    if not service:
+        return {"error": "service is required (e.g. 'mcp-server', 'cortex-api')"}
+    if not note:
+        return {"error": "note is required — describe what went wrong"}
+    valid_categories = {
+        "tool_mismatch",
+        "schema_gap",
+        "boot_drift",
+        "lesson_gap",
+        "lesson_conflict",
+        "stale_context",
+        "tool_absent",
+    }
+    if category and category not in valid_categories:
+        return {
+            "error": f"Invalid category {category!r}. Must be one of: {sorted(valid_categories)}"
+        }
+    claim = f"[{category or 'unclassified'}] {note}"
+    if suggestion:
+        claim += f" — Suggestion: {suggestion}"
+    body: dict[str, Any] = {
+        "entity_id": f"service:{service}",
+        "claim": claim,
+        "confidence": "hypothesized",
+        "evidence": f"Friction observed by {agent or 'unknown'} during session",
+        "derivation_type": "agent_observation",
+        "observed_at": datetime.now(UTC).isoformat(),
+        "confidence_score": 0.5,
+    }
+    if agent:
+        body["seeded_by"] = agent
+    result = _cx("POST", "/assertions", body)
+    if "error" not in result:
+        logger.info("cortex friction: %s/%s — %s", service, category, note[:60])
+        record(
+            "mcp.cortex.friction.logged",
+            service=service,
+            category=category or "unclassified",
+            agent=agent,
+        )
+    return result
+
+
 def _op_deadlines(**_: object) -> dict[str, Any]:
     return _cx("GET", "/deadlines")
 
@@ -388,6 +503,100 @@ def _op_edge_types(**_: object) -> Any:
     return _cx("GET", "/edges/types")
 
 
+def _op_ingest_document(
+    source_uri: str | None = None,
+    content: str | None = None,
+    observer: str = "web",
+    source_date: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if not source_uri:
+        return {"error": "source_uri is required"}
+    if not content:
+        return {"error": "content is required"}
+    body: dict[str, Any] = {
+        "source_uri": source_uri,
+        "content": content,
+        "observer": observer,
+    }
+    if source_date is not None:
+        body["source_date"] = source_date
+    result = _cx("POST", "/ingest-document", body)
+    if "error" not in result:
+        chunk_count = result.get("chunk_count", 0)
+        logger.info("cortex ingest_document: %s — %d chunks", source_uri, chunk_count)
+        record(
+            "mcp.cortex.ingest_document",
+            source_uri=source_uri,
+            chunk_count=chunk_count,
+        )
+    return result
+
+
+def _op_assert_from_chunk(
+    chunk_id: int | None = None,
+    entity_id: str | None = None,
+    claim: str | None = None,
+    confidence: str | None = None,
+    evidence: str | None = None,
+    evidence_uris: list[str] | str | None = None,
+    derivation_type: str | None = None,
+    confidence_score: float | None = None,
+    observed_at: str | None = None,
+    valid_from: str | None = None,
+    reasoning_summary: str | None = None,
+    resolution_status: str | None = None,
+    seeded_by: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    required = {
+        "chunk_id": chunk_id,
+        "entity_id": entity_id,
+        "claim": claim,
+        "confidence": confidence,
+        "evidence": evidence,
+    }
+    for field, val in required.items():
+        if not val and val != 0:
+            return {"error": f"{field} is required"}
+    body: dict[str, Any] = {
+        "chunk_id": chunk_id,
+        "entity_id": entity_id,
+        "claim": claim,
+        "confidence": confidence,
+        "evidence": evidence,
+    }
+    if evidence_uris:
+        if isinstance(evidence_uris, str):
+            evidence_uris = [evidence_uris]
+        body["evidence_uris"] = [str(u) for u in evidence_uris]
+    for key, val in [
+        ("derivation_type", derivation_type),
+        ("confidence_score", confidence_score),
+        ("observed_at", observed_at),
+        ("valid_from", valid_from),
+        ("reasoning_summary", reasoning_summary),
+        ("resolution_status", resolution_status),
+        ("seeded_by", seeded_by),
+    ]:
+        if val is not None:
+            body[key] = val
+    result = _cx("POST", "/assert-from-chunk", body)
+    if "error" not in result:
+        logger.info(
+            "cortex assert_from_chunk: chunk=%s entity=%s — %s",
+            chunk_id,
+            entity_id,
+            str(claim)[:60],
+        )
+        record(
+            "mcp.cortex.assert_from_chunk",
+            chunk_id=chunk_id,
+            entity_id=entity_id,
+        )
+    return result
+
+
 def _op_review_queue(limit: int | None = None, **_: object) -> dict[str, Any]:
     lim = limit or 30
     flagged_resp = _cx(
@@ -442,8 +651,12 @@ _OPS: dict[str, Any] = {
     "entity_update": _op_entity_update,
     "assertions": _op_assertions,
     "assert": _op_assert,
+    "observe": _op_observe,
+    "friction": _op_friction,
     "assertion_update": _op_assertion_update,
     "supersede": _op_supersede,
+    "ingest_document": _op_ingest_document,
+    "assert_from_chunk": _op_assert_from_chunk,
     "relationships": _op_relationships,
     "relationship_create": _op_relationship_create,
     "stats": _op_stats,

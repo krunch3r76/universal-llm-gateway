@@ -43,6 +43,7 @@ import asyncio
 import json
 import logging
 import random
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -63,9 +64,54 @@ STARGATE_URL = "http://localhost:9999"
 _PIPELINE_CEILING_S = 3600.0
 _client = httpx.AsyncClient(timeout=_PIPELINE_CEILING_S + 30.0)
 
-_MAX_RETRIES = 3
-_BACKOFF_BASE_S = 2.0
+_MAX_GENERAL_RETRIES = 2
+_GENERAL_BACKOFF_BASE_S = 2.0
 _batch_overhead_s: float = 30.0
+
+# ---------------------------------------------------------------------------
+# Capacity retry budget (model eviction/reload cycles)
+#
+# Stargate returns retryable capacity errors when the extraction model is
+# evicted (VRAM reclaimed for another model). On NVMe + RTX 5090, cold loads
+# take ~15-30s; worst-case contention (another model mid-inference) ~120s.
+# Fixed polling interval avoids exponential backoff's wasted short/long tails.
+# ---------------------------------------------------------------------------
+_CAPACITY_POLL_INTERVAL_S = 25.0
+_CAPACITY_POLL_JITTER_S = 4.0
+_CAPACITY_MAX_TOTAL_WAIT_S = 330.0  # hard cap ~5.5 min
+
+# ---------------------------------------------------------------------------
+# Extraction circuit breaker
+#
+# Only HARD failures (non-retryable errors, capacity budget exhausted) count
+# toward the breaker. Transient capacity errors during normal model eviction
+# cycles are expected and must not trip the breaker.
+# ---------------------------------------------------------------------------
+_CIRCUIT_OPEN_AFTER = 5  # consecutive hard-fail batches before opening
+_CIRCUIT_COOLDOWN_S = (
+    180.0  # 3 min — exceeds worst-case contention, < reconcile interval
+)
+
+_consecutive_all_failures: int = 0
+_last_all_failure_ts: float = 0.0
+
+
+def _is_circuit_open() -> bool:
+    """True when the breaker is open (recent consecutive all-fail batches)."""
+    if _consecutive_all_failures < _CIRCUIT_OPEN_AFTER:
+        return False
+    return (time.monotonic() - _last_all_failure_ts) < _CIRCUIT_COOLDOWN_S
+
+
+def _record_batch_outcome(*, all_failed: bool) -> None:
+    """Update breaker state after an extraction batch completes."""
+    global _consecutive_all_failures, _last_all_failure_ts
+    if all_failed:
+        _consecutive_all_failures += 1
+        _last_all_failure_ts = time.monotonic()
+    else:
+        _consecutive_all_failures = 0
+
 
 # Pipeline registration window: pipelines register 5–10s after Stargate starts
 # accepting requests. MODEL_NOT_FOUND 404s during this window are transient.
@@ -531,6 +577,31 @@ async def extract_knowledge_batch(
     if not chunk_ids:
         return [], {}
 
+    if _is_circuit_open():
+        remaining = _CIRCUIT_COOLDOWN_S - (time.monotonic() - _last_all_failure_ts)
+        await _emit_extraction_debug(
+            "debug.rag.extraction.circuit",
+            file=file,
+            payload={
+                "step": "circuit_open",
+                "consecutive_failures": _consecutive_all_failures,
+                "cooldown_remaining_s": round(max(0, remaining), 1),
+                "chunk_count": len(chunk_ids),
+            },
+        )
+        logger.info(
+            "Extraction circuit breaker open (%d consecutive all-fail batches,"
+            " %.0fs cooldown remaining) — deferring %d chunks for %s",
+            _consecutive_all_failures,
+            max(0, remaining),
+            len(chunk_ids),
+            file or "unknown",
+        )
+        return [None] * len(chunk_ids), {
+            "circuit_breaker": True,
+            "consecutive_failures": _consecutive_all_failures,
+        }
+
     mat = get_model_availability_tracker()
     if mat is not None:
         result = await mat.wait_until_available(
@@ -596,30 +667,18 @@ async def extract_knowledge_batch(
 
     last_exc: Exception | None = None
     capacity_retries = 0
+    capacity_waited_s = 0.0
+    general_attempts = 0
 
-    async def _retry_with_backoff(exc: Exception, attempt: int) -> None:
-        nonlocal last_exc
-        last_exc = exc
-        if attempt < _MAX_RETRIES - 1:
-            delay = _BACKOFF_BASE_S ** (attempt + 1)
-            logger.warning(
-                "Batch extraction attempt %d/%d failed (%s); retrying in %.1fs",
-                attempt + 1,
-                _MAX_RETRIES,
-                type(exc).__name__,
-                delay,
-                exc_info=True,
-            )
-            await asyncio.sleep(delay)
-
-    for attempt in range(_MAX_RETRIES):
+    while True:
         await _emit_extraction_debug(
             "debug.rag.extraction.attempt",
             file=file,
             payload={
                 "step": "call_started",
-                "attempt": attempt + 1,
-                "max_retries": _MAX_RETRIES,
+                "general_attempt": general_attempts + 1,
+                "capacity_retries": capacity_retries,
+                "capacity_waited_s": round(capacity_waited_s, 1),
                 "chunk_count": len(chunk_ids),
                 "model_id": config.extraction_model,
                 "pipeline": config.pipeline,
@@ -628,16 +687,21 @@ async def extract_knowledge_batch(
         try:
             parsed, timing = await _call_extraction(chunks, chunk_ids, config)
             if capacity_retries > 0:
-                timing = {**timing, "capacity_retries": capacity_retries}
+                timing = {
+                    **timing,
+                    "capacity_retries": capacity_retries,
+                    "capacity_waited_s": round(capacity_waited_s, 1),
+                }
             await _emit_extraction_debug(
                 "debug.rag.extraction.result",
                 file=file,
                 payload={
                     "step": "call_succeeded",
-                    "attempt": attempt + 1,
+                    "general_attempt": general_attempts + 1,
+                    "capacity_retries": capacity_retries,
+                    "capacity_waited_s": round(capacity_waited_s, 1),
                     "chunk_count": len(chunk_ids),
                     "result_count": len(parsed),
-                    "capacity_retries": capacity_retries,
                     "finish_reason": timing.get("finish_reason"),
                     "processing_seconds": timing.get("processing_seconds"),
                     "queue_wait_seconds": timing.get("queue_wait_seconds"),
@@ -650,7 +714,7 @@ async def extract_knowledge_batch(
                 file=file,
                 payload={
                     "step": "client_timeout",
-                    "attempt": attempt + 1,
+                    "general_attempt": general_attempts + 1,
                     "chunk_count": len(chunk_ids),
                     "timeout_budget_seconds": batch_timeout,
                 },
@@ -664,82 +728,128 @@ async def extract_knowledge_batch(
         except httpx.HTTPStatusError as exc:
             if _is_pipeline_not_registered(exc, config.pipeline):
                 return await _await_pipeline_registration(chunks, chunk_ids, config)
-            parsed = _parse_stargate_error(exc)
-            if parsed is not None:
+            stargate_err = _parse_stargate_error(exc)
+            if stargate_err is not None:
                 await _emit_extraction_debug(
                     "debug.rag.extraction.stargate",
                     file=file,
                     payload={
                         "step": "http_status_error",
-                        "attempt": attempt + 1,
+                        "general_attempt": general_attempts + 1,
+                        "capacity_retries": capacity_retries,
                         "status_code": exc.response.status_code,
-                        "code": parsed.code,
-                        "retryable": parsed.retryable,
-                        "message": parsed.message,
+                        "code": stargate_err.code,
+                        "retryable": stargate_err.retryable,
+                        "message": stargate_err.message,
                     },
                 )
-                if not parsed.retryable:
+                if not stargate_err.retryable:
                     logger.warning(
                         "Non-retryable Stargate error for extraction: code=%s message=%s",
-                        parsed.code,
-                        parsed.message,
+                        stargate_err.code,
+                        stargate_err.message,
                     )
-                    return [None] * len(chunk_ids), {"stargate_error": parsed.code}
+                    return [None] * len(chunk_ids), {
+                        "stargate_error": stargate_err.code
+                    }
 
-                capacity_retries += 1
+                # --- Capacity retry path (fixed-interval polling) ---
                 last_exc = exc
-                if attempt < _MAX_RETRIES - 1:
-                    delay = min(
-                        60.0, _BACKOFF_BASE_S ** (attempt + 1)
-                    ) + random.uniform(0.0, 3.0)
-                    logger.info(
-                        "Stargate retryable extraction error (attempt %d/%d, code=%s); "
-                        "backing off %.1fs",
-                        attempt + 1,
-                        _MAX_RETRIES,
-                        parsed.code,
-                        delay,
+                if capacity_waited_s >= _CAPACITY_MAX_TOTAL_WAIT_S:
+                    logger.warning(
+                        "Capacity wait budget exhausted (%.0fs / %.0fs) for %s; "
+                        "treating as hard failure",
+                        capacity_waited_s,
+                        _CAPACITY_MAX_TOTAL_WAIT_S,
+                        file or "unknown",
                     )
-                    await asyncio.sleep(delay)
+                    break
+                capacity_retries += 1
+                delay = _CAPACITY_POLL_INTERVAL_S + random.uniform(
+                    -_CAPACITY_POLL_JITTER_S, _CAPACITY_POLL_JITTER_S
+                )
+                logger.info(
+                    "Capacity contention (code=%s, waited %.0fs/%.0fs); "
+                    "polling in %.0fs for %s",
+                    stargate_err.code,
+                    capacity_waited_s,
+                    _CAPACITY_MAX_TOTAL_WAIT_S,
+                    delay,
+                    file or "unknown",
+                )
+                await asyncio.sleep(delay)
+                capacity_waited_s += delay
                 continue
-            await _retry_with_backoff(exc, attempt)
-        except httpx.RequestError as exc:
-            await _retry_with_backoff(exc, attempt)
-        except Exception as exc:
-            await _retry_with_backoff(exc, attempt)
 
+            # --- General error path (exponential backoff, limited retries) ---
+            last_exc = exc
+            general_attempts += 1
+            if general_attempts >= _MAX_GENERAL_RETRIES:
+                break
+            delay = _GENERAL_BACKOFF_BASE_S**general_attempts
+            logger.warning(
+                "Batch extraction general error %d/%d (%s); retrying in %.1fs",
+                general_attempts,
+                _MAX_GENERAL_RETRIES,
+                type(exc).__name__,
+                delay,
+                exc_info=True,
+            )
+            await asyncio.sleep(delay)
+        except httpx.RequestError as exc:
+            last_exc = exc
+            general_attempts += 1
+            if general_attempts >= _MAX_GENERAL_RETRIES:
+                break
+            delay = _GENERAL_BACKOFF_BASE_S**general_attempts
+            logger.warning(
+                "Batch extraction request error %d/%d (%s); retrying in %.1fs",
+                general_attempts,
+                _MAX_GENERAL_RETRIES,
+                type(exc).__name__,
+                delay,
+                exc_info=True,
+            )
+            await asyncio.sleep(delay)
+        except Exception as exc:
+            last_exc = exc
+            general_attempts += 1
+            if general_attempts >= _MAX_GENERAL_RETRIES:
+                break
+            delay = _GENERAL_BACKOFF_BASE_S**general_attempts
+            logger.warning(
+                "Batch extraction unexpected error %d/%d (%s); retrying in %.1fs",
+                general_attempts,
+                _MAX_GENERAL_RETRIES,
+                type(exc).__name__,
+                delay,
+                exc_info=True,
+            )
+            await asyncio.sleep(delay)
+
+    await _emit_extraction_debug(
+        "debug.rag.extraction.result",
+        file=file,
+        payload={
+            "step": "attempts_exhausted",
+            "chunk_count": len(chunk_ids),
+            "general_attempts": general_attempts,
+            "capacity_retries": capacity_retries,
+            "capacity_waited_s": round(capacity_waited_s, 1),
+            "last_error_type": type(last_exc).__name__ if last_exc else None,
+            "last_error": str(last_exc)[:240] if last_exc else None,
+        },
+    )
     if last_exc is not None:
-        await _emit_extraction_debug(
-            "debug.rag.extraction.result",
-            file=file,
-            payload={
-                "step": "attempts_exhausted",
-                "chunk_count": len(chunk_ids),
-                "capacity_retries": capacity_retries,
-                "last_error_type": type(last_exc).__name__,
-                "last_error": str(last_exc)[:240],
-            },
-        )
         logger.warning(
-            "Batch extraction failed after %d attempts: %s",
-            _MAX_RETRIES,
+            "Batch extraction failed (general=%d, capacity=%d, waited=%.0fs): %s",
+            general_attempts,
+            capacity_retries,
+            capacity_waited_s,
             last_exc,
             exc_info=True,
         )
-    else:
-        await _emit_extraction_debug(
-            "debug.rag.extraction.result",
-            file=file,
-            payload={
-                "step": "attempts_exhausted_without_exception",
-                "chunk_count": len(chunk_ids),
-                "capacity_retries": capacity_retries,
-            },
-        )
-        # This case should ideally not be reached if all attempts failed without an exception.
-        # If it is, it indicates a logic error where an exception was not captured.
-        logger.error(
-            "Batch extraction finished without success and without captured exception. This indicates an unhandled error path."
-        )
-    timing: dict[str, Any] = {}  # Or a more specific TypedDict if structure is fixed
-    return [None] * len(chunk_ids), timing
+    return [None] * len(chunk_ids), {
+        "capacity_retries": capacity_retries,
+        "capacity_waited_s": round(capacity_waited_s, 1),
+    }

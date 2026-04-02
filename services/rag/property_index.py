@@ -911,6 +911,8 @@ class PropertyIndex:
                     if normalized:
                         rows.append((scope, register, normalized))
 
+        deduped_rows = list(dict.fromkeys(rows))
+
         async def _write() -> None:
             conn = self._ensure_conn()
             conn.execute("BEGIN IMMEDIATE")
@@ -920,11 +922,11 @@ class PropertyIndex:
                     f"DELETE FROM scope_vocabulary WHERE scope IN ({placeholders})",
                     scope_names,
                 )
-                if rows:
+                if deduped_rows:
                     conn.executemany(
                         "INSERT INTO scope_vocabulary (scope, register, term)"
                         " VALUES (?, ?, ?)",
-                        rows,
+                        deduped_rows,
                     )
                 conn.execute("COMMIT")
             except sqlite3.Error as e:

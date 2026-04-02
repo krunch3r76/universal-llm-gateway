@@ -35,13 +35,12 @@ from schema_compact import patch_fastmcp_tool_serialization
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
-
 from tools.agent_bus import register_agent_bus_tools
 from tools.agent_consult import register_agent_consult_tools
 from tools.browser import register_browser_tools
 from tools.context import register_context_tools
 from tools.cortex import register_cortex_tools
-from tools.cortex_v2 import register_cortex_v2_tools
+from tools.cortex_named_tools import register_cortex_named_tools
 from tools.document_ocr import register_document_ocr_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
@@ -51,6 +50,7 @@ from tools.finance_reconcile import register_finance_reconcile_tools
 from tools.finance_smart_ingest import register_finance_smart_ingest_tools
 from tools.frontier import register_frontier_tools
 from tools.ingest_binary import register_ingest_binary_tools
+from tools.ingest_document import register_ingest_document_tools
 from tools.llm import register_llm_tools
 from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
@@ -296,6 +296,7 @@ def _build_server() -> FastMCP:
     register_finance_reconcile_tools(mcp)
     register_finance_smart_ingest_tools(mcp)
     register_ingest_binary_tools(mcp)
+    register_ingest_document_tools(mcp)
     register_document_ocr_tools(mcp)
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)
@@ -304,7 +305,7 @@ def _build_server() -> FastMCP:
     register_agent_bus_tools(mcp)
     register_agent_consult_tools(mcp)
     register_cortex_tools(mcp)
-    register_cortex_v2_tools(mcp)
+    register_cortex_named_tools(mcp)
     register_llm_tools(mcp)
     register_frontier_tools(mcp)
 
@@ -348,8 +349,13 @@ def _build_server() -> FastMCP:
         section: str = "",
         all_occurrences: bool = False,
         include_untracked: bool = True,
+        binary: bool = False,
     ) -> dict[str, Any]:
         """File I/O across sandboxes (files, context, project). Both sandbox and op are REQUIRED.
+
+        Use `binary=True` with `read` when another tool needs base64 file bytes
+        instead of decoded text. Use `move` to rename or relocate a file within
+        the selected sandbox. Prefer the markdown ops for large markdown docs.
 
         Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="fs")
         """
@@ -377,7 +383,7 @@ def _build_server() -> FastMCP:
                 fn = overflow_registry.get("read_project_file")
                 if fn is None:
                     return {"error": "read_project_file tool not available"}
-                return fn(path)
+                return fn(path, binary=binary)
             if op == "write":
                 fn = overflow_registry.get("write_project_file")
                 if fn is None:
@@ -402,13 +408,24 @@ def _build_server() -> FastMCP:
                 fn = overflow_registry.get("edit_project_file")
                 if fn is None:
                     return {"error": "edit_project_file tool not available"}
-                return fn(path, "replace", content, target_str=target, all_occurrences=all_occurrences)
+                return fn(
+                    path,
+                    "replace",
+                    content,
+                    target_str=target,
+                    all_occurrences=all_occurrences,
+                )
             if op == "insert_at_line":
                 fn = overflow_registry.get("edit_project_file")
                 if fn is None:
                     return {"error": "edit_project_file tool not available"}
                 return fn(path, "insert_at_line", content, line=line)
-            valid = "read, write, append, prepend, replace, insert_at_line, list, search"
+            if op == "move":
+                fn = overflow_registry.get("move_project_file")
+                if fn is None:
+                    return {"error": "move_project_file tool not available"}
+                return fn(path, target)
+            valid = "read, write, append, prepend, replace, insert_at_line, move, list, search"
             return {"error": f"Unknown project op: {op!r}. Available: {valid}"}
 
         tool_name = sandbox_tool[sandbox]
@@ -418,7 +435,14 @@ def _build_server() -> FastMCP:
         if sandbox == "files":
             if op == "read_multi":
                 paths = paths or []
-                return fn(op=op, path=path, paths=paths, content=content, target=target)
+                return fn(
+                    op=op,
+                    path=path,
+                    paths=paths,
+                    content=content,
+                    target=target,
+                    binary=binary,
+                )
             return fn(
                 op=op,
                 path=path,
@@ -426,6 +450,7 @@ def _build_server() -> FastMCP:
                 target=target,
                 line=line,
                 all_occurrences=all_occurrences,
+                binary=binary,
             )
         return fn(
             op=op,
@@ -434,6 +459,7 @@ def _build_server() -> FastMCP:
             target=target,
             line=line,
             all_occurrences=all_occurrences,
+            binary=binary,
         )
 
     rag_op_tool: dict[str, str] = {

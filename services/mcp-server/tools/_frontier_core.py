@@ -22,14 +22,14 @@ from model_id import ModelId
 from universal_logging import get_logger
 
 from ._file_helpers import read_file_result
-from .cortex_v2 import run_cortex_boot
+from .cortex_named_tools import run_cortex_boot
 
 logger = get_logger(__name__)
 
 _STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 _BOOT_SEPARATOR = "\n\n---\n\n"
-_VALID_BOOT_LEVELS = {"none", "mcp", "minimal", "full"}
+_VALID_BOOT_LEVELS = {"none", "mcp", "minimal", "full", "team"}
 
 _PROVIDER_NATIVE_PATHS: dict[str, str] = {
     "anthropic": "/api/v1/providers/anthropic/messages",
@@ -70,6 +70,22 @@ def _normalize_boot_level(boot: str) -> str:
     return boot_level
 
 
+_SUBAGENT_PREAMBLE = """\
+You are a team member consulted by the system owner.
+Apply your own epistemic standards fully — if you identify errors or gaps in the supplied framing, flag them. Do not defer.
+
+Cortex is the team's shared knowledge graph. When Cortex excerpts appear in context:
+- Entities: typed nodes (`type:slug`). Assertions: claims with confidence (confirmed/believed/suspected/hypothesized).
+- Absence of assertion ≠ negation — it means the information was not supplied.
+- Parametric knowledge (from training) is not Cortex-grounded. Label the source when using both.
+
+For this invocation, your Cortex grounding is the context supplied in this conversation. \
+If you cannot ground a claim in the supplied context, mark it [UNGROUNDED] and note what query would resolve it.
+
+Shared vocabulary: "Cortex" = the knowledge graph, not the service · \
+"directive" = implement now · "ticket" = deferred work."""
+
+
 def _default_mcp_brief() -> str:
     lines = [
         "You are a frontier subagent dispatched by another frontier model.",
@@ -101,17 +117,22 @@ def _assemble_boot_context(boot: str, boot_ref: str | None) -> str:
         return ""
     if boot_level == "mcp":
         return _read_boot_ref(boot_ref) if boot_ref else _default_mcp_brief()
-    if boot_ref:
-        raise ValueError(
-            "boot_ref is only supported with boot='mcp' (legacy alias: 'minimal')"
-        )
+    if boot_level == "team":
+        parts = [_SUBAGENT_PREAMBLE]
+        if boot_ref:
+            parts.append(_read_boot_ref(boot_ref))
+        return _BOOT_SEPARATOR.join(parts)
     result = run_cortex_boot(agent="subagent")
     if "error" in result:
         raise RuntimeError(str(result["error"]))
     narrative = result.get("boot_narrative")
     if not isinstance(narrative, str) or not narrative.strip():
         raise RuntimeError("cortex_boot returned no boot_narrative")
-    return narrative
+    parts = [_SUBAGENT_PREAMBLE]
+    if boot_ref:
+        parts.append(_read_boot_ref(boot_ref))
+    parts.append(narrative)
+    return _BOOT_SEPARATOR.join(parts)
 
 
 def execute_frontier(
@@ -164,6 +185,14 @@ def execute_frontier(
     _url, _headers, json_body = adapter.build_frontier_request(
         req, mcp_cfg if mcp_cfg else None
     )
+    has_mcp_servers = bool(json_body.get("mcp_servers"))
+    if has_mcp_servers:
+        record(
+            "mcp.frontier.generate.mcp.injected",
+            model=model,
+            tool=tool_name,
+            provider=provider_key,
+        )
 
     stargate_url = f"{_STARGATE_URL}{native_path}"
     try:
@@ -174,29 +203,53 @@ def execute_frontier(
                 headers={"Content-Type": "application/json"},
             )
     except httpx.TimeoutException:
-        record("mcp.frontier.generate.error", error="timeout", provider=provider_key)
-        return {"error": "Upstream timeout"}
+        duration = monotonic_now() - t0
+        has_mcp = bool(json_body.get("mcp_servers"))
+        record(
+            "mcp.frontier.generate.error",
+            error="timeout",
+            provider=provider_key,
+            duration_s=round(duration, 3),
+            has_mcp=has_mcp,
+        )
+        suffix = (
+            " MCP tool callbacks may be hanging — check MCP server health and "
+            "firewall rules for provider callback IPs."
+            if has_mcp
+            else ""
+        )
+        return {"error": f"Upstream timeout after {int(duration)}s.{suffix}"}
     except httpx.RequestError as exc:
         logger.error("Frontier upstream request failed: %s", exc)
         record("mcp.frontier.generate.error", error="connection", provider=provider_key)
         return {"error": "Upstream connection failed"}
 
     if resp.status_code >= 400:
+        detail_text = resp.text[:500]
+        error_key = f"upstream_{resp.status_code}"
+        error_msg = f"Upstream error ({resp.status_code})"
+
+        if "Connection to MCP server timed out" in detail_text:
+            error_key = "mcp_server_unreachable"
+            error_msg = (
+                "Provider could not reach the MCP server for tool callbacks. "
+                "The MCP server may be overloaded, unreachable from the provider's "
+                "network, or blocked by a firewall."
+            )
+
         logger.warning(
-            "Frontier upstream %d for model=%s provider=%s",
+            "Frontier upstream %d for model=%s provider=%s: %s",
             resp.status_code,
             model,
             provider_key,
+            error_key,
         )
         record(
             "mcp.frontier.generate.error",
-            error=f"upstream_{resp.status_code}",
+            error=error_key,
             provider=provider_key,
         )
-        return {
-            "error": f"Upstream error ({resp.status_code})",
-            "detail": resp.text[:500],
-        }
+        return {"error": error_msg, "detail": detail_text}
 
     try:
         raw = resp.json()

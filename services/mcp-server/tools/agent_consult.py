@@ -44,8 +44,8 @@ def register_agent_consult_tools(mcp: FastMCP) -> None:
             providers: Which providers to consult. Default: all with
                 configured API keys. Options: "grok", "openai".
             context_entities: Entity IDs to pre-load into context before
-                the query (e.g. ["person:kaywan-mansubi",
-                "legal_matter:osaic-demand"]). Optional — models can also
+                the query (e.g. ["person:jane-doe",
+                "decision:api-migration-v2"]). Optional — models can also
                 discover entities via tools.
 
         Returns:

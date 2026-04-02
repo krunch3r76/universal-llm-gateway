@@ -24,6 +24,9 @@ basename_profiles:
   "qwen3-32b-awq": "code-generation"
   # Examples: qwen3-32b-awq-32768
 
+  "gemma-4": "gemma4-instruct"
+  # Examples: gemma-4-26b-a4b-it-q4-k-m, gemma-4-31b-it-q4-k-m
+
   "ernie-4-5-21b-a3b-pt-q8-0": "general-chat"
   
   "uncensored-frank": "general-chat"

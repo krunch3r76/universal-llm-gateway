@@ -388,3 +388,123 @@ def get_boot_todos(
         for r in rows
     ]
     return {"items": items}
+
+
+_COMMITMENTS_SQL = """
+    SELECT a.id, a.entity_id, e.name AS entity_name, a.claim,
+           a.confidence, a.valid_from, a.valid_until,
+           a.resolution_status, a.created_at
+    FROM assertions a
+    JOIN entities e ON a.entity_id = e.id
+    WHERE a.resolution_status = 'pending'
+      AND a.superseded_by IS NULL
+      AND (a.valid_until IS NULL OR a.valid_until > datetime('now'))
+    ORDER BY a.valid_from ASC
+    LIMIT ?
+"""
+
+_LEGAL_CONTACTS_SQL = """
+    SELECT DISTINCT se.from_node AS connected_id
+    FROM session_edges se
+    WHERE se.to_node LIKE 'legal_matter:%'
+      AND se.valid_until IS NULL
+      AND se.edge_type NOT IN ('supersedes', 'superseded_by')
+    UNION
+    SELECT DISTINCT se.to_node AS connected_id
+    FROM session_edges se
+    WHERE se.from_node LIKE 'legal_matter:%'
+      AND se.valid_until IS NULL
+      AND se.edge_type NOT IN ('supersedes', 'superseded_by')
+"""
+
+_ENTITY_RECENT_ASSERTIONS_SQL = """
+    SELECT a.entity_id, a.claim, a.confidence, a.observed_at, a.created_at
+    FROM assertions a
+    WHERE a.entity_id = ?
+      AND a.superseded_by IS NULL
+    ORDER BY a.created_at DESC
+    LIMIT 3
+"""
+
+
+@router.get("/boot-commitments")
+def get_boot_commitments(
+    limit: int = Query(10, ge=1, le=50, description="Max open commitments"),
+) -> dict[str, Any]:
+    """Open commitments (resolution_status='pending') for boot briefings.
+
+    Returns count + top N by age (oldest first). Used by cortex_boot
+    to surface unresolved promises alongside open investigations.
+    """
+    conn = cortex_conn()
+    try:
+        rows = db_query(conn, _COMMITMENTS_SQL, (limit,))
+    finally:
+        conn.close()
+
+    items = [
+        {
+            "id": r["id"],
+            "entity_id": r["entity_id"],
+            "entity_name": r["entity_name"],
+            "claim": r["claim"],
+            "confidence": r["confidence"],
+            "valid_from": r["valid_from"],
+            "valid_until": r["valid_until"],
+            "resolution_status": r["resolution_status"],
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+    return {"count": len(items), "items": items}
+
+
+@router.get("/boot-legal-contacts")
+def get_boot_legal_contacts() -> dict[str, Any]:
+    """Entities connected to active legal_matter entities via reasoning edges.
+
+    For each connected entity, returns top 3 assertions by recency.
+    Used by cortex_boot to expand visibility of legal matter participants.
+    """
+    conn = cortex_conn()
+    try:
+        connected_rows = db_query(conn, _LEGAL_CONTACTS_SQL)
+        connected_ids = {
+            r["connected_id"]
+            for r in connected_rows
+            if not r["connected_id"].startswith("legal_matter:")
+            and not r["connected_id"].startswith("assertion:")
+        }
+
+        contacts: list[dict[str, Any]] = []
+        for entity_id in sorted(connected_ids):
+            entity_rows = db_query(
+                conn,
+                "SELECT id, name, type FROM entities WHERE id = ?",
+                (entity_id,),
+            )
+            if not entity_rows:
+                continue
+
+            entity = entity_rows[0]
+            assertion_rows = db_query(conn, _ENTITY_RECENT_ASSERTIONS_SQL, (entity_id,))
+            contacts.append(
+                {
+                    "entity_id": entity_id,
+                    "entity_name": entity["name"],
+                    "entity_type": entity["type"],
+                    "assertions": [
+                        {
+                            "claim": a["claim"],
+                            "confidence": a["confidence"],
+                            "observed_at": a.get("observed_at"),
+                            "created_at": a["created_at"],
+                        }
+                        for a in assertion_rows
+                    ],
+                }
+            )
+    finally:
+        conn.close()
+
+    return {"count": len(contacts), "contacts": contacts}

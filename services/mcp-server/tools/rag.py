@@ -416,7 +416,12 @@ def register_rag_tools(mcp: FastMCP) -> None:
         Uses multi-query rewriting, reciprocal rank fusion, entity/relation
         merging, and property index boost.
 
+        IMPORTANT: query must be natural language. Boolean operators (OR, AND)
+        degrade dense retrieval — use parallel calls per concept instead.
+
         Call rag_list_scopes() for the current set of valid scope names.
+
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="rag_search")
 
         Args:
             query: Natural language search query.
@@ -543,7 +548,12 @@ def register_rag_tools(mcp: FastMCP) -> None:
         Set deep=True for complex multi-faceted questions that benefit
         from iterative retrieval (up to 2 gap-filling passes).
 
+        IMPORTANT: question must be natural language. Boolean operators (OR, AND)
+        degrade dense retrieval — use parallel rag_search calls per concept instead.
+
         Call rag_list_scopes() for the current set of valid scope names.
+
+        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="rag_answer")
 
         Args:
             question: Natural language question.

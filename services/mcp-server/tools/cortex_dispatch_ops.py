@@ -1,4 +1,4 @@
-"""Cortex v2.1 op handlers — assertion lifecycle, relationships, stats, surface forms.
+"""Cortex dispatch op handlers — assertion lifecycle, relationships, stats, surface forms.
 
 Plain handler functions consumed by the _OPS dispatch table in cortex.py.
 These follow the same pattern as the existing _op_* handlers: accept kwargs,

@@ -21,12 +21,14 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from mcp_events import record
 
+from ._file_helpers import build_binary_read_result
 from .file_editor import perform_edit
 
 if TYPE_CHECKING:
@@ -298,7 +300,9 @@ def _tracked_parent_directories(
     for file_path in files:
         try:
             relative_to_base = (
-                Path(file_path).relative_to(base_prefix) if directory else Path(file_path)
+                Path(file_path).relative_to(base_prefix)
+                if directory
+                else Path(file_path)
             )
         except ValueError:
             continue
@@ -317,23 +321,32 @@ def register_project_tools(mcp: FastMCP) -> None:
     """Register project directory tools on *mcp*."""
 
     @mcp.tool()
-    def read_project_file(path: str) -> dict[str, str]:
+    def read_project_file(path: str, binary: bool = False) -> dict[str, Any]:
         """Read a file from the project directory.
 
-        Only text files are supported. Binary files (.pyc, .so, images,
-        model weights, etc.) are rejected.
+        Use the default text mode for source files and docs. Use
+        ``binary=True`` when another tool needs base64 bytes instead of text
+        decoding.
 
         Args:
             path: Relative file path within the project, e.g. "services/mcp-server/server.py".
+            binary: If True, return base64 bytes instead of decoded text.
 
         Returns:
-            {"content": "<file contents>", "path": "<relative path>"}
+            Text mode: {"content": "<file contents>", "path": "<relative path>"}
+            Binary mode: {"content_base64", "mime_type", "encoding", "bytes", "path"}
         """
         src = _safe_project_path(path)
         if not src.exists():
             raise FileNotFoundError(f"File not found: {path!r}")
         if not src.is_file():
             raise ValueError(f"Path is not a file: {path!r}")
+        if binary:
+            result = build_binary_read_result(src, path_value=path)
+            logger.info(
+                "read_project_file: %s (%d bytes, binary)", path, result["bytes"]
+            )
+            return result
         if _is_binary(src):
             raise ValueError(
                 f"Binary file type {src.suffix!r} cannot be read. "
@@ -344,6 +357,30 @@ def register_project_tools(mcp: FastMCP) -> None:
         rel = str(src.relative_to(_PROJECT_ROOT.resolve()))
         logger.info("read_project_file: %s (%d chars)", rel, len(content))
         return {"content": content, "path": rel}
+
+    @mcp.tool()
+    def move_project_file(path: str, target: str) -> dict[str, str]:
+        """Move or rename a file in the project directory.
+
+        Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
+        """
+        if _PROJECT_READ_ONLY:
+            return cast("dict[str, str]", _read_only_error())
+
+        src = _safe_project_path(path)
+        dst = _safe_project_path(target)
+        if not src.exists():
+            return {"error": f"File not found: {path!r}"}
+        if not src.is_file():
+            return {"error": f"Path is not a file: {path!r}"}
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        rel_src = str(src.relative_to(_PROJECT_ROOT.resolve()))
+        rel_dst = str(dst.relative_to(_PROJECT_ROOT.resolve()))
+        logger.info("move_project_file: %s -> %s", rel_src, rel_dst)
+        record("mcp.project.file.moved", source=rel_src, destination=rel_dst)
+        return {"status": "moved", "from": rel_src, "to": rel_dst}
 
     @mcp.tool()
     def list_project_files(
@@ -392,7 +429,9 @@ def register_project_tools(mcp: FastMCP) -> None:
             )
         else:
             tracked = _git_tracked_files(directory)
-            base_path_obj = _safe_project_path(directory) if directory else _PROJECT_ROOT.resolve()
+            base_path_obj = (
+                _safe_project_path(directory) if directory else _PROJECT_ROOT.resolve()
+            )
             files = []
             for f in tracked:
                 # Ensure path is relative to the directory being listed, not just PROJECT_ROOT
@@ -602,4 +641,3 @@ def register_project_tools(mcp: FastMCP) -> None:
         logger.info("edit_project_file: %s op=%s", rel, operation)
         record("mcp.project.file.edited", path=rel, operation=operation)
         return result
-

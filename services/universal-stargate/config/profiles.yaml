@@ -393,6 +393,36 @@ profiles:
       presence_penalty: 2.0
       frequency_penalty: 0.0
 
+  gemma4-thinking:
+    description: "Gemma 4 thinking mode (model card)"
+    system_prompt: ""
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 64
+    chat_template_kwargs:
+      enable_thinking: true
+    llama_cpp:
+      min_p: 0.0
+      repeat_penalty: 1.0
+    vllm:
+      presence_penalty: 0.0
+      frequency_penalty: 0.0
+
+  gemma4-instruct:
+    description: "Gemma 4 non-thinking/instruct mode (model card)"
+    system_prompt: ""
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 64
+    chat_template_kwargs:
+      enable_thinking: false
+    llama_cpp:
+      min_p: 0.0
+      repeat_penalty: 1.0
+    vllm:
+      presence_penalty: 0.0
+      frequency_penalty: 0.0
+
   qwen3-thinking:
     description: "Qwen3 thinking mode — general tasks (model card)"
     system_prompt: ""

@@ -66,7 +66,7 @@ def create_model_router(
     router = APIRouter(prefix="/api/v1/federation/models", tags=["federation-models"])
 
     def _edge_client_and_headers(timeout: float):
-        """Build federation auth headers and an AsyncClient for Edge UDS. Caller must async with client."""
+        """Build auth headers and an Edge UDS client."""
         headers = {"Content-Type": "application/json"}
         if relay_stargate_id and local_edge_client:
             headers["X-Federation-Source"] = relay_stargate_id
@@ -102,7 +102,8 @@ def create_model_router(
         if local_edge_client:
             logger.info(f"📡 Forwarding load to Edge via Unix socket: {model_id!r}")
             try:
-                client, headers = _edge_client_and_headers(185.0)  # Slightly longer than Edge's 180s
+                # Slightly longer than Edge's own 180s outcome wait.
+                client, headers = _edge_client_and_headers(185.0)
                 async with client:
                     response = await client.post(
                         "http://edge/api/v1/federation/models/load",
@@ -178,11 +179,24 @@ def create_model_router(
                     "(event-driven)..."
                 )
                 timeout = 180.0
-                start_time = asyncio.get_event_loop().time()
+                loop = asyncio.get_running_loop()
+                start_time = loop.time()
 
-                await asyncio.wait_for(tracker.future, timeout=timeout)
+                try:
+                    await asyncio.wait_for(tracker.future, timeout=timeout)
+                except TimeoutError:
+                    elapsed = loop.time() - start_time
+                    logger.error(
+                        f"❌ Timeout waiting for {model_id.routing_key} load outcome "
+                        f"after {elapsed:.1f}s (budget {timeout}s)"
+                    )
+                    raise HTTPException(
+                        504,
+                        f"Model load outcome timed out after {elapsed:.1f}s "
+                        f"(budget {timeout}s)",
+                    ) from None
 
-                elapsed = asyncio.get_event_loop().time() - start_time
+                elapsed = loop.time() - start_time
                 logger.info(
                     f"✅ Model {model_id.routing_key} loaded on Gateway "
                     f"(took {elapsed:.1f}s)"
@@ -203,13 +217,6 @@ def create_model_router(
                     model_id=model_id.routing_key,
                     message=e.message,
                 )
-
-            except TimeoutError:
-                logger.error(
-                    f"❌ Timeout waiting for {model_id.routing_key} to load "
-                    f"(>{timeout}s)"
-                )
-                raise HTTPException(504, f"Model load timeout after {timeout}s")
 
             finally:
                 # CRITICAL: Always unregister callbacks
@@ -242,7 +249,7 @@ def create_model_router(
         if local_edge_client:
             logger.info(f"📡 Forwarding unload to Edge via Unix socket: {model_id!r}")
             try:
-                client, headers = _edge_client_and_headers(60.0)  # Unload should be fast
+                client, headers = _edge_client_and_headers(60.0)
                 async with client:
                     response = await client.post(
                         "http://edge/api/v1/federation/models/unload",

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -35,6 +36,13 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _format_elapsed_ms(elapsed_ms: float) -> str:
+    """Render elapsed time for user-facing load errors."""
+    if elapsed_ms >= 1000:
+        return f"{elapsed_ms / 1000:.1f}s"
+    return f"{elapsed_ms:.0f}ms"
+
+
 def _load_error(
     code: str,
     message: str,
@@ -42,12 +50,20 @@ def _load_error(
     gateway_id: str,
     *,
     retryable: bool = True,
+    elapsed_ms: int | None = None,
+    timeout_budget_s: float | int | None = None,
 ) -> HTTPException:
     """Build structured HTTPException for load failures.
 
     Uses error_envelope so the capacity retry loop in chat.py
     recognises these as retryable (or not) via _is_capacity_error().
     """
+    data: dict[str, Any] = {"model_id": str(model_id), "gateway_id": gateway_id}
+    if elapsed_ms is not None:
+        data["elapsed_ms"] = elapsed_ms
+    if timeout_budget_s is not None:
+        data["timeout_budget_s"] = timeout_budget_s
+
     return HTTPException(
         status_code=get_http_status(code),
         detail=error_envelope(
@@ -55,7 +71,7 @@ def _load_error(
             message=message,
             source="master",
             retryable=retryable,
-            data={"model_id": str(model_id), "gateway_id": gateway_id},
+            data=data,
         ),
     )
 
@@ -569,13 +585,16 @@ class FederatedLoadOrchestrator:
 
                 # Wall-clock timeout authority (180s default)
                 # NOTE: model_id is ModelId object; forwarder handles serialization
-                result = await asyncio.wait_for(
+                remote_call = asyncio.create_task(
                     self._forwarder.forward_model_load_request(
                         gateway=gateway,
                         model_id=model_id,  # ModelId object, NOT str
                         sticky=sticky,
                         request_id=request_id,
-                    ),
+                    )
+                )
+                result = await asyncio.wait_for(
+                    remote_call,
                     timeout=self._config.load_timeout,
                 )
 
@@ -652,20 +671,63 @@ class FederatedLoadOrchestrator:
                 raise
 
             except TimeoutError:
+                elapsed_ms = (time.monotonic() - attempt_start) * 1000
+                if (
+                    "remote_call" in locals()
+                    and remote_call.done()
+                    and not remote_call.cancelled()
+                ):
+                    inner_exc = remote_call.exception()
+                    inner_summary = (
+                        f"{type(inner_exc).__name__}: {inner_exc}"
+                        if inner_exc is not None
+                        else "inner timeout with no exception details"
+                    )
+                    last_error = _load_error(
+                        ErrorCode.LOAD_TIMEOUT,
+                        f"Remote load for {model_id} on {gateway.gateway_id} failed "
+                        f"after {_format_elapsed_ms(elapsed_ms)} before the "
+                        f"{self._config.load_timeout}s master timeout budget expired: "
+                        f"{inner_summary}",
+                        model_id,
+                        gateway.gateway_id,
+                        elapsed_ms=int(elapsed_ms),
+                        timeout_budget_s=self._config.load_timeout,
+                    )
+                    logger.error(
+                        f"⏱️ Upstream timeout surfaced for {model_id} after "
+                        f"{_format_elapsed_ms(elapsed_ms)} "
+                        f"(master budget {self._config.load_timeout}s): {inner_summary}"
+                    )
+                    if self._metrics:
+                        self._metrics.record_load_operation_failure(elapsed_ms)
+                        if not exhaustion_recorded:
+                            self._metrics.record_retries_exhausted()
+                            exhaustion_recorded = True
+                    break
+
+                if "remote_call" in locals():
+                    remote_call.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await remote_call
+
                 # Wall-clock timeout = operation too slow/hung
                 # DON'T retry: Remote may still be loading, but waiting longer is
                 # unreasonable.
                 # Next request will re-issue ensure_model_loaded() which is idempotent
-                elapsed_ms = (time.monotonic() - attempt_start) * 1000
                 last_error = _load_error(
                     ErrorCode.LOAD_TIMEOUT,
-                    f"Timeout loading {model_id} on {gateway.gateway_id} "
-                    f"after {self._config.load_timeout}s",
+                    f"Timeout loading {model_id} on {gateway.gateway_id} after "
+                    f"{_format_elapsed_ms(elapsed_ms)} "
+                    f"(budget {self._config.load_timeout}s)",
                     model_id,
                     gateway.gateway_id,
+                    elapsed_ms=int(elapsed_ms),
+                    timeout_budget_s=self._config.load_timeout,
                 )
                 logger.error(
-                    f"⏱️ Load timeout for {model_id} after {elapsed_ms:.0f}ms - "
+                    f"⏱️ Load timeout for {model_id} after "
+                    f"{_format_elapsed_ms(elapsed_ms)} - "
                     "not retrying (Remote may still be loading; "
                     "telemetry will update state)"
                 )

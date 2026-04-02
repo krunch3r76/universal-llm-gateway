@@ -4,6 +4,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
+from ..assertion_quality import validate_assertion
 from ..claim_hash import compute_claim_hash
 from ..db import cortex_conn, decode_row, json_encode, query
 from ..models import (
@@ -29,7 +30,8 @@ _ASSERTION_COLS = (
     "id, entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by, "
     "derivation_type, chunk_id, reasoning_summary, is_atomic, is_decontextualized, "
     "observed_at, valid_from, valid_until, superseded_by, "
-    "review_status, reviewer, reviewed_at, review_notes, created_at"
+    "review_status, reviewer, reviewed_at, review_notes, "
+    "resolution_status, fulfillment_assertion_id, quality_score, created_at"
 )
 
 _VALID_REVIEW_STATUS = {"committed", "flagged", "staged", "rejected"}
@@ -127,15 +129,44 @@ def list_assertions(
 def create_assertion(
     body: AssertionCreate, response: Response
 ) -> AssertionCreateResponse:
-    """Create an assertion with idempotent dedup via claim_hash.
+    """Create an assertion with quality validation and idempotent dedup.
 
-    Exact duplicate claims (same entity + normalized text) are silent no-ops
-    that return the existing assertion with ``was_new: false``.
+    v2.4 enforcement: hard rejects return 422 with specific diagnostics.
+    Warnings route the assertion to staging (review_status='staged').
+    Quality score is computed and stored on every new assertion.
     """
     if body.confidence not in _VALID_CONFIDENCE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid confidence: {body.confidence!r}. Must be one of {sorted(_VALID_CONFIDENCE)}",
+        )
+
+    validation = validate_assertion(body)
+
+    if validation.rejected:
+        diagnostics = [
+            {"field": d.field, "message": d.message} for d in validation.hard_reject
+        ]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "assertion_quality_rejected",
+                "quality_score": validation.quality_score,
+                "diagnostics": diagnostics,
+            },
+        )
+
+    review_status: str | None = None
+    validation_warnings: list[dict[str, str]] | None = None
+    if validation.route_to_staging:
+        review_status = "staged"
+        validation_warnings = [
+            {"field": d.field, "message": d.message} for d in validation.warnings
+        ]
+        logger.info(
+            "Assertion routed to staging (quality_score=%.2f): %s",
+            validation.quality_score,
+            body.entity_id,
         )
 
     claim_hash = compute_claim_hash(body.entity_id, body.claim)
@@ -155,8 +186,9 @@ def create_assertion(
             "INSERT OR IGNORE INTO assertions ("
             "  entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by,"
             "  chunk_id, derivation_type, reasoning_summary, observed_at,"
-            "  valid_from, valid_until, is_atomic, is_decontextualized, claim_hash"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  valid_from, valid_until, is_atomic, is_decontextualized, claim_hash,"
+            "  resolution_status, fulfillment_assertion_id, quality_score, review_status"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.entity_id,
                 body.claim,
@@ -174,6 +206,10 @@ def create_assertion(
                 body.is_atomic,
                 body.is_decontextualized,
                 claim_hash,
+                body.resolution_status,
+                body.fulfillment_assertion_id,
+                validation.quality_score,
+                review_status,
             ),
         )
         conn.commit()
@@ -227,7 +263,10 @@ def create_assertion(
             item.id,
         )
     return AssertionCreateResponse(
-        was_new=was_new, item=item, near_duplicate_warning=near_dup_warning
+        was_new=was_new,
+        item=item,
+        near_duplicate_warning=near_dup_warning,
+        validation_warnings=validation_warnings,
     )
 
 
@@ -281,6 +320,8 @@ def update_assertion(assertion_id: int, body: AssertionUpdate) -> AssertionItem:
             "review_status": body.review_status,
             "reviewer": body.reviewer,
             "reviewed_at": body.reviewed_at,
+            "resolution_status": body.resolution_status,
+            "fulfillment_assertion_id": body.fulfillment_assertion_id,
         }
         sets: list[str] = []
         params: list[object] = []

@@ -53,7 +53,6 @@ steps:
     generation_parameters:
       temperature: 0.2
       max_tokens: 32768
-      tool_choice: "none"
       response_format:
         type: json_object
         schema:

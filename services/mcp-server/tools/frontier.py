@@ -20,6 +20,19 @@ from ._frontier_core import (
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
+_GROK_OPPIE_BOOT_REFS: dict[str, str] = {
+    "mcp": "notes/system/prompts/oppie-seed-mcp-v1.4.md",
+    "team": "notes/system/prompts/oppie-seed-mcp-v1.4.md",
+    "full": "notes/system/prompts/oppie-seed-full-v1.4.md",
+}
+_GROK_OPPIE_MODELS: set[str] = {"grok-4.20-multi-agent"}
+
+_CLAUDE_BOOT_REF_DEFAULTS: dict[str, str] = {
+    "mcp": "notes/system/prompts/api-claude-seed-v1.0.md",
+    "team": "notes/system/prompts/api-claude-seed-v1.0.md",
+    "full": "notes/system/prompts/claude-seed-full-v1.0.md",
+}
+
 
 def register_frontier_tools(mcp: FastMCP) -> None:
     """Register grok_generate, claude_generate, and frontier_generate (compat)."""
@@ -27,7 +40,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     def grok_generate(
         messages: list[dict[str, Any]],
-        model: str = "grok-4.20-reasoning",
+        model: str = "grok-4.20-multi-agent",
         system: str = "",
         max_output_tokens: int | None = None,
         temperature: float | None = None,
@@ -49,13 +62,28 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Generate with xAI Grok models via Stargate provider-native endpoint.
 
-        Default mode is tool-aware frontier consult work: ``boot="mcp"`` and
-        MCP injection are enabled unless the caller opts out with
-        ``boot="none"`` or ``inject_mcp=False``.
+        **Model routing** (two orthogonal axes — model selects capability,
+        boot selects identity/context):
+
+        - ``grok-4.20-multi-agent`` + boot=mcp/team/full → Oppie persona seed
+          auto-loaded. Use for multi-agent coordination, Triad consultation.
+        - ``grok-4.20`` (reasoning) → neutral, no persona seed. Use for deep
+          chain-of-thought reasoning without persona overhead.
+        - ``grok-3-mini`` → neutral, no persona seed. Use for quick advisory
+          checks via agent_consult.
+
+        Default to neutral reasoning Grok unless you specifically need Oppie's
+        team-lead context, tool mastery enforcement, or multi-agent orchestration.
+        Any model can still force a persona seed via explicit ``boot_ref``.
 
         Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="grok_generate")
         """
         full_model = model if "/" in model else f"xai/{model}"
+
+        if boot_ref is None:
+            base_model = model.split("/")[-1] if "/" in model else model
+            if base_model in _GROK_OPPIE_MODELS:
+                boot_ref = _GROK_OPPIE_BOOT_REFS.get(boot)
 
         thinking: dict[str, Any] | None = None
         if reasoning_effort or include_encrypted_reasoning:
@@ -105,7 +133,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     def claude_generate(
         messages: list[dict[str, Any]],
-        model: str = "claude-sonnet-4",
+        model: str = "claude-sonnet-4-6",
         system: str = "",
         max_tokens: int | None = None,
         temperature: float | None = None,
@@ -126,13 +154,19 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Generate with Anthropic Claude models via Stargate provider-native endpoint.
 
-        Default mode is tool-aware frontier consult work: ``boot="mcp"`` and
-        MCP injection are enabled unless the caller opts out with
+        Default boot=mcp loads the API Claude seed — an MCP analytical operator
+        identity (subordinate to caller, tool-disciplined, journal-capable).
+        This is distinct from Web Claude (strategic advisor) and Cursor Claude.
+
+        MCP injection is enabled unless the caller opts out with
         ``boot="none"`` or ``inject_mcp=False``.
 
         Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="claude_generate")
         """
         full_model = model if "/" in model else f"anthropic/{model}"
+
+        if boot_ref is None:
+            boot_ref = _CLAUDE_BOOT_REF_DEFAULTS.get(boot)
 
         thinking_dict: dict[str, Any] | None = None
         if isinstance(thinking, str):

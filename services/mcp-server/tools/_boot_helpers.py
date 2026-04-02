@@ -5,6 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from ._operational_context import (
+    AGENT_PERSONA_SEEDS as AGENT_PERSONA_SEEDS,  # noqa: PLC0414
+)
+from ._operational_context import (
+    render_operational_context as render_operational_context,  # noqa: PLC0414
+)
+
 
 def safe_list(raw: dict[str, Any] | list[Any], key: str = "items") -> list[Any]:
     """Extract a list from an API response, returning [] on error."""
@@ -40,6 +47,10 @@ def build_gated_entities(
     return result
 
 
+_MAX_NARRATIVE_TOKENS = 2000
+_CHARS_PER_TOKEN = 4
+
+
 def render_boot_narrative(
     *,
     boot_sections: dict[str, Any] | None = None,
@@ -58,12 +69,27 @@ def render_boot_narrative(
     gated_entities: list[dict[str, Any]] | None = None,
     edges_supersedes: list[dict[str, Any]] | None = None,
     edges_reasoning: list[dict[str, Any]] | None = None,
+    commitments: list[dict[str, Any]] | None = None,
+    legal_contacts: list[dict[str, Any]] | None = None,
+    max_narrative_tokens: int = _MAX_NARRATIVE_TOKENS,
 ) -> str:
-    """Render boot briefing as Markdown narrative.
+    """Render boot briefing as Markdown narrative with token budget enforcement.
 
     Sections with None values are omitted entirely. This enables
     persona-scoped boot: Cursor skips deadlines, investigations,
     and review queue; Web gets everything.
+
+    If the narrative exceeds max_narrative_tokens, sections are truncated
+    from the bottom of the priority stack:
+    1. Deadlines (never truncated)
+    2. Open investigations
+    3. Agent bus (unread summary)
+    4. Continuation state + todos
+    5. Recent sessions (2-3 most recent)
+    6. Session edges
+    7. Temporal assertions
+    8. Commitments + legal contacts
+    9. Gated entities + key entity one-liners (truncated most aggressively)
     """
     import logging
 
@@ -229,7 +255,29 @@ def render_boot_narrative(
                 val = s.get(field)
                 if val:
                     items = list(val)
-                    parts.append(f"**{label}**: {', '.join(str(i) for i in items)}")
+                    fenced = [f"> {str(i)}" for i in items]
+                    parts.append(f"**{label}**:\n" + "\n".join(fenced))
+
+    if commitments is not None:
+        if commitments:
+            parts.append(f"\n## Open Commitments ({len(commitments)})")
+            for c in commitments:
+                name = c.get("entity_name", c.get("entity_id", "?"))
+                vf = c.get("valid_from", "")
+                since = f" (since {vf})" if vf else ""
+                parts.append(f"- **{name}**{since} — {c.get('claim', '')}")
+        else:
+            parts.append("\n## Open Commitments\nNo pending commitments.")
+
+    if legal_contacts:
+        parts.append(f"\n## Legal Matter Contacts ({len(legal_contacts)})")
+        for contact in legal_contacts:
+            name = contact.get("entity_name", contact.get("entity_id", "?"))
+            etype = contact.get("entity_type", "?")
+            parts.append(f"\n### {name} ({etype})")
+            for a in contact.get("assertions", []):
+                conf = a.get("confidence", "?")
+                parts.append(f"- [{conf}] {a.get('claim', '')}")
 
     if suspected is not None or hypothesized is not None:
         parts.append("\n## Open Investigations")
@@ -261,4 +309,44 @@ def render_boot_narrative(
     if review_total is not None:
         parts.append(f"\n## Review Queue\n{review_total} item(s) pending review.")
 
-    return "\n".join(parts)
+    narrative = "\n".join(parts)
+    max_chars = max_narrative_tokens * _CHARS_PER_TOKEN
+    if len(narrative) <= max_chars:
+        return narrative
+
+    _logger.warning(
+        "boot_narrative %d chars exceeds budget %d (%d tokens). Truncating.",
+        len(narrative),
+        max_chars,
+        max_narrative_tokens,
+    )
+    truncation_targets = [
+        "## Key Entities",
+        "## Open Commitments",
+        "## Legal Matter Contacts",
+        "## Temporally Active",
+        "## Upcoming",
+        "## Session Edges",
+        "## Recent Sessions",
+    ]
+    for target in truncation_targets:
+        if len(narrative) <= max_chars:
+            break
+        idx = narrative.find(f"\n{target}")
+        if idx > 0:
+            next_section = narrative.find("\n## ", idx + len(target) + 2)
+            if next_section > 0:
+                narrative = narrative[:idx] + narrative[next_section:]
+            else:
+                narrative = narrative[:idx]
+
+    if len(narrative) > max_chars:
+        narrative = narrative[:max_chars]
+
+    sections_removed = sum(
+        1 for t in truncation_targets if f"\n{t}" not in narrative
+    )
+    if sections_removed:
+        narrative += f"\n\n*[{sections_removed} section(s) truncated for token budget]*"
+
+    return narrative

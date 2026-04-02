@@ -25,6 +25,7 @@ from .routes import (
     entity_status,
     extraction_runs,
     gated,
+    ingest,
     relationships,
     salience,
     session_journals,
@@ -103,6 +104,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(boot.router)
     app.include_router(extraction_runs.router)
     app.include_router(gated.router)
+    app.include_router(ingest.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:
