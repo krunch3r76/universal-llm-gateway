@@ -735,7 +735,13 @@ class ResponsesAPIAdapter:
                     }
                 )
 
-            elif item_type in {"web_search_call", "code_interpreter_call"}:
+            elif item_type in {
+                "web_search_call",
+                "x_search_call",
+                "code_interpreter_call",
+                "file_search_call",
+                "mcp_call",
+            }:
                 server_tool_calls.append(item)
 
         # Fallback: output_text convenience field

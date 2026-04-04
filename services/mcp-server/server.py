@@ -35,6 +35,7 @@ from schema_compact import patch_fastmcp_tool_serialization
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
+
 from tools.agent_bus import register_agent_bus_tools
 from tools.agent_consult import register_agent_consult_tools
 from tools.browser import register_browser_tools
@@ -62,6 +63,8 @@ from tools.project import register_project_tools
 from tools.quality import register_quality_tools
 from tools.rag import register_rag_tools
 from tools.rag_articles import register_rag_article_tools
+from tools.security import register_security_tools
+from tools.security_js import register_security_js_tools
 from tools.sqlite import register_sqlite_tools
 from tools.web import register_web_tools
 
@@ -308,6 +311,8 @@ def _build_server() -> FastMCP:
     register_cortex_named_tools(mcp)
     register_llm_tools(mcp)
     register_frontier_tools(mcp)
+    register_security_tools(mcp)
+    register_security_js_tools(mcp)
 
     @mcp.tool()
     def health() -> dict[str, str]:
@@ -354,8 +359,10 @@ def _build_server() -> FastMCP:
         """File I/O across sandboxes (files, context, project). Both sandbox and op are REQUIRED.
 
         Use `binary=True` with `read` when another tool needs base64 file bytes
-        instead of decoded text. Use `move` to rename or relocate a file within
-        the selected sandbox. Prefer the markdown ops for large markdown docs.
+        instead of decoded text. Use `write_binary` (files sandbox only) to stage
+        base64-encoded binary files (PDFs, images) — pass the base64 string as
+        `content`. Use `move` to rename or relocate a file within the selected
+        sandbox. Prefer the markdown ops for large markdown docs.
 
         Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="fs")
         """

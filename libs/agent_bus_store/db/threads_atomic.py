@@ -18,6 +18,7 @@ def create_thread_with_turn(
     body: str,
     status: str = "open",
     after_turn: int | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], int, str, int]:
     """Atomically create a thread and its first turn in one transaction.
 
@@ -25,7 +26,7 @@ def create_thread_with_turn(
     The thread ID is auto-assigned. Both the thread and the turn are
     committed together - no partial state is possible.
     """
-    from .turns import UnreadTurnsExist
+    from .turns import UnreadTurnsExist, _insert_attachments
 
     ts = now()
     with connect() as conn:
@@ -57,6 +58,9 @@ def create_thread_with_turn(
         if cur.lastrowid is None:
             raise RuntimeError("Failed to insert turn: sqlite returned no row id")
         turn_id = cur.lastrowid
+
+        if attachments:
+            _insert_attachments(conn, turn_id, attachments)
 
     thread_detail = get_thread(thread_id)
     assert thread_detail is not None

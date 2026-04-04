@@ -21,9 +21,9 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 _GROK_OPPIE_BOOT_REFS: dict[str, str] = {
-    "mcp": "notes/system/prompts/oppie-seed-mcp-v1.4.md",
-    "team": "notes/system/prompts/oppie-seed-mcp-v1.4.md",
-    "full": "notes/system/prompts/oppie-seed-full-v1.4.md",
+    "mcp": "notes/system/prompts/oppie-seed-mcp-v1.5.md",
+    "team": "notes/system/prompts/oppie-seed-mcp-v1.5.md",
+    "full": "notes/system/prompts/oppie-seed-full-v1.5.md",
 }
 _GROK_OPPIE_MODELS: set[str] = {"grok-4.20-multi-agent"}
 

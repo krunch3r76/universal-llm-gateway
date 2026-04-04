@@ -116,6 +116,9 @@ if mcp_url:
 fp = (cfg.get('firefox_profile_dir') or '').strip()
 if fp:
     print('export FIREFOX_PROFILE_DIR=' + shlex.quote(str(Path(fp).expanduser())))
+web_fetcher = (cfg.get('WEB_FETCHER_URL') or cfg.get('web_fetcher_url') or '').strip()
+if web_fetcher:
+    print('export WEB_FETCHER_URL=' + shlex.quote(web_fetcher))
 ")"
 
 cd "$WORKSPACE_ROOT"

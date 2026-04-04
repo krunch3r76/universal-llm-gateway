@@ -22,6 +22,7 @@ from ..db import (
 )
 from ..models import AgentName
 from ..turns_models import (
+    Attachment,
     Turn,
     TurnCreate,
     TurnCreated,
@@ -36,6 +37,10 @@ router = APIRouter(dependencies=[Depends(require_token)])
 
 def _turn_from_row(r: dict[str, Any]) -> Turn:
     """Map one database turn row into the API model with alias fields."""
+    raw_attachments = r.get("attachments")
+    attachments = (
+        [Attachment(**a) for a in raw_attachments] if raw_attachments else None
+    )
     return Turn.model_validate(
         {
             "id": r["id"],
@@ -49,6 +54,7 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
             "supersedes_turn": r["supersedes_turn"],
             "created_at": r["created_at"],
             "read_at": r["read_at"],
+            "attachments": attachments,
         }
     )
 
@@ -61,6 +67,7 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
 async def create_turn(turn: TurnCreate) -> TurnCreated:
     """Create one turn, enforcing unread and status invariants from storage logic."""
     turn.thread = normalize_thread_id(turn.thread)
+    att_dicts = [a.model_dump() for a in turn.attachments] if turn.attachments else None
     try:
         turn_id, ts, turn_number = insert_turn(
             thread=turn.thread,
@@ -72,6 +79,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             thread_slug=turn.thread_slug,
             after_turn=turn.after_turn,
             supersedes_turn=turn.supersedes_turn,
+            attachments=att_dicts,
         )
     except UnreadTurnsExist as e:
         raise HTTPException(

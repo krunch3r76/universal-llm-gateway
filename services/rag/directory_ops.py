@@ -86,6 +86,7 @@ async def index_directory_contents(
     metadata_overrides: dict[str, str | int | float | bool] | None,
     on_index_error: OnIndexErrorFn,
     force: bool = False,
+    operation: str | None = None,
 ) -> DirectoryIndexTotals:
     totals = DirectoryIndexTotals()
 
@@ -96,7 +97,12 @@ async def index_directory_contents(
     # ∀ file_path: per-source asyncio.Lock in _index_file prevents double-indexing.
     async def _process(fp: Path) -> IndexResult | None:
         try:
-            return await index_file(fp, metadata_overrides, force=force)
+            return await index_file(
+                fp,
+                metadata_overrides,
+                force=force,
+                operation=operation,
+            )
         except Exception as exc:
             on_index_error(fp, exc)
             return None

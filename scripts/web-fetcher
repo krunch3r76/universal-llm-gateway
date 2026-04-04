@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Start the web fetcher service.
+
+Run on a host with a clean (residential) IP to bypass Cloudflare
+managed challenges that block datacenter IPs and headless browsers.
+
+    scripts/web-fetcher --port 8765
+
+To reuse a real Chrome session that already solved Cloudflare:
+
+    BROWSER_CDP_URL=http://127.0.0.1:9222 scripts/web-fetcher --port 8765
+
+The MCP server connects to this service via WEB_FETCHER_URL env var.
+
+Dependencies (install in the target venv):
+    pip install playwright playwright-stealth trafilatura fastapi uvicorn
+    playwright install chromium
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Web fetcher with CF bypass")
+    parser.add_argument("--host", default="0.0.0.0", help="Bind address")
+    parser.add_argument("--port", type=int, default=8765, help="Listen port")
+    parser.add_argument(
+        "--headed",
+        action="store_true",
+        help="Run browser in headed mode (requires DISPLAY). Needed for CF Turnstile.",
+    )
+    parser.add_argument(
+        "--cdp-url",
+        help="Attach to an already-running Chrome/Chromium debug session.",
+    )
+    parser.add_argument(
+        "--log-level",
+        default="info",
+        choices=["debug", "info", "warning", "error"],
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper()),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    import os
+
+    import uvicorn
+    from web_fetcher import create_app
+
+    if args.cdp_url:
+        os.environ["BROWSER_CDP_URL"] = args.cdp_url
+
+    headless: bool | None = False if args.headed else None
+    app = create_app(headless=headless)
+    uvicorn.run(app, host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()

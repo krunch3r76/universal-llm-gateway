@@ -544,6 +544,8 @@ def _detect_vision_architecture(model_id: str) -> str | None:
         return "qwen3_5"
     if "qwen2" in model_lower and "vl" in model_lower:
         return "qwen2_vl"
+    if "gemma-4" in model_lower or "gemma4" in model_lower:
+        return "gemma4"
     elif "llava" in model_lower:
         if "1.6" in model_lower or "next" in model_lower:
             return "llava_1_6"

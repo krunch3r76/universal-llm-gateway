@@ -164,14 +164,16 @@ class AuthMiddleware:
         if path == "/clip":
             auth = request.headers.get("authorization", "")
             if request.method == "OPTIONS":
-                response = JSONResponse({"status": "ok"}, headers=self._CORS_HEADERS)
+                response = JSONResponse(
+                    {"status": "ok"}, headers=self._CLIP_CORS_HEADERS
+                )
                 await response(scope, receive, send)
                 return
-            if auth != f"Bearer {self._token}":
+            if not self._is_static_token_authorized(auth):
                 response = JSONResponse(
                     {"error": "Unauthorized"},
                     status_code=401,
-                    headers=self._CORS_HEADERS,
+                    headers=self._CLIP_CORS_HEADERS,
                 )
                 await response(scope, receive, send)
                 return
@@ -182,7 +184,7 @@ class AuthMiddleware:
             response = JSONResponse(
                 {"error": "Method not allowed"},
                 status_code=405,
-                headers=self._CORS_HEADERS,
+                headers=self._CLIP_CORS_HEADERS,
             )
             await response(scope, receive, send)
             return
@@ -342,7 +344,7 @@ class AuthMiddleware:
                 return JSONResponse(
                     {"error": "Payload too large (5MB limit)"},
                     status_code=413,
-                    headers=self._CORS_HEADERS,
+                    headers=self._CLIP_CORS_HEADERS,
                 )
 
         try:
@@ -352,7 +354,7 @@ class AuthMiddleware:
             return JSONResponse(
                 {"error": "Invalid JSON"},
                 status_code=400,
-                headers=self._CORS_HEADERS,
+                headers=self._CLIP_CORS_HEADERS,
             )
 
         url = data.get("url", "").strip()
@@ -365,7 +367,7 @@ class AuthMiddleware:
             return JSONResponse(
                 {"error": "Missing required field: content"},
                 status_code=400,
-                headers=self._CORS_HEADERS,
+                headers=self._CLIP_CORS_HEADERS,
             )
 
         content, extracted = normalize_clip_content(content)
@@ -410,14 +412,14 @@ chars: {len(content)}
                 return JSONResponse(
                     {"error": "Failed to save clip"},
                     status_code=500,
-                    headers=self._CORS_HEADERS,
+                    headers=self._CLIP_CORS_HEADERS,
                 )
         else:
             logger.error("clip: unable to allocate unique filename for slug '%s'", slug)
             return JSONResponse(
                 {"error": f"Unable to allocate unique clip filename for slug '{slug}'"},
                 status_code=409,
-                headers=self._CORS_HEADERS,
+                headers=self._CLIP_CORS_HEADERS,
             )
 
         logger.info(
@@ -425,5 +427,5 @@ chars: {len(content)}
         )
         return JSONResponse(
             {"status": "clipped", "clip_id": filename},
-            headers=self._CORS_HEADERS,
+            headers=self._CLIP_CORS_HEADERS,
         )

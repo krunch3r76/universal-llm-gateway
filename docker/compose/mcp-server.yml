@@ -55,6 +55,7 @@ services:
       - TASKS_READ_ONLY=${TASKS_READ_ONLY:-true}
       - PROJECT_READ_ONLY=${PROJECT_READ_ONLY:-true}
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
+      - WEB_FETCHER_URL=${WEB_FETCHER_URL:-}
       - SQLITE_CONFIG_PATH=/data/sqlite-config.yaml
       - STARGATE_URL=${STARGATE_URL:-http://io:9999}
       - MCP_SHARED_IMAGE_DIR=/data/files/.shared-images

@@ -92,15 +92,22 @@ def get_thread_summary(thread_id: str, *, recent: int = 3) -> dict[str, Any] | N
 
 
 def get_thread_turns_asc(thread_id: str) -> list[dict[str, Any]]:
-    """All turns for a thread ordered by turn_number ASC."""
+    """All turns for a thread ordered by turn_number ASC, with attachments."""
+    from .turns import _get_attachments_for_turns
+
     with connect() as conn:
-        return [
+        rows = [
             dict(row)
             for row in conn.execute(
                 "SELECT * FROM turns WHERE thread = ? ORDER BY turn_number ASC",
                 (thread_id,),
             ).fetchall()
         ]
+        turn_ids = [r["id"] for r in rows]
+        att_map = _get_attachments_for_turns(conn, turn_ids)
+        for row in rows:
+            row["attachments"] = att_map.get(row["id"])
+        return rows
 
 
 def _seed_auto_id(conn: sqlite3.Connection) -> str:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
 from .connection import connect, now
@@ -20,6 +21,52 @@ class TurnAlreadyAcknowledged(Exception):  # noqa: N818
     """Raised when attempting to modify a turn whose read_at is already set."""
 
 
+# ── Attachment helpers ───────────────────────────────────────────────
+
+
+def _insert_attachments(
+    conn: sqlite3.Connection,
+    turn_id: int,
+    attachments: list[dict[str, Any]],
+) -> None:
+    """Insert attachment metadata rows for a turn within an existing transaction."""
+    for att in attachments:
+        conn.execute(
+            "INSERT INTO turn_attachments "
+            "(turn_id, filename, path, mime_type, size_bytes, sha256) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                turn_id,
+                att["filename"],
+                att["path"],
+                att.get("mime_type"),
+                att.get("size_bytes"),
+                att.get("sha256"),
+            ),
+        )
+
+
+def _get_attachments_for_turns(
+    conn: sqlite3.Connection, turn_ids: list[int]
+) -> dict[int, list[dict[str, Any]]]:
+    """Fetch attachments grouped by turn_id."""
+    if not turn_ids:
+        return {}
+    placeholders = ",".join("?" for _ in turn_ids)
+    rows = conn.execute(
+        f"SELECT * FROM turn_attachments WHERE turn_id IN ({placeholders})",
+        turn_ids,
+    ).fetchall()
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for r in rows:
+        d = dict(r)
+        grouped.setdefault(d["turn_id"], []).append(d)
+    return grouped
+
+
+# ── Turn CRUD ────────────────────────────────────────────────────────
+
+
 def insert_turn(
     *,
     thread: str,
@@ -31,6 +78,7 @@ def insert_turn(
     thread_slug: str | None = None,
     after_turn: int | None = None,
     supersedes_turn: int | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> tuple[int, str, int]:
     """Returns (turn_id, created_at, turn_number).
 
@@ -108,7 +156,12 @@ def insert_turn(
 
         if cur.lastrowid is None:
             raise RuntimeError("Failed to insert turn: sqlite returned no row id")
-        return cur.lastrowid, ts, turn_number
+
+        turn_id = cur.lastrowid
+        if attachments:
+            _insert_attachments(conn, turn_id, attachments)
+
+        return turn_id, ts, turn_number
 
 
 def get_turns(
@@ -167,6 +220,13 @@ def get_turns(
         if compact:
             for row in rows:
                 row["body"] = None
+                row["attachments"] = None
+        else:
+            turn_ids = [r["id"] for r in rows]
+            att_map = _get_attachments_for_turns(conn, turn_ids)
+            for row in rows:
+                row["attachments"] = att_map.get(row["id"])
+
         return rows
 
 
@@ -248,13 +308,18 @@ def update_turn(
 
 
 def get_turn_by_number(thread: str, turn_number: int) -> dict[str, Any] | None:
-    """Look up a single turn by thread + turn_number."""
+    """Look up a single turn by thread + turn_number, including attachments."""
     with connect() as conn:
         row = conn.execute(
             "SELECT * FROM turns WHERE thread = ? AND turn_number = ?",
             (thread, turn_number),
         ).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        d = dict(row)
+        att_map = _get_attachments_for_turns(conn, [d["id"]])
+        d["attachments"] = att_map.get(d["id"])
+        return d
 
 
 def delete_turn(turn_id: int, *, force: bool = False) -> dict[str, Any]:

@@ -39,6 +39,7 @@ def _post_impl(
     body: str,
     from_agent: str,
     summary: str | None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Atomic thread+turn creation via POST /threads/with-turn."""
     payload: dict[str, Any] = {
@@ -52,6 +53,8 @@ def _post_impl(
     }
     if summary is not None:
         payload["summary"] = summary
+    if attachments:
+        payload["attachments"] = attachments
 
     result = _relay("agent-bus", "POST", "/threads/with-turn", body=payload)
     if "error" in result:
@@ -84,8 +87,9 @@ def _reply_impl(
     from_agent: str,
     status: str,
     mark_read: bool,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    payload = {
+    payload: dict[str, Any] = {
         "thread": thread,
         "from": from_agent,
         "to": to,
@@ -94,6 +98,8 @@ def _reply_impl(
         "status": status,
         "after_turn": after_turn,
     }
+    if attachments:
+        payload["attachments"] = attachments
     result = _relay("agent-bus", "POST", "/turns", body=payload)
 
     if "error" in result:
@@ -373,6 +379,7 @@ def _post_dispatch(
     body: str = "",
     from_agent: str = "web",
     summary: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not slug or not to or not subject or not body:
         return {"error": "post requires: slug, to, subject, body"}
@@ -383,6 +390,7 @@ def _post_dispatch(
         body=body,
         from_agent=from_agent,
         summary=summary,
+        attachments=attachments,
     )
 
 
@@ -396,6 +404,7 @@ def _reply_dispatch(
     from_agent: str = "web",
     status: str = "open",
     mark_read: bool = False,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not thread or not to or not subject or not body or after_turn < 1:
         return {"error": "reply requires: thread, to, subject, body, after_turn"}
@@ -408,6 +417,7 @@ def _reply_dispatch(
         from_agent=from_agent,
         status=status,
         mark_read=mark_read,
+        attachments=attachments,
     )
 
 
@@ -487,9 +497,7 @@ def _delete_turn_dispatch(
     return _delete_turn_impl(thread=thread, turn_number=turn_number, force=force)
 
 
-def _mark_read_dispatch(
-    *, thread: str = "", turn_number: int = 0
-) -> dict[str, Any]:
+def _mark_read_dispatch(*, thread: str = "", turn_number: int = 0) -> dict[str, Any]:
     """Mark a specific turn as read. Clears it from unread counts."""
     if not thread or turn_number < 1:
         return {"error": "mark_read requires: thread, turn_number (>= 1)"}

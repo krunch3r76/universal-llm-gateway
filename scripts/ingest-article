@@ -72,6 +72,7 @@ SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
     "code-transformation": "code_transformation",
     "prompt-injection": "prompt_injection",
     "constitutional-ai": "constitutional_ai",
+    "bug-bounty-research": "bug_bounty_research",
 }
 
 

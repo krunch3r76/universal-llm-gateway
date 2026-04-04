@@ -11,6 +11,7 @@ Supported write formats: .md, .txt, .csv, .docx, .pdf, .yaml, .yml.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import io
 import logging
@@ -49,6 +50,7 @@ _ALLOWED_WRITE_SUFFIXES = {
 }
 _ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
 _EDITABLE_SUFFIXES = {".md", ".txt"}
+_BINARY_MAX_BYTES = 20 * 1024 * 1024
 
 
 def _normalize_files_reference(path: str) -> str:
@@ -565,6 +567,101 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         logger.debug("list_files: %s → %d files", target, len(files))
         return {"files": files}
 
+    def _write_binary_to_sandbox(rel_path: str, content_base64: str) -> dict[str, Any]:
+        """Decode base64 and write binary bytes to the sandbox atomically.
+
+        No extension restrictions — the container sandbox is the security
+        boundary. Any file type is accepted.
+        """
+        dest = _safe_path(rel_path)
+        try:
+            raw = base64.b64decode(content_base64, validate=True)
+        except binascii.Error as exc:
+            record(
+                "mcp.tool.file.write_failed",
+                path=rel_path,
+                reason="invalid_base64",
+            )
+            raise ValueError("content is not valid base64") from exc
+
+        if len(raw) > _BINARY_MAX_BYTES:
+            raise ValueError(
+                f"Decoded binary ({len(raw)} bytes) exceeds "
+                f"{_BINARY_MAX_BYTES // (1024 * 1024)}MB limit"
+            )
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = dest.with_suffix(dest.suffix + ".tmp")
+        try:
+            temp_path.write_bytes(raw)
+            os.replace(temp_path, dest)
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
+
+        record(
+            "mcp.tool.file.written",
+            path=rel_path,
+            resolved=str(dest),
+            bytes=len(raw),
+            binary=True,
+        )
+        logger.debug("write_binary: wrote %s (%d bytes)", dest, len(raw))
+        return {"status": "written", "path": str(dest), "bytes": len(raw)}
+
+    def _append_binary_to_sandbox(rel_path: str, content_base64: str) -> dict[str, Any]:
+        """Decode base64 and append binary bytes to an existing sandbox file.
+
+        Creates the file if it doesn't exist. Each chunk must be
+        independently valid base64. The total file size is capped at
+        _BINARY_MAX_BYTES.
+        """
+        dest = _safe_path(rel_path)
+        try:
+            raw = base64.b64decode(content_base64, validate=True)
+        except binascii.Error as exc:
+            record(
+                "mcp.tool.file.write_failed",
+                path=rel_path,
+                reason="invalid_base64",
+            )
+            raise ValueError("content is not valid base64") from exc
+
+        current_size = dest.stat().st_size if dest.exists() else 0
+        if current_size + len(raw) > _BINARY_MAX_BYTES:
+            raise ValueError(
+                f"Appending {len(raw)} bytes to {current_size}-byte file "
+                f"would exceed {_BINARY_MAX_BYTES // (1024 * 1024)}MB limit"
+            )
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with dest.open("ab") as fh:
+            fh.write(raw)
+
+        final_size = dest.stat().st_size
+        record(
+            "mcp.tool.file.written",
+            path=rel_path,
+            resolved=str(dest),
+            bytes=len(raw),
+            total_bytes=final_size,
+            binary=True,
+            append=True,
+        )
+        logger.debug(
+            "append_binary: appended %d bytes to %s (total %d)",
+            len(raw),
+            dest,
+            final_size,
+        )
+        return {
+            "status": "appended",
+            "path": str(dest),
+            "bytes_appended": len(raw),
+            "total_bytes": final_size,
+        }
+
     @mcp.tool()
     def files(
         op: str = "",
@@ -595,6 +692,14 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
           read   — read file contents (path required)
           read_multi — batch read multiple files (paths required)
           write  — create/overwrite file (path, content required)
+          write_binary — write base64-encoded binary data (path required,
+              content = base64 string). Use to stage PDFs, images, or other
+              binary files for downstream tools like document_ocr.
+          append_binary — append base64-encoded bytes to a file (path required,
+              content = base64 chunk). For chunked upload of large binaries:
+              first call write_binary with chunk 1, then append_binary for
+              each subsequent chunk. Each chunk must be independently valid
+              base64 (padded). Creates the file if it doesn't exist.
           append — append to end of file (path, content required)
           prepend — insert at beginning of file (path, content required)
           replace — find-and-replace in file (path, target required; content = replacement)
@@ -659,6 +764,18 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             if not content:
                 raise ValueError("'content' is required for write")
             return write_file(path, content)
+        if op == "write_binary":
+            if not path:
+                raise ValueError("'path' is required for write_binary")
+            if not content:
+                raise ValueError("'content' (base64) is required for write_binary")
+            return _write_binary_to_sandbox(path, content)
+        if op == "append_binary":
+            if not path:
+                raise ValueError("'path' is required for append_binary")
+            if not content:
+                raise ValueError("'content' (base64) is required for append_binary")
+            return _append_binary_to_sandbox(path, content)
         if op == "list":
             return list_files(path)
         if op in ("append", "prepend"):
@@ -693,5 +810,6 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             return move_file(path, target)
         raise ValueError(
             f"Unknown op: {op!r}. "
-            "Use: read, read_multi, write, append, prepend, replace, insert_at_line, list, move"
+            "Use: read, read_multi, write, write_binary, append_binary, "
+            "append, prepend, replace, insert_at_line, list, move"
         )

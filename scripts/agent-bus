@@ -9,8 +9,9 @@ Usage:
   agent-bus fetch --to cursor --last 1 --unread --mark-read
   agent-bus fetch --thread 049 --last 5
   agent-bus post --slug "my-topic" --to web --subject "Title" --body-file /tmp/body.md
+  agent-bus post --slug "my-topic" --to web --subject "Title" --body "text" --attach /tmp/file.json
   agent-bus reply --thread 049 --to web --subject "done" --body "Phase 1 shipped" --after-turn 3
-  agent-bus reply --thread 049 --to web --subject "done" --body-file /tmp/reply.md --after-turn 3
+  agent-bus reply --thread 049 --to web --subject "done" --body-file /tmp/reply.md --after-turn 3 --attach /tmp/results.csv
   agent-bus threads
   agent-bus threads --status closed
   agent-bus update-thread --thread 049 --status closed --summary "Entity resolution shipped"
@@ -24,7 +25,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import mimetypes
 import os
 import sys
 from pathlib import Path
@@ -88,6 +91,29 @@ def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
     print(json.dumps(result, indent=indent, default=str))
 
 
+def _resolve_attachments(paths: list[str] | None) -> list[dict[str, Any]] | None:
+    """Build attachment metadata from file paths, computing sha256 + size."""
+    if not paths:
+        return None
+    attachments: list[dict[str, Any]] = []
+    for p in paths:
+        fp = Path(p)
+        if not fp.exists():
+            print(f"Attachment not found: {p}", file=sys.stderr)
+            sys.exit(1)
+        data = fp.read_bytes()
+        attachments.append(
+            {
+                "filename": fp.name,
+                "path": str(fp.resolve()),
+                "mime_type": mimetypes.guess_type(fp.name)[0],
+                "size_bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+        )
+    return attachments
+
+
 def _cmd_post(args: argparse.Namespace, token: str) -> None:
     """Atomically create a new thread and first turn via POST /threads/with-turn."""
     if args.body_file:
@@ -108,6 +134,9 @@ def _cmd_post(args: argparse.Namespace, token: str) -> None:
     }
     if args.summary:
         payload["summary"] = args.summary
+    atts = _resolve_attachments(args.attach)
+    if atts:
+        payload["attachments"] = atts
     result = _request("POST", "/threads/with-turn", token, body=payload)
     print(json.dumps(result, indent=2, default=str))
 
@@ -120,7 +149,7 @@ def _cmd_reply(args: argparse.Namespace, token: str) -> None:
     else:
         print("reply requires --body or --body-file", file=sys.stderr)
         sys.exit(1)
-    payload = {
+    payload: dict[str, Any] = {
         "thread": args.thread,
         "from": args.from_agent,
         "to": args.to,
@@ -129,6 +158,9 @@ def _cmd_reply(args: argparse.Namespace, token: str) -> None:
         "status": args.status,
         "after_turn": args.after_turn,
     }
+    atts = _resolve_attachments(args.attach)
+    if atts:
+        payload["attachments"] = atts
     result = _request("POST", "/turns", token, body=payload)
     if args.mark_read:
         qs = urlencode({"thread": args.thread, "last": 1, "mark_read": "true"})
@@ -289,6 +321,12 @@ def _build_parser() -> argparse.ArgumentParser:
     po.add_argument("--body-file", help="Read body from file path")
     po.add_argument("--summary", help="Thread summary")
     po.add_argument("--from-agent", default="cursor", help="Sender (default: cursor)")
+    po.add_argument(
+        "--attach",
+        action="append",
+        metavar="PATH",
+        help="Attach a file (repeatable); auto-computes filename, size, sha256",
+    )
 
     # reply
     r = sub.add_parser("reply", help="Post a turn to a thread")
@@ -303,14 +341,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--status", default="open", help="Thread status hint (default: open)"
     )
     r.add_argument(
-        "--mark-read", action="store_true",
+        "--mark-read",
+        action="store_true",
         help="Mark this turn as read immediately (for self-closing notes)",
+    )
+    r.add_argument(
+        "--attach",
+        action="append",
+        metavar="PATH",
+        help="Attach a file (repeatable); auto-computes filename, size, sha256",
     )
 
     # append
-    ap = sub.add_parser(
-        "append", help="Append content to an unread turn's body"
-    )
+    ap = sub.add_parser("append", help="Append content to an unread turn's body")
     ap.add_argument("--thread", required=True)
     ap.add_argument("--turn", type=int, required=True, help="Turn number")
     ap.add_argument("--body", help="Inline text to append")
@@ -342,11 +385,16 @@ def _build_parser() -> argparse.ArgumentParser:
     u.add_argument("--summary", help="Thread summary")
     mark_grp = u.add_mutually_exclusive_group()
     mark_grp.add_argument(
-        "--mark-read", dest="mark_read", action="store_true", default=None,
+        "--mark-read",
+        dest="mark_read",
+        action="store_true",
+        default=None,
         help="Mark all turns read (default when closing)",
     )
     mark_grp.add_argument(
-        "--no-mark-read", dest="mark_read", action="store_false",
+        "--no-mark-read",
+        dest="mark_read",
+        action="store_false",
         help="Skip marking turns read even when closing",
     )
 
@@ -354,7 +402,8 @@ def _build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("delete-thread", help="Delete a thread and all its turns")
     d.add_argument("--thread", required=True)
     d.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Delete even if turns have been read",
     )
 
@@ -363,7 +412,8 @@ def _build_parser() -> argparse.ArgumentParser:
     dt.add_argument("--thread", required=True)
     dt.add_argument("--turn", type=int, required=True, help="Turn number")
     dt.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Delete even if the turn has been read",
     )
 

@@ -197,9 +197,9 @@ Pipeline configuration: `pipelines/rag/rag_context_v1/rag-context-v1-direct.yaml
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `POST /index` | POST | Index a single file |
-| `POST /reindex` | POST | Reindex a single file (re-chunk, re-embed, re-extract) |
+| `POST /reindex` | POST | Reindex a single file (re-chunk, re-embed, re-extract), even when unchanged on disk |
 | `POST /index_directory` | POST | Index all supported files in a directory |
-| `POST /reindex_directory` | POST | Reindex directory — removes stale sources, reindexes changed files |
+| `POST /reindex_directory` | POST | Reindex directory — removes stale sources and reruns walked files; `force=true` clears directory state first |
 | `POST /clear_directory` | POST | Remove all chunks under a directory path |
 | `POST /clear` | POST | Clear entire collection |
 

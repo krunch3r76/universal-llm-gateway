@@ -136,6 +136,68 @@ async def test_mcp_suffix_respects_tool_choice_none() -> None:
 
 
 @pytest.mark.asyncio
+async def test_xai_mcp_converts_multimodal_content_parts() -> None:
+    """image_url parts are converted to input_image for the Responses API."""
+    recorded: list[dict[str, object]] = []
+    adapter = _make_adapter(recorder=recorded)
+
+    await adapter.forward_chat(
+        {
+            "model": "xai/grok-4-fast-reasoning-mcp",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What is in this image?"},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": "data:image/png;base64,iVBORw0KGgo=",
+                                "detail": "high",
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert recorded
+    upstream = recorded[0]["body"]
+    assert isinstance(upstream, dict)
+    input_msgs = upstream["input"]
+    assert len(input_msgs) == 1
+    content = input_msgs[0]["content"]
+    assert content == [
+        {"type": "input_text", "text": "What is in this image?"},
+        {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,iVBORw0KGgo=",
+            "detail": "high",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_xai_mcp_preserves_string_content() -> None:
+    """Plain string content is passed through unchanged."""
+    recorded: list[dict[str, object]] = []
+    adapter = _make_adapter(recorder=recorded)
+
+    await adapter.forward_chat(
+        {
+            "model": "xai/grok-4-fast-reasoning-mcp",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
+
+    assert recorded
+    upstream = recorded[0]["body"]
+    assert isinstance(upstream, dict)
+    assert upstream["input"][0]["content"] == "hello"
+
+
+@pytest.mark.asyncio
 async def test_xai_mcp_max_tokens_maps_to_max_output_tokens() -> None:
     """max_tokens in the request maps to max_output_tokens for the Responses API."""
     recorded: list[dict[str, object]] = []

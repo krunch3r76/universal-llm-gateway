@@ -86,6 +86,13 @@ Shared vocabulary: "Cortex" = the knowledge graph, not the service · \
 "directive" = implement now · "ticket" = deferred work."""
 
 
+_MCP_GROUNDING_GUARD = """\
+Source discipline (invariant):
+∀ factual claim about people, decisions, entities, or events: ground in Cortex \
+via tool or tag [PARAMETRIC]. If Cortex has no data, state absence before \
+offering parametric knowledge. No unmarked parametric claims."""
+
+
 def _default_mcp_brief() -> str:
     lines = [
         "You are a frontier subagent dispatched by another frontier model.",
@@ -116,7 +123,10 @@ def _assemble_boot_context(boot: str, boot_ref: str | None) -> str:
             raise ValueError("boot_ref requires boot='mcp' (legacy alias: 'minimal')")
         return ""
     if boot_level == "mcp":
-        return _read_boot_ref(boot_ref) if boot_ref else _default_mcp_brief()
+        if boot_ref:
+            seed_content = _read_boot_ref(boot_ref)
+            return f"{_MCP_GROUNDING_GUARD}{_BOOT_SEPARATOR}{seed_content}"
+        return _default_mcp_brief()
     if boot_level == "team":
         parts = [_SUBAGENT_PREAMBLE]
         if boot_ref:

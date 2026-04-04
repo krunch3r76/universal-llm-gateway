@@ -78,6 +78,36 @@ logger = logging.getLogger(__name__)
 _CHARS_PER_TOKEN = 4  # Approximate characters per token for chunk sizing, used for chunk sizing heuristics.
 
 
+def _should_skip_cached_source(
+    *,
+    force: bool,
+    operation: str | None,
+    cached_source: object | None,
+    source_mtime_ns: int,
+    source_size_bytes: int,
+    schema_version: int,
+    extraction_model: str,
+    has_retriable_failures: bool,
+) -> bool:
+    """Return whether the stat-first cache may short-circuit this source.
+
+    `reindex` is an operator intent to rerun the indexing pipeline even when the
+    on-disk file is unchanged. `force` remains the stronger clean-slate switch
+    used by higher-level directory flows.
+    """
+    if force or operation == "reindex" or cached_source is None:
+        return False
+
+    cached = cached_source
+    return bool(
+        cached.mtime_ns == source_mtime_ns
+        and cached.size_bytes == source_size_bytes
+        and cached.extraction_schema_version == schema_version
+        and cached.extraction_model == extraction_model
+        and not has_retriable_failures
+    )
+
+
 def _derive_subdirectory(source: str, config: RagConfig) -> str:
     """Return the parent path of source relative to its configured watch root."""
     source_path = Path(source).expanduser().resolve()
@@ -194,15 +224,17 @@ async def _index_file_impl(
     extraction_model = state._config.knowledge_extraction.extraction_model
     source_stat = await asyncio.to_thread(file_path.stat)
 
-    if not force and prop_index is not None:
+    if prop_index is not None:
         cached_source = prop_index.get_indexed_source(source)
-        if (
-            cached_source is not None
-            and cached_source.mtime_ns == source_stat.st_mtime_ns
-            and cached_source.size_bytes == source_stat.st_size
-            and cached_source.extraction_schema_version == schema_version
-            and cached_source.extraction_model == extraction_model
-            and not prop_index.has_retriable_failures(source)
+        if _should_skip_cached_source(
+            force=force,
+            operation=operation,
+            cached_source=cached_source,
+            source_mtime_ns=source_stat.st_mtime_ns,
+            source_size_bytes=source_stat.st_size,
+            schema_version=schema_version,
+            extraction_model=extraction_model,
+            has_retriable_failures=prop_index.has_retriable_failures(source),
         ):
             await prop_index.clear_pending(source)
             if emit_skip_event and state._event_bus is not None:
@@ -416,12 +448,12 @@ async def _index_file_impl(
                         )
             if emit_skip_event and state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
-                            rag_file_skipped(
-                                file=source,
-                                reason="unchanged",
-                                operation_id=correlation_id,
-                                operation=operation,
-                            )
+                    rag_file_skipped(
+                        file=source,
+                        reason="unchanged",
+                        operation_id=correlation_id,
+                        operation=operation,
+                    )
                 )
             return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
 

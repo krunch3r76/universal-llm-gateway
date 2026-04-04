@@ -228,6 +228,7 @@ def register_admin_routes(
             metadata_overrides=metadata_overrides,
             on_index_error=_on_error,
             force=force,
+            operation="reindex" if is_reindex else "index",
         )
 
         if is_reindex:

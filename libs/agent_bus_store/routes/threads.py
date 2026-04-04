@@ -139,6 +139,12 @@ async def export_thread_route(thread_id: str) -> Response:
         if t.get("subject"):
             lines.append(f"**Subject:** {t['subject']}\n")
         lines.append(f"\n{t['body']}\n")
+        atts = t.get("attachments")
+        if atts:
+            lines.append("\n**Attachments:**\n")
+            for a in atts:
+                size = f" ({a['size_bytes']} bytes)" if a.get("size_bytes") else ""
+                lines.append(f"- `{a['filename']}`{size} — {a['path']}\n")
 
     content = "\n".join(lines)
     return Response(
@@ -179,6 +185,7 @@ async def create_thread_with_turn_route(
     body: ThreadWithTurnCreate,
 ) -> ThreadWithTurnCreated:
     """Atomically create a thread and its first turn in one transaction."""
+    att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
     try:
         thread_row, turn_id, ts, turn_number = create_thread_with_turn(
             slug=body.slug,
@@ -189,6 +196,7 @@ async def create_thread_with_turn_route(
             body=body.body,
             status=body.status,
             after_turn=body.after_turn,
+            attachments=att_dicts,
         )
     except UnreadTurnsExist as e:
         raise HTTPException(

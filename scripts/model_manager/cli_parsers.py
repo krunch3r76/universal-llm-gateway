@@ -96,6 +96,7 @@ def add_generate_parser(subparsers: argparse._SubParsersAction) -> None:
         choices=[
             "qwen2_vl",
             "qwen3_5",
+            "gemma4",
             "llava_1_5",
             "llava_1_6",
             "minicpm_v",
@@ -368,7 +369,7 @@ Resource caps:
     p.add_argument(
         "--vision-architecture",
         metavar="ARCH",
-        help="Vision architecture (e.g., minicpm_v, qwen2_vl, llava_1_5, llava_1_6, moondream). Auto-detected if not provided.",
+        help="Vision architecture (e.g., minicpm_v, qwen2_vl, qwen3_5, gemma4, llava_1_5, llava_1_6, moondream, mistral3). Auto-detected if not provided.",
     )
     p.add_argument(
         "--tokens-per-image",
@@ -509,7 +510,7 @@ Use --contexts to override with explicit values.
     p.add_argument(
         "--vision-architecture",
         metavar="ARCH",
-        help="Vision architecture (e.g., minicpm_v, qwen2_vl, llava_1_5, llava_1_6, moondream). Auto-detected if not provided.",
+        help="Vision architecture (e.g., minicpm_v, qwen2_vl, qwen3_5, gemma4, llava_1_5, llava_1_6, moondream, mistral3). Auto-detected if not provided.",
     )
     p.add_argument(
         "--tokens-per-image",

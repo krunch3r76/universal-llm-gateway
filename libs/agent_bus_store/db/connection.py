@@ -67,6 +67,17 @@ CREATE TABLE IF NOT EXISTS thread_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS turn_attachments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    turn_id    INTEGER NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+    filename   TEXT NOT NULL,
+    path       TEXT NOT NULL,
+    mime_type  TEXT,
+    size_bytes INTEGER,
+    sha256     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_turn ON turn_attachments(turn_id);
 """
 
 

@@ -12,11 +12,12 @@ import logging
 import os
 import re
 import socket
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import httpx
 import trafilatura
+from mcp.types import ImageContent, TextContent
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -221,3 +222,136 @@ def register_web_tools(mcp: FastMCP) -> None:
             "total_chars": total_chars,
             "truncated": truncated,
         }
+
+    @mcp.tool()
+    def browse(
+        url: str,
+        selector: str | None = None,
+        mode: str = "auto",
+        max_chars: int = _DEFAULT_MAX_CHARS,
+        raw: bool = False,
+        screenshot: bool = False,
+        screenshot_format: str = "jpeg",
+        screenshot_quality: int = 80,
+        screenshot_raw: bool = False,
+    ) -> list[TextContent | ImageContent] | dict[str, Any]:
+        """Fetch a URL via a browser proxy with Cloudflare bypass.
+
+        Routes through a web-fetcher service running on a clean-IP host.
+        Use instead of web_fetch when the target site uses Cloudflare
+        challenges, requires JavaScript rendering (SPAs), or returns 403
+        on direct HTTP.
+
+        Modes:
+          auto (default): Try plain HTTP first, fall back to headless
+            Chromium if Cloudflare challenge detected.
+          browser: Always use headless Chromium (slower, handles all JS/CF).
+          http: Plain HTTP only through the proxy host's IP (no browser).
+
+        When to prefer browse over web_fetch:
+          - Site returns 403 or "Just a moment..." on web_fetch
+          - HackenProof, Immunefi, or other CF-protected web3 sites
+          - React/Vue/Angular SPAs requiring JS rendering
+
+        Screenshot mode (screenshot=true):
+          Returns a full-page image as base64 in the "screenshot" field alongside
+          the text content. Use when SPA-rendered content (reward tables, stats
+          panels, Vue/React components) is lost by text extraction. Only works
+          in browser mode — ignored for httpx fast path.
+
+          By default (screenshot_raw=False) the image is returned as an MCP
+          ImageContent object alongside a TextContent block — Claude.ai renders
+          this directly in vision context. Set screenshot_raw=True to embed the
+          image as a base64 string in the JSON dict instead; prefer this for
+          API callers (Grok, OpenAI remote MCP) that may not handle ImageContent.
+
+          Defaults to JPEG at quality 80 (~150-300 KB). Use screenshot_format="png"
+          for lossless captures. Adjust screenshot_quality (1-100) to trade
+          size for fidelity (50 = ~80KB, 95 = ~500KB).
+
+        Args:
+            url: The URL to fetch (http or https).
+            selector: Optional CSS selector — extract only matching elements.
+            mode: "auto" (default), "browser", or "http".
+            max_chars: Maximum characters to return (default 36000).
+            raw: If True, return raw HTML instead of extracted text.
+            screenshot: If True, capture a full-page screenshot.
+            screenshot_format: "jpeg" (default, smaller) or "png" (lossless).
+            screenshot_quality: JPEG quality 1-100 (default 80). Ignored for PNG.
+            screenshot_raw: If True, embed screenshot as base64 in JSON dict
+                instead of returning ImageContent (for non-Claude MCP clients).
+
+        Returns:
+            Without screenshot: {url, title, content, total_chars, truncated,
+                method, cf_bypassed}
+            screenshot=True, screenshot_raw=False (default): [TextContent, ImageContent]
+                — Claude.ai renders the image directly in vision context.
+            screenshot=True, screenshot_raw=True: dict with added "screenshot"
+                (base64) and "screenshot_format" fields.
+        """
+        fetcher_url = os.environ.get("WEB_FETCHER_URL", "").strip()
+        if not fetcher_url:
+            return {
+                "error": (
+                    "WEB_FETCHER_URL not configured. Start the web-fetcher service "
+                    "on a clean-IP host and set WEB_FETCHER_URL=http://HOST:PORT "
+                    "in the MCP server environment."
+                ),
+                "url": url,
+            }
+
+        try:
+            with httpx.Client(timeout=45.0) as client:
+                resp = client.post(
+                    f"{fetcher_url.rstrip('/')}/fetch",
+                    json={
+                        "url": url,
+                        "selector": selector,
+                        "mode": mode,
+                        "max_chars": max_chars,
+                        "raw": raw,
+                        "screenshot": screenshot,
+                        "screenshot_format": screenshot_format,
+                        "screenshot_quality": screenshot_quality,
+                        # Always request raw bytes from fetcher; we decide the
+                        # return shape (ImageContent vs dict) here in the tool.
+                    },
+                )
+                resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("browse: fetcher HTTP error for %s: %s", url, exc)
+            return {
+                "error": f"Fetcher HTTP {exc.response.status_code}",
+                "url": url,
+            }
+        except httpx.RequestError as exc:
+            logger.warning("browse: fetcher request error for %s: %s", url, exc)
+            return {"error": f"Fetcher unreachable: {exc}", "url": url}
+
+        data = resp.json()
+        logger.info(
+            "browse: %s → %s chars via %s (cf_bypassed=%s, screenshot=%s)",
+            url,
+            data.get("total_chars"),
+            data.get("method"),
+            data.get("cf_bypassed"),
+            screenshot,
+        )
+
+        img_b64: str | None = data.pop("screenshot", None)
+        img_fmt: str = data.pop("screenshot_format", screenshot_format)
+
+        if screenshot and img_b64 and not screenshot_raw:
+            mime = "image/jpeg" if img_fmt == "jpeg" else "image/png"
+            import json as _json
+
+            return [
+                TextContent(type="text", text=_json.dumps(data)),
+                ImageContent(type="image", data=img_b64, mimeType=mime),
+            ]
+
+        if screenshot and img_b64 and screenshot_raw:
+            data["screenshot"] = img_b64
+            data["screenshot_format"] = img_fmt
+
+        return data

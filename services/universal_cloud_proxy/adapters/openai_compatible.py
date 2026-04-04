@@ -156,6 +156,37 @@ class OpenAICompatibleAdapter:
             and request_body.get("tool_choice") != "none"
         )
 
+    @staticmethod
+    def _convert_content_for_responses(
+        content: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Convert OpenAI chat-completions content parts to Responses API format.
+
+        Chat completions uses ``type: "text"`` / ``type: "image_url"`` with a
+        nested ``image_url.url`` field.  The xAI Responses API expects
+        ``type: "input_text"`` / ``type: "input_image"`` with ``image_url`` as
+        a flat URL string.
+        """
+        converted: list[dict[str, Any]] = []
+        for part in content:
+            if not isinstance(part, dict):
+                converted.append(part)
+                continue
+            part_type = part.get("type", "")
+            if part_type == "text":
+                converted.append({"type": "input_text", "text": part.get("text", "")})
+            elif part_type == "image_url":
+                img = part.get("image_url", {})
+                url = img.get("url", "") if isinstance(img, dict) else str(img)
+                item: dict[str, Any] = {"type": "input_image", "image_url": url}
+                detail = img.get("detail") if isinstance(img, dict) else None
+                if detail:
+                    item["detail"] = detail
+                converted.append(item)
+            else:
+                converted.append(part)
+        return converted
+
     def _build_responses_body(self, request_body: dict[str, Any]) -> dict[str, Any]:
         """Build Responses API body with remote MCP tools for xAI.
 
@@ -170,9 +201,14 @@ class OpenAICompatibleAdapter:
         model_id = str(request_body.get("model", ""))
         upstream_model = self.to_upstream_model_id(model_id)
 
-        input_msgs: list[dict[str, Any]] = [
-            msg for msg in request_body.get("messages", []) if isinstance(msg, dict)
-        ]
+        input_msgs: list[dict[str, Any]] = []
+        for msg in request_body.get("messages", []):
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if isinstance(content, list):
+                msg = {**msg, "content": self._convert_content_for_responses(content)}
+            input_msgs.append(msg)
 
         mcp_tool: dict[str, Any] = {
             "type": "mcp",

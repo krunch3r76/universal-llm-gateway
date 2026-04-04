@@ -7,6 +7,27 @@ from pydantic import BaseModel, Field
 
 from .models import AgentName
 
+# --- Attachment schemas ---
+
+
+class AttachmentCreate(BaseModel):
+    """Metadata for a file attached to a turn."""
+
+    filename: str
+    path: str
+    mime_type: str | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
+
+
+class Attachment(AttachmentCreate):
+    """Stored attachment with database ID."""
+
+    id: int
+
+
+# --- Turn/Thread status enums ---
+
 
 class TurnStatus(StrEnum):
     OPEN = "open"
@@ -37,6 +58,7 @@ class TurnCreate(BaseModel):
     status: TurnStatus = TurnStatus.OPEN
     after_turn: int | None = None
     supersedes_turn: int | None = None
+    attachments: list[AttachmentCreate] | None = None
 
 
 class TurnCreated(BaseModel):
@@ -60,6 +82,7 @@ class Turn(BaseModel):
     supersedes_turn: int | None = None
     created_at: datetime
     read_at: datetime | None = None
+    attachments: list[Attachment] | None = None
 
 
 class TurnList(BaseModel):
@@ -146,6 +169,7 @@ class ThreadWithTurnCreate(BaseModel):
     body: str
     status: TurnStatus = TurnStatus.OPEN
     after_turn: int | None = None
+    attachments: list[AttachmentCreate] | None = None
 
 
 class ThreadWithTurnCreated(BaseModel):
